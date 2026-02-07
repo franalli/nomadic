@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowRight, Loader2, Sparkles } from 'lucide-react';
 import { memo } from 'react';
 
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,10 +70,10 @@ function FloatingBuildButtonInner({
   hasEverHadPlan = false,
   className,
 }: FloatingBuildButtonProps) {
-  const { isDesktop, mode } = useMobileMode();
+  const isDesktop = useIsDesktop();
 
-  // Only show on mobile when in planner mode (chat visible)
-  if (isDesktop || mode !== 'planner') {
+  // Only show on mobile
+  if (isDesktop) {
     return null;
   }
 

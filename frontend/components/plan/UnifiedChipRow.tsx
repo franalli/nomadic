@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import { memo } from 'react';
 
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
 import { type ActivitySettings,type BookingTypes, type FlightSettings, type HotelSettings, isBookingEnabled } from '@/types/document';
 import type { ViewMode } from '@/types/plan-envelope';
@@ -410,7 +410,7 @@ function UnifiedChipRowInner({
   mode,
   destinationLocked,
 }: UnifiedChipRowProps) {
-  const { isDesktop } = useMobileMode();
+  const isDesktop = useIsDesktop();
   const isMobile = !isDesktop;
 
   // In BOOKING mode, chips are read-only (show values but can't edit)

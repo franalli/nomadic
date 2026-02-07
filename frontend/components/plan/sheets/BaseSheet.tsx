@@ -17,7 +17,7 @@ import { X } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -369,7 +369,7 @@ function MobileSheet({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function BaseSheetInner(props: BaseSheetProps) {
-  const { isDesktop } = useMobileMode();
+  const isDesktop = useIsDesktop();
 
   if (isDesktop) {
     return <DesktopDialog {...props} />;

@@ -601,7 +601,10 @@ def _extract_destination_context(text: str, state: "GraphState") -> Optional[str
     for pattern in ORIGIN_PATTERNS:
         match = re.match(pattern, text, re.IGNORECASE)
         if match:
-            city = match.group(1).strip().rstrip(".!?,").lower()
+            city = match.group(1).strip().rstrip(".!?,")
+            # Truncate at destination indicators: "rome to bali" → "rome"
+            city = re.split(r"\s+to\s+", city, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+            city = city.lower()
             # Add both full match and first word (handles "rome italy")
             origin_cities.add(city)
             if city:
@@ -669,6 +672,15 @@ def _detect_origin_from_message(user_text: str) -> Optional[str]:
         match = re.match(pattern, text, re.IGNORECASE)
         if match:
             city = match.group(1).strip().rstrip(".!?,")
+            # Truncate at destination indicators: "rome to bali" → "rome"
+            city = re.split(r"\s+to\s+", city, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+            # Truncate at date-like tokens: "rome feb 11" → "rome"
+            city = re.split(
+                r"\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}[/-])\b",
+                city,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0].strip()
             # Normalize: "rome italy" → "Rome", remove country suffixes
             city = _normalize_city_name(city)
             if city:
@@ -2425,6 +2437,13 @@ async def intent_router(state: GraphState) -> GraphState:
             # 2. destination + activities (e.g., "bali diving")
             # Input parameters have highest priority - don't ask exploration questions
             if plan_has_dates or new_specialists:
+                # ── Clear stale fast-path flags from previous turns ──
+                # Without this, "from rome" sets origin_only_logistics=True,
+                # and the next message ("I want hiking") skips specialists entirely.
+                state.metadata.pop("origin_only_logistics", None)
+                state.metadata.pop("skip_specialists", None)
+                state.metadata.pop("skip_architect", None)
+
                 # CRITICAL FIX: Persist destination to state so route_after_router
                 # can dispatch specialists (it checks has_destination before routing)
                 if destination and not state.trip_plan.destination:

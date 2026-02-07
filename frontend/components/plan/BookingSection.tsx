@@ -214,13 +214,6 @@ export function BookingSection({
     activities: activityTiles.length,
   };
 
-  // GAP 4 FIX: Hide entire section when no tiles exist
-  // This prevents showing an empty tab bar or placeholder noise
-  // Specialist cards + map fill the right panel instead
-  if (totalTiles === 0) {
-    return null;
-  }
-
   // Apply filters and sorting to tiles
   const applyFilters = useCallback((tilesToFilter: Tile[]): Tile[] => {
     let result = [...tilesToFilter];
@@ -367,6 +360,14 @@ export function BookingSection({
     }
     return grouped;
   }, [tileArray, activeSpecialists]);
+
+  // GAP 4 FIX: Hide entire section when no tiles exist
+  // This prevents showing an empty tab bar or placeholder noise
+  // Specialist cards + map fill the right panel instead
+  // NOTE: Must be AFTER all hook declarations to satisfy Rules of Hooks
+  if (totalTiles === 0) {
+    return null;
+  }
 
   // PLANNING mode: Show S2-style preview regardless of S2/S3 state
   // Mode is the SSoT for UI variant, not state. See docs/ux_unified_architecture.md

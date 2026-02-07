@@ -85,7 +85,7 @@ export function ActivityMiniCard({
   return (
     <div
       className={cn(
-        'group relative flex gap-3 p-3 rounded-xl border transition-shadow',
+        'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border transition-shadow',
         isUnschedulable
           ? 'bg-zinc-100/50 dark:bg-zinc-900/30 border-dashed border-amber-500/50 opacity-60'
           : 'bg-white dark:bg-zinc-800/50 hover:shadow-md'
@@ -100,19 +100,19 @@ export function ActivityMiniCard({
         </div>
       )}
 
-      {/* Thumbnail */}
+      {/* Thumbnail — full-width banner on mobile, inline 80×80 on desktop */}
       {block.image_url ? (
-        <div className="relative w-20 h-20 rounded-lg overflow-hidden shrink-0">
+        <div className="relative w-full h-32 lg:w-20 lg:h-20 rounded-lg overflow-hidden shrink-0">
           <Image
             src={block.image_url}
             alt={block.summary}
             fill
             className="object-cover"
-            sizes="80px"
+            sizes="(min-width: 1024px) 80px, 100vw"
           />
         </div>
       ) : (
-        <div className={cn('w-20 h-20 rounded-lg shrink-0 flex items-center justify-center', bgColorClass)}>
+        <div className={cn('w-full h-32 lg:w-20 lg:h-20 rounded-lg shrink-0 flex items-center justify-center', bgColorClass)}>
           <Sparkles className={cn('w-8 h-8', iconColorClass)} />
         </div>
       )}

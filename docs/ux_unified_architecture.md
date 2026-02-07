@@ -1521,10 +1521,12 @@ The renderer uses data density to determine what to show:
 
 | Density | Condition | Renders |
 | --- | --- | --- |
-| `empty` | S0 + no specialist content | Hero image only |
+| `empty` | S0 + no specialist content | Topo background + "Build Your Itinerary" tagline (PlanHeader) |
 | `ghost` | S0 + specialist content | Strategy cards + ghost timeline |
 | `bridge` | S2 + specialist + no tiles + no dates | Strategy cards + sample timeline + POI map |
 | `full` | S2 + tiles exist | Strategy cards + real timeline + tiles + full map |
+
+**Map POI extraction:** Only runs when `dayCardsFingerprint` changes (content-based proxy using block IDs with coordinates). The `effectiveDayCards` reference is stabilized via a ref that only updates on fingerprint change, preventing spurious re-renders from `mergeEnvelope` creating new DayCard objects. Map uses `fitBounds` with responsive padding (desktop: 40px, mobile: 20px) and `maxZoom: 12` / `minZoom: 7`.
 
 ---
 
@@ -1763,23 +1765,106 @@ export function getNextAction(
 
 ## X. Mobile Topology & Adaptation
 
-The "Split Screen" desktop architecture translates to a "Tabbed View" on mobile.
+The "Split Screen" desktop architecture translates to a **horizontal swipe layout** on mobile (<1024px). Chat and Plan are two full-screen pages using CSS `scroll-snap`. Desktop is unchanged.
+
+### Implementation
+
+| Component | File | Purpose |
+| --- | --- | --- |
+| `MobileSwipeLayout` | `components/layout/MobileSwipeLayout.tsx` | CSS scroll-snap horizontal container with tab bar |
+| `MobileChatInput` | `components/chat/MobileChatInput.tsx` | Detached chat input below swipe container (visible on both pages) |
+| `TripStatusBar` | `components/chat/TripStatusBar.tsx` | Compact trip summary above swipe container (shared across pages) |
+| `mobileNavStore` | `state/mobileNavStore.ts` | Zustand store: `activePage`, `hasNewPlanContent` badge |
+| `useIsDesktop` | `hooks/useIsDesktop.ts` | Viewport detection hook (`useSyncExternalStore` + `matchMedia`) |
+
+### Layout Stack
+
+```
+┌──────────────────────────┐
+│  MobileModeHeader     48px│
+│  TripStatusBar      ~40px│  ← conditional (after first input)
+│  [Chat]  [Plan ●]   ~36px│  ← tab bar inside MobileSwipeLayout
+├──────────────────────────┤
+│                          │
+│  MobileSwipeLayout       │  ← flex-1 (scroll-snap-x mandatory)
+│  Page 0: Chat messages   │
+│  Page 1: Plan content    │
+│                          │
+├──────────────────────────┤
+│  MobileChatInput     ~56px│  ← OUTSIDE swipe container
+│  + safe area              │
+└──────────────────────────┘
+```
 
 ### Spatial Translation
 
 | Desktop Concept | Mobile Translation | Behavior |
 | --- | --- | --- |
-| **Right Panel** | **Plan Tab** | The "Canvas" lives behind the "Plan" tab. |
-| **Instant Update** | **Toast Notification** | When backend updates Bridge/Plan state, show a Toast: *"Plan Updated: Diving Strategy Added"* |
-| **Bridge Mode** | **Preview Sheet** | In Setup phase, tapping the Plan tab shows the Strategy Cards + Ghost Timeline. |
-| **Navigation** | **Bottom/Top Bar** | Explicit switching between `Chat` (Commander) and `Plan` (Canvas). |
+| **Right Panel** | **Plan Page (Page 1)** | Swipe right or tap "Plan" tab. Same component tree as desktop right panel. |
+| **Instant Update** | **Badge Dot** | Emerald dot on Plan tab when content updates while user is on Chat page. |
+| **Bridge Mode** | **Auto-navigate** | First plan content arrival auto-swipes to Plan page. Subsequent updates use badge only. |
+| **Navigation** | **Tab Bar + Swipe** | Compact segmented control `[Chat] [Plan ●]` above swipe container. |
+| **Chat Input** | **Shared bottom input** | `MobileChatInput` is outside the swipe container — visible on both pages. |
+
+### Auto-Navigation Rules
+
+| Event | User on Chat | User on Plan |
+|-------|-------------|--------------|
+| First strategy/tiles arrive | **Auto-swipe to Plan** | Stay |
+| Itinerary completes | Badge dot on Plan tab | Stay, content updates live |
+| User sends new message | Stay on Chat | Stay on Plan |
+| Session reset | Go to Chat | Go to Chat |
+| User manually swipes | Follow user | Follow user |
+
+**Key principle:** Auto-navigate ONCE (first plan content), then respect user choice. Badge dot for subsequent updates.
+
+### Height Chain (Critical for Mobile)
+
+The mobile flex chain MUST be fully constrained to prevent input clipping:
+
+```
+ROOT div         h-[100dvh] overflow-hidden
+  └─ <main>      flex-1 flex-col overflow-hidden min-h-0
+       ├─ TripStatusBar      (intrinsic)
+       ├─ MobileSwipeLayout  (flex-1 min-h-0)
+       │    ├─ Tab bar            (~36px)
+       │    └─ Snap container     (flex-1 min-h-0 overflow-y-hidden)
+       │         ├─ Chat page     (h-full overflow-y-auto)
+       │         └─ Plan page     (h-full overflow-y-auto)
+       └─ MobileChatInput    (shrink-0)
+```
+
+**Rules:** Every flex level needs `min-h-0` (prevents implicit `min-height: auto` from expanding). Each page scrolls independently via `overflow-y-auto` — `overflow-y-hidden` on the snap container prevents cross-axis stretching to tallest sibling.
+
+### Chat Message Anchoring (Mobile)
+
+Messages anchor to the **bottom** of the scroll area so the last message sits near the input:
+- Scroll container: `flex flex-col` (mobile only)
+- Inner message wrapper: `mt-auto` when messages exist (mobile only)
+- Empty state: Uses `mt-[42vh]` for globe positioning at ~55-60% viewport
+
+### Plan Tab Locking
+
+Plan tab is **locked** until first real plan content arrives:
+- Tab button: `disabled={!planTabEnabled}` with `cursor-not-allowed` styling
+- Swipe blocked: `handleScroll` snaps back to page 0 if user swipes while locked
+- Programmatic navigation: Skipped when `activePage === 1 && !planTabEnabled`
 
 ### Mobile Invariants
 
-1. **Notification of Change:** Since the Canvas is hidden behind a tab, every significant state change (e.g., Strategy Card added) MUST trigger a **Toast** or **Badge Dot** on the Plan tab to alert the user.
-2. **State Persistence:** Switching tabs must NEVER lose the scroll position or drafted message.
-3. **Touch Targets:** All interactive elements must be minimum 44x44px per `design-system.md`.
-4. **Safe Areas:** Respect iOS/Android safe areas for notches and home indicators.
+1. **Notification of Change:** Every significant state change MUST trigger a **Badge Dot** on the Plan tab (via `mobileNavStore.setHasNewPlanContent(true)`). Badge clears when user views Plan page.
+2. **State Persistence:** Each page has independent vertical scroll. Both pages stay in DOM — scroll position survives page switches.
+3. **Touch Targets:** All interactive elements minimum 44x44px per `design-system.md`.
+4. **Safe Areas:** Chat input uses `pb-[max(0.5rem,env(safe-area-inset-bottom))]`. Header uses `pt-[env(safe-area-inset-top)]`.
+5. **Chat Input Always Visible:** Users can type commands from either page without swiping back.
+6. **Height Constraint:** Root div MUST use fixed `h-[100dvh]` (NOT `min-h-[100dvh]`) to prevent input clipping below viewport.
+
+### Deleted Components (replaced by swipe layout)
+
+- `MobileModeContext` → replaced by `useIsDesktop()` hook + `mobileNavStore`
+- `MobilePlanFooter` → replaced by `MobileChatInput` (shared across pages)
+- `MinimizedChatInput` → replaced by `MobileChatInput`
+- `SetupDrawer` / `SetupProgressIndicator` → removed (dead code)
 
 ### Cross-Reference
 
@@ -1885,6 +1970,12 @@ useEffect(() => {
   }
 }, [planViewState, executedTopics, hasDates, ...]);
 ```
+
+**Backend Gates (`/api/expand-itinerary`):**
+The endpoint rejects early if prerequisites aren't met (prevents wasted ItineraryBuilder calls during S0_BOOTSTRAP):
+1. **Both dates required:** Returns `MISSING_DATES` error if `start_date` or `end_date` is null
+2. **Strategy sections required:** Returns `NO_STRATEGY` error if `strategy_sections` is empty
+3. **Minimum trip length:** Returns `TRIP_TOO_SHORT` error if trip < 2 days
 
 **Why Multi-Specialist Only:**
 - Single-specialist trips (diving only) may have simple constraints - user may want to explore tiles first
@@ -2526,28 +2617,29 @@ The S3 Itinerary View (after plan finalization) transforms from raw data dumps i
 
 **Day Selection Sync:** Hovering a day in the timeline highlights only that day's POIs on the map.
 
-#### B. Mobile Layout
+#### B. Mobile Layout (Swipe Pages)
+
+Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container. The same component tree as desktop (StrategyStageRenderer → BookingSection → TimelineThread) renders inside the plan page. See **Section X** for the full mobile architecture.
 
 | Element | Behavior |
 |---------|----------|
-| Default | Timeline Thread (full screen with bottom sheet pattern) |
-| Action | Floating "View Route" button (bottom-right, above bottom sheet) |
-| Map | Opens in 90vh bottom sheet for full pan/zoom |
+| Default | Plan page scrolls vertically: strategy cards → tiles → timeline |
+| Map | Inline between tiles and timeline (250px height), scrolls with content |
+| Chat Input | `MobileChatInput` docked below swipe container (always visible) |
+| Navigation | Tab bar `[Chat] [Plan ●]` + horizontal swipe between pages |
 
 ```
 ┌─────────────────────────┐
-│ MOBILE                  │
+│ MOBILE (Plan Page)      │
 │ ┌─────────────────────┐ │
-│ │                     │ │
-│ │    [Map 50vh]       │ │
-│ │                     │ │
-│ ├─────────────────────┤ │
-│ │ ████ (drag handle)  │ │
-│ │                     │ │
-│ │ Timeline (bottom    │ │
-│ │ sheet, expandable)  │ │
-│ │                     │ │
-│ │ [View Route] FAB    │ │
+│ │ Strategy Cards      │ │
+│ │ Booking Tiles       │ │
+│ │ [Map 250px inline]  │ │
+│ │ Timeline Thread     │ │
+│ │ NextStepBar         │ │
+│ └─────────────────────┘ │
+│ ┌─────────────────────┐ │
+│ │ Chat Input (shared) │ │
 │ └─────────────────────┘ │
 └─────────────────────────┘
 ```

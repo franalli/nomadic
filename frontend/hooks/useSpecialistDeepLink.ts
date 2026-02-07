@@ -2,8 +2,9 @@
 
 import { useCallback } from 'react';
 
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import type { SpecialistType } from '@/lib/specialistLinkParser';
+import { useMobileNavStore } from '@/state/mobileNavStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -30,13 +31,13 @@ const HIGHLIGHT_DURATION_MS = 2000;
  * navigateToSpecialist('diving'); // Scrolls to Diving Specialist card
  */
 export function useSpecialistDeepLink() {
-  const { switchToPlan, isDesktop } = useMobileMode();
+  const isDesktop = useIsDesktop();
 
   const navigateToSpecialist = useCallback(
     (specialistType: SpecialistType) => {
-      // On mobile, switch to Plan mode first
+      // On mobile, navigate to Plan page first
       if (!isDesktop) {
-        switchToPlan();
+        useMobileNavStore.getState().navigateToPlan();
       }
 
       // Wait for tab transition animation, then scroll
@@ -64,7 +65,7 @@ export function useSpecialistDeepLink() {
         }
       }, isDesktop ? 0 : TAB_TRANSITION_DELAY_MS);
     },
-    [switchToPlan, isDesktop]
+    [isDesktop]
   );
 
   return { navigateToSpecialist };

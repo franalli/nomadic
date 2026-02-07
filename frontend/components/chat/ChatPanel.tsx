@@ -23,7 +23,7 @@ import {
 } from '@/components/plan/sheets';
 import { UnifiedChipRow } from '@/components/plan/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
@@ -47,16 +47,16 @@ import {
 } from '@/types/document';
 import type { TriggerContext } from '@/types/loader';
 import type { PlanViewState } from '@/types/plan-envelope';
+import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
 import { CollapsedSetupSummary } from './CollapsedSetupSummary';
 // HoldToDeleteButton removed for demo - re-enable post-launch
 // import { HoldToDeleteButton } from './HoldToDeleteButton';
-import { MobileChatCompactHeader } from './MobileChatCompactHeader';
 import { MobileSetupCollapsedHeader } from './MobileSetupCollapsedHeader';
+// TripStatusBar is mobile-only (rendered in SplitLayoutView shared slot)
 // NodeProgress removed - replaced by Live Logic Status Pill above input
-import { PlanModeHint } from './PlanModeHint';
 import { type ActiveStatus,SmartLoader } from './SmartLoader';
 import { SystemAckLine } from './SystemAckLine';
 import { SystemReceipt } from './SystemReceipt';
@@ -67,7 +67,10 @@ const sanitizeContent = (content: string): string => {
   return content
     .replace(/\\n/g, '\n')  // Replace literal \n with actual newlines
     .replace(/\\t/g, '\t')  // Replace literal \t with actual tabs
-    .replace(/\\\*/g, '*'); // Unescape asterisks for markdown bold/italic
+    .replace(/\\\*/g, '*')  // Unescape asterisks for markdown bold/italic
+    // Strip "right panel" references — no right panel on mobile, redundant on desktop
+    .replace(/\s*(?:[-–—]\s*)?[Cc]heck\s+(?:the\s+)?right\s+panel[^.!?\n]*[.!]?/g, '')
+    .trim();
 };
 // ID prefix for "ready to generate" messages that should be replaced when branches are created
 const READY_MESSAGE_ID_PREFIX = 'ready_';
@@ -364,7 +367,7 @@ interface ChatPanelProps {
   /** Open budget input in TripDetailsForm */
   onOpenBudgetInput?: () => void;
   /** Shared sheet opener - opens trip input sheets at common parent level */
-  onOpenSheet?: (sheet: 'destination' | 'origin' | 'dates' | 'travelers' | 'budget') => void;
+  onOpenSheet?: (sheet: SheetType) => void;
   /**
    * Whether a plan has ever been generated in this session.
    * When true, suppress "Generate plan" user messages and full assistant streaming
@@ -381,6 +384,7 @@ interface ChatPanelProps {
 export interface ChatPanelHandle {
   sendMessage: (message: string) => Promise<void>;
   addAssistantMessage: (message: string) => void;
+  stopStreaming: () => void;
 }
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
@@ -472,7 +476,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // const restoreTripInputs = useDocumentStore((state) => state.restoreTripInputs);
 
     // Get desktop mode to determine if right panel with "Build Plan" button is visible
-    const { isDesktop } = useMobileMode();
+    const isDesktop = useIsDesktop();
 
     const [input, setInput] = useState('');
     // const [isDeleting, setIsDeleting] = useState(false); // Delete removed for demo
@@ -596,10 +600,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       !isLoadingHistory &&
       !isGenerating;
 
-    // Dynamic height - grows with content naturally
+    // Dynamic height — mobile fills parent (docked input), desktop grows naturally
     const panelHeightClass = fullHeight
       ? 'h-full'
-      : 'min-h-[300px]';
+      : !isDesktop
+        ? 'h-full'
+        : 'min-h-[300px]';
 
     // Check if user is near the bottom of the scroll container
     const isNearBottom = useCallback(() => {
@@ -1080,6 +1086,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               const freshState = useDocumentStore.getState();
               const hasItinerary = (freshState.document?.day_cards?.length ?? 0) > 0;
 
+              // Read dates from FRESH store state — the hasDates prop is a stale closure
+              // captured when handleSend was called. If dates arrive in the same response,
+              // the prop won't reflect them but the store will.
+              const freshInputs = freshState.document?.trip_inputs;
+              const freshHasDates =
+                (Boolean(freshInputs?.start_date) && Boolean(freshInputs?.end_date)) ||
+                (freshInputs?.date_flex === true && freshInputs?.trip_duration != null);
+
               // New state from response - MUST use specialist_type (not title) for consistent comparison
               // Filter out undefined specialist_types (shouldn't happen, but TypeScript safety)
               const newSpecialistTypes = (doc.strategy_sections?.map(s => s.specialist_type).filter((t): t is string => !!t)) ?? [];
@@ -1098,7 +1112,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // EXPAND gate check logging - shows why expand fires or skips
               const tileCount = Object.keys(doc.tiles ?? {}).length;
               const viewState = doc.plan_view_state ?? 'unknown';
-              const shouldExpandStructural = hasItinerary && (hasNewSpecialist || hasStructuralNewTileType) && !isSilentPlanGeneration;
+              const shouldExpandStructural = (hasItinerary || freshHasDates) && (hasNewSpecialist || hasStructuralNewTileType) && !isSilentPlanGeneration;
               // Pre-compute date change for logging (actual handling below)
               const _prevInputs = prevTripInputsRef.current;
               const _newInputs = freshState.document?.trip_inputs;
@@ -1108,18 +1122,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               );
               const _hasStrategy = (doc.strategy_sections?.length ?? 0) > 0;
               const shouldExpandDates = _datesChanged && _hasStrategy && !isSilentPlanGeneration;
-              const shouldExpandCatchAll = _hasStrategy && !hasItinerary && hasDates && !isSilentPlanGeneration;
+              const shouldExpandCatchAll = _hasStrategy && !hasItinerary && freshHasDates && !isSilentPlanGeneration;
               const expandPath = shouldExpandStructural ? 'STRUCTURAL'
                 : shouldExpandDates ? 'DATE_CHANGE'
                 : shouldExpandCatchAll ? 'CATCH_ALL'
                 : 'SKIP';
               console.log(
                 `[EXPAND] gate check: strategy=${newSpecialistTypes.length} tiles=${tileCount} ` +
-                `viewState=${viewState} hasItinerary=${hasItinerary} silent=${isSilentPlanGeneration} ` +
+                `viewState=${viewState} hasItinerary=${hasItinerary} freshHasDates=${freshHasDates} silent=${isSilentPlanGeneration} ` +
                 `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!_datesChanged} → ${expandPath}`
               );
 
-              // Auto-expand if structural change detected (gated behind hasItinerary)
+              // Auto-expand if structural change detected (existing itinerary OR dates available)
               // Priority gate: structural wins over trip inputs (structural rebuild incorporates inputs anyway)
               let structuralRebuildTriggered = false;
               if (shouldExpandStructural) {
@@ -1206,7 +1220,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // This ensures itinerary generation even when backend clears day_cards
               // Example: Guard violation during session - strategy preserved, day_cards cleared
               // Gate: Requires dates - without dates, ItineraryBuilder can't create DayCard[] scaffold
-              if (hasStrategyContent && !hasItinerary && hasDates && !isSilentPlanGeneration && !structuralRebuildTriggered) {
+              if (hasStrategyContent && !hasItinerary && freshHasDates && !isSilentPlanGeneration && !structuralRebuildTriggered) {
                 console.log('[ChatPanel] Strategy exists but no itinerary - triggering rebuild...', {
                   strategyCount: doc.strategy_sections?.length,
                   hasItinerary,
@@ -1353,8 +1367,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       () => ({
         sendMessage: sendMessageCore,
         addAssistantMessage,
+        stopStreaming: handleStopStreaming,
       }),
-      [sendMessageCore, addAssistantMessage]
+      [sendMessageCore, addAssistantMessage, handleStopStreaming]
     );
 
     async function handleSubmit(e: React.FormEvent) {
@@ -1419,11 +1434,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     return (
       <div
         ref={panelRef}
-        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-transparent p-4`}
+        className={cn(
+          'text-foreground flex min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-transparent p-4',
+          panelHeightClass,
+          !isDesktop && 'pb-1',
+        )}
       >
-        {/* Mobile Setup Header - Collapsed/Expanded state based on scroll */}
-        {/* When scrolled > 50px, collapse to compact glass bar */}
-        {!isDesktop && planViewState === 'S0_BOOTSTRAP' && (
+        {/* ── DESKTOP: Hero banner + collapsed header (S0 only) ── */}
+        {isDesktop && planViewState === 'S0_BOOTSTRAP' && (
           <AnimatePresence mode="wait">
             {isSetupHeaderCollapsed ? (
               <MobileSetupCollapsedHeader
@@ -1431,7 +1449,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 tripInputs={tripInputs}
                 dateRange={dateRange}
                 onExpand={() => {
-                  // Scroll back to top to expand
                   scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
               />
@@ -1444,7 +1461,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 transition={{ duration: 0.2, ease: 'easeOut' }}
                 className="relative -mx-4 -mt-4 mb-0 w-[calc(100%+2rem)] overflow-hidden border-b border-border/30"
               >
-                {/* Topo pattern layer - boosted opacity for retina mobile visibility */}
                 <div
                   className="absolute inset-0 animate-topo-drift opacity-[0.12] dark:opacity-[0.08]"
                   style={{
@@ -1459,24 +1475,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     willChange: '-webkit-mask-position, mask-position',
                   }}
                 >
-                  {/* Black background for max contrast in light mode */}
                   <div className="absolute inset-0 bg-black dark:bg-white" />
                 </div>
-
-                {/* Content - padding-based height for tighter fit */}
                 <div className="relative z-10 flex flex-col items-center justify-center text-center px-4 py-6">
                   <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
-                    {/* Dynamic headline based on trip input progress */}
                     {!destination ? 'Where to next?' :
                      !dateRange ? 'When would you like to go?' :
                      !tripInputs?.adults ? 'Who\'s traveling?' :
                      'Ready to build your plan'}
                   </h1>
-                  {/* Terminal cursor indicator - classic blink */}
-                  {/* Light: "Typewriter Ink" (Jet Black) | Dark: "System Pulse" (Emerald Glow) */}
                   <div className="mt-1.5 flex items-center gap-1.5">
                     <span className="font-mono text-[9px] uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
-                      {/* Contextual status message */}
                       {!destination ? 'Awaiting Input' :
                        !dateRange ? 'Set Dates' :
                        !tripInputs?.adults ? 'Add Travelers' :
@@ -1490,20 +1499,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           </AnimatePresence>
         )}
 
-        {/* Mobile Compact Header - shown after plan generation (replaces hero) */}
-        {/* This is the "morphing tab" - Chat tab transforms from Setup to Chat mode */}
-        {!isDesktop && hasEverHadPlan && planViewState !== 'S0_BOOTSTRAP' && (
-          <MobileChatCompactHeader
-            tripInputs={tripInputs}
-            planState={planState}
-            onOpenSheet={onOpenSheet}
-          />
-        )}
-
-        {/* Unified Chip Row - two-row layout: core constraints + module toggles */}
-        {/* In S1+, header pills are the ONLY interactive surface for trip inputs */}
-        {/* Show UnifiedChipRow in S0 only (bootstrap phase) - hide when mobile header is collapsed */}
-        {planViewState === 'S0_BOOTSTRAP' && (!isSetupHeaderCollapsed || isDesktop) && (
+        {/* ── DESKTOP: Unified Chip Row (S0 only) ── */}
+        {isDesktop && planViewState === 'S0_BOOTSTRAP' && !isSetupHeaderCollapsed && (
           <UnifiedChipRow
             destination={destination}
             origin={origin}
@@ -1528,23 +1525,39 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         <div
           ref={scrollContainerRef}
-          className="min-h-0 flex-1 space-y-3 overflow-y-auto text-sm no-scrollbar"
+          className={cn("min-h-0 flex-1 overflow-y-auto text-sm no-scrollbar", !isDesktop && "flex flex-col")}
           style={{ overflowAnchor: 'none' }}
           role="log"
           aria-label="Chat messages"
           aria-busy={isLoadingHistory || isLoading}
           onScroll={handleScroll}
         >
+          {/* Inner wrapper: messages flow top-down; on mobile, mt-auto anchors to bottom */}
+          <div className={cn("flex flex-col space-y-3", !isDesktop && visibleMessages.length > 0 && "mt-auto")}>
           {isLoadingHistory ? (
             /* Tier 9: Skeleton loading for better perceived performance */
             <ChatSkeleton count={2} />
           ) : (
             <>
-              {/* Plan mode hint - shown after Setup→Plan transition */}
-              {planViewState !== 'S0_BOOTSTRAP' && hasEverHadPlan && (
-                <PlanModeHint
-                  hasSetupHistory={messages.some((m) => m.displayMode === 'collapsed_summary')}
-                />
+              {/* Mobile empty-state placeholder — decorative prompt, not an input */}
+              {/* Positioned at ~55-60% of viewport via mt-[42vh] (header+tab offset
+                  pushes visual center to ~57% of total viewport) */}
+              {!isDesktop && visibleMessages.length === 0 && planViewState === 'S0_BOOTSTRAP' && (
+                <div className="flex flex-col items-center text-center px-6 mt-[42vh]">
+                  <span className="text-3xl mb-3" role="img" aria-label="Globe">🌍</span>
+                  <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
+                    Where to next?
+                  </h2>
+                  <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
+                    Try: &ldquo;Bali from Rome, Feb 11-14&rdquo;
+                  </p>
+                  <div className="mt-3 flex items-center gap-1.5">
+                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
+                      Awaiting Input
+                    </span>
+                    <div className="w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+                  </div>
+                </div>
               )}
 
               {visibleMessages.map((m, idx) => {
@@ -1688,7 +1701,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 );
               })}
               {/* Invisible sentinel for smooth scroll-to-bottom */}
-              <div ref={bottomSentinelRef} aria-hidden="true" className="h-px" />
+              <div ref={bottomSentinelRef} aria-hidden="true" className="h-px -mt-2" />
             </>
           )}
         </div>
@@ -1772,109 +1785,115 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           )}
 
-          {/* Exploration Progress - shows after 3+ questions during exploration mode */}
-          {isExplorationMode && userMessageCount >= 3 && !isLoading && (
-            <ExplorationProgress
-              questionCount={userMessageCount}
-              destination={destination}
-              onPlanNow={() => sendMessageCore("Let's plan my trip!")}
-              className="mx-4 mb-3"
-            />
-          )}
-
-          {/* Action Bar: Unified Capsule Design with "Living Void" Effect */}
-          {/* Input and button merged into one continuous capsule (like Perplexity/ChatGPT) */}
-          {/* During AI processing: the input BECOMES the status indicator (emerald glow + pulse) */}
-          <div
-            className={cn(
-              'relative flex items-center w-full h-14 rounded-[28px] transition-all duration-300',
-              'bg-zinc-50 dark:bg-black/40',
-              // Priority 1: "Living Void" - AI Processing state
-              isLoading && nodeStatus?.node
-                ? [
-                    'border border-emerald-500/50 dark:border-emerald-500/40',
-                    'shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)] dark:shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]',
-                    'animate-pulse',
-                  ]
-                // Priority 2: Ready to Generate highlight
-                : readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches
-                  ? 'border border-emerald-500/50 ring-1 ring-emerald-500/30 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]'
-                  // Default state
-                  : [
-                      'shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]',
-                      'border border-zinc-200 dark:border-white/10',
-                    ]
-            )}
-          >
-            {/* Input Field - takes remaining space */}
-            {/* Note: Status text removed - Logic Terminal in chat list is the single source of truth (DS Section 19.C) */}
-            <form onSubmit={handleSubmit} className="flex-1 h-full">
-              <textarea
-                ref={inputRef}
-                disabled={isInputDisabledByPlanState}
-                className="w-full h-full bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-4 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
-                placeholder={
-                  isInputDisabledByPlanState
-                    ? 'Updating...'
-                    : readyToGenerate
-                      ? 'Type to refine...'
-                      : !hasDestination
-                        ? 'Where to?'
-                        : 'Tell me more...'
-                }
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                }}
-                onKeyDown={(e) => {
-                  // Submit on Enter without Shift
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSubmit(e);
-                  }
-                }}
-                rows={1}
-              />
-            </form>
-
-            {/* Button - inside the capsule */}
-            <div className="pr-1.5 py-1.5 flex-shrink-0">
-              {isLoading && hasReceivedFirstToken ? (
-                // Stop streaming button - minimal monochrome (not red - that's for errors)
-                <button
-                  type="button"
-                  onClick={handleStopStreaming}
-                  className={cn(
-                    'h-11 w-11 flex items-center justify-center rounded-[22px] transition-all hover:scale-105 active:scale-95',
-                    'bg-zinc-200 dark:bg-white/10',
-                    'hover:bg-zinc-300 dark:hover:bg-white/20',
-                    'border border-zinc-300 dark:border-white/10'
-                  )}
-                  title="Stop"
-                >
-                  {/* Minimal square icon - matches theme */}
-                  <div className="w-3 h-3 bg-zinc-900 dark:bg-white rounded-[2px]" />
-                </button>
-              ) : (
-                // SEND STATE: Arrow button inside capsule
-                <button
-                  type="button"
-                  onClick={(e) => input.trim() && handleSubmit(e as unknown as React.FormEvent)}
-                  disabled={isLoading || !input.trim()}
-                  className={cn(
-                    'h-11 w-11 flex items-center justify-center rounded-[22px] transition-all duration-300',
-                    input.trim() && !isLoading
-                      ? 'bg-zinc-900 text-white hover:bg-zinc-800 hover:scale-105 active:scale-95 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)]'
-                      : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600'
-                  )}
-                  title="Send message (Enter)"
-                >
-                  <ArrowUp className="h-5 w-5" />
-                </button>
+          {/* Exploration Progress + Action Bar — desktop only (mobile uses MobileChatInput) */}
+          {isDesktop && (
+            <>
+              {/* Exploration Progress - shows after 3+ questions during exploration mode */}
+              {isExplorationMode && userMessageCount >= 3 && !isLoading && (
+                <ExplorationProgress
+                  questionCount={userMessageCount}
+                  destination={destination}
+                  onPlanNow={() => sendMessageCore("Let's plan my trip!")}
+                  className="mx-4 mb-3"
+                />
               )}
-            </div>
-          </div>
-        </div>
+
+              {/* Action Bar: Unified Capsule Design with "Living Void" Effect */}
+              {/* Input and button merged into one continuous capsule (like Perplexity/ChatGPT) */}
+              {/* During AI processing: the input BECOMES the status indicator (emerald glow + pulse) */}
+              <div
+                className={cn(
+                  'relative flex items-center w-full h-14 rounded-[28px] transition-all duration-300',
+                  'bg-zinc-50 dark:bg-black/40',
+                  // Priority 1: "Living Void" - AI Processing state
+                  isLoading && nodeStatus?.node
+                    ? [
+                        'border border-emerald-500/50 dark:border-emerald-500/40',
+                        'shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)] dark:shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]',
+                        'animate-pulse',
+                      ]
+                    // Priority 2: Ready to Generate highlight
+                    : readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches
+                      ? 'border border-emerald-500/50 ring-1 ring-emerald-500/30 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]'
+                      // Default state
+                      : [
+                          'shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]',
+                          'border border-zinc-200 dark:border-white/10',
+                        ]
+                )}
+              >
+                {/* Input Field - takes remaining space */}
+                {/* Note: Status text removed - Logic Terminal in chat list is the single source of truth (DS Section 19.C) */}
+                <form onSubmit={handleSubmit} className="flex-1 h-full">
+                  <textarea
+                    ref={inputRef}
+                    disabled={isInputDisabledByPlanState}
+                    className="w-full h-full bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-4 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                    placeholder={
+                      isInputDisabledByPlanState
+                        ? 'Updating...'
+                        : readyToGenerate
+                          ? 'Type to refine...'
+                          : !hasDestination
+                            ? 'Where to?'
+                            : 'Tell me more...'
+                    }
+                    value={input}
+                    onChange={(e) => {
+                      setInput(e.target.value);
+                    }}
+                    onKeyDown={(e) => {
+                      // Submit on Enter without Shift
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSubmit(e);
+                      }
+                    }}
+                    rows={1}
+                  />
+                </form>
+
+                {/* Button - inside the capsule */}
+                <div className="pr-1.5 py-1.5 flex-shrink-0">
+                  {isLoading && hasReceivedFirstToken ? (
+                    // Stop streaming button - minimal monochrome (not red - that's for errors)
+                    <button
+                      type="button"
+                      onClick={handleStopStreaming}
+                      className={cn(
+                        'h-11 w-11 flex items-center justify-center rounded-[22px] transition-all hover:scale-105 active:scale-95',
+                        'bg-zinc-200 dark:bg-white/10',
+                        'hover:bg-zinc-300 dark:hover:bg-white/20',
+                        'border border-zinc-300 dark:border-white/10'
+                      )}
+                      title="Stop"
+                    >
+                      {/* Minimal square icon - matches theme */}
+                      <div className="w-3 h-3 bg-zinc-900 dark:bg-white rounded-[2px]" />
+                    </button>
+                  ) : (
+                    // SEND STATE: Arrow button inside capsule
+                    <button
+                      type="button"
+                      onClick={(e) => input.trim() && handleSubmit(e as unknown as React.FormEvent)}
+                      disabled={isLoading || !input.trim()}
+                      className={cn(
+                        'h-11 w-11 flex items-center justify-center rounded-[22px] transition-all duration-300',
+                        input.trim() && !isLoading
+                          ? 'bg-zinc-900 text-white hover:bg-zinc-800 hover:scale-105 active:scale-95 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)]'
+                          : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600'
+                      )}
+                      title="Send message (Enter)"
+                    >
+                      <ArrowUp className="h-5 w-5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </div>{/* close inner wrapper */}
+        </div>{/* close scroll container */}
 
         {/* Module sheets (flights/stays/activities) - control booking types */}
         {/* Trip input sheets (destination/origin/dates/travelers/budget) are in NomadicLanding */}

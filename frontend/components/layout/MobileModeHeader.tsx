@@ -2,10 +2,10 @@
 
 import { Check, Compass, Loader2, MoreVertical, RotateCcw } from 'lucide-react';
 import Link from 'next/link';
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
 import type { PlanState } from '@/types/plan-envelope';
 
@@ -71,8 +71,10 @@ function MobileModeHeaderInner({
   onReset,
   className,
 }: MobileModeHeaderProps) {
-  const { isDesktop } = useMobileMode();
+  const isDesktop = useIsDesktop();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   // Don't render on desktop - split view shows both panels
   if (isDesktop) {
@@ -82,6 +84,7 @@ function MobileModeHeaderInner({
   const status = STATUS_CONFIG[planState];
 
   return (
+    <>
     <header
       className={cn(
         'fixed top-0 left-0 right-0 z-[1100]',
@@ -102,86 +105,105 @@ function MobileModeHeaderInner({
         <span className="font-semibold text-sm text-foreground">Nomadic</span>
       </div>
 
-      {/* Right side: Status (if active) + Menu */}
+      {/* Right side: Menu only (status moved to floating pill below) */}
       <div className="flex items-center gap-2">
-        {/* Status indicator - only show when there's active status */}
-        {status.text && (
-          <div
-            className={cn(
-              'flex items-center gap-1.5 text-xs font-medium',
-              status.className
-            )}
+        {/* Menu button with Popover - deferred until mount to avoid Radix ID hydration mismatch */}
+        {mounted ? (
+          <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="p-2 text-muted-foreground hover:text-foreground transition-colors -mr-2"
+                aria-label="Menu"
+              >
+                <MoreVertical className="h-5 w-5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-[200px] p-2">
+              <nav className="flex flex-col">
+                {/* Reset - moved inside menu to prevent accidental taps */}
+                {onReset && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onReset();
+                      }}
+                      className="flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left text-[10px] font-bold uppercase tracking-widest text-zinc-900 dark:text-white"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      <span>Reset Trip</span>
+                    </button>
+                    <div className="h-px bg-border my-1" />
+                  </>
+                )}
+
+                <span className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Help & Legal</span>
+                <Link
+                  href="/privacy"
+                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Privacy Policy
+                </Link>
+                <Link
+                  href="/terms"
+                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Terms of Service
+                </Link>
+                <Link
+                  href="/cookies"
+                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Cookie Policy
+                </Link>
+                <Link
+                  href="/contact"
+                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Contact Us
+                </Link>
+              </nav>
+            </PopoverContent>
+          </Popover>
+        ) : (
+          <button
+            type="button"
+            className="p-2 text-muted-foreground hover:text-foreground transition-colors -mr-2"
+            aria-label="Menu"
           >
-            {status.icon}
-            <span>{status.text}</span>
-          </div>
+            <MoreVertical className="h-5 w-5" />
+          </button>
         )}
-
-        {/* Menu button with Popover - Reset moved inside for safety */}
-        <Popover open={menuOpen} onOpenChange={setMenuOpen}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className="p-2 text-muted-foreground hover:text-foreground transition-colors -mr-2"
-              aria-label="Menu"
-            >
-              <MoreVertical className="h-5 w-5" />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-[200px] p-2">
-            <nav className="flex flex-col">
-              {/* Reset - moved inside menu to prevent accidental taps */}
-              {onReset && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onReset();
-                    }}
-                    className="flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left text-[10px] font-bold uppercase tracking-widest text-zinc-900 dark:text-white"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    <span>Reset Trip</span>
-                  </button>
-                  <div className="h-px bg-border my-1" />
-                </>
-              )}
-
-              <span className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Help & Legal</span>
-              <Link
-                href="/privacy"
-                className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
-                onClick={() => setMenuOpen(false)}
-              >
-                Privacy Policy
-              </Link>
-              <Link
-                href="/terms"
-                className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
-                onClick={() => setMenuOpen(false)}
-              >
-                Terms of Service
-              </Link>
-              <Link
-                href="/cookies"
-                className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
-                onClick={() => setMenuOpen(false)}
-              >
-                Cookie Policy
-              </Link>
-              <Link
-                href="/contact"
-                className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
-                onClick={() => setMenuOpen(false)}
-              >
-                Contact Us
-              </Link>
-            </nav>
-          </PopoverContent>
-        </Popover>
       </div>
     </header>
+
+    {/* Floating status pill — centered below header, glass morphism */}
+    {status.text && (
+      <div
+        className={cn(
+          'fixed z-[1099] left-1/2 -translate-x-1/2',
+          'top-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top)+8px)]',
+          'flex items-center gap-1.5',
+          'px-3 py-1 rounded-full',
+          'text-xs font-medium',
+          'bg-background/80 backdrop-blur-md',
+          'border border-border/40',
+          'shadow-sm',
+          'lg:hidden',
+          status.className
+        )}
+      >
+        {status.icon}
+        <span>{status.text}</span>
+      </div>
+    )}
+    </>
   );
 }
 

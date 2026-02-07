@@ -265,6 +265,12 @@ Map panels use sticky positioning during timeline scroll (P3+ only).
 - Tailwind classes can fail when merged with `h-full` in nested components
 - The wrapper ensures correct height, inner component uses `h-full w-full`
 
+**fitBounds Behavior:**
+- Uses responsive padding: desktop 40px, mobile 20px (via `useIsDesktop` hook)
+- `maxZoom: 12` prevents over-zoom on single-POI clusters
+- `minZoom: 7` prevents zooming out to show the whole globe
+- `duration: 1000` for smooth 1s animation
+
 ---
 
 ## 3. Usage Examples
@@ -470,6 +476,10 @@ The Trip DNA bar shows engine constraints from niche specialists (diving, hiking
 1. Specialist Analysis (collapsed accordion cards, hidden in S3 by default)
 2. Trip DNA bar (constraint pills with priority coloring)
 3. Day-by-day Itinerary
+
+**Specialist Card Subtitle (one_liner):**
+- Uses `line-clamp-2` (not `truncate`) to allow 2-line display on mobile
+- Prevents mid-word clipping of destination descriptions
 
 **Constraint Priority Colors:**
 | Priority | Keywords | Icon | Border | Background | Text (Light) | Text (Dark) |
@@ -2180,8 +2190,10 @@ slideInRight: {
 
 - SelectionsBar: Non-sticky on mobile (scrolls with content)
 - Specialists: No auto-expand on mobile
-- Map: Hidden on mobile (drawer instead)
+- Map: Inline on mobile plan page (250px, scrolls with content)
 - Consider `prefers-reduced-motion` for accessibility
+- **Layout:** Horizontal swipe (`MobileSwipeLayout` with CSS `scroll-snap`). See `ux_unified_architecture.md` Section X.
+- **Viewport detection:** Use `useIsDesktop()` hook from `hooks/useIsDesktop.ts` (replaces former `MobileModeContext`)
 
 ### Loading States
 

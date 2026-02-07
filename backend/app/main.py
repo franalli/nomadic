@@ -335,6 +335,7 @@ def _build_day_cards(metadata: dict) -> list:
             cards.append(
                 DayCard(
                     day_number=c.get("day_number", 0),
+                    date=c.get("date"),
                     label=c.get("label", ""),
                     blocks=blocks,
                 )
@@ -2905,9 +2906,21 @@ async def expand_itinerary_endpoint(
                     )
                 )
 
-                # NOTE: executed_topics was extracted here but is no longer used
-                # since we build itinerary directly instead of via planner graph.
-                # Kept as comment for reference if needed in future.
+                # Guard: Require at least one strategy section
+                # (no specialists = nothing to schedule)
+                if not strategy_sections_data:
+                    _debug("❌ [expand-itinerary] EARLY RETURN: No strategy sections")
+                    event = ExpandItineraryStreamEvent(
+                        type="error",
+                        message=json.dumps(
+                            {
+                                "error": "NO_STRATEGY",
+                                "message": "Ask about activities before generating itinerary",
+                            }
+                        ),
+                    )
+                    yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                    return
 
                 # =================================================================
                 # SELECTIVE REGENERATION: Detect strategy based on changed fields
@@ -3015,18 +3028,18 @@ async def expand_itinerary_endpoint(
                 start_date = trip_inputs_data.get("start_date")
                 end_date = trip_inputs_data.get("end_date")
 
-                # Guard: Require end_date (multi-day trips are Nomadic's core product)
-                if start_date and not end_date:
+                # Guard: Require both dates (S0_BOOTSTRAP has neither)
+                if not start_date or not end_date:
                     _debug(
-                        f"❌ [expand-itinerary] EARLY RETURN: Missing end_date, start={start_date}"
+                        f"❌ [expand-itinerary] EARLY RETURN: Missing dates "
+                        f"(start={start_date}, end={end_date})"
                     )
                     event = ExpandItineraryStreamEvent(
                         type="error",
                         message=json.dumps(
                             {
-                                "error": "MISSING_END_DATE",
-                                "message": "Add return date to see itinerary",
-                                "start_date": start_date,
+                                "error": "MISSING_DATES",
+                                "message": "Set travel dates to generate itinerary",
                             }
                         ),
                     )

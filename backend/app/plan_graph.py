@@ -529,6 +529,12 @@ def route_after_specialist(
     if has_dates and not has_destination:
         _debug_log("Specialist done, skipping logistics (no destination set)")
 
+    # OPTIMIZATION: If architect already ran this turn, skip to guard/synthesizer
+    # Prevents double-call: router→logistics(skip)→architect→local_expert→architect(again)
+    if state.metadata.get("architect_ran_this_turn", False):
+        _debug_log("[SPECIALIST→] Skipping architect (already ran this turn)")
+        return _should_run_guard(state)
+
     # General intent without dates - skip tile fetching, go to architect for extraction
     _debug_log("Specialist done, skipping logistics, routing to architect (no dates)")
     return "architect"

@@ -1,30 +1,13 @@
 'use client';
 
-import { AnimatePresence, motion } from 'framer-motion';
 import Link from 'next/link';
 import React, { memo } from 'react';
 
 import { MobileModeHeader } from '@/components/layout/MobileModeHeader';
-import { MobilePlanFooter } from '@/components/layout/MobilePlanFooter';
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { MobileSwipeLayout } from '@/components/layout/MobileSwipeLayout';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
 import type { PlanState } from '@/types/plan-envelope';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Animation Variants
-// ─────────────────────────────────────────────────────────────────────────────
-
-const mobileSlideVariants = {
-  // Planner mode (slide in from left)
-  plannerEnter: { x: -12, opacity: 0.96 },
-  plannerCenter: { x: 0, opacity: 1 },
-  plannerExit: { x: -12, opacity: 0.96 },
-
-  // Plan mode (slide in from right)
-  planEnter: { x: 12, opacity: 0.96 },
-  planCenter: { x: 0, opacity: 1 },
-  planExit: { x: 12, opacity: 0.96 },
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -55,6 +38,10 @@ export interface SplitLayoutViewProps {
   bookTabEnabled?: boolean;
   /** Handler for "Select Dates" CTA button */
   onSelectDates?: () => void;
+  /** Mobile-only: chat input rendered below swipe container (visible on both pages) */
+  mobileInput?: React.ReactNode;
+  /** Mobile-only: trip status bar rendered above swipe container (shared across pages) */
+  mobileStatusBar?: React.ReactNode;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,32 +55,37 @@ export interface SplitLayoutViewProps {
  * - Left: Planner panel (TripDetailsForm + ChatPanel), scrollable
  * - Right: Plan View (StrategyStageRenderer), always visible
  *
- * Mobile (<lg): Two-mode switching (no tabs)
- * - Planner Mode: Shows planner content only
- * - Plan Mode: Shows plan view with single-scroll progressive disclosure
- * - Animated transitions between modes
+ * Mobile (<lg): Horizontal swipe layout (Chat ↔ Plan)
+ * - CSS scroll-snap with two full-screen pages
+ * - Tab bar for tap navigation + badge indicator
+ * - Auto-navigates to plan when content arrives
  */
 export const SplitLayoutView = memo(function SplitLayoutView({
   plannerContent,
   planViewContent,
-  bookContent,
+  bookContent: _bookContent,
   planState = 'INCOMPLETE',
   headerContent,
   hasDestination: _hasDestination = false,
   onReset,
-  onSendMessage,
-  isProcessing = false,
-  planTabEnabled: _planTabEnabled = false,
+  onSendMessage: _onSendMessage,
+  isProcessing: _isProcessing = false,
+  planTabEnabled = false,
   bookTabEnabled: _bookTabEnabled = false,
-  onSelectDates,
+  onSelectDates: _onSelectDates,
+  mobileInput,
+  mobileStatusBar,
 }: SplitLayoutViewProps) {
   void _hasDestination; // Reserved for future topo background control
-  void _planTabEnabled; // Kept for API compat - tabs removed
-  void _bookTabEnabled; // Kept for API compat - tabs removed
-  const { mode, isDesktop } = useMobileMode();
+  void _bookTabEnabled; // Kept for API compat
+  void _onSendMessage; // Kept for API compat
+  void _isProcessing; // Kept for API compat
+  void _onSelectDates; // Kept for API compat
+  void _bookContent; // Kept for API compat
+  const isDesktop = useIsDesktop();
 
   return (
-    <div className="flex flex-col min-h-[100dvh] lg:min-h-screen lg:pt-0">
+    <div className="flex flex-col h-[100dvh] lg:h-screen overflow-hidden">
       {/* Compact Header (branding) - always visible on desktop, mode-aware on mobile */}
       {headerContent && (
         <header className="hidden lg:flex items-center h-12 px-6 border-b border-[var(--theme-hairline)] bg-[var(--theme-panel)]">
@@ -108,11 +100,11 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       />
 
       {/* Main Layout Container */}
-      {/* Desktop: Grid 40/60 split | Mobile: Single column with mode switching */}
+      {/* Desktop: Grid 40/60 split | Mobile: Horizontal swipe pages */}
       <div
         className={cn(
           'flex-1 overflow-hidden min-h-0', // min-h-0 fixes flexbox height collapse on mobile
-          // Mobile: flex column for mode switching
+          // Mobile: flex column for swipe layout
           'flex flex-col',
           // Desktop: Grid with fluid chat panel width (clamp for continuous scaling)
           'lg:grid lg:grid-cols-[clamp(320px,28vw,480px)_1fr]'
@@ -167,7 +159,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
               aria-label="Your trip plan"
               data-testid="plan-view"
             >
-              <div id="plan-panel" className="flex-1 overflow-y-auto no-scrollbar p-6">
+              <div id="plan-panel" className="flex-1 overflow-y-auto no-scrollbar px-6 pb-6 pt-0">
                 {planViewContent}
               </div>
             </main>
@@ -175,71 +167,27 @@ export const SplitLayoutView = memo(function SplitLayoutView({
         )}
 
         {/* ─────────────────────────────────────────────────────────────────── */}
-        {/* Mobile Layout: Two-Mode Switching (<lg) - No Tabs */}
+        {/* Mobile Layout: Horizontal Swipe (Chat ↔ Plan) */}
         {/* ─────────────────────────────────────────────────────────────────── */}
         {!isDesktop && (
-          <>
-            <AnimatePresence mode="wait">
-              {mode === 'planner' && (
-                <motion.main
-                  key="mobile-planner"
-                  className={cn(
-                    'flex-1 overflow-y-auto p-4 lg:hidden bg-[var(--theme-panel)]',
-                    'pt-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]', // Space for fixed header
-                    'pb-[calc(env(safe-area-inset-bottom)+16px)]' // Safe area + breathing room
-                  )}
-                  initial="plannerEnter"
-                  animate="plannerCenter"
-                  exit="plannerExit"
-                  variants={mobileSlideVariants}
-                  transition={{ duration: 0.24, ease: 'easeOut' }}
-                  aria-label="Trip planner"
-                >
-                  {plannerContent}
-                </motion.main>
-              )}
-
-              {mode === 'plan' && (
-                <motion.main
-                  key="mobile-plan"
-                  id="plan-panel"
-                  className={cn(
-                    // Single-scroll container for progressive disclosure
-                    'flex-1 h-full min-h-0 lg:hidden rightCanvas overflow-y-auto',
-                    'pt-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]', // Space for fixed header
-                    'pb-[calc(env(safe-area-inset-bottom)+140px)]' // Space for MobilePlanFooter
-                  )}
-                  initial="planEnter"
-                  animate="planCenter"
-                  exit="planExit"
-                  variants={mobileSlideVariants}
-                  transition={{ duration: 0.26, ease: 'easeOut' }}
-                  aria-label="Your trip plan"
-                  data-testid="plan-view"
-                >
-                  {/* Single-scroll progressive disclosure: plan content + booking */}
-                  <div className="flex flex-col gap-6">
-                    {planViewContent}
-                    {/* Booking section integrated into single scroll */}
-                    {bookContent && (
-                      <section className="px-4 pb-4" aria-label="Booking options">
-                        {bookContent}
-                      </section>
-                    )}
-                  </div>
-                </motion.main>
-              )}
-            </AnimatePresence>
-
-            {/* Mobile Plan Footer - Command input, visible in plan mode */}
-            {onSendMessage && (
-              <MobilePlanFooter
-                onSelectDates={onSelectDates ?? (() => {})}
-                onSendMessage={onSendMessage}
-                isProcessing={isProcessing}
-              />
+          <main
+            className={cn(
+              'flex-1 flex flex-col overflow-hidden min-h-0 lg:hidden',
+              'pt-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]',
             )}
-          </>
+          >
+            {/* Shared TripStatusBar — visible on both Chat and Plan pages */}
+            {mobileStatusBar}
+
+            <MobileSwipeLayout
+              chatContent={plannerContent}
+              planContent={planViewContent}
+              planTabEnabled={planTabEnabled}
+            />
+
+            {/* Shared chat input — visible on both Chat and Plan pages */}
+            {mobileInput}
+          </main>
         )}
       </div>
     </div>

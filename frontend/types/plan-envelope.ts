@@ -725,6 +725,7 @@ export interface DayBlock {
  */
 export interface DayCard {
   day_number: number;
+  date?: string; // ISO date string, e.g. "2025-02-12"
   label: string; // e.g., "Arrival + light activity", "Main hike day"
   blocks: DayBlock[]; // Max 3 blocks
 }

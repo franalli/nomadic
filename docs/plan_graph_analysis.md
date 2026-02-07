@@ -724,7 +724,17 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - Image enrichment via Unsplash
 - Graceful constraint warnings
 
+**Suggested Replies Priority:**
+1. Exploration/soft_transition → pre-computed by router
+2. Route violations → "Back to {prev}", "Different city", "Help me choose"
+3. **Safety constraint violations** (blocking, non-route) → "Extend trip by a day", "Reorder activities", "Show alternatives"
+4. Missing fields → destination/date prompts
+5. Specialist-specific → domain action chips (feasibility-gated)
+6. Fallback → generic exploration
+
 **Logic Guard Voice:** When a blocking route violation is detected (`category="route"`), the Synthesizer shifts to **"Architectural Safety Mode"**. It refuses to generate enthusiasm or itinerary content and instead provides a firm, corrective statement (e.g., "I cannot generate a route where Origin and Destination are identical.").
+
+**Safety Constraint Surfacing:** When non-route blocking violations are detected (e.g., diving surface interval), the synthesis context includes a `⚠️ SAFETY CONSTRAINT VIOLATION` section prompting the LLM to mention the safety issue and suggest plan adjustments.
 
 **True Streaming:**
 Uses LangGraph's `astream_events` to tap into the LLM token stream:
@@ -1395,7 +1405,12 @@ def route_after_specialist(state: GraphState):
     if state.intent == "booking" or state.is_generate_trigger:
         return "logistics"
 
-    # 4. General Intent: Extract fields in Architect (skip tiles)
+    # 4. Skip architect if it already ran this turn
+    #    Prevents double-call: router→logistics(skip)→architect→local_expert→architect(again)
+    if state.metadata.get("architect_ran_this_turn", False):
+        return _should_run_guard(state)
+
+    # 5. General Intent: Extract fields in Architect (skip tiles)
     return "architect"
 ```
 

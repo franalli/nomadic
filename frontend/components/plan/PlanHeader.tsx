@@ -123,8 +123,9 @@ export function PlanHeader({
     return startFormatted;
   }, [startDate, endDate]);
 
-  // Shared hero height - fluid clamp for continuous scaling across viewports
-  const HERO_HEIGHT = 'h-[clamp(140px,20vw,300px)]';
+  // Shared hero height - viewport-height relative so it scales with screen height, not width
+  // 13" (800px h) → 200px | 15" (900px h) → 225px | 27" (1440px h) → capped at 280px
+  const HERO_HEIGHT = 'h-[clamp(180px,25vh,280px)]';
 
   // COLLAPSED STATE: Compact header bar when scrolled
   if (isCollapsed) {

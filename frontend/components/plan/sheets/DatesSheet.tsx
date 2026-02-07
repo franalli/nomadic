@@ -17,7 +17,7 @@ import { createPortal } from 'react-dom';
 
 import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { useToast } from '@/components/ui/toast';
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ function DatesSheetInner({
   onSave,
 }: DatesSheetProps) {
   const { toast } = useToast();
-  const { isDesktop } = useMobileMode();
+  const isDesktop = useIsDesktop();
   const [range, setRange] = useState<DateRange | undefined>(undefined);
   const [activePreset, setActivePreset] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);

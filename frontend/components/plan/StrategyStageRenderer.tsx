@@ -33,7 +33,7 @@ import { useToast } from '@/components/ui/toast';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
@@ -147,6 +147,7 @@ import {
 } from './planStateHelpers';
 import { ReadyToPlanBanner } from './ReadyToPlanBanner';
 import { S2StrategyView } from './stages/S2StrategyView';
+import { getShortConstraintLabel } from './stages/StrategyHero';
 // import { S3BlockedView } from './stages/S3BlockedView';
 // import { S3EditingView } from './stages/S3EditingView';
 // import { S3ItineraryView } from './stages/S3ItineraryView';
@@ -307,13 +308,25 @@ export function StrategyStageRenderer({
     // Fingerprint: count + IDs of blocks with coordinates (the ones that affect POIs)
     const blockIds = cards
       .flatMap(c => c.blocks || [])
-      .filter(b => b.coordinates)
+      .filter(b => b.coordinates?.lat && b.coordinates?.lng)
       .map(b => b.id)
       .join(',');
+    // No blocks with coordinates → treat as no day cards (skip POI extraction)
+    // Free Day placeholders have no coords, so they won't trigger map extraction
+    if (!blockIds) return null;
     return `${cards.length}:${blockIds}`;
   });
-  const storeDayCards = useDocumentStore((s) => s.document?.day_cards);
-  const effectiveDayCards = storeDayCards ?? viewModel.day_cards;
+  // Stabilize day_cards reference: only snapshot from store when fingerprint changes.
+  // mergeEnvelope creates new DayCard objects on every update, so raw selector
+  // returns a new ref each time → causes spurious re-renders and 8x POI extractions.
+  const storeDayCardsRaw = useDocumentStore((s) => s.document?.day_cards);
+  const stableDayCardsRef = useRef(storeDayCardsRaw);
+  const prevFingerprintRef = useRef(dayCardsFingerprint);
+  if (dayCardsFingerprint !== prevFingerprintRef.current) {
+    prevFingerprintRef.current = dayCardsFingerprint;
+    stableDayCardsRef.current = storeDayCardsRaw;
+  }
+  const effectiveDayCards = stableDayCardsRef.current ?? viewModel.day_cards;
 
 
   // Heart preference system for SelectionsBar
@@ -328,12 +341,6 @@ export function StrategyStageRenderer({
   // NOTE: Using stable selectors - fallback arrays defined outside component to avoid infinite loops
   const constraintsValidated = useDocumentStore((s) => s.document?.constraints_validated) ?? EMPTY_CONSTRAINTS_VALIDATED;
   const constraintViolations = useDocumentStore((s) => s.document?.constraint_violations) ?? EMPTY_CONSTRAINT_VIOLATIONS;
-
-  // DEBUG: Log raw document constraint data
-  if (process.env.NODE_ENV === 'development') {
-    console.log('[Trip DNA] document.constraints_validated:', constraintsValidated);
-    console.log('[Trip DNA] document.constraint_violations:', constraintViolations);
-  }
 
   // Memoized sets for efficient rule lookup
   const validatedRules = useMemo(
@@ -350,7 +357,7 @@ export function StrategyStageRenderer({
   const isAnyRegenerating = isRegenerating || isRegenUpdating;
 
   // Get desktop state for mobile-specific rendering
-  const { isDesktop } = useMobileMode();
+  const isDesktop = useIsDesktop();
 
   // Scroll collapse tracking for mobile header optimization
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -607,7 +614,7 @@ export function StrategyStageRenderer({
       );
     }
 
-    // EMPTY: S0 without specialist content - hero is the view
+    // EMPTY: S0 without specialist content — PlanHeader topo + tagline shows through
     if (density === 'empty') {
       return null;
     }
@@ -883,22 +890,13 @@ export function StrategyStageRenderer({
 
                   if (engineConstraints.length === 0) return null;
 
-                  // Short label: label > reason > rule (title-cased) - NO truncation
-                  // Matches chat language ("24h No-Fly Buffer" not "No Fly 24h")
+                  // Short label: label > shortConstraintLabel(rule) - compact for mobile pills
                   const getShortLabel = (c: { label?: string; rule?: string; reason?: string }) =>
                     c.label ||
-                    c.reason ||
-                    (c.rule?.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())) ||
+                    (c.rule ? getShortConstraintLabel(c.rule) : null) ||
                     'Constraint';
 
                   // Three-state styling: violated > validated > unchecked (with priority coloring)
-                  // DEBUG: Log rule matching to diagnose icon issues
-                  if (process.env.NODE_ENV === 'development') {
-                    console.log('[Trip DNA] violatedRules:', [...violatedRules]);
-                    console.log('[Trip DNA] validatedRules:', [...validatedRules]);
-                    console.log('[Trip DNA] constraint rules:', engineConstraints.map(c => c.rule));
-                  }
-
                   const getPillStyle = (c: { rule?: string; type?: string; reason?: string }) => {
                     const rule = c.rule;
                     // Check both exact rule match AND partial match for robustness
@@ -1073,8 +1071,8 @@ export function StrategyStageRenderer({
             )}
           </AnimatePresence>
 
-          {/* MOBILE ONLY: Inline map before timeline */}
-          {!isDesktop && hasItineraryContent && (
+          {/* MOBILE ONLY: Inline map before timeline — only when POIs exist (not just destination pin) */}
+          {!isDesktop && hasItineraryContent && fullModePOIs.length > 0 && (
             <section className="mt-4 px-4">
               {/* Explicit height wrapper ensures Mapbox initializes correctly */}
               <div style={{ height: 300 }} className="rounded-xl overflow-hidden border border-border/50">
@@ -1240,28 +1238,14 @@ export function StrategyStageRenderer({
   if (!isDesktop) {
     return (
       <div className="flex flex-col h-full">
-        {/* Header - always visible */}
-        <PlanHeader
-          destinationCard={destinationCard}
-          currentStage={currentStage}
-          isGenerating={generating}
-          fallbackTitle={fallbackTitle}
-          planViewState={state}
-          hasDates={hasDates}
-          isExpandingItinerary={isExpandingItinerary}
-          currentSubStage={currentSubStage}
-          tripInputs={effectiveTripInputs}
-          onOpenSheet={onOpenSheet}
-          isStreaming={isStreaming}
-          isCollapsed={isCollapsed}
-        />
+        {/* Hero hidden on mobile — TripStatusBar provides trip context */}
 
         {/* Content - direct render, scrollable */}
         <div
           ref={scrollContainerRef}
           className={cn(
             'flex-1 overflow-y-auto',
-            nextAction && 'pb-32' // Space for MobilePlanFooter and sticky footer
+            nextAction && 'pb-32' // Space for sticky footer
           )}
         >
           {/* Content scrim for topo visibility */}

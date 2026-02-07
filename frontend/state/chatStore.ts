@@ -155,7 +155,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     set({
       messages: DEFAULT_MESSAGES,
       isLoadingHistory: false,
-      historyLoaded: false,
+      historyLoaded: true, // Mark as loaded to prevent re-fetching stale history after reset
       sessionState: null,
     }),
 

@@ -30,7 +30,7 @@ import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
@@ -80,7 +80,7 @@ function CheckoutSheetInner({
   onSubmit,
 }: CheckoutSheetProps) {
   const { toast } = useToast();
-  const { isDesktop } = useMobileMode();
+  const isDesktop = useIsDesktop();
   const [mounted, setMounted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 

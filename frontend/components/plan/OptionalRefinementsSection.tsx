@@ -17,7 +17,7 @@ import { memo, useEffect, useState } from 'react';
 import { ExpandablePill } from '@/components/pill/ExpandablePill';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { Switch } from '@/components/ui/switch';
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import {
   getActivitiesSummary,
   getFlightsSummary,
@@ -183,7 +183,7 @@ function OptionalRefinementsSectionInner({
   llmUpdatedFields,
   onAcknowledgeLLMUpdate,
 }: OptionalRefinementsSectionProps) {
-  const { isDesktop } = useMobileMode();
+  const isDesktop = useIsDesktop();
 
   // Collapsible state - desktop expanded, mobile collapsed
   const [isOpen, setIsOpen] = useState(true);

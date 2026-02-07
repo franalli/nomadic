@@ -6,6 +6,7 @@ import { Bed, Camera, Landmark, MapPin, Mountain, Plane, Utensils, Waves } from 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Map, { type ErrorEvent, Layer, type MapRef, Marker, NavigationControl, Source } from 'react-map-gl/mapbox';
 
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
 
 // =============================================================================
@@ -247,6 +248,7 @@ export function InteractiveMap({
   interactive = true,
   showAttribution = true,
 }: InteractiveMapProps) {
+  const isDesktop = useIsDesktop();
   const mapRef = useRef<MapRef>(null);
   const isMountedRef = useRef(true);
   const [isMapReady, setIsMapReady] = useState(false);
@@ -266,6 +268,35 @@ export function InteractiveMap({
       setIsMapReady(true);
     }
   }, []);
+
+  // Auto-fit bounds to all pins when items change (no active selection)
+  useEffect(() => {
+    if (!isMapReady || !mapRef.current || !isMountedRef.current) return;
+    // Skip auto-fit when a specific item is actively selected
+    if (activeItemId) return;
+    const withCoords = items.filter((i) => i.coordinates?.lat && i.coordinates?.lng);
+    if (withCoords.length < 2) return; // Single pin uses defaultCenter zoom
+    const lngs = withCoords.map((i) => i.coordinates.lng);
+    const lats = withCoords.map((i) => i.coordinates.lat);
+    try {
+      mapRef.current.fitBounds(
+        [
+          [Math.min(...lngs), Math.min(...lats)],
+          [Math.max(...lngs), Math.max(...lats)],
+        ],
+        {
+          padding: isDesktop
+            ? { top: 40, bottom: 40, left: 40, right: 40 }
+            : { top: 20, bottom: 20, left: 20, right: 20 },
+          maxZoom: 12,
+          minZoom: 7,
+          duration: 1000,
+        }
+      );
+    } catch {
+      // Silently ignore fitBounds errors during unmount
+    }
+  }, [isMapReady, items, activeItemId, isDesktop]);
 
   // Scrollytelling: Fly to active item (only when map is ready)
   const flyToItem = useCallback((item: MapItem) => {

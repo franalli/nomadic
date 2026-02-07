@@ -18,7 +18,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
 
 import { Typewriter } from './Typewriter';
@@ -33,7 +33,7 @@ const SESSION_KEY = 'nomadic_has_booted';
 export const StartupSequence = memo(function StartupSequence({
   onComplete,
 }: StartupSequenceProps) {
-  const { isDesktop } = useMobileMode();
+  const isDesktop = useIsDesktop();
   const [phase, setPhase] = useState<'typing' | 'grid' | 'verify' | 'beacon' | 'done'>('typing');
   const [isVisible, setIsVisible] = useState(true);
   const [shouldSkip, setShouldSkip] = useState(false);

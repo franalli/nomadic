@@ -116,7 +116,7 @@ function getConstraintSectionLabel(specialistType: string): string {
 /**
  * Get concise badge text for constraint (3-4 words max)
  */
-function getShortConstraintLabel(rule: string): string {
+export function getShortConstraintLabel(rule: string): string {
   // Map common full rules to short labels
   const shortLabels: Record<string, string> = {
     'min_24h_buffer_after_dive': 'No-Fly 24h',
@@ -692,7 +692,13 @@ export function StrategyHero({
   const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
   const TopicIcon = config.icon;
   const heroImage = getHeroImage(section);
-  const constraintCount = section.constraints_applied?.length || 0;
+  // Deduplicate constraints — backend may emit the same rule twice
+  const constraints = React.useMemo(() => {
+    const raw = section.constraints_applied;
+    if (!raw || raw.length === 0) return [];
+    return [...new Map(raw.map(c => [c.rule || c.reason, c])).values()];
+  }, [section.constraints_applied]);
+  const constraintCount = constraints.length;
 
   // Generate unique IDs for accessibility
   const uniqueId = useId();
@@ -782,7 +788,7 @@ export function StrategyHero({
           onKeyDown={handleKeyDown}
           className={cn(
             'flex items-center gap-3 p-3 cursor-pointer',
-            'h-[60px]',
+            'min-h-[60px]',
             'transition-all duration-150',
             // Hover: Tactile Rule - border snaps to visible
             'hover:bg-zinc-100/50 dark:hover:bg-white/[0.02]',
@@ -886,14 +892,14 @@ export function StrategyHero({
             )}
 
             {/* Constraints - Label changes based on specialist type */}
-            {section.constraints_applied && section.constraints_applied.length > 0 && (
+            {constraints.length > 0 && (
               <div className="space-y-2">
                 <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5">
                   <AlertCircle className="w-3 h-3" />
                   {getConstraintSectionLabel(topic)}
                 </h4>
                 <div className="flex flex-wrap gap-1.5">
-                  {section.constraints_applied.map((c, i) => (
+                  {constraints.map((c, i) => (
                     <span
                       key={i}
                       className={cn(
@@ -917,7 +923,7 @@ export function StrategyHero({
             {(() => {
               const uniquePrinciples = section.principles?.filter(principle => {
                 const isOneLiner = principle === section.one_liner || principle === section.editorial_one_liner;
-                const isConstraintReason = section.constraints_applied?.some(c => c.reason === principle);
+                const isConstraintReason = constraints.some(c => c.reason === principle);
                 return !isOneLiner && !isConstraintReason;
               }) || [];
               return uniquePrinciples.length > 0 && (
@@ -1042,7 +1048,7 @@ export function StrategyHero({
             </div>
 
             {/* One-liner - show meaningful subtitle for all specialist types */}
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate mt-0.5 group-hover:text-zinc-700 dark:group-hover:text-zinc-300">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 line-clamp-2 mt-0.5 group-hover:text-zinc-700 dark:group-hover:text-zinc-300">
               {section.one_liner ||
                 section.editorial_one_liner ||
                 (section.principles?.length > 0 ? section.principles[0] : null) ||
@@ -1327,11 +1333,11 @@ export function StrategyHero({
                 )}
 
                 {/* Constraints List */}
-                {section.constraints_applied && section.constraints_applied.length > 0 && (
+                {constraints.length > 0 && (
                   <div className="space-y-3">
                     <h4 className={DS.text.label}>Applied Constraints</h4>
                     <div className="grid gap-2">
-                      {section.constraints_applied.map((c, i) => (
+                      {constraints.map((c, i) => (
                         <div key={i} className={DS.infoBox.container}>
                           <div className="flex gap-3">
                             {getConstraintIcon(c.type)}
@@ -1512,9 +1518,9 @@ export function StrategyHero({
         )}
 
         {/* 3. Constraint Pills (Horizontal Scroll) - use short labels to prevent truncation */}
-        {section.constraints_applied && section.constraints_applied.length > 0 && !isInfeasible && (
+        {constraints.length > 0 && !isInfeasible && (
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-5 md:-mx-6 px-5 md:px-6 pb-1">
-            {section.constraints_applied.map((c, i) => (
+            {constraints.map((c, i) => (
               <div
                 key={i}
                 className={cn(
@@ -1533,7 +1539,7 @@ export function StrategyHero({
         )}
 
         {/* Principles (if no constraints) */}
-        {(!section.constraints_applied || section.constraints_applied.length === 0) &&
+        {constraints.length === 0 &&
           section.principles.length > 0 &&
           !isInfeasible && (
             <div className="flex flex-wrap gap-2">
@@ -1688,11 +1694,11 @@ export function StrategyHero({
             )}
 
             {/* Constraints */}
-            {section.constraints_applied && section.constraints_applied.length > 0 && (
+            {constraints.length > 0 && (
               <div className="space-y-3">
                 <h4 className={DS.text.label}>Applied Constraints</h4>
                 <div className="space-y-2">
-                  {section.constraints_applied.map((c, i) => (
+                  {constraints.map((c, i) => (
                     <div key={i} className={DS.infoBox.container}>
                       <div className="flex gap-3">
                         {getConstraintIcon(c.type)}

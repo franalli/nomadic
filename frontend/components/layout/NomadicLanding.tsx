@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { StartupSequence } from '@/components/animations/StartupSequence';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
+import { MobileChatInput } from '@/components/chat/MobileChatInput';
+import { TripStatusBar } from '@/components/chat/TripStatusBar';
 import { FloatingBuildButton } from '@/components/layout/FloatingBuildButton';
 import {
   type PlanResultPayload,
@@ -14,7 +16,6 @@ import {
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
-import { BookingSection } from '@/components/plan/BookingSection';
 import type { ConflictData, ConflictResolution } from '@/components/plan/ConflictResolutionBanner';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { shouldAutoTriggerItinerary } from '@/components/plan/planStateHelpers';
@@ -28,10 +29,11 @@ import {
   StaysSheet,
   TravelersSheet,
 } from '@/components/plan/sheets';
+import { TripSettingsSheet } from '@/components/plan/sheets/TripSettingsSheet';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
-import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { usePreferenceAutoRegen } from '@/hooks/usePreferenceAutoRegen';
 import { useSheetManager } from '@/hooks/useSheetManager';
 import { useShortlist } from '@/hooks/useShortlist';
@@ -42,7 +44,8 @@ import { parseISODateLocal } from '@/lib/date-utils';
 import type { SpecialistType } from '@/lib/specialistLinkParser';
 import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
 import { formatDateForDisplay } from '@/lib/utils';
-import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
+import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
+import { useMobileNavStore } from '@/state/mobileNavStore';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
@@ -114,8 +117,12 @@ function detectChangedFieldNames(
 }
 
 export function NomadicLanding() {
-  // Mobile mode context - for switching between planner/plan views on mobile
-  const { isDesktop, switchToPlan, switchToPlanner } = useMobileMode();
+  // Viewport detection
+  const isDesktop = useIsDesktop();
+  // Mobile page navigation (Chat ↔ Plan swipe)
+  const mobileNavigateToPlan = useMobileNavStore((s) => s.navigateToPlan);
+  const mobileNavReset = useMobileNavStore((s) => s.reset);
+  const mobileSetHasNewContent = useMobileNavStore((s) => s.setHasNewPlanContent);
 
   // Document store - single source of truth for trip inputs
   const documentStore = useDocumentStore();
@@ -277,43 +284,60 @@ export function NomadicLanding() {
 
   // Wrap handleStartNewSession to also clear all local state
   const handleStartNewSession = useCallback(async () => {
-    // CRITICAL: Reset document store FIRST (synchronously) to prevent stale state
-    // from causing incorrect planViewState computation during async operations
-    documentStore.reset();
-    // Clear shortlist (saved tiles)
-    shortlist.clear();
-    // Clear local UI generation state
-    setUiGeneration(null);
-    setLastGenerationError(null);
-    // Clear conflict state
-    setConflictData(null);
-    // Clear receipt data
-    setReceiptData(null);
-    previousTripInputsRef.current = null;
-    // Reset plan history flag - allows returning to S0_BOOTSTRAP
-    setHasEverHadPlan(false);
-    // Reset user generation request flag - critical for returning to Setup
-    setUserRequestedGeneration(false);
-    // Clear optimistic pending topics
-    setLocalPendingTopics([]);
-    // Clear destination image
-    setDestinationImageUrl(null);
-    lastFetchedDestination.current = null;
-    // Close any open trip input sheet
-    closeSheet();
-    // Reset mobile mode to planner view (shows chat/setup)
-    if (!isDesktop) {
-      switchToPlanner();
+    console.log('[handleStartNewSession] 🔄 Reset triggered');
+    try {
+      // CRITICAL: Reset document store FIRST (synchronously) to prevent stale state
+      // from causing incorrect planViewState computation during async operations
+      documentStore.reset();
+      // Reset chat store synchronously so empty state ("Where to next?") shows
+      // immediately — don't wait for async branchManagerStartNewSession network calls
+      useChatStore.getState().resetChat();
+      console.log('[handleStartNewSession] ✅ documentStore.reset() + chatStore.resetChat() done');
+      // Clear shortlist (saved tiles)
+      shortlist.clear();
+      // Clear local UI generation state
+      setUiGeneration(null);
+      setLastGenerationError(null);
+      // Clear conflict state
+      setConflictData(null);
+      // Clear receipt data
+      setReceiptData(null);
+      previousTripInputsRef.current = null;
+      // Reset plan history flag - allows returning to S0_BOOTSTRAP
+      setHasEverHadPlan(false);
+      // Reset user generation request flag - critical for returning to Setup
+      setUserRequestedGeneration(false);
+      // Clear optimistic pending topics
+      setLocalPendingTopics([]);
+      // Clear destination image
+      setDestinationImageUrl(null);
+      lastFetchedDestination.current = null;
+      // Reset finalization state
+      setIsFinalizing(false);
+      // Close gear settings sheets
+      setGearActivitiesSheetOpen(false);
+      setGearStaysSheetOpen(false);
+      setGearFlightsSheetOpen(false);
+      // Close any open trip input sheet
+      closeSheet();
+      // Reset mobile nav to chat page
+      if (!isDesktop) {
+        mobileNavReset();
+      }
+      // Proceed with branch manager reset (clears server session, chat, branches, etc.)
+      console.log('[handleStartNewSession] ⏳ Calling branchManagerStartNewSession...');
+      await branchManagerStartNewSession();
+      console.log('[handleStartNewSession] ✅ Reset complete');
+    } catch (error) {
+      console.error('[handleStartNewSession] ❌ Reset failed:', error);
     }
-    // Proceed with branch manager reset (clears server session, chat, branches, etc.)
-    await branchManagerStartNewSession();
   }, [
     shortlist,
     branchManagerStartNewSession,
     closeSheet,
     documentStore,
     isDesktop,
-    switchToPlanner,
+    mobileNavReset,
   ]);
 
   // Wrapped handlers for receipt functionality
@@ -324,11 +348,11 @@ export function NomadicLanding() {
     handleGeneratePlanStart();
     // Navigate to Plan view when generation starts
     navigateTo('plan');
-    // Switch to Plan Mode on mobile when generation starts
+    // Auto-navigate to plan page on mobile when generation starts
     if (!isDesktop) {
-      switchToPlan();
+      mobileNavigateToPlan();
     }
-  }, [storeTripInputs, handleGeneratePlanStart, navigateTo, isDesktop, switchToPlan]);
+  }, [storeTripInputs, handleGeneratePlanStart, navigateTo, isDesktop, mobileNavigateToPlan]);
 
   // Compare inputs after plan result and show receipt
   const handlePlanResultWithReceipt = useCallback(
@@ -605,16 +629,27 @@ export function NomadicLanding() {
     hasTilesReady,
   ]);
 
-  // Auto-switch to Plan Mode when generation is in progress
+  // Auto-switch to Plan view when generation is in progress
   useEffect(() => {
     if (planViewState === 'S1_FRAMING') {
       if (!isDesktop) {
-        switchToPlan(); // Mobile uses tab switching
+        mobileNavigateToPlan(); // Auto-swipe to plan page
       }
       // Desktop: Update activeView in store
       setActiveView('planning');
     }
-  }, [isDesktop, planViewState, switchToPlan, setActiveView]);
+  }, [isDesktop, planViewState, mobileNavigateToPlan, setActiveView]);
+
+  // Mobile badge: plan content updated while user is on chat page
+  const mobileActivePage = useMobileNavStore((s) => s.activePage);
+  const tileCount = Object.keys(docTiles ?? {}).length;
+  const prevTileCountRef = useRef(0);
+  useEffect(() => {
+    if (!isDesktop && mobileActivePage === 0 && tileCount > prevTileCountRef.current) {
+      mobileSetHasNewContent(true);
+    }
+    prevTileCountRef.current = tileCount;
+  }, [isDesktop, mobileActivePage, tileCount, mobileSetHasNewContent]);
 
   // Specialist deep link navigation - handles clicks on specialist mentions in chat
   const { navigateToSpecialist } = useSpecialistDeepLink();
@@ -716,11 +751,11 @@ export function NomadicLanding() {
     // 3. Currently in Setup view
     if (hasDates && canViewPlan && activeView === 'setup') {
       if (!isDesktop) {
-        switchToPlan(); // Mobile uses tab switching
+        mobileSetHasNewContent(true); // Badge the plan tab
       }
       setActiveView('planning');
     }
-  }, [hasDates, canViewPlan, activeView, isDesktop, switchToPlan, setActiveView]);
+  }, [hasDates, canViewPlan, activeView, isDesktop, mobileSetHasNewContent, setActiveView]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Itinerary Generation Flow
@@ -901,6 +936,11 @@ export function NomadicLanding() {
           console.debug('[expand-itinerary] Generation complete');
           setUiGeneration(null);
           setLastGenerationError(null);
+          // Sync version from backend to prevent 409 on next PATCH
+          // expand-itinerary persists changes which increments version
+          if (typeof event.version === 'number') {
+            useDocumentStore.setState({ version: event.version });
+          }
           // Sync preferences to track which were used in this generation
           documentStore.markPreferencesAsApplied();
           // Log warning if some preferred activities couldn't fit
@@ -1254,6 +1294,10 @@ export function NomadicLanding() {
                   console.debug('[remove-specialist] Complete');
                   setUiGeneration(null);
                   setLastGenerationError(null);
+                  // Sync version from backend to prevent 409 on next PATCH
+                  if (typeof event.version === 'number') {
+                    useDocumentStore.setState({ version: event.version });
+                  }
                   addToast(`Focused on ${keepSpecialist}`, 'success');
                   // Log warning if some preferred activities couldn't fit
                   if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
@@ -1313,9 +1357,18 @@ export function NomadicLanding() {
     setIsFinalizing(false);
   }, [finalizePlan, navigateTo]);
 
-  // Handler for minimized chat input (Plan/Book tabs) - sends message via ChatPanel
-  const handleMinimizedSendMessage = useCallback((message: string) => {
-    chatPanelRef.current?.sendMessage?.(message);
+  // Handler for mobile chat input — guards against ref not ready during first render
+  const handleMobileSend = useCallback((message: string) => {
+    if (!chatPanelRef.current?.sendMessage) {
+      console.warn('[MobileChatInput] ChatPanel ref not ready');
+      return;
+    }
+    chatPanelRef.current.sendMessage(message);
+  }, []);
+
+  // Handler for mobile stop streaming
+  const handleMobileStopStreaming = useCallback(() => {
+    chatPanelRef.current?.stopStreaming?.();
   }, []);
 
   // Planner content (left panel): ChatPanel (primary funnel with refinements inside)
@@ -1429,26 +1482,34 @@ export function NomadicLanding() {
         <SplitLayoutView
           plannerContent={plannerContent}
           planViewContent={planViewContent}
-          bookContent={
-            <BookingSection
-              state={planViewState}
-              tiles={tiles}
-              generation={generation}
-              hasStrategyContent={hasStrategyContent}
-              savedTileIds={shortlist.savedTileIds}
-              onSaveTile={shortlist.toggleItem}
-              onOpenSheet={openSheet}
-              strategySections={docStrategySections}
-            />
-          }
           planState={planState}
           hasDestination={hasDestination}
           onReset={handleStartNewSession}
-          onSendMessage={handleMinimizedSendMessage}
+          onSendMessage={handleMobileSend}
           isProcessing={isGenerating}
           planTabEnabled={planTabEnabled}
           bookTabEnabled={bookTabEnabled}
           onSelectDates={() => openSheet('dates')}
+          mobileStatusBar={
+            !isDesktop && (hasDestination || Boolean(tripInputs.origin) || Boolean(tripInputs.start_date)) ? (
+              <TripStatusBar
+                tripInputs={tripInputs}
+                specialists={docExecutedTopics ?? []}
+                onEditTap={() => openSheet('trip-settings')}
+              />
+            ) : undefined
+          }
+          mobileInput={
+            !isDesktop ? (
+              <MobileChatInput
+                onSend={handleMobileSend}
+                onStop={handleMobileStopStreaming}
+                isProcessing={isGenerating}
+                hasDestination={hasDestination}
+                hasPlan={hasPlan}
+              />
+            ) : undefined
+          }
           headerContent={
             <div className="flex w-full items-center justify-between">
               <div className="flex items-center gap-3">
@@ -1462,6 +1523,7 @@ export function NomadicLanding() {
                 </span>
               </div>
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 onClick={handleStartNewSession}
@@ -1637,11 +1699,19 @@ export function NomadicLanding() {
         onOpenDestination={() => openSheet('destination')}
         onOpenDates={() => openSheet('dates')}
       />
+
+      {/* Trip settings relay sheet - opened from TripStatusBar pencil icon */}
+      <TripSettingsSheet
+        open={activeSheet === 'trip-settings'}
+        onOpenChange={(open) => !open && closeSheet()}
+        tripInputs={tripInputs}
+        onOpenSheet={openSheet}
+      />
     </>
   );
 }
 
-// Inner component that uses MobileModeContext (for StartupSequence)
+// Inner component with startup animation
 function AppWithStartup() {
   const [hasBooted, setHasBooted] = useState(false);
 
@@ -1661,11 +1731,6 @@ function AppWithStartup() {
   );
 }
 
-// Wrap the component with MobileModeProvider
 export default function NomadicLandingWithProvider() {
-  return (
-    <MobileModeProvider>
-      <AppWithStartup />
-    </MobileModeProvider>
-  );
+  return <AppWithStartup />;
 }

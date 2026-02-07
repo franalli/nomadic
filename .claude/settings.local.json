@@ -79,7 +79,11 @@
       "Bash(test:*)",
       "Bash(copy:*)",
       "Bash(Copy-Item \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\public\\\\nomadic_logo.png\" \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\app\\\\icon.png\")",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(del \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\components\\\\layout\\\\PlanDrawer.tsx\")",
+      "Bash(del \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\state\\\\planDrawerStore.ts\")",
+      "Bash(npm uninstall:*)",
+      "Bash(del:*)"
     ],
     "deny": [],
     "ask": []

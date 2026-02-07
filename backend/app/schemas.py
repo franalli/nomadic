@@ -611,6 +611,7 @@ class DayCard(BaseModel):
     """A single day in the itinerary (Stage 3)."""
 
     day_number: int
+    date: Optional[str] = None  # ISO date string, e.g. "2025-02-12"
     label: str  # e.g., "Arrival + light activity", "Main hike day"
     blocks: List[DayBlock] = Field(default_factory=list)  # Max 3 blocks
 

@@ -1571,8 +1571,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   clearPreferences: () => {
-    const { version } = get();
+    const { version, document } = get();
     set({ preferredTileIds: new Set() });
+
+    // Skip backend sync if document doesn't exist (e.g. during session reset)
+    if (!document) return;
 
     // Sync to backend
     const patch = {

@@ -412,6 +412,11 @@ export function TimelineThread({
                   )}
                 >
                   Day {card.day_number}
+                  {card.date && (
+                    <span className="text-sm font-normal text-muted-foreground ml-2">
+                      · {new Date(card.date + 'T00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </span>
+                  )}
                 </h3>
                 {card.label && !/^Day \d+$/i.test(card.label) && (
                   <p className="text-sm text-muted-foreground truncate">{card.label}</p>

@@ -181,11 +181,11 @@ def _build_synthesis_context(state: GraphState) -> str:
     if plan.trip_type:
         parts.append(f"- Trip Type: {plan.trip_type}")
 
-    # Specialist content - COUNTS ONLY (descriptions are in the right panel)
+    # Specialist content - COUNTS ONLY (descriptions are in the plan view)
     if plan.itinerary_blocks:
         activity_blocks = [b for b in plan.itinerary_blocks if not getattr(b, "is_buffer", False)]
         buffer_blocks = [b for b in plan.itinerary_blocks if getattr(b, "is_buffer", False)]
-        parts.append("\n## Specialist Content (counts only - details on right panel)")
+        parts.append("\n## Specialist Content (counts only - details in plan view)")
         if activity_blocks:
             parts.append(f"- Activities added: {len(activity_blocks)}")
         if buffer_blocks:
@@ -206,6 +206,37 @@ def _build_synthesis_context(state: GraphState) -> str:
 
     # Specialist feasibility alerts (trip too short, wrong season, etc.)
     strategy_sections = state.metadata.get("strategy_sections", [])
+
+    # Short-trip warning for safety-critical specialists (e.g., diving with no-fly buffer)
+    if plan.start_date and plan.end_date:
+        try:
+            from datetime import date as _date
+
+            sd = _date.fromisoformat(str(plan.start_date))
+            ed = _date.fromisoformat(str(plan.end_date))
+            trip_days = (ed - sd).days + 1
+            active_specialists = set()
+            for s in strategy_sections:
+                st = (
+                    s.get("specialist_type")
+                    if isinstance(s, dict)
+                    else getattr(s, "specialist_type", None)
+                )
+                if st:
+                    active_specialists.add(st)
+            if "diving" in active_specialists and trip_days <= 3:
+                parts.append("\n## ⚠️ SHORT TRIP + DIVING WARNING")
+                parts.append(f"- Trip is only {trip_days} day(s) with diving specialist active.")
+                parts.append(
+                    "- The 24h no-fly buffer consumes the last full day, "
+                    "leaving limited time for actual dives."
+                )
+                parts.append(
+                    "YOUR TASK: Warn the user that this trip may be too short "
+                    "for meaningful diving. Suggest extending by 1-2 days."
+                )
+        except (ValueError, TypeError):
+            pass  # Dates not parseable — skip warning
     infeasible_sections = [
         s
         for s in strategy_sections
@@ -255,20 +286,35 @@ def _build_synthesis_context(state: GraphState) -> str:
         parts.append("3. Ask the user to provide a VALID alternative")
         parts.append("4. Keep response under 30 words")
 
-    # Tile results - COUNTS ONLY (details are in the right panel)
+    # SAFETY VIOLATIONS: Blocking constraints (e.g., diving surface interval, altitude)
+    # These are non-route violations that affect the itinerary's safety/feasibility.
+    # The user MUST be told about them so they can adjust.
+    blocking_violations = [
+        v
+        for v in constraint_violations
+        if v.get("severity") == "blocking" and v.get("category") != "route"
+    ]
+    if blocking_violations:
+        parts.append("\n## ⚠️ SAFETY CONSTRAINT VIOLATION")
+        for v in blocking_violations:
+            parts.append(f"- {v.get('code')}: {v.get('message')}")
+        parts.append(
+            "YOUR TASK: Mention the safety issue briefly in your response "
+            "(1 sentence). Suggest how the user could adjust their plan "
+            "(e.g., add a rest day, extend the trip, reorder activities)."
+        )
+
+    # Tile results - COUNTS ONLY (details are in the plan view)
     # Don't include tile names/prices - LLM should only mention counts
     if state.tiles:
-        parts.append("\n## Available Options (counts only - details on right panel)")
+        parts.append("\n## Available Options (counts only - details in plan view)")
         tile_counts = []
         for category, tiles in state.tiles.items():
             if tiles:
                 tile_counts.append(f"{len(tiles)} {category}")
         if tile_counts:
             parts.append(f"- Found: {', '.join(tile_counts)}")
-            parts.append(
-                "- NOTE: Do NOT list individual options. "
-                "Just mention counts and direct to right panel."
-            )
+            parts.append("- NOTE: Do NOT list individual options. " "Just mention counts.")
 
     return "\n".join(parts)
 
@@ -383,6 +429,15 @@ def generate_suggested_replies(state: GraphState) -> List[str]:
             # No previous destination - suggest inspiration
             suggestions = ["Paris", "Tokyo", "Barcelona"]
         return suggestions[:3]
+
+    # PRIORITY 1b: Safety constraint violations (specialist) - suggest plan adjustments
+    blocking_violations = [
+        v
+        for v in constraint_violations
+        if v.get("severity") == "blocking" and v.get("category") != "route"
+    ]
+    if blocking_violations:
+        return ["Extend trip by a day", "Reorder activities", "Show alternatives"]
 
     # PRIORITY 2: Based on current state
     if not plan.destination:

@@ -300,6 +300,7 @@ class DayCardOutput(BaseModel):
     """Output day card - matches frontend DayCard interface."""
 
     day_number: int
+    date: Optional[str] = None  # ISO date string, e.g. "2025-02-12"
     label: str
     blocks: List[DayBlockOutput] = Field(default_factory=list)
 
@@ -681,6 +682,7 @@ class ItineraryBuilder:
 
         for i in range(duration):
             day_num = i + 1
+            day_date = start + timedelta(days=i)
 
             # Default labels
             if day_num == 1:
@@ -693,6 +695,7 @@ class ItineraryBuilder:
             days.append(
                 DayCardOutput(
                     day_number=day_num,
+                    date=day_date.isoformat(),
                     label=label,
                     blocks=[],
                 )

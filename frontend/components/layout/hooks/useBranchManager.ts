@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
+import { apiFetch, clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
 import { saveTripSummary } from '@/lib/summary';
 import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
@@ -13,7 +13,7 @@ import type { TripSummaryPayload } from '@/types/summary';
 import type { Tile, TileSelection } from '@/types/tile';
 
 import { useBranchState } from './useBranchState';
-import { useSessionHydration } from './useSessionHydration';
+import { clearSessionTimestamp, useSessionHydration } from './useSessionHydration';
 import { EMPTY_TILE_SELECTION, selectionsToTileSelection, useTileSelection } from './useTileSelection';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -361,17 +361,28 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * Shows a toast indicating whether server reset succeeded.
    */
   const handleStartNewSession = useCallback(async () => {
+    console.log('[branchManager.startNewSession] 🔄 Starting server reset...');
     branchState.abortTilesFetch();
     let didResetServerState = false;
 
     try {
       const res = await resetSession();
       didResetServerState = res.ok;
+      console.log('[branchManager.startNewSession] Server DELETE /api/session →', res.status, res.ok ? '✅' : '❌');
+
+      // Re-establish session cookies after DELETE clears them.
+      // Without this, the CSRF cookie is gone and all subsequent
+      // POST/DELETE requests fail with 403 Forbidden.
+      await apiFetch('/api/document');
+      console.log('[branchManager.startNewSession] ✅ Session re-established (fresh CSRF cookie)');
     } catch (error) {
-      console.error('Failed to reset planning session', error);
+      console.error('[branchManager.startNewSession] ❌ Server reset failed:', error);
     } finally {
       // Clear session-related localStorage (preserves consent preferences)
       clearSessionLocalStorage();
+
+      // Clear session timestamp so next page load doesn't try to hydrate stale session
+      clearSessionTimestamp();
 
       // Clear persisted UI state (selectedBranchId, comparison mode) from localStorage
       clearPersistedUIState();
