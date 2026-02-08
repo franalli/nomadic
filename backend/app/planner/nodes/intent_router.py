@@ -381,6 +381,247 @@ FLIGHT_PATTERNS = [
     r"(?:flexible|fixed)\s*(?:dates|schedule)?",
 ]
 
+# =============================================================================
+# Suggestion Pool (registry-driven chip generation)
+# =============================================================================
+
+# Month names for contextual date suggestions
+_MONTHS = {
+    "january": "January",
+    "february": "February",
+    "march": "March",
+    "april": "April",
+    "may": "May",
+    "june": "June",
+    "july": "July",
+    "august": "August",
+    "september": "September",
+    "october": "October",
+    "november": "November",
+    "december": "December",
+}
+
+# Subset of QUESTION_TYPE_MAPPING that makes good suggestion chips.
+# Template keywords MUST match QUESTION_TYPE_MAPPING patterns for routability.
+SUGGESTABLE_QUESTION_TYPES = {
+    "weather": "What's the weather like in {destination}?",
+    "safety": "Is {destination} safe to visit?",
+    "costs": "How expensive is {destination}?",
+    "accommodation": "Where should I stay in {destination}?",
+    "packing": "What should I pack for {destination}?",
+    "visa": "Do I need a visa for {destination}?",
+    "transport": "How do I get around {destination}?",
+    "activities": "What are must-do activities in {destination}?",
+}
+
+
+class SuggestionPool:
+    """
+    Declarative suggestion pool. Each entry specifies:
+    - template: text sent to backend (can use {destination}/{month} placeholders)
+    - source: which router capability handles it
+    - condition: when this suggestion is relevant (function of state)
+    - priority: lower = higher priority (0 = critical, 10 = nice-to-have)
+    - category: for deduplication (max 1 per category in final output)
+    """
+
+    @staticmethod
+    def get_pool() -> list[dict]:
+        return [
+            # ── Missing destination (highest priority) ──
+            {
+                "template": "I want a beach vacation",
+                "source": "planning_signal",
+                "condition": lambda s: not s.trip_plan.destination,
+                "priority": 0,
+                "category": "destination_choice",
+            },
+            {
+                "template": "I want a mountain adventure",
+                "source": "planning_signal",
+                "condition": lambda s: not s.trip_plan.destination,
+                "priority": 0,
+                "category": "destination_choice",
+            },
+            {
+                "template": "I want a city break",
+                "source": "planning_signal",
+                "condition": lambda s: not s.trip_plan.destination,
+                "priority": 0,
+                "category": "destination_choice",
+            },
+            # ── Contextual date prompts (month detected) ──
+            {
+                "template": "{month} 1-8",
+                "source": "date_extraction",
+                "condition": lambda s: (
+                    s.trip_plan.destination
+                    and not s.trip_plan.start_date
+                    and s.metadata.get("detected_month")
+                ),
+                "priority": 0,
+                "category": "date_contextual",
+            },
+            {
+                "template": "{month} 10-17",
+                "source": "date_extraction",
+                "condition": lambda s: (
+                    s.trip_plan.destination
+                    and not s.trip_plan.start_date
+                    and s.metadata.get("detected_month")
+                ),
+                "priority": 0,
+                "category": "date_contextual",
+            },
+            {
+                "template": "I'm flexible on dates",
+                "source": "date_extraction",
+                "condition": lambda s: (
+                    s.trip_plan.destination
+                    and not s.trip_plan.start_date
+                    and s.metadata.get("detected_month")
+                ),
+                "priority": 0,
+                "category": "date_contextual",
+            },
+            # ── Generic date prompts: generated dynamically by _build_date_suggestions() ──
+            # ── Plan generation ──
+            {
+                "template": "Build my itinerary",
+                "source": "planning_readiness",
+                "condition": lambda s: (s.trip_plan.destination and s.trip_plan.start_date),
+                "priority": 1,
+                "category": "generate",
+            },
+            # ── Change destination (always available) ──
+            {
+                "template": "I want to change my destination",
+                "source": "planning_signal",
+                "condition": lambda s: bool(s.trip_plan.destination),
+                "priority": 9,
+                "category": "change_dest",
+            },
+        ]
+
+
+def _build_specialist_suggestions(state: "GraphState") -> list[dict]:
+    """
+    Generate cross-sell suggestions for specialists the user selected in the
+    activity pill but that haven't been executed yet.
+    Only pill-selected specialists appear — no blind cross-sell from the full registry.
+    """
+    executed = set(state.metadata.get("executed_strategy_topics", []))
+    dest = state.trip_plan.destination
+
+    if not dest or not state.trip_plan.start_date:
+        return []
+
+    # Only suggest specialists the user explicitly chose in the activity pill
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    activity_settings = trip_inputs.get("activity_settings", {})
+    selected_categories = activity_settings.get("categories", [])
+
+    pending = []
+    for category in selected_categories:
+        specialist_id = ACTIVITY_CATEGORY_TO_SPECIALIST.get(category.lower())
+        if specialist_id and specialist_id not in executed:
+            pending.append(specialist_id)
+
+    suggestions = []
+    for specialist_id in pending:
+        suggestions.append(
+            {
+                "template": f"I also want to go {specialist_id} in {{destination}}",
+                "source": "specialist_pattern",
+                "condition": lambda s, _id=specialist_id: _id
+                not in set(s.metadata.get("executed_strategy_topics", [])),
+                "priority": 3,
+                "category": f"specialist_{specialist_id}",
+            }
+        )
+
+    return suggestions
+
+
+def _build_date_suggestions(state: "GraphState") -> list[dict]:
+    """
+    Generate concrete date range chips when destination is set but dates are missing.
+    Produces parseable date text (e.g., "Feb 14-16") that the router's
+    opportunistic LLM extraction can reliably convert to start_date/end_date.
+    """
+    if not state.trip_plan.destination or state.trip_plan.start_date:
+        return []
+    if state.metadata.get("detected_month"):
+        return []  # Contextual date chips handle this case
+
+    from datetime import date, timedelta
+
+    today = date.today()
+
+    # Next weekend (Fri-Sun)
+    days_until_fri = (4 - today.weekday()) % 7 or 7
+    next_fri = today + timedelta(days=days_until_fri)
+    next_sun = next_fri + timedelta(days=2)
+
+    # Week-long trip starting 1st of next month
+    next_month_1st = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+    week_end = next_month_1st + timedelta(days=6)
+
+    # Mid-month week trip
+    mid_month = next_month_1st.replace(day=15)
+    mid_end = mid_month + timedelta(days=7)
+
+    chips = [
+        f"{next_fri.strftime('%b %d')}-{next_sun.strftime('%d')}",
+        f"{next_month_1st.strftime('%b %d')}-{week_end.strftime('%d')}",
+        f"{mid_month.strftime('%b %d')}-{mid_end.strftime('%d')}",
+    ]
+
+    return [
+        {
+            "template": chip,
+            "source": "date_extraction",
+            "condition": lambda s: (s.trip_plan.destination and not s.trip_plan.start_date),
+            "priority": 0,
+            "category": "date_prompt",
+        }
+        for chip in chips
+    ]
+
+
+def _build_question_suggestions(state: "GraphState") -> list[dict]:
+    """
+    Generate local expert question suggestions.
+    Only suggests questions whose keywords exist in QUESTION_TYPE_MAPPING.
+    Excludes question types already shown in previous turns (rotation).
+    """
+    if not state.trip_plan.destination:
+        return []
+
+    already_suggested = set(state.metadata.get("suggested_question_types", []))
+
+    suggestions = []
+    for qtype, template in SUGGESTABLE_QUESTION_TYPES.items():
+        if qtype in already_suggested:
+            continue
+
+        # Verify this question type exists in the router
+        type_exists = any(qtype == qt for _, (qt, _) in QUESTION_TYPE_MAPPING.items())
+        if not type_exists:
+            continue
+
+        suggestions.append(
+            {
+                "template": template,
+                "source": "question_type",
+                "condition": lambda s: bool(s.trip_plan.destination),
+                "priority": 6,
+                "category": f"question_{qtype}",
+            }
+        )
+
+    return suggestions
+
 
 def _detect_settings_from_message(user_text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
     """
@@ -1747,7 +1988,10 @@ async def generate_comprehensive_answer(
 
 
 def _get_exploration_suggestions(qtype: str, destination: str) -> List[str]:
-    """Get contextual suggestion chips for exploration mode."""
+    """Get contextual suggestion chips for exploration mode.
+
+    DEPRECATED: replaced by SuggestionPool. Kept for router backward compat.
+    """
     base_suggestions = {
         "couples": ["Best romantic spots?", "When to visit?", f"Plan {destination} trip"],
         "family": ["Kid-friendly activities?", "When to visit?", f"Plan {destination} trip"],
@@ -1772,6 +2016,9 @@ def _get_exploration_suggestions(qtype: str, destination: str) -> List[str]:
 
 def _get_date_suggestions(user_text: str) -> List[str]:
     """
+    DEPRECATED: replaced by SuggestionPool + detected_month metadata.
+    Kept for router backward compat.
+
     Generate context-aware date suggestions based on user's message.
 
     If user mentioned a specific month (e.g., "March"), use that month in suggestions.
@@ -2319,8 +2566,16 @@ async def intent_router(state: GraphState) -> GraphState:
                     f"When would you like to travel?"
                 )
 
+                # Detect month from user text for contextual date suggestions (SuggestionPool)
+                for _ml, _mc in _MONTHS.items():
+                    if _ml in user_text.lower():
+                        state.metadata["detected_month"] = _mc
+                        break
+
                 # Generate context-aware date suggestions based on any month mentioned
-                state.suggested_replies = _get_date_suggestions(user_text)
+                state.suggested_replies = _get_date_suggestions(
+                    user_text
+                )  # DEPRECATED: replaced by SuggestionPool
                 state.metadata["short_circuit_response"] = True
                 state.metadata["short_circuit_type"] = "exploration"
                 state.metadata["awaiting_dates"] = True

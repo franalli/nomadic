@@ -1133,9 +1133,19 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!_datesChanged} → ${expandPath}`
               );
 
+              // BLOCK: Don't auto-expand when blocking constraint violations exist
+              // User should resolve violations first (via suggested replies)
+              const blockingViolations = freshState.document?.constraint_violations?.filter(
+                v => v.severity === 'blocking'
+              ) ?? [];
+              if (blockingViolations.length > 0) {
+                console.log('[EXPAND] BLOCKED — blocking constraint violations exist:',
+                  blockingViolations.map(v => v.code));
+              }
+
               // Auto-expand if structural change detected (existing itinerary OR dates available)
               // Priority gate: structural wins over trip inputs (structural rebuild incorporates inputs anyway)
-              let structuralRebuildTriggered = false;
+              let structuralRebuildTriggered = blockingViolations.length > 0;
               if (shouldExpandStructural) {
                 console.log('[ChatPanel] Structural change detected - auto-expanding...', {
                   hasNewSpecialist,
@@ -1220,7 +1230,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // This ensures itinerary generation even when backend clears day_cards
               // Example: Guard violation during session - strategy preserved, day_cards cleared
               // Gate: Requires dates - without dates, ItineraryBuilder can't create DayCard[] scaffold
-              if (hasStrategyContent && !hasItinerary && freshHasDates && !isSilentPlanGeneration && !structuralRebuildTriggered) {
+              if (hasStrategyContent && !hasItinerary && freshHasDates && !isSilentPlanGeneration && !structuralRebuildTriggered && viewState !== 'S0_BOOTSTRAP') {
                 console.log('[ChatPanel] Strategy exists but no itinerary - triggering rebuild...', {
                   strategyCount: doc.strategy_sections?.length,
                   hasItinerary,

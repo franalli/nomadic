@@ -190,7 +190,7 @@ backend/app/planner/
 │  ───────────────────────────                                                │
 │  Unified response generation                                                │
 │  • Response type-aware tone (planning = solver, greeting = warm)            │
-│  • Generates suggested_replies (always 3 chips)                             │
+│  • Generates suggestions via registry-driven pool (up to 3 chips)           │
 │  • Enriches content with Unsplash images                                    │
 │  • Handles constraint warnings gracefully                                   │
 │  • Templates: greeting, exploration, planning, specialist_update            │
@@ -720,17 +720,26 @@ Unified response generator - "One voice, regardless of which agents contributed.
 3. Planning - Full planning mode with tiles/constraints
 
 **Always includes:**
-- `suggested_replies` (exactly 3 chips)
+- `suggested_replies` (up to 3 chips, no padding)
 - Image enrichment via Unsplash
 - Graceful constraint warnings
 
-**Suggested Replies Priority:**
-1. Exploration/soft_transition → pre-computed by router
-2. Route violations → "Back to {prev}", "Different city", "Help me choose"
-3. **Safety constraint violations** (blocking, non-route) → "Extend trip by a day", "Reorder activities", "Show alternatives"
-4. Missing fields → destination/date prompts
-5. Specialist-specific → domain action chips (feasibility-gated)
-6. Fallback → generic exploration
+**Suggestion Engine (registry-driven):**
+
+`generate_suggestions()` derives all chips from router capability registries × current state.
+Zero hardcoded specialist names — adding a specialist to `SPECIALIST_PATTERNS` or question type
+to `QUESTION_TYPE_MAPPING` automatically makes it available as a suggestion.
+
+Priority cascade:
+1. Blocking violations → `[suggested_action, "Change dates", "Change destination"]`
+2. Route violations → `["Back to {prev}", "Different city", "Help me choose"]`
+3. Pool-based (condition × priority × category dedup):
+   - P0: destination_choice / date_contextual / date_prompt
+   - P1: "Build my itinerary"
+   - P3: specialist cross-sell (from `SPECIALIST_PATTERNS` minus `executed_strategy_topics`)
+   - P5: "Set my departure city"
+   - P6: question suggestions (from `SUGGESTABLE_QUESTION_TYPES`)
+   - P9: "I want to change my destination"
 
 **Logic Guard Voice:** When a blocking route violation is detected (`category="route"`), the Synthesizer shifts to **"Architectural Safety Mode"**. It refuses to generate enthusiasm or itinerary content and instead provides a firm, corrective statement (e.g., "I cannot generate a route where Origin and Destination are identical.").
 

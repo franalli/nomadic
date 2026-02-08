@@ -401,98 +401,132 @@ CONSTRAINT_WARNING_TEMPLATE = """⚠️ Just a heads up: {warning}"""
 # =============================================================================
 
 
-def generate_suggested_replies(state: GraphState) -> List[str]:
+def generate_suggestions(state: GraphState) -> List[str]:
     """
-    Generate context-aware suggestion chips.
-
-    Always returns exactly 3 suggestions.
-    Priority: Exploration > Rejection > Missing Fields > Specialist > Default
+    Deterministic suggestion engine.
+    Derives all suggestions from router capability registries x current state.
+    Returns max 3 executable suggestions. No padding.
     """
-    # PRIORITY 0: Exploration mode - use pre-computed suggestions from router
-    short_circuit_type = state.metadata.get("short_circuit_type")
-    if short_circuit_type in ("exploration", "soft_transition"):
-        return state.suggested_replies  # Pre-computed by router
+    from app.planner.nodes.intent_router import (
+        SuggestionPool,
+        _build_date_suggestions,
+        _build_question_suggestions,
+        _build_specialist_suggestions,
+    )
 
-    suggestions = []
-    plan = state.trip_plan
+    dest = state.trip_plan.destination or ""
 
-    # PRIORITY 1: Rejection state - suggest valid alternatives
+    # ── Step 1: Blocking violations (highest priority) ──
     constraint_violations = state.metadata.get("constraint_violations", [])
-    route_violations = [v for v in constraint_violations if v.get("category") == "route"]
-    if route_violations:
-        # Get the previous valid destination for context
-        prev_dest = state.metadata.get("trip_inputs", {}).get("destination")
-        if prev_dest:
-            # Suggest nearby alternatives (generic)
-            suggestions = [f"Back to {prev_dest}", "Different city", "Help me choose"]
-        else:
-            # No previous destination - suggest inspiration
-            suggestions = ["Paris", "Tokyo", "Barcelona"]
-        return suggestions[:3]
-
-    # PRIORITY 1b: Safety constraint violations (specialist) - suggest plan adjustments
-    blocking_violations = [
+    blocking = [
         v
         for v in constraint_violations
         if v.get("severity") == "blocking" and v.get("category") != "route"
     ]
-    if blocking_violations:
-        return ["Extend trip by a day", "Reorder activities", "Show alternatives"]
+    if blocking:
+        first = blocking[0]
+        action = first.get("suggested_action", "Adjust your dates")
+        return [action, "Change dates", "Change destination"]
 
-    # PRIORITY 2: Based on current state
-    if not plan.destination:
-        suggestions = ["Beach destination", "Mountain adventure", "City break"]
-    elif not plan.start_date:
-        suggestions = ["Next week", "Next month", "I'm flexible"]
-    elif state.active_specialist or state.metadata.get("last_executed_specialist"):
-        topic = state.active_specialist or state.metadata.get("last_executed_specialist")
+    # ── Step 2: Route violations ──
+    route_violations = [v for v in constraint_violations if v.get("category") == "route"]
+    if route_violations:
+        prev_dest = state.metadata.get("trip_inputs", {}).get("destination")
+        if prev_dest:
+            return [f"Back to {prev_dest}", "Different city", "Help me choose"]
+        return ["Paris", "Tokyo", "Barcelona"]
 
-        # Check if specialist is feasible before suggesting specialist-specific actions
-        # Handle both dict (post-serialization) and Pydantic (pre-serialization) formats
-        strategy_sections = state.metadata.get("strategy_sections", [])
-        specialist_section = next(
-            (
-                s
-                for s in strategy_sections
-                if (
-                    s.get("specialist_type")
-                    if isinstance(s, dict)
-                    else getattr(s, "specialist_type", None)
-                )
-                == topic
-            ),
-            None,
-        )
-        feasibility = (
-            (
-                specialist_section.get("feasibility_status")
-                if isinstance(specialist_section, dict)
-                else getattr(specialist_section, "feasibility_status", "feasible")
-            )
-            if specialist_section
-            else "feasible"
-        )
+    # ── Step 3: Assemble candidate pool ──
+    candidates = []
+    candidates.extend(SuggestionPool.get_pool())
+    candidates.extend(_build_date_suggestions(state))
+    candidates.extend(_build_specialist_suggestions(state))
+    candidates.extend(_build_question_suggestions(state))
 
-        # Only suggest specialist-specific actions if feasible or caveat
-        if feasibility != "infeasible":
-            if topic == "diving":
-                suggestions = ["Add more dives", "Show dive shops", "Check equipment"]
-            elif topic == "hiking":
-                suggestions = ["Add trail", "Check weather", "Show gear list"]
-            elif topic == "skiing":
-                suggestions = ["Add ski days", "Book lessons", "Show resorts"]
-            else:
-                suggestions = ["Add activities", "Change dates", "Show options"]
-        # If infeasible: fall through to generic suggestions below
-    if not suggestions and state.tiles:
-        suggestions = ["Show flights", "Show hotels", "Add activities"]
-    if not suggestions:
-        suggestions = ["Search options", "Change destination", "Adjust budget"]
+    # ── Step 4: Filter by state condition ──
+    eligible = [c for c in candidates if c["condition"](state)]
 
-    # Ensure exactly 3 suggestions
-    while len(suggestions) < 3:
-        suggestions.append("Tell me more")
-    return suggestions[:3]
+    # ── Step 5: Slot allocation ──
+    # Slot 1: ACTION (generate, date prompts) — anchors the chip bar
+    # Slot 2-3: DISCOVER (specialist cross-sell, question) — rotates
+    ACTION_CATS = {"generate", "date_prompt", "date_contextual"}
+    DISCOVER_PREFIXES = ("specialist_", "question_")
+    PRIORITY_0_CATS = {"destination_choice", "date_prompt", "date_contextual"}
+
+    actions = sorted(
+        [c for c in eligible if c["category"] in ACTION_CATS],
+        key=lambda c: c["priority"],
+    )
+    discovers = sorted(
+        [c for c in eligible if c["category"].startswith(DISCOVER_PREFIXES)],
+        key=lambda c: c["priority"],
+    )
+    fallbacks = sorted(
+        [c for c in eligible if c["category"] == "change_dest"],
+        key=lambda c: c["priority"],
+    )
+    # Priority-0 groups (destination_choice, date chips) fill all 3 slots
+    p0_group = sorted(
+        [c for c in eligible if c["category"] in PRIORITY_0_CATS],
+        key=lambda c: c["priority"],
+    )
+
+    final: list[dict] = []
+
+    if p0_group:
+        # Priority 0 fills all slots (destination choices, date prompts)
+        seen_cats: dict[str, int] = {}
+        for c in p0_group:
+            if len(final) >= 3:
+                break
+            cat = c["category"]
+            cnt = seen_cats.get(cat, 0)
+            if cnt >= 3:
+                continue
+            seen_cats[cat] = cnt + 1
+            final.append(c)
+    else:
+        # Slot 1: best action
+        if actions:
+            final.append(actions[0])
+
+        # Slot 2-3: discovers (max 1 specialist, rest questions)
+        specialist_used = False
+        for d in discovers:
+            if len(final) >= 3:
+                break
+            if d["category"].startswith("specialist_"):
+                if specialist_used:
+                    continue
+                specialist_used = True
+            final.append(d)
+
+        # Backfill with fallbacks
+        for f in fallbacks:
+            if len(final) >= 3:
+                break
+            final.append(f)
+
+    # ── Step 6: Render templates ──
+    month = state.metadata.get("detected_month", "")
+    result = []
+    for c in final:
+        text = c["template"]
+        text = text.replace("{destination}", dest)
+        text = text.replace("{month}", month)
+        result.append(text)
+
+    # ── Step 7: Track shown question types for rotation ──
+    shown_qtypes = [
+        c["category"].replace("question_", "")
+        for c in final
+        if c["category"].startswith("question_")
+    ]
+    if shown_qtypes:
+        prev = state.metadata.get("suggested_question_types", [])
+        state.metadata["suggested_question_types"] = prev + shown_qtypes
+
+    return result
 
 
 # =============================================================================
@@ -636,7 +670,7 @@ class Synthesizer:
             message = self.synthesize_planning(state)
 
         # Generate suggestion chips
-        suggested_replies = generate_suggested_replies(state)
+        suggested_replies = generate_suggestions(state)
 
         # Collect UI events
         ui_events = [
@@ -770,7 +804,7 @@ async def synthesizer(state: GraphState) -> GraphState:
             await image_task
 
     # Generate suggestion chips (always template-based for consistency)
-    suggested_replies = generate_suggested_replies(state)
+    suggested_replies = generate_suggestions(state)
 
     # Log response details
     log("SYNTH", f"Response: {len(message)} chars")

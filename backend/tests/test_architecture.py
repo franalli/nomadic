@@ -13,7 +13,7 @@ from app.planner.nodes.intent_router import (
     IntentClassification,
     _detect_specialist_keywords,
 )
-from app.planner.nodes.synthesizer import Synthesizer, generate_suggested_replies
+from app.planner.nodes.synthesizer import Synthesizer, generate_suggestions
 from app.planner.nodes.trip_architect import TripArchitect
 from app.planner.nodes.vertical_specialist import VerticalSpecialist
 from app.planner.state import (
@@ -183,10 +183,15 @@ class TestConstraintGuard:
         assert any("DATE_ORDER" in v.code for v in violations)
 
     def test_specialist_constraint_checking(self):
-        """Should check specialist constraints."""
+        """Should detect diving-on-departure-day conflict."""
         from app.planner.nodes.constraint_guard import check_specialist_constraints
+        from app.planner.state import ItineraryBlock
 
-        plan = TripPlan()
+        plan = TripPlan(
+            destination="Bali",
+            start_date="2025-03-01",
+            end_date="2025-03-04",  # 4-day trip
+        )
         plan.constraints.append(
             SpecialistConstraint(
                 type="temporal",
@@ -194,8 +199,19 @@ class TestConstraintGuard:
                 applies_to="flights",
             )
         )
+        # Diving on day 4 (departure day) = conflict
+        plan.itinerary_blocks.append(
+            ItineraryBlock(
+                day=4,
+                title="Morning dive",
+                description="Dive at USS Liberty",
+                type="activity",
+                source_specialist="diving",
+            )
+        )
+        tiles = {"flights": [{"id": "f1", "type": "flight"}]}
 
-        violations = check_specialist_constraints(plan, {})
+        violations = check_specialist_constraints(plan, tiles)
         assert len(violations) > 0
         assert any("DIVING" in v.code for v in violations)
 
@@ -204,10 +220,85 @@ class TestSynthesizer:
     """Test the Synthesizer node."""
 
     def test_suggested_replies_count(self):
-        """Should always return exactly 3 suggestions."""
+        """Should return up to 3 suggestions."""
         state = GraphState()
-        suggestions = generate_suggested_replies(state)
-        assert len(suggestions) == 3
+        suggestions = generate_suggestions(state)
+        assert 1 <= len(suggestions) <= 3
+
+    def test_all_suggestions_are_executable(self):
+        """Every suggestion the engine can produce must be routable."""
+        import re
+
+        from app.planner.nodes.intent_router import (
+            PLANNING_READINESS_SIGNALS,
+            QUESTION_TYPE_MAPPING,
+            SPECIALIST_PATTERNS,
+        )
+
+        def is_routable(text: str) -> bool:
+            text_lower = text.lower()
+            # Planning readiness signals
+            for signal in PLANNING_READINESS_SIGNALS:
+                if signal in text_lower:
+                    return True
+            # Specialist patterns
+            for patterns in SPECIALIST_PATTERNS.values():
+                for pattern in patterns:
+                    if re.search(pattern, text_lower):
+                        return True
+            # Question type mapping
+            for keywords in QUESTION_TYPE_MAPPING:
+                if any(kw in text_lower for kw in keywords.split("|")):
+                    return True
+            # Destination/date/change/origin triggers
+            if any(
+                kw in text_lower
+                for kw in [
+                    "beach",
+                    "mountain",
+                    "city break",
+                    "next week",
+                    "next month",
+                    "flexible",
+                    "change",
+                    "departure",
+                    "set my",
+                ]
+            ):
+                return True
+            # Date ranges (e.g., "March 1-8")
+            if re.search(r"\b\w+ \d+-\d+", text):
+                return True
+            return False
+
+        # Test states covering major branches
+        test_states = [
+            GraphState(),  # No destination
+            GraphState(trip_plan=TripPlan(destination="Bali")),  # Has dest, no dates
+            GraphState(
+                trip_plan=TripPlan(destination="Bali"),
+                metadata={"detected_month": "March"},
+            ),  # Has dest + detected month
+            GraphState(
+                trip_plan=TripPlan(
+                    destination="Bali", start_date="2025-03-01", end_date="2025-03-08"
+                ),
+            ),  # Has dest + dates, no specialists
+            GraphState(
+                trip_plan=TripPlan(
+                    destination="Bali", start_date="2025-03-01", end_date="2025-03-08"
+                ),
+                metadata={"executed_strategy_topics": ["diving"]},
+                tiles={"hotels": [{"id": "1"}]},
+            ),  # Has tiles, diving done
+        ]
+        for state in test_states:
+            suggestions = generate_suggestions(state)
+            for text in suggestions:
+                assert is_routable(text), (
+                    f"Dead suggestion: '{text}' (state: dest={state.trip_plan.destination}, "
+                    f"dates={state.trip_plan.start_date})"
+                )
 
     def test_greeting_response(self):
         """Should generate appropriate greeting."""
