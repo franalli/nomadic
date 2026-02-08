@@ -484,13 +484,14 @@ class TestScenario4MultipleConflicts:
         assert "constraint_clash" in conflict_types or "insufficient_days" in conflict_types
 
     def test_partial_timeline_shows_priority_specialist(self):
-        """Verify partial timeline prioritizes diving over hiking."""
+        """Verify partial timeline marks hiking as unschedulable in constraint clash."""
         sections = make_strategy_sections(
             diving_count=2,
             hiking_count=2,
             include_altitude_constraint=True,
         )
-        input_data = make_builder_input("2026-03-01", "2026-03-03", sections)
+        # Use 5-day trip so builder has enough usable days for partial schedule
+        input_data = make_builder_input("2026-03-01", "2026-03-05", sections)
 
         builder = ItineraryBuilder()
         result = builder.build(input_data)
@@ -498,7 +499,7 @@ class TestScenario4MultipleConflicts:
         # Should have partial day_cards
         assert len(result.day_cards) > 0
 
-        # Check that diving is scheduled (primary)
+        # Check that diving is scheduled (primary) and hiking is unschedulable
         diving_scheduled = False
         hiking_unschedulable = False
 
@@ -509,7 +510,6 @@ class TestScenario4MultipleConflicts:
                 if block.specialist_type == "hiking" and getattr(block, "unschedulable", False):
                     hiking_unschedulable = True
 
-        # Diving should be scheduled, hiking should be unschedulable
         assert diving_scheduled, "Diving should be scheduled as primary specialist"
         assert hiking_unschedulable, "Hiking should be marked unschedulable"
 

@@ -63,15 +63,11 @@ export function getHotelsSummary(
       pet_friendly: 'Pets OK',
     };
 
-    const formattedAmenities = settings.amenities
-      .slice(0, 2)
-      .map((a) => amenityLabels[a] || a)
-      .join(', ');
-
-    if (settings.amenities.length > 2) {
-      parts.push(`${formattedAmenities} +${settings.amenities.length - 2}`);
+    const formatted = settings.amenities.map((a) => amenityLabels[a] || a);
+    if (formatted.length <= 4) {
+      parts.push(formatted.join(', '));
     } else {
-      parts.push(formattedAmenities);
+      parts.push(`${formatted.slice(0, 2).join(', ')} +${formatted.length - 2}`);
     }
   }
 

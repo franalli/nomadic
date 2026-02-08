@@ -153,8 +153,7 @@ class RouterOutput(BaseModel):
     has_dates_in_message: bool = Field(
         default=False,
         description=(
-            "True if user provided any date info in this message "
-            "(month, dates, 'next week', etc.)"
+            "True if user provided any date info in this message (month, dates, 'next week', etc.)"
         ),
     )
     has_activity_in_message: bool = Field(
@@ -243,7 +242,10 @@ QUESTION_TYPE_MAPPING = {
     "get around|transport|taxi|uber|scooter": ("transport", "transportation"),
     "wear|dress|clothes|attire": ("cultural", "cultural_norms"),
     "must see|must do|attractions|things to do": ("activities", "things_to_do"),
-    "stay|hotel|neighborhood|area": ("accommodation", "neighborhoods"),
+    "stay|hotel|neighborhood|area|lodging|resort|hostel|airbnb|accommodation": (
+        "accommodation",
+        "neighborhoods",
+    ),
     "scam|rip off|tourist trap|avoid": ("scams", "scams_traps"),
     "pack|bring|luggage|adapter": ("packing", "packing"),
     "sim|wifi|internet|phone": ("connectivity", "connectivity"),
@@ -324,7 +326,7 @@ SPECIALIST_PATTERNS = {
     "hiking": [r"\b(hiking|hike|trek|trekking|climb|trail|mountain|hikeing|hikng|trekk|treking)\b"],
     "skiing": [r"\b(skiing|ski|snowboard|snow|slopes|skii|skiig|skking|sking|snowbord)\b"],
     "cycling": [r"\b(cycling|bike|bicycle|biking)\b"],
-    "boating": [r"\b(boating|boat|sailing|yacht|cruise)\b"],
+    "surfing": [r"\b(surfing|surf|surfer|wave riding)\b"],
 }
 
 # Origin specification patterns - detect "from [city]" as departure city
@@ -485,14 +487,6 @@ class SuggestionPool:
                 "category": "date_contextual",
             },
             # ── Generic date prompts: generated dynamically by _build_date_suggestions() ──
-            # ── Plan generation ──
-            {
-                "template": "Build my itinerary",
-                "source": "planning_readiness",
-                "condition": lambda s: (s.trip_plan.destination and s.trip_plan.start_date),
-                "priority": 1,
-                "category": "generate",
-            },
             # ── Change destination (always available) ──
             {
                 "template": "I want to change my destination",
@@ -617,6 +611,66 @@ def _build_question_suggestions(state: "GraphState") -> list[dict]:
                 "condition": lambda s: bool(s.trip_plan.destination),
                 "priority": 6,
                 "category": f"question_{qtype}",
+            }
+        )
+
+    return suggestions
+
+
+def _build_plan_progression_suggestions(state: "GraphState") -> list[dict]:
+    """
+    Generate plan-progression suggestions at S2+ (active plan with dates).
+    These nudge the user toward refining preferences instead of exploring.
+    Priority 4: above exploration questions (6), below specialists (3).
+    """
+    plan_view = state.metadata.get("plan_view_state", "")
+    if not plan_view.startswith("S2") and not plan_view.startswith("S3"):
+        return []
+
+    dest = state.trip_plan.destination
+    if not dest or not state.trip_plan.start_date:
+        return []
+
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    hotel_settings = trip_inputs.get("hotel_settings") or {}
+    flight_settings = trip_inputs.get("flight_settings") or {}
+
+    suggestions = []
+
+    # Hotel preference (if min_stars not set)
+    if not hotel_settings.get("min_stars"):
+        suggestions.append(
+            {
+                "template": "5-star hotels only",
+                "source": "settings_detection",
+                "condition": lambda s: bool(s.trip_plan.destination and s.trip_plan.start_date),
+                "priority": 4,
+                "category": "plan_hotel_pref",
+            }
+        )
+
+    # Flight preference (if direct_only not set)
+    if not flight_settings.get("direct_only"):
+        suggestions.append(
+            {
+                "template": "Direct flights only",
+                "source": "settings_detection",
+                "condition": lambda s: bool(s.trip_plan.destination and s.trip_plan.start_date),
+                "priority": 4,
+                "category": "plan_flight_pref",
+            }
+        )
+
+    # Activity exploration (if no categories selected and destination has activities)
+    activity_settings = trip_inputs.get("activity_settings") or {}
+    if not activity_settings.get("categories"):
+        suggestions.append(
+            {
+                "template": "What are must-do activities in {destination}?",
+                "source": "question_type",
+                "condition": lambda s: bool(s.trip_plan.destination),
+                "priority": 5,
+                "category": "plan_activities",
             }
         )
 
@@ -1098,7 +1152,6 @@ ACTIVITY_CATEGORY_TO_SPECIALIST = {
     "diving": "diving",
     "scuba": "diving",
     "scuba diving": "diving",
-    "snorkeling": "diving",
     "freediving": "diving",
     # Hiking
     "hiking": "hiking",
@@ -1116,20 +1169,16 @@ ACTIVITY_CATEGORY_TO_SPECIALIST = {
     "biking": "cycling",
     "mountain biking": "cycling",
     "road cycling": "cycling",
-    # Boating
-    "sailing": "boating",
-    "boating": "boating",
-    "yachting": "boating",
+    # Surfing
+    "surfing": "surfing",
+    "surf": "surfing",
 }
 
+# Canonical Tier 1 specialist set — single source of truth
+TIER1_SPECIALISTS = frozenset({"diving", "hiking", "skiing", "cycling", "surfing"})
+
 # Canonical specialist activity categories (should appear at top of activity pill)
-SPECIALIST_ACTIVITY_CATEGORIES = [
-    "diving",
-    "hiking",
-    "skiing",
-    "cycling",
-    "sailing",
-]
+SPECIALIST_ACTIVITY_CATEGORIES = sorted(TIER1_SPECIALISTS)
 
 
 def _detect_specialists_from_activity_settings(state: GraphState) -> List[str]:
@@ -2368,6 +2417,21 @@ async def intent_router(state: GraphState) -> GraphState:
 
             state.metadata["trip_inputs"] = trip_inputs
 
+            # Populate extracted_settings so _format_result includes them in
+            # the output trip_inputs and they persist across graph runs.
+            ext = state.metadata.setdefault("extracted_settings", {})
+            if "hotel_settings" in detected_settings:
+                hs = detected_settings["hotel_settings"]
+                if "min_stars" in hs:
+                    ext["hotel_min_stars"] = hs["min_stars"]
+            if "flight_settings" in detected_settings:
+                fs = detected_settings["flight_settings"]
+                if fs.get("direct_only") is not None:
+                    ext["flights_toggle"] = True
+                    ext["flight_direct_only"] = fs["direct_only"]
+                if "cabin_class" in fs:
+                    ext["flight_cabin_class"] = fs["cabin_class"]
+
             # Mark for frontend
             state.metadata["settings_just_updated"] = True
             state.metadata["updated_settings"] = list(detected_settings.keys())
@@ -2596,43 +2660,75 @@ async def intent_router(state: GraphState) -> GraphState:
 
         # If exploring and we have destination context, generate comprehensive answer
         elif planning_intent == "exploring" and destination:
-            # SAFETY GATE: Don't enter exploration for short messages when active plan exists
-            # This prevents "from rome" edge cases where origin detection didn't match
             has_active_plan = state.trip_plan.destination and state.metadata.get(
                 "plan_view_state"
             ) in ("S2_STRATEGY_READY", "S3_ITINERARY_READY")
-            word_count = len(user_text.strip().split())
 
-            if has_active_plan and word_count <= 5:
-                log(
-                    "ROUTER",
-                    f"[EXPLORATION] Active plan exists, skipping exploration for short message "
-                    f"({word_count} words) - falling through to LLM",
-                )
-                state.metadata["exploration_mode"] = False
-                # Fall through to LLM classification which has full conversation context
+            if has_active_plan:
+                # ── Post-planning: section-specific answer ──
+                qtype, section = classify_question_type(user_text)
+                if qtype != "general":
+                    answer, _ = await generate_comprehensive_answer(
+                        user_text, destination, qtype, section, state
+                    )
+                    # Track for question rotation
+                    count = state.metadata.get("generic_question_count", 0) + 1
+                    state.metadata["generic_question_count"] = count
+
+                    state.last_summary = answer  # No ending ("Ready to plan?")
+                    state.metadata["short_circuit_response"] = True
+                    state.metadata["short_circuit_type"] = "question_answer"
+                    # Don't set suggested_replies — synthesizer's generate_suggestions
+                    # produces fresh state-aware chips (falls through PRIORITY 2 logic)
+
+                    log(
+                        "ROUTER",
+                        f"[QUESTION] Post-plan answer: {qtype}/{section} (#{count})",
+                    )
+                    _debug_node_end(
+                        "router",
+                        "🧭",
+                        intent="QUESTION_ANSWER",
+                        destination=destination,
+                        question_type=qtype,
+                        question_count=count,
+                        short_circuit=True,
+                    )
+                    return state
+                else:
+                    # Unrecognized question + active plan → fall through to LLM
+                    log(
+                        "ROUTER",
+                        "[QUESTION] Unrecognized post-plan question, falling through to LLM",
+                    )
+                    state.metadata["exploration_mode"] = False
+
             else:
+                # ── Pre-planning: exploration short-circuit (existing behavior) ──
                 qtype, section = classify_question_type(user_text)
                 log("ROUTER", f"[EXPLORATION] Detected question type: {qtype}, section: {section}")
 
-                # Generate comprehensive answer
                 answer, ending = await generate_comprehensive_answer(
                     user_text, destination, qtype, section, state
                 )
 
-                # Update conversation tracking
                 count = state.metadata.get("generic_question_count", 0) + 1
                 state.metadata["generic_question_count"] = count
                 state.metadata["last_destination_context"] = destination
                 state.metadata["exploration_mode"] = True
 
-                # Set short-circuit response
+                # Override ending when trip state makes the generic prompt irrelevant.
+                # Chips already suggest dates — response should match.
+                if state.trip_plan.origin and not state.trip_plan.start_date:
+                    ending = "When are you thinking of going?"
+                elif not state.trip_plan.start_date:
+                    ending = "When would you like to go?"
+
                 state.last_summary = f"{answer}\n\n{ending}"
                 state.suggested_replies = _get_exploration_suggestions(qtype, destination)
                 state.metadata["short_circuit_response"] = True
                 state.metadata["short_circuit_type"] = "exploration"
 
-                # Pre-set destination for when they're ready to plan
                 if not state.trip_plan.destination:
                     state.trip_plan.destination = destination
 
@@ -2679,6 +2775,13 @@ async def intent_router(state: GraphState) -> GraphState:
 
             # Detect NEW specialists from the message
             new_specialists = get_new_specialists_from_text(user_text, existing_specialists)
+
+            # Also detect specialists from activity_settings categories (UI pill selection)
+            # Without this, categories set via pills are ignored in SOFT_TRANSITION path
+            category_specialists = _detect_specialists_from_activity_settings(state)
+            for s in category_specialists:
+                if s not in new_specialists:
+                    new_specialists.append(s)
 
             # Track all requested specialists (persists across turns so infeasible
             # ones can be resurrected when constraints like dates change)
@@ -2831,11 +2934,9 @@ async def intent_router(state: GraphState) -> GraphState:
                 if state.trip_plan.start_date and state.trip_plan.end_date:
                     start = state.trip_plan.start_date
                     end = state.trip_plan.end_date
-                    ending = (
-                        f"Great, I've noted your dates ({start} to {end}). " f"{activity_prompt}"
-                    )
+                    ending = f"Great, I've noted your dates ({start} to {end}). {activity_prompt}"
                 elif state.trip_plan.start_date:
-                    ending = f"Got it, starting {state.trip_plan.start_date}. " f"{activity_prompt}"
+                    ending = f"Got it, starting {state.trip_plan.start_date}. {activity_prompt}"
                 else:
                     ending = activity_prompt
                 suggestions = [

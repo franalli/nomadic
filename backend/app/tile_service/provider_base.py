@@ -403,7 +403,7 @@ class BookableProvider(Provider):
         Real providers should query their API for current status.
         """
         raise NotImplementedError(
-            f"{self.name} does not support status polling. " "Status updates come via webhooks."
+            f"{self.name} does not support status polling. Status updates come via webhooks."
         )
 
 

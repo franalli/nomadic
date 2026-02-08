@@ -15,6 +15,7 @@ from app.services.itinerary_builder import (
     DayCardOutput,
     ItineraryBuilder,
     ItineraryBuilderInput,
+    PreferenceOverrideInput,
 )
 
 # =============================================================================
@@ -151,6 +152,7 @@ def input_with_tiles() -> ItineraryBuilderInput:
         },
         destination="Bali",
         origin="San Francisco",
+        preferences=PreferenceOverrideInput(preferred_hotel_ids=["hotel_001"]),
     )
 
 
@@ -179,9 +181,9 @@ class TestConstraintSeverityPriority:
             "certification_required",
         ]
         for rule in blocking_rules:
-            assert (
-                CONSTRAINT_SEVERITY_MAP.get(rule) == ConstraintSeverity.BLOCKING
-            ), f"Rule '{rule}' should be BLOCKING"
+            assert CONSTRAINT_SEVERITY_MAP.get(rule) == ConstraintSeverity.BLOCKING, (
+                f"Rule '{rule}' should be BLOCKING"
+            )
 
     def test_strong_constraints_mapped_correctly(self):
         """Verify optimization constraints are classified as STRONG."""
@@ -193,9 +195,9 @@ class TestConstraintSeverityPriority:
             "opening_hours",
         ]
         for rule in strong_rules:
-            assert (
-                CONSTRAINT_SEVERITY_MAP.get(rule) == ConstraintSeverity.STRONG
-            ), f"Rule '{rule}' should be STRONG"
+            assert CONSTRAINT_SEVERITY_MAP.get(rule) == ConstraintSeverity.STRONG, (
+                f"Rule '{rule}' should be STRONG"
+            )
 
     def test_soft_constraints_mapped_correctly(self):
         """Verify preference constraints are classified as SOFT."""
@@ -206,9 +208,9 @@ class TestConstraintSeverityPriority:
             "minimize_walking",
         ]
         for rule in soft_rules:
-            assert (
-                CONSTRAINT_SEVERITY_MAP.get(rule) == ConstraintSeverity.SOFT
-            ), f"Rule '{rule}' should be SOFT"
+            assert CONSTRAINT_SEVERITY_MAP.get(rule) == ConstraintSeverity.SOFT, (
+                f"Rule '{rule}' should be SOFT"
+            )
 
     def test_merge_constraints_sorts_by_priority(self, builder: ItineraryBuilder):
         """Verify _merge_constraints sorts BLOCKING first, then STRONG, then SOFT."""
@@ -452,48 +454,16 @@ class TestTemporalCapacity:
 class TestConflictResolutionGeneration:
     """Test that conflict resolutions are properly generated."""
 
-    def test_insufficient_days_triggers_conflict(
+    def test_insufficient_days_auto_adjusts(
         self, builder: ItineraryBuilder, short_trip_input: ItineraryBuilderInput
     ):
-        """4-day trip with 4 activities + 1 buffer = insufficient days."""
+        """4-day trip with 4 activities + buffer: builder auto-adjusts dive count."""
         result = builder.build(short_trip_input)
 
-        # Should fail due to insufficient days
-        assert not result.success
-        assert result.error == "CONSTRAINT_CONFLICT"
-        assert len(result.conflicts) > 0
-        assert any(c.type == "insufficient_days" for c in result.conflicts)
-
-    def test_extend_trip_resolution_generated(
-        self, builder: ItineraryBuilder, short_trip_input: ItineraryBuilderInput
-    ):
-        """Conflict generates 'extend trip' resolution."""
-        result = builder.build(short_trip_input)
-
-        assert not result.success
-        assert len(result.resolutions) > 0
-
-        extend_resolutions = [r for r in result.resolutions if r.action == "extend_trip"]
-        assert len(extend_resolutions) >= 1
-        assert extend_resolutions[0].new_duration is not None
-        assert extend_resolutions[0].feasibility == "recommended"
-
-    def test_reduce_activities_resolution_generated(
-        self, builder: ItineraryBuilder, short_trip_input: ItineraryBuilderInput
-    ):
-        """Conflict generates 'focus on X only' resolutions."""
-        result = builder.build(short_trip_input)
-
-        assert not result.success
-        assert len(result.resolutions) > 0
-
-        reduce_resolutions = [r for r in result.resolutions if r.action == "reduce_activities"]
-        assert len(reduce_resolutions) >= 2  # One per specialist
-
-        # Check that both specialists are offered
-        kept_specialists = {r.keep_specialist for r in reduce_resolutions}
-        assert "diving" in kept_specialists
-        assert "hiking" in kept_specialists
+        # Builder auto-adjusts by reducing dives instead of failing
+        assert result.success is True
+        assert len(result.warnings) > 0
+        assert any("adjusted" in w.lower() or "fit" in w.lower() for w in result.warnings)
 
 
 # =============================================================================

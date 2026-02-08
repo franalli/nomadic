@@ -409,9 +409,11 @@ def emit_event(
     if console_output:
         from app.debug_utils import get_debug_mode
 
-        if get_debug_mode() == "full":
+        if get_debug_mode() in ("full", "compact"):
+            from app.debug_utils import _safe_print
+
             prefix = _TRACE_VERBOSE_PREFIX if verbose_only else _TRACE_PREFIX
-            print(f"{prefix} {name} {json_line}")
+            _safe_print(f"{prefix} {name} {json_line}")
 
     # Also emit via logger for log aggregation
     _trace_logger.info(json_line)
@@ -455,11 +457,11 @@ def emit_anomaly_event(
     except Exception:
         json_line = json.dumps({"event": name, "error": "serialization_failed"})
 
-    # Print anomaly events (only in demo/full mode)
-    from app.debug_utils import get_debug_mode
+    # Print anomaly events (compact and full modes)
+    from app.debug_utils import _safe_print, get_debug_mode
 
     if get_debug_mode() != "off":
-        print(f"{_TRACE_ANOMALY_PREFIX} {name} {json_line}")
+        _safe_print(f"{_TRACE_ANOMALY_PREFIX} {name} {json_line}")
     _trace_logger.warning(json_line)
 
 

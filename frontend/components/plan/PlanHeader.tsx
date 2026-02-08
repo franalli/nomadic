@@ -18,7 +18,6 @@
 import { ArrowRight, Loader2 } from 'lucide-react';
 import React from 'react';
 
-import { StatusBadge } from '@/components/plan/StatusBadge';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
@@ -247,11 +246,6 @@ export function PlanHeader({
 
             {/* Subtle scrim for text readability - z-10 so pills can be above */}
             <div className="absolute inset-0 z-10 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
-
-            {/* Status Badge - top-right of postcard */}
-            <div className="absolute top-3 right-3 z-20">
-              <StatusBadge state={planViewState} />
-            </div>
 
             {/* Destination content overlay - title/subtitle only */}
             <div className="absolute inset-0 z-10 flex flex-col justify-end p-5 pb-14">

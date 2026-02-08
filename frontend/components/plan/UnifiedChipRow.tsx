@@ -1,19 +1,20 @@
 /**
  * UnifiedChipRow - "Cockpit" Layout
  *
- * Two-deck vertical layout for trip inputs. All controls above chat input.
+ * Three-row semantic layout for trip inputs. All controls above chat input.
  *
  * Layout:
- * ┌─────────────────────────────────────────────────────────────┐
- * │ DECK 1: [ Destination ] [ Origin ] [ Dates ] [ Travelers ] │  ← Context Pills (h-9, 36px)
- * │ DECK 2: [ Flights ] [ Stays ] [ Activities ]               │  ← Module Pills (h-10, 40px)
- * └─────────────────────────────────────────────────────────────┘
+ * ┌──────────────────────────────────────────────────┐
+ * │ ROW 1: [ Destination ] [ Origin ] [ Dates ]      │  ← Trip params (h-8, 32px)
+ * │ ROW 2: [ Travelers ] [ Budget (opt) ]             │  ← Travelers   (h-8, 32px)
+ * │ ROW 3: [ Flights ] [ Stays ] [ Activities ]       │  ← Booking types (h-9, 36px)
+ * └──────────────────────────────────────────────────┘
  *
  * Design Rules:
- * - Deck 1: h-9 tactile buttons, monochrome glass (grey → white when filled)
- * - Deck 2: h-10 primary touch targets, teal glow when active
- * - Vertical stack reads top-down: Context → Scope → Chat
- * - "Cockpit" aesthetic - all instruments large and readable
+ * - Row 1-2: h-8 compact pills, monochrome glass (grey → white when filled)
+ * - Row 3: h-9 primary touch targets, teal glow when active
+ * - Semantic grouping: "what you're planning" vs "what we'll search for"
+ * - "Cockpit" aesthetic - all instruments readable at ≥380px panel width
  */
 
 'use client';
@@ -127,8 +128,7 @@ function getFlightChipSummary(settings?: FlightSettings): string | null {
     tokens.push('One-way');
   }
 
-  // Max 2 tokens
-  return tokens.slice(0, 2).join(' · ') || null;
+  return tokens.join(' · ') || null;
 }
 
 function getHotelChipSummary(settings?: HotelSettings): string | null {
@@ -140,9 +140,26 @@ function getHotelChipSummary(settings?: HotelSettings): string | null {
     tokens.push(`${settings.min_stars}★+`);
   }
 
-  // Could add area/location if available in settings
+  // Include amenity filters
+  if (settings.amenities && settings.amenities.length > 0) {
+    const amenityLabels: Record<string, string> = {
+      wifi: 'WiFi',
+      pool: 'Pool',
+      parking: 'Parking',
+      gym: 'Gym',
+      spa: 'Spa',
+      breakfast: 'Breakfast',
+      pet_friendly: 'Pets OK',
+      beachfront: 'Beachfront',
+    };
+    for (const a of settings.amenities) {
+      tokens.push(amenityLabels[a] || a.charAt(0).toUpperCase() + a.slice(1));
+    }
+  }
 
-  return tokens.slice(0, 2).join(' · ') || null;
+  if (tokens.length === 0) return null;
+  if (tokens.length <= 4) return tokens.join(' · ');
+  return `${tokens.slice(0, 2).join(' · ')} +${tokens.length - 2}`;
 }
 
 function getActivityChipSummary(settings?: ActivitySettings): string | null {
@@ -150,9 +167,9 @@ function getActivityChipSummary(settings?: ActivitySettings): string | null {
     return null;
   }
 
-  // Max 2 categories
-  const categories = settings.categories.slice(0, 2);
-  return categories.map(c => c.charAt(0).toUpperCase() + c.slice(1)).join(' · ');
+  const categories = settings.categories.map(c => c.charAt(0).toUpperCase() + c.slice(1));
+  if (categories.length <= 4) return categories.join(' · ');
+  return `${categories.length} selected`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,9 +210,9 @@ const CoreChip = memo(function CoreChip({
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
       className={cn(
-        // Mobile: h-10 (40px) for better touch, Desktop: h-9 (36px)
-        'inline-flex items-center gap-2 rounded-lg flex-shrink-0 cursor-pointer',
-        isMobile ? 'h-10 px-4' : 'h-9 px-3.5',
+        // Mobile: h-10 (40px) for better touch, Desktop: h-8 (32px) compact for narrow panels
+        'inline-flex items-center gap-1.5 rounded-lg flex-shrink-0 cursor-pointer',
+        isMobile ? 'h-10 px-4' : 'h-8 px-3',
         'transition-all duration-200 ease-out active:scale-[0.98]',
         // Hover: Scale 1.02 + snap-to-black/white (DS Tactile Rule)
         'hover:scale-[1.02] hover:border-zinc-900',
@@ -313,9 +330,9 @@ const ModuleChip = memo(function ModuleChip({
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
       className={cn(
-        // Mobile: h-11 (44px) for Apple's minimum, Desktop: h-10 (40px)
-        'inline-flex items-center gap-2 rounded-full flex-shrink-0',
-        isMobile ? 'h-11 px-5' : 'h-10 px-5',
+        // Mobile: h-11 (44px) for Apple's minimum, Desktop: h-9 (36px) compact for narrow panels
+        'inline-flex items-center gap-1.5 rounded-full flex-shrink-0',
+        isMobile ? 'h-11 px-5' : 'h-9 px-4',
         'transition-all duration-200 ease-out active:scale-[0.95]',
         'border',
 
@@ -436,14 +453,11 @@ function UnifiedChipRowInner({
   const isTravelersDefault = travelers === '1 adult';
 
   return (
-    <div className="flex flex-col gap-3 w-full">
-      {/* DECK 1: TRIP CONTEXT (The Facts) */}
-      {/* Mobile: horizontal scroll reel, Desktop: wrap naturally */}
+    <div className="flex flex-col gap-2 w-full">
+      {/* ROW 1: TRIP PARAMS (Where & When) */}
       <div className={cn(
-        'flex items-center gap-2',
-        // Mobile: horizontal scroll carousel
+        'flex items-center gap-1.5',
         isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
-        // Desktop: natural wrap
         !isMobile && 'flex-wrap'
       )}>
         <CoreChip
@@ -472,7 +486,14 @@ function UnifiedChipRowInner({
           isMobile={isMobile}
           disabled={isBookingMode}
         />
+      </div>
 
+      {/* ROW 2: TRAVELERS (Who & How Much) */}
+      <div className={cn(
+        'flex items-center gap-1.5',
+        isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
+        !isMobile && 'flex-wrap'
+      )}>
         <CoreChip
           icon={Users}
           label="Travelers"
@@ -494,13 +515,10 @@ function UnifiedChipRowInner({
         />
       </div>
 
-      {/* DECK 2: SCOPE TOGGLES (The Tools) */}
-      {/* Mobile: horizontal scroll reel, Desktop: wrap naturally */}
+      {/* ROW 3: BOOKING TYPES (What We Search For) */}
       <div className={cn(
-        'flex items-center gap-2.5',
-        // Mobile: horizontal scroll carousel
+        'flex items-center gap-2',
         isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
-        // Desktop: natural wrap
         !isMobile && 'flex-wrap'
       )}>
         <ModuleChip

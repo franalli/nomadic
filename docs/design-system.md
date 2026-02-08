@@ -425,7 +425,8 @@ Multi-specialist trips use color-coded visual indicators to distinguish activity
 | `hiking` | Forest Green | `#10B981` | Terrestrial activities |
 | `skiing` | Snow Blue | `#3B82F6` | Alpine activities |
 | `cycling` | Lime | `#84CC16` | Cycling activities |
-| `boating` | Indigo | `#6366F1` | Boating/sailing activities |
+| `surfing` | Indigo | `#6366F1` | Surfing activities (Tier 1) |
+| `boating` | Indigo | `#6366F1` | Boating/sailing activities (legacy frontend key, Tier 2) |
 | `default` | Zinc | `#71717A` | Fallback for unknown types |
 
 #### Timeline Block Styling
@@ -457,7 +458,8 @@ export const SPECIALIST_COLORS: Record<string, string> = {
   hiking: '#10B981',
   skiing: '#3B82F6',
   cycling: '#84CC16',
-  boating: '#6366F1',
+  surfing: '#6366F1',
+  boating: '#6366F1',  // legacy — frontend migration pending
   default: '#71717A',
 };
 
@@ -997,9 +999,12 @@ Exploration responses show contextual follow-up chips. These use the standard pi
 
 | Chip Type | Purpose | Example |
 |-----------|---------|---------|
-| **Follow-up question** | Continue exploration | "Best romantic spots?" |
+| **Follow-up question** | Continue exploration / post-plan topic query | "Best romantic spots?", "Where should I stay?" |
 | **Planning nudge** | Soft transition | "When to visit?" |
 | **Plan CTA** | Exit exploration | "Plan Bali trip" |
+
+Question chips are always visible (never suppressed). Post-planning, they route through
+`question_answer` short-circuit to produce section-specific content (accommodation, weather, etc.).
 
 **Visual distinction:**
 - Follow-up chips: `DS.pills.inactive` (zinc border)
@@ -1132,7 +1137,7 @@ Mobile fingers are imprecise. Every interactive element needs adequate hit area.
 
 | Element | Minimum Size | Notes |
 |---------|--------------|-------|
-| **Pills/Chips** | `h-10` or `h-11` | Larger than desktop (`h-9`) |
+| **Pills/Chips** | `h-10` or `h-11` | Larger than desktop (core: `h-8`, module: `h-9`) |
 | **Buttons** | `h-12` (48px) | Apple's minimum recommendation |
 | **Close X** | `p-4` hit area | Even if icon is small |
 | **Stepper +/-** | `w-12 h-12` | Bigger than desktop (`w-10 h-10`) |
@@ -1250,11 +1255,29 @@ On mobile's narrow screen, create a stronger "Conversation" feel with strict ali
 
 ---
 
+### Chat Status Header (Persistent Progress Indicator)
+
+**Principle:** Never remove UI chrome mid-session. Elements that disappear create layout shift and break spatial memory. **Transform, don't remove.**
+
+The chat status header is a persistent element at the top of the chat panel that evolves through planning phases:
+
+| Phase | Status Text | Label | Indicator |
+|-------|------------|-------|-----------|
+| S0 (no destination) | "Where to next?" | AWAITING INPUT | blinking cursor |
+| S0 (destination, no dates) | "When would you like to go?" | SET DATES | blinking cursor |
+| S0 (all fields set) | "Ready to build your plan" | GENERATING PLAN | blinking cursor |
+| S1 / Generating | "Building your trip..." | GENERATING | spinning loader |
+| S2 / P1 (plan ready) | "Your trip is taking shape" | REFINE PLAN | pulsing dot |
+| S3 / P3 (itinerary) | "Itinerary complete" | READY | check icon |
+
+**Desktop rendering:**
+- **S0:** Full hero banner with topographic background pattern; collapses to compact glassmorphism bar on scroll
+- **Post-S0:** Compact 56px glassmorphism bar (`h-14`, `backdrop-blur-md`) with status dot/icon + text + label
+- Transition between S0 hero and post-S0 compact bar uses `AnimatePresence mode="wait"` crossfade
+
+**Mobile:** Header collapse behavior remains — full "Where to next?" visible initially, collapses on scroll.
+
 ### Mobile-Specific Header Behavior
-
-**Problem:** The "Where to next?" header is large and takes up valuable space on scroll.
-
-**Solution:** Header should collapse/vanish when user scrolls or engages with content.
 
 | State | Header Visibility |
 |-------|-------------------|

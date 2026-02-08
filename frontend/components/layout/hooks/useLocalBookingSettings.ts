@@ -444,6 +444,12 @@ export function useLocalBookingSettings(
       hotelSettingsRef.current = newSettings;
       setLocalHotelSettings(newSettings);
 
+      // Sync to document store immediately so trip_inputs is up-to-date
+      // (commitTripInputs is debounced — this bridges the gap)
+      if (document) {
+        documentStore.updateTripInputs({ hotel_settings: newSettings });
+      }
+
       // Commit with debounce (handles queue for pre-document state)
       commitWithDebounce(
         { hotel_settings: newSettings },
@@ -509,7 +515,7 @@ export function useLocalBookingSettings(
         }
       }
     },
-    [commitWithDebounce, ensureBookingTypeEnabled, onToast]
+    [commitWithDebounce, document, documentStore, ensureBookingTypeEnabled, onToast]
   );
 
   // Activity settings update handler
@@ -521,6 +527,12 @@ export function useLocalBookingSettings(
       // Update ref and state synchronously so rapid clicks work correctly
       activitySettingsRef.current = newSettings;
       setLocalActivitySettings(newSettings);
+
+      // Sync to document store immediately so trip_inputs is up-to-date
+      // (commitTripInputs is debounced — this bridges the gap)
+      if (document) {
+        documentStore.updateTripInputs({ activity_settings: newSettings });
+      }
 
       // Commit with debounce (handles queue for pre-document state)
       commitWithDebounce(
@@ -540,7 +552,7 @@ export function useLocalBookingSettings(
         }
       }
     },
-    [commitWithDebounce, ensureBookingTypeEnabled, onToast]
+    [commitWithDebounce, document, documentStore, ensureBookingTypeEnabled, onToast]
   );
 
   // Add activity handler

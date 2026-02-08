@@ -71,6 +71,7 @@ def _logistics_input_hash(state: GraphState) -> str:
             "hotel_settings": ti.get("hotel_settings"),
             "flight_settings": ti.get("flight_settings"),
             "activity_skill_level": ti.get("activity_skill_level"),
+            "activity_categories": sorted(ti.get("activity_settings", {}).get("categories", [])),
         }
     )
 
@@ -461,6 +462,12 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
     _debug_log(f"Searching hotels/activities for {plan.destination}...")
 
+    # Read user settings from trip_inputs for provider filtering
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    hotel_settings = trip_inputs.get("hotel_settings") or {}
+    activity_settings = trip_inputs.get("activity_settings") or {}
+    flight_settings = trip_inputs.get("flight_settings") or {}
+
     # Determine provider and cache key parameters
     dest_key = plan.destination.lower().strip() if plan.destination else ""
     curated_manifest = DEMO_MANIFEST.get(dest_key, {})
@@ -491,7 +498,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
         else:
             _debug_log(f"[TILE_CACHE] Hotels MISS - fetching from {provider}")
 
-            # Build search context
+            # Build search context with user settings for provider-level filtering
             ctx = SearchContext(
                 destination=plan.destination,
                 origin=plan.origin,
@@ -502,6 +509,9 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 currency="USD",
                 verticals=["hotel", "activity"],
                 max_results_per_vertical=5,
+                hotel_settings=hotel_settings or None,
+                activity_settings=activity_settings or None,
+                flight_settings=flight_settings or None,
             )
 
             hotel_tiles = []
@@ -577,6 +587,9 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     currency="USD",
                     verticals=["hotel", "activity"],
                     max_results_per_vertical=5,
+                    hotel_settings=hotel_settings or None,
+                    activity_settings=activity_settings or None,
+                    flight_settings=flight_settings or None,
                 )
 
             activity_tiles = []
@@ -599,6 +612,24 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     db, provider, "activity", plan.destination, start_date, end_date, activity_dicts
                 )
 
+    # Post-fetch hotel star filter (curated provider filters at search time,
+    # but mock/Amadeus/cached tiles need post-fetch filtering)
+    min_stars = 0
+    if isinstance(hotel_settings, dict):
+        min_stars = hotel_settings.get("min_stars", 0) or 0
+    if min_stars > 0:
+        before = len(hotel_dicts)
+        hotel_dicts = [
+            h
+            for h in hotel_dicts
+            if (h.get("meta") or {}).get("stars", h.get("rating") or 0) >= min_stars
+        ]
+        if before != len(hotel_dicts):
+            log(
+                "LOGISTICS",
+                f"Hotel star filter: {before} → {len(hotel_dicts)} ({min_stars}+ stars)",
+            )
+
     # Store in state
     state.tiles["hotels"] = hotel_dicts
     log("LOGISTICS", f"Found {len(hotel_dicts)} hotels for {plan.destination}")
@@ -606,20 +637,57 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
     state.tiles["activities"] = activity_dicts
 
-    # DEMO: Suppress logistics activities when niche specialists have curated the activity layer
-    # local_expert runs for ALL trips - only suppress when diving/hiking/skiing/etc are active
-    NICHE_SPECIALISTS = {"diving", "hiking", "skiing", "cycling", "boating"}
+    # Two-tier activity handling:
+    # Tier 1 (specialist): diving, hiking, skiing, cycling, surfing → full specialist run
+    # Tier 2 (experience): cooking, yoga, sailing, etc. → tile filtering only
+    #
+    # When a niche specialist is active:
+    # - Pure Tier 1 selections → suppress all generic tiles (specialist provides curated content)
+    # - Mixed Tier 1 + Tier 2 → keep only tiles matching Tier 2 categories
+    from app.planner.nodes.intent_router import TIER1_SPECIALISTS
+
+    NICHE_SPECIALISTS = TIER1_SPECIALISTS
+    TIER1_CATEGORIES = TIER1_SPECIALISTS
     executed = state.metadata.get("executed_strategy_topics", [])
     has_niche_specialist = any(t in NICHE_SPECIALISTS for t in executed)
     if has_niche_specialist:
-        active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
-        log(
-            "LOGISTICS",
-            "Suppressing logistics activities - niche specialists active",
-            data=f"specialists={active_niche}",
-        )
-        state.tiles["activities"] = []
-        activity_dicts = []  # Update for booking_summary below
+        trip_inputs = state.metadata.get("trip_inputs", {})
+        selected_cats = set(trip_inputs.get("activity_settings", {}).get("categories", []))
+        tier2_cats = selected_cats - TIER1_CATEGORIES
+
+        if not tier2_cats:
+            # Pure Tier 1 — specialist provides activities, suppress all generic tiles
+            active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
+            log(
+                "LOGISTICS",
+                "Suppressing logistics activities - pure Tier 1",
+                data=f"specialists={active_niche}",
+            )
+            state.tiles["activities"] = []
+            activity_dicts = []
+        else:
+            # Mixed — keep ONLY tiles matching Tier 2 selections
+            matching = [t for t in activity_dicts if _tile_matches_categories(t, tier2_cats)]
+            active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
+            if not matching and activity_dicts:
+                # Fallback: show all generic tiles rather than nothing
+                matching = activity_dicts
+                log(
+                    "LOGISTICS",
+                    f"Tier 2 filter returned 0 tiles, falling back to all {len(activity_dicts)}",
+                    data=f"specialists={active_niche}, tier2={tier2_cats}",
+                )
+            else:
+                log(
+                    "LOGISTICS",
+                    (
+                        f"Mixed tiers: kept {len(matching)}/{len(activity_dicts)} "
+                        "activities for Tier 2"
+                    ),
+                    data=f"specialists={active_niche}, tier2={tier2_cats}",
+                )
+            state.tiles["activities"] = matching
+            activity_dicts = matching
 
     log("LOGISTICS", f"Found {len(activity_dicts)} activities for {plan.destination}")
     _debug_log(f"Activities found: {len(activity_dicts)}")
@@ -629,6 +697,17 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     booking_summary["hotels_found"] = len(hotel_dicts)
     booking_summary["activities_found"] = len(activity_dicts)
     state.metadata["booking_summary"] = booking_summary
+
+
+def _tile_matches_categories(tile: dict, categories: set) -> bool:
+    """Match tile against selected Tier 2 categories via tags (primary) or text (fallback)."""
+    tile_tags = {t.lower() for t in tile.get("tags", [])}
+    # Primary: tag intersection
+    if tile_tags & {cat.lower() for cat in categories}:
+        return True
+    # Fallback: keyword in title/subtitle (handles mock tiles without proper tags)
+    text = f"{tile.get('title', '')} {tile.get('subtitle', '')}".lower()
+    return any(cat.lower() in text for cat in categories)
 
 
 def _city_to_code(city: str) -> str:

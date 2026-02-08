@@ -37,25 +37,22 @@ export interface ActivitiesSheetProps {
   onOpenDestination?: () => void;
 }
 
-// Specialist activity categories (trigger specialist agents)
-const SPECIALIST_CATEGORIES = [
-  { value: 'diving', label: 'Diving', icon: '🤿', specialist: true },
-  { value: 'hiking', label: 'Hiking', icon: '🥾', specialist: true },
-  { value: 'skiing', label: 'Skiing', icon: '⛷️', specialist: true },
-  { value: 'cycling', label: 'Cycling', icon: '🚴', specialist: true },
-  { value: 'sailing', label: 'Sailing', icon: '⛵', specialist: true },
-];
-
-// General activity categories
-const GENERAL_CATEGORIES = [
-  { value: 'culture', label: 'Culture', icon: '🏛️' },
-  { value: 'food', label: 'Food & Drink', icon: '🍽️' },
-  { value: 'outdoors', label: 'Outdoors', icon: '🏔️' },
-  { value: 'nightlife', label: 'Nightlife', icon: '🌙' },
+// Activity categories — flat list, no visual distinction between tiers.
+// Tier 1 (specialist) vs Tier 2 (experience) is a backend implementation detail.
+const ALL_CATEGORIES = [
+  { value: 'diving', label: 'Diving', icon: '🤿' },
+  { value: 'hiking', label: 'Hiking', icon: '🥾' },
+  { value: 'skiing', label: 'Skiing', icon: '⛷️' },
+  { value: 'cycling', label: 'Cycling', icon: '🚴' },
+  { value: 'sailing', label: 'Sailing', icon: '⛵' },
+  { value: 'surfing', label: 'Surfing', icon: '🏄' },
+  { value: 'cooking', label: 'Cooking', icon: '🍳' },
+  { value: 'yoga', label: 'Yoga', icon: '🧘' },
+  { value: 'temples', label: 'Temples', icon: '⛩️' },
+  { value: 'nightlife', label: 'Nightlife', icon: '🎉' },
+  { value: 'beach', label: 'Beach', icon: '🏖️' },
   { value: 'shopping', label: 'Shopping', icon: '🛍️' },
-  { value: 'wellness', label: 'Wellness', icon: '🧘' },
-  { value: 'adventure', label: 'Adventure', icon: '🪂' },
-  { value: 'family', label: 'Family', icon: '👨‍👩‍👧' },
+  { value: 'photography', label: 'Photography', icon: '📸' },
 ];
 
 // Skill level options
@@ -257,16 +254,10 @@ function ActivitiesSheetInner({
             !localEnabled && 'opacity-40 pointer-events-none'
           )}
         >
-          {/* Specialist Activities */}
+          {/* Activity Categories — single flat grid */}
           <div>
-            <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-2">
-              Specialist Activities
-            </h3>
-            <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-              Get expert planning with safety constraints
-            </p>
             <div className="grid grid-cols-2 gap-2">
-              {SPECIALIST_CATEGORIES.map((option) => {
+              {ALL_CATEGORIES.map((option) => {
                 const isSelected = localCategories.includes(option.value);
                 return (
                   <button
@@ -277,52 +268,10 @@ function ActivitiesSheetInner({
                       'flex items-center gap-2 px-3 py-3 rounded-lg text-sm font-medium',
                       'transition-all duration-150 text-left',
                       isSelected
-                        // Selected: Solid Black (maximum contrast)
                         ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
-                        // Tactile: Crisp border, snap-to-black hover
-                        // Inactive: Glass Fill - visible buttons
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-600',
                           'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          // Dark: Glass substance
-                          'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white'
-                        )
-                    )}
-                  >
-                    <span>{option.icon}</span>
-                    <span>{option.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* General Categories */}
-          <div>
-            <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
-              General Categories
-            </h3>
-            <div className="grid grid-cols-2 gap-2">
-              {GENERAL_CATEGORIES.map((option) => {
-                const isSelected = localCategories.includes(option.value);
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => toggleCategory(option.value)}
-                    className={cn(
-                      'flex items-center gap-2 px-3 py-3 rounded-lg text-sm font-medium',
-                      'transition-all duration-150 text-left',
-                      isSelected
-                        // Selected: Solid Black (maximum contrast)
-                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
-                        // Tactile: Crisp border, snap-to-black hover
-                        // Inactive: Glass Fill - visible buttons
-                      : cn(
-                          'bg-white border-2 border-zinc-200 text-zinc-600',
-                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          // Dark: Glass substance
                           'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
                           'dark:hover:bg-white/10 dark:hover:text-white'
                         )

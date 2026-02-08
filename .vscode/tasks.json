@@ -3,18 +3,10 @@
     "tasks": [
         {
             "label": "Docker: Compose DB",
-            "type": "process",
-            "command": "pwsh",
-            "args": [
-                "-NoLogo",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "& \"${workspaceFolder}\\.venv\\Scripts\\Activate.ps1\"; pip install -r requirements.txt; docker compose up db --build -d; alembic upgrade head"
-            ],
+            "type": "shell",
+            "command": "source ${workspaceFolder}/backend/.venv/bin/activate && pip install -r requirements.txt && docker compose up db --build -d && alembic upgrade head",
             "options": {
-                "cwd": "${workspaceFolder}/backend",
+                "cwd": "${workspaceFolder}/backend"
             },
             "presentation": {
                 "reveal": "always",
@@ -28,18 +20,10 @@
         },
         {
             "label": "Backend: Uvicorn",
-            "type": "process",
-            "command": "pwsh",
-            "args": [
-                "-NoLogo",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "& \"${workspaceFolder}\\.venv\\Scripts\\Activate.ps1\"; uvicorn app.main:app --reload"
-            ],
+            "type": "shell",
+            "command": "source ${workspaceFolder}/backend/.venv/bin/activate && python start.py",
             "options": {
-                "cwd": "${workspaceFolder}/backend",
+                "cwd": "${workspaceFolder}/backend"
             },
             "presentation": {
                 "reveal": "always",
@@ -53,18 +37,10 @@
         },
         {
             "label": "Frontend: Next Dev",
-            "type": "process",
-            "command": "pwsh",
-            "args": [
-                "-NoLogo",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "& \"${workspaceFolder}\\.venv\\Scripts\\Activate.ps1\"; npm run dev"
-            ],
+            "type": "shell",
+            "command": "npm run dev",
             "options": {
-                "cwd": "${workspaceFolder}/frontend",
+                "cwd": "${workspaceFolder}/frontend"
             },
             "presentation": {
                 "reveal": "always",
@@ -87,16 +63,8 @@
         },
         {
             "label": "Claude: Cleanup History",
-            "type": "process",
-            "command": "pwsh",
-            "args": [
-                "-NoLogo",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}/scripts/cleanup-claude-history.ps1"
-            ],
+            "type": "shell",
+            "command": "bash ${workspaceFolder}/scripts/cleanup-claude-history.sh",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"

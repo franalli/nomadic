@@ -46,7 +46,7 @@ from app.crud_trip import (  # noqa: E402
     record_chat_message,
 )
 from app.db import _get_async_session_factory, get_async_db, get_db  # noqa: E402
-from app.debug_utils import _debug, log_llm_output, log_user_input  # noqa: E402
+from app.debug_utils import _debug, _debug_info, log_llm_output, log_user_input  # noqa: E402
 from app.graph_plan_utils import (  # noqa: E402
     check_payload_size,
     compute_today_iso,
@@ -447,10 +447,10 @@ async def lifespan(app: FastAPI):
     Pre-warms caches and compiles templates to eliminate cold-start latency.
     Validates template coverage at startup - fails fast on mismatch.
     """
-    # Configure logging for demo mode (suppress HTTP logs, warnings)
-    from app.debug_utils import _debug, configure_demo_logging
+    # Configure logging (suppress noisy loggers in non-full modes)
+    from app.debug_utils import _debug, configure_logging
 
-    configure_demo_logging()
+    configure_logging()
 
     # Log build info for cache debugging
     logger.info(
@@ -1264,22 +1264,69 @@ async def graph_plan_endpoint(
             if document_data.trip_inputs:
                 doc_inputs = document_data.trip_inputs.model_dump()
                 session_inputs = session_state.get("trip_inputs", {})
-                # Document values as baseline, session (request) values override
-                merged = {
-                    **doc_inputs,
-                    **{k: v for k, v in session_inputs.items() if v is not None},
+                # User-owned settings fields — document is SSoT (set via PATCH
+                # from frontend sheets). Session may carry stale values from
+                # previous graph runs; document always wins for these.
+                _USER_OWNED_SETTINGS = {
+                    "activity_settings",
+                    "hotel_settings",
+                    "flight_settings",
+                    "transport_settings",
+                    "booking_types",
                 }
+                # Document as baseline, session overrides for graph-owned fields only
+                merged = {**doc_inputs}
+                for k, v in session_inputs.items():
+                    if v is not None and k not in _USER_OWNED_SETTINGS:
+                        merged[k] = v
                 session_state["trip_inputs"] = normalize_trip_inputs(merged)
-                logger.debug(
-                    f"[{request_id}] Merged trip_inputs: doc.origin={doc_inputs.get('origin')}, "
-                    f"session.origin={session_inputs.get('origin')}, "
-                    f"final.origin={session_state['trip_inputs'].get('origin')}"
+                # HARD TRACE: Log doc's activity categories at merge time
+                _doc_cats = doc_inputs.get("activity_settings", {}).get("categories", [])
+                _final_cats = (
+                    session_state["trip_inputs"].get("activity_settings", {}).get("categories", [])
+                )
+                logger.info(
+                    f"[{request_id}] trip_inputs merge: "
+                    f"doc.categories={_doc_cats}, "
+                    f"final.categories={_final_cats}, "
+                    f"doc.origin={doc_inputs.get('origin')}"
                 )
     except HTTPException:
         raise  # Re-raise HTTP exceptions (like version conflict)
     except Exception as e:
         logger.warning(f"[{request_id}] Failed to load document for session: {e}")
         # Continue without document - not fatal
+
+    # ── Pass document's user-owned settings to graph state ──
+    # _restore_graph_state merges these into state.metadata["trip_inputs"],
+    # ensuring the graph sees pill selections / settings panel values
+    # even when the session carries stale trip_inputs from a prior turn.
+    if document:
+        try:
+            await db.refresh(document)
+            fresh_data = get_document_data(document)
+            if fresh_data.trip_inputs:
+                ti = fresh_data.trip_inputs
+                session_state["_doc_settings"] = {
+                    "activity_settings": ti.activity_settings.model_dump()
+                    if ti.activity_settings
+                    else {},
+                    "hotel_settings": ti.hotel_settings.model_dump() if ti.hotel_settings else {},
+                    "flight_settings": ti.flight_settings.model_dump()
+                    if ti.flight_settings
+                    else {},
+                    "transport_settings": ti.transport_settings.model_dump()
+                    if ti.transport_settings
+                    else {},
+                    "booking_types": ti.booking_types.model_dump() if ti.booking_types else {},
+                }
+                # HARD TRACE: Log what we're injecting
+                _cats = ti.activity_settings.categories if ti.activity_settings else []
+                logger.info(
+                    f"[{request_id}] _doc_settings injected: activity_settings.categories={_cats}"
+                )
+        except Exception as e:
+            logger.error(f"[{request_id}] _doc_settings injection FAILED: {e}")
 
     # Note: We intentionally do not reject relative date phrases (e.g., "next week").
     # The planner should handle them contextually using today_iso.
@@ -1307,8 +1354,7 @@ async def graph_plan_endpoint(
             metadata={"timeout_seconds": route_timeout_seconds, "session_id": session_id},
         )
         logger.error(
-            f"[{request_id}] Route timeout after {route_timeout_seconds}s "
-            f"(session_id={session_id})"
+            f"[{request_id}] Route timeout after {route_timeout_seconds}s (session_id={session_id})"
         )
         raise HTTPException(
             status_code=504,
@@ -1439,6 +1485,9 @@ async def graph_plan_endpoint(
                         tiles_dict[tile_id] = tile_data
             logger.info(f"[TILES] Persisting {len(tiles_dict)} tiles to DB (graph_plan)")
 
+            # Extract NL-extracted settings for deep-merge persistence
+            nl_extracted = updated_session_state.get("metadata", {}).get("extracted_settings")
+
             # Apply planner update
             updated_doc = await apply_planner_update(
                 db,
@@ -1454,6 +1503,7 @@ async def graph_plan_endpoint(
                 pending_strategy_topics=graph_doc.get("pending_strategy_topics"),
                 day_cards=graph_doc.get("day_cards"),
                 can_expand_to_itinerary=graph_doc.get("can_expand_to_itinerary"),
+                extracted_settings=nl_extracted,
             )
             if updated_doc:
                 new_document_version = updated_doc.version
@@ -1856,20 +1906,73 @@ async def graph_plan_stream_endpoint(
                     if document_data.trip_inputs:
                         doc_inputs = document_data.trip_inputs.model_dump()
                         session_inputs = session_state.get("trip_inputs", {})
-                        # Document values as baseline, session (request) values override
-                        merged = {
-                            **doc_inputs,
-                            **{k: v for k, v in session_inputs.items() if v is not None},
+                        # User-owned settings fields — document is SSoT (set via PATCH
+                        # from frontend sheets). Session may carry stale values from
+                        # previous graph runs; document always wins for these.
+                        _USER_OWNED_SETTINGS = {
+                            "activity_settings",
+                            "hotel_settings",
+                            "flight_settings",
+                            "transport_settings",
+                            "booking_types",
                         }
+                        # Document as baseline, session overrides for graph-owned fields only
+                        merged = {**doc_inputs}
+                        for k, v in session_inputs.items():
+                            if v is not None and k not in _USER_OWNED_SETTINGS:
+                                merged[k] = v
                         session_state["trip_inputs"] = normalize_trip_inputs(merged)
-                        logger.debug(
-                            f"[{request_id}] Merged trip_inputs: "
-                            f"doc.origin={doc_inputs.get('origin')}, "
-                            f"session.origin={session_inputs.get('origin')}, "
-                            f"final.origin={session_state['trip_inputs'].get('origin')}"
+                        # HARD TRACE: Log doc's activity categories at merge time
+                        _doc_cats = doc_inputs.get("activity_settings", {}).get("categories", [])
+                        _final_cats = (
+                            session_state["trip_inputs"]
+                            .get("activity_settings", {})
+                            .get("categories", [])
+                        )
+                        logger.info(
+                            f"[{request_id}] trip_inputs merge: "
+                            f"doc.categories={_doc_cats}, "
+                            f"final.categories={_final_cats}, "
+                            f"doc.origin={doc_inputs.get('origin')}"
                         )
             except Exception as e:
                 logger.warning(f"[{request_id}] Failed to load document for session: {e}")
+
+            # ── Pass document's user-owned settings to graph state ──
+            # _restore_graph_state merges these into state.metadata["trip_inputs"],
+            # ensuring the graph sees pill selections / settings panel values
+            # even when the session carries stale trip_inputs from a prior turn.
+            if document:
+                try:
+                    await db.refresh(document)
+                    fresh_data = get_document_data(document)
+                    if fresh_data.trip_inputs:
+                        ti = fresh_data.trip_inputs
+                        session_state["_doc_settings"] = {
+                            "activity_settings": ti.activity_settings.model_dump()
+                            if ti.activity_settings
+                            else {},
+                            "hotel_settings": ti.hotel_settings.model_dump()
+                            if ti.hotel_settings
+                            else {},
+                            "flight_settings": ti.flight_settings.model_dump()
+                            if ti.flight_settings
+                            else {},
+                            "transport_settings": ti.transport_settings.model_dump()
+                            if ti.transport_settings
+                            else {},
+                            "booking_types": ti.booking_types.model_dump()
+                            if ti.booking_types
+                            else {},
+                        }
+                        # HARD TRACE: Log what we're injecting
+                        _cats = ti.activity_settings.categories if ti.activity_settings else []
+                        logger.info(
+                            f"[{request_id}] _doc_settings injected: "
+                            f"activity_settings.categories={_cats}"
+                        )
+                except Exception as e:
+                    logger.error(f"[{request_id}] _doc_settings injection FAILED: {e}")
 
             # --- Log user input for DEBUG=full mode ---
             log_user_input(req.message, request_id)
@@ -1995,6 +2098,11 @@ async def graph_plan_stream_endpoint(
                             for s in graph_strategy_sections
                         ]
 
+                    # Extract NL-extracted settings for deep-merge persistence
+                    nl_extracted = updated_session_state.get("metadata", {}).get(
+                        "extracted_settings"
+                    )
+
                     updated_doc = await apply_planner_update(
                         db,
                         doc=document,
@@ -2009,6 +2117,7 @@ async def graph_plan_stream_endpoint(
                         pending_strategy_topics=graph_doc.get("pending_strategy_topics"),
                         day_cards=graph_doc.get("day_cards"),
                         can_expand_to_itinerary=graph_doc.get("can_expand_to_itinerary"),
+                        extracted_settings=nl_extracted,
                     )
                     if updated_doc:
                         new_document_version = updated_doc.version
@@ -2621,15 +2730,16 @@ async def fetch_tiles_for_branch(
     has_activities = bool(branch.tiles.activities)
     has_all_tiles = has_stays and has_flights and has_activities
 
-    print(
-        f"[TILES] Branch {branch_id}: stays={len(branch.tiles.stays)}, "
-        f"flights={len(branch.tiles.flights)}, activities={len(branch.tiles.activities)}"
+    _debug_info(
+        "TILES",
+        f"Branch {branch_id}: stays={len(branch.tiles.stays)}, "
+        f"flights={len(branch.tiles.flights)}, activities={len(branch.tiles.activities)}",
     )
-    print(f"[TILES] has_all_tiles={has_all_tiles}")
+    _debug_info("TILES", f"has_all_tiles={has_all_tiles}")
 
     if has_all_tiles:
         # All categories present, return current document
-        print("[TILES] All categories present, returning cached")
+        _debug_info("TILES", "All categories present, returning cached")
         return PlanDocumentResponse(
             version=doc.version,
             updated_by=doc.updated_by,
@@ -2651,8 +2761,8 @@ async def fetch_tiles_for_branch(
     primary_dest = branch.destination
     ti = doc_data.trip_inputs
 
-    print(f"[TILES] Fetching missing verticals: {verticals_to_fetch}")
-    print(f"[TILES] origin: branch={branch.origin}, trip_inputs={ti.origin}")
+    _debug_info("TILES", f"Fetching missing verticals: {verticals_to_fetch}")
+    _debug_info("TILES", f"origin: branch={branch.origin}, trip_inputs={ti.origin}")
     tiles_request = TilesSearchRequest(
         session_id=session_id,
         destination=primary_dest,
@@ -2673,9 +2783,9 @@ async def fetch_tiles_for_branch(
 
     tiles_response = search_tiles(tiles_request)
 
-    print(f"[TILES] search_tiles returned {len(tiles_response.tiles)} tiles")
+    _debug_info("TILES", f"search_tiles returned {len(tiles_response.tiles)} tiles")
     for t in tiles_response.tiles:
-        print(f"[TILES]   - {t.type}: {t.title}")
+        _debug_info("TILES", f"  - {t.type}: {t.title}")
 
     if tiles_response.tiles:
         # Add tiles to the document
@@ -3082,6 +3192,9 @@ async def expand_itinerary_endpoint(
                 )
 
                 builder = ItineraryBuilder()
+                activity_categories = trip_inputs_data.get("activity_settings", {}).get(
+                    "categories"
+                )
                 builder_input = ItineraryBuilderInput(
                     start_date=start_date,
                     end_date=end_date,
@@ -3090,6 +3203,7 @@ async def expand_itinerary_endpoint(
                     destination=trip_inputs_data.get("destination"),
                     origin=trip_inputs_data.get("origin"),
                     preferences=preferences_input,
+                    activity_categories=activity_categories,
                 )
 
                 try:
@@ -3440,6 +3554,9 @@ async def remove_specialist_endpoint(
                     return
 
                 builder = ItineraryBuilder()
+                activity_categories = trip_inputs_data.get("activity_settings", {}).get(
+                    "categories"
+                )
                 builder_input = ItineraryBuilderInput(
                     start_date=start_date,
                     end_date=end_date,
@@ -3448,6 +3565,7 @@ async def remove_specialist_endpoint(
                     destination=trip_inputs_data.get("destination"),
                     origin=trip_inputs_data.get("origin"),
                     preferences=preferences_input,
+                    activity_categories=activity_categories,
                 )
 
                 try:

@@ -2,7 +2,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowUp, Check, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -119,6 +119,37 @@ const FALLBACK_SUGGESTIONS: Record<string, string[]> = {
   origin: ['New York', 'London', 'Dubai'],
   destination: ['Tokyo', 'Paris', 'Bali'],
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat Status Config - maps plan phase to persistent status bar content
+// ─────────────────────────────────────────────────────────────────────────────
+function getChatStatusConfig(
+  planViewState: PlanViewState | undefined,
+  planState: string | undefined,
+  isGenerating: boolean,
+  destination: string | undefined,
+  dateRange: string | undefined,
+): { text: string; label: string; indicator: 'blink' | 'spin' | 'pulse' | 'check' } {
+  // S0: Setup phase — progressive prompts
+  if (!planViewState || planViewState === 'S0_BOOTSTRAP') {
+    if (!destination) return { text: 'Where to next?', label: 'Awaiting Input', indicator: 'blink' };
+    if (!dateRange) return { text: 'When would you like to go?', label: 'Set Dates', indicator: 'blink' };
+    return { text: 'Ready to build your plan', label: 'Generating Plan', indicator: 'blink' };
+  }
+
+  // Active generation / resolving
+  if (planViewState === 'S1_FRAMING' || isGenerating || planState === 'RESOLVING') {
+    return { text: 'Building your trip...', label: 'Generating', indicator: 'spin' };
+  }
+
+  // Itinerary complete
+  if (['S3_ITINERARY_READY', 'P3_FINALIZED'].includes(planViewState)) {
+    return { text: 'Itinerary complete', label: 'Ready', indicator: 'check' };
+  }
+
+  // Plan ready, refinement phase (S2, P0, P1, P2, and fallback)
+  return { text: 'Your trip is taking shape', label: 'Refine Plan', indicator: 'pulse' };
+}
 
 // Helper to generate specific error messages based on error type
 function getErrorMessage(error: Error): string {
@@ -927,12 +958,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           // Pass suggestion_clicked when user clicked a suggestion chip
           // This enables LQA suggestion echo in the backend
           suggestion_clicked: options?.suggestionClicked,
-          // CRITICAL: For regeneration triggers, pass current frontend trip_inputs
-          // This ensures backend uses the latest destination/dates, not cached state
-          // Fixes race condition where user changes destination then clicks Refresh
-          ...(isGenerateTrigger && {
-            trip_inputs: currentTripInputs ?? undefined,
-          }),
+          // CRITICAL: Always pass current frontend trip_inputs so the backend
+          // graph sees the latest settings (activity_settings, hotel_settings, etc.)
+          // Without this, session_state carries stale defaults that override document values
+          trip_inputs: currentTripInputs ?? undefined,
         };
 
         // DEBUG: Log API payload for regeneration triggers
@@ -1016,6 +1045,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               delayedLoader.reset(); // Ensure loader is hidden
               actionLoader.reset(); // Reset action loader
               setTriggerContext(null); // Clear trigger context
+
+              // Strip wrapping quotes from streamed message (LLM sometimes mirrors example formatting)
+              if (!isSilentPlanGeneration) {
+                const msgs = useChatStore.getState().messages;
+                const streamedMsg = msgs.find((m) => m.id === streamingMsgId);
+                if (streamedMsg?.content?.startsWith('"') && streamedMsg.content.endsWith('"') && streamedMsg.content.length > 2) {
+                  updateMessage(streamingMsgId, { content: streamedMsg.content.slice(1, -1) });
+                }
+              }
 
               // Parse the response - it matches GraphPlanResponse structure
               const data = response as unknown as GraphPlanResponse;
@@ -1450,64 +1488,105 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           !isDesktop && 'pb-1',
         )}
       >
-        {/* ── DESKTOP: Hero banner + collapsed header (S0 only) ── */}
-        {isDesktop && planViewState === 'S0_BOOTSTRAP' && (
-          <AnimatePresence mode="wait">
-            {isSetupHeaderCollapsed ? (
-              <MobileSetupCollapsedHeader
-                key="collapsed-header"
-                tripInputs={tripInputs}
-                dateRange={dateRange}
-                onExpand={() => {
-                  scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-              />
-            ) : (
-              <motion.div
-                key="hero-banner"
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.2, ease: 'easeOut' }}
-                className="relative -mx-4 -mt-4 mb-0 w-[calc(100%+2rem)] overflow-hidden border-b border-border/30"
-              >
-                <div
-                  className="absolute inset-0 animate-topo-drift opacity-[0.12] dark:opacity-[0.08]"
-                  style={{
-                    maskImage: 'url("/assets/contours.svg")',
-                    WebkitMaskImage: 'url("/assets/contours.svg")',
-                    maskSize: '350px',
-                    WebkitMaskSize: '350px',
-                    maskRepeat: 'repeat',
-                    WebkitMaskRepeat: 'repeat',
-                    maskPosition: '0% 0%',
-                    WebkitMaskPosition: '0% 0%',
-                    willChange: '-webkit-mask-position, mask-position',
-                  }}
+        {/* ── DESKTOP: Persistent status header (all states) ── */}
+        {isDesktop && (() => {
+          const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, dateRange);
+          return (
+            <AnimatePresence mode="wait">
+              {planViewState === 'S0_BOOTSTRAP' ? (
+                // S0: Full hero banner (collapses on scroll)
+                isSetupHeaderCollapsed ? (
+                  <MobileSetupCollapsedHeader
+                    key="collapsed-header"
+                    tripInputs={tripInputs}
+                    dateRange={dateRange}
+                    onExpand={() => {
+                      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                  />
+                ) : (
+                  <motion.div
+                    key="hero-banner"
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                    className="relative -mx-4 -mt-4 mb-0 w-[calc(100%+2rem)] overflow-hidden border-b border-border/30"
+                  >
+                    <div
+                      className="absolute inset-0 animate-topo-drift opacity-[0.12] dark:opacity-[0.08]"
+                      style={{
+                        maskImage: 'url("/assets/contours.svg")',
+                        WebkitMaskImage: 'url("/assets/contours.svg")',
+                        maskSize: '350px',
+                        WebkitMaskSize: '350px',
+                        maskRepeat: 'repeat',
+                        WebkitMaskRepeat: 'repeat',
+                        maskPosition: '0% 0%',
+                        WebkitMaskPosition: '0% 0%',
+                        willChange: '-webkit-mask-position, mask-position',
+                      }}
+                    >
+                      <div className="absolute inset-0 bg-black dark:bg-white" />
+                    </div>
+                    <div className="relative z-10 flex flex-col items-center justify-center text-center px-4 py-6">
+                      <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
+                        {status.text}
+                      </h1>
+                      <div className="mt-1.5 flex items-center gap-1.5">
+                        <span className="font-mono text-[9px] uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
+                          {status.label}
+                        </span>
+                        <div className="w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+                      </div>
+                    </div>
+                  </motion.div>
+                )
+              ) : (
+                // Post-S0: Compact glassmorphism status bar
+                <motion.div
+                  key="status-bar"
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                  className={cn(
+                    'sticky top-0 z-40',
+                    '-mx-4 -mt-4 mb-2',
+                    'w-[calc(100%+2rem)]',
+                    'h-14 px-4',
+                    'bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md',
+                    'border-b border-zinc-200 dark:border-white/5',
+                    'flex items-center',
+                    'transition-all duration-300',
+                  )}
                 >
-                  <div className="absolute inset-0 bg-black dark:bg-white" />
-                </div>
-                <div className="relative z-10 flex flex-col items-center justify-center text-center px-4 py-6">
-                  <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
-                    {!destination ? 'Where to next?' :
-                     !dateRange ? 'When would you like to go?' :
-                     !tripInputs?.adults ? 'Who\'s traveling?' :
-                     'Ready to build your plan'}
-                  </h1>
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
-                      {!destination ? 'Awaiting Input' :
-                       !dateRange ? 'Set Dates' :
-                       !tripInputs?.adults ? 'Add Travelers' :
-                       'Generating Plan'}
+                  <div className="flex items-center gap-2">
+                    {/* Status indicator */}
+                    {status.indicator === 'spin' ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />
+                    ) : status.indicator === 'check' ? (
+                      <Check className="w-3 h-3 text-emerald-500" />
+                    ) : (
+                      <div className={cn(
+                        'w-2 h-2 rounded-full bg-emerald-500',
+                        status.indicator === 'pulse' && 'animate-pulse',
+                      )} />
+                    )}
+                    {/* Status text */}
+                    <span className="text-sm font-semibold text-zinc-900 dark:text-white">
+                      {status.text}
                     </span>
-                    <div className="w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+                    {/* Label badge */}
+                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] font-bold text-zinc-500 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
+                      {status.label}
+                    </span>
                   </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          );
+        })()}
 
         {/* ── DESKTOP: Unified Chip Row (S0 only) ── */}
         {isDesktop && planViewState === 'S0_BOOTSTRAP' && !isSetupHeaderCollapsed && (
@@ -1959,6 +2038,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               onUpdateHotelSettings(settings);
             }
             toast('Stay preferences saved');
+            // Trigger plan regeneration if plan is active
+            const isActive = planViewState === 'S2_STRATEGY_READY' || planViewState === 'S3_ITINERARY_READY';
+            if (isActive) {
+              sendMessageCore(GENERATE_PLAN_TRIGGER);
+            }
           }}
           onOpenDestination={() => {
             setStaysSheetOpen(false);
@@ -1985,6 +2069,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onSaveSettings={(settings) => {
             onUpdateActivitySettings?.(settings);
             toast('Activity preferences saved');
+            // Trigger plan regeneration if plan is active
+            const isActive = planViewState === 'S2_STRATEGY_READY' || planViewState === 'S3_ITINERARY_READY';
+            if (isActive) {
+              sendMessageCore(GENERATE_PLAN_TRIGGER);
+            }
           }}
           onOpenDestination={() => {
             setActivitiesSheetOpen(false);

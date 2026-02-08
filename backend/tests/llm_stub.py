@@ -588,7 +588,7 @@ def llm_json_for_prompt(
 
         return {
             "assistant_message": (
-                "Let's plan this in a safe, step-by-step way. " "What's your skill level?"
+                "Let's plan this in a safe, step-by-step way. What's your skill level?"
             ),
             "trip_inputs": {},
             "ready_to_generate": False,
@@ -646,7 +646,7 @@ def llm_json_for_prompt(
 
         return {
             "assistant_message": (
-                " Transport preferences noted. " "Any must-haves (direct, scenic, budget)?"
+                " Transport preferences noted. Any must-haves (direct, scenic, budget)?"
             ),
             "trip_inputs": {
                 "booking_types": {"ground_transport": True},
@@ -966,8 +966,7 @@ def llm_json_for_strategy_streaming(prompt: str) -> str:
                     "Download resort trail map app",
                 ],
                 "tradeoffs_summary": (
-                    "Prioritized reliable conditions over extreme terrain "
-                    "for consistent enjoyment."
+                    "Prioritized reliable conditions over extreme terrain for consistent enjoyment."
                 ),
             }
         )
@@ -1013,7 +1012,7 @@ def llm_json_for_strategy_streaming(prompt: str) -> str:
                     "No flying within 24 hours of diving",
                 ],
                 "tradeoffs_summary": (
-                    "Chose established dive sites over remote spots " "for safety and logistics."
+                    "Chose established dive sites over remote spots for safety and logistics."
                 ),
             }
         )
@@ -1103,7 +1102,7 @@ def llm_json_for_strategy_streaming(prompt: str) -> str:
                     "Bring seasickness remedy just in case",
                 ],
                 "tradeoffs_summary": (
-                    "Chose well-known routes with reliable anchorages " "over remote exploration."
+                    "Chose well-known routes with reliable anchorages over remote exploration."
                 ),
             }
         )

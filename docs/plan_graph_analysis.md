@@ -102,7 +102,7 @@ backend/app/planner/
 │  ─────────────────────────────────────                                      │
 │  LLM-based intent classification (no regex!)                                │
 │  • Classifies: GREETING, RESET, or PLANNING                                 │
-│  • Detects: specialist_hint (diving/hiking/skiing/cycling/boating)          │
+│  • Detects: specialist_hint (diving/hiking/skiing/cycling/surfing)          │
 │  • GREETING/RESET → Static response, skip to Synthesizer                    │
 │  • EXPLORATION → Generic Q&A using Local Expert knowledge (no LLM)          │
 │  • SOFT_TRANSITION → Routes to PLANNING when dates OR activities provided   │
@@ -122,7 +122,7 @@ backend/app/planner/
 │  Returns static    │  │  Domain expert node     │  │  • Opening hours       │
 │  response with     │  │  Topics: diving, hiking │  │  • Booking windows     │
 │  suggested_replies │  │  skiing, cycling,       │  │  • Transit passes      │
-│                    │  │  boating                │  │  • Cultural tips       │
+│                    │  │  surfing                │  │  • Cultural tips       │
 │                    │  │                         │  │                        │
 │                    │  │  Returns:               │  │  Returns:              │
 │                    │  │  • Constraints          │  │  • Constraints         │
@@ -366,7 +366,7 @@ SPECIALIST_KEYWORDS = {
     "hiking": ["hike", "trek", "trail", "mountain", "summit", "alpine", ...],
     "skiing": ["ski", "snowboard", "slope", "powder", "piste", ...],
     "cycling": ["cycle", "bike", "bicycle", "mtb", "road bike", ...],
-    "boating": ["sail", "boat", "yacht", "charter", "catamaran", ...],
+    "surfing": ["surfing", "surf", "surfer", "wave riding", ...],
 }
 ```
 
@@ -431,20 +431,15 @@ Domain expert that runs BEFORE Architect calls tools. **Uses LLM-first architect
 **Implementation:** Single LLM call per specialist generates feasibility + activities + constraints.
 
 ```python
-SPECIALIST_SYSTEM_PROMPTS = {
-    "diving": """You are a PADI-certified dive master planning safe dive trips.
-CRITICAL SAFETY RULES (BLOCKING - cannot be violated):
-1. NO-FLY TIME: 24h minimum after diving before flying
-2. NO ALTITUDE: No activities above 2500m within 24h of diving...""",
+# Prompts loaded from backend/app/prompts/specialists/{topic}.txt
+# Inline SPECIALIST_SYSTEM_PROMPTS dict used as fallback only
+system_prompt = load_specialist_prompt(topic) or SPECIALIST_SYSTEM_PROMPTS.get(topic)
 
-    "hiking": """You are a certified mountain guide planning hiking expeditions.
-Focus: elevation gain, acclimatization (max 500m/day above 3000m)....""",
+# User skill level injected when available
+if skill_level:
+    system_prompt += f"\n\nUSER SKILL LEVEL: {skill_level}. ..."
 
-    "skiing": """You are a certified ski instructor planning ski trips.
-Focus: avalanche risk, skill progression, snow conditions...""",
-}
-
-async def generate_specialist_output_llm(topic, destination, trip_plan):
+async def generate_specialist_output_llm(topic, destination, trip_plan, db=None, skill_level=None):
     """Single LLM call generates feasibility + activities + constraints."""
     llm = ChatOpenAI(model="gpt-4o", temperature=0.2)
     return await llm.with_structured_output(LLMSpecialistOutput).ainvoke(...)
@@ -645,24 +640,44 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 **Output:**
 - `state.tiles["flights"]` - Flight tiles for frontend display
 - `state.tiles["hotels"]` - Hotel tiles for frontend display
-- `state.tiles["activities"]` - Activity tiles for frontend display (suppressed when niche specialists active)
+- `state.tiles["activities"]` - Activity tiles for frontend display (two-tier filtering when specialists active)
 - `state.metadata["flight_options"]` - Backwards compatibility
 
-**Activity Suppression (Demo):**
-When niche specialists (diving, hiking, skiing, cycling, boating) have curated the activity layer, logistics activities are suppressed to avoid competing with specialist-curated content. `local_expert` does NOT trigger suppression since it runs for all trips.
+**Two-Tier Activity Suppression:**
+
+Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** categories (sailing, cooking, yoga, temples, nightlife, beach, shopping, photography) are lightweight — they bias tile selection without triggering specialists.
+
+When niche specialists are active, suppression is tier-aware:
 
 ```python
-NICHE_SPECIALISTS = {"diving", "hiking", "skiing", "cycling", "boating"}
+# Canonical constant — single source of truth
+TIER1_SPECIALISTS = frozenset({"diving", "hiking", "skiing", "cycling", "surfing"})
+NICHE_SPECIALISTS = TIER1_SPECIALISTS
+TIER1_CATEGORIES = TIER1_SPECIALISTS
+
 executed = state.metadata.get("executed_strategy_topics", [])
 has_niche_specialist = any(t in NICHE_SPECIALISTS for t in executed)
+
 if has_niche_specialist:
-    state.tiles["activities"] = []  # Specialists own the activity layer
+    selected_cats = set(trip_inputs.get("activity_settings", {}).get("categories", []))
+    tier2_cats = selected_cats - TIER1_CATEGORIES
+
+    if not tier2_cats:
+        # Pure Tier 1 — specialists own the activity layer
+        state.tiles["activities"] = []
+    else:
+        # Mixed — keep ONLY tiles matching Tier 2 selections
+        matching = [t for t in activity_dicts if _tile_matches_categories(t, tier2_cats)]
+        state.tiles["activities"] = matching
 ```
 
-| Trip Type | `executed_strategy_topics` | Activities |
-|-----------|---------------------------|------------|
-| "diving + hiking in Bali" | `["local_expert", "diving", "hiking"]` | **Suppressed** |
-| "trip to Rome" | `["local_expert"]` | **Shown** |
+Tile matching uses `tags` (primary, reliable for curated tiles) with keyword fallback (title/subtitle text search for mock tiles).
+
+| Trip Type | Categories | `executed_strategy_topics` | Activities |
+|-----------|-----------|---------------------------|------------|
+| "diving in Bali" | `["diving"]` | `["local_expert", "diving"]` | **Suppressed** (pure Tier 1) |
+| "diving + cooking in Bali" | `["diving", "cooking"]` | `["local_expert", "diving"]` | **Cooking tiles kept** (mixed) |
+| "trip to Rome" | `["cooking"]` | `["local_expert"]` | **All shown** (no specialist) |
 
 ### ConstraintGuard
 
@@ -737,9 +752,14 @@ Priority cascade:
    - P0: destination_choice / date_contextual / date_prompt
    - P1: "Build my itinerary"
    - P3: specialist cross-sell (from `SPECIALIST_PATTERNS` minus `executed_strategy_topics`)
+   - P4: plan progression — preference refinement chips at S2+ (e.g., "5-star hotels only", "Direct flights only", activity exploration). Generated by `_build_plan_progression_suggestions()` based on which settings are NOT yet configured.
    - P5: "Set my departure city"
    - P6: question suggestions (from `SUGGESTABLE_QUESTION_TYPES`)
    - P9: "I want to change my destination"
+
+At S2+ (active plan with dates), plan progression chips (P4) outprioritize exploration questions (P6),
+ensuring chips suggest plan actions rather than exploration. Question chips remain available as
+backfill and are actionable post-planning (routed through the `question_answer` short-circuit path).
 
 **Logic Guard Voice:** When a blocking route violation is detected (`category="route"`), the Synthesizer shifts to **"Architectural Safety Mode"**. It refuses to generate enthusiasm or itinerary content and instead provides a firm, corrective statement (e.g., "I cannot generate a route where Origin and Destination are identical.").
 
@@ -842,7 +862,7 @@ Each specialist type has its own constraint generator:
 - `advanced_terrain` (info): Applied when `intensity == "challenging"`
 
 **Surfing Constraints:**
-- `tide_timing` (info): Applied to all boating activities
+- `tide_timing` (info): Applied to all surfing activities
 
 **Hotel Constraints:**
 - `proximity_optimized` (success): Applied to check-in blocks, lists active specialists (e.g., "Proximity to diving, hiking activities")
@@ -856,7 +876,7 @@ Each specialist type has its own constraint generator:
 | `early_start_recommended` | info | hiking | Morning departure recommended |
 | `avalanche_awareness` | warning | skiing | Off-piste/backcountry safety |
 | `advanced_terrain` | info | skiing | Black diamond skill level |
-| `tide_timing` | info | boating | Check swell/tide forecast |
+| `tide_timing` | info | surfing | Check swell/tide forecast |
 | `proximity_optimized` | success | hotel | Location optimized for activities |
 
 **Frontend Rendering:** See `docs/ux_unified_architecture.md` Section I.A.2 "Inline Constraints Display"
@@ -1104,7 +1124,12 @@ class GraphState(BaseModel):
 
 ### TripPlan (SSoT)
 
-Single Source of Truth for the trip.
+Single Source of Truth for the trip's **core dimensions** (who, where, when, budget).
+
+Settings fields (`activity_settings`, `hotel_settings`, `flight_settings`,
+`transport_settings`, `booking_types`) exist on the dataclass as defaults but are
+**not emitted** by `_trip_plan_to_trip_inputs()` — the document is the SSoT for
+user-owned settings. See [Settings Ownership & Document Merge](#settings-ownership--document-merge-v33).
 
 ```python
 class TripPlan(BaseModel):
@@ -1273,7 +1298,7 @@ Questions are classified into types that map to Local Expert knowledge sections:
 | `transport` | taxi, uber, scooter | `transportation` |
 | `cultural` | wear, dress, clothes | `cultural_norms` |
 | `activities` | must see, must do | `things_to_do` |
-| `accommodation` | stay, hotel, neighborhood | `neighborhoods` |
+| `accommodation` | stay, hotel, neighborhood, lodging, resort, hostel, airbnb, accommodation | `neighborhoods` |
 | `scams` | rip off, tourist trap | `scams_traps` |
 | `packing` | bring, luggage, adapter | `packing` |
 | `connectivity` | sim, wifi, internet | `connectivity` |
@@ -1305,16 +1330,42 @@ ACTIVITY_INDICATORS = [
 | Intent | Condition | Behavior |
 |--------|-----------|----------|
 | `ready` | Explicit planning signal OR (date AND activity) | Continue to PLANNING flow |
-| `soft_transition` | Has date OR activity | **Routes to PLANNING** (dates/activities = actionable input) |
+| `soft_transition` | Has date OR activity | **Routes to PLANNING** (dates/activities = actionable input). Detects specialists from both message text AND `activity_settings.categories` (UI pill selections) |
 | `exploring` | Generic question, no planning signals | Comprehensive answer + "What else?" |
+| `exploring` (post-plan) | Question with active plan (S2/S3) | Section-specific answer via `question_answer` short-circuit |
+
+### Post-Planning Question Routing
+
+When `planning_intent == "exploring"` and the plan is active (`plan_view_state` in S2/S3), the router
+classifies the question type and returns section-specific content instead of canned exploration responses:
+
+- **Recognized question** (e.g., accommodation, weather): `generate_comprehensive_answer` produces a
+  section-specific answer from `LOCAL_EXPERT_KNOWLEDGE`. Sets `short_circuit_type = "question_answer"`.
+  No exploration ending is appended. Synthesizer uses the pre-computed answer and generates fresh
+  state-aware suggestion chips.
+- **Unrecognized question** (`qtype == "general"`): Falls through to LLM (exploration_mode disabled).
+
+This avoids routing through the full graph (local_expert cache would no-op, `route_after_specialist`
+would trigger unnecessary logistics).
 
 ### Progressive Nudging
 
+**State-aware ending override** (checked first):
+| Condition | Response Ending |
+|-----------|-----------------|
+| Origin + dest set, no dates | "When are you thinking of going?" |
+| Dest set, no dates | "When would you like to go?" |
+
+**Fallback (question-count based):**
 | Question # | Response Ending |
 |-----------|-----------------|
 | 1 | "What else would you like to know?" |
 | 2 | "When are you thinking of going?" (soft nudge) |
 | 3+ | "I can help plan your trip when you're ready..." |
+
+The state-aware override ensures the exploration ending matches what the suggestion chips
+are showing (e.g., date chips), rather than asking a generic "what else?" when the next
+logical step is clearly setting dates.
 
 ### Conversation State Tracking
 
@@ -1322,7 +1373,7 @@ ACTIVITY_INDICATORS = [
 state.metadata["exploration_mode"] = True
 state.metadata["generic_question_count"] = 2
 state.metadata["last_destination_context"] = "Bali"
-state.metadata["short_circuit_type"] = "exploration"  # or "soft_transition"
+state.metadata["short_circuit_type"] = "exploration"  # or "soft_transition" or "question_answer"
 ```
 
 ### Example Flow
@@ -1341,6 +1392,18 @@ User: "What's the weather like?"
 User: "Maybe February and we want to dive"
 → Intent: ready (has date AND activity)
 → Continues to normal PLANNING flow with specialists
+```
+
+**Post-Planning Example:**
+```
+[Plan is active — S2_STRATEGY_READY]
+
+User: "What about lodging options?"
+→ Intent: exploring, destination: Bali, has_active_plan: True
+→ classify_question_type → ("accommodation", "neighborhoods")
+→ generate_comprehensive_answer → neighborhoods content (areas, vibes, avoid)
+→ short_circuit_type = "question_answer"
+→ Synthesizer uses pre-computed answer, generates fresh chips
 ```
 
 ---
@@ -1376,7 +1439,7 @@ def route_after_router(state: GraphState) -> Literal["specialist", "local_expert
     if state.metadata.get("origin_only_logistics"):
         return "logistics"
 
-    # GREETING/RESET short-circuits skip to synthesizer
+    # Short-circuits (greeting, reset, exploration, question_answer) skip to synthesizer
     if state.metadata.get("short_circuit_response"):
         return "synthesizer"
 
@@ -2001,26 +2064,81 @@ try {
 }
 ```
 
-### Origin Sync for Flight Fetching (v3.3)
+### Settings Ownership & Document Merge (v3.3)
 
-The origin field set via the settings panel (PATCH `/api/document`) must be properly synced to the graph state when users trigger chat or regeneration. Without proper sync, flights won't be fetched even when origin is set.
+User-configurable settings (`activity_settings`, `hotel_settings`, `flight_settings`,
+`transport_settings`, `booking_types`) follow a strict ownership model to prevent
+stale graph state from overwriting user intent.
 
-**Root Cause (Fixed):**
-The chat API was merging request `trip_inputs` BEFORE loading the document, causing document-stored fields (like origin) to be lost when the request had partial `trip_inputs`.
+**Ownership Rule:** The document (written by `PATCH /api/document`) is the SSoT for
+these fields. The graph session must never overwrite them with defaults.
 
-**Fix Pattern:**
+**Three-layer defense:**
+
+| Layer | File | What it does |
+|-------|------|--------------|
+| Emission | `plan_graph.py` `_trip_plan_to_trip_inputs()` | Settings fields **omitted** from TripPlan conversion — they live on the document, not `TripPlan` |
+| Restoration | `plan_graph.py` `_format_result()` | Merges settings from `state.metadata["trip_inputs"]` (populated by `_doc_settings`) into output `trip_inputs` so the frontend receives current values |
+| Input merge | `main.py` both chat endpoints | `_USER_OWNED_SETTINGS` guard — document baseline wins for settings fields |
+| Output persist | `crud_document.py` `apply_planner_update()` | Strips settings from graph output before `merge_trip_inputs()` |
+
+**How the four layers work together:**
+`_trip_plan_to_trip_inputs()` emits only scalar fields (destination, dates, etc.)
+because settings live on the document, not TripPlan. The `_format_result` restoration
+layer then merges user-owned settings from `state.metadata["trip_inputs"]` (which was
+populated from `_doc_settings` at graph startup). This ensures the response carries
+current settings back to the frontend. The input merge guard (layer 3) and persist
+strip (layer 4) provide defense-in-depth on the document side.
+
+**Input merge pattern (both endpoints in `main.py`):**
 ```python
-# In main.py chat endpoints (both regular and streaming)
-# Always use document trip_inputs as BASELINE, then merge request on top
+_USER_OWNED_SETTINGS = {
+    "activity_settings", "hotel_settings", "flight_settings",
+    "transport_settings", "booking_types",
+}
 if document_data.trip_inputs:
     doc_inputs = document_data.trip_inputs.model_dump()
     session_inputs = session_state.get("trip_inputs", {})
-    # Document values as baseline, session (request) values override
-    merged = {**doc_inputs, **{k: v for k, v in session_inputs.items() if v is not None}}
+    # Document as baseline, session overrides for graph-owned fields only
+    merged = {**doc_inputs}
+    for k, v in session_inputs.items():
+        if v is not None and k not in _USER_OWNED_SETTINGS:
+            merged[k] = v
     session_state["trip_inputs"] = normalize_trip_inputs(merged)
 ```
 
-**Defensive Check in IntentRouter:**
+**Output persist strip (`apply_planner_update`):**
+```python
+# Strip user-owned settings from graph output before merge
+if trip_inputs:
+    cleaned_inputs = _trip_inputs_to_dict(trip_inputs)
+    for field in _USER_OWNED_SETTINGS:
+        cleaned_inputs.pop(field, None)
+data.trip_inputs = merge_trip_inputs(data.trip_inputs, cleaned_inputs, ...)
+```
+
+**NL-Extracted Settings Bypass:**
+When the router detects settings from natural language (e.g., "5-star hotels"),
+these are stored in `state.metadata["extracted_settings"]` and deep-merged via a
+separate path in `apply_planner_update(extracted_settings=...)`, bypassing the
+user-owned field strip. Supported keys: `hotel_min_stars`, `flight_direct_only`,
+`flight_cabin_class`, `activity_skill_level`, `flights_toggle`.
+
+**Concurrent PATCH Safety (v3.4):**
+The session carries stale `trip_inputs` from the previous graph run — user-owned
+fields set via PATCH (pill selections, settings sheets) are not reflected in the
+session. Two additional guards fix this:
+
+| Guard | Location | Mechanism |
+|-------|----------|-----------|
+| `_doc_settings` injection | `main.py` both endpoints → `plan_graph.py` `_restore_graph_state()` | `db.refresh(document)`, extract user-owned fields into `session_state["_doc_settings"]`, merge them into `state.metadata["trip_inputs"]` inside `_restore_graph_state` so the router sees pill-selected specialists |
+| Pre-persist refresh | `crud_document.py` `apply_planner_update()` / `apply_planner_update_sync()` | `db.refresh(doc)` before `get_document_data(doc)` so the base document reflects any PATCHes that committed during the graph run |
+
+Combined with the three-layer defense above, this ensures:
+1. The graph **sees** pill-selected categories for specialist routing (Part 1)
+2. The graph **cannot erase** pill-selected categories on output (Part 2)
+
+**Defensive Check in IntentRouter (origin sync):**
 ```python
 # If origin mismatch detected at graph entry, sync from trip_inputs
 trip_inputs = state.metadata.get("trip_inputs", {})
@@ -2028,14 +2146,6 @@ trip_inputs_origin = trip_inputs.get("origin")
 if trip_inputs_origin and not state.trip_plan.origin:
     logger.warning(f"ORIGIN MISMATCH: Syncing from trip_inputs")
     state.trip_plan.origin = trip_inputs_origin
-```
-
-**Diagnostic Logging (LogisticsNode):**
-```
-[LOGISTICS] trip_plan.origin='Rome'
-[LOGISTICS] metadata.trip_inputs.origin='Rome'
-[LOGISTICS] flights_enabled=True
-[LOGISTICS] ✈️ Fetching flights: Rome → London
 ```
 
 ### Performance Impact
@@ -2560,8 +2670,9 @@ return tile_idx <= user_idx
 ```
 
 **Implementation Files:**
-- `backend/app/tile_service/curated_provider.py::search()` - Budget, stars, skill filtering
+- `backend/app/tile_service/curated_provider.py::search()` - Budget, stars, skill filtering at provider level
 - `backend/app/tile_service/amadeus_provider.py::_search_async()` - Budget filtering post-API
+- `backend/app/planner/nodes/logistics_node.py` - Post-fetch hotel star filter (applies to all providers including mock/cached tiles)
 
 ---
 

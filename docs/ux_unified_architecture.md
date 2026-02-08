@@ -497,8 +497,15 @@ if (hasItinerary && structureChanged && !isSilentPlanGeneration) {
 **FAB Suppression for Chat Changes:**
 Chat-originated changes update `trip_inputs` (e.g., origin from "from rome"). The chat auto-regeneration flow handles these changes automatically without manual user intervention.
 
+**trip_inputs in POST body:**
+Every chat message includes `trip_inputs` in the POST body (not just generate triggers). The backend
+hydrates session state from the document before graph execution, using the document as SSoT for
+user-owned settings (`activity_settings`, `hotel_settings`, `flight_settings`, `transport_settings`,
+`booking_types`). Session values cannot override these fields.
+See `plan_graph_analysis.md` > Settings Ownership & Document Merge.
+
 **Files:**
-- `ChatPanel.tsx` - Calls `onChatTripInputsUpdated` in SSE `onComplete`
+- `ChatPanel.tsx` - Calls `onChatTripInputsUpdated` in SSE `onComplete`; always sends `trip_inputs` in POST
 - `NomadicLanding.tsx` - Handles regeneration via `proceedWithItineraryGeneration`
 
 #### Chip/Settings Regeneration
@@ -511,6 +518,13 @@ Chat-originated changes update `trip_inputs` (e.g., origin from "from rome"). Th
 3. GENERATE_PLAN_TRIGGER sent via chat system
 4. Backend forces tile cache clear → fetches fresh tiles
 5. New itinerary generates automatically
+
+**Preference sheet auto-regeneration:**
+When the user saves activity or hotel preferences via the Activities/Stays sheets while a plan is active
+(S2/S3), the sheet save handler:
+1. Calls `documentStore.updateTripInputs()` immediately (bypasses 300ms debounce)
+2. Sends `GENERATE_PLAN_TRIGGER` to re-run the graph with updated preferences
+3. Backend detects constraint hash change → specialists re-run with new settings
 
 **State tracking:**
 - `documentStore.updateTripInputs()` - Sync local state write (before validation)
@@ -660,7 +674,7 @@ When there are only 1-2 selections, the bar renders as a slim one-line badge to 
 
 ### Specialist Filtering (Domain Mode)
 
-When domain specialists (diving, hiking, skiing, surfing, etc.) are active, both SelectionsBar and BookingSection filter activities to show only specialist-relevant items. Hotels always pass through.
+When Tier 1 domain specialists (diving, hiking, skiing, cycling, surfing) are active, both SelectionsBar and BookingSection filter activities to show only specialist-relevant items. Hotels always pass through. Tier 2 categories (sailing, cooking, yoga, temples, nightlife, beach, shopping, photography) do not trigger specialists — they bias tile selection via tag-based filtering in LogisticsNode.
 
 **Keyword Mappings:**
 ```typescript
@@ -695,20 +709,32 @@ function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boole
 ```
 
 **Where Applied:**
-- **Backend (Source Suppression):** `LogisticsNode` suppresses activity tiles when niche specialists (diving, hiking, skiing, cycling, boating) are active. `local_expert` does NOT trigger suppression.
+- **Backend (Two-Tier Suppression):** `LogisticsNode` applies tier-aware filtering when niche specialists (diving, hiking, skiing, cycling, surfing) are active. Pure Tier 1 → suppress all generic tiles. Mixed Tier 1+2 → keep only tiles matching Tier 2 selections. `local_expert` does NOT trigger suppression.
 - `SelectionsBar.tsx`: Filters hearted activities by specialist before grouping
 - `BookingSection.tsx`: Filters activity tiles in `tilesByCategory` when specialists are active
 
-**Backend Suppression Logic:**
+**Backend Two-Tier Suppression Logic:**
 ```python
 # logistics_node.py - after fetching activities
-NICHE_SPECIALISTS = {"diving", "hiking", "skiing", "cycling", "boating"}
+NICHE_SPECIALISTS = TIER1_SPECIALISTS  # frozenset({"diving", "hiking", "skiing", "cycling", "surfing"})
+TIER1_CATEGORIES = TIER1_SPECIALISTS
+
 executed = state.metadata.get("executed_strategy_topics", [])
-if any(t in NICHE_SPECIALISTS for t in executed):
-    state.tiles["activities"] = []  # Specialists own the activity layer
+has_niche_specialist = any(t in NICHE_SPECIALISTS for t in executed)
+
+if has_niche_specialist:
+    selected_cats = set(trip_inputs.get("activity_settings", {}).get("categories", []))
+    tier2_cats = selected_cats - TIER1_CATEGORIES
+
+    if not tier2_cats:
+        state.tiles["activities"] = []  # Pure Tier 1: specialists own the activity layer
+    else:
+        # Mixed: keep ONLY tiles matching Tier 2 selections (via tags or keyword fallback)
+        matching = [t for t in activity_dicts if _tile_matches_categories(t, tier2_cats)]
+        state.tiles["activities"] = matching
 ```
 
-**Rationale:** When a diving specialist is active, showing "Night market" or "Sunrise ridge" in the tile browser or SelectionsBar creates expectation mismatch. Users heart generic activities but the timeline shows diving content. Backend suppression at the source ensures the "Activities" tab chip disappears entirely (count = 0), providing a clean demo story: *"Specialists plan your activities. You pick flights and hotels."*
+**Rationale:** When a diving specialist is active, showing "Night market" or "Sunrise ridge" creates expectation mismatch. But if a user selects both diving AND cooking, cooking tiles (matched via `tags` on curated tiles or keyword fallback on mock tiles) should survive — only the Tier 1 categories are handled by specialists. This two-tier approach gives specialists ownership of their domain while preserving Tier 2 experience tiles.
 
 ### Empty Specialist Card Filtering
 
@@ -813,6 +839,7 @@ Icons are selected based on constraint priority/severity, not validation state:
 
 **Implementation:**
 ```tsx
+// Frontend still uses 'boating' key — pending frontend migration to 'surfing'
 const NICHE_SPECIALISTS = ['diving', 'hiking', 'skiing', 'cycling', 'boating'];
 
 const engineConstraints = fullModeSections
@@ -940,13 +967,13 @@ The backend emits **planning phases** (not UI modes) based on data density:
 
 ### Planning Phase Progression
 
-| Phase | Data State | UI Shows |
-|-------|-----------|----------|
-| `P0_MINIMAL` | Destination only, no specialists | Hero image, empty timeline |
-| `P1_ENRICHED` | Specialists run, strategy sections present | Strategy cards, ghost timeline |
-| `P2_LOGISTICS` | Tiles fetched, suggestions available | Tile browser in Overview tab |
-| `P2.5_PREFERENCE` | User has hearted tiles (optional) | Preferred tiles sorted first |
-| `P3_FINALIZED` | Itinerary validated, ready to book | Complete itinerary, "Proceed to Booking" |
+| Phase | Data State | UI Shows | Chat Status Header |
+|-------|-----------|----------|--------------------|
+| `P0_MINIMAL` | Destination only, no specialists | Hero image, empty timeline | "Your trip is taking shape" · REFINE PLAN |
+| `P1_ENRICHED` | Specialists run, strategy sections present | Strategy cards, ghost timeline | "Your trip is taking shape" · REFINE PLAN |
+| `P2_LOGISTICS` | Tiles fetched, suggestions available | Tile browser in Overview tab | "Your trip is taking shape" · REFINE PLAN |
+| `P2.5_PREFERENCE` | User has hearted tiles (optional) | Preferred tiles sorted first | "Your trip is taking shape" · REFINE PLAN |
+| `P3_FINALIZED` | Itinerary validated, ready to book | Complete itinerary, "Proceed to Booking" | "Itinerary complete" · READY |
 
 ### Legacy Mapping (Coexistence)
 
@@ -1112,7 +1139,7 @@ Each activity block shows a 4px colored left-border indicating its specialist so
 | `hiking` | Forest Green | `#10B981` |
 | `skiing` | Snow Blue | `#3B82F6` |
 | `cycling` | Lime | `#84CC16` |
-| `boating` | Indigo | `#6366F1` |
+| `surfing` | Indigo | `#6366F1` |
 
 **Visual Treatment:**
 - 4px colored left-border on each block
@@ -1288,9 +1315,14 @@ automatically generates the corresponding chip.
 | No destination | "I want a beach vacation", "mountain adventure", "city break" |
 | Has destination, no dates | "Next week", "Next month", "I'm flexible" |
 | Has destination, month detected | "{Month} 1-8", "{Month} 10-17", "I'm flexible" |
-| Has destination + dates | "Build my itinerary", specialist cross-sell, question |
-| After specialist ran | Cross-sell other specialists, question chips |
+| S2+ (active plan, dates set) | "5-star hotels only", "Direct flights only", "What are must-do activities?" |
+| After specialist ran | Cross-sell other specialists, plan progression, question chips |
 | Blocking violation | `[suggested_action]`, "Change dates", "Change destination" |
+
+**S2+ Plan Progression:** Once dates are set, chips shift from exploration questions to plan-refinement actions.
+`_build_plan_progression_suggestions()` checks which settings are unconfigured (hotel stars, flight preferences,
+activity categories) and generates corresponding chips at priority 4 — above exploration questions (P6) but below
+specialist cross-sell (P3). As preferences are set, those chips are removed and exploration questions backfill.
 
 ### Soft Transition → Planning (Priority Rule)
 
@@ -1570,7 +1602,9 @@ plan_documents.document (JSONB)
 │   ├── children: int                       # 0
 │   ├── requires_assistance: bool           # false
 │   ├── budget: float                       # 5000
-│   └── currency: string                    # "USD"
+│   ├── currency: string                    # "USD"
+│   ├── hotel_settings: HotelSettings       # { min_stars, amenities, ... }
+│   └── activity_settings: ActivitySettings # { categories, skill_level }
 ├── branches: List[DocumentBranch]          # ✅ PERSISTED
 │   └── [branch]
 │       ├── id: string                      # UUID
@@ -1674,7 +1708,7 @@ useSessionHydration() runs
 | `POST /api/graph_plan` | `apply_planner_update()` | Non-streaming chat | All |
 | `POST /api/graph_plan/stream` | `apply_planner_update()` | Streaming chat | All |
 | `POST /api/expand-itinerary/stream` | `apply_planner_update()` | Build Itinerary CTA | `day_cards`, `plan_view_state` |
-| `PATCH /api/document` | `apply_user_patch()` | Tile selection | `branches.selections` |
+| `PATCH /api/document` | `apply_user_patch()` | Tile selection, settings sheets | `branches.selections`, `trip_inputs.*_settings` |
 
 ### Implementation Files
 
@@ -1764,9 +1798,10 @@ export function getNextAction(
 
 1. **Right Panel Never Empty:** After first user message, always show *something* (hero, cards, or full plan).
 2. **No View Swapping:** Single renderer adapts; don't mount/unmount entire view components.
-3. **Backend is SSoT:** `plan_view_state` from backend determines rendering mode.
-4. **Coordinates Flow:** `[lng, lat]` format preserved from specialist → strategy_sections → DayBlock.
-5. **Dates Gate Plan Navigation:** The Plan tab MUST be locked until `start_date` is set. Strategy content alone does NOT unlock Plan.
+3. **No UI Chrome Removal:** Elements that appear during setup (status header, chip rows) must **transform through states**, not disappear. Layout shift breaks spatial memory. See `getChatStatusConfig` in `ChatPanel.tsx`.
+4. **Backend is SSoT:** `plan_view_state` from backend determines rendering mode.
+5. **Coordinates Flow:** `[lng, lat]` format preserved from specialist → strategy_sections → DayBlock.
+6. **Dates Gate Plan Navigation:** The Plan tab MUST be locked until `start_date` is set. Strategy content alone does NOT unlock Plan.
 
 ---
 
@@ -3132,7 +3167,17 @@ interface PlanHeaderProps {
 
 **File:** `components/plan/UnifiedChipRow.tsx`
 
-All chips (destination, origin, dates, travelers, budget, flights, stays, activities) respect the mode prop.
+Three-row semantic layout for trip inputs:
+
+```
+┌──────────────────────────────────────────────────┐
+│ ROW 1: [ Destination ] [ Origin ] [ Dates ]      │  ← Trip params (h-8 desktop, h-10 mobile)
+│ ROW 2: [ Travelers ] [ Budget (opt) ]             │  ← Travelers   (h-8 desktop, h-10 mobile)
+│ ROW 3: [ Flights ] [ Stays ] [ Activities ]       │  ← Booking types (h-9 desktop, h-11 mobile)
+└──────────────────────────────────────────────────┘
+```
+
+All chips respect the mode prop.
 
 ```typescript
 interface UnifiedChipRowProps {

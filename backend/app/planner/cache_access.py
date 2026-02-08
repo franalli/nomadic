@@ -89,7 +89,7 @@ def get_cache_handle(name: CacheName) -> Optional[CacheHandle]:
     """
     if not _initialized:
         raise RuntimeError(
-            f"Cache '{name}' accessed before initialization. " "Call init_cache_handles() first."
+            f"Cache '{name}' accessed before initialization. Call init_cache_handles() first."
         )
     return _cache_handles.get(name)
 

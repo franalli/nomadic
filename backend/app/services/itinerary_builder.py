@@ -414,6 +414,7 @@ class ItineraryBuilderInput:
     destination: Optional[str] = None
     origin: Optional[str] = None
     preferences: Optional[PreferenceOverrideInput] = None  # User heart preferences
+    activity_categories: Optional[List[str]] = None  # User-selected categories from pills
 
 
 # =============================================================================
@@ -616,7 +617,14 @@ class ItineraryBuilder:
             days = self._distribute_activities(days, activities)
 
             # Phase 5.5: Handle empty days (add FreeDay placeholders)
-            days = self._handle_empty_days(days, input_data.tiles)
+            # Compute Tier 2 categories: user selections minus scheduled specialists
+            scheduled_types = set(activities.keys())
+            tier2_cats = [
+                c
+                for c in (input_data.activity_categories or [])
+                if c not in scheduled_types and c not in ("general", "local_expert")
+            ]
+            days = self._handle_empty_days(days, input_data.tiles, tier2_cats)
 
             # Phase 5.25: Populate free days with user-preferred activities
             preferred_acts = self.preferences.preferred_activity_ids if self.preferences else "None"
@@ -876,42 +884,6 @@ class ItineraryBuilder:
                 f"FOUND (rule={altitude_constraint.rule})" if altitude_constraint else "NOT FOUND"
             )
             _debug(f"[ItineraryBuilder] no_altitude_after_dive constraint: {alt_msg}")
-
-            # Layer 2 defense: Only apply altitude buffer for HIGH-ALTITUDE destinations
-            # Low-altitude destinations (Bali, Caribbean, etc.) don't need this buffer
-            if altitude_constraint:
-                HIGH_ALTITUDE_DESTINATIONS = {
-                    "nepal",
-                    "everest",
-                    "annapurna",
-                    "ladakh",
-                    "leh",
-                    "cusco",
-                    "peru",
-                    "machu picchu",
-                    "bolivia",
-                    "la paz",
-                    "kilimanjaro",
-                    "tanzania",
-                    "mt kenya",
-                    "switzerland",
-                    "chamonix",
-                    "mont blanc",
-                    "zermatt",
-                    "patagonia",
-                    "aconcagua",
-                    "colorado",
-                    "tibet",
-                }
-                dest_lower = (self.destination or "").lower()
-                is_high_altitude = any(kw in dest_lower for kw in HIGH_ALTITUDE_DESTINATIONS)
-
-                if not is_high_altitude:
-                    _debug(
-                        f"[ItineraryBuilder] Skipping altitude buffer - "
-                        f"low-altitude destination: {self.destination}"
-                    )
-                    altitude_constraint = None  # Disable for this trip
 
             if altitude_constraint:
                 # Need additional buffer day between diving and high-altitude activities
@@ -1456,12 +1428,14 @@ class ItineraryBuilder:
         self,
         days: List[DayCardOutput],
         tiles: Dict[str, Any],
+        tier2_categories: Optional[List[str]] = None,
     ) -> List[DayCardOutput]:
         """
         Phase 5.5: Add FreeDay placeholders for days without activities.
 
         For each day (excluding arrival/departure) that has no activity blocks,
         insert a free_day block so the timeline never appears empty.
+        When Tier 2 categories are selected, labels free days with those categories.
         """
         # Count available activity tiles for reference in the placeholder
         activity_count = sum(
@@ -1469,6 +1443,11 @@ class ItineraryBuilder:
             for tile in tiles.values()
             if isinstance(tile, dict) and tile.get("type") == "activity"
         )
+
+        # Build Tier 2 label if user selected non-specialist categories
+        tier2_label = None
+        if tier2_categories:
+            tier2_label = " & ".join(c.title() for c in tier2_categories)
 
         for i, day in enumerate(days):
             # Skip arrival day (first) and departure day (last)
@@ -1483,12 +1462,20 @@ class ItineraryBuilder:
             )
 
             if not has_activity:
+                # Label with Tier 2 categories if available
+                if tier2_label:
+                    summary = f"{tier2_label} Day - explore at your own pace"
+                    day_label = f"{tier2_label} Day"
+                else:
+                    summary = "Free Day - explore at your own pace"
+                    day_label = "Free Day"
+
                 # Create FreeDay placeholder block
                 free_day_block = DayBlockOutput(
                     id=f"free_day_{day.day_number}",
                     period="morning",
                     activity_type="free_day",
-                    summary="Free Day - explore at your own pace",
+                    summary=summary,
                     is_buffer=False,
                     specialist_type=None,
                     intensity="light",
@@ -1501,7 +1488,7 @@ class ItineraryBuilder:
 
                 # Update day label if generic
                 if day.label.startswith("Day "):
-                    day.label = "Free Day"
+                    day.label = day_label
 
         return days
 
@@ -1825,7 +1812,7 @@ class ItineraryBuilder:
                 specialist = (block.specialist_type or "").lower()
                 is_diving = "div" in activity_type or specialist == "diving"
                 _debug(
-                    f"[ItineraryBuilder] 🏷️ Day {day_idx+1} block: "
+                    f"[ItineraryBuilder] 🏷️ Day {day_idx + 1} block: "
                     f"activity_type='{activity_type}', specialist='{specialist}', "
                     f"is_diving={is_diving}, is_buffer={block.is_buffer}"
                 )
@@ -1920,7 +1907,7 @@ class ItineraryBuilder:
                                 "icon": "🏔️",
                                 "title": "Avalanche Terrain",
                                 "description": (
-                                    "Check avalanche bulletin - " "guide + safety gear required"
+                                    "Check avalanche bulletin - guide + safety gear required"
                                 ),
                             }
                         )
@@ -2102,9 +2089,11 @@ class ItineraryBuilder:
         """Generate resolution options for conflicts."""
         resolutions = []
 
-        # Check if extending trip would help
-        has_insufficient_days = any(c.type == "insufficient_days" for c in conflicts)
-        if has_insufficient_days:
+        # Check if extending trip would help (insufficient days OR constraint clash)
+        needs_more_days = any(
+            c.type in ("insufficient_days", "constraint_clash") for c in conflicts
+        )
+        if needs_more_days:
             resolutions.append(
                 Resolution(
                     action="extend_trip",

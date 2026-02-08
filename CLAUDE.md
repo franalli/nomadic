@@ -52,7 +52,7 @@ _For deep details, see Governance section above._
 0. **Keep Solutions Simple** - DO NOT over-engineer anything, keep solutions light and simple
 1. **TripPlan is the SSoT** - Single Source of Truth for all trip state
 2. **Data over Agents** - Flights/Hotels are data fetchers (LogisticsNode), not complex agents
-3. **Domain Experts ARE Agents** - Diving/Hiking/Skiing require reasoning (VerticalSpecialist)
+3. **Domain Experts ARE Agents** - Tier 1 activities (Diving/Hiking/Skiing/Cycling/Surfing) require reasoning (VerticalSpecialist); Tier 2 (Sailing/Cooking/Yoga etc.) are lightweight tile filters
 4. **Architect sees the whole picture** - Avoids context fracture
 5. **Safe Routing** - LLM-based intent classification (GPT-4o-mini), no regex patterns
 6. **Constraint Injector** - Specialist runs BEFORE Architect calls tools

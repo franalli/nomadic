@@ -397,12 +397,12 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
 
         # Verify PRIMARY branch was updated to match trip_inputs
         primary_branch = next(b for b in data.branches if b.is_primary)
-        assert (
-            primary_branch.destination == "Florence"
-        ), "Primary branch destination should cascade from trip_inputs"
-        assert (
-            primary_branch.origin == "Oslo"
-        ), "Primary branch origin should cascade from trip_inputs"
+        assert primary_branch.destination == "Florence", (
+            "Primary branch destination should cascade from trip_inputs"
+        )
+        assert primary_branch.origin == "Oslo", (
+            "Primary branch origin should cascade from trip_inputs"
+        )
         assert primary_branch.start_date == "2025-12-10"
         assert primary_branch.end_date == "2025-12-20"
         assert primary_branch.adults == 4
@@ -411,12 +411,12 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
 
         # Verify NON-PRIMARY branch was NOT updated (stays with its own values)
         non_primary_branch = next(b for b in data.branches if not b.is_primary)
-        assert (
-            non_primary_branch.destination == "Paris"
-        ), "Non-primary branch should retain its own destination"
-        assert (
-            non_primary_branch.origin == "London"
-        ), "Non-primary branch should retain its own origin"
+        assert non_primary_branch.destination == "Paris", (
+            "Non-primary branch should retain its own destination"
+        )
+        assert non_primary_branch.origin == "London", (
+            "Non-primary branch should retain its own origin"
+        )
         assert non_primary_branch.currency == "USD"
 
 
@@ -472,9 +472,9 @@ def test_apply_planner_update_preserves_destination_when_null():
         # Verify destination is PRESERVED (not cleared) - this is the correct behavior
         # for planner updates where None means "not provided" not "clear it"
         data = get_document_data(doc)
-        assert (
-            data.trip_inputs.destination == "Nice"
-        ), "Destination should be preserved when LLM returns None"
+        assert data.trip_inputs.destination == "Nice", (
+            "Destination should be preserved when LLM returns None"
+        )
 
         # Origin should be updated since it was explicitly set
         assert data.trip_inputs.origin == "London"
@@ -651,9 +651,9 @@ def test_merge_trip_inputs_explicit_null_clears_activity_categories():
         explicit_nulls={"activity_settings"},
     )
 
-    assert (
-        result.activity_settings.categories == []
-    ), "activity categories should be cleared after explicit null"
+    assert result.activity_settings.categories == [], (
+        "activity categories should be cleared after explicit null"
+    )
 
 
 def test_apply_user_patch_clears_origin():
@@ -741,9 +741,9 @@ def test_apply_user_patch_clears_destination():
 
         # Destination is cleared because setting destination=None in the patch
         # adds it to explicit_nulls (auto-detected via model_fields_set)
-        assert (
-            data.trip_inputs.destination is None
-        ), "Destination should be cleared when explicitly set to None in patch"
+        assert data.trip_inputs.destination is None, (
+            "Destination should be cleared when explicitly set to None in patch"
+        )
         assert "destination" in data.trip_inputs.missing_fields
 
 
@@ -792,9 +792,9 @@ def test_apply_user_patch_cascades_destination_change_to_branch():
         data = get_document_data(updated_doc)
 
         # Verify trip_inputs updated
-        assert (
-            data.trip_inputs.destination == "Florence"
-        ), "trip_inputs.destination should be Florence"
+        assert data.trip_inputs.destination == "Florence", (
+            "trip_inputs.destination should be Florence"
+        )
 
         # Branches for old destination should be pruned
         # (they referenced "Nice" which is no longer the destination)

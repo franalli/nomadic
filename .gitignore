@@ -22,6 +22,7 @@ db-data
 **/.env.*
 
 # Virtual environments
+.venv/
 backend/.venv/
 
 # Ruff

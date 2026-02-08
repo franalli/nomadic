@@ -13,7 +13,7 @@
  *
  * Layout:
  * ┌─────────────────────────────┐
- * │ PlanHeader (sticky top)     │  ← Hero + StatusBadge
+ * │ PlanHeader (sticky top)     │  ← Hero image + summary pills
  * ├─────────────────────────────┤
  * │ StageBody (scrollable)      │  ← Stage views render content here
  * │   - S0: Ghost timeline      │     (No form - Zero-UI)
@@ -156,7 +156,7 @@ import { TimelineThread, type TimelineVariant } from './TimelineThread';
 
 /**
  * Compute timeline variant based on current planning state.
- * - S3_ITINERARY_READY: 'real' (finalized itinerary - no badge)
+ * - S3_ITINERARY_READY: 'real' (finalized itinerary)
  * - S3_EDITING/S2_STRATEGY_READY: 'draft' (work in progress)
  * - Others: 'ghost' (preview)
  * @see docs/ux_unified_architecture.md

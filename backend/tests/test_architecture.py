@@ -412,9 +412,9 @@ class TestLocalExpert:
 
         # Check for Louvre closed Tuesday constraint
         constraint_descs = [c.description for c in knowledge.constraints]
-        assert any(
-            "Louvre" in d and "Tuesday" in d for d in constraint_descs
-        ), f"Should mention Louvre closed Tuesday: {constraint_descs}"
+        assert any("Louvre" in d and "Tuesday" in d for d in constraint_descs), (
+            f"Should mention Louvre closed Tuesday: {constraint_descs}"
+        )
 
     def test_unknown_destination_empty_knowledge(self):
         """Unknown destinations should return empty knowledge."""

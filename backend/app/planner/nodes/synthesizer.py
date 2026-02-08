@@ -181,6 +181,23 @@ def _build_synthesis_context(state: GraphState) -> str:
     if plan.trip_type:
         parts.append(f"- Trip Type: {plan.trip_type}")
 
+    # User's activity selections (from pill UI) — MUST acknowledge, never re-ask
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    activity_settings = trip_inputs.get("activity_settings", {})
+    if isinstance(activity_settings, dict):
+        categories = activity_settings.get("categories", [])
+    else:
+        categories = []
+    if categories:
+        parts.append("\n## User's Activity Selections (from UI)")
+        parts.append(f"- Selected activities: {', '.join(categories)}")
+        parts.append(
+            "- IMPORTANT: The user ALREADY selected these via the UI. "
+            "Acknowledge naturally (e.g., 'Great picks — diving and surfing "
+            "are perfect for Bali'). Do NOT ask what activities they want. "
+            "Move on to the next missing field."
+        )
+
     # Specialist content - COUNTS ONLY (descriptions are in the plan view)
     if plan.itinerary_blocks:
         activity_blocks = [b for b in plan.itinerary_blocks if not getattr(b, "is_buffer", False)]
@@ -314,7 +331,7 @@ def _build_synthesis_context(state: GraphState) -> str:
                 tile_counts.append(f"{len(tiles)} {category}")
         if tile_counts:
             parts.append(f"- Found: {', '.join(tile_counts)}")
-            parts.append("- NOTE: Do NOT list individual options. " "Just mention counts.")
+            parts.append("- NOTE: Do NOT list individual options. Just mention counts.")
 
     return "\n".join(parts)
 
@@ -343,7 +360,11 @@ async def synthesize_with_llm(state: GraphState) -> tuple[str | None, dict]:
         token_usage = {}
         if hasattr(response, "response_metadata"):
             token_usage = response.response_metadata.get("token_usage", {})
-        return response.content, token_usage
+        content = response.content
+        # Strip wrapping quotes — LLM sometimes mirrors example formatting
+        if content and len(content) > 2 and content[0] == '"' and content[-1] == '"':
+            content = content[1:-1]
+        return content, token_usage
     except Exception as e:
         logger.error(f"LLM synthesis failed: {e}")
         # Fall back to template-based response
@@ -410,6 +431,7 @@ def generate_suggestions(state: GraphState) -> List[str]:
     from app.planner.nodes.intent_router import (
         SuggestionPool,
         _build_date_suggestions,
+        _build_plan_progression_suggestions,
         _build_question_suggestions,
         _build_specialist_suggestions,
     )
@@ -441,16 +463,17 @@ def generate_suggestions(state: GraphState) -> List[str]:
     candidates.extend(SuggestionPool.get_pool())
     candidates.extend(_build_date_suggestions(state))
     candidates.extend(_build_specialist_suggestions(state))
+    candidates.extend(_build_plan_progression_suggestions(state))
     candidates.extend(_build_question_suggestions(state))
 
     # ── Step 4: Filter by state condition ──
     eligible = [c for c in candidates if c["condition"](state)]
 
     # ── Step 5: Slot allocation ──
-    # Slot 1: ACTION (generate, date prompts) — anchors the chip bar
-    # Slot 2-3: DISCOVER (specialist cross-sell, question) — rotates
-    ACTION_CATS = {"generate", "date_prompt", "date_contextual"}
-    DISCOVER_PREFIXES = ("specialist_", "question_")
+    # Slot 1: ACTION (date prompts) — anchors the chip bar
+    # Slot 2-3: DISCOVER (specialist, plan progression, question) — rotates
+    ACTION_CATS = {"date_prompt", "date_contextual"}
+    DISCOVER_PREFIXES = ("specialist_", "plan_", "question_")
     PRIORITY_0_CATS = {"destination_choice", "date_prompt", "date_contextual"}
 
     actions = sorted(
@@ -490,7 +513,7 @@ def generate_suggestions(state: GraphState) -> List[str]:
         if actions:
             final.append(actions[0])
 
-        # Slot 2-3: discovers (max 1 specialist, rest questions)
+        # Slot 2-3: discovers (max 1 specialist, then plan progression, then questions)
         specialist_used = False
         for d in discovers:
             if len(final) >= 3:
@@ -775,7 +798,7 @@ async def synthesizer(state: GraphState) -> GraphState:
         else:
             # Check if we have a pre-computed response from router (exploration mode)
             short_circuit_type = state.metadata.get("short_circuit_type")
-            if short_circuit_type in ("exploration", "soft_transition"):
+            if short_circuit_type in ("exploration", "soft_transition", "question_answer"):
                 # Use the pre-computed response from router - already in state.last_summary
                 message = state.last_summary
                 log("SYNTH", f"Pre-computed {short_circuit_type} ({len(message)} chars)")

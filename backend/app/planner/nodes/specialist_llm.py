@@ -155,7 +155,9 @@ async def generate_specialist_output_with_llm(
 
     except Exception as e:
         # Log error and return None to allow fallback
-        print(f"[SPECIALIST_LLM] Error generating with LLM: {e}")
+        from app.debug_utils import _debug_info
+
+        _debug_info("SPECIALIST_LLM", f"Error generating with LLM: {e}")
         return None
 
 

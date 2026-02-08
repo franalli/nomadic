@@ -278,6 +278,7 @@ async def generate_all_specialists_parallel(
     destination: str,
     trip_plan: Any,
     db: Optional[Any] = None,  # AsyncSession for persistent caching
+    skill_level: Optional[str] = None,  # User skill from activity_settings
 ) -> Dict[str, Optional[LLMSpecialistOutput]]:
     """
     Run all specialist LLM calls in parallel.
@@ -347,7 +348,9 @@ async def generate_all_specialists_parallel(
 
         # Create tasks WITHOUT db (cache write happens after)
         tasks = [
-            generate_specialist_output_llm(topic, destination, trip_plan, db=None)
+            generate_specialist_output_llm(
+                topic, destination, trip_plan, db=None, skill_level=skill_level
+            )
             for topic in topics_needing_llm
         ]
 
@@ -410,6 +413,7 @@ async def generate_specialist_output_llm(
     destination: str,
     trip_plan: Any,
     db: Optional[Any] = None,  # AsyncSession for persistent caching
+    skill_level: Optional[str] = None,  # User skill from activity_settings
 ) -> Optional[LLMSpecialistOutput]:
     """
     Single LLM call generates feasibility + activities + constraints.
@@ -451,11 +455,19 @@ async def generate_specialist_output_llm(
         except Exception as e:
             _debug_log(f"[LLM_SPECIALIST] Cache lookup error: {e}")
 
-    system_prompt = SPECIALIST_SYSTEM_PROMPTS.get(topic)
+    system_prompt = load_specialist_prompt(topic) or SPECIALIST_SYSTEM_PROMPTS.get(topic)
     if not system_prompt:
         # Unknown specialist - return None to trigger fallback
         _debug_log(f"[LLM_SPECIALIST] No system prompt for topic '{topic}', using fallback")
         return None
+
+    # Inject user skill level so LLM generates appropriate activities
+    if skill_level:
+        system_prompt += (
+            f"\n\nUSER SKILL LEVEL: {skill_level}. "
+            "Generate activities appropriate for this level. "
+            "Do NOT suggest activities above this skill level."
+        )
 
     # Calculate trip duration
     duration_days = 5  # Default
@@ -597,47 +609,18 @@ def _get_minimal_safety_constraints(
             ),
         ]
 
-        # U8: Add altitude constraint for high-altitude destinations
-        HIGH_ALTITUDE_DESTINATIONS = {
-            "nepal",
-            "everest",
-            "annapurna",
-            "ladakh",
-            "leh",
-            "cusco",
-            "peru",
-            "machu picchu",
-            "bolivia",
-            "la paz",
-            "kilimanjaro",
-            "tanzania",
-            "mt kenya",
-            "switzerland",
-            "chamonix",
-            "mont blanc",
-            "zermatt",
-            "patagonia",
-            "aconcagua",
-            "colorado",
-            "tibet",
-        }
-
-        dest_lower = (destination or "").lower()
-        is_high_altitude = any(kw in dest_lower for kw in HIGH_ALTITUDE_DESTINATIONS)
-
-        if is_high_altitude:
-            base_constraints.append(
-                SpecialistConstraint(
-                    constraint_id="altitude_acclimatization",
-                    type="safety",
-                    rule="altitude_acclimatization",
-                    severity=ConstraintSeverity.STRONG,
-                    applies_to_categories=["activities"],
-                    reason="Max 500m elevation gain per day above 3000m",
-                    label="Altitude Acclimatization",
-                    icon="🏔️",
-                )
+        base_constraints.append(
+            SpecialistConstraint(
+                constraint_id="altitude_acclimatization",
+                type="safety",
+                rule="altitude_acclimatization",
+                severity=ConstraintSeverity.STRONG,
+                applies_to_categories=["activities"],
+                reason="Max 500m elevation gain per day above 3000m",
+                label="Altitude Acclimatization",
+                icon="🏔️",
             )
+        )
 
         return base_constraints
     elif topic == "skiing":
@@ -1087,14 +1070,15 @@ class VerticalSpecialist:
         """
         plan = state.trip_plan
 
-        # DEBUG: Always print to console to trace dates
-        print("[SPECIALIST DEBUG] _calculate_activity_days called")
-        print(f"[SPECIALIST DEBUG]   topic={self.topic}")
-        print(f"[SPECIALIST DEBUG]   start_date={plan.start_date}")
-        print(f"[SPECIALIST DEBUG]   end_date={plan.end_date}")
+        from app.debug_utils import _debug_info
+
+        _debug_info("SPECIALIST", "_calculate_activity_days called")
+        _debug_info("SPECIALIST", f"  topic={self.topic}")
+        _debug_info("SPECIALIST", f"  start_date={plan.start_date}")
+        _debug_info("SPECIALIST", f"  end_date={plan.end_date}")
 
         if not plan.start_date or not plan.end_date:
-            print("[SPECIALIST DEBUG]   -> No dates, returning 3 (default)")
+            _debug_info("SPECIALIST", "  -> No dates, returning 3 (default)")
             return 3  # Default to 3 activity days if dates unknown
 
         from datetime import datetime
@@ -1103,20 +1087,20 @@ class VerticalSpecialist:
             start = datetime.strptime(plan.start_date, "%Y-%m-%d")
             end = datetime.strptime(plan.end_date, "%Y-%m-%d")
             total_days = (end - start).days + 1
-            print(f"[SPECIALIST DEBUG]   total_days={total_days}")
+            _debug_info("SPECIALIST", f"  total_days={total_days}")
         except ValueError as e:
-            print(f"[SPECIALIST DEBUG]   -> Date parse error: {e}, returning 3")
+            _debug_info("SPECIALIST", f"  -> Date parse error: {e}, returning 3")
             return 3  # Default if date parsing fails
 
         # Subtract arrival (day 1) and departure (last day)
         available = total_days - 2
-        print(f"[SPECIALIST DEBUG]   after arrival/departure: available={available}")
+        _debug_info("SPECIALIST", f"  after arrival/departure: available={available}")
 
         # Specialist-specific buffers
         if self.topic == "diving":
             # No-fly buffer day before departure
             available -= 1
-            print(f"[SPECIALIST DEBUG]   after diving no-fly buffer: available={available}")
+            _debug_info("SPECIALIST", f"  after diving no-fly buffer: available={available}")
         elif self.topic == "hiking":
             # Acclimatization day for high-altitude destinations
             high_altitude_dests = [
@@ -1133,10 +1117,10 @@ class VerticalSpecialist:
             dest_lower = (plan.destination or "").lower()
             if any(h in dest_lower for h in high_altitude_dests):
                 available -= 1
-                print(f"[SPECIALIST DEBUG]   after hiking altitude buffer: available={available}")
+                _debug_info("SPECIALIST", f"  after hiking altitude buffer: available={available}")
 
         result = max(0, available)
-        print(f"[SPECIALIST DEBUG]   -> FINAL: max_activities={result}")
+        _debug_info("SPECIALIST", f"  -> FINAL: max_activities={result}")
         return result
 
     def get_content_for_destination(
@@ -1152,7 +1136,7 @@ class VerticalSpecialist:
         1. Curated content from demo_curation.py (has images for hero destinations)
         2. Hardcoded knowledge (fallback for non-hero destinations)
         """
-        from app.debug_utils import _debug_log
+        from app.debug_utils import _debug_info, _debug_log
 
         # Guard: return empty if no destination (prevents false matches)
         if not destination:
@@ -1171,16 +1155,12 @@ class VerticalSpecialist:
 
         # Calculate available activity days from trip dates
         max_activities = self._calculate_activity_days(state) if state else 3
-        print(f"[SPECIALIST DEBUG] get_content_for_destination: max_activities={max_activities}")
-        _debug_log(f"[SPECIALIST] get_content_for_destination: max_activities={max_activities}")
+        _debug_info("SPECIALIST", f"get_content_for_destination: max_activities={max_activities}")
 
         # For very short trips (no activity days), return empty
         if max_activities <= 0:
-            print(
-                "[SPECIALIST DEBUG] get_content_for_destination: "
-                "TRIP TOO SHORT - returning empty list!"
-            )
-            _debug_log("[SPECIALIST] get_content_for_destination: " "Trip too short for activities")
+            message = "get_content_for_destination: TRIP TOO SHORT - returning empty"
+            _debug_info("SPECIALIST", message)
             return []
 
         # Check for curated content (includes images) - used for demo destinations
@@ -1192,13 +1172,9 @@ class VerticalSpecialist:
         )
         curated_blocks = self._get_curated_content(dest_lower, max_activities)
         if curated_blocks:
-            print(
-                f"[SPECIALIST DEBUG] Returning {len(curated_blocks)} "
-                f"curated blocks (max was {max_activities})"
-            )
-            _debug_log(
-                f"[SPECIALIST] get_content_for_destination: "
-                f"Found {len(curated_blocks)} curated blocks (limited to {max_activities})"
+            _debug_info(
+                "SPECIALIST",
+                f"Returning {len(curated_blocks)} curated blocks (max was {max_activities})",
             )
             return curated_blocks
 
@@ -1467,8 +1443,7 @@ class VerticalSpecialist:
 
         # DEBUG: Log input state
         _debug_log(
-            f"[SPECIALIST] generate_output called: "
-            f"topic={self.topic}, destination='{destination}'"
+            f"[SPECIALIST] generate_output called: topic={self.topic}, destination='{destination}'"
         )
         _debug_log(
             f"[SPECIALIST] trip_plan: start_date={state.trip_plan.start_date}, "
@@ -1537,8 +1512,16 @@ class VerticalSpecialist:
                 _debug_log(f"[SPECIALIST] Trying LLM generation for {self.topic} in {destination}")
                 try:
                     # Native async - no event loop blocking
+                    _skill = (
+                        state.metadata.get("trip_inputs", {})
+                        .get("activity_settings", {})
+                        .get("skill_level")
+                    )
                     llm_output = await generate_specialist_output_llm(
-                        self.topic, destination, state.trip_plan
+                        self.topic,
+                        destination,
+                        state.trip_plan,
+                        skill_level=_skill,
                     )
                 except Exception as e:
                     _debug_log(f"[SPECIALIST] LLM generation failed: {e}, using hardcoded fallback")
@@ -1947,11 +1930,17 @@ async def vertical_specialist(state: GraphState) -> GraphState:
 
             async with async_session_factory() as db:
                 # Run all LLM calls in parallel with persistent caching
+                _skill = (
+                    state.metadata.get("trip_inputs", {})
+                    .get("activity_settings", {})
+                    .get("skill_level")
+                )
                 parallel_results = await generate_all_specialists_parallel(
                     topics=all_specialists,
                     destination=state.trip_plan.destination,
                     trip_plan=state.trip_plan,
                     db=db,  # Pass session for L1+L2 caching
+                    skill_level=_skill,
                 )
 
             # Cache results for this and subsequent specialist calls
@@ -1996,11 +1985,17 @@ async def vertical_specialist(state: GraphState) -> GraphState:
                         _debug_log(f"[SPECIALIST_CACHE] ❌ MISS for {topic} - calling LLM")
 
                         # STEP 2: Call LLM with db session for cache write
+                        _skill = (
+                            state.metadata.get("trip_inputs", {})
+                            .get("activity_settings", {})
+                            .get("skill_level")
+                        )
                         llm_result = await generate_specialist_output_llm(
                             topic=topic,
                             destination=state.trip_plan.destination,
                             trip_plan=state.trip_plan,
                             db=db,  # Pass db for cache write
+                            skill_level=_skill,
                         )
 
                         if llm_result:
@@ -2082,50 +2077,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         state.metadata["specialist_caveat_reason"] = output.feasibility_reason
 
     # FEASIBLE or CAVEAT: Inject constraints into trip plan
-    # U8: Filter out altitude constraints for non-high-altitude destinations
-    HIGH_ALTITUDE_DESTINATIONS = {
-        "nepal",
-        "everest",
-        "annapurna",
-        "ladakh",
-        "leh",
-        "cusco",
-        "peru",
-        "machu picchu",
-        "bolivia",
-        "la paz",
-        "kilimanjaro",
-        "tanzania",
-        "mt kenya",
-        "switzerland",
-        "chamonix",
-        "mont blanc",
-        "zermatt",
-        "patagonia",
-        "aconcagua",
-        "colorado",
-        "tibet",
-    }
-    dest_lower = (state.trip_plan.destination or "").lower()
-    is_high_altitude = any(kw in dest_lower for kw in HIGH_ALTITUDE_DESTINATIONS)
-
     for constraint in output.constraints:
-        # Skip ALL altitude-related constraints for low-altitude destinations (e.g., Bali)
-        # This catches both hiking's "altitude_acclimatization" AND diving's "no_altitude_24h"
-        rule_lower = constraint.rule.lower()
-        is_altitude_constraint = "altitude" in rule_lower or rule_lower in (
-            "no_altitude_24h",
-            "no_altitude_after_dive",
-            "altitude_buffer",
-        )
-        if is_altitude_constraint and not is_high_altitude:
-            dest = state.trip_plan.destination
-            log(
-                "SPECIALIST",
-                f"Skipping altitude constraint '{constraint.rule}' "
-                f"for low-altitude destination: {dest}",
-            )
-            continue
         if constraint not in state.trip_plan.constraints:
             state.trip_plan.constraints.append(constraint)
 
@@ -2267,7 +2219,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     _debug_log(f"Strategy section created for {topic} with {len(content_added)} recommendations")
     reason_preview = output.feasibility_reason[:50] if output.feasibility_reason else None
     _debug_log(
-        f"  feasibility_status={output.feasibility_status}, " f"feasibility_reason={reason_preview}"
+        f"  feasibility_status={output.feasibility_status}, feasibility_reason={reason_preview}"
     )
     _debug_log(
         f"  constraints_count={len(output.constraints)}, "

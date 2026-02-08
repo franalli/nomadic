@@ -18,19 +18,13 @@ repos:
         exclude: ^backend/(migrations|test_artifacts)/
 
   # ----- Python formatting / linting -----
-  - repo: https://github.com/psf/black
-    rev: 25.12.0
-    hooks:
-      - id: black
-        language_version: python3.12
-        files: ^backend/
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.10
     hooks:
       - id: ruff
         args: [--fix]
-        additional_dependencies: []
+        files: ^backend/
+      - id: ruff-format
         files: ^backend/
 
   # ----- P2: SSoT Violations Check -----

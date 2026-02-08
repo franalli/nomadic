@@ -581,6 +581,9 @@ async def apply_planner_update(
     pending_strategy_topics: Optional[list[str]] = None,
     day_cards: Optional[list[DayCard]] = None,
     can_expand_to_itinerary: Optional[bool] = None,
+    # NL-extracted settings that should bypass the user-owned field strip.
+    # These are settings the user explicitly requested via chat (e.g. "5 star hotels").
+    extracted_settings: Optional[dict[str, Any]] = None,
 ) -> models.PlanDocument:
     """
     Apply planner-generated branches, tiles, and viewModel state to the document (async).
@@ -591,6 +594,10 @@ async def apply_planner_update(
     When trip_inputs change but no new branches are provided, the primary branch
     is updated to reflect the new trip parameters (destinations, origin, dates, etc).
     """
+    # Refresh doc from DB to pick up concurrent writes (e.g., pill PATCHes
+    # that committed during the graph run).  Without this, activity_settings
+    # categories set via PATCH would be clobbered by the stale base doc.
+    await db.refresh(doc)
     data = get_document_data(doc)
 
     # Update trip context
@@ -599,12 +606,56 @@ async def apply_planner_update(
     if trip_inputs:
         _debug(f"apply_planner_update: Incoming trip_inputs = {trip_inputs.model_dump()}")
 
-    # Merge trip inputs - most recent update wins
+    # User-owned settings fields — document is SSoT (set via PATCH from frontend
+    # sheets). Graph output carries Pydantic defaults for these fields (e.g.
+    # activity_settings=ActivitySettings(categories=[])) which must NOT overwrite
+    # the user's PATCH values. Strip them so merge_trip_inputs preserves doc values.
+    _USER_OWNED_SETTINGS = {
+        "activity_settings",
+        "hotel_settings",
+        "flight_settings",
+        "transport_settings",
+        "booking_types",
+    }
+    cleaned_inputs: dict | None = None
+    if trip_inputs:
+        cleaned_inputs = _trip_inputs_to_dict(trip_inputs)
+        for field in _USER_OWNED_SETTINGS:
+            cleaned_inputs.pop(field, None)
+
+    # Merge trip inputs - graph-owned fields only (user-owned stripped above)
     data.trip_inputs = merge_trip_inputs(
         data.trip_inputs,
-        trip_inputs,
+        cleaned_inputs,
         replace_destinations=True,
     )
+
+    # Deep-merge NL-extracted settings into the document's user-owned fields.
+    # Unlike Pydantic defaults (which are stripped), these are values the user
+    # explicitly requested via chat (e.g. "5 star hotels" → hotel_min_stars=5).
+    if extracted_settings:
+        if extracted_settings.get("hotel_min_stars") is not None:
+            if data.trip_inputs.hotel_settings is None:
+                data.trip_inputs.hotel_settings = HotelSettings()
+            data.trip_inputs.hotel_settings.min_stars = extracted_settings["hotel_min_stars"]
+        if extracted_settings.get("flight_direct_only") is not None:
+            if data.trip_inputs.flight_settings is None:
+                data.trip_inputs.flight_settings = FlightSettings()
+            data.trip_inputs.flight_settings.direct_only = extracted_settings["flight_direct_only"]
+        if extracted_settings.get("flight_cabin_class"):
+            if data.trip_inputs.flight_settings is None:
+                data.trip_inputs.flight_settings = FlightSettings()
+            data.trip_inputs.flight_settings.cabin_class = extracted_settings["flight_cabin_class"]
+        if extracted_settings.get("activity_skill_level"):
+            if data.trip_inputs.activity_settings is None:
+                data.trip_inputs.activity_settings = ActivitySettings()
+            data.trip_inputs.activity_settings.skill_level = extracted_settings[
+                "activity_skill_level"
+            ]
+        if extracted_settings.get("flights_toggle"):
+            if data.trip_inputs.booking_types is None:
+                data.trip_inputs.booking_types = BookingTypes()
+            data.trip_inputs.booking_types.flights = extracted_settings["flights_toggle"]
 
     # Title-case destination for consistent display
     if data.trip_inputs.destination:
@@ -684,15 +735,31 @@ def apply_planner_update_sync(
     Mirrors apply_planner_update() but for sync SQLAlchemy sessions.
     Also persists viewModel fields (strategy_sections, day_cards, etc.) for session restoration.
     """
+    db.refresh(doc)
     data = get_document_data(doc)
 
     # Update trip context
     data.trip_context_id = trip_context_id
 
-    # Merge trip inputs - most recent update wins
+    # User-owned settings fields — document is SSoT (set via PATCH from frontend
+    # sheets). Strip them so merge_trip_inputs preserves doc values.
+    _USER_OWNED_SETTINGS = {
+        "activity_settings",
+        "hotel_settings",
+        "flight_settings",
+        "transport_settings",
+        "booking_types",
+    }
+    cleaned_inputs: dict | None = None
+    if trip_inputs:
+        cleaned_inputs = _trip_inputs_to_dict(trip_inputs)
+        for field in _USER_OWNED_SETTINGS:
+            cleaned_inputs.pop(field, None)
+
+    # Merge trip inputs - graph-owned fields only (user-owned stripped above)
     data.trip_inputs = merge_trip_inputs(
         data.trip_inputs,
-        trip_inputs,
+        cleaned_inputs,
         replace_destinations=True,
     )
 

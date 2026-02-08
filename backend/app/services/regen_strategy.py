@@ -150,8 +150,7 @@ def compute_strategy(changed_fields: Set[str]) -> RegenStrategy:
     for strategy in STRATEGY_PRIORITY:
         if strategy in strategies_needed:
             _debug(
-                f"[regen_strategy] Strategy={strategy.value} "
-                f"for changed_fields={changed_fields}"
+                f"[regen_strategy] Strategy={strategy.value} for changed_fields={changed_fields}"
             )
             return strategy
 

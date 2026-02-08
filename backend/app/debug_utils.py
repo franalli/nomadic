@@ -6,15 +6,8 @@ Consolidated debug logging for the planning graph.
 
 DEBUG modes (set in .env or environment):
 - DEBUG=off     - Zero output (production)
-- DEBUG=demo    - Rich colorized agent-level logs only (for videos, with delay)
-- DEBUG=full    - Rich colorized logs + verbose V2 DEBUG statements (no delay)
+- DEBUG=full    - Rich colorized logs + verbose DEBUG statements
 - DEBUG=compact - Structured compact logs with token tracking (recommended for dev)
-
-Both demo and full modes use the same colorized rich output for agent-level
-logs (log, log_phase, log_tokens, log_complete). The difference is:
-- demo: includes configurable delay (RICH_DEMO_DELAY_MS) for video recording
-- full: no delay, plus verbose _debug/_debug_log statements
-- compact: structured symbol-prefixed logs with token/cost tracking
 
 All functions are non-fatal - they silently catch errors to prevent
 debug code from crashing production.
@@ -35,7 +28,6 @@ from rich.theme import Theme
 # DEBUG MODE CONFIGURATION
 # =============================================================================
 
-# "Systems Engineering" color palette for demo mode
 _THEME = Theme(
     {
         "orchestrator": "bold blue",
@@ -62,24 +54,12 @@ _console = Console(theme=_THEME)
 def get_debug_mode() -> str:
     """Get current debug mode from environment.
 
-    Returns: 'demo', 'full', 'compact', or 'off'
+    Returns: 'full', 'compact', or 'off'
     """
     mode = os.getenv("DEBUG", "off").lower().strip()
-    if mode in ("demo", "full", "compact"):
+    if mode in ("full", "compact"):
         return mode
-    # Legacy support
-    if os.getenv("RICH_DEMO_LOGS", "0") == "1":
-        return "demo"
-    if os.getenv("DEBUG_PLAN_MESSAGES", "").lower() in ("true", "1", "yes"):
-        return "full"
     return "off"
-
-
-def _get_demo_delay() -> float:
-    """Get demo delay in seconds. Only non-zero when DEBUG=demo."""
-    if get_debug_mode() != "demo":
-        return 0.0
-    return float(os.getenv("RICH_DEMO_DELAY_MS", "100")) / 1000.0
 
 
 # =============================================================================
@@ -138,7 +118,7 @@ class RequestMetrics:
 
 
 class CompactLogger:
-    """Structured, compact logging with token tracking for DEBUG=compact mode."""
+    """Structured, compact logging with token tracking. Active in compact and full modes."""
 
     SYMBOLS = {
         "cache_hit": "✅",
@@ -161,13 +141,13 @@ class CompactLogger:
 
     def __init__(self, name: str, metrics: Optional[RequestMetrics] = None):
         self.logger = logging.getLogger(f"app.{name}")
-        self._is_compact = get_debug_mode() == "compact"
+        self._active = get_debug_mode() in ("compact", "full")
         self.metrics = metrics
         self.current_node_tokens = TokenUsage()
 
     def node_start(self, node: str, **kwargs: Any) -> None:
         """Log node entry (only in compact mode)."""
-        if not self._is_compact:
+        if not self._active:
             return
         try:
             params = self._format_params(kwargs)
@@ -178,7 +158,7 @@ class CompactLogger:
 
     def node_end(self, node: str, duration_ms: int, **kwargs: Any) -> None:
         """Log node exit (only in compact mode)."""
-        if not self._is_compact:
+        if not self._active:
             # Still track metrics even if not in compact mode
             if self.metrics:
                 self.metrics.node_tokens[node] = self.current_node_tokens
@@ -203,7 +183,7 @@ class CompactLogger:
         self.current_node_tokens = self.current_node_tokens + usage
         if self.metrics:
             self.metrics.add_model_usage(model, usage)
-        if not self._is_compact:
+        if not self._active:
             return
         try:
             cost = self._calculate_cost(model, usage)
@@ -235,7 +215,7 @@ class CompactLogger:
 
     def event(self, category: str, message: str, **kwargs: Any) -> None:
         """Log an event (only in compact mode)."""
-        if not self._is_compact:
+        if not self._active:
             return
         try:
             symbol = self.SYMBOLS.get(category, "•")
@@ -246,7 +226,7 @@ class CompactLogger:
 
     def state_change(self, label: str, old: Any, new: Any) -> None:
         """Log state transitions (only in compact mode)."""
-        if not self._is_compact:
+        if not self._active:
             return
         if old != new:
             try:
@@ -257,7 +237,7 @@ class CompactLogger:
 
     def batch_update(self, label: str, updates: Dict[str, Any]) -> None:
         """Log multiple fields in one line (only in compact mode)."""
-        if not self._is_compact:
+        if not self._active:
             return
         try:
             params = self._format_params(updates)
@@ -274,7 +254,7 @@ class CompactLogger:
 
     def separator(self, title: str = "") -> None:
         """Visual section divider (only in compact mode)."""
-        if not self._is_compact:
+        if not self._active:
             return
         try:
             if title:
@@ -286,7 +266,7 @@ class CompactLogger:
 
     def request_summary(self) -> None:
         """Log cumulative metrics with cost alerts (only in compact mode)."""
-        if not self._is_compact or not self.metrics:
+        if not self._active or not self.metrics:
             return
         try:
             total = self.metrics.total_tokens
@@ -356,26 +336,25 @@ class CompactLogger:
 
 
 # =============================================================================
-# AGENT-LEVEL LOGGING (shown in both demo and full modes)
+# AGENT-LEVEL LOGGING (shown in full mode only)
 # =============================================================================
 
 
 def log(tag: str, message: str, data: str | None = None, sleep: float | None = None):
     """
-    Agent-level log output. Shown in both demo and full modes with rich colorization.
+    Agent-level log output. Shown in full mode with rich colorization.
 
     Args:
         tag: Component name (e.g., "ARCHITECT", "GUARD", "SPECIALIST")
         message: The action being performed
         data: Optional extra info (e.g., "destination=Bali")
-        sleep: Override delay in seconds (default: _get_demo_delay() in demo mode only)
+        sleep: Deprecated, ignored. Kept for backward compatibility.
     """
     mode = get_debug_mode()
 
-    if mode == "off":
+    if mode != "full":
         return
 
-    # Both demo and full use rich colorized output
     try:
         formatted_tag = f"[{tag}]".ljust(16)
 
@@ -407,39 +386,27 @@ def log(tag: str, message: str, data: str | None = None, sleep: float | None = N
 
         if data:
             _console.print(f"{' ' * 17}[data]└─ {data}[/data]")
-
-        # Demo delay (only in demo mode, not full)
-        if mode == "demo":
-            delay = sleep if sleep is not None else _get_demo_delay()
-            if delay > 0:
-                time.sleep(delay)
     except Exception:
         pass
 
 
 def log_phase(phase: str, title: str):
-    """Print a phase header box. Shown in both demo and full modes with rich colorization."""
-    mode = get_debug_mode()
-
-    if mode == "off":
+    """Print a phase header box. Shown in full mode with rich colorization."""
+    if get_debug_mode() != "full":
         return
 
-    # Both demo and full use rich colorized output
     try:
         _console.print()
         _console.print()
         _console.print("[bold cyan]" + "─" * 50 + "[/bold cyan]")
         _console.print(f"   [bold]{phase}: {title}[/bold]")
         _console.print("[bold cyan]" + "─" * 50 + "[/bold cyan]")
-        # Demo delay (only in demo mode, not full)
-        if mode == "demo":
-            time.sleep(_get_demo_delay())
     except Exception:
         pass
 
 
 def log_tokens(component: str, prompt: int, completion: int, total: int):
-    """Log token usage. Shown in both demo and full modes."""
+    """Log token usage. Shown in full mode."""
     log(
         "TOKENS",
         f"{component} LLM call",
@@ -448,13 +415,10 @@ def log_tokens(component: str, prompt: int, completion: int, total: int):
 
 
 def log_complete(tiles: int, strategy_sections: int, view_state: str):
-    """Log graph completion summary. Shown in both demo and full modes with rich colorization."""
-    mode = get_debug_mode()
-
-    if mode == "off":
+    """Log graph completion summary. Shown in full mode with rich colorization."""
+    if get_debug_mode() != "full":
         return
 
-    # Both demo and full use rich colorized output
     try:
         _console.print()
         _console.print()
@@ -656,53 +620,47 @@ class NodeTimer:
         self.outputs.update(kwargs)
 
 
-def _debug_itinerary(message: str, **kwargs: Any) -> None:
-    """Print itinerary builder debug message. Shown in full AND compact modes."""
-    mode = get_debug_mode()
-    if mode not in ("full", "compact"):
+def _debug_info(tag: str, message: str, **kwargs: Any) -> None:
+    """Print operational info. Shown in both compact and full modes."""
+    if get_debug_mode() not in ("full", "compact"):
         return
     try:
-        max_len = 2000
-        if len(message) > max_len:
-            message = message[:max_len] + "...(truncated)"
-
-        extras_parts = []
-        for k, v in kwargs.items():
-            try:
-                v_str = str(v)
-                if len(v_str) > 200:
-                    v_str = v_str[:200] + "..."
-                extras_parts.append(f"{k}={v_str}")
-            except Exception:
-                extras_parts.append(f"{k}=<unserializable>")
-        extras = " ".join(extras_parts) if extras_parts else ""
-        _safe_print(f"[ITINERARY] {message} {extras}".strip())
+        extras = _format_extras(kwargs)
+        _safe_print(f"[{tag}] {message} {extras}".strip())
     except Exception:
         pass
+
+
+def _debug_itinerary(message: str, **kwargs: Any) -> None:
+    """Print itinerary builder debug message. Shown in both compact and full modes."""
+    _debug_info("ITINERARY", message, **kwargs)
 
 
 def _debug(message: str, **kwargs: Any) -> None:
-    """Print debug message. Only shown in full mode."""
+    """Print verbose debug message. Only shown in full mode."""
     if get_debug_mode() != "full":
         return
     try:
-        max_len = 2000
-        if len(message) > max_len:
-            message = message[:max_len] + "...(truncated)"
-
-        extras_parts = []
-        for k, v in kwargs.items():
-            try:
-                v_str = str(v)
-                if len(v_str) > 200:
-                    v_str = v_str[:200] + "..."
-                extras_parts.append(f"{k}={v_str}")
-            except Exception:
-                extras_parts.append(f"{k}=<unserializable>")
-        extras = " ".join(extras_parts) if extras_parts else ""
+        extras = _format_extras(kwargs)
         _safe_print(f"[DEBUG] {message} {extras}".strip())
     except Exception:
         pass
+
+
+def _format_extras(kwargs: Dict[str, Any], max_len: int = 200) -> str:
+    """Format kwargs as key=value pairs for log output."""
+    if not kwargs:
+        return ""
+    parts = []
+    for k, v in kwargs.items():
+        try:
+            v_str = str(v)
+            if len(v_str) > max_len:
+                v_str = v_str[:max_len] + "..."
+            parts.append(f"{k}={v_str}")
+        except Exception:
+            parts.append(f"{k}=<unserializable>")
+    return " ".join(parts)
 
 
 def _debug_error(message: str, **kwargs: Any) -> None:
@@ -730,29 +688,23 @@ def _debug_error(message: str, **kwargs: Any) -> None:
 
 
 # =============================================================================
-# LOGGING CONFIGURATION (for demo mode cleanup)
+# LOGGING CONFIGURATION
 # =============================================================================
 
 
-def configure_demo_logging():
+def configure_logging():
     """
-    Configure logging for demo/off modes.
+    Configure logging for non-full modes.
 
-    Suppresses:
-    - ALL Python warnings (UserWarning, RuntimeWarning, DeprecationWarning)
-    - HTTP access logs (uvicorn.access)
-    - Uvicorn error logs (uvicorn.error)
-    - OpenAI/LangChain schema warnings
-    - Other noisy loggers
-
-    Call this at app startup. Only applies when DEBUG=demo or DEBUG=off.
+    Suppresses noisy loggers when not in full mode.
+    Call this at app startup.
     """
     import logging
     import warnings
 
     mode = get_debug_mode()
 
-    # Only suppress in demo and off modes (full mode shows everything)
+    # Full mode shows everything
     if mode == "full":
         return
 
@@ -785,7 +737,7 @@ def configure_demo_logging():
     # Pydantic warnings
     logging.getLogger("pydantic").setLevel(logging.CRITICAL)
 
-    # App-level loggers (suppress warnings/errors from our code in demo mode)
+    # App-level loggers
     logging.getLogger("app").setLevel(logging.CRITICAL)
     logging.getLogger("app.planner").setLevel(logging.CRITICAL)
     logging.getLogger("app.planner.nodes").setLevel(logging.CRITICAL)

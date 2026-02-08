@@ -141,8 +141,7 @@ class ConstraintEngine:
                 "CONSTRAINT",
                 f"Result: {len(safe_flights)} safe, {len(blocked_flights)} blocked",
                 data=(
-                    f"Blocked flights depart before "
-                    f"{min_safe_departure.strftime('%Y-%m-%d %H:%M')}"
+                    f"Blocked flights depart before {min_safe_departure.strftime('%Y-%m-%d %H:%M')}"
                 ),
                 sleep=0.1,
             )

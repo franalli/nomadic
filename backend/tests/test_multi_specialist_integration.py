@@ -32,7 +32,7 @@ def create_diving_section(num_dives: int = 2) -> Dict[str, Any]:
     return {
         "specialist_type": "diving",
         "content_added": [
-            {"title": f"Dive Site {i+1}", "duration_hours": 3.0, "intensity": "moderate"}
+            {"title": f"Dive Site {i + 1}", "duration_hours": 3.0, "intensity": "moderate"}
             for i in range(num_dives)
         ],
         "constraints_applied": [
@@ -49,7 +49,7 @@ def create_hiking_section(num_hikes: int = 2) -> Dict[str, Any]:
     return {
         "specialist_type": "hiking",
         "content_added": [
-            {"title": f"Trail {i+1}", "duration_hours": 4.0, "intensity": "challenging"}
+            {"title": f"Trail {i + 1}", "duration_hours": 4.0, "intensity": "challenging"}
             for i in range(num_hikes)
         ],
         "constraints_applied": [
@@ -63,7 +63,7 @@ def create_skiing_section(num_runs: int = 2) -> Dict[str, Any]:
     return {
         "specialist_type": "skiing",
         "content_added": [
-            {"title": f"Ski Run {i+1}", "duration_hours": 5.0, "intensity": "challenging"}
+            {"title": f"Ski Run {i + 1}", "duration_hours": 5.0, "intensity": "challenging"}
             for i in range(num_runs)
         ],
         "constraints_applied": [
@@ -135,15 +135,13 @@ class TestDivingHikingSuccess:
 # =============================================================================
 
 
-class TestDivingHikingConflict:
-    """Test conflict detection when days are insufficient."""
+class TestDivingHikingAutoAdjust:
+    """Test auto-adjustment when days are insufficient for requested activities."""
 
-    def test_4_day_trip_triggers_conflict(self, builder: ItineraryBuilder):
+    def test_4_day_trip_auto_adjusts(self, builder: ItineraryBuilder):
         """
-        4-day trip with 2 dives + 2 hikes + 1 buffer = insufficient.
-        Usable days: 4 - 2 = 2
-        Required: 4 activities + 1 buffer = 5
-        Should trigger CONSTRAINT_CONFLICT.
+        4-day trip with 2 dives + 2 hikes: builder auto-adjusts dive count
+        to fit within available days, producing a warning.
         """
         input_data = ItineraryBuilderInput(
             start_date="2024-03-15",
@@ -158,16 +156,12 @@ class TestDivingHikingConflict:
 
         result = builder.build(input_data)
 
-        assert not result.success
-        assert result.error == "CONSTRAINT_CONFLICT"
-        assert len(result.conflicts) > 0
+        assert result.success
+        assert len(result.warnings) > 0
+        assert any("adjusted" in w.lower() or "fit" in w.lower() for w in result.warnings)
 
-        # Should have insufficient_days conflict
-        conflict_types = [c.type for c in result.conflicts]
-        assert "insufficient_days" in conflict_types
-
-    def test_conflict_includes_both_specialists(self, builder: ItineraryBuilder):
-        """Conflict should list both specialists involved."""
+    def test_auto_adjust_schedules_both_specialists(self, builder: ItineraryBuilder):
+        """Auto-adjusted trip should still include activities from both specialists."""
         input_data = ItineraryBuilderInput(
             start_date="2024-03-15",
             end_date="2024-03-18",  # 4 days
@@ -180,69 +174,17 @@ class TestDivingHikingConflict:
         )
 
         result = builder.build(input_data)
+        assert result.success
 
-        assert not result.success
+        # Collect specialist types from activity blocks
+        specialists_scheduled = set()
+        for day in result.day_cards:
+            for block in day.blocks:
+                if block.specialist_type and not block.is_buffer:
+                    specialists_scheduled.add(block.specialist_type)
 
-        # Find the insufficient_days conflict
-        conflict = next(c for c in result.conflicts if c.type == "insufficient_days")
-
-        # Should mention both specialists
-        assert "diving" in conflict.specialists
-        assert "hiking" in conflict.specialists
-
-    def test_conflict_generates_extend_trip_resolution(self, builder: ItineraryBuilder):
-        """Conflict should offer 'extend trip' as recommended resolution."""
-        input_data = ItineraryBuilderInput(
-            start_date="2024-03-15",
-            end_date="2024-03-18",  # 4 days - insufficient
-            strategy_sections=[
-                create_diving_section(num_dives=2),
-                create_hiking_section(num_hikes=2),
-            ],
-            tiles={},
-            destination="Bali",
-        )
-
-        result = builder.build(input_data)
-
-        assert not result.success
-        assert len(result.resolutions) > 0
-
-        # Should have extend_trip resolution
-        extend = next(
-            (r for r in result.resolutions if r.action == "extend_trip"),
-            None,
-        )
-        assert extend is not None
-        assert extend.feasibility == "recommended"
-        assert extend.new_duration is not None
-        assert extend.new_duration > 4  # Should recommend more than 4 days
-
-    def test_conflict_generates_reduce_activities_resolutions(self, builder: ItineraryBuilder):
-        """Conflict should offer 'focus on X only' for each specialist."""
-        input_data = ItineraryBuilderInput(
-            start_date="2024-03-15",
-            end_date="2024-03-18",  # 4 days - insufficient
-            strategy_sections=[
-                create_diving_section(num_dives=2),
-                create_hiking_section(num_hikes=2),
-            ],
-            tiles={},
-            destination="Bali",
-        )
-
-        result = builder.build(input_data)
-
-        assert not result.success
-
-        # Should have reduce_activities resolutions
-        reduce_resolutions = [r for r in result.resolutions if r.action == "reduce_activities"]
-        assert len(reduce_resolutions) >= 2
-
-        # Should offer both diving and hiking focus options
-        keep_options = {r.keep_specialist for r in reduce_resolutions}
-        assert "diving" in keep_options
-        assert "hiking" in keep_options
+        assert "diving" in specialists_scheduled, "Should still have diving activities"
+        assert "hiking" in specialists_scheduled, "Should still have hiking activities"
 
 
 # =============================================================================
@@ -284,12 +226,12 @@ class TestThreeSpecialists:
         assert activities_by_specialist["hiking"] >= 1
         assert activities_by_specialist["skiing"] >= 1
 
-    def test_three_specialists_with_insufficient_days(self, builder: ItineraryBuilder):
-        """Three specialists with insufficient days should trigger conflict."""
-        # 5 days is not enough for 6 activities + 1 buffer
+    def test_three_specialists_tight_schedule_auto_adjusts(self, builder: ItineraryBuilder):
+        """Three specialists in tight schedule: builder auto-adjusts dives."""
+        # 4 days: 2 usable activity days for 6 activities + buffer → auto-adjust
         input_data = ItineraryBuilderInput(
             start_date="2024-03-15",
-            end_date="2024-03-19",  # 5 days
+            end_date="2024-03-18",  # 4 days
             strategy_sections=[
                 create_diving_section(num_dives=2),
                 create_hiking_section(num_hikes=2),
@@ -301,12 +243,9 @@ class TestThreeSpecialists:
 
         result = builder.build(input_data)
 
-        assert not result.success
-        assert result.error == "CONSTRAINT_CONFLICT"
-
-        # All three specialists should be in conflict
-        conflict = next(c for c in result.conflicts if c.type == "insufficient_days")
-        assert len(conflict.specialists) == 3
+        assert result.success
+        assert len(result.warnings) > 0
+        assert any("adjusted" in w.lower() or "fit" in w.lower() for w in result.warnings)
 
 
 # =============================================================================
@@ -415,9 +354,9 @@ class TestInterleavingPatterns:
                 for b in day.blocks
                 if not b.is_buffer and b.specialist_type in ("diving", "hiking")
             ]
-            assert (
-                len(activity_blocks) <= 3
-            ), f"Day {day.day_number} has {len(activity_blocks)} activities (max 3)"
+            assert len(activity_blocks) <= 3, (
+                f"Day {day.day_number} has {len(activity_blocks)} activities (max 3)"
+            )
 
 
 # =============================================================================

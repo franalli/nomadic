@@ -47,7 +47,7 @@ class TileSearchInput(BaseModel):
     constraints: Optional[Dict[str, Any]] = Field(
         default=None,
         description=(
-            "Additional constraints from Specialist " "(e.g., {'min_24h_buffer_after_dive': True})"
+            "Additional constraints from Specialist (e.g., {'min_24h_buffer_after_dive': True})"
         ),
     )
     # Category-specific settings

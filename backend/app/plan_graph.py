@@ -247,7 +247,7 @@ def _trip_plan_to_trip_inputs(plan: TripPlan) -> Dict[str, Any]:
     travelers_text = f"{total_travelers} traveler{'s' if total_travelers != 1 else ''}"
 
     return {
-        # Structured fields
+        # Structured fields (from TripPlan only)
         "destination": plan.destination,
         "origin": plan.origin,
         "start_date": plan.start_date,
@@ -256,12 +256,13 @@ def _trip_plan_to_trip_inputs(plan: TripPlan) -> Dict[str, Any]:
         "children": plan.children,
         "budget": plan.budget,
         "currency": plan.currency,
-        "booking_types": {},
-        "flight_settings": {},
-        "hotel_settings": {},
-        "activity_settings": {"categories": []},
-        "transport_settings": {},
-        "strategy_settings": {},
+        # NOTE: Settings fields (booking_types, flight_settings, hotel_settings,
+        # activity_settings, transport_settings, strategy_settings) are intentionally
+        # OMITTED here. They live on the document (set via PATCH from frontend sheets),
+        # not on TripPlan. Including empty defaults here caused them to overwrite
+        # the real document values during session merge at graph startup.
+        # @see main.py graph_plan_stream_endpoint — doc_inputs merge
+        #
         # Legacy display fields for V1 frontend pills
         "destination_text": plan.destination,
         "dates_text": dates_text,
@@ -363,6 +364,26 @@ def _restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
 
     # Also store trip_inputs in metadata for consistent access (router, specialist detection)
     state.metadata["trip_inputs"] = trip_inputs
+
+    # ── Merge document's user-owned settings (SSoT) ──
+    # Session may carry stale defaults from a prior graph run (e.g.,
+    # activity_settings.categories=[] even though the user selected
+    # ['diving'] via the pill UI).  The document is the SSoT for these
+    # fields — main.py reads the latest doc and passes them here.
+    doc_settings = session_state.get("_doc_settings", {})
+    for field, value in doc_settings.items():
+        if value:
+            state.metadata["trip_inputs"][field] = value
+
+    # HARD TRACE: Log the exact activity_settings reaching the graph
+    final_activity = state.metadata["trip_inputs"].get("activity_settings", {})
+    final_cats = final_activity.get("categories", []) if isinstance(final_activity, dict) else []
+    logger.info(
+        f"[RESTORE] activity_settings.categories={final_cats}, "
+        f"_doc_settings_keys={list(doc_settings.keys())}, "
+        f"doc_activity={doc_settings.get('activity_settings', 'NOT_SET')}"
+    )
+
     state.tiles = metadata.get("tiles", {})
     state.active_specialist = metadata.get("active_specialist")
     state.last_constraint_hash = metadata.get(
@@ -1247,6 +1268,26 @@ def _format_result(
     # NOTE: session_state is captured AFTER metadata updates (see below)
 
     # ==========================================================================
+    # TACTICAL FIX: Merge user-owned settings back into trip_inputs output.
+    # Root cause: _trip_plan_to_trip_inputs() rebuilds from TripPlan which lacks settings.
+    # REMOVE IN STAGE 2: When TripPlan becomes SSoT and trip_inputs dict is eliminated,
+    # this merge becomes unnecessary — settings will be first-class TripPlan fields.
+    # Must go BEFORE extracted_settings merge so NL commands override UI selections.
+    # ==========================================================================
+    _USER_SETTINGS_FIELDS = (
+        "activity_settings",
+        "hotel_settings",
+        "flight_settings",
+        "transport_settings",
+        "booking_types",
+    )
+    state_trip_inputs = state.metadata.get("trip_inputs", {})
+    for field in _USER_SETTINGS_FIELDS:
+        val = state_trip_inputs.get(field)
+        if val:
+            trip_inputs[field] = val
+
+    # ==========================================================================
     # Merge extracted settings into trip_inputs (from NL command parsing)
     # ==========================================================================
     extracted_settings = state.metadata.get("extracted_settings", {})
@@ -1336,9 +1377,7 @@ def _format_result(
 
     # DEBUG: Log existing sections
     section_types = [s.get("specialist_type") for s in strategy_sections]
-    _debug_log(
-        f"_format_result: BEFORE - {len(strategy_sections)} sections, " f"types={section_types}"
-    )
+    _debug_log(f"_format_result: BEFORE - {len(strategy_sections)} sections, types={section_types}")
     for s in strategy_sections:
         content_count = len(s.get("content_added", []))
         constraint_count = len(s.get("constraints_applied", []))
@@ -1374,8 +1413,7 @@ def _format_result(
         )  # Don't create general if specialist ran
     )
     _debug_log(
-        f"_format_result: needs_section={needs_section} "
-        f"(flattened_tiles={bool(flattened_tiles)})"
+        f"_format_result: needs_section={needs_section} (flattened_tiles={bool(flattened_tiles)})"
     )
 
     # CRITICAL FIX: Enrich EXISTING specialist sections even when needs_section=False
@@ -1468,7 +1506,7 @@ def _format_result(
                     if not headline:
                         headline = f"{section_type.title()} constraint applied"
 
-                    extra = f" (+{len(constraints)-1} more)" if len(constraints) > 1 else ""
+                    extra = f" (+{len(constraints) - 1} more)" if len(constraints) > 1 else ""
                     section["one_liner"] = f"{headline[:100]}{extra}"
                 else:
                     section["one_liner"] = (
@@ -1714,7 +1752,9 @@ def _format_result(
                 category = (
                     "culture"
                     if "culture" in label.lower()
-                    else "adventure" if "adventure" in label.lower() else "destination"
+                    else "adventure"
+                    if "adventure" in label.lower()
+                    else "destination"
                 )
                 vibe_trio.append(
                     {

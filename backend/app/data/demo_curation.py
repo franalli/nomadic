@@ -168,6 +168,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "BBQ dinner under the stars. Perfect activity for your no-fly rest day."
                     ),
                     "type": "activity",
+                    "tags": ["adventure", "photography"],
                     "logic_hook": "Perfect for no-fly day - surface interval activity",
                     # Dubai desert dunes sunset
                     "image": "https://images.unsplash.com/photo-1547234935-80c7145ec969?w=800&q=80",
@@ -189,6 +190,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "Book the sunset slot for spectacular views."
                     ),
                     "type": "activity",
+                    "tags": ["photography", "culture"],
                     "logic_hook": "Book sunset slot (5-7 PM) for best photos",
                     # Burj Khalifa
                     "image": "https://images.unsplash.com/photo-1582672060674-bc2bd808a8b5?w=800&q=80",
@@ -209,6 +211,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "Includes refreshments and swimming stop."
                     ),
                     "type": "activity",
+                    "tags": ["sailing", "beach", "photography"],
                     "logic_hook": "Morning slot avoids afternoon heat",
                     # Yacht/marina
                     "image": "https://images.unsplash.com/photo-1569263979104-865ab7cd8d13?w=800&q=80",
@@ -358,6 +361,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "Palatine Hill. Skip all queues with priority access."
                     ),
                     "type": "activity",
+                    "tags": ["culture", "temples", "photography"],
                     "logic_hook": "Book 8 AM slot to avoid crowds",
                     # Colosseum interior arches
                     "image": "https://images.unsplash.com/photo-1555992828-ca4dbe41d294?w=800&q=80",
@@ -373,6 +377,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "Includes Sistine Chapel and St. Peter's Basilica."
                     ),
                     "type": "activity",
+                    "tags": ["culture", "temples", "photography"],
                     "logic_hook": "Early entry (7:30 AM) - 80% fewer crowds",
                     # Vatican museum ceiling/gallery
                     "image": "https://images.unsplash.com/photo-1531572753322-ad063cecc140?w=800&q=80",
@@ -388,6 +393,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "Sample pasta, supplì, gelato, and local wines."
                     ),
                     "type": "activity",
+                    "tags": ["cooking", "nightlife"],
                     "logic_hook": "Evening tour (6 PM) - cooler weather",
                     # Fresh pasta making
                     "image": "https://images.unsplash.com/photo-1473093295043-cdd812d0e601?w=800&q=80",
@@ -419,7 +425,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                 "id": "curated_rome_hotel_002",
                 "name": "Chapter Roma",
                 "description": (
-                    "Boutique hotel in a former monastery. " "Rooftop bar with Colosseum views."
+                    "Boutique hotel in a former monastery. Rooftop bar with Colosseum views."
                 ),
                 "price_estimate": 280,
                 "currency": "EUR",
@@ -550,6 +556,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "Step into the Void glass box for the brave."
                     ),
                     "type": "activity",
+                    "tags": ["photography", "adventure"],
                     "logic_hook": "Book first cable car (8 AM) for clearest views",
                     # Stunning Mont Blanc panoramic mountain view
                     "image": "https://images.unsplash.com/photo-1483728642387-6c3bdd6c93e5?w=800&q=80",
@@ -885,6 +892,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "the golden sky."
                     ),
                     "type": "activity",
+                    "tags": ["temples", "photography"],
                     "logic_hook": "Arrive 4:30 PM for sunset - temple closes at dark",
                     "image": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?w=800&q=80",
                     "duration_hours": 3,
@@ -907,6 +915,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "Ubud's art galleries and craft workshops. Perfect rest day activity."
                     ),
                     "type": "activity",
+                    "tags": ["culture", "photography"],
                     "logic_hook": "Morning visit - monkeys less aggressive, cooler temps",
                     "image": "https://images.unsplash.com/photo-1578469550956-0e16b69c6a3d?w=800&q=80",
                     "duration_hours": 4,
@@ -929,6 +938,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "and sunset cocktails. Perfect no-fly day activity after diving."
                     ),
                     "type": "activity",
+                    "tags": ["beach", "yoga"],
                     "logic_hook": "Perfect for 24h no-fly buffer day - no altitude stress",
                     "image": "https://images.unsplash.com/photo-1540541338287-41700207dee6?w=800&q=80",
                     "duration_hours": 6,
@@ -1206,6 +1216,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "Watch and hear ice calving into Lago Argentino."
                     ),
                     "type": "activity",
+                    "tags": ["photography"],
                     "logic_hook": "Afternoon best for calving - ice warms and breaks more",
                     "image": "https://images.unsplash.com/photo-1503614472-8c93d56e92ce?w=800&q=80",
                     "duration_hours": 4,
@@ -1228,6 +1239,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "sheep shearing demo, and asado (BBQ) lunch."
                     ),
                     "type": "activity",
+                    "tags": ["cooking", "culture"],
                     "logic_hook": "Book for rest day between big hikes - perfect recovery",
                     "image": "https://images.unsplash.com/photo-1548199973-03cce0bbc87b?w=800&q=80",
                     "duration_hours": 6,
@@ -1250,6 +1262,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                         "Full day on the water with lunch included."
                     ),
                     "type": "activity",
+                    "tags": ["sailing", "photography"],
                     "logic_hook": "All-weather activity - boat runs rain or shine",
                     "image": "https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=800&q=80",
                     "duration_hours": 8,

@@ -116,8 +116,7 @@ def meta_set_once(
     # Different value already set
     if _is_test_mode_internal():
         raise AssertionError(
-            f"meta_set_once: key '{key}' already set to {existing!r}, "
-            f"attempted to set to {value!r}"
+            f"meta_set_once: key '{key}' already set to {existing!r}, attempted to set to {value!r}"
         )
 
     # Prod mode
@@ -277,7 +276,7 @@ def validate_turn_metadata(metadata: Dict[str, Any]) -> List[str]:
                 )
         elif not isinstance(metadata[key], expected_type):
             errors.append(
-                f"Key {key} has wrong type: expected {expected_type}, " f"got {type(metadata[key])}"
+                f"Key {key} has wrong type: expected {expected_type}, got {type(metadata[key])}"
             )
 
     return errors

@@ -203,7 +203,7 @@ class CuratedProvider(Provider):
         activity_id = activity.get("id") or f"curated_activity_{uuid.uuid4().hex[:8]}"
 
         # Build tags from activity properties
-        tags = []
+        tags = list(activity.get("tags", []))  # Category tags from curated data
         if activity.get("skill_level"):
             tags.append(activity["skill_level"])
         if activity.get("duration_hours"):

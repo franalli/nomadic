@@ -269,7 +269,7 @@ class Settings(BaseSettings):
 
     # Feature flags for Amadeus integration
     use_amadeus_provider: bool = os.getenv("USE_AMADEUS_PROVIDER", "false").lower() == "true"
-    use_demo_curation: bool = os.getenv("USE_DEMO_CURATION", "true").lower() == "true"
+    use_demo_curation: bool = os.getenv("USE_DEMO_CURATION", "false").lower() == "true"
 
     # Rate limiting and circuit breaker
     amadeus_requests_per_minute: int = int(os.getenv("AMADEUS_REQUESTS_PER_MINUTE", "30"))

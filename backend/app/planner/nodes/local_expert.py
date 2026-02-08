@@ -34,7 +34,7 @@ class LocalConstraint(BaseModel):
     type: str = Field(
         default="general",
         description=(
-            "Type of constraint (visa, safety, cultural, " "booking, seasonal, transport, general)"
+            "Type of constraint (visa, safety, cultural, booking, seasonal, transport, general)"
         ),
     )
     description: str = Field(description="Short, actionable constraint text")
@@ -49,7 +49,7 @@ class LocalRecommendation(BaseModel):
     category: str = Field(
         default="logistics",
         description=(
-            "Category (logistics, attraction, dining, activity, " "accommodation, scam_warning)"
+            "Category (logistics, attraction, dining, activity, accommodation, scam_warning)"
         ),
     )
     logic_hook: str = Field(default="", description="The specific logistical advantage")
@@ -368,7 +368,7 @@ LOCAL_EXPERT_KNOWLEDGE = {
             {
                 "type": "cultural",
                 "description": (
-                    "Dress modestly in malls and public areas - " "shoulders and knees covered"
+                    "Dress modestly in malls and public areas - shoulders and knees covered"
                 ),
                 "severity": "warning",
             },
@@ -609,7 +609,7 @@ LOCAL_EXPERT_KNOWLEDGE = {
             {
                 "type": "booking_window",
                 "description": (
-                    "Broadway shows: book 2+ weeks for popular shows, " "or try TKTS day-of"
+                    "Broadway shows: book 2+ weeks for popular shows, or try TKTS day-of"
                 ),
                 "severity": "info",
             },
@@ -676,7 +676,7 @@ LOCAL_EXPERT_KNOWLEDGE = {
             ],
             "emergency_number": "112 (general), 118 (ambulance)",
             "nearest_hospital": (
-                "BIMC Hospital Kuta - 24/7 English-speaking staff, " "accepts travel insurance"
+                "BIMC Hospital Kuta - 24/7 English-speaking staff, accepts travel insurance"
             ),
             "vaccinations": ["Hepatitis A recommended", "Typhoid for adventurous eaters"],
             "areas_to_avoid": ["Kuta after midnight if solo - drunk tourists attract trouble"],
@@ -767,7 +767,7 @@ LOCAL_EXPERT_KNOWLEDGE = {
             ),
             "greetings": "Namaste-style hands together greeting. Right hand for giving/receiving.",
             "photo_etiquette": (
-                "Ask before photographing ceremonies. " "Never climb sacred trees or statues."
+                "Ask before photographing ceremonies. Never climb sacred trees or statues."
             ),
             "dining_etiquette": [
                 "Remove shoes if entering someone's home",
@@ -799,7 +799,7 @@ LOCAL_EXPERT_KNOWLEDGE = {
             "best_months": ["Apr", "May", "Jun", "Jul", "Aug", "Sep"],
             "avoid_months": ["Dec-Feb if you hate rain, Jan for extreme crowds"],
             "high_season": (
-                "Jul-Aug and Dec-Jan - book hotels 2-3 months ahead, " "prices 30-50% higher"
+                "Jul-Aug and Dec-Jan - book hotels 2-3 months ahead, prices 30-50% higher"
             ),
             "rainy_season": (
                 "Nov-Mar - afternoon thunderstorms, mornings usually clear. "
@@ -818,7 +818,7 @@ LOCAL_EXPERT_KNOWLEDGE = {
                     "name": "Galungan",
                     "when": "Every 210 days",
                     "impact": (
-                        "Temples decorated, ceremonies everywhere. " "Beautiful but some closures."
+                        "Temples decorated, ceremonies everywhere. Beautiful but some closures."
                     ),
                 },
             ],
@@ -1020,7 +1020,7 @@ LOCAL_EXPERT_KNOWLEDGE = {
                 "luxury": "$200-500+/night",
             },
             "book_ahead": (
-                "2-3 weeks for peak season (Jul-Aug, Dec-Jan). " "Last minute OK in low season."
+                "2-3 weeks for peak season (Jul-Aug, Dec-Jan). Last minute OK in low season."
             ),
         },
         "scams_traps": {
@@ -1028,7 +1028,7 @@ LOCAL_EXPERT_KNOWLEDGE = {
                 {
                     "name": "Money Changer Scam",
                     "how_it_works": (
-                        "Shows good rate, palms bills during counting " "or uses rigged calculator"
+                        "Shows good rate, palms bills during counting or uses rigged calculator"
                     ),
                     "how_to_avoid": (
                         "Use ATMs or official changers (BMC, Central Kuta). "
@@ -1039,7 +1039,7 @@ LOCAL_EXPERT_KNOWLEDGE = {
                     "name": "Taxi Meter Scam",
                     "how_it_works": "Claims meter is broken, quotes inflated price",
                     "how_to_avoid": (
-                        "Use Grab/Gojek or Blue Bird taxis only. " "Always insist on meter."
+                        "Use Grab/Gojek or Blue Bird taxis only. Always insist on meter."
                     ),
                 },
                 {
@@ -1113,8 +1113,7 @@ LOCAL_EXPERT_KNOWLEDGE = {
             {
                 "type": "seasonal",
                 "description": (
-                    "Rainy season (Nov-Mar) brings afternoon showers - "
-                    "mornings are best for diving"
+                    "Rainy season (Nov-Mar) brings afternoon showers - mornings are best for diving"
                 ),
                 "severity": "info",
             },
@@ -1402,8 +1401,8 @@ Output as JSON with "constraints" and "recommendations" arrays."""
 
         user_context = f"""
 Destination: {plan.destination}
-Dates: {plan.start_date or 'Not specified'} to {plan.end_date or 'Not specified'}
-Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children else ''}
+Dates: {plan.start_date or "Not specified"} to {plan.end_date or "Not specified"}
+Travelers: {plan.adults} adults{f", {plan.children} children" if plan.children else ""}
 """
 
         model = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")

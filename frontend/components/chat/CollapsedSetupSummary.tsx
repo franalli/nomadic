@@ -70,7 +70,7 @@ function TripBrief({ tripInputs, executedTopics }: TripBriefProps) {
     preferences.push({ label: `⭐ ${hotelSettings.min_stars}+ star hotels`, variant: 'setting' });
   }
   if (hotelSettings?.amenities?.length) {
-    hotelSettings.amenities.slice(0, 2).forEach((a) => {
+    hotelSettings.amenities.forEach((a) => {
       preferences.push({ label: `🏨 ${a}`, variant: 'setting' });
     });
   }
