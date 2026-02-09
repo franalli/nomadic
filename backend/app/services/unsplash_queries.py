@@ -26,6 +26,17 @@ ACTIVITY_QUERIES: dict[str, str] = {
     "snorkeling": "snorkeling tropical reef underwater",
     "kayaking": "kayaking ocean river paddle",
     "cycling": "cycling mountain bike trail",
+    # Tier 2 experience categories
+    "yoga": "yoga retreat meditation wellness",
+    "cooking": "cooking class local food market",
+    "nightlife": "nightlife bar rooftop cocktail",
+    "sailing": "sailing yacht ocean sunset",
+    "food": "food tour street food local cuisine",
+    "wine": "wine tasting vineyard cellar",
+    "photography": "photography tour scenic viewpoint",
+    "wellness": "spa wellness retreat relaxation",
+    "culture": "cultural tour temple museum heritage",
+    "music": "live music concert venue",
 }
 
 # Curated mapping for common destinations
@@ -178,7 +189,23 @@ def get_query_for_destination(destination: str, activities: list[str] | None = N
         if activity in ACTIVITY_QUERIES:
             # Land-based activities: combine destination for location-specific imagery
             # e.g., "bali hiking mountain trail" instead of generic "mountain hiking trail"
-            land_based = {"hiking", "skiing", "climbing", "cycling", "surfing"}
+            land_based = {
+                "hiking",
+                "skiing",
+                "climbing",
+                "cycling",
+                "surfing",
+                "yoga",
+                "cooking",
+                "nightlife",
+                "sailing",
+                "food",
+                "wine",
+                "photography",
+                "wellness",
+                "culture",
+                "music",
+            }
             if activity in land_based:
                 return f"{destination} {activity} {ACTIVITY_QUERIES[activity]}"
             # Underwater activities: use pure activity query (coral looks the same everywhere)

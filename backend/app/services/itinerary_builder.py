@@ -626,6 +626,9 @@ class ItineraryBuilder:
             ]
             days = self._handle_empty_days(days, input_data.tiles, tier2_cats)
 
+            # Phase 5.6: Place LLM-generated experience tiles on free days
+            days = self._place_experience_tiles(days, input_data.tiles)
+
             # Phase 5.25: Populate free days with user-preferred activities
             preferred_acts = self.preferences.preferred_activity_ids if self.preferences else "None"
             _debug_itinerary(
@@ -1489,6 +1492,137 @@ class ItineraryBuilder:
                 # Update day label if generic
                 if day.label.startswith("Day "):
                     day.label = day_label
+
+        return days
+
+    # =========================================================================
+    # Phase 5.6: Place Experience Tiles on Free Days
+    # =========================================================================
+
+    def _place_experience_tiles(
+        self,
+        days: List[DayCardOutput],
+        tiles: Dict[str, Any],
+    ) -> List[DayCardOutput]:
+        """
+        Phase 5.6: Auto-place LLM-generated experience tiles on free days.
+
+        Finds tiles with source_agent="experience_generator" in the flat tile map
+        and distributes them across days that currently have free_day placeholder blocks.
+        Replaces the placeholder with actual activity blocks.
+
+        Args:
+            days: Day cards from previous phases
+            tiles: Flat {tile_id: tile_dict} map from input_data.tiles
+
+        Returns:
+            Updated day cards with experience tiles placed on free days.
+        """
+        if not tiles:
+            _debug_itinerary("⏭️ Phase 5.6 skipped: no tiles")
+            return days
+
+        # Filter for experience generator tiles
+        experience_tiles = [
+            t
+            for _, t in tiles.items()
+            if isinstance(t, dict) and t.get("source_agent") == "experience_generator"
+        ]
+
+        if not experience_tiles:
+            _debug_itinerary("⏭️ Phase 5.6 skipped: no experience tiles")
+            return days
+
+        _debug_itinerary(f"📅 Phase 5.6: Found {len(experience_tiles)} experience tiles")
+
+        # Sort by time_of_day: morning first, then afternoon, then evening
+        TIME_ORDER = {"morning": 0, "afternoon": 1, "evening": 2}
+        experience_tiles.sort(
+            key=lambda t: TIME_ORDER.get((t.get("meta") or {}).get("time_of_day", "afternoon"), 1)
+        )
+
+        # Find free day indices (days with a free_day block, excluding arrival/departure)
+        free_day_indices = []
+        for i, day in enumerate(days):
+            if i == 0 or i == len(days) - 1:
+                continue
+            has_free_day = any(b.activity_type == "free_day" for b in day.blocks)
+            if has_free_day:
+                free_day_indices.append(i)
+
+        if not free_day_indices:
+            _debug_itinerary("📅 Phase 5.6: No free days available")
+            return days
+
+        # Distribute experience tiles across free days — even spread
+        # Pass 1: 1 tile per free day
+        tile_idx = 0
+        for day_idx in free_day_indices:
+            if tile_idx >= len(experience_tiles):
+                break
+            day = days[day_idx]
+            day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
+            tile = experience_tiles[tile_idx]
+            meta = tile.get("meta", {})
+            block = DayBlockOutput(
+                id=tile.get("id", f"exp_block_{day.day_number}_0"),
+                period=meta.get("time_of_day", "afternoon"),
+                activity_type=meta.get("category", "experience"),
+                summary=tile.get("title", "Experience Activity"),
+                specialist_type="experience",
+                intensity="light",
+                duration=f"{meta.get('duration_hours', 2)}h",
+                image_url=tile.get("image_url"),
+                booked_tile=tile,
+                requires_booking=True,
+                booking_category="activity",
+            )
+            day.blocks.append(block)
+            tile_idx += 1
+
+        # Pass 2: remaining tiles round-robin from the top
+        for i, tile in enumerate(experience_tiles[tile_idx:]):
+            target_day_idx = free_day_indices[i % len(free_day_indices)]
+            day = days[target_day_idx]
+            meta = tile.get("meta", {})
+            placed_count = sum(1 for b in day.blocks if b.specialist_type == "experience")
+            block = DayBlockOutput(
+                id=tile.get("id", f"exp_block_{day.day_number}_{placed_count}"),
+                period=meta.get("time_of_day", "afternoon"),
+                activity_type=meta.get("category", "experience"),
+                summary=tile.get("title", "Experience Activity"),
+                specialist_type="experience",
+                intensity="light",
+                duration=f"{meta.get('duration_hours', 2)}h",
+                image_url=tile.get("image_url"),
+                booked_tile=tile,
+                requires_booking=True,
+                booking_category="activity",
+            )
+            day.blocks.append(block)
+
+        # Update day labels
+        for day_idx in free_day_indices:
+            day = days[day_idx]
+            placed_categories = []
+            for b in day.blocks:
+                if b.specialist_type == "experience" and b.activity_type != "free_day":
+                    cat_title = b.activity_type.replace("_", " ").title()
+                    if cat_title not in placed_categories:
+                        placed_categories.append(cat_title)
+            if placed_categories:
+                day.label = " & ".join(placed_categories) + " Day"
+            _debug_itinerary(
+                f"📅 Phase 5.6: Day {day.day_number} — placed "
+                f"{sum(1 for b in day.blocks if b.specialist_type == 'experience')} "
+                f"experience tiles"
+            )
+
+        placed_total = len(experience_tiles)
+        _debug_itinerary(
+            f"✅ Phase 5.6: Placed {placed_total}/{len(experience_tiles)} experience tiles "
+            f"across {len(free_day_indices)} free days"
+        )
 
         return days
 

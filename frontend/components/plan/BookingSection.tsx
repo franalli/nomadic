@@ -65,6 +65,9 @@ const SPECIALIST_KEYWORDS: Record<string, string[]> = {
 function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boolean {
   if (!specialistTypes || specialistTypes.length === 0) return true;
 
+  // Experience tiles always pass through (Tier 2, purpose-generated for user's selection)
+  if (tile.tags?.includes('experience')) return true;
+
   const category = (tile.type || '').toLowerCase();
   const title = (tile.title || '').toLowerCase();
   const subtitle = (tile.subtitle || '').toLowerCase();

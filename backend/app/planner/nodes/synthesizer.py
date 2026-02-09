@@ -209,6 +209,22 @@ def _build_synthesis_context(state: GraphState) -> str:
             parts.append(f"- Safety buffers: {len(buffer_blocks)}")
         parts.append("- NOTE: Do NOT describe activities in chat. Just mention counts.")
 
+    # Experience tiles count (Tier 2 activities from experience_generator)
+    if state.tiles:
+        experience_tiles = [
+            t
+            for t in state.tiles.get("activities", [])
+            if isinstance(t, dict) and t.get("source_agent") == "experience_generator"
+        ]
+        if experience_tiles:
+            categories = set()
+            for t in experience_tiles:
+                cat = (t.get("meta") or {}).get("category", "")
+                if cat:
+                    categories.add(cat)
+            cat_str = f" for {', '.join(sorted(categories))}" if categories else ""
+            parts.append(f"- Experience activities: {len(experience_tiles)}{cat_str}")
+
     # Constraints from specialist
     if plan.constraints:
         parts.append("\n## Active Constraints")

@@ -116,6 +116,9 @@ function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boole
   if (isHotelType(tile.type)) return true;
   if (!specialistTypes || specialistTypes.length === 0) return true;
 
+  // Experience tiles always pass through (Tier 2, purpose-generated for user's selection)
+  if (tile.tags?.includes('experience')) return true;
+
   const category = (tile.type || '').toLowerCase();
   const title = (tile.title || '').toLowerCase();
 

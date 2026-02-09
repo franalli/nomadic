@@ -621,6 +621,13 @@ async def apply_planner_update(
     if trip_inputs:
         cleaned_inputs = _trip_inputs_to_dict(trip_inputs)
         for field in _USER_OWNED_SETTINGS:
+            # Preserve activity_settings when it carries non-empty categories
+            # (e.g. from NL extraction or prior-turn state). Other settings
+            # are always stripped — document (via db.refresh) is SSoT.
+            if field == "activity_settings":
+                val = cleaned_inputs.get(field)
+                if isinstance(val, dict) and val.get("categories"):
+                    continue  # Non-empty categories — keep
             cleaned_inputs.pop(field, None)
 
     # Merge trip inputs - graph-owned fields only (user-owned stripped above)
@@ -754,6 +761,13 @@ def apply_planner_update_sync(
     if trip_inputs:
         cleaned_inputs = _trip_inputs_to_dict(trip_inputs)
         for field in _USER_OWNED_SETTINGS:
+            # Preserve activity_settings when it carries non-empty categories
+            # (e.g. from NL extraction or prior-turn state). Other settings
+            # are always stripped — document (via db.refresh) is SSoT.
+            if field == "activity_settings":
+                val = cleaned_inputs.get(field)
+                if isinstance(val, dict) and val.get("categories"):
+                    continue  # Non-empty categories — keep
             cleaned_inputs.pop(field, None)
 
     # Merge trip inputs - graph-owned fields only (user-owned stripped above)

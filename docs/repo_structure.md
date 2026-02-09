@@ -89,13 +89,14 @@ backend/
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── base_cache.py           # Base cache class
+│   │   ├── experience_generator.py # Tier 2 experience tile generation via gpt-4o-mini (L1+L2 cache)
 │   │   ├── itinerary_builder.py    # Itinerary construction + constraint alias normalization
 │   │   ├── regen_strategy.py       # Selective regeneration strategy computation
 │   │   ├── router_cache.py         # Thread-safe L1 cache for router extraction (context-aware)
 │   │   ├── specialist_cache.py     # Thread-safe L1+L2 cache for specialist LLM outputs
 │   │   ├── tile_cache.py           # Thread-safe L1+L2 cache for tile provider data (24h TTL)
 │   │   ├── unsplash.py             # Unsplash image service
-│   │   └── unsplash_queries.py     # Unsplash query helpers
+│   │   └── unsplash_queries.py     # Unsplash query helpers (includes Tier 2 activity queries)
 │   │
 │   ├── tile_service/           # Tile data providers
 │   │   ├── __init__.py

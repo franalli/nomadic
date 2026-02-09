@@ -643,9 +643,9 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 - `state.tiles["activities"]` - Activity tiles for frontend display (two-tier filtering when specialists active)
 - `state.metadata["flight_options"]` - Backwards compatibility
 
-**Two-Tier Activity Suppression:**
+**Two-Tier Activity System:**
 
-Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** categories (sailing, cooking, yoga, temples, nightlife, beach, shopping, photography) are lightweight — they bias tile selection without triggering specialists.
+Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** categories (yoga, cooking, nightlife, sailing, food, wine, photography, wellness, culture, music) generate real, destination-specific experience tiles via `gpt-4o-mini` structured output.
 
 When niche specialists are active, suppression is tier-aware:
 
@@ -666,18 +666,44 @@ if has_niche_specialist:
         # Pure Tier 1 — specialists own the activity layer
         state.tiles["activities"] = []
     else:
-        # Mixed — keep ONLY tiles matching Tier 2 selections
-        matching = [t for t in activity_dicts if _tile_matches_categories(t, tier2_cats)]
-        state.tiles["activities"] = matching
+        # Mixed — generate Tier 2 experience tiles via LLM
+        experience_tiles = await generate_experiences(
+            destination=plan.destination,
+            categories=list(tier2_cats),
+            month=month,
+            budget=plan.budget,
+            tier1_specialists=active_niche,
+        )
+        if experience_tiles:
+            state.tiles["activities"] = experience_tiles
+        else:
+            # Fallback: keyword match (original behavior)
+            matching = [t for t in activity_dicts if _tile_matches_categories(t, tier2_cats)]
+            state.tiles["activities"] = matching
+else:
+    # No niche specialist — check if user selected Tier 2 categories
+    tier2_only = selected_cats - TIER1_CATEGORIES
+    if tier2_only:
+        experience_tiles = await generate_experiences(
+            destination=plan.destination,
+            categories=list(tier2_only),
+            month=month,
+            budget=plan.budget,
+        )
+        if experience_tiles:
+            state.tiles["activities"] = experience_tiles
 ```
 
-Tile matching uses `tags` (primary, reliable for curated tiles) with keyword fallback (title/subtitle text search for mock tiles).
+**Experience Generator Service:** `backend/app/services/experience_generator.py`
+
+Generates 2 activities per Tier 2 category via `gpt-4o-mini` structured output. Each tile includes title, subtitle, category, duration, price estimate, time of day, and skill level. Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (same pattern as specialist cache). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
 
 | Trip Type | Categories | `executed_strategy_topics` | Activities |
 |-----------|-----------|---------------------------|------------|
 | "diving in Bali" | `["diving"]` | `["local_expert", "diving"]` | **Suppressed** (pure Tier 1) |
-| "diving + cooking in Bali" | `["diving", "cooking"]` | `["local_expert", "diving"]` | **Cooking tiles kept** (mixed) |
-| "trip to Rome" | `["cooking"]` | `["local_expert"]` | **All shown** (no specialist) |
+| "diving + yoga + cooking in Bali" | `["diving", "yoga", "cooking"]` | `["local_expert", "diving"]` | **LLM-generated** yoga + cooking tiles (mixed Tier 1+2) |
+| "yoga + cooking in Bali" | `["yoga", "cooking"]` | `["local_expert"]` | **LLM-generated** yoga + cooking tiles (pure Tier 2) |
+| "trip to Rome" | `[]` | `["local_expert"]` | **All shown** (no categories selected) |
 
 ### ConstraintGuard
 
@@ -1667,10 +1693,11 @@ Switzerland, Austria, Czech Republic, Hungary, Nepal, Mongolia, Bolivia, Rwanda,
 | Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
 |-------|-------------|---------|--------|--------|------------|---------|
 | Specialist | `specialist_cache.py` | 128 | 1h | 7 days | `specialist:{topic}:{dest}:{month}:{duration}` | LLM outputs |
+| Experience | `experience_generator.py` | 128 | 1h | 7 days | `experience:{dest}:{sorted_cats}:{month}` | Tier 2 tiles |
 | Tile | `tile_cache.py` | 256 | 24h | 24h | `tiles:{provider}:{type}:{dest}:{dates}` | Provider API data |
 | Router | `router_cache.py` | 500 | 1h | N/A | `SHA256({text}:{date})` | NL extraction |
 
-**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'tiles'`).
+**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'tiles'`).
 
 ### Cache Invalidation Triggers
 
@@ -1760,6 +1787,41 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 **Integration Points:**
 - Multi-specialist: `generate_all_specialists_parallel()` - batch cache lookup/write
 - Single specialist: `vertical_specialist()` - direct L1+L2 lookup before `generate_specialist_output_llm()`
+
+### Experience Generator Cache
+
+Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Inline within `experience_generator.py` (same pattern as specialist cache, no separate cache module).
+
+**Service:** `backend/app/services/experience_generator.py`
+
+**Tier 1: In-Memory TTLCache (Thread-Safe)**
+- Storage: `cachetools.TTLCache` with `RLock` for thread safety
+- Max size: 128 entries
+- TTL: 1 hour
+- Key format: `experience:{destination}:{sorted_categories}:{month}`
+
+**Tier 2: Database Cache**
+- Table: `response_cache` (filtered by `cache_type = 'experience'`)
+- TTL: 7 days
+- Storage: JSONB array of tile dicts
+
+**Cache Key Components:**
+| Component | Example | Purpose |
+|-----------|---------|---------|
+| destination | `bali` | Normalized lowercase |
+| categories | `cooking\|nightlife\|yoga` | Sorted alphabetically for stable keys |
+| month | `2026-03` | Seasonal context (not full dates) |
+
+**Why month granularity (not full dates):** Experiences are seasonal, not date-specific. A yoga retreat in Bali is relevant for all of March, unlike specialist activities which may vary by exact trip duration.
+
+**DB Session:** Creates its own via `_get_async_session_factory()` — zero coupling with caller (runs outside logistics_node's `async with db:` scope).
+
+**Lookup Order:**
+1. L1 in-memory (thread-safe) → ~1ms
+2. L2 PostgreSQL → ~50ms (promotes to L1 on hit)
+3. `gpt-4o-mini` structured output → ~2-3s (writes to both layers)
+
+**Integration Point:** `logistics_node.py` → Tier 2 activity block (both mixed Tier 1+2 and pure Tier 2 paths)
 
 #### Session-Level Cache (`parallel_llm_results`)
 
@@ -2361,6 +2423,15 @@ Phase 5: Tile Matching
 ├─ Activities matched to day blocks
 ├─ Flights attached to arrival/departure
 └─ Hotel preference attribution (user_preferred metadata)
+
+Phase 5.6: Experience Tile Placement (NEW)
+├─ Filter tiles by source_agent == "experience_generator"
+├─ Sort by time_of_day: morning → afternoon → evening
+├─ Find free day indices (days with free_day placeholder blocks)
+├─ Round-robin distribute 1-2 experience tiles per free day
+├─ Remove free_day placeholder, create activity DayBlockOutput
+├─ Update day.label from "Free Day" to category title (e.g., "Yoga Day")
+└─ Leftover tiles (more tiles than free days) are dropped
 
 Phase 6: Constraint Tagging (Inline Display)
 ├─ Tag blocks with relevant constraints for frontend display

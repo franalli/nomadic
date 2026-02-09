@@ -639,11 +639,13 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
     # Two-tier activity handling:
     # Tier 1 (specialist): diving, hiking, skiing, cycling, surfing → full specialist run
-    # Tier 2 (experience): cooking, yoga, sailing, etc. → tile filtering only
+    # Tier 2 (experience): cooking, yoga, sailing, etc. → LLM-generated experience tiles
     #
     # When a niche specialist is active:
     # - Pure Tier 1 selections → suppress all generic tiles (specialist provides curated content)
-    # - Mixed Tier 1 + Tier 2 → keep only tiles matching Tier 2 categories
+    # - Mixed Tier 1 + Tier 2 → generate experience tiles for Tier 2 categories
+    # When no niche specialist:
+    # - Pure Tier 2 selections → generate experience tiles (most important case)
     from app.planner.nodes.intent_router import TIER1_SPECIALISTS
 
     NICHE_SPECIALISTS = TIER1_SPECIALISTS
@@ -666,28 +668,71 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             state.tiles["activities"] = []
             activity_dicts = []
         else:
-            # Mixed — keep ONLY tiles matching Tier 2 selections
-            matching = [t for t in activity_dicts if _tile_matches_categories(t, tier2_cats)]
+            # Mixed — generate Tier 2 experience tiles via LLM
+            from app.services.experience_generator import generate_experiences
+
+            month = str(plan.start_date)[:7] if plan.start_date else ""
             active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
-            if not matching and activity_dicts:
-                # Fallback: show all generic tiles rather than nothing
-                matching = activity_dicts
+            experience_tiles = await generate_experiences(
+                destination=plan.destination,
+                categories=list(tier2_cats),
+                month=month,
+                budget=plan.budget,
+                tier1_specialists=active_niche,
+            )
+
+            if experience_tiles:
                 log(
                     "LOGISTICS",
-                    f"Tier 2 filter returned 0 tiles, falling back to all {len(activity_dicts)}",
+                    f"Generated {len(experience_tiles)} Tier 2 experience tiles",
                     data=f"specialists={active_niche}, tier2={tier2_cats}",
                 )
+                state.tiles["activities"] = experience_tiles
+                activity_dicts = experience_tiles
             else:
+                # Fallback: keyword match existing tiles (original behavior)
+                matching = [t for t in activity_dicts if _tile_matches_categories(t, tier2_cats)]
+                if not matching and activity_dicts:
+                    matching = activity_dicts
+                    log(
+                        "LOGISTICS",
+                        f"Experience gen empty, falling back to all {len(activity_dicts)}",
+                        data=f"specialists={active_niche}, tier2={tier2_cats}",
+                    )
+                else:
+                    log(
+                        "LOGISTICS",
+                        (
+                            f"Experience gen empty, keyword matched "
+                            f"{len(matching)}/{len(activity_dicts)}"
+                        ),
+                        data=f"specialists={active_niche}, tier2={tier2_cats}",
+                    )
+                state.tiles["activities"] = matching
+                activity_dicts = matching
+    else:
+        # No niche specialist — check if user selected Tier 2 categories
+        trip_inputs = state.metadata.get("trip_inputs", {})
+        selected_cats = set(trip_inputs.get("activity_settings", {}).get("categories", []))
+        tier2_only = selected_cats - TIER1_CATEGORIES
+        if tier2_only:
+            from app.services.experience_generator import generate_experiences
+
+            month = str(plan.start_date)[:7] if plan.start_date else ""
+            experience_tiles = await generate_experiences(
+                destination=plan.destination,
+                categories=list(tier2_only),
+                month=month,
+                budget=plan.budget,
+            )
+            if experience_tiles:
                 log(
                     "LOGISTICS",
-                    (
-                        f"Mixed tiers: kept {len(matching)}/{len(activity_dicts)} "
-                        "activities for Tier 2"
-                    ),
-                    data=f"specialists={active_niche}, tier2={tier2_cats}",
+                    f"Pure Tier 2: generated {len(experience_tiles)} experience tiles",
+                    data=f"categories={tier2_only}",
                 )
-            state.tiles["activities"] = matching
-            activity_dicts = matching
+                state.tiles["activities"] = experience_tiles
+                activity_dicts = experience_tiles
 
     log("LOGISTICS", f"Found {len(activity_dicts)} activities for {plan.destination}")
     _debug_log(f"Activities found: {len(activity_dicts)}")

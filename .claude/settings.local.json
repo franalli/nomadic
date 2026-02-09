@@ -96,7 +96,10 @@
       "Bash(source:*)",
       "Bash(PYTHONPATH=. pytest:*)",
       "Bash(pytest:*)",
-      "Bash(.venv/bin/pytest:*)"
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(.venv/bin/python -m pytest tests/test_experience_generator.py -v)",
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(poetry env info:*)"
     ],
     "deny": [],
     "ask": []

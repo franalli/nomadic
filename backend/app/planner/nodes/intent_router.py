@@ -133,6 +133,15 @@ class RouterOutput(BaseModel):
         default_factory=list, description="List of detected specialist activities"
     )
 
+    # Tier 2 activity categories (yoga, cooking, nightlife, etc.)
+    activity_categories: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Activity categories mentioned: yoga, cooking, nightlife, temples, beach, "
+            "shopping, photography, sailing, wellness, culture, music, wine, food"
+        ),
+    )
+
     # Extracted trip fields (populated when intent=PLANNING)
     destination: Optional[str] = Field(None, description="Destination city/country if mentioned")
     origin: Optional[str] = Field(None, description="Origin city if mentioned")
@@ -1312,6 +1321,22 @@ Include all matching specialists (use CANONICAL lowercase names):
 - "biking", "bicycle", "bike tour" → "cycling"
 - "sailing", "yacht", "cruise" → "boating"
 
+## Task 4: Activity Categories
+
+Extract any activity categories the user mentions or implies. Use these canonical names:
+yoga, cooking, nightlife, temples, beach, shopping, photography, sailing, wellness,
+culture, music, wine, food
+
+Examples:
+- "I want to party" → ["nightlife"]
+- "explore local cuisine" → ["cooking", "food"]
+- "relaxing trip with spa" → ["yoga", "wellness"]
+- "diving and cooking" → ["cooking"] (diving goes in specialist_hints, not here)
+- "temple tours and wine tasting" → ["temples", "wine"]
+
+Do NOT include Tier 1 specialist activities (diving, hiking, skiing, cycling, surfing) here — \
+those go in specialist_hints.
+
 ## User Message
 "{user_message}"
 
@@ -1332,7 +1357,7 @@ def _get_router_extraction_llm() -> ChatOpenAI:
     return ChatOpenAI(
         model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
         temperature=0,  # Deterministic extraction
-        max_tokens=400,  # Need more tokens for field extraction
+        max_tokens=500,  # Need more tokens for field extraction + activity_categories
     )
 
 
@@ -2191,6 +2216,36 @@ def _populate_trip_plan_from_router_output(
 
     if router_output.budget is not None:
         state.trip_plan.budget = router_output.budget
+
+    # Persist activity categories to activity_settings (Tier 2 pipeline activation)
+    if router_output.activity_categories:
+        KNOWN_CATEGORIES = TIER1_SPECIALISTS | {
+            "yoga",
+            "cooking",
+            "nightlife",
+            "temples",
+            "beach",
+            "shopping",
+            "photography",
+            "sailing",
+            "wellness",
+            "culture",
+            "music",
+            "wine",
+            "food",
+        }
+        validated = [c for c in router_output.activity_categories if c.lower() in KNOWN_CATEGORIES]
+        if validated:
+            trip_inputs = state.metadata.get("trip_inputs", {})
+            activity_settings = trip_inputs.get("activity_settings", {})
+            existing = set(activity_settings.get("categories", []))
+            # Also include Tier 1 specialists as categories
+            from_specialists = set(router_output.specialist_hints)
+            merged = sorted(existing | set(validated) | from_specialists)
+            activity_settings["categories"] = merged
+            trip_inputs["activity_settings"] = activity_settings
+            state.metadata["trip_inputs"] = trip_inputs
+            logger.info(f"[ROUTER] Categories: {merged} (from LLM: {validated})")
 
     logger.debug(
         f"Populated trip_plan: dest={state.trip_plan.destination}, "

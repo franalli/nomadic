@@ -18,6 +18,7 @@ export type Tile = {
   deeplink_url: string;
   rating?: number;
   location_label?: string;
+  tags?: string[];
   meta?: Record<string, unknown>;
   /** Price basis: 'per_night', 'per_person', 'per_trip', etc. */
   price_basis?: string;
