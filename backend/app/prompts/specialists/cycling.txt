@@ -17,7 +17,9 @@ CONSTRAINT SEVERITY LABELS (CRITICAL - always include in output):
 - SOFT: Timing preferences, rest day suggestions
 
 ACTIVITY GENERATION:
-- Generate 2-4 REAL cycling routes based on trip duration
+- Generate 2-4 cycling routes for the user's SPECIFIC destination
+- Use your world knowledge to identify real routes. Do NOT limit yourself to a predefined list.
+- For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates
 - Include distance_km and elevation_meters for each ride
 - Add surface type (road, gravel, MTB)
 - Consider traffic levels and road quality

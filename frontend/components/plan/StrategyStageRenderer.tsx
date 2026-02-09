@@ -39,6 +39,7 @@ import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { getDestinationCoords } from '@/lib/destination-coords';
+import { NICHE_SPECIALIST_IDS } from '@/lib/specialists';
 import {
   calculateMapCenter,
   extractPOIsFromDayCards,
@@ -167,25 +168,6 @@ function computeTimelineVariant(state: PlanViewState): TimelineVariant {
   return 'ghost';
 }
 
-/**
- * Get alternative destination suggestions for infeasible specialists
- */
-function getAlternativeDestinations(specialistType?: string): string {
-  switch (specialistType?.toLowerCase()) {
-    case 'diving':
-      return 'Consider Bali, Red Sea, or Maldives.';
-    case 'skiing':
-      return 'Consider Alps, Aspen, or Hokkaido.';
-    case 'hiking':
-      return 'Consider Nepal, Patagonia, or Swiss Alps.';
-    case 'surfing':
-      return 'Consider Bali, Hawaii, or Portugal.';
-    case 'boating':
-      return 'Consider Greece, Croatia, or Caribbean.';
-    default:
-      return 'Try a different destination.';
-  }
-}
 
 interface StrategyStageRendererProps {
   state: PlanViewState;
@@ -435,10 +417,10 @@ export function StrategyStageRenderer({
 
       newInfeasible.forEach(section => {
         const specialistName = section.title || section.specialist_type || 'Activity';
-        const alternatives = getAlternativeDestinations(section.specialist_type);
+        const reason = section.feasibility_reason || 'Try a different destination.';
 
         toast(
-          `${specialistName} unavailable in ${destination}. ${alternatives}`,
+          `${specialistName} unavailable in ${destination}. ${reason}`,
           { type: 'warning', duration: 5000 }
         );
       });
@@ -882,10 +864,9 @@ export function StrategyStageRenderer({
                 )}
                 {/* Trip DNA bar - U6: Shows ENGINE CONSTRAINTS with validation state */}
                 {(() => {
-                  // Filter: only niche specialists (diving, hiking, skiing), not local_expert/general
-                  const NICHE_SPECIALISTS = ['diving', 'hiking', 'skiing', 'cycling', 'boating'];
+                  // Filter: only niche specialists, not local_expert/general
                   const engineConstraints = fullModeSections
-                    .filter((s) => NICHE_SPECIALISTS.includes(s.specialist_type || ''))
+                    .filter((s) => NICHE_SPECIALIST_IDS.includes(s.specialist_type || ''))
                     .flatMap((s) => s.constraints_applied || []);
 
                   if (engineConstraints.length === 0) return null;
@@ -960,10 +941,10 @@ export function StrategyStageRenderer({
                   };
 
                   return (
-                    <div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700">
-                      <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0">Trip DNA:</span>
-                      <div className="relative flex-1 min-w-0">
-                        <div className="flex gap-2 overflow-x-auto no-scrollbar pr-8">
+                    <div className="flex items-start gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700">
+                      <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0 leading-[30px]">Trip DNA:</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap gap-2">
                           {engineConstraints.map((c, i) => {
                             const style = getPillStyle(c);
                             return (
@@ -993,15 +974,13 @@ export function StrategyStageRenderer({
                             );
                           })}
                         </div>
-                        {/* Right fade gradient */}
-                        <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-zinc-100 dark:from-zinc-950 to-transparent pointer-events-none" />
                       </div>
                       {/* Toggle for specialist cards - inside Trip DNA bar, right-aligned */}
                       {hasItineraryContent && (
                         <button
                           type="button"
                           onClick={() => setShowConstraints(!showConstraints)}
-                          className="text-xs text-zinc-500 hover:text-zinc-400 underline cursor-pointer shrink-0 ml-2"
+                          className="text-xs text-zinc-500 hover:text-zinc-400 underline cursor-pointer shrink-0 ml-2 leading-[30px]"
                         >
                           {showConstraints ? 'Hide' : 'Details'}
                         </button>

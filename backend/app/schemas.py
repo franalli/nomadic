@@ -545,6 +545,10 @@ class StrategySection(BaseModel):
     content_added: List[Dict[str, Any]] = Field(default_factory=list)
     # Each dict: {"title": "USAT Liberty Wreck", "day": 2, "type": "activity"}
 
+    # Typed content blocks — mirrors content_added but as a first-class field.
+    # Replaces TripPlan.itinerary_blocks for specialist content.
+    content_blocks: List[Dict[str, Any]] = Field(default_factory=list)
+
     # Destination gallery - "Vibe Trio" images for Local Expert card (hero destinations only)
     destination_gallery: List[Dict[str, str]] = Field(default_factory=list)
     # Each dict: {"url": "https://...", "alt": "Dubai Marina"}

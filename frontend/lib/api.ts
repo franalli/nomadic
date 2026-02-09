@@ -458,7 +458,7 @@ export interface SSENodeStatusEvent {
     // Strategy-specific fields (optional, only present for strategy_node)
     stage?: number;
     tier?: 'outline' | 'section' | 'full';
-    topic?: 'hiking' | 'skiing' | 'diving' | 'cycling' | 'boating';
+    topic?: string;
     max_tokens?: number;
   };
 }

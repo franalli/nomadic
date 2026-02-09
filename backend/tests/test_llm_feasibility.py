@@ -1,50 +1,75 @@
 """
-Tests for LLM-based feasibility checking.
+Tests for registry-gated feasibility checking.
 
-These tests verify that the geographic feasibility layer correctly identifies
-impossible activities (e.g., diving in landlocked Chamonix).
+These tests verify that the geographic feasibility layer correctly gates
+on has_geographic_constraint from the specialist registry.
 """
 
 from app.planner.nodes.vertical_specialist import check_feasibility
+from app.planner.specialist_registry import get as get_specialist_config
 
 
-class TestHardcodedFeasibility:
-    """Test hardcoded feasibility checks (fast path)."""
+class TestRegistryGatedFeasibility:
+    """Test that feasibility respects registry has_geographic_constraint flag."""
 
-    def test_diving_in_switzerland_infeasible(self):
-        """Diving should be infeasible in Switzerland (landlocked)."""
-        status, reason, alternative = check_feasibility("diving", "Switzerland")
-        assert status == "infeasible"
-        assert "not available" in reason.lower()
-        assert alternative is not None
+    def test_diving_has_geographic_constraint(self):
+        """Diving config should have geographic constraint enabled."""
+        config = get_specialist_config("diving")
+        assert config is not None
+        assert config.has_geographic_constraint is True
 
-    def test_diving_in_bali_feasible(self):
-        """Diving should be feasible in Bali (coastal)."""
-        status, reason, alternative = check_feasibility("diving", "Bali")
+    def test_skiing_has_geographic_constraint(self):
+        """Skiing config should have geographic constraint enabled."""
+        config = get_specialist_config("skiing")
+        assert config is not None
+        assert config.has_geographic_constraint is True
+
+    def test_hiking_no_geographic_constraint(self):
+        """Hiking should not have geographic constraint — feasible everywhere."""
+        config = get_specialist_config("hiking")
+        assert config is not None
+        assert config.has_geographic_constraint is False
+
+    def test_cycling_no_geographic_constraint(self):
+        """Cycling should not have geographic constraint — feasible everywhere."""
+        config = get_specialist_config("cycling")
+        assert config is not None
+        assert config.has_geographic_constraint is False
+
+    def test_surfing_no_geographic_constraint(self):
+        """Surfing should not have geographic constraint."""
+        config = get_specialist_config("surfing")
+        assert config is not None
+        assert config.has_geographic_constraint is False
+
+
+class TestCheckFeasibilityAutoFeasible:
+    """Test that specialists without geographic constraint are auto-feasible."""
+
+    def test_hiking_always_feasible(self):
+        """Hiking should be feasible everywhere (no LLM check)."""
+        status, reason, alternative = check_feasibility("hiking", "Chamonix")
         assert status == "feasible"
         assert reason is None
 
-    def test_skiing_in_bali_infeasible(self):
-        """Skiing should be infeasible in Bali (tropical)."""
-        status, reason, alternative = check_feasibility("skiing", "Bali")
-        assert status == "infeasible"
-        assert "not available" in reason.lower()
-
-    def test_skiing_in_chamonix_feasible(self):
-        """Skiing should be feasible in Chamonix (Alps)."""
-        # Note: Chamonix might not be in hardcoded list but LLM should say feasible
-        status, reason, alternative = check_feasibility("skiing", "Chamonix")
-        # Could be "feasible" (from LLM) or might not be in hardcoded list
-        assert status in ["feasible", "caveat"]
-
-
-class TestCheckFeasibilityIntegration:
-    """Test the full check_feasibility flow with LLM fallback."""
-
-    def test_hiking_always_feasible(self):
-        """Hiking should be feasible almost everywhere (no LLM check)."""
-        status, reason, alternative = check_feasibility("hiking", "Chamonix")
-        assert status == "feasible"
-
         status, reason, alternative = check_feasibility("hiking", "Tokyo")
         assert status == "feasible"
+        assert reason is None
+
+    def test_cycling_always_feasible(self):
+        """Cycling should be feasible everywhere (no LLM check)."""
+        status, reason, alternative = check_feasibility("cycling", "Antarctica")
+        assert status == "feasible"
+        assert reason is None
+
+    def test_empty_destination_always_feasible(self):
+        """Empty destination should be auto-feasible for any specialist."""
+        status, reason, alternative = check_feasibility("diving", "")
+        assert status == "feasible"
+        assert reason is None
+
+    def test_unknown_specialist_always_feasible(self):
+        """Unknown specialist should be auto-feasible (no config)."""
+        status, reason, alternative = check_feasibility("unknown_sport", "Paris")
+        assert status == "feasible"
+        assert reason is None

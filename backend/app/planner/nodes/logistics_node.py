@@ -33,11 +33,12 @@ from app.debug_utils import (
     log,
 )
 from app.planner.hashing import stable_hash
+from app.planner.services.iata_resolver import resolve_iata_codes
 from app.planner.state.schemas import GraphState
+from app.planner.state.typed_meta import get_trip_settings
 from app.tile_service.curated_provider import CuratedProvider
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
 from app.tile_service.models import SearchContext
-from app.tools.amadeus_client import city_to_airport_code
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ def _logistics_input_hash(state: GraphState) -> str:
     - Activity skill level
     """
     tp = state.trip_plan
-    ti = state.metadata.get("trip_inputs", {})
+    settings = get_trip_settings(state)
     return stable_hash(
         {
             "destination": (tp.destination or "").lower(),
@@ -68,10 +69,10 @@ def _logistics_input_hash(state: GraphState) -> str:
             "adults": tp.adults,
             "children": tp.children,
             "budget": tp.budget,
-            "hotel_settings": ti.get("hotel_settings"),
-            "flight_settings": ti.get("flight_settings"),
-            "activity_skill_level": ti.get("activity_skill_level"),
-            "activity_categories": sorted(ti.get("activity_settings", {}).get("categories", [])),
+            "hotel_settings": settings.hotel_settings.model_dump(),
+            "flight_settings": settings.flight_settings.model_dump(),
+            "activity_skill_level": settings.activity_settings.skill_level,
+            "activity_categories": sorted(settings.activity_settings.categories),
         }
     )
 
@@ -172,22 +173,13 @@ async def logistics_node(state: GraphState) -> GraphState:
     # ==========================================================================
     # DIAGNOSTIC LOGGING - Track origin sync (Issue 6 investigation)
     # ==========================================================================
+    _logistics_settings = get_trip_settings(state)
+    flights_enabled = _logistics_settings.booking_types.flights != "off"
     trip_inputs = state.metadata.get("trip_inputs", {})
     trip_inputs_origin = trip_inputs.get("origin")
-    booking_types = trip_inputs.get("booking_types", {})
-    flights_enabled = booking_types.get("flights") != "off"
 
     _debug_log(f"[LOGISTICS] trip_plan.origin={plan.origin!r}")
-    _debug_log(f"[LOGISTICS] metadata.trip_inputs.origin={trip_inputs_origin!r}")
-    _debug_log(f"[LOGISTICS] trip_inputs keys: {list(trip_inputs.keys())}")
     _debug_log(f"[LOGISTICS] flights_enabled={flights_enabled}")
-
-    # Check for origin mismatch (reveals where sync breaks)
-    if trip_inputs_origin and not plan.origin:
-        logger.warning(
-            f"[LOGISTICS] ⚠️ ORIGIN MISMATCH: trip_inputs has '{trip_inputs_origin}' "
-            f"but trip_plan.origin is empty! Check _restore_graph_state sync in plan_graph.py"
-        )
 
     # Skip flights if disabled in settings (even if origin exists)
     if not flights_enabled:
@@ -204,8 +196,8 @@ async def logistics_node(state: GraphState) -> GraphState:
         return state
 
     # Resolve airport codes for flights (flights need origin, hotels/activities don't)
-    origin_code = _city_to_code(plan.origin or "")
-    dest_code = _city_to_code(plan.destination)
+    # Reads state first (populated by router), falls back to LLM only if missing
+    origin_code, dest_code = await resolve_iata_codes(plan.origin or "", plan.destination, state)
     # Can only search flights if: codes resolved + flights not disabled in settings
     can_search_flights = bool(origin_code and dest_code) and flights_enabled
 
@@ -462,11 +454,11 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
     _debug_log(f"Searching hotels/activities for {plan.destination}...")
 
-    # Read user settings from trip_inputs for provider filtering
-    trip_inputs = state.metadata.get("trip_inputs", {})
-    hotel_settings = trip_inputs.get("hotel_settings") or {}
-    activity_settings = trip_inputs.get("activity_settings") or {}
-    flight_settings = trip_inputs.get("flight_settings") or {}
+    # Read user settings for provider filtering
+    _settings = get_trip_settings(state)
+    hotel_settings = _settings.hotel_settings.model_dump()
+    activity_settings = _settings.activity_settings.model_dump()
+    flight_settings = _settings.flight_settings.model_dump()
 
     # Determine provider and cache key parameters
     dest_key = plan.destination.lower().strip() if plan.destination else ""
@@ -653,8 +645,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     executed = state.metadata.get("executed_strategy_topics", [])
     has_niche_specialist = any(t in NICHE_SPECIALISTS for t in executed)
     if has_niche_specialist:
-        trip_inputs = state.metadata.get("trip_inputs", {})
-        selected_cats = set(trip_inputs.get("activity_settings", {}).get("categories", []))
+        selected_cats = set(get_trip_settings(state).activity_settings.categories)
         tier2_cats = selected_cats - TIER1_CATEGORIES
 
         if not tier2_cats:
@@ -673,12 +664,14 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
             month = str(plan.start_date)[:7] if plan.start_date else ""
             active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
+            tiles_per_cat = _compute_tiles_per_category(state, tier2_cats)
             experience_tiles = await generate_experiences(
                 destination=plan.destination,
                 categories=list(tier2_cats),
                 month=month,
                 budget=plan.budget,
                 tier1_specialists=active_niche,
+                tiles_per_category=tiles_per_cat,
             )
 
             if experience_tiles:
@@ -712,18 +705,19 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 activity_dicts = matching
     else:
         # No niche specialist — check if user selected Tier 2 categories
-        trip_inputs = state.metadata.get("trip_inputs", {})
-        selected_cats = set(trip_inputs.get("activity_settings", {}).get("categories", []))
+        selected_cats = set(get_trip_settings(state).activity_settings.categories)
         tier2_only = selected_cats - TIER1_CATEGORIES
         if tier2_only:
             from app.services.experience_generator import generate_experiences
 
             month = str(plan.start_date)[:7] if plan.start_date else ""
+            tiles_per_cat = _compute_tiles_per_category(state, tier2_only)
             experience_tiles = await generate_experiences(
                 destination=plan.destination,
                 categories=list(tier2_only),
                 month=month,
                 budget=plan.budget,
+                tiles_per_category=tiles_per_cat,
             )
             if experience_tiles:
                 log(
@@ -744,6 +738,40 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     state.metadata["booking_summary"] = booking_summary
 
 
+def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
+    """Scale experience tile count based on free days available.
+
+    free_days = trip_days - specialist_activity_days - 2 (arrival/departure)
+    tiles_per_category = clamp(free_days // len(tier2_cats), 2, 4)
+    """
+    plan = state.trip_plan
+    if not plan.start_date or not plan.end_date or not tier2_cats:
+        return 2
+
+    try:
+        start = datetime.strptime(plan.start_date, "%Y-%m-%d")
+        end = datetime.strptime(plan.end_date, "%Y-%m-%d")
+        trip_days = (end - start).days + 1
+    except ValueError:
+        return 2
+
+    # Count items from niche specialist sections as proxy for specialist days
+    specialist_days = 0
+    for section in state.metadata.get("strategy_sections", []):
+        if section.get("specialist_type", "") in ("local_expert", "general"):
+            continue
+        specialist_days += len(section.get("content_added", []))
+
+    free_days = max(1, trip_days - specialist_days - 2)
+    tiles_per_cat = min(max(2, free_days // len(tier2_cats)), 4)
+    log(
+        "LOGISTICS",
+        f"Tile scaling: trip={trip_days}d, specialist={specialist_days}d, "
+        f"free={free_days}d, cats={len(tier2_cats)}, tiles/cat={tiles_per_cat}",
+    )
+    return tiles_per_cat
+
+
 def _tile_matches_categories(tile: dict, categories: set) -> bool:
     """Match tile against selected Tier 2 categories via tags (primary) or text (fallback)."""
     tile_tags = {t.lower() for t in tile.get("tags", [])}
@@ -753,16 +781,6 @@ def _tile_matches_categories(tile: dict, categories: set) -> bool:
     # Fallback: keyword in title/subtitle (handles mock tiles without proper tags)
     text = f"{tile.get('title', '')} {tile.get('subtitle', '')}".lower()
     return any(cat.lower() in text for cat in categories)
-
-
-def _city_to_code(city: str) -> str:
-    """Map city name to airport code."""
-    if not city:
-        return ""
-    # Check if already an airport code (3 letters)
-    if len(city) == 3 and city.isalpha():
-        return city.upper()
-    return city_to_airport_code(city) or ""
 
 
 def _has_diving_constraints(state: GraphState) -> bool:

@@ -55,11 +55,21 @@ backend/.benchmarks/
 # Database
 db-data/
 
+# Alembic auto-generated migrations
+backend/migrations/versions/
+
+# Environment files
+**/.env
+**/.env.*
+!**/.env.example
+
+# Docker overrides
+docker-compose.override.yml
+
 # Secrets (for safety)
 .secrets.baseline
 
 # IDE settings
-.vscode/
 .idea/
 *.code-workspace
 
@@ -75,7 +85,6 @@ db-data/
 **/*.jpeg
 **/*.gif
 **/*.webp
-**/*.svg
 **/*.mp4
 **/*.mov
 **/*.pdf

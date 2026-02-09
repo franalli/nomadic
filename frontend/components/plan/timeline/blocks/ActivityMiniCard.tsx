@@ -17,8 +17,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn, normalizeTitle } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
 
+import { getSpecialistColor } from '@/lib/specialists';
+
 import { PreferenceAttributionBadge, type PreferenceStatus } from './PreferenceAttributionBadge';
-import { type DisplayTime, getSpecialistBorderColor,getTopicColor } from './types';
+import type { DisplayTime } from './types';
 
 interface ActivityMiniCardProps {
   block: DayBlock;
@@ -48,39 +50,52 @@ export function ActivityMiniCard({
   onSwitchToAlternative,
 }: ActivityMiniCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const color = getTopicColor(block.specialist_type);
+  const st = block.specialist_type || '';
   const isUnschedulable = block.unschedulable === true;
 
-  // Dynamic color classes - using template literals for Tailwind scanning
-  const bgColorClass = {
-    cyan: 'bg-cyan-100 dark:bg-cyan-900/30',
-    emerald: 'bg-emerald-100 dark:bg-emerald-900/30',
-    blue: 'bg-blue-100 dark:bg-blue-900/30',
-    lime: 'bg-lime-100 dark:bg-lime-900/30',
-    indigo: 'bg-indigo-100 dark:bg-indigo-900/30',
-    zinc: 'bg-zinc-100 dark:bg-zinc-800/50',
-  }[color] || 'bg-zinc-100 dark:bg-zinc-800/50';
+  // Tailwind class lookups keyed by specialist type (Tailwind JIT needs static strings)
+  const bgColorClass: Record<string, string> = {
+    diving: 'bg-cyan-100 dark:bg-cyan-900/30',
+    hiking: 'bg-emerald-100 dark:bg-emerald-900/30',
+    skiing: 'bg-blue-100 dark:bg-blue-900/30',
+    cycling: 'bg-lime-100 dark:bg-lime-900/30',
+    surfing: 'bg-indigo-100 dark:bg-indigo-900/30',
+    boating: 'bg-indigo-100 dark:bg-indigo-900/30',
+    sailing: 'bg-cyan-100 dark:bg-cyan-900/30',
+    climbing: 'bg-orange-100 dark:bg-orange-900/30',
+    wildlife_safari: 'bg-amber-100 dark:bg-amber-900/30',
+  };
 
-  const iconColorClass = {
-    cyan: 'text-cyan-500',
-    emerald: 'text-emerald-500',
-    blue: 'text-blue-500',
-    lime: 'text-lime-500',
-    indigo: 'text-indigo-500',
-    zinc: 'text-zinc-500',
-  }[color] || 'text-zinc-500';
+  const iconColorClass: Record<string, string> = {
+    diving: 'text-cyan-500',
+    hiking: 'text-emerald-500',
+    skiing: 'text-blue-500',
+    cycling: 'text-lime-500',
+    surfing: 'text-indigo-500',
+    boating: 'text-indigo-500',
+    sailing: 'text-cyan-500',
+    climbing: 'text-orange-500',
+    wildlife_safari: 'text-amber-500',
+  };
 
-  const badgeBgClass = {
-    cyan: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400',
-    emerald: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400',
-    blue: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-    lime: 'bg-lime-100 dark:bg-lime-900/30 text-lime-700 dark:text-lime-400',
-    indigo: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400',
-    zinc: 'bg-zinc-100 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-400',
-  }[color] || 'bg-zinc-100 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-400';
+  const badgeBgClass: Record<string, string> = {
+    diving: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400',
+    hiking: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400',
+    skiing: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
+    cycling: 'bg-lime-100 dark:bg-lime-900/30 text-lime-700 dark:text-lime-400',
+    surfing: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400',
+    boating: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400',
+    sailing: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400',
+    climbing: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
+    wildlife_safari: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
+  };
 
-  // Get border color for multi-specialist visual distinction
-  const borderColor = getSpecialistBorderColor(block.specialist_type);
+  const bg = bgColorClass[st] || 'bg-zinc-100 dark:bg-zinc-800/50';
+  const iconColor = iconColorClass[st] || 'text-zinc-500';
+  const badgeBg = badgeBgClass[st] || 'bg-zinc-100 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-400';
+
+  // Hex border color from registry
+  const borderColor = getSpecialistColor(block.specialist_type);
 
   return (
     <div
@@ -112,8 +127,8 @@ export function ActivityMiniCard({
           />
         </div>
       ) : (
-        <div className={cn('w-full h-32 lg:w-20 lg:h-20 rounded-lg shrink-0 flex items-center justify-center', bgColorClass)}>
-          <Sparkles className={cn('w-8 h-8', iconColorClass)} />
+        <div className={cn('w-full h-32 lg:w-20 lg:h-20 rounded-lg shrink-0 flex items-center justify-center', bg)}>
+          <Sparkles className={cn('w-8 h-8', iconColor)} />
         </div>
       )}
 
@@ -135,7 +150,7 @@ export function ActivityMiniCard({
 
           {/* Specialist badge */}
           {block.specialist_type && (
-            <span className={cn('text-xs px-2 py-0.5 rounded font-medium uppercase', badgeBgClass)}>
+            <span className={cn('text-xs px-2 py-0.5 rounded font-medium uppercase', badgeBg)}>
               {block.specialist_type}
             </span>
           )}

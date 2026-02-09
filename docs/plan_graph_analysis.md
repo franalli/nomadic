@@ -36,7 +36,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 | Deterministic Nodes   | 1     | ConstraintGuard (pure Python validation) |
 | **Total Nodes**       | **7** | Core graph nodes                        |
 
-> **Note:** `ItineraryBuilder` is a pure Python **service** (not a LangGraph node). It's called from the `/api/expand-itinerary` endpoint, preserving the 7-node architecture.
+> **Note:** `ItineraryBuilder` is a pure Python **service** (not a LangGraph node). It's called from both `_format_result()` (via `itinerary_adapter.py`, shadow mode at S2_STRATEGY_READY) and the `/api/expand-itinerary` endpoint. The 7-node architecture is preserved.
 
 ### Design Principles
 
@@ -64,23 +64,30 @@ backend/app/planner/
 ├── hashing.py               # Stable hashing utilities
 ├── meta.py                  # Metadata helpers
 ├── meta_keys.py             # Metadata key constants
-├── season.py                # Season detection logic
 ├── telemetry.py             # Telemetry instrumentation
 ├── test_mode.py             # Test mode detection
+├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
+#   Frontend mirror: frontend/lib/specialists.ts (colors, icons, keywords, display names)
 ├── nodes/                   # Node implementations
 │   ├── __init__.py          # Node exports
 │   ├── intent_router.py     # LLM-based intent classification
 │   ├── trip_architect.py    # Core planning node (The Boss)
-│   ├── vertical_specialist.py # Domain specialist (diving/hiking/skiing)
+│   ├── vertical_specialist.py # Domain specialist (8 specialists, registry-driven)
 │   ├── specialist_llm.py    # Specialist LLM generation logic
 │   ├── specialist_schemas.py # Specialist Pydantic schemas
 │   ├── local_expert.py      # City logistics concierge
 │   ├── logistics_node.py    # Flight fetching + safety logic
 │   ├── constraint_guard.py  # Pure Python validation
 │   └── synthesizer.py       # Unified response generation
+├── services/
+│   ├── __init__.py          # Services package (exports section_builder + itinerary_adapter + iata_resolver)
+│   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed with state caching)
+│   ├── section_builder.py   # Strategy section CRUD (upsert, anchor sort, builders)
+│   └── itinerary_adapter.py # Thin bridge: GraphState → ItineraryBuilder
 └── state/
     ├── __init__.py          # State exports
-    └── schemas.py           # State models (GraphState, TripPlan)
+    ├── schemas.py           # State models (GraphState, TripPlan, TripSettings)
+    └── typed_meta.py        # Typed metadata bridge (TurnMeta, PersistentMeta, get_trip_settings)
 ```
 
 ---
@@ -102,13 +109,15 @@ backend/app/planner/
 │  ─────────────────────────────────────                                      │
 │  LLM-based intent classification (no regex!)                                │
 │  • Classifies: GREETING, RESET, or PLANNING                                 │
-│  • Detects: specialist_hint (diving/hiking/skiing/cycling/surfing)          │
+│  • Detects: specialist_hint (8 specialists via registry)                   │
 │  • GREETING/RESET → Static response, skip to Synthesizer                    │
+│  • SETTINGS_TO_LOGISTICS → Hotel/flight/budget/traveler changes → Logistics │
+│  • ACTIONABLE_TO_LOGISTICS → Tier 2 activities, removals, skill, resets     │
 │  • EXPLORATION → Generic Q&A using Local Expert knowledge (no LLM)          │
 │  • SOFT_TRANSITION → Routes to PLANNING when dates OR activities provided   │
 │  • PLANNING + no specialist → LocalExpert (city logistics)                  │
 │  • PLANNING + specialist → VerticalSpecialist                               │
-│  ~150 tokens, ~300ms (0 tokens for exploration mode)                        │
+│  ~150 tokens, ~300ms (0 tokens for exploration/settings/actionable modes)   │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │
          ┌─────────────────────────┼──────────────────────────┬───────────────┐
@@ -120,9 +129,9 @@ backend/app/planner/
 │    (skip architect)│  │  (LLM - Expert)         │  │  (City Concierge)      │
 │                    │  │  ─────────────────────  │  │  ────────────────────  │
 │  Returns static    │  │  Domain expert node     │  │  • Opening hours       │
-│  response with     │  │  Topics: diving, hiking │  │  • Booking windows     │
-│  suggested_replies │  │  skiing, cycling,       │  │  • Transit passes      │
-│                    │  │  surfing                │  │  • Cultural tips       │
+│  response with     │  │  8 specialists via      │  │  • Booking windows     │
+│  suggested_replies │  │  specialist_registry.py │  │  • Transit passes      │
+│                    │  │                         │  │  • Cultural tips       │
 │                    │  │                         │  │                        │
 │                    │  │  Returns:               │  │  Returns:              │
 │                    │  │  • Constraints          │  │  • Constraints         │
@@ -172,8 +181,8 @@ backend/app/planner/
 │  Pure Python validation (NO LLM)   │            │
 │  • Budget: total < allocation      │            │
 │  • Temporal: dates valid           │            │
-│  • Geographic: landlocked diving   │            │
-│  • Specialist: 24h surface interval│            │
+│  • Specialist: departure buffer    │            │
+│  • Specialist: cross-domain blocks │            │
 │                                    │            │
 │  Returns: violations[], has_blocking│           │
 │                                    │            │
@@ -360,15 +369,32 @@ DATE_INDICATORS = [
 This fixes the bug where users said "I want to go diving March 1-8" but were asked for dates again.
 
 **Specialist Detection:**
-```python
-SPECIALIST_KEYWORDS = {
-    "diving": ["dive", "diving", "scuba", "snorkel", "reef", "padi", ...],
-    "hiking": ["hike", "trek", "trail", "mountain", "summit", "alpine", ...],
-    "skiing": ["ski", "snowboard", "slope", "powder", "piste", ...],
-    "cycling": ["cycle", "bike", "bicycle", "mtb", "road bike", ...],
-    "surfing": ["surfing", "surf", "surfer", "wave riding", ...],
-}
-```
+
+Specialist keywords are defined in `backend/app/planner/specialist_registry.py` via `ALL_SPECIALIST_KEYWORDS`.
+The registry manages detection for **8 specialists**: diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari.
+Intent router imports and uses these keywords for both specialist detection and activity indicator matching.
+
+**Actionable Input Detection (Pre-Exploration):**
+
+`_detect_actionable_input()` runs AFTER settings detection, BEFORE `detect_planning_intent()`.
+Catches chat inputs that would otherwise be swallowed by the exploration short-circuit:
+
+| Input Type | Detection | Route | Example |
+|------------|-----------|-------|---------|
+| Tier 2 activity addition | `TIER2_ACTIVITY_KEYWORDS` (word-boundary) | `ACTIONABLE_TO_LOGISTICS` | "yoga as well" |
+| Activity removal | `REMOVAL_PATTERN` + known-activity guard | `ACTIONABLE_TO_LOGISTICS` | "skip the yoga" |
+| Skill level | `SKILL_LEVEL_MAP` keywords | `ACTIONABLE_TO_LOGISTICS` | "I'm a beginner" |
+| Budget reset | `RESET_BUDGET_PATTERN` | `ACTIONABLE_TO_LOGISTICS` | "no budget limit" |
+| Hotel reset | `RESET_HOTEL_PATTERN` | `ACTIONABLE_TO_LOGISTICS` | "any hotel is fine" |
+| Mixed Tier 1+2 | Tier 2 detected + Tier 1 keyword present | Fall through to SOFT_TRANSITION | "yoga and diving" |
+
+Uses the same `origin_only_logistics` fast-path flag as `SETTINGS_TO_LOGISTICS`.
+
+**Tier 1 Category Sync (SOFT_TRANSITION):**
+
+When specialists are detected via chat in the SOFT_TRANSITION path, they are now also synced to
+`activity_settings.categories`. Without this, logistics sees `categories=[]` and treats it as
+"pure Tier 1", suppressing all activity tiles — even when Tier 2 activities are added later.
 
 **Routing Decision (Local Expert Always First):**
 
@@ -404,6 +430,10 @@ See `ux_unified_architecture.md` Section III.A for full specification.
 - Origin: Detects "from X to Y" pattern
 - Destination: Detects "to X", "in X", "visit X" patterns
 - Dates: Placeholder (uses real date parsing in production)
+- Settings: LLM-based extraction gated by `_has_settings_keywords()` — only triggers
+  on compound phrases with booking context (`"direct flight"`, `"budget hotel"`,
+  `"skip flights"`). Generic words like "class", "activity", "budget" alone do NOT
+  trigger extraction. The LLM prompt requires explicit user intent for toggle=off.
 
 **Tool Usage:**
 ```python
@@ -431,9 +461,8 @@ Domain expert that runs BEFORE Architect calls tools. **Uses LLM-first architect
 **Implementation:** Single LLM call per specialist generates feasibility + activities + constraints.
 
 ```python
-# Prompts loaded from backend/app/prompts/specialists/{topic}.txt
-# Inline SPECIALIST_SYSTEM_PROMPTS dict used as fallback only
-system_prompt = load_specialist_prompt(topic) or SPECIALIST_SYSTEM_PROMPTS.get(topic)
+# Prompts loaded from backend/app/prompts/specialists/{topic}.txt via registry
+system_prompt = load_prompt(topic)  # from specialist_registry
 
 # User skill level injected when available
 if skill_level:
@@ -449,53 +478,43 @@ async def generate_specialist_output_llm(topic, destination, trip_plan, db=None,
 function calling API receives the Pydantic schema from `.with_structured_output()` directly.
 This saves ~200-500 tokens per specialist call while maintaining schema enforcement at the API level.
 
-**Fallback Mechanism:** If LLM fails (parse error, timeout), falls back to minimal safety constraints:
+**Fallback Mechanism:** If LLM fails (parse error, timeout), falls back to minimal safety constraints from the registry:
 ```python
 def _get_minimal_safety_constraints(topic: str) -> List[SpecialistConstraint]:
-    """Hardcoded fallback when LLM fails - safety over features."""
-    if topic == "diving":
-        return [SpecialistConstraint(
-            constraint_id="no_fly_24h",
-            type="temporal",
-            rule="24h_no_fly_after_diving",
-            severity=ConstraintSeverity.BLOCKING,
-            ...
-        )]
+    """Registry-driven fallback when LLM fails - safety over features."""
+    config = get_specialist_config(topic)
+    if not config or not config.hardcoded_constraints:
+        return []
+    return [SpecialistConstraint(**hc) for hc in config.hardcoded_constraints]
 ```
 
 **Domain Knowledge (LLM-Generated):**
+All 8 specialists use LLM-generated domain knowledge. Prompt files instruct the LLM to use world knowledge for real destinations, including approximate lat/lng coordinates per activity.
 - Diving: Flight buffers, certification requirements, real dive sites
 - Hiking: Altitude acclimatization, elevation data, trail recommendations
 - Skiing: Snow conditions, avalanche awareness, resort suggestions
+- Cycling: Route distances, elevation, surface types
+- Surfing: Wave heights, tide conditions, skill requirements
+- Climbing: Altitude acclimatization, gear inspection, route difficulty
+- Sailing: Weather windows, licensing, vessel requirements
+- Wildlife Safari: Seasonal migration, guide requirements, drive timing
 
 #### LLM Feasibility Layer
 
-Geographic feasibility checking for unknown destinations (e.g., "diving in Chamonix").
+Geographic feasibility checking, gated by the `has_geographic_constraint` flag in the specialist registry.
 
-**Two-Tier Architecture:**
-1. **Hardcoded List (Fast):** ~400 known destination/activity combinations
-2. **LLM Fallback (Cached):** GPT-4o-mini check for unknown destinations
+**Registry-Gated Architecture:**
+- Specialists with `has_geographic_constraint=True` (diving, skiing) → LLM feasibility check
+- Specialists with `has_geographic_constraint=False` (hiking, cycling, surfing, climbing, sailing, wildlife_safari) → auto-feasible
 
 ```python
-# Tier 1: Hardcoded check (0ms)
-if destination in DIVING_FEASIBILITY["infeasible"]:
-    return ("infeasible", "Diving not available", alternative)
+config = get_specialist_config(topic)
+if not config or not config.has_geographic_constraint:
+    return ("feasible", None, None)  # auto-feasible
 
-# Tier 2: LLM check (200ms, cached)
+# LLM check (200ms, cached)
 possible, reason = get_feasibility_llm("diving", "Chamonix")
 # LLM determines: landlocked alpine town → diving impossible
-```
-
-**LLM Prompt:**
-```
-Is {topic} activity possible in {destination}?
-
-Rules:
-- Diving requires coastline, large lakes, or dedicated dive facilities
-- Skiing requires mountains with reliable snow or indoor ski facilities
-- Hiking requires terrain suitable for walking trails
-
-Respond JSON: {"possible": true/false, "reason": "brief"}
 ```
 
 **Caching:** `@lru_cache(maxsize=1000)` - cache key is `f"{topic}:{destination}"`
@@ -506,8 +525,7 @@ Respond JSON: {"possible": true/false, "reason": "brief"}
 
 **Frontend Handling:** S2StrategyView renders infeasible specialists with:
 - Red border and "Unavailable" badge
-- `feasibility_reason` message
-- `alternative_suggestion` (e.g., "Consider Bali, Red Sea, or Maldives")
+- `feasibility_reason` message from backend (no hardcoded frontend destination suggestions)
 
 #### Parallel LLM Execution (Multi-Specialist Optimization)
 
@@ -628,6 +646,13 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 
 > **Note:** Amadeus providers are disabled for now to ensure consistent behavior between first request and regeneration flows.
 
+**Airport Code Resolution:**
+- IATA codes are resolved by `services/iata_resolver.py:resolve_iata_codes()`
+- Primary path: extracted by RouterOutput LLM call (piggybacks on existing intent extraction — free)
+- Fast-path (regex origin): resolved in IntentRouter origin detection block before handoff to logistics
+- Fallback: `resolve_iata_codes()` reads `state.trip_plan.origin_iata`/`destination_iata` first (instant), fires gpt-4o-mini only if missing (~50 tokens)
+- No hardcoded airport mappings — all IATA codes are LLM-resolved
+
 **Safety Logic (Diving Integration):**
 - Detects diving constraints from VerticalSpecialist
 - Applies 24h no-fly surface interval calculation
@@ -645,13 +670,13 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 
 **Two-Tier Activity System:**
 
-Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** categories (yoga, cooking, nightlife, sailing, food, wine, photography, wellness, culture, music) generate real, destination-specific experience tiles via `gpt-4o-mini` structured output.
+Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** categories (yoga, cooking, nightlife, food, wine, photography, wellness, culture, music) generate real, destination-specific experience tiles via `gpt-4o-mini` structured output.
 
 When niche specialists are active, suppression is tier-aware:
 
 ```python
 # Canonical constant — single source of truth
-TIER1_SPECIALISTS = frozenset({"diving", "hiking", "skiing", "cycling", "surfing"})
+TIER1_SPECIALISTS = TIER1_SPECIALIST_NAMES  # from specialist_registry (8 specialists)
 NICHE_SPECIALISTS = TIER1_SPECIALISTS
 TIER1_CATEGORIES = TIER1_SPECIALISTS
 
@@ -696,7 +721,7 @@ else:
 
 **Experience Generator Service:** `backend/app/services/experience_generator.py`
 
-Generates 2 activities per Tier 2 category via `gpt-4o-mini` structured output. Each tile includes title, subtitle, category, duration, price estimate, time of day, and skill level. Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (same pattern as specialist cache). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
+Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output (`tiles_per_category` param, default 2). `LogisticsNode._compute_tiles_per_category()` scales the count based on free days: `clamp(free_days // num_categories, 2, 4)` where `free_days = trip_days − specialist_activity_days − 2`. Each tile includes title, subtitle, category, duration, price estimate, time of day, and skill level. Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
 
 | Trip Type | Categories | `executed_strategy_topics` | Activities |
 |-----------|-----------|---------------------------|------------|
@@ -709,6 +734,8 @@ Generates 2 activities per Tier 2 category via `gpt-4o-mini` structured output. 
 
 Pure Python deterministic validation. **NO LLM calls.**
 
+All checks are registry-driven. Geographic and seasonal checks were deleted — the VerticalSpecialist LLM handles these via `check_feasibility()`.
+
 | Constraint Type | Check | Severity |
 |-----------------|-------|----------|
 | Route | `origin == destination` | blocking |
@@ -717,9 +744,9 @@ Pure Python deterministic validation. **NO LLM calls.**
 | Budget | Category cost < allocation | warning |
 | Temporal | end_date > start_date | blocking |
 | Temporal | Duration < 30 days | info |
-| Geographic | Diving in landlocked country | blocking |
-| Specialist | 24h surface interval (with conflict) | blocking |
-| Specialist | 24h surface interval (no conflict) | info |
+| Specialist | Departure buffer (any `has_nofly_buffer` specialist) | blocking |
+| Specialist | Cross-domain blocks (declarative via registry) | blocking |
+| Capacity | Activity count > available days (registry-driven) | blocking |
 
 **Auto-Fix Loop with Route Error Short-Circuit:**
 ```python
@@ -728,14 +755,15 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     retry_count = state.guard_retry_count
     violations = state.metadata.get("constraint_violations", [])
 
-    # 1. ROUTE ERROR SHORT-CIRCUIT (Logic Guards)
-    # User Intent errors (Rome->Rome, Atlantis) are UNFIXABLE by the Architect.
-    # They must bypass the auto-fix loop and go straight to rejection.
-    if any(v.get("category") == "route" for v in violations):
-        return "synthesizer"  # Triggers Amber "REJECTED" receipt
+    # 1. UNFIXABLE CONSTRAINT SHORT-CIRCUIT
+    # Route and specialist errors are unfixable by Architect.
+    unfixable_categories = {"route", "specialist"}
+    is_unfixable = any(v.get("category") in unfixable_categories for v in violations)
+    if is_unfixable:
+        return "synthesizer"
 
     # 2. OPTIMIZATION AUTO-FIX
-    # Budget/Schedule errors can be self-corrected by the Architect.
+    # Budget/capacity errors can be self-corrected by the Architect.
     if has_blocking and retry_count < 1:
         return "architect"  # Loop back for auto-fix
 
@@ -768,7 +796,7 @@ Unified response generator - "One voice, regardless of which agents contributed.
 **Suggestion Engine (registry-driven):**
 
 `generate_suggestions()` derives all chips from router capability registries × current state.
-Zero hardcoded specialist names — adding a specialist to `SPECIALIST_PATTERNS` or question type
+Zero hardcoded specialist names — adding a specialist to `specialist_registry.py` or question type
 to `QUESTION_TYPE_MAPPING` automatically makes it available as a suggestion.
 
 Priority cascade:
@@ -777,7 +805,7 @@ Priority cascade:
 3. Pool-based (condition × priority × category dedup):
    - P0: destination_choice / date_contextual / date_prompt
    - P1: "Build my itinerary"
-   - P3: specialist cross-sell (from `SPECIALIST_PATTERNS` minus `executed_strategy_topics`)
+   - P3: specialist cross-sell (from `ALL_SPECIALIST_KEYWORDS` minus `executed_strategy_topics`)
    - P4: plan progression — preference refinement chips at S2+ (e.g., "5-star hotels only", "Direct flights only", activity exploration). Generated by `_build_plan_progression_suggestions()` based on which settings are NOT yet configured.
    - P5: "Set my departure city"
    - P6: question suggestions (from `SUGGESTABLE_QUESTION_TYPES`)
@@ -890,6 +918,16 @@ Each specialist type has its own constraint generator:
 **Surfing Constraints:**
 - `tide_timing` (info): Applied to all surfing activities
 
+**Climbing Constraints:**
+- `altitude_acclimatization` (warning): Applied above 3000m elevation
+- `gear_inspection` (info): Applied to all climbing activities
+
+**Sailing Constraints:**
+- `weather_window` (info): Applied to all sailing activities
+
+**Wildlife Safari Constraints:**
+- `guide_required` (info): Applied to all game drive activities
+
 **Hotel Constraints:**
 - `proximity_optimized` (success): Applied to check-in blocks, lists active specialists (e.g., "Proximity to diving, hiking activities")
 
@@ -903,6 +941,10 @@ Each specialist type has its own constraint generator:
 | `avalanche_awareness` | warning | skiing | Off-piste/backcountry safety |
 | `advanced_terrain` | info | skiing | Black diamond skill level |
 | `tide_timing` | info | surfing | Check swell/tide forecast |
+| `altitude_acclimatization` | warning | climbing | Above 3000m elevation |
+| `gear_inspection` | info | climbing | Equipment safety check |
+| `weather_window` | info | sailing | Check weather conditions |
+| `guide_required` | info | wildlife_safari | Professional guide for game drives |
 | `proximity_optimized` | success | hotel | Location optimized for activities |
 
 **Frontend Rendering:** See `docs/ux_unified_architecture.md` Section I.A.2 "Inline Constraints Display"
@@ -918,16 +960,17 @@ Each specialist type has its own constraint generator:
 - Cross-domain constraint clash (diving + hiking within 24h buffer via `no_altitude_after_dive`)
 - Insufficient days for planned activities
 
-**Cross-Domain Constraints:** The `no_altitude_after_dive` constraint (BLOCKING severity) prevents scheduling high-altitude hiking/trekking/mountaineering within 24 hours of diving activities. Validated in `_detect_early_conflicts()`.
+**Cross-Domain Constraints:** Declarative `CrossDomainBlock` entries on the specialist registry enforce temporal buffers between specialists. Diving's `ALTITUDE_AFTER_DIVE` block prevents scheduling hiking/skiing/climbing within 24h. Enforced by `check_specialist_constraints()` in the guard (blocking severity) and also by `_detect_early_conflicts()` in ItineraryBuilder.
 
 #### Constraint Alias Normalization
 
 LLMs generate constraint names with natural variation (e.g., `"no_altitude_24h"`, `"altitude_buffer"`, `"no-altitude-after-diving"`). The builder normalizes these via **alias mapping** to ensure robust constraint detection regardless of LLM phrasing.
 
-**Location:** `backend/app/services/itinerary_builder.py` (lines ~186-210)
+**Location:** Defined in `backend/app/planner/specialist_registry.py` per specialist, aggregated into `ALL_CONSTRAINT_ALIASES`. Re-exported in `itinerary_builder.py` as `CONSTRAINT_ALIASES`.
 
 ```python
-CONSTRAINT_ALIASES: Dict[str, List[str]] = {
+# In specialist_registry.py (per specialist config):
+constraint_aliases={
     "no_altitude_after_dive": [
         "no_altitude_24h", "altitude_buffer", "no_altitude_after_diving",
         "altitude_restriction_after_dive",
@@ -1058,6 +1101,8 @@ class RouterOutput(BaseModel):
     intent: Literal["GREETING", "RESET", "PLANNING"]
     destination: Optional[str] = None
     origin: Optional[str] = None
+    origin_iata: Optional[str] = None       # IATA code (e.g. SFO, LHR)
+    destination_iata: Optional[str] = None   # IATA code (e.g. DPS, CDG)
     start_date: Optional[str] = None  # YYYY-MM-DD format
     end_date: Optional[str] = None    # YYYY-MM-DD format
     duration_days: Optional[int] = None
@@ -1153,15 +1198,18 @@ class GraphState(BaseModel):
 Single Source of Truth for the trip's **core dimensions** (who, where, when, budget).
 
 Settings fields (`activity_settings`, `hotel_settings`, `flight_settings`,
-`transport_settings`, `booking_types`) exist on the dataclass as defaults but are
-**not emitted** by `_trip_plan_to_trip_inputs()` — the document is the SSoT for
-user-owned settings. See [Settings Ownership & Document Merge](#settings-ownership--document-merge-v33).
+`transport_settings`, `booking_types`) are now typed via the `TripSettings` model
+(using `get_trip_settings(state)` accessor). The typed settings live in
+`metadata["trip_settings"]`; the legacy `metadata["trip_inputs"]` dict is deprecated
+but preserved for backward compatibility. See [Settings Ownership & Document Merge](#settings-ownership--document-merge-v33).
 
 ```python
 class TripPlan(BaseModel):
     # Core fields
     destination: Optional[str]
     origin: Optional[str]
+    origin_iata: Optional[str]       # IATA code — resolved by RouterOutput or iata_resolver service
+    destination_iata: Optional[str]   # IATA code — resolved by RouterOutput or iata_resolver service
     start_date: Optional[str]
     end_date: Optional[str]
 
@@ -1180,7 +1228,7 @@ class TripPlan(BaseModel):
     # Booked segments
     segments: List[TripSegment]
 
-    # Specialist content
+    # DEPRECATED Stage 2B: content now lives on strategy_sections[].content_blocks
     itinerary_blocks: List[ItineraryBlock]
 
     # Constraints from Specialist
@@ -1344,11 +1392,10 @@ DATE_INDICATORS = [
     r"\b\d{1,2}[/-]\d{1,2}\b",  # Date patterns
 ]
 
-ACTIVITY_INDICATORS = [
-    r"\b(diving|dive|scuba|snorkel)\b",
-    r"\b(hiking|trek|climb|trail)\b",
-    r"\b(skiing|snowboard|ski)\b",
-]
+# ACTIVITY_INDICATORS removed — now uses ALL_SPECIALIST_KEYWORDS from specialist_registry.py
+has_activity = any(
+    kw in text_lower for kws in ALL_SPECIALIST_KEYWORDS.values() for kw in kws
+)
 ```
 
 ### Intent Classification
@@ -1356,7 +1403,8 @@ ACTIVITY_INDICATORS = [
 | Intent | Condition | Behavior |
 |--------|-----------|----------|
 | `ready` | Explicit planning signal OR (date AND activity) | Continue to PLANNING flow |
-| `soft_transition` | Has date OR activity | **Routes to PLANNING** (dates/activities = actionable input). Detects specialists from both message text AND `activity_settings.categories` (UI pill selections) |
+| `actionable` | Tier 2 activity, removal, skill level, or setting reset (pre-exploration check) | Update categories/settings → `ACTIONABLE_TO_LOGISTICS` fast path. If mixed Tier 1+2, updates categories then falls through to `soft_transition` |
+| `soft_transition` | Has date OR activity (Tier 1 keyword) | **Routes to PLANNING** (dates/activities = actionable input). Detects specialists from both message text AND `activity_settings.categories` (UI pill selections). Syncs detected specialists to `activity_settings.categories` |
 | `exploring` | Generic question, no planning signals | Comprehensive answer + "What else?" |
 | `exploring` (post-plan) | Question with active plan (S2/S3) | Section-specific answer via `question_answer` short-circuit |
 
@@ -1459,9 +1507,11 @@ All ephemeral flags are cleared in `_restore_graph_state()` at turn start.
 
 ```python
 def route_after_router(state: GraphState) -> Literal["specialist", "local_expert", "logistics", "architect", "synthesizer"]:
-    # ORIGIN/SETTINGS FAST PATH: Route directly to logistics for flight/hotel fetch
-    # Skips architect/specialists - only fetches tiles and rebuilds itinerary
-    # Flag is cleared in _restore_graph_state() to prevent bleed
+    # ORIGIN/SETTINGS/ACTIONABLE FAST PATH: Route directly to logistics
+    # Used by: origin detection, settings changes, Tier 2 activity additions,
+    # activity removals, skill level changes, setting resets.
+    # Skips architect/specialists - only fetches tiles and rebuilds itinerary.
+    # Flag is cleared in _restore_graph_state() to prevent bleed.
     if state.metadata.get("origin_only_logistics"):
         return "logistics"
 
@@ -1517,7 +1567,8 @@ def route_after_specialist(state: GraphState):
 ```
 Entry: router
 
-router → specialist/local_expert/architect/synthesizer (conditional)
+router → logistics (origin/settings/actionable fast path)
+       → specialist/local_expert/architect/synthesizer (conditional)
 specialist → specialist (recursion) OR logistics (booking) OR architect (general) OR synthesizer (speculative)
 local_expert → specialist (recursion) OR logistics (booking) OR architect (general) OR synthesizer (speculative)
 logistics → architect/guard/synthesizer (conditional - skip architect if already ran)
@@ -1587,67 +1638,95 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 
 ## Specialist Domain Knowledge
 
+> **SSoT:** All specialist configuration (keywords, constraints, enhancements, flags) lives in `backend/app/planner/specialist_registry.py`. Top destinations and activities are LLM-generated per prompt file — no hardcoded destination lists. Router LLM prompts (`CLASSIFICATION_PROMPT`, `ROUTER_EXTRACTION_PROMPT`), Pydantic schemas (`SpecialistOutput.specialist_type`, `RouterOutput.specialist_hints`), and validation sets (`KNOWN_CATEGORIES`) are all derived from the registry at module load time. Adding a specialist requires only: 1) add entry to `SPECIALIST_REGISTRY`, 2) create `prompts/specialists/{topic}.txt`.
+
 ### Diving
 
-**Constraints:**
-| Rule | Type | Reason | Cross-Domain |
-|------|------|--------|--------------|
-| `min_24h_buffer_after_dive` | temporal | Decompression sickness risk | flights |
-| `min_18h_surface_interval` | temporal | Minimum before single dive | flights |
-| `advanced_cert_required_for_deep` | safety | Dives below 18m need AOW | activities |
-| `no_altitude_after_dive` | safety | Altitude >2500m within 24h increases DCS risk | hiking, trekking, mountaineering, skiing |
+**Constraints (from registry):**
+| Rule | Type | Severity | Cross-Domain |
+|------|------|----------|--------------|
+| `no_fly_24h` | temporal | blocking | flights |
+| `no_altitude_after_dive` | safety | blocking | hiking, trekking, mountaineering, skiing, climbing |
 
-**Top Destinations:**
-- Bali: USAT Liberty Wreck, Manta Point Nusa Penida, Crystal Bay
-- Maldives: Hanifaru Bay, Maaya Thila
-- Egypt: SS Thistlegorm, Ras Mohammed
-- Dubai: Deep Dive Dubai, Jumeirah Artificial Reef, MV Dara Wreck
+**Registry flags:** `has_geographic_constraint=True`, `has_nofly_buffer=True`
+**Cross-domain blocks:** `ALTITUDE_AFTER_DIVE` → skiing, hiking, climbing (24h buffer, blocking)
+
+**Note:** Top destinations are LLM-generated from `specialists/diving.txt` using world knowledge.
 
 ### Hiking
 
-**Constraints:**
-| Rule | Type | Reason |
-|------|------|--------|
-| `altitude_acclimatization` | safety | Max 500m/day above 3000m |
-| `proper_footwear_required` | equipment | Hiking boots for mountain trails |
+**Constraints (from registry):**
+| Rule | Type | Severity |
+|------|------|----------|
+| `altitude_acclimatization` | safety | strong |
+| `proper_footwear_required` | equipment | soft |
+| `fitness_assessment` | safety | soft |
 
-**Altitude Constraint Gating:** The `altitude_acclimatization` constraint is only applied to high-altitude destinations. Low-altitude destinations like Bali (max ~3000m at Agung summit, typical hikes 200-800m) are excluded.
+**Registry flags:** `has_altitude_buffer=True`
 
-```python
-HIGH_ALTITUDE_DESTINATIONS = {
-    "nepal", "everest", "annapurna", "ladakh", "leh",
-    "cusco", "peru", "machu picchu", "bolivia", "la paz",
-    "kilimanjaro", "tanzania", "mt kenya",
-    "switzerland", "chamonix", "mont blanc", "zermatt",
-    "patagonia", "aconcagua", "colorado", "tibet",
-}
-
-def _should_apply_altitude_constraint(destination: str) -> bool:
-    dest_lower = (destination or "").lower()
-    return any(kw in dest_lower for kw in HIGH_ALTITUDE_DESTINATIONS)
-```
+**Altitude Constraint Gating:** The `altitude_acclimatization` constraint is only applied to high-altitude destinations. Gated by `HIGH_ALTITUDE_DESTINATIONS` set in vertical_specialist.py.
 
 **Note:** Hiking is affected by diving's `no_altitude_after_dive` constraint (one-directional: diving → hiking).
 
-**Top Destinations:**
-- Patagonia: Torres del Paine W Trek, Fitz Roy Summit Approach
-- Nepal: Everest Base Camp, Annapurna Circuit
-
 ### Skiing
 
-**Constraints:**
-| Rule | Type | Reason |
-|------|------|--------|
-| `check_snow_conditions` | temporal | Verify avalanche reports |
-| `guide_required_offpiste` | certification | Certified guide for off-piste |
+**Constraints (from registry):**
+| Rule | Type | Severity |
+|------|------|----------|
+| `check_snow_conditions` | temporal | strong |
+| `guide_required_offpiste` | certification | soft |
 
-**Note:** Skiing is affected by diving's `no_altitude_after_dive` constraint (one-directional: diving → skiing).
+**Registry flags:** `has_geographic_constraint=True`
 
-**Top Destinations:**
-- Chamonix: Vallee Blanche, Les Grands Montets
-- Japan: Niseko Powder, Hakuba Valley
+### Cycling
 
-**Seasonality Guard:** Checks hemisphere/month alignment before generating content. Northern Hemisphere (Alps, Rockies, Japan) is December-April; Southern Hemisphere (NZ, Chile, Argentina) is June-September. Out-of-season requests (e.g., "Alps in July") are flagged as INFEASIBLE unless glacier skiing is specified.
+**Constraints (from registry):**
+| Rule | Type | Severity |
+|------|------|----------|
+| `helmet_required` | safety | strong |
+| `hydration_stops` | safety | soft |
+
+### Surfing
+
+**Constraints (from registry):**
+| Rule | Type | Severity |
+|------|------|----------|
+| `hazardous_conditions` | safety | blocking |
+| `tide_check` | safety | strong |
+
+### Climbing (NEW — Stage 3)
+
+**Constraints (from registry):**
+| Rule | Type | Severity |
+|------|------|----------|
+| `altitude_acclimatization_above_3000m` | safety | blocking |
+| `gear_inspection_required` | equipment | strong |
+| `no_altitude_after_dive_24h` | cross-domain | blocking |
+
+**Registry flags:** `has_altitude_buffer=True`, `min_days_needed=3`
+
+**Note:** Climbing is affected by diving's `no_altitude_after_dive` constraint and shares altitude buffer logic with hiking.
+
+### Sailing (NEW — Stage 3)
+
+**Constraints (from registry):**
+| Rule | Type | Severity |
+|------|------|----------|
+| `weather_window_check` | safety | strong |
+| `skipper_license` | certification | soft |
+
+**Backward compat:** Keywords include old "boating" terms; `category_mappings` maps `"boating" → "sailing"`.
+
+### Wildlife Safari (NEW — Stage 3)
+
+**Constraints (from registry):**
+| Rule | Type | Severity |
+|------|------|----------|
+| `professional_guide_required` | safety | strong |
+| `seasonal_migration_timing` | temporal | strong |
+| `vehicle_safety_rules` | safety | strong |
+
+**Registry flags:** `min_days_needed=3`
 
 ---
 
@@ -1664,18 +1743,14 @@ def _should_apply_altitude_constraint(destination: str) -> bool:
 | Temporal | `end_date < start_date` | blocking | Auto-fixable |
 | Temporal | `duration > 30 days` | info | |
 | Temporal | `duration < 1 day` | warning | |
-| Seasonal | Hiking in Swiss Alps in winter | warning | |
-| Seasonal | Skiing in summer months | warning | |
-| Geographic | Diving in landlocked country | blocking | |
-| Geographic | Beach in landlocked country | blocking | |
-| Specialist | 24h surface interval (diving) | info | |
-| Specialist | Altitude warning (hiking) | info | |
-| Specialist | Certification required | warning | |
-| Specialist | No altitude after diving (cross-domain) | info | ItineraryBuilder enforces |
+| Specialist | Departure buffer (registry: `has_nofly_buffer`) | blocking | Unfixable |
+| Specialist | Cross-domain (registry: `cross_domain_blocks`) | blocking | Unfixable |
+| Capacity | Activity count > available days | blocking | Auto-fixable |
 
-### Landlocked Countries (Partial List)
-
-Switzerland, Austria, Czech Republic, Hungary, Nepal, Mongolia, Bolivia, Rwanda, Ethiopia, and more.
+**Deleted checks (handled by specialist LLM feasibility):**
+- ~~Geographic: Diving in landlocked country~~ → specialist `check_feasibility()` returns `infeasible`
+- ~~Seasonal: Hiking in winter / Skiing in summer~~ → specialist LLM prompt includes seasonality
+- ~~season.py~~ → deleted entirely (sole consumer was the guard)
 
 ---
 
@@ -2140,17 +2215,29 @@ these fields. The graph session must never overwrite them with defaults.
 | Layer | File | What it does |
 |-------|------|--------------|
 | Emission | `plan_graph.py` `_trip_plan_to_trip_inputs()` | Settings fields **omitted** from TripPlan conversion — they live on the document, not `TripPlan` |
-| Restoration | `plan_graph.py` `_format_result()` | Merges settings from `state.metadata["trip_inputs"]` (populated by `_doc_settings`) into output `trip_inputs` so the frontend receives current values |
+| Restoration | `plan_graph.py` `_build_trip_inputs_with_settings()` | Reads typed `TripSettings` via `get_trip_settings(state)` and serializes sub-models into output `trip_inputs`. **Override:** if `metadata["trip_inputs"]["activity_settings"]` has non-empty categories (from router's in-turn sync), those win over typed settings to survive serialization |
 | Input merge | `main.py` both chat endpoints | `_USER_OWNED_SETTINGS` guard — document baseline wins for settings fields |
 | Output persist | `crud_document.py` `apply_planner_update()` | Strips settings from graph output before `merge_trip_inputs()` |
 
 **How the four layers work together:**
 `_trip_plan_to_trip_inputs()` emits only scalar fields (destination, dates, etc.)
-because settings live on the document, not TripPlan. The `_format_result` restoration
-layer then merges user-owned settings from `state.metadata["trip_inputs"]` (which was
-populated from `_doc_settings` at graph startup). This ensures the response carries
-current settings back to the frontend. The input merge guard (layer 3) and persist
-strip (layer 4) provide defense-in-depth on the document side.
+because settings live on the document, not TripPlan. The `_build_trip_inputs_with_settings()`
+restoration layer reads typed settings via `get_trip_settings(state)` (from
+`metadata["trip_settings"]`, falling back to legacy `metadata["trip_inputs"]`) and
+serializes them back into the output `trip_inputs` dict. **Category override:**
+after the typed-settings loop, `_build_trip_inputs_with_settings()` checks
+`metadata["trip_inputs"]["activity_settings"]` — if it has non-empty categories
+(written by the router's sync block during the turn), those override the typed
+settings value. This ensures in-turn category writes survive to `apply_planner_update`,
+which preserves non-empty categories in the document. The input merge guard
+(layer 3) and persist strip (layer 4) provide defense-in-depth on the document side.
+
+**Stage 2 additions:**
+- `metadata["trip_settings"]` is the typed SSoT for settings (shadow-written in `_restore_graph_state`)
+- `get_trip_settings(state)` accessor returns a `TripSettings` Pydantic model
+- All nodes read settings via `get_trip_settings()` instead of raw `metadata["trip_inputs"]` dicts
+- `metadata["trip_inputs"]` is deprecated but preserved for backward compat with old sessions
+- After any write to `metadata["trip_inputs"]`, nodes rebuild typed settings via `state.metadata["trip_settings"] = get_trip_settings(state).model_dump()`
 
 **Input merge pattern (both endpoints in `main.py`):**
 ```python
@@ -2180,11 +2267,19 @@ data.trip_inputs = merge_trip_inputs(data.trip_inputs, cleaned_inputs, ...)
 ```
 
 **NL-Extracted Settings Bypass:**
-When the router detects settings from natural language (e.g., "5-star hotels"),
+When the Architect detects settings from natural language (e.g., "5-star hotels"),
 these are stored in `state.metadata["extracted_settings"]` and deep-merged via a
 separate path in `apply_planner_update(extracted_settings=...)`, bypassing the
 user-owned field strip. Supported keys: `hotel_min_stars`, `flight_direct_only`,
 `flight_cabin_class`, `activity_skill_level`, `flights_toggle`.
+
+**Settings Extraction Keyword Guard (v3.5):**
+The Architect's `_has_settings_keywords()` gate uses compound phrases that require
+booking context (e.g., `"direct flight"`, `"budget hotel"`, `"star hotel"`) rather
+than generic words. This prevents false triggers on activity descriptions like
+"yoga class" or "business district". The LLM prompt explicitly forbids inferring
+toggle=off from absence — a toggle is "off" only when the user says "no hotels",
+"skip flights", etc.
 
 **Concurrent PATCH Safety (v3.4):**
 The session carries stale `trip_inputs` from the previous graph run — user-owned
@@ -2256,6 +2351,11 @@ backend/app/prompts/
 │   ├── diving.txt                 # VerticalSpecialist - diving domain
 │   ├── hiking.txt                 # VerticalSpecialist - hiking domain
 │   ├── skiing.txt                 # VerticalSpecialist - skiing domain
+│   ├── cycling.txt                # VerticalSpecialist - cycling domain
+│   ├── surfing.txt                # VerticalSpecialist - surfing domain
+│   ├── climbing.txt               # VerticalSpecialist - climbing domain (Stage 3)
+│   ├── sailing.txt                # VerticalSpecialist - sailing domain (Stage 3)
+│   ├── wildlife_safari.txt        # VerticalSpecialist - wildlife safari domain (Stage 3)
 │   └── local_expert.txt           # Alternative local expert prompt
 ├── _strategy_base.txt             # Shared strategy generation base
 ├── _scope_specialist.txt          # Specialist scope boundaries
@@ -2274,6 +2374,11 @@ backend/app/prompts/
 | `specialists/diving.txt` | VerticalSpecialist | Diving domain knowledge |
 | `specialists/hiking.txt` | VerticalSpecialist | Hiking domain knowledge |
 | `specialists/skiing.txt` | VerticalSpecialist | Skiing domain knowledge |
+| `specialists/cycling.txt` | VerticalSpecialist | Cycling domain knowledge |
+| `specialists/surfing.txt` | VerticalSpecialist | Surfing domain knowledge |
+| `specialists/climbing.txt` | VerticalSpecialist | Climbing domain knowledge (Stage 3) |
+| `specialists/sailing.txt` | VerticalSpecialist | Sailing domain knowledge (Stage 3) |
+| `specialists/wildlife_safari.txt` | VerticalSpecialist | Wildlife safari domain knowledge (Stage 3) |
 
 ### Shared Includes
 
@@ -2426,6 +2531,7 @@ Phase 5: Tile Matching
 
 Phase 5.6: Experience Tile Placement (NEW)
 ├─ Filter tiles by source_agent == "experience_generator"
+├─ Tile count scaled by _compute_tiles_per_category(): clamp(free_days // cats, 2, 4)
 ├─ Sort by time_of_day: morning → afternoon → evening
 ├─ Find free day indices (days with free_day placeholder blocks)
 ├─ Round-robin distribute 1-2 experience tiles per free day
@@ -2841,6 +2947,52 @@ from app.planner import (
 
 ### Result Format
 
+Built by `_format_result()` orchestrator in `plan_graph.py`, which delegates to:
+
+| Function | Responsibility |
+|----------|---------------|
+| `_build_trip_inputs_with_settings()` | TripPlan → trip_inputs + settings merge (reads typed `TripSettings` via `get_trip_settings()`, with metadata category override) |
+| `_resolve_blocking_violations()` | Route vs specialist violations, tile/state clearing |
+| ~~`_enrich_existing_sections()`~~ | **DELETED Stage 2B.4** — sections now created complete by `section_builder.py` |
+| `_build_new_section()` | Build new strategy section for General Agent (delegates to 7 sub-functions) |
+| `_upsert_section_and_persist()` | SINGLETON/APPENDABLE upsert + anchor sort + metadata write (delegates to `SectionBuilder` service) |
+| `build_itinerary_from_state()` | Shadow: build itinerary at S2_STRATEGY_READY via `itinerary_adapter.py` |
+| `_build_response_envelope()` | Document + session_state + legacy fields + `itinerary_day_cards` |
+
+#### SectionBuilder Service (`backend/app/planner/services/section_builder.py`)
+
+Strategy section CRUD was extracted from duplicated inline code in `vertical_specialist.py`, `local_expert.py`, and `plan_graph.py` into a single service:
+
+| Function | Responsibility |
+|----------|---------------|
+| `upsert_section(metadata, section, mode=)` | Init-if-missing, filter-by-type, insert/append, anchor-sort. Modes: `"singleton"` (General at index 0) or `"appendable"` (specialists deduplicate+append) |
+| `mark_topic_executed(metadata, topic)` | Deduplicating append to `executed_strategy_topics` |
+| `build_specialist_section(...)` | Pure dict builder for niche specialist sections (diving, hiking, etc.) |
+| `build_local_expert_section(...)` | Pure dict builder for local expert sections (Magazine Layout) |
+| `sort_sections_anchor_first(sections)` | Anchor rule: `local_expert`/`general` always at index 0 |
+
+Callers: `vertical_specialist.py`, `local_expert.py`, `plan_graph.py:_upsert_section_and_persist()`.
+
+#### IATA Resolver (`backend/app/planner/services/iata_resolver.py`)
+
+LLM-backed airport code resolver with state caching. Single source of truth for all IATA code resolution.
+
+| Function | Responsibility |
+|----------|---------------|
+| `resolve_iata_codes(origin, destination, state)` | Returns `(origin_code, dest_code)`. Reads `state.trip_plan.*_iata` first; fires gpt-4o-mini fallback (~50 tokens) only if missing. Caches resolved codes back onto state. |
+
+Called by: IntentRouter (origin detection fast-path), LogisticsNode (flight search gating).
+
+#### Itinerary Adapter (`backend/app/planner/services/itinerary_adapter.py`)
+
+Thin bridge from `GraphState` to `ItineraryBuilder`. Avoids circular import by duplicating the tile-flatten helper (~10 lines).
+
+| Function | Responsibility |
+|----------|---------------|
+| `build_itinerary_from_state(state)` | Build `ItineraryResult` from graph state. Returns `None` if preconditions not met (no dates/sections). |
+
+Called by `_format_result()` step 6.5 (shadow mode — exception → warning, doesn't block response).
+
 ```python
 {
     "assistant_message": "...",
@@ -2853,7 +3005,8 @@ from app.planner import (
     "document": {
         "plan_view_state": "P0_MINIMAL" | "P1_ENRICHED" | "P2_LOGISTICS" | "P3_FINALIZED",
         "tiles": {...},           # Flattened ID-based map
-        "strategy_sections": [...], # Agent cards data
+        "strategy_sections": [...], # Agent cards data (content_blocks dual-written)
+        "itinerary_day_cards": [...] | null,  # ItineraryBuilder output (null until S2_STRATEGY_READY)
     },
 }
 ```

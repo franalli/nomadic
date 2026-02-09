@@ -15,6 +15,7 @@
 import {
   AlertCircle,
   Bike,
+  Binoculars,
   Building,
   Calendar,
   CheckCircle2,
@@ -35,54 +36,49 @@ import React, { useId, useState } from 'react';
 
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { DS } from '@/lib/design-system';
+import { getSpecialistConfig } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
 import type { StrategySection, TravelIntelligence } from '@/types/plan-envelope';
 
-// Topic configuration with icons
-const TOPIC_CONFIG: Record<
-  string,
-  {
-    icon: React.ComponentType<{ className?: string }>;
-    label: string;
-  }
-> = {
-  hiking: { icon: Mountain, label: 'Hiking' },
-  diving: { icon: Waves, label: 'Diving' },
-  skiing: { icon: Snowflake, label: 'Skiing' },
-  boating: { icon: Sailboat, label: 'Boating' },
-  cycling: { icon: Bike, label: 'Cycling' },
-  local_expert: { icon: Building, label: 'Local Expert' },
-  general: { icon: Sparkles, label: 'General' },
+// Lucide icon mapping from registry string names to components
+const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  Waves, Mountain, Snowflake, Bike, Sailboat, Binoculars, Building, Sparkles,
 };
 
-// Fallback images by specialist type
-const FALLBACK_IMAGES: Record<string, string> = {
-  diving:
-    'https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=2070&auto=format&fit=crop',
-  hiking:
-    'https://images.unsplash.com/photo-1551632811-561732d1e306?q=80&w=2070&auto=format&fit=crop',
-  skiing:
-    'https://images.unsplash.com/photo-1565992441121-4367c2967103?q=80&w=2127&auto=format&fit=crop',
-  boating:
-    'https://images.unsplash.com/photo-1500514966906-fe245eea9344?q=80&w=2070&auto=format&fit=crop',
-  cycling:
-    'https://images.unsplash.com/photo-1541625602330-2277a4c46182?q=80&w=2070&auto=format&fit=crop',
-  local_expert:
-    'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?q=80&w=2021&auto=format&fit=crop',
-  general:
-    'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?q=80&w=2021&auto=format&fit=crop',
-};
+function getTopicIcon(specialistType: string): React.ComponentType<{ className?: string }> {
+  const config = getSpecialistConfig(specialistType);
+  if (config) return ICON_MAP[config.icon] || Sparkles;
+  if (specialistType === 'local_expert') return Building;
+  return Sparkles;
+}
 
-// Specialist-specific colors for accordion icons (per design-system.md)
-const SPECIALIST_COLORS: Record<string, { light: string; icon: string }> = {
+function getTopicLabel(specialistType: string): string {
+  const config = getSpecialistConfig(specialistType);
+  if (config) return config.displayName;
+  if (specialistType === 'local_expert') return 'Local Expert';
+  if (specialistType === 'general') return 'General';
+  return specialistType;
+}
+
+// Generic fallback image (specialist-specific hero images come from backend hero_image field)
+const GENERIC_FALLBACK_IMAGE =
+  'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?q=80&w=2021&auto=format&fit=crop';
+
+// Accordion icon Tailwind classes keyed by specialist type (component-local UI)
+const SPECIALIST_STYLE_CLASSES: Record<string, { light: string; icon: string }> = {
   diving: { light: 'bg-blue-50', icon: 'text-blue-600 dark:text-blue-400' },
   hiking: { light: 'bg-green-50', icon: 'text-green-600 dark:text-green-400' },
   skiing: { light: 'bg-blue-50', icon: 'text-blue-600 dark:text-blue-400' },
+  sailing: { light: 'bg-cyan-50', icon: 'text-cyan-600 dark:text-cyan-400' },
   boating: { light: 'bg-cyan-50', icon: 'text-cyan-600 dark:text-cyan-400' },
   cycling: { light: 'bg-lime-50', icon: 'text-lime-600 dark:text-lime-400' },
+  surfing: { light: 'bg-indigo-50', icon: 'text-indigo-600 dark:text-indigo-400' },
+  climbing: { light: 'bg-orange-50', icon: 'text-orange-600 dark:text-orange-400' },
+  wildlife_safari: { light: 'bg-amber-50', icon: 'text-amber-600 dark:text-amber-400' },
   local_expert: { light: 'bg-purple-50', icon: 'text-purple-600 dark:text-purple-400' },
   general: { light: 'bg-emerald-50', icon: 'text-emerald-600 dark:text-emerald-400' },
 };
+const DEFAULT_STYLE = { light: 'bg-zinc-50', icon: 'text-zinc-600 dark:text-zinc-400' };
 
 /**
  * Get summary badge text showing content counts
@@ -105,12 +101,16 @@ function getConstraintSectionLabel(specialistType: string): string {
     diving: 'Safety Requirements',
     hiking: 'Trail Safety',
     skiing: 'Mountain Safety',
+    sailing: 'Maritime Safety',
     boating: 'Maritime Safety',
     cycling: 'Route Safety',
+    surfing: 'Ocean Safety',
+    climbing: 'Climbing Safety',
+    wildlife_safari: 'Safari Safety',
     local_expert: 'Local Tips',
     general: 'Things to Know',
   };
-  return labels[specialistType] || 'Things to Know';
+  return labels[specialistType] || 'Safety & Constraints';
 }
 
 /**
@@ -651,9 +651,8 @@ function getHeroImage(section: StrategySection): string {
     return contentImage;
   }
 
-  // Priority 5: Fallback by specialist type (generic, not destination-specific)
-  const topic = section.specialist_type || 'general';
-  return FALLBACK_IMAGES[topic] || FALLBACK_IMAGES.general;
+  // Priority 5: Generic fallback (specialist images come from backend hero_image field)
+  return GENERIC_FALLBACK_IMAGE;
 }
 
 /**
@@ -689,8 +688,8 @@ export function StrategyHero({
   onExpand
 }: StrategyHeroProps) {
   const topic = section.specialist_type || 'general';
-  const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
-  const TopicIcon = config.icon;
+  const TopicIcon = getTopicIcon(topic);
+  const topicLabel = getTopicLabel(topic);
   const heroImage = getHeroImage(section);
   // Deduplicate constraints — backend may emit the same rule twice
   const constraints = React.useMemo(() => {
@@ -715,7 +714,7 @@ export function StrategyHero({
   const isAccordionExpanded = controlledExpanded !== undefined ? controlledExpanded : internalExpanded;
 
   // Get specialist colors
-  const specialistColors = SPECIALIST_COLORS[topic] || SPECIALIST_COLORS.general;
+  const specialistColors = SPECIALIST_STYLE_CLASSES[topic] || DEFAULT_STYLE;
 
   // Infeasible state
   const isInfeasible = section.feasibility_status === 'infeasible';
@@ -816,7 +815,7 @@ export function StrategyHero({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-zinc-900 dark:text-white leading-tight">
-                {config.label}
+                {topicLabel}
               </span>
               {/* Infeasible badge */}
               {isInfeasible && (
@@ -1024,7 +1023,7 @@ export function StrategyHero({
 
               {/* Title */}
               <span className="text-xs font-bold text-zinc-900 dark:text-white truncate">
-                {config.label}
+                {topicLabel}
               </span>
 
               {/* Ready checkmark */}
@@ -1066,7 +1065,7 @@ export function StrategyHero({
         <BottomSheet
           open={isSheetOpen}
           onOpenChange={setIsSheetOpen}
-          title={`${config.label} Strategy`}
+          title={`${topicLabel} Strategy`}
           hint="Tap outside to close"
         >
           {/* pb-24 ensures content can scroll past any floating buttons (Build Itinerary) */}
@@ -1319,7 +1318,7 @@ export function StrategyHero({
                       )}
                     >
                       <TopicIcon className="w-3 h-3" />
-                      {config.label}
+                      {topicLabel}
                     </span>
                   </div>
                 </div>
@@ -1484,7 +1483,7 @@ export function StrategyHero({
             )}
           >
             <TopicIcon className="w-3 h-3" />
-            {config.label} Strategy
+            {topicLabel} Strategy
           </span>
 
           {/* Infeasible badge */}
@@ -1566,7 +1565,7 @@ export function StrategyHero({
     <BottomSheet
       open={isSheetOpen}
       onOpenChange={setIsSheetOpen}
-      title={`${config.label} Strategy`}
+      title={`${topicLabel} Strategy`}
       hint="Tap to expand"
     >
       <div className="space-y-6 pb-24">
@@ -1680,7 +1679,7 @@ export function StrategyHero({
                   'bg-white/20 backdrop-blur-md text-white border border-white/20'
                 )}>
                   <TopicIcon className="w-3 h-3" />
-                  {config.label}
+                  {topicLabel}
                 </span>
               </div>
             </div>

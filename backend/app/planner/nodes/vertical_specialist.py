@@ -17,213 +17,30 @@ The Specialist runs BEFORE the Architect calls tools.
 import json
 import os
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel
 
 from app.placeholders import get_activity_image
-
-# Optional LLM-based constraint generation
+from app.planner.services.section_builder import (
+    build_specialist_section,
+    mark_topic_executed,
+    upsert_section,
+)
+from app.planner.specialist_registry import (
+    get as get_specialist_config,
+)
+from app.planner.specialist_registry import (
+    load_prompt,
+)
 from app.planner.state import (
     ConstraintSeverity,
     GraphState,
     ItineraryBlock,
     SpecialistConstraint,
     SpecialistOutput,
+    get_trip_settings,
 )
-
-# =============================================================================
-# Activity Coordinates Lookup (for LLM-generated activities)
-# Format: [longitude, latitude] per GeoJSON/Mapbox convention
-# =============================================================================
-
-ACTIVITY_COORDINATES: Dict[str, List[float]] = {
-    # === BALI DIVING ===
-    "usat liberty": [115.5931, -8.2762],
-    "liberty wreck": [115.5931, -8.2762],
-    "tulamben": [115.5931, -8.2762],
-    "manta point": [115.5271, -8.7935],
-    "crystal bay": [115.4486, -8.7179],
-    "padang bai": [115.5088, -8.5331],
-    "blue lagoon": [115.5088, -8.5331],
-    "amed": [115.6461, -8.3474],
-    "jemeluk": [115.6461, -8.3474],
-    # === BALI HIKING ===
-    "mount batur": [115.3756, -8.2417],
-    "batur": [115.3756, -8.2417],
-    "campuhan ridge": [115.2580, -8.4952],
-    "tegallalang": [115.2791, -8.4343],
-    "rice terrace": [115.2791, -8.4343],
-    "sekumpul": [115.1847, -8.1768],
-    "gitgit": [115.0867, -8.6213],
-    "munduk": [115.0867, -8.6213],
-    "tirta gangga": [115.5147, -8.4116],
-    "mount agung": [115.5079, -8.3427],
-    # === DUBAI DIVING ===
-    "zainab": [55.3075, 25.1177],
-    "anchor barge": [55.1850, 25.2048],
-    "mv dara": [55.6000, 25.5700],
-    # === CHAMONIX SKIING ===
-    "grands montets": [6.9608, 45.9763],
-    "vallee blanche": [6.8694, 45.8762],
-    "les houches": [6.7983, 45.8908],
-    "brevent": [6.8398, 45.9330],
-    "flegere": [6.8850, 45.9590],
-    # === NISEKO SKIING ===
-    "grand hirafu": [140.6892, 42.8636],
-    "hirafu": [140.6892, 42.8636],
-    "niseko village": [140.6789, 42.8467],
-    "annupuri": [140.6458, 42.8556],
-    "hanazono": [140.7128, 42.8847],
-    # === PATAGONIA HIKING ===
-    "torres del paine": [-72.9667, -50.9423],
-    "grey glacier": [-73.0486, -50.4967],
-    "perito moreno": [-73.0486, -50.4967],
-    "fitz roy": [-72.8867, -49.3314],
-}
-
-
-def _lookup_coordinates(title: str) -> Optional[List[float]]:
-    """Lookup coordinates by activity title (case-insensitive partial match)."""
-    title_lower = title.lower()
-    for key, coords in ACTIVITY_COORDINATES.items():
-        if key in title_lower:
-            return coords
-    return None
-
-
-# =============================================================================
-# LLM Specialist System Prompts (Zero-Template Architecture)
-# =============================================================================
-
-SPECIALIST_SYSTEM_PROMPTS: Dict[str, str] = {
-    "diving": """You are a PADI-certified dive master planning safe dive trips.
-
-ROLE: Generate feasibility assessment, real dive sites, and safety constraints.
-
-CRITICAL SAFETY RULES (BLOCKING - cannot be violated):
-1. NO-FLY TIME: 24h minimum after diving before flying
-2. NO ALTITUDE: No activities above 2500m within 24h of diving
-3. CERTIFICATION: Open Water = 18m max depth, Advanced = 30m max depth
-4. SURFACE INTERVALS: Minimum 18h between multi-day diving
-
-CROSS-DOMAIN CONSTRAINTS:
-- Diving affects skiing: No high-altitude skiing (>2500m) within 24h after diving
-- Same decompression physics as no-fly rule — altitude reduces ambient pressure
-- This is a BLOCKING constraint
-
-ACTIVITY GENERATION:
-- Generate 2-4 REAL dive sites based on trip duration
-- Include depth_meters and certification_required for each dive
-- Add logic_hook (practical tip) for each activity
-- Consider seasonality and water conditions""",
-    "hiking": """You are a certified mountain guide planning hiking expeditions.
-
-ROLE: Generate feasibility assessment, real trails, and safety constraints.
-
-CRITICAL SAFETY RULES:
-1. ALTITUDE ACCLIMATIZATION: Max 500m elevation gain per day above 3000m (STRONG)
-2. WEATHER WINDOWS: Morning starts recommended for mountain hikes
-3. CROSS-DOMAIN: High-altitude hiking (>2500m) requires 24h buffer AFTER diving \
-(altitude before dive is safe)
-
-CONSTRAINT SEVERITY LABELS (CRITICAL - always include in output):
-- BLOCKING: Trail closed, impassable conditions, permit required but unavailable
-- STRONG: Altitude >3000m requires acclimatization day, daily elevation gain >1000m
-- SOFT: Prefer morning starts, suggested rest day after 2 consecutive hard days
-
-SEASONALITY (REGIONAL AWARENESS):
-- High alpine (Alps, Himalaya): June-September for summer hiking
-- Southern Hemisphere (NZ, Patagonia): November-March
-- Monsoon regions (Nepal, India): Avoid June-September
-- If trip dates fall OUTSIDE hiking season: set feasibility_status="caveat" or "infeasible"
-- Exception: Lower-elevation trails may be accessible year-round
-
-ACTIVITY GENERATION:
-- Generate 2-4 REAL hiking trails based on trip duration
-- Include elevation_meters and distance_km for each hike
-- Add difficulty progression (easier trails first)
-- Consider fitness requirements and acclimatization needs
-
-OUTPUT FIELD HINTS:
-- Always include duration_hours (estimated completion at moderate pace)
-- Always include trail_type: "day_hike" | "multi_day" | "summit" | "ridge_walk"
-- Severity labels MUST appear in constraints_applied[].type field""",
-    "skiing": """You are a certified ski instructor planning ski trips.
-
-ROLE: Generate feasibility assessment, real ski areas, and safety constraints.
-
-CRITICAL SAFETY RULES:
-1. AVALANCHE CHECK: Required for off-piste/backcountry (BLOCKING)
-2. GUIDE REQUIRED: Certified guide mandatory for off-piste terrain (BLOCKING)
-3. SKILL PROGRESSION: Match terrain to skill level
-
-SEASONALITY:
-- Northern Hemisphere: December-April
-- Southern Hemisphere: June-September
-- Indoor facilities: Year-round
-
-CROSS-DOMAIN CONSTRAINTS:
-- If trip includes diving: High-altitude skiing (>2500m) requires 24h buffer AFTER diving
-- Ski resorts often sit at 2000-3500m elevation — flag altitude conflict for diving combos
-- Plan diving activities BEFORE high-altitude skiing days, not after
-- This is a BLOCKING constraint (same physiological basis as no-fly rule)
-
-ACTIVITY GENERATION:
-- Generate 2-4 REAL ski runs/areas based on trip duration
-- Include vertical_meters and run_difficulty for each
-- Flag off-piste activities with guide requirement
-- Consider snow conditions and resort quality""",
-    "surfing": """You are a certified surf coach planning surf trips.
-
-ROLE: Generate feasibility assessment, real surf breaks, and safety constraints.
-
-CRITICAL SAFETY RULES (BLOCKING - cannot be violated):
-1. HAZARDOUS CONDITIONS: Do not surf when wave height exceeds skill level thresholds
-   - Beginner: max 3ft, Intermediate: max 6ft, Advanced: max 10ft
-
-STRONG RECOMMENDATIONS:
-1. TIDE/SWELL CHECK: Required before each session
-2. RIP CURRENT AWARENESS: Briefing required for unfamiliar breaks
-3. REEF AWARENESS: Booties required for reef breaks
-4. BOARD SIZE: Match to skill level
-
-CONSTRAINT SEVERITY LABELS (CRITICAL - always include in output):
-- BLOCKING: Hazardous conditions exceeding skill level
-- STRONG: Tide check, rip current briefing, reef gear
-- SOFT: Board size preferences, optimal session timing
-
-ACTIVITY GENERATION:
-- Generate 2-4 REAL surf breaks based on trip duration
-- Include wave_height range and best tide conditions
-- Add skill level requirements
-- Consider seasonal swell patterns""",
-    "cycling": """You are a cycling guide planning cycling trips.
-
-ROLE: Generate feasibility assessment, real routes, and safety constraints.
-
-STRONG RECOMMENDATIONS (not blocking - user can override):
-1. TRAFFIC SAFETY: Helmet required, high-visibility gear recommended
-2. HYDRATION: Water stops every 20-30km in hot climates (500ml/hour)
-3. BIKE FIT: Proper sizing essential for multi-day rides
-
-SOFT PREFERENCES:
-1. TIMING: Morning starts in hot climates to avoid midday heat
-2. REST DAYS: Suggested after 3+ consecutive riding days
-
-CONSTRAINT SEVERITY LABELS (CRITICAL - always include in output):
-- BLOCKING: None typical for cycling (no life-threatening constraints like diving)
-- STRONG: Helmet, hydration, bike fit
-- SOFT: Timing preferences, rest day suggestions
-
-ACTIVITY GENERATION:
-- Generate 2-4 REAL cycling routes based on trip duration
-- Include distance_km and elevation_meters for each ride
-- Add surface type (road, gravel, MTB)
-- Consider traffic levels and road quality""",
-}
-
 
 # =============================================================================
 # LLM Specialist Output Schema (for structured output)
@@ -245,6 +62,9 @@ class LLMActivity(BaseModel):
     certification_required: Optional[str] = None
     vertical_meters: Optional[int] = None
     logic_hook: Optional[str] = None
+    # LLM-generated coordinates (replaces hardcoded ACTIVITY_COORDINATES)
+    lat: Optional[float] = None
+    lng: Optional[float] = None
 
 
 class LLMConstraint(BaseModel):
@@ -455,7 +275,7 @@ async def generate_specialist_output_llm(
         except Exception as e:
             _debug_log(f"[LLM_SPECIALIST] Cache lookup error: {e}")
 
-    system_prompt = load_specialist_prompt(topic) or SPECIALIST_SYSTEM_PROMPTS.get(topic)
+    system_prompt = load_prompt(topic)
     if not system_prompt:
         # Unknown specialist - return None to trigger fallback
         _debug_log(f"[LLM_SPECIALIST] No system prompt for topic '{topic}', using fallback")
@@ -564,79 +384,25 @@ def _get_minimal_safety_constraints(
     Get minimal hardcoded safety constraints as fallback.
 
     Used when LLM generation fails to ensure critical safety rules are present.
-
-    Args:
-        topic: The specialist topic (diving, hiking, skiing)
-        destination: Optional destination for gating altitude constraints
+    All constraint data is driven by the specialist registry.
     """
-    if topic == "diving":
-        return [
-            SpecialistConstraint(
-                constraint_id="no_fly_24h",
-                type="temporal",
-                rule="min_24h_buffer_after_dive",
-                severity=ConstraintSeverity.BLOCKING,
-                applies_to_categories=["flights"],
-                buffer_hours=24,
-                reason="Flying within 24h of diving risks decompression sickness",
-                label="24h No-Fly Buffer",
-                icon="🚫",
-            ),
-        ]
-    elif topic == "hiking":
-        # Base constraints that apply to ALL hiking destinations
-        # Valid types: 'temporal', 'safety', 'equipment', 'certification', 'budget'
-        base_constraints = [
-            SpecialistConstraint(
-                constraint_id="morning_start_recommended",
-                type="temporal",
-                rule="morning_start_recommended",
-                severity=ConstraintSeverity.SOFT,
-                applies_to_categories=["activities"],
-                reason="Morning starts recommended for mountain hikes to avoid afternoon weather",
-                label="Morning Start",
-                icon="🌅",
-            ),
-            SpecialistConstraint(
-                constraint_id="proper_footwear_required",
-                type="equipment",
-                rule="proper_footwear_required",
-                severity=ConstraintSeverity.SOFT,
-                applies_to_categories=["activities"],
-                reason="Proper footwear required for steep terrain",
-                label="Proper Footwear",
-                icon="🥾",
-            ),
-        ]
-
-        base_constraints.append(
-            SpecialistConstraint(
-                constraint_id="altitude_acclimatization",
-                type="safety",
-                rule="altitude_acclimatization",
-                severity=ConstraintSeverity.STRONG,
-                applies_to_categories=["activities"],
-                reason="Max 500m elevation gain per day above 3000m",
-                label="Altitude Acclimatization",
-                icon="🏔️",
-            )
+    config = get_specialist_config(topic)
+    if not config or not config.hardcoded_constraints:
+        return []
+    return [
+        SpecialistConstraint(
+            constraint_id=hc["constraint_id"],
+            type=hc["type"],
+            rule=hc["rule"],
+            severity=ConstraintSeverity(hc["severity"]),
+            applies_to_categories=hc.get("applies_to_categories", []),
+            buffer_hours=hc.get("buffer_hours"),
+            reason=hc.get("reason", ""),
+            label=hc.get("label"),
+            icon=hc.get("icon"),
         )
-
-        return base_constraints
-    elif topic == "skiing":
-        return [
-            SpecialistConstraint(
-                constraint_id="avalanche_check",
-                type="safety",
-                rule="check_snow_conditions",
-                severity=ConstraintSeverity.BLOCKING,
-                applies_to_categories=["activities"],
-                reason="Check avalanche bulletin before off-piste skiing",
-                label="Avalanche Check Required",
-                icon="🏔️",
-            ),
-        ]
-    return []
+        for hc in config.hardcoded_constraints
+    ]
 
 
 def _migrate_legacy_constraints(
@@ -672,8 +438,8 @@ def convert_llm_output_to_specialist_output(
         # Use Unsplash service with activity context for location-specific images
         # Variant cycles through prefetched images (0-5)
         image_url = get_image_url_sync(destination, variant=i % 6, activities=[topic])
-        # Lookup coordinates by activity title
-        coordinates = _lookup_coordinates(activity.title)
+        # Use LLM-generated coordinates ([lng, lat] Mapbox convention)
+        coordinates = [activity.lng, activity.lat] if activity.lat and activity.lng else None
         content_blocks.append(
             ItineraryBlock(
                 day=i + 2,  # Start from day 2 (day 1 is arrival)
@@ -721,145 +487,6 @@ def convert_llm_output_to_specialist_output(
         constraints=constraints,
         content_blocks=content_blocks,
     )
-
-
-# =============================================================================
-# Feasibility Data (Geographic/Physical Constraints)
-# Used for fast pre-checks before LLM calls
-# =============================================================================
-
-SKIING_FEASIBILITY = {
-    # Infeasible - no natural or indoor skiing possible
-    "infeasible": [
-        "miami",
-        "florida",
-        "hawaii",
-        "caribbean",
-        "bahamas",
-        "cancun",
-        "bali",
-        "thailand",
-        "singapore",
-        "philippines",
-        "vietnam",
-        "indonesia",
-        "malaysia",
-        "cambodia",
-        "laos",
-        "myanmar",
-        "india",
-        "sri lanka",
-        "maldives",
-        "seychelles",
-        "mauritius",
-        "kenya",
-        "tanzania",
-        "south africa",
-        "egypt",
-        "morocco",
-        "brazil",
-        "argentina",
-        "mexico",
-        "costa rica",
-        "panama",
-        "cuba",
-        "jamaica",
-        "dominican republic",
-        "puerto rico",
-    ],
-    # Caveat - indoor only
-    "caveat": {
-        "amsterdam": "Indoor skiing at SnowWorld Zoetermeer (30min drive)",
-        "netherlands": "Indoor skiing at SnowWorld (Zoetermeer or Landgraaf)",
-        "london": "Indoor skiing at The Snow Centre Hemel Hempstead (45min)",
-        "uk": "Indoor skiing at The Snow Centre or Chill Factore Manchester",
-        "dubai": "Indoor skiing at Ski Dubai (Mall of the Emirates)",
-        "uae": "Indoor skiing at Ski Dubai in Dubai",
-        "madrid": "Indoor skiing at Madrid SnowZone (Xanadú)",
-        "berlin": "Indoor skiing at Alpincenter Bottrop (4h drive)",
-        "paris": "No indoor ski facilities nearby - consider Alps (3h by TGV)",
-    },
-}
-
-DIVING_FEASIBILITY = {
-    # Caveat - pool/aquarium only, or limited ocean access
-    "caveat": {
-        "london": "Pool diving at NDAC or London Aquarium experiences",
-        "amsterdam": "Pool diving at Duikvaker centers",
-        "paris": "Pool diving at Aqua 92 or Nemo 33 (Belgium, 3h)",
-        "berlin": "Pool diving at Dive4Life or aquarium experiences",
-        "madrid": "Pool diving available; nearest sea diving in Valencia (3h)",
-        "munich": "Pool diving; nearest sea diving in Croatia (5h)",
-        "vienna": "Pool diving available; landlocked country",
-        "dubai": (
-            "Ocean diving is limited. Try **Deep Dive Dubai** - "
-            "world's deepest pool (60m), sunken city theme, indoor facility."
-        ),
-    },
-    # Infeasible - landlocked, no facilities
-    "infeasible": [
-        "switzerland",
-        "austria",
-        "czech",
-        "czechia",
-        "hungary",
-        "luxembourg",
-        "liechtenstein",
-        "andorra",
-        "san marino",
-        "mongolia",
-        "nepal",
-        "bhutan",
-        "laos",
-        "paraguay",
-        "bolivia",
-        "rwanda",
-        "burundi",
-        "uganda",
-        "zambia",
-        "zimbabwe",
-        "botswana",
-        "malawi",
-        "lesotho",
-        "eswatini",
-        "ethiopia",
-        "chad",
-        "niger",
-        "mali",
-        "burkina faso",
-        "central african republic",
-        "south sudan",
-        "kazakhstan",
-        "uzbekistan",
-        "turkmenistan",
-        "kyrgyzstan",
-        "tajikistan",
-        "afghanistan",
-        "armenia",
-        "azerbaijan",
-        "belarus",
-        "slovakia",
-    ],
-}
-
-HIKING_FEASIBILITY = {
-    # Hiking is generally feasible almost everywhere, but with caveats
-    "infeasible": [],  # Very few places where hiking is truly impossible
-    "caveat": {
-        "maldives": "Flat terrain only - no mountain hiking available",
-        "bahamas": "Flat terrain - limited to coastal/nature walks",
-        "singapore": "Urban hiking only - MacRitchie Reservoir, Bukit Timah",
-        "hong kong": "Urban hiking - Dragon's Back, Lion Rock trails",
-        "dubai": "Desert hiking only - no mountain trails nearby",
-    },
-}
-
-# Map topic to feasibility data
-FEASIBILITY_DATA = {
-    "skiing": SKIING_FEASIBILITY,
-    "diving": DIVING_FEASIBILITY,
-    "hiking": HIKING_FEASIBILITY,
-}
 
 
 # =============================================================================
@@ -945,11 +572,7 @@ def check_feasibility(
     destination: str,
 ) -> tuple:
     """
-    Check if activity is feasible at destination.
-
-    Uses a two-tier approach:
-    1. Fast hardcoded checks for known destinations
-    2. LLM fallback for unknown destinations (cached)
+    LLM-only feasibility check, gated by registry has_geographic_constraint flag.
 
     Returns:
         (status, reason, alternative_suggestion) tuple where:
@@ -959,71 +582,28 @@ def check_feasibility(
     """
     from app.debug_utils import _debug_log
 
-    dest_lower = (destination or "").lower()
-
-    # Skip empty destinations
-    if not dest_lower:
+    if not (destination or "").strip():
         return ("feasible", None, None)
 
-    data = FEASIBILITY_DATA.get(topic)
-    if not data:
+    config = get_specialist_config(topic)
+    if not config or not config.has_geographic_constraint:
         return ("feasible", None, None)
 
-    # TIER 1: Check hardcoded infeasible locations (fast)
-    for location in data.get("infeasible", []):
-        if location in dest_lower:
-            return (
-                "infeasible",
-                f"{topic.title()} is not available in {destination}",
-                _suggest_alternative(topic),
-            )
+    # All feasibility decisions delegated to LLM
+    _debug_log(f"[FEASIBILITY] LLM check for {topic} in {destination}")
+    possible, reason = get_feasibility_llm(topic, destination)
 
-    # TIER 1: Check hardcoded caveat locations (fast)
-    for location, caveat_msg in data.get("caveat", {}).items():
-        if location in dest_lower:
-            return (
-                "caveat",
-                caveat_msg,
-                None,
-            )
+    if not possible:
+        return (
+            "infeasible",
+            f"{topic.title()} is not available in {destination}. {reason}",
+            reason,  # LLM provides alternatives in reason text
+        )
 
-    # TIER 1: Check hardcoded feasible locations for skiing
-    # (Skip LLM for known ski destinations)
-    if topic == "skiing" and "feasible" in data:
-        for location in data.get("feasible", []):
-            if location in dest_lower:
-                return ("feasible", None, None)
-
-    # TIER 2: LLM check for unknown destinations
-    # Only run for activities with geographic constraints (diving, skiing)
-    # Hiking is generally possible everywhere, so skip LLM for it
-    if topic in ["diving", "skiing"]:
-        _debug_log(f"[FEASIBILITY] LLM check for {topic} in {destination}")
-        possible, reason = get_feasibility_llm(topic, destination)
-
-        if not possible:
-            return (
-                "infeasible",
-                f"{topic.title()} is not available in {destination}. {reason}",
-                _suggest_alternative(topic),
-            )
-
-        # If LLM says possible but with nuance, treat as caveat
-        # (e.g., "possible but limited" scenarios)
-        if possible and "limited" in reason.lower():
-            return ("caveat", reason, None)
+    if "limited" in reason.lower():
+        return ("caveat", reason, None)
 
     return ("feasible", None, None)
-
-
-def _suggest_alternative(topic: str) -> str:
-    """Get alternative destination suggestion for infeasible activities."""
-    alternatives = {
-        "skiing": "Consider destinations like Chamonix, Zermatt, Niseko, or Aspen",
-        "diving": "Consider destinations like Bali, Red Sea, Maldives, or Great Barrier Reef",
-        "hiking": "Consider destinations like Patagonia, Nepal, the Alps, or Yosemite",
-    }
-    return alternatives.get(topic, "Consider a destination better suited for this activity")
 
 
 # =============================================================================
@@ -1046,6 +626,7 @@ class VerticalSpecialist:
     def __init__(self, topic: str):
         self.topic = topic
         self.debug = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
+        self._cached_activity_days: int | None = None
 
     def get_constraints(self) -> List[SpecialistConstraint]:
         """Get domain-specific constraints (fallback only).
@@ -1067,7 +648,11 @@ class VerticalSpecialist:
 
         Returns the number of days available for specialist activities.
         For very short trips (1-2 days), returns 0 (no activity days).
+        Result is cached on the instance for the duration of this specialist run.
         """
+        if self._cached_activity_days is not None:
+            return self._cached_activity_days
+
         plan = state.trip_plan
 
         from app.debug_utils import _debug_info
@@ -1079,7 +664,8 @@ class VerticalSpecialist:
 
         if not plan.start_date or not plan.end_date:
             _debug_info("SPECIALIST", "  -> No dates, returning 3 (default)")
-            return 3  # Default to 3 activity days if dates unknown
+            self._cached_activity_days = 3
+            return 3
 
         from datetime import datetime
 
@@ -1090,37 +676,26 @@ class VerticalSpecialist:
             _debug_info("SPECIALIST", f"  total_days={total_days}")
         except ValueError as e:
             _debug_info("SPECIALIST", f"  -> Date parse error: {e}, returning 3")
-            return 3  # Default if date parsing fails
+            self._cached_activity_days = 3
+            return 3
 
         # Subtract arrival (day 1) and departure (last day)
         available = total_days - 2
         _debug_info("SPECIALIST", f"  after arrival/departure: available={available}")
 
-        # Specialist-specific buffers
-        if self.topic == "diving":
-            # No-fly buffer day before departure
+        # Specialist-specific buffers (registry-driven)
+        config = get_specialist_config(self.topic)
+        if config and config.has_nofly_buffer:
             available -= 1
-            _debug_info("SPECIALIST", f"  after diving no-fly buffer: available={available}")
-        elif self.topic == "hiking":
-            # Acclimatization day for high-altitude destinations
-            high_altitude_dests = [
-                "nepal",
-                "everest",
-                "kilimanjaro",
-                "peru",
-                "cusco",
-                "tibet",
-                "ladakh",
-                "bolivia",
-                "la paz",
-            ]
-            dest_lower = (plan.destination or "").lower()
-            if any(h in dest_lower for h in high_altitude_dests):
-                available -= 1
-                _debug_info("SPECIALIST", f"  after hiking altitude buffer: available={available}")
+            _debug_info("SPECIALIST", f"  after {self.topic} no-fly buffer: available={available}")
+        elif config and config.has_altitude_buffer:
+            available -= 1  # Conservative — LLM handles content appropriately
+            message = f"  after {self.topic} altitude buffer: available={available}"
+            _debug_info("SPECIALIST", message)
 
         result = max(0, available)
         _debug_info("SPECIALIST", f"  -> FINAL: max_activities={result}")
+        self._cached_activity_days = result
         return result
 
     def get_content_for_destination(
@@ -1283,25 +858,12 @@ class VerticalSpecialist:
 
     def generate_enhancements(self, state: GraphState) -> List[str]:
         """
-        Suggest enhancements to the plan.
+        Suggest enhancements to the plan. Data-driven from registry.
         """
-        enhancements = []
-        plan = state.trip_plan
-
-        if self.topic == "diving":
-            if not any("dive" in str(b.title).lower() for b in plan.itinerary_blocks):
-                enhancements.append("Consider adding a dive site visit")
-            enhancements.append("Book a dive shop for equipment rental in advance")
-
-        elif self.topic == "hiking":
-            enhancements.append("Check weather forecasts before departure")
-            enhancements.append("Download offline maps for the trails")
-
-        elif self.topic == "skiing":
-            enhancements.append("Book ski passes in advance for better rates")
-            enhancements.append("Consider private lessons for the first day")
-
-        return enhancements
+        config = get_specialist_config(self.topic)
+        if config and config.enhancements:
+            return list(config.enhancements)
+        return []
 
     def generate_bookends(self, state: GraphState) -> List[ItineraryBlock]:
         """
@@ -1381,48 +943,34 @@ class VerticalSpecialist:
         else:
             duration = 5
 
-        if self.topic == "diving" and duration >= 3:
-            # No-fly buffer is now shown as INLINE CONSTRAINT on the last dive activity
-            # (see itinerary_builder._apply_constraints_to_blocks)
-            # No standalone buffer block needed - keeps timeline cleaner while
-            # still communicating the safety rule via inline badges.
+        # Registry-driven safety buffers
+        config = get_specialist_config(self.topic)
+        if not config:
             pass
-
-        elif self.topic == "hiking":
-            # For high-altitude destinations, add acclimatization day
-            high_altitude_dests = [
-                "nepal",
-                "everest",
-                "kilimanjaro",
-                "peru",
-                "cusco",
-                "tibet",
-                "ladakh",
-            ]
-            dest_lower = (plan.destination or "").lower()
-
-            if any(h in dest_lower for h in high_altitude_dests) and duration >= 4:
-                # Add acclimatization on day 3
-                blocks.append(
-                    ItineraryBlock(
-                        day=3,
-                        title="Acclimatization Day",
-                        description=(
-                            "Rest day to adjust to altitude. Light walks only, stay hydrated."
-                        ),
-                        type="buffer",
-                        is_buffer=True,
-                        buffer_type="acclimatization",
-                        buffer_reason=(
-                            "Altitude sickness prevention: "
-                            "max 500m elevation gain per day above 3000m"
-                        ),
-                        source_specialist="hiking",
-                        safety_notes=(
-                            "Ascending too fast increases risk of AMS (Acute Mountain Sickness)"
-                        ),
-                    )
+        elif config.has_nofly_buffer and duration >= 3:
+            # No-fly buffer shown as INLINE CONSTRAINT on last dive activity
+            # (see itinerary_builder._apply_constraints_to_blocks)
+            pass
+        elif config.has_altitude_buffer and duration >= 4:
+            blocks.append(
+                ItineraryBlock(
+                    day=3,
+                    title="Acclimatization Day",
+                    description=(
+                        "Rest day to adjust to altitude. Light walks only, stay hydrated."
+                    ),
+                    type="buffer",
+                    is_buffer=True,
+                    buffer_type="acclimatization",
+                    buffer_reason=(
+                        "Altitude sickness prevention: max 500m elevation gain per day above 3000m"
+                    ),
+                    source_specialist=self.topic,
+                    safety_notes=(
+                        "Ascending too fast increases risk of AMS (Acute Mountain Sickness)"
+                    ),
                 )
+            )
 
         return blocks
 
@@ -1456,18 +1004,15 @@ class VerticalSpecialist:
         activity_days = self._calculate_activity_days(state)
         if activity_days <= 0:
             # Trip is too short for this specialist's activities
-            min_days_needed = {
-                "diving": 4,  # arrival + dive + no-fly buffer + departure
-                "hiking": 3,  # arrival + hike + departure
-                "skiing": 3,  # arrival + ski + departure
-            }.get(self.topic, 3)
+            config = get_specialist_config(self.topic)
+            min_days_needed = config.min_days_needed if config else 3
 
             reason = (
                 f"{self.topic.title()} requires at least {min_days_needed} days "
                 f"(your trip is too short). "
             )
-            if self.topic == "diving":
-                reason += "The 24h no-fly safety buffer leaves no time for diving."
+            if config and config.has_nofly_buffer:
+                reason += "The 24h no-fly safety buffer leaves no time for activity."
 
             _debug_log(f"[SPECIALIST] INFEASIBLE: Trip too short for {self.topic}")
             return SpecialistOutput(
@@ -1506,7 +1051,7 @@ class VerticalSpecialist:
             # =====================================================================
             # STEP 1: Try LLM-based generation (fallback if not parallel)
             # =====================================================================
-            use_llm = self.topic in SPECIALIST_SYSTEM_PROMPTS
+            use_llm = load_prompt(self.topic) is not None
 
             if use_llm and destination:
                 _debug_log(f"[SPECIALIST] Trying LLM generation for {self.topic} in {destination}")
@@ -1541,7 +1086,7 @@ class VerticalSpecialist:
                 return SpecialistOutput(
                     feasibility_status="infeasible",
                     feasibility_reason=llm_output.feasibility_reason,
-                    alternative_suggestion=_suggest_alternative(self.topic),
+                    alternative_suggestion=llm_output.feasibility_reason,
                     constraints=[],
                     content_blocks=[],
                     critique=None,
@@ -1668,21 +1213,6 @@ class VerticalSpecialist:
 # =============================================================================
 # Prompt Loading (for future LLM-based specialist)
 # =============================================================================
-
-
-def load_specialist_prompt(topic: str) -> Optional[str]:
-    """
-    Load specialist prompt from file.
-
-    Looks for prompts/specialists/{topic}.txt
-    """
-    prompts_dir = Path(__file__).parent.parent.parent / "prompts" / "specialists"
-    prompt_file = prompts_dir / f"{topic}.txt"
-
-    if prompt_file.exists():
-        return prompt_file.read_text()
-
-    return None
 
 
 # =============================================================================
@@ -1894,10 +1424,10 @@ async def vertical_specialist(state: GraphState) -> GraphState:
 
     log("SPECIALIST", f"{topic.title()} Specialist activated")
     log("SPECIALIST", f"Destination from trip_plan: '{state.trip_plan.destination}'")
-    dest_from_inputs = state.metadata.get("trip_inputs", {}).get("destination")
+    dest_from_inputs = state.trip_plan.destination
     log(
         "SPECIALIST",
-        f"Destination from metadata.trip_inputs: '{dest_from_inputs}'",
+        f"Destination from trip_plan (canonical): '{dest_from_inputs}'",
     )
 
     # Verify destination is set - critical for correct content
@@ -1930,11 +1460,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
 
             async with async_session_factory() as db:
                 # Run all LLM calls in parallel with persistent caching
-                _skill = (
-                    state.metadata.get("trip_inputs", {})
-                    .get("activity_settings", {})
-                    .get("skill_level")
-                )
+                _skill = get_trip_settings(state).activity_settings.skill_level
                 parallel_results = await generate_all_specialists_parallel(
                     topics=all_specialists,
                     destination=state.trip_plan.destination,
@@ -2175,46 +1701,24 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     if not hero_image:
         hero_image = get_activity_image(topic, state.trip_plan.destination or "", topic)
 
-    section: Dict[str, Any] = {
-        "id": f"specialist_{topic}",
-        "title": f"{topic.title()} Specialist",
-        "specialist_type": topic,
-        "subtitle": state.trip_plan.destination,  # For cache comparison
-        # Cache invalidation key: must match destination AND dates
-        "_cache_dates": f"{state.trip_plan.start_date}:{state.trip_plan.end_date}",
-        "feasibility_status": output.feasibility_status,
-        "feasibility_reason": output.feasibility_reason,
-        "alternative_suggestion": output.alternative_suggestion,
-        "constraints_applied": [
+    section = build_specialist_section(
+        topic=topic,
+        destination=state.trip_plan.destination,
+        start_date=state.trip_plan.start_date,
+        end_date=state.trip_plan.end_date,
+        feasibility_status=output.feasibility_status,
+        feasibility_reason=output.feasibility_reason,
+        alternative_suggestion=output.alternative_suggestion,
+        constraints=[
             {"rule": c.rule, "reason": c.reason, "type": c.type} for c in output.constraints
         ],
-        "content_added": content_added,
-        "hero_image": hero_image,  # Hero banner for niche specialist layout
-        "impact_areas": [topic.title(), "Safety", "Activities"],
-        # Required fields for StrategySection
-        "principles": [],
-        "must_dos": [],
-        "optional_upgrades": output.enhancements[:3] if output.enhancements else [],
-        "logistics_notes": [],
-        "bullets": [],
-    }
+        content_added=content_added,
+        enhancements=output.enhancements,
+        hero_image=hero_image,
+    )
 
-    # Initialize strategy_sections if needed
-    if "strategy_sections" not in state.metadata:
-        state.metadata["strategy_sections"] = []
-
-    # Remove existing section for this specialist (avoid duplicates on re-run)
-    state.metadata["strategy_sections"] = [
-        s for s in state.metadata["strategy_sections"] if s.get("specialist_type") != topic
-    ]
-    state.metadata["strategy_sections"].append(section)
-
-    # Add topic to executed_strategy_topics (for frontend status display)
-    executed = state.metadata.get("executed_strategy_topics", [])
-    if topic not in executed:
-        executed = list(executed)  # Make a copy
-        executed.append(topic)
-        state.metadata["executed_strategy_topics"] = executed
+    upsert_section(state.metadata, section, mode="appendable")
+    mark_topic_executed(state.metadata, topic)
 
     _debug_log(f"Strategy section created for {topic} with {len(content_added)} recommendations")
     reason_preview = output.feasibility_reason[:50] if output.feasibility_reason else None

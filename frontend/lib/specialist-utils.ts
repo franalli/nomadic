@@ -3,11 +3,12 @@
  * Used to generate dynamic headers based on active specialists.
  */
 
+import { SPECIALIST_IDS } from '@/lib/specialists';
 import type { StrategySection } from '@/types/plan-envelope';
 
 /**
  * Extract active specialist types from strategy sections.
- * Excludes 'general' and 'local_expert' which are always present.
+ * Returns only niche specialists (those in the registry), excluding structural roles.
  */
 export function getActiveSpecialists(
   sections: StrategySection[] | undefined
@@ -17,7 +18,7 @@ export function getActiveSpecialists(
     .map((s) => s.specialist_type)
     .filter(
       (t): t is string =>
-        t !== undefined && t !== 'general' && t !== 'local_expert'
+        t !== undefined && SPECIALIST_IDS.includes(t)
     );
 }
 

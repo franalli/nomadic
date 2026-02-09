@@ -6,32 +6,24 @@
  * them to deep links that navigate to the Plan tab and scroll to the card.
  */
 
+import { SPECIALIST_DISPLAY_NAMES, getSpecialistConfig } from './specialists';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type SpecialistType =
-  | 'diving'
-  | 'hiking'
-  | 'skiing'
-  | 'cycling'
-  | 'boating'
-  | 'local_expert'
-  | 'general';
+export type SpecialistType = string;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Patterns
+// Patterns (generated from registry)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Patterns to detect specialist mentions in chat content.
- * Matches both bold (**) and non-bold mentions.
- */
+const ALL_DISPLAY_NAMES = Object.values(SPECIALIST_DISPLAY_NAMES);
+const NAME_ALTERNATION = ALL_DISPLAY_NAMES.join('|');
+
 const SPECIALIST_PATTERNS = [
-  // Bold mentions: **Diving Specialist**
-  /\*\*(Diving|Hiking|Skiing|Cycling|Boating|Local Expert|General)\s+Specialist\*\*/gi,
-  // Plain mentions: Diving Specialist (not as common but supported)
-  /(?<!\*\*)(Diving|Hiking|Skiing|Cycling|Boating|Local Expert|General)\s+Specialist(?!\*\*)/gi,
+  new RegExp(`\\*\\*(${NAME_ALTERNATION})\\s+Specialist\\*\\*`, 'gi'),
+  new RegExp(`(?<!\\*\\*)(${NAME_ALTERNATION})\\s+Specialist(?!\\*\\*)`, 'gi'),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,14 +98,9 @@ export function parseSpecialistLink(href: string): SpecialistType | null {
  * e.g., "diving" -> "Diving Specialist", "local_expert" -> "Local Expert Specialist"
  */
 export function getSpecialistDisplayName(type: SpecialistType): string {
-  const nameMap: Record<SpecialistType, string> = {
-    diving: 'Diving Specialist',
-    hiking: 'Hiking Specialist',
-    skiing: 'Skiing Specialist',
-    cycling: 'Cycling Specialist',
-    boating: 'Boating Specialist',
-    local_expert: 'Local Expert Specialist',
-    general: 'General Specialist',
-  };
-  return nameMap[type] || `${type} Specialist`;
+  const config = getSpecialistConfig(type);
+  if (config) return `${config.displayName} Specialist`;
+  const displayName = SPECIALIST_DISPLAY_NAMES[type];
+  if (displayName) return `${displayName} Specialist`;
+  return `${type} Specialist`;
 }

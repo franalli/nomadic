@@ -9,6 +9,8 @@ import type {
   VerticalFetchType,
 } from '@/types/loader';
 
+import { SPECIALIST_IDS } from './specialists';
+
 /**
  * ETA thresholds by node type.
  * Operations with ETA below threshold won't show loader.
@@ -26,11 +28,7 @@ export const LOADER_ETA_THRESHOLDS: Record<string, number> = {
   itinerary_node: 0,     // Itinerary updates
 
   // Specialist nodes - always show (4000ms+ typically)
-  hiking_specialist: 0,
-  diving_specialist: 0,
-  skiing_specialist: 0,
-  cycling_specialist: 0,
-  boating_specialist: 0,
+  ...Object.fromEntries(SPECIALIST_IDS.map((id) => [`${id}_specialist`, 0])),
 
   // Multi-step operations - always show
   multi_city_routing: 0,
@@ -72,11 +70,7 @@ const ACTION_TYPE_NODE_MAP: Record<string, LoaderActionType> = {
   structure_node: 'generate_plan',
 
   // Specialist nodes (part of generate_plan)
-  hiking_specialist: 'generate_plan',
-  diving_specialist: 'generate_plan',
-  skiing_specialist: 'generate_plan',
-  cycling_specialist: 'generate_plan',
-  boating_specialist: 'generate_plan',
+  ...Object.fromEntries(SPECIALIST_IDS.map((id) => [`${id}_specialist`, 'generate_plan' as const])),
 
   // Create itinerary nodes
   itinerary_node: 'create_itinerary',

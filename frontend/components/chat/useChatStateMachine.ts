@@ -23,7 +23,7 @@ export type StrategyStatus = {
   active: boolean;
   stage: number;
   tier: 'outline' | 'section' | 'full';
-  topic: 'hiking' | 'skiing' | 'diving' | 'cycling' | 'boating';
+  topic: string;
   estimatedDurationMs: number;
   startTime: number;
 } | null;

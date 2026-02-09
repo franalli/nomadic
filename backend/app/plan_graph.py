@@ -39,7 +39,21 @@ from app.planner.nodes.logistics_node import logistics_node
 from app.planner.nodes.synthesizer import synthesizer
 from app.planner.nodes.trip_architect import trip_architect
 from app.planner.nodes.vertical_specialist import vertical_specialist
-from app.planner.state import GraphState, TripPlan
+from app.planner.services.section_builder import (
+    mark_topic_executed,
+    sort_sections_anchor_first,
+    upsert_section,
+)
+from app.planner.specialist_registry import ALL_DOMAIN_DEFAULT_PRINCIPLES, DOMAIN_DEFAULT_FALLBACK
+from app.planner.state import GraphState, TripPlan, TripSettings, reset_turn_metadata
+from app.planner.state.typed_meta import get_trip_settings
+from app.schemas import (
+    ActivitySettings,
+    BookingTypes,
+    FlightSettings,
+    HotelSettings,
+    TransportSettings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,31 +62,6 @@ logger = logging.getLogger(__name__)
 # Domain Default Principles (for strategy sections)
 # Used by _format_result() for both enrichment and new section paths
 # =============================================================================
-
-DOMAIN_DEFAULT_PRINCIPLES: Dict[str, list] = {
-    "diving": [
-        "24-hour no-fly buffer after dives",
-        "Depth and time limits for safe diving",
-        "Equipment and certification requirements",
-    ],
-    "hiking": [
-        "Altitude acclimatization schedule",
-        "Daily elevation gain limits",
-        "Rest day planning",
-    ],
-    "skiing": [
-        "Slope difficulty progression",
-        "Weather window optimization",
-        "Equipment rental coordination",
-    ],
-}
-
-# Fallback for unknown specialist types (use .format(specialist_type=...) to substitute)
-DOMAIN_DEFAULT_FALLBACK = [
-    "{specialist_type} safety protocols active",
-    "Expert recommendations applied",
-    "Optimized scheduling",
-]
 
 
 # =============================================================================
@@ -250,6 +239,8 @@ def _trip_plan_to_trip_inputs(plan: TripPlan) -> Dict[str, Any]:
         # Structured fields (from TripPlan only)
         "destination": plan.destination,
         "origin": plan.origin,
+        "origin_iata": plan.origin_iata,
+        "destination_iata": plan.destination_iata,
         "start_date": plan.start_date,
         "end_date": plan.end_date,
         "adults": plan.adults,
@@ -327,14 +318,16 @@ def _restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
 
     if not session_state:
         _debug_log("_restore_graph_state: No session_state provided, returning empty state")
-        return GraphState()
+        state = GraphState()
+        # Ensure typed settings exist even on first turn
+        state.metadata["trip_inputs"] = {}
+        state.metadata["trip_settings"] = TripSettings().model_dump()
+        return state
 
     state = GraphState()
 
-    # Clear per-turn flags (must be here, not in nodes - nodes don't always run)
-    state.metadata["architect_ran_this_turn"] = False
-    state.metadata["origin_only_logistics"] = False  # Prevents flag bleed from origin changes
-    state.metadata["short_circuit_response"] = False  # Prevents stale short-circuit state
+    # NOTE: Per-turn flag resets moved to reset_turn_metadata() at turn boundary.
+    # Called from run_turn_streaming() and run_turn_internal() after _restore_graph_state().
 
     # Convert messages
     for msg in session_state.get("messages", []):
@@ -351,6 +344,8 @@ def _restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
     if trip_inputs:
         state.trip_plan.destination = trip_inputs.get("destination")
         state.trip_plan.origin = trip_inputs.get("origin")
+        state.trip_plan.origin_iata = trip_inputs.get("origin_iata")
+        state.trip_plan.destination_iata = trip_inputs.get("destination_iata")
         state.trip_plan.start_date = trip_inputs.get("start_date")
         state.trip_plan.end_date = trip_inputs.get("end_date")
         state.trip_plan.adults = trip_inputs.get("adults", 1) or 1
@@ -374,6 +369,23 @@ def _restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
     for field, value in doc_settings.items():
         if value:
             state.metadata["trip_inputs"][field] = value
+
+    # ── Shadow-write: build typed TripSettings from merged trip_inputs ──
+    _merged = {**trip_inputs}
+    for field, value in doc_settings.items():
+        if value:
+            _merged[field] = value
+    state.metadata["trip_settings"] = TripSettings(
+        booking_types=BookingTypes(**(_merged.get("booking_types") or {})),
+        flight_settings=FlightSettings(**(_merged.get("flight_settings") or {})),
+        hotel_settings=HotelSettings(**(_merged.get("hotel_settings") or {})),
+        activity_settings=ActivitySettings(**(_merged.get("activity_settings") or {})),
+        transport_settings=TransportSettings(**(_merged.get("transport_settings") or {})),
+        date_flex=_merged.get("date_flex", False),
+        trip_duration=_merged.get("trip_duration"),
+        date_window_start=_merged.get("date_window_start"),
+        date_window_end=_merged.get("date_window_end"),
+    ).model_dump()
 
     # HARD TRACE: Log the exact activity_settings reaching the graph
     final_activity = state.metadata["trip_inputs"].get("activity_settings", {})
@@ -706,7 +718,8 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     # 1. UNFIXABLE CONSTRAINT SHORT-CIRCUIT
     # Route and specialist errors are unfixable by Architect - skip auto-fix loop.
     # - Route: Rome->Rome, invalid destination (rollback already happened in constraint_guard)
-    # - Specialist: DIVING_SURFACE_INTERVAL, altitude (Architect can't reschedule)
+    # - Specialist: departure buffer, cross-domain conflicts
+    #   (Architect can't reschedule specialist output)
     unfixable_categories = {"route", "specialist"}
     is_unfixable = any(v.get("category") in unfixable_categories for v in violations)
 
@@ -1010,6 +1023,9 @@ async def run_turn_streaming(
     # Restore state from session
     state = _restore_graph_state(session_state)
 
+    # Canonical turn boundary — all per-turn flags start clean
+    reset_turn_metadata(state)
+
     # Store metrics in state for nodes to access
     state.metadata["_metrics"] = metrics
 
@@ -1244,52 +1260,44 @@ def _flatten_tiles_to_id_map(tiles_by_category: Optional[Dict[str, Any]]) -> Dic
 
 
 def _sort_sections_anchor_first(sections: list) -> list:
-    """
-    Ensure local_expert/general is always at index 0 (anchor rule).
-
-    This fixes the ordering flip bug where filter+append pattern
-    reverses section order when local_expert runs twice.
-    """
-    anchor_types = {"local_expert", "general"}
-    anchors = [s for s in sections if s.get("specialist_type") in anchor_types]
-    others = [s for s in sections if s.get("specialist_type") not in anchor_types]
-    return anchors + others
+    """Delegate to canonical implementation in section_builder service."""
+    return sort_sections_anchor_first(sections)
 
 
-def _format_result(
-    state: GraphState,
-    original_session_state: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Format result state for main.py response."""
-    from app.debug_utils import _debug_log
-    from app.planner.state import trip_plan_is_ready
+# =============================================================================
+# _format_result: Extracted Sub-Functions
+# =============================================================================
 
+# Settings fields owned by frontend UI (not in TripPlan)
+_USER_SETTINGS_FIELDS = (
+    "activity_settings",
+    "hotel_settings",
+    "flight_settings",
+    "transport_settings",
+    "booking_types",
+)
+
+
+def _build_trip_inputs_with_settings(state: GraphState) -> Dict[str, Any]:
+    """Convert TripPlan to trip_inputs and merge user/extracted settings."""
     trip_inputs = _trip_plan_to_trip_inputs(state.trip_plan)
-    # NOTE: session_state is captured AFTER metadata updates (see below)
 
-    # ==========================================================================
-    # TACTICAL FIX: Merge user-owned settings back into trip_inputs output.
-    # Root cause: _trip_plan_to_trip_inputs() rebuilds from TripPlan which lacks settings.
-    # REMOVE IN STAGE 2: When TripPlan becomes SSoT and trip_inputs dict is eliminated,
-    # this merge becomes unnecessary — settings will be first-class TripPlan fields.
+    # Read typed settings (SSoT) and serialize sub-models into trip_inputs output.
     # Must go BEFORE extracted_settings merge so NL commands override UI selections.
-    # ==========================================================================
-    _USER_SETTINGS_FIELDS = (
-        "activity_settings",
-        "hotel_settings",
-        "flight_settings",
-        "transport_settings",
-        "booking_types",
-    )
-    state_trip_inputs = state.metadata.get("trip_inputs", {})
+    settings = get_trip_settings(state)
     for field in _USER_SETTINGS_FIELDS:
-        val = state_trip_inputs.get(field)
-        if val:
-            trip_inputs[field] = val
+        val = getattr(settings, field, None)
+        if val is not None:
+            trip_inputs[field] = val.model_dump() if hasattr(val, "model_dump") else val
 
-    # ==========================================================================
+    # FIX: Preserve in-turn category writes from router's sync block.
+    # The router writes detected specialists to metadata["trip_inputs"]["activity_settings"]
+    # but typed settings (trip_settings) may carry stale values from graph startup.
+    meta_activity = state.metadata.get("trip_inputs", {}).get("activity_settings", {})
+    if isinstance(meta_activity, dict) and meta_activity.get("categories"):
+        trip_inputs["activity_settings"] = meta_activity
+
     # Merge extracted settings into trip_inputs (from NL command parsing)
-    # ==========================================================================
     extracted_settings = state.metadata.get("extracted_settings", {})
     if extracted_settings:
         # Merge booking_types
@@ -1334,11 +1342,17 @@ def _format_result(
             f"Merged extracted settings into trip_inputs: {list(extracted_settings.keys())}"
         )
 
-    # ==========================================================================
-    # BLOCKING VIOLATION CHECK
-    # Route errors (SAME_CITY_ERROR, invalid destination) → wipe state, S0_BOOTSTRAP
-    # Specialist violations (DIVING_SURFACE_INTERVAL) → preserve state, explain constraint
-    # ==========================================================================
+    return trip_inputs
+
+
+def _resolve_blocking_violations(
+    state: GraphState,
+) -> tuple:
+    """Handle blocking violations: compute tiles, view state, and whether route error occurred.
+
+    Returns:
+        (flattened_tiles, plan_view_state, has_blocking_violations, is_route_error)
+    """
     has_blocking_violations = state.metadata.get("has_blocking_violations", False)
     if has_blocking_violations:
         violations = state.metadata.get("constraint_violations", [])
@@ -1348,7 +1362,7 @@ def _format_result(
             # Route errors are catastrophic - user gave invalid destination
             # Wipe state and return to S0_BOOTSTRAP
             logger.warning("[_format_result] Route error - clearing tiles/sections")
-            flattened_tiles = {}
+            flattened_tiles: Dict[str, Any] = {}
             plan_view_state = "S0_BOOTSTRAP"
             state.metadata["strategy_sections"] = []
             state.metadata["executed_strategy_topics"] = []
@@ -1359,11 +1373,11 @@ def _format_result(
             logger.info("[_format_result] Specialist violation - preserving tiles/sections")
             flattened_tiles = _flatten_tiles_to_id_map(state.tiles)
             plan_view_state = _compute_plan_view_state(state)
-            # Don't clear strategy_sections - keep them for the response
     else:
         # Normal path - flatten tiles for frontend
         flattened_tiles = _flatten_tiles_to_id_map(state.tiles)
         plan_view_state = _compute_plan_view_state(state)
+        is_route_error = False
 
     logger.info(
         f"_format_result: plan_view_state={plan_view_state}, "
@@ -1371,501 +1385,426 @@ def _format_result(
         f"raw_tiles_count={sum(len(v) for v in state.tiles.values()) if state.tiles else 0}"
     )
 
-    # Generate strategy sections from tiles if not already present
-    strategy_sections = state.metadata.get("strategy_sections", [])
-    executed_topics = state.metadata.get("executed_strategy_topics", [])
+    return flattened_tiles, plan_view_state, has_blocking_violations, is_route_error
 
-    # DEBUG: Log existing sections
-    section_types = [s.get("specialist_type") for s in strategy_sections]
-    _debug_log(f"_format_result: BEFORE - {len(strategy_sections)} sections, types={section_types}")
-    for s in strategy_sections:
-        content_count = len(s.get("content_added", []))
-        constraint_count = len(s.get("constraints_applied", []))
-        _debug_log(
-            f"  Section '{s.get('specialist_type')}': "
-            f"content_added={content_count}, constraints={constraint_count}"
-        )
 
-    # Build strategy section for current specialist (accumulates with existing sections)
-    # Use last_executed_specialist as fallback since active_specialist is cleared after execution
-    last_specialist = state.metadata.get("last_executed_specialist")
-    specialist_type = state.active_specialist or last_specialist or "general"
+# =============================================================================
+# _build_new_section: Sub-Functions
+# =============================================================================
 
-    _debug_log(
-        f"_format_result: active_specialist={state.active_specialist}, "
-        f"last_specialist={last_specialist}, specialist_type={specialist_type}"
+
+def _build_section_bullets(
+    plan: "TripPlan",
+    flattened_tiles: Dict[str, Any],
+) -> tuple:
+    """Build section bullets from trip params + tile counts.
+
+    Returns:
+        (bullets, hotels_count, flights_count, activities_count)
+    """
+    bullets = []
+    if plan.destination:
+        bullets.append(f"Trip to {plan.destination}")
+    if plan.start_date:
+        date_str = plan.start_date
+        if plan.end_date:
+            date_str = f"{plan.start_date} to {plan.end_date}"
+        bullets.append(f"Dates: {date_str}")
+    if plan.adults or plan.children:
+        travelers = (plan.adults or 0) + (plan.children or 0)
+        bullets.append(f"{travelers} traveler{'s' if travelers > 1 else ''}")
+
+    # Count tiles by type
+    hotels_count = len(
+        [t for t in flattened_tiles.values() if t.get("type") in ("hotel", "stay", "accommodation")]
+    )
+    flights_count = len([t for t in flattened_tiles.values() if t.get("type") == "flight"])
+    activities_count = len(
+        [
+            t
+            for t in flattened_tiles.values()
+            if t.get("type") in ("activity", "experience", "tour", "attraction")
+        ]
     )
 
-    # Check if we need to create/update a section for this specialist
-    # FIX: Check if section ALREADY EXISTS (not just type) - defensive against
-    # nodes that fail silently. This prevents silent failures when a node
-    # doesn't create its expected section.
-    # @see docs/plan_graph_analysis.md - Nodes should not fail silently
+    if hotels_count:
+        bullets.append(f"{hotels_count} accommodation options found")
+    if flights_count:
+        bullets.append(f"{flights_count} flight options found")
+    if activities_count:
+        bullets.append(f"{activities_count} activities available")
+
+    return bullets, hotels_count, flights_count, activities_count
+
+
+def _build_trip_summary(plan: "TripPlan") -> Dict[str, Any]:
+    """Build trip_summary dict for General Agent section."""
+    travelers_count = (plan.adults or 1) + (plan.children or 0)
+    return {
+        "destination": plan.destination or "Unknown",
+        "dates": (
+            f"{plan.start_date} – {plan.end_date}"
+            if plan.start_date and plan.end_date
+            else plan.start_date or "TBD"
+        ),
+        "travelers": f"{travelers_count} traveler{'s' if travelers_count > 1 else ''}",
+    }
+
+
+def _extract_section_content(
+    state: GraphState,
+    specialist_type: str,
+    strategy_sections: list,
+) -> tuple:
+    """Extract constraints, content_added, and must_dos for a new section.
+
+    Returns:
+        (constraints_applied, content_added, must_dos)
+    """
+    plan = state.trip_plan
+
+    # Extract constraints applied from TripPlan
+    constraints_applied = []
+    for c in plan.constraints:
+        constraints_applied.append(
+            {
+                "rule": c.rule,
+                "type": c.type,
+                "reason": c.reason or "",
+            }
+        )
+
+    # Extract content added from itinerary_blocks (PRESERVE RICH DATA)
+    content_added = []
+    for block in plan.itinerary_blocks:
+        content_added.append(
+            {
+                "title": block.title,
+                "day": block.day,
+                "type": block.type,
+                "description": block.description,  # Rich description for UI
+                "logic_hook": getattr(block, "logic_hook", None),  # Pro tip for UI
+                "image_url": getattr(block, "image_url", None),  # Curated image
+                "coordinates": getattr(block, "coordinates", None),  # [lng, lat] for Mapbox
+            }
+        )
+
+    # Merge image_url and coordinates from specialist sections (rich curated content)
+    # This ensures images and map POIs are preserved even when rebuilding content_added
+    for section in strategy_sections:
+        if section.get("specialist_type") == specialist_type:
+            existing_content = section.get("content_added", [])
+            for item in existing_content:
+                for ca in content_added:
+                    if ca.get("title") == item.get("title"):
+                        if item.get("image_url") and not ca.get("image_url"):
+                            ca["image_url"] = item.get("image_url")
+                        if item.get("coordinates") and not ca.get("coordinates"):
+                            ca["coordinates"] = item.get("coordinates")
+
+    # Build must_dos from itinerary_blocks (actual specialist recommendations)
+    must_dos = []
+    for block in plan.itinerary_blocks:
+        if block.title and block.title not in must_dos:
+            must_dos.append(block.title)
+    must_dos = must_dos[:5]  # Limit to 5
+
+    return constraints_applied, content_added, must_dos
+
+
+def _build_one_liner(state: GraphState, specialist_type: str) -> str:
+    """Build one-liner based on specialist type.
+
+    General: Editorial "magazine" style, evocative.
+    Specialist: Technical, domain-focused.
+    """
+    plan = state.trip_plan
+    if specialist_type == "general":
+        editorial_summary = state.metadata.get("editorial_summary")
+        if editorial_summary:
+            return editorial_summary
+        if plan.origin and plan.destination:
+            return f"A journey from {plan.origin} to {plan.destination} awaits"
+        elif plan.destination:
+            return f"Your adventure to {plan.destination} is taking shape"
+        else:
+            return "Your personalized trip is ready to customize"
+    elif specialist_type == "local_expert":
+        return f"Local logistics and tips for {plan.destination or 'your destination'}"
+    else:
+        return (
+            f"{specialist_type.title()} recommendations for "
+            f"{plan.destination or 'your destination'}"
+        )
+
+
+def _build_principles(
+    state: GraphState,
+    specialist_type: str,
+    hotels_count: int,
+    flights_count: int,
+    activities_count: int,
+) -> list:
+    """Build principles based on specialist type.
+
+    General: Trip highlights (destinations, flights, hotels).
+    Niche: Domain-specific strategy principles from constraints/content.
+    """
+    plan = state.trip_plan
+    principles: list = []
+
+    if specialist_type == "general":
+        if plan.origin and plan.destination:
+            principles.append(f"{plan.origin} → {plan.destination} adventure")
+        elif plan.destination:
+            principles.append(f"Exploring {plan.destination}")
+        if flights_count:
+            principles.append(f"{flights_count} flight options to compare")
+        if hotels_count:
+            principles.append(f"{hotels_count} accommodation choices")
+        if activities_count:
+            principles.append(f"{activities_count} activities to discover")
+        if plan.start_date and plan.end_date:
+            try:
+                start = datetime.fromisoformat(plan.start_date)
+                end = datetime.fromisoformat(plan.end_date)
+                days = (end - start).days + 1
+                principles.append(f"{days}-day itinerary")
+            except (ValueError, TypeError):
+                pass
+        if not principles:
+            principles.append("Your personalized trip is taking shape")
+    elif specialist_type not in ("general", "local_expert"):
+        # NICHE SPECIALIST: Build principles from constraints + specialist output
+        specialist_output = state.metadata.get("specialist_output", {})
+        llm_principles = specialist_output.get("principles", [])
+        if llm_principles:
+            principles.extend(llm_principles[:5])
+
+        if not principles and plan.constraints:
+            for c in plan.constraints[:4]:
+                if c.reason:
+                    principles.append(c.reason)
+                else:
+                    rule_text = c.rule.replace("_", " ").title()
+                    principles.append(f"{rule_text} applied")
+
+        if not principles:
+            principles = ALL_DOMAIN_DEFAULT_PRINCIPLES.get(
+                specialist_type,
+                [
+                    p.format(specialist_type=specialist_type.title())
+                    for p in DOMAIN_DEFAULT_FALLBACK
+                ],
+            )
+
+    return principles
+
+
+def _build_vibe_trio(state: GraphState, specialist_type: str) -> list:
+    """Build vibe_trio for General and Local Expert (destination images).
+
+    Returns empty list for niche specialists.
+    """
+    if specialist_type not in ("general", "local_expert"):
+        return []
+
+    plan = state.trip_plan
+    # 1. Try to get vibes from Architect metadata (LLM-generated)
+    extracted_vibes = state.metadata.get("trip_vibes", [])
+
+    # 2. If no LLM-generated vibes, create fallback vibes based on destination
+    if not extracted_vibes:
+        if plan.destination:
+            destination_slug = plan.destination.lower().replace(" ", ",")
+            extracted_vibes = [
+                {"label": "City Highlights", "query": f"{destination_slug} landmark"},
+                {"label": "Local Culture", "query": f"{destination_slug} culture"},
+                {"label": "Hidden Gems", "query": f"{destination_slug} street scene"},
+            ]
+        else:
+            extracted_vibes = [
+                {"label": "Inspiration", "query": "travel inspiration"},
+                {"label": "Adventure", "query": "adventure travel"},
+                {"label": "Relaxation", "query": "luxury resort"},
+            ]
+
+    # 3. Build vibe_trio with curated images (max 3)
+    vibe_trio = []
+    for idx, vibe in enumerate(extracted_vibes[:3]):
+        label = vibe.get("label", "Vibe")
+        category = (
+            "culture"
+            if "culture" in label.lower()
+            else "adventure"
+            if "adventure" in label.lower()
+            else "destination"
+        )
+        vibe_trio.append(
+            {
+                "label": label,
+                "image_url": vibe.get("image_url")
+                or get_hero_image(category, f"{plan.destination}-{label}-{idx}"),
+            }
+        )
+
+    return vibe_trio
+
+
+def _build_hero_image(
+    specialist_type: str,
+    content_added: list,
+    destination: Optional[str],
+) -> Optional[str]:
+    """Build hero_image for Niche Specialists (single focused action shot).
+
+    Returns None for general/local_expert.
+    """
+    if specialist_type in ("general", "local_expert"):
+        return None
+
+    for item in content_added:
+        if item.get("image_url"):
+            return item["image_url"]
+
+    return get_hero_image(specialist_type, destination)
+
+
+def _build_new_section(
+    state: GraphState,
+    specialist_type: str,
+    flattened_tiles: Dict[str, Any],
+    strategy_sections: list,
+) -> Optional[Dict[str, Any]]:
+    """Build a new strategy section for the active specialist, if needed.
+
+    Returns None if no section is needed (specialist already has one, or no tiles).
+    """
+    # Check if we need to create a section
     existing_types = [s.get("specialist_type") for s in strategy_sections]
     specialist_already_has_section = specialist_type in existing_types
+    last_specialist = state.metadata.get("last_executed_specialist")
 
     needs_section = (
         flattened_tiles
-        # Only skip if the section ALREADY EXISTS in strategy_sections
         and not specialist_already_has_section
         and not (
             specialist_type == "general" and last_specialist
         )  # Don't create general if specialist ran
     )
+
+    from app.debug_utils import _debug_log
+
     _debug_log(
         f"_format_result: needs_section={needs_section} (flattened_tiles={bool(flattened_tiles)})"
     )
 
-    # CRITICAL FIX: Enrich EXISTING specialist sections even when needs_section=False
-    # This ensures diving/hiking/skiing sections get hero_image, one_liner, principles
-    # even before tiles are fetched (e.g., user hasn't set origin yet)
-    # @see docs/ux_unified_architecture.md - Niche specialists need rich data for UI
-    strategy_sections = list(strategy_sections)  # Make a copy for mutation
+    if not needs_section:
+        return None
+
     plan = state.trip_plan
-    for section in strategy_sections:
-        section_type = section.get("specialist_type")
-        # Skip general/local_expert - they have their own logic
-        if section_type in ("general", "local_expert", None):
-            continue
 
-        try:
-            # ENRICH: Add content_added if missing (hiking fix)
-            # Hiking specialist creates itinerary_blocks but doesn't always populate content_added
-            if not section.get("content_added") and plan.itinerary_blocks:
-                section["content_added"] = [
-                    {
-                        "title": block.title,
-                        "day": block.day,
-                        "type": getattr(block, "type", "activity"),
-                        "description": getattr(block, "description", ""),
-                        "logic_hook": getattr(block, "logic_hook", None),
-                        "image_url": getattr(block, "image_url", None),
-                        "coordinates": getattr(block, "coordinates", None),
-                        "is_buffer": getattr(block, "is_buffer", False),
-                    }
-                    for block in plan.itinerary_blocks
-                    if getattr(block, "source_specialist", None) == section_type
-                ]
-                if section["content_added"]:
-                    _debug_log(
-                        f"  Section '{section_type}': enriched "
-                        f"content_added={len(section['content_added'])} from itinerary_blocks"
-                    )
+    # Build all sub-components
+    bullets, hotels_count, flights_count, activities_count = _build_section_bullets(
+        plan, flattened_tiles
+    )
+    trip_summary = _build_trip_summary(plan)
+    constraints_applied, content_added, must_dos = _extract_section_content(
+        state, specialist_type, strategy_sections
+    )
+    one_liner = _build_one_liner(state, specialist_type)
+    principles = _build_principles(
+        state, specialist_type, hotels_count, flights_count, activities_count
+    )
+    vibe_trio = _build_vibe_trio(state, specialist_type)
+    hero_image = _build_hero_image(specialist_type, content_added, plan.destination)
 
-            # ENRICH: Add hero_image if missing
-            if not section.get("hero_image"):
-                # Try to get from content_added first
-                hero_img = None
-                for item in section.get("content_added", []):
-                    if item.get("image_url"):
-                        hero_img = item["image_url"]
-                        break
-                # Fallback to curated placeholder
-                if not hero_img:
-                    hero_img = get_hero_image(section_type, plan.destination)
-                section["hero_image"] = hero_img
+    # Assemble the section dict
+    return {
+        "id": f"strategy_{specialist_type}",
+        "title": (
+            f"{specialist_type.title()} Strategy"
+            if specialist_type != "general"
+            else "Trip Overview"
+        ),
+        "subtitle": plan.destination,
+        "specialist_type": specialist_type,
+        "one_liner": one_liner,
+        # Magazine-style fields for General and Local Expert
+        "editorial_one_liner": (
+            one_liner if specialist_type in ("general", "local_expert") else None
+        ),
+        "vibe_trio": vibe_trio if specialist_type in ("general", "local_expert") else None,
+        # Niche specialist hero image (single focused action shot)
+        "hero_image": hero_image,
+        "bullets": [],  # No longer show generic trip params
+        "principles": principles,
+        "must_dos": must_dos,  # Actual specialist recommendations
+        "optional_upgrades": [],
+        "logistics_notes": [],
+        "booking_artifacts": {
+            "hotels_count": hotels_count,
+            "flights_count": flights_count,
+            "activities_count": activities_count,
+        },
+        "impact_areas": (
+            ["Accommodations", "Transportation", "Activities"] if flattened_tiles else []
+        ),
+        # Technical log data for System Log display
+        "trip_summary": trip_summary if specialist_type == "general" else None,
+        "constraints_applied": constraints_applied,
+        "content_added": content_added,
+        "content_blocks": content_added,
+        # Feasibility state from specialist output (for Red/Amber/Green card states)
+        "feasibility_status": state.metadata.get("specialist_output", {}).get(
+            "feasibility_status", "feasible"
+        ),
+        "feasibility_reason": state.metadata.get("specialist_output", {}).get("feasibility_reason"),
+        "alternative_suggestion": state.metadata.get("specialist_output", {}).get(
+            "alternative_suggestion"
+        ),
+    }
 
-            # ENRICH: Add one_liner if missing
-            # GAP 1 FIX: Defensive field mapping to extract actual constraint headline
-            if not section.get("one_liner"):
-                constraints = section.get("constraints_applied", [])
-                if constraints:
-                    # Severity keywords to skip when extracting headline text
-                    SEVERITY_ORDER = {"blocking": 0, "strong": 1, "soft": 2}
-                    SEVERITY_KEYWORDS = set(SEVERITY_ORDER.keys())
 
-                    def _get_constraint_severity(
-                        c: dict,
-                        severity_order: dict = SEVERITY_ORDER,
-                    ) -> int:
-                        """Extract severity rank, checking both possible field locations."""
-                        for field in ("severity", "reason"):
-                            val = (c.get(field) or "").strip().lower()
-                            if val in severity_order:
-                                return severity_order[val]
-                        return 2  # default: soft
+def _upsert_section_and_persist(
+    state: GraphState,
+    strategy_sections: list,
+    new_section: Optional[Dict[str, Any]],
+    specialist_type: str,
+    executed_topics: list,
+    has_blocking_violations: bool,
+    is_route_error: bool,
+) -> tuple:
+    """Apply SINGLETON/APPENDABLE upsert, persist to state.metadata, enforce anchor rule.
 
-                    def _get_constraint_headline(
-                        c: dict,
-                        severity_keywords: set = SEVERITY_KEYWORDS,
-                    ) -> str:
-                        """Extract human-readable text, skipping severity keywords."""
-                        for field in ("label", "reason", "rule"):
-                            val = (c.get(field) or "").strip()
-                            if val and val.lower() not in severity_keywords:
-                                # Clean machine-readable names: "min_24h_buffer" → "Min 24H Buffer"
-                                if "_" in val and " " not in val:
-                                    val = val.replace("_", " ").title()
-                                return val
-                        return ""
-
-                    sorted_constraints = sorted(constraints, key=_get_constraint_severity)
-                    best = sorted_constraints[0]
-                    headline = _get_constraint_headline(best)
-
-                    if not headline:
-                        headline = f"{section_type.title()} constraint applied"
-
-                    extra = f" (+{len(constraints) - 1} more)" if len(constraints) > 1 else ""
-                    section["one_liner"] = f"{headline[:100]}{extra}"
-                else:
-                    section["one_liner"] = (
-                        f"{section_type.title()} recommendations for "
-                        f"{plan.destination or 'your destination'}"
-                    )
-                # Also set editorial_one_liner for niche specialists
-                section["editorial_one_liner"] = section["one_liner"]
-
-            # ENRICH: Add principles if missing or empty
-            if not section.get("principles"):
-                principles = []
-                # 1. Try from constraints
-                for c in section.get("constraints_applied", [])[:4]:
-                    if c.get("reason"):
-                        principles.append(c["reason"])
-                    else:
-                        rule_text = c.get("rule", "").replace("_", " ").title()
-                        principles.append(f"{rule_text} applied")
-                # 2. Fallback to domain defaults
-                if not principles:
-                    principles = DOMAIN_DEFAULT_PRINCIPLES.get(
-                        section_type,
-                        [
-                            p.format(specialist_type=section_type.title())
-                            for p in DOMAIN_DEFAULT_FALLBACK
-                        ],
-                    )
-                section["principles"] = principles
-
-        except Exception as e:
-            logger.warning(f"_format_result: Failed to enrich section '{section_type}': {e}")
-            # Section survives with whatever fields it already has
-            continue
-
-    if needs_section:
-        # Build bullets from available data
-        bullets = []
-        plan = state.trip_plan
-        if plan.destination:
-            bullets.append(f"Trip to {plan.destination}")
-        if plan.start_date:
-            date_str = plan.start_date
-            if plan.end_date:
-                date_str = f"{plan.start_date} to {plan.end_date}"
-            bullets.append(f"Dates: {date_str}")
-        if plan.adults or plan.children:
-            travelers = (plan.adults or 0) + (plan.children or 0)
-            bullets.append(f"{travelers} traveler{'s' if travelers > 1 else ''}")
-
-        # Add tile summary
-        hotels_count = len(
-            [
-                t
-                for t in flattened_tiles.values()
-                if t.get("type") in ("hotel", "stay", "accommodation")
-            ]
-        )
-        flights_count = len([t for t in flattened_tiles.values() if t.get("type") == "flight"])
-        activities_count = len(
-            [
-                t
-                for t in flattened_tiles.values()
-                if t.get("type") in ("activity", "experience", "tour", "attraction")
-            ]
-        )
-
-        if hotels_count:
-            bullets.append(f"{hotels_count} accommodation options found")
-        if flights_count:
-            bullets.append(f"{flights_count} flight options found")
-        if activities_count:
-            bullets.append(f"{activities_count} activities available")
-
-        # Build trip_summary for General Agent
-        travelers_count = (plan.adults or 1) + (plan.children or 0)
-        trip_summary = {
-            "destination": plan.destination or "Unknown",
-            "dates": (
-                f"{plan.start_date} – {plan.end_date}"
-                if plan.start_date and plan.end_date
-                else plan.start_date or "TBD"
-            ),
-            "travelers": f"{travelers_count} traveler{'s' if travelers_count > 1 else ''}",
-        }
-
-        # Extract constraints applied from TripPlan
-        constraints_applied = []
-        for c in plan.constraints:
-            constraints_applied.append(
-                {
-                    "rule": c.rule,
-                    "type": c.type,
-                    "reason": c.reason or "",
-                }
-            )
-
-        # Extract content added from itinerary_blocks (PRESERVE RICH DATA)
-        content_added = []
-        for block in plan.itinerary_blocks:
-            content_added.append(
-                {
-                    "title": block.title,
-                    "day": block.day,
-                    "type": block.type,
-                    "description": block.description,  # Rich description for UI
-                    "logic_hook": getattr(block, "logic_hook", None),  # Pro tip for UI
-                    "image_url": getattr(block, "image_url", None),  # Curated image
-                    "coordinates": getattr(block, "coordinates", None),  # [lng, lat] for Mapbox
-                }
-            )
-
-        # Merge image_url and coordinates from specialist sections (rich curated content)
-        # This ensures images and map POIs are preserved even when rebuilding content_added
-        for section in strategy_sections:
-            if section.get("specialist_type") == specialist_type:
-                existing_content = section.get("content_added", [])
-                for item in existing_content:
-                    # Merge in image_url/coordinates if present in specialist section
-                    # but missing from our content
-                    for ca in content_added:
-                        if ca.get("title") == item.get("title"):
-                            if item.get("image_url") and not ca.get("image_url"):
-                                ca["image_url"] = item.get("image_url")
-                            if item.get("coordinates") and not ca.get("coordinates"):
-                                ca["coordinates"] = item.get("coordinates")
-
-        # Build must_dos from itinerary_blocks (actual specialist recommendations)
-        # NOT from generic trip parameters
-        must_dos = []
-        for block in plan.itinerary_blocks:
-            if block.title and block.title not in must_dos:
-                must_dos.append(block.title)
-        must_dos = must_dos[:5]  # Limit to 5
-
-        # Build one-liner based on specialist type
-        # General: Editorial "magazine" style, evocative
-        # Specialist: Technical, domain-focused
-        if specialist_type == "general":
-            # Try to get editorial summary from Architect metadata (LLM-generated)
-            editorial_summary = state.metadata.get("editorial_summary")
-            if editorial_summary:
-                one_liner = editorial_summary
-            else:
-                # Fallback: Generate a more evocative one-liner than generic
-                if plan.origin and plan.destination:
-                    one_liner = f"A journey from {plan.origin} to {plan.destination} awaits"
-                elif plan.destination:
-                    one_liner = f"Your adventure to {plan.destination} is taking shape"
-                else:
-                    one_liner = "Your personalized trip is ready to customize"
-        elif specialist_type == "local_expert":
-            one_liner = f"Local logistics and tips for {plan.destination or 'your destination'}"
-        else:
-            one_liner = (
-                f"{specialist_type.title()} recommendations for "
-                f"{plan.destination or 'your destination'}"
-            )
-
-        # Build principles based on specialist type
-        # General: Trip highlights (destinations, flights, hotels)
-        # Niche: Domain-specific strategy principles from constraints/content
-        principles = []
-        if specialist_type == "general":
-            if plan.origin and plan.destination:
-                principles.append(f"{plan.origin} → {plan.destination} adventure")
-            elif plan.destination:
-                principles.append(f"Exploring {plan.destination}")
-            if flights_count:
-                principles.append(f"{flights_count} flight options to compare")
-            if hotels_count:
-                principles.append(f"{hotels_count} accommodation choices")
-            if activities_count:
-                principles.append(f"{activities_count} activities to discover")
-            if plan.start_date and plan.end_date:
-                # Calculate trip duration
-                try:
-                    start = datetime.fromisoformat(plan.start_date)
-                    end = datetime.fromisoformat(plan.end_date)
-                    days = (end - start).days + 1
-                    principles.append(f"{days}-day itinerary")
-                except (ValueError, TypeError):
-                    pass
-            if not principles:
-                principles.append("Your personalized trip is taking shape")
-        elif specialist_type not in ("general", "local_expert"):
-            # NICHE SPECIALIST: Build principles from constraints + specialist output
-            # 1. Get principles from specialist metadata (LLM-generated)
-            specialist_output = state.metadata.get("specialist_output", {})
-            llm_principles = specialist_output.get("principles", [])
-            if llm_principles:
-                principles.extend(llm_principles[:5])
-
-            # 2. Fallback: Generate principles from constraints
-            if not principles and plan.constraints:
-                for c in plan.constraints[:4]:
-                    # Convert constraint to principle
-                    if c.reason:
-                        principles.append(c.reason)
-                    else:
-                        # Format the rule nicely
-                        rule_text = c.rule.replace("_", " ").title()
-                        principles.append(f"{rule_text} applied")
-
-            # 3. Fallback: Domain-specific defaults
-            if not principles:
-                principles = DOMAIN_DEFAULT_PRINCIPLES.get(
-                    specialist_type,
-                    [
-                        p.format(specialist_type=specialist_type.title())
-                        for p in DOMAIN_DEFAULT_FALLBACK
-                    ],
-                )
-
-        # Build vibe_trio for General and Local Expert (destination images)
-        # @see docs/ux_unified_architecture.md Section XII - Magazine Style
-        # Local Expert also needs images for the magazine layout
-        vibe_trio = []
-        if specialist_type in ("general", "local_expert"):
-            # 1. Try to get vibes from Architect metadata (LLM-generated)
-            extracted_vibes = state.metadata.get("trip_vibes", [])
-
-            # 2. If no LLM-generated vibes, create fallback vibes based on destination
-            if not extracted_vibes:
-                if plan.destination:
-                    destination_slug = plan.destination.lower().replace(" ", ",")
-                    extracted_vibes = [
-                        {"label": "City Highlights", "query": f"{destination_slug} landmark"},
-                        {"label": "Local Culture", "query": f"{destination_slug} culture"},
-                        {"label": "Hidden Gems", "query": f"{destination_slug} street scene"},
-                    ]
-                else:
-                    # No destination yet - use generic travel vibes
-                    extracted_vibes = [
-                        {"label": "Inspiration", "query": "travel inspiration"},
-                        {"label": "Adventure", "query": "adventure travel"},
-                        {"label": "Relaxation", "query": "luxury resort"},
-                    ]
-
-            # 3. Build vibe_trio with curated images (max 3)
-            for idx, vibe in enumerate(extracted_vibes[:3]):
-                label = vibe.get("label", "Vibe")
-                category = (
-                    "culture"
-                    if "culture" in label.lower()
-                    else "adventure"
-                    if "adventure" in label.lower()
-                    else "destination"
-                )
-                vibe_trio.append(
-                    {
-                        "label": label,
-                        "image_url": vibe.get("image_url")
-                        or get_hero_image(category, f"{plan.destination}-{label}-{idx}"),
-                    }
-                )
-
-        # Build hero_image for Niche Specialists (single focused action shot)
-        # @see docs/ux_unified_architecture.md Section XII - Activity Layout
-        hero_image = None
-        if specialist_type not in ("general", "local_expert"):
-            # 1. Try to get from content_added (first item with image)
-            for item in content_added:
-                if item.get("image_url"):
-                    hero_image = item["image_url"]
-                    break
-
-            # 2. Fallback: Use curated placeholder image
-            if not hero_image:
-                hero_image = get_hero_image(specialist_type, plan.destination)
-
-        new_section = {
-            "id": f"strategy_{specialist_type}",
-            "title": (
-                f"{specialist_type.title()} Strategy"
-                if specialist_type != "general"
-                else "Trip Overview"
-            ),
-            "subtitle": plan.destination,
-            "specialist_type": specialist_type,
-            "one_liner": one_liner,
-            # Magazine-style fields for General and Local Expert
-            "editorial_one_liner": (
-                one_liner if specialist_type in ("general", "local_expert") else None
-            ),
-            "vibe_trio": vibe_trio if specialist_type in ("general", "local_expert") else None,
-            # Niche specialist hero image (single focused action shot)
-            "hero_image": hero_image,
-            "bullets": [],  # No longer show generic trip params
-            "principles": principles,
-            "must_dos": must_dos,  # Actual specialist recommendations
-            "optional_upgrades": [],
-            "logistics_notes": [],
-            "booking_artifacts": {
-                "hotels_count": hotels_count,
-                "flights_count": flights_count,
-                "activities_count": activities_count,
-            },
-            "impact_areas": (
-                ["Accommodations", "Transportation", "Activities"] if flattened_tiles else []
-            ),
-            # Technical log data for System Log display
-            "trip_summary": trip_summary if specialist_type == "general" else None,
-            "constraints_applied": constraints_applied,
-            "content_added": content_added,
-            # Feasibility state from specialist output (for Red/Amber/Green card states)
-            "feasibility_status": state.metadata.get("specialist_output", {}).get(
-                "feasibility_status", "feasible"
-            ),
-            "feasibility_reason": state.metadata.get("specialist_output", {}).get(
-                "feasibility_reason"
-            ),
-            "alternative_suggestion": state.metadata.get("specialist_output", {}).get(
-                "alternative_suggestion"
-            ),
-        }
-
-        # SINGLETON vs HISTORY LOGIC:
-        # - General Agent: Singleton (update in place, always at index 0)
-        # - Specialists: Append (accumulate, but deduplicate same specialist type)
-        strategy_sections = list(strategy_sections)  # Make a copy
-
-        if specialist_type == "general":
-            # SINGLETON: Remove existing general section, insert at front
-            strategy_sections = [
-                s for s in strategy_sections if s.get("specialist_type") != "general"
-            ]
-            strategy_sections.insert(0, new_section)  # Keep General at top
-        else:
-            # APPENDABLE: Remove duplicate of same specialist type, then append
-            strategy_sections = [
-                s for s in strategy_sections if s.get("specialist_type") != specialist_type
-            ]
-            strategy_sections.append(new_section)
-
-        # Track executed specialist in executed_topics (deduplicates automatically)
-        if specialist_type not in executed_topics:
-            executed_topics = list(executed_topics)  # Make a copy
-            executed_topics.append(specialist_type)
+    Returns:
+        (final_strategy_sections, final_executed_topics)
+    """
+    from app.debug_utils import _debug_log
 
     # CRITICAL: Write accumulated sections back to state.metadata for persistence
-    # This ensures sections are preserved across turns via session_state
-    # Apply anchor rule: local_expert/general always at index 0
     # Only skip persistence for ROUTE errors (catastrophic), preserve for specialist violations
-    violations = state.metadata.get("constraint_violations", [])
-    is_route_error = any(v.get("category") == "route" for v in violations)
-
     if has_blocking_violations and is_route_error:
-        # Route errors - clear sections (user needs to fix destination)
         strategy_sections = []
         executed_topics = []
     else:
-        # Normal path OR specialist violations - persist sections
-        state.metadata["strategy_sections"] = _sort_sections_anchor_first(strategy_sections)
-        state.metadata["executed_strategy_topics"] = executed_topics
+        # Seed metadata with enriched sections before service calls
+        state.metadata["strategy_sections"] = list(strategy_sections)
+        state.metadata["executed_strategy_topics"] = list(executed_topics)
 
-    # CRITICAL: Capture session_state AFTER metadata is updated (not before!)
-    # This ensures strategy_sections are persisted for the next turn
-    updated_session_state = _state_to_session_state(state)
+        if new_section is not None:
+            # SINGLETON (general) vs APPENDABLE (specialists) — handled by service
+            mode = "singleton" if specialist_type == "general" else "appendable"
+            upsert_section(state.metadata, new_section, mode=mode)
+            mark_topic_executed(state.metadata, specialist_type)
+        else:
+            # Still apply anchor sort even without new section
+            state.metadata["strategy_sections"] = sort_sections_anchor_first(
+                state.metadata["strategy_sections"]
+            )
+
+        strategy_sections = state.metadata["strategy_sections"]
+        executed_topics = state.metadata["executed_strategy_topics"]
 
     # DEBUG: Log what strategy_sections we're saving for next turn
     final_sections = state.metadata["strategy_sections"]
@@ -1874,12 +1813,37 @@ def _format_result(
         f"_format_result: Saving {len(final_sections)} "
         f"strategy_sections to session_state, types={saved_types}"
     )
-    # Enhanced tracing: verify anchor rule was applied
     if saved_types and saved_types[0] not in ("local_expert", "general"):
         _debug_log(
             f"⚠️ WARNING: Anchor rule violation! First section is '{saved_types[0]}', "
             f"expected 'local_expert' or 'general'"
         )
+
+    return strategy_sections, executed_topics
+
+
+def _build_response_envelope(
+    state: GraphState,
+    trip_inputs: Dict[str, Any],
+    flattened_tiles: Dict[str, Any],
+    plan_view_state: str,
+    strategy_sections: list,
+    executed_topics: list,
+    itinerary_day_cards: Optional[list] = None,
+) -> Dict[str, Any]:
+    """Build the final response dict (document + session_state + legacy fields)."""
+    from app.planner.state import trip_plan_is_ready
+    from app.schemas import StrategySection as StrategySectionModel
+
+    # Shadow-validate strategy sections against Pydantic model (log only)
+    for section_dict in strategy_sections:
+        try:
+            StrategySectionModel(**section_dict)
+        except Exception as e:
+            logger.warning(f"StrategySection validation: {section_dict.get('id')}: {e}")
+
+    # CRITICAL: Capture session_state AFTER metadata is updated (not before!)
+    updated_session_state = _state_to_session_state(state)
 
     # Build document object matching PlanDocumentData type expected by frontend
     document = {
@@ -1901,6 +1865,8 @@ def _format_result(
         # Constraint validation receipts for Trip DNA bar badges
         "constraints_validated": state.metadata.get("constraints_validated", []),
         "constraint_violations": state.metadata.get("constraint_violations", []),
+        # Itinerary day cards (computed by ItineraryBuilder, None until S2_STRATEGY_READY)
+        "itinerary_day_cards": itinerary_day_cards,
     }
 
     # DEBUG: Log origin_just_set for troubleshooting
@@ -1927,6 +1893,87 @@ def _format_result(
     }
 
 
+# =============================================================================
+# _format_result: Orchestrator
+# =============================================================================
+
+
+def _format_result(
+    state: GraphState,
+    original_session_state: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Format result state for main.py response."""
+    from app.debug_utils import _debug_log
+
+    # 1. Build trip_inputs with settings merged
+    trip_inputs = _build_trip_inputs_with_settings(state)
+
+    # 2. Resolve blocking violations → tiles, view state
+    flattened_tiles, plan_view_state, has_blocking, is_route_error = _resolve_blocking_violations(
+        state
+    )
+
+    # 3. Determine specialist context
+    strategy_sections = state.metadata.get("strategy_sections", [])
+    executed_topics = state.metadata.get("executed_strategy_topics", [])
+    last_specialist = state.metadata.get("last_executed_specialist")
+    specialist_type = state.active_specialist or last_specialist or "general"
+
+    # DEBUG: Log existing sections
+    section_types = [s.get("specialist_type") for s in strategy_sections]
+    _debug_log(f"_format_result: BEFORE - {len(strategy_sections)} sections, types={section_types}")
+    for s in strategy_sections:
+        content_count = len(s.get("content_added", []))
+        constraint_count = len(s.get("constraints_applied", []))
+        _debug_log(
+            f"  Section '{s.get('specialist_type')}': "
+            f"content_added={content_count}, constraints={constraint_count}"
+        )
+    _debug_log(
+        f"_format_result: active_specialist={state.active_specialist}, "
+        f"last_specialist={last_specialist}, specialist_type={specialist_type}"
+    )
+
+    # 4. (Deleted Stage 2B.4: sections now created complete by section_builder)
+
+    # 5. Build new section if needed
+    new_section = _build_new_section(state, specialist_type, flattened_tiles, strategy_sections)
+
+    # 6. Upsert + persist
+    strategy_sections, executed_topics = _upsert_section_and_persist(
+        state,
+        strategy_sections,
+        new_section,
+        specialist_type,
+        executed_topics,
+        has_blocking,
+        is_route_error,
+    )
+
+    # 6.5 (Shadow): Build itinerary if strategy ready
+    itinerary_day_cards = None
+    if plan_view_state == "S2_STRATEGY_READY" and not has_blocking:
+        try:
+            from app.planner.services.itinerary_adapter import build_itinerary_from_state
+
+            result = build_itinerary_from_state(state)
+            if result and result.success:
+                itinerary_day_cards = [dc.model_dump() for dc in result.day_cards]
+        except Exception as e:
+            logger.warning(f"[_format_result] Itinerary build failed (shadow): {e}")
+
+    # 7. Build response envelope
+    return _build_response_envelope(
+        state,
+        trip_inputs,
+        flattened_tiles,
+        plan_view_state,
+        strategy_sections,
+        executed_topics,
+        itinerary_day_cards,
+    )
+
+
 async def run_turn_internal(
     graph: Any,
     user_message: str,
@@ -1941,6 +1988,9 @@ async def run_turn_internal(
 
     # Restore state from session
     state = _restore_graph_state(session_state)
+
+    # Canonical turn boundary — all per-turn flags start clean
+    reset_turn_metadata(state)
 
     # Add user message
     state.messages.append(HumanMessage(content=user_message))

@@ -36,38 +36,13 @@ These constraints MUST be passed to the Architect:
    - Adequate water (2-3L per day minimum)
 
 ==============================
-HIKING DESTINATION KNOWLEDGE
-==============================
-Top hiking destinations by region:
-
-SOUTH AMERICA:
-- Torres del Paine (Chile): W Trek, O Circuit
-- Patagonia (Argentina): Fitz Roy, Cerro Torre
-- Peru: Inca Trail, Salkantay Trek
-- Ecuador: Cotopaxi, Quilotoa Loop
-
-EUROPE:
-- Alps: Tour du Mont Blanc, Haute Route
-- Dolomites: Alta Via 1 & 2
-- Norway: Trolltunga, Besseggen Ridge
-- Scotland: West Highland Way
-
-ASIA:
-- Nepal: Everest Base Camp, Annapurna Circuit
-- Bhutan: Snowman Trek
-- Japan: Kumano Kodo, Mt. Fuji
-- Indonesia: Mt. Rinjani, Bromo
-
-NORTH AMERICA:
-- Grand Canyon: Rim to Rim
-- Yosemite: Half Dome, Mist Trail
-- Canadian Rockies: Lake O'Hara, Skyline Trail
-- Pacific Northwest: Wonderland Trail
-
-==============================
 OUTPUT REQUIREMENTS
 ==============================
-Generate hiking activities with REAL trail/route names for the destination.
+Generate hiking activities for the user's SPECIFIC destination.
+Use your world knowledge to identify real trails and routes.
+Do NOT limit yourself to a predefined list.
+
+For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates.
 Include topic-specific fields:
 - elevation_meters: Starting/max altitude
 - vertical_meters: Total elevation gain

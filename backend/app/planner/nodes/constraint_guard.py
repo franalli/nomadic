@@ -14,7 +14,14 @@ Key Principle: "The math must work."
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
-from app.planner.state import GraphState, TripPlan
+from app.planner.specialist_registry import canonicalize_rule
+from app.planner.state import (
+    GraphState,
+    TripPlan,
+    get_persistent_meta,
+    get_turn_meta,
+    sync_turn_meta,
+)
 from app.planner.state.schemas import SpecialistConstraint
 
 # =============================================================================
@@ -91,31 +98,6 @@ class ConstraintViolation:
 # =============================================================================
 
 # Canonical constraint rule names — LLMs generate aliases
-# NOTE: itinerary_builder.py has similar CONSTRAINT_ALIASES dict.
-# Post-demo: extract to shared backend/app/planner/constraint_defs.py
-# For now, keep in sync manually or risk mismatch bugs.
-CONSTRAINT_ALIASES = {
-    "min_24h_buffer_after_dive": [
-        "no_fly_24h",
-        "24h_no_fly",
-        "diving_no_fly_buffer",
-        "no_fly_after_dive",
-        "24h_buffer_after_dive",
-    ],
-    "morning_start_recommended": ["early_start", "morning_activity", "am_start"],
-    "guide_required": ["requires_guide", "guided_activity", "professional_guide"],
-}
-
-
-def canonicalize_rule(rule: str) -> str:
-    """Normalize to canonical constraint name."""
-    if not rule:
-        return rule
-    normalized = rule.lower().replace("-", "_").replace(" ", "_")
-    for canonical, aliases in CONSTRAINT_ALIASES.items():
-        if normalized == canonical or any(normalized == a.lower() for a in aliases):
-            return canonical
-    return normalized
 
 
 # =============================================================================
@@ -248,269 +230,119 @@ def check_temporal_constraints(
     return violations
 
 
-def _check_diving_flight_conflict(
+def _check_departure_buffer_conflict(
     plan: TripPlan,
     tiles: Dict[str, List[Dict[str, Any]]],
+    topic: str,
+    blocks: list,
+    buffer_days: int,
 ) -> bool:
-    """
-    Check if diving activities are scheduled too close to departure flight.
+    """Check if specialist activities are scheduled too close to departure.
 
-    Returns True if there's a conflict (diving on last day with flight scheduled).
-
-    Logic:
-    1. Calculate trip duration from start_date and end_date
-    2. Find the last day with diving activities in itinerary_blocks
-    3. Check if flights are present (user wants to fly home)
-    4. Conflict = diving on last day (or day before with early flight)
+    Returns True if the last activity for this specialist falls within
+    buffer_days of the departure date and flights are present.
     """
-    # Need dates to calculate trip duration
     if not plan.start_date or not plan.end_date:
         return False
 
     try:
         start = datetime.fromisoformat(plan.start_date)
         end = datetime.fromisoformat(plan.end_date)
-        trip_days = (end - start).days + 1  # Inclusive of both days
+        trip_days = (end - start).days + 1  # Inclusive
     except ValueError:
         return False
 
     if trip_days < 1:
         return False
 
-    # Find last day with diving activity
-    last_dive_day = None
-    for block in plan.itinerary_blocks:
-        is_diving = block.source_specialist == "diving" or (
-            block.type == "activity" and "dive" in (block.title or "").lower()
-        )
-        if is_diving and block.day:
-            if last_dive_day is None or block.day > last_dive_day:
-                last_dive_day = block.day
+    # No flights → no departure conflict
+    if not tiles.get("flights"):
+        return False
 
-    if last_dive_day is None:
-        return False  # No diving activities found
+    last_day = max((b.day for b in blocks if b.day), default=0)
+    if last_day == 0:
+        return False
 
-    # Check if flights are enabled/present
-    flight_tiles = tiles.get("flights", [])
-    has_departure_flight = len(flight_tiles) > 0  # Any flight tile indicates flights enabled
-
-    if not has_departure_flight:
-        return False  # No flights, no conflict
-
-    # Conflict: diving on last day or second-to-last day (needs 24h buffer)
-    # trip_days is total days, so last day = trip_days, second-to-last = trip_days - 1
-    # Conservative: flag if diving is on the last day (day N) since flight is on end_date
-    if last_dive_day >= trip_days:
-        return True  # Diving on departure day = definite conflict
-
-    # Also flag if diving on day before last (second-to-last day)
-    # because 24h buffer may not be met depending on flight time
-    if last_dive_day == trip_days - 1:
-        return True  # Diving day before departure = potential conflict
-
-    return False
+    # Conflict: activity within buffer_days of departure
+    # trip_days = N means departure on day N. Need buffer_days clear before that.
+    return last_day >= trip_days - buffer_days
 
 
 def check_specialist_constraints(
     plan: TripPlan,
     tiles: Dict[str, List[Dict[str, Any]]],
 ) -> List[ConstraintViolation]:
+    """Registry-driven specialist constraint checks.
+
+    Two checks per specialist:
+    1. Departure buffer — for specialists with has_nofly_buffer, check if
+       activities are scheduled too close to departure flight.
+    2. Cross-domain — for specialists with cross_domain_blocks, check if
+       target specialist blocks are scheduled within the buffer window.
     """
-    Check constraints injected by Vertical Specialist.
-
-    For example:
-    - 24h surface interval before flying (diving)
-    - Altitude acclimatization (hiking)
-    """
-    violations = []
-
-    for constraint in plan.constraints:
-        if constraint.rule == "min_24h_buffer_after_dive":
-            # Check for actual diving+flight conflict
-            has_conflict = _check_diving_flight_conflict(plan, tiles)
-
-            if has_conflict:
-                # Actual conflict detected - blocking severity triggers auto-fix
-                violations.append(
-                    ConstraintViolation(
-                        code="DIVING_SURFACE_INTERVAL",
-                        message="Diving scheduled too close to departure flight - need 24h buffer",
-                        severity="blocking",
-                        category="specialist",
-                        suggested_action="Move diving activities earlier or extend trip by 1 day",
-                    )
-                )
-            # No else branch - satisfied constraints don't add violations
-
-        elif constraint.rule == "altitude_acclimatization":
-            violations.append(
-                ConstraintViolation(
-                    code="ALTITUDE_WARNING",
-                    message="Plan for altitude acclimatization if going above 3000m",
-                    severity="info",
-                    category="specialist",
-                )
-            )
-
-        elif constraint.rule == "advanced_cert_required_for_deep":
-            # Check activities for deep dives
-            activity_tiles = tiles.get("activities", [])
-            for tile in activity_tiles:
-                skill = tile.get("meta", {}).get("skill_level")
-                if skill == "advanced":
-                    violations.append(
-                        ConstraintViolation(
-                            code="CERTIFICATION_REQUIRED",
-                            message=f"'{tile.get('title')}' may require advanced certification",
-                            severity="warning",
-                            category="specialist",
-                        )
-                    )
-
-        elif constraint.rule == "no_altitude_after_dive":
-            # Cross-domain constraint: diving → hiking
-            # Detailed validation happens in ItineraryBuilder
-            violations.append(
-                ConstraintViolation(
-                    code="ALTITUDE_AFTER_DIVE_WARNING",
-                    message="High-altitude activities must be scheduled 24h+ after diving",
-                    severity="info",
-                    category="specialist",
-                )
-            )
-
-    return violations
-
-
-def check_seasonal_constraints(plan: TripPlan) -> List[ConstraintViolation]:
-    """
-    Check if trip_type is compatible with the season at destination.
-
-    Examples:
-    - Hiking in Swiss Alps in November → Trails closed due to snow
-    - Skiing in Chamonix in July → No snow conditions
-
-    Returns violations with suggested alternative specialists.
-    """
-    from app.planner.season import get_activity_season_conflict
-
-    violations = []
-
-    if not plan.trip_type or not plan.start_date or not plan.destination:
-        return violations
-
-    # Get season conflict
-    conflict = get_activity_season_conflict(
-        activity_type=plan.trip_type,
-        date_str=plan.start_date,
-        destination=plan.destination,
+    from app.planner.specialist_registry import (
+        get as get_config,
+    )
+    from app.planner.specialist_registry import (
+        get_nofly_buffer_hours,
     )
 
-    if conflict:
-        violation_message, suggested_specialist = conflict
-        # season variable intentionally not used - conflict message already contains context
+    violations: List[ConstraintViolation] = []
 
-        violations.append(
-            ConstraintViolation(
-                code="SEASONAL_ACTIVITY_CONFLICT",
-                message=violation_message,
-                severity="warning",  # Warning, not blocking - user can override
-                category="seasonal",
-                suggested_action=f"Try {suggested_specialist} instead?",
-                suggested_specialist=suggested_specialist,
-            )
-        )
+    # Group itinerary blocks by source specialist (activity blocks only —
+    # buffer/arrival/departure blocks must not trigger constraint violations)
+    blocks_by_specialist: Dict[str, list] = {}
+    for block in plan.itinerary_blocks:
+        if block.source_specialist and block.type == "activity":
+            blocks_by_specialist.setdefault(block.source_specialist, []).append(block)
 
-    return violations
+    for topic, blocks in blocks_by_specialist.items():
+        config = get_config(topic)
+        if not config:
+            continue
 
-
-def check_geographic_constraints(plan: TripPlan) -> List[ConstraintViolation]:
-    """
-    Check geographic feasibility.
-
-    Validates:
-    - Diving in landlocked countries (impossible)
-    - Beach activities in landlocked countries (impossible)
-
-    Note: Seasonal constraints (skiing in summer, beach in winter for Nordic countries)
-    are complex because they require understanding the trip activities AND timing.
-    For MVP, the LLM architect handles these through contextual reasoning.
-    """
-    violations = []
-
-    # Landlocked countries (simplified list)
-    landlocked = {
-        "switzerland",
-        "austria",
-        "czech",
-        "czechia",
-        "hungary",
-        "luxembourg",
-        "liechtenstein",
-        "andorra",
-        "san marino",
-        "mongolia",
-        "nepal",
-        "bhutan",
-        "laos",
-        "paraguay",
-        "bolivia",
-        "rwanda",
-        "burundi",
-        "uganda",
-        "zambia",
-        "zimbabwe",
-        "botswana",
-        "malawi",
-        "lesotho",
-        "eswatini",
-        "ethiopia",
-        "chad",
-        "niger",
-        "mali",
-        "burkina faso",
-        "central african republic",
-        "south sudan",
-    }
-
-    destination = (plan.destination or "").lower()
-
-    # Check diving in landlocked
-    if plan.trip_type == "diving":
-        for country in landlocked:
-            if country in destination:
+        # 1. Departure buffer (generalized from _check_diving_flight_conflict)
+        if config.has_nofly_buffer:
+            buffer_hours = get_nofly_buffer_hours(topic) or 24
+            buffer_days = buffer_hours // 24
+            if _check_departure_buffer_conflict(plan, tiles, topic, blocks, buffer_days):
                 violations.append(
                     ConstraintViolation(
-                        code="GEOGRAPHIC_INFEASIBLE",
-                        message=f"Diving not available in landlocked {plan.destination}",
+                        code=f"{topic.upper()}_SURFACE_INTERVAL",
+                        message=(
+                            f"{topic.title()} scheduled too close to departure "
+                            f"flight — need {buffer_hours}h buffer"
+                        ),
                         severity="blocking",
-                        category="geographic",
+                        category="specialist",
+                        suggested_action=(
+                            f"Move {topic} activities earlier or extend trip by 1 day"
+                        ),
                     )
                 )
-                break
 
-    # Check beach activities in landlocked (via itinerary blocks)
-    beach_keywords = {"beach", "snorkeling", "coastal", "seaside"}
-    for block in plan.itinerary_blocks:
-        block_title = (block.title or "").lower()
-        block_desc = (block.description or "").lower()
-        has_beach = any(kw in block_title or kw in block_desc for kw in beach_keywords)
-
-        if has_beach:
-            for country in landlocked:
-                if country in destination:
-                    violations.append(
-                        ConstraintViolation(
-                            code="BEACH_IN_LANDLOCKED",
-                            message=(
-                                f"Beach activity '{block.title}' not possible "
-                                f"in landlocked {plan.destination}"
-                            ),
-                            severity="blocking",
-                            category="geographic",
+        # 2. Cross-domain blocks
+        for xd in config.cross_domain_blocks:
+            last_source_day = max((b.day for b in blocks if b.day), default=0)
+            if not last_source_day:
+                continue
+            for target_sid in xd.target_specialists:
+                target_blocks = blocks_by_specialist.get(target_sid, [])
+                for tb in target_blocks:
+                    if tb.day and tb.day <= last_source_day:
+                        violations.append(
+                            ConstraintViolation(
+                                code=xd.violation_code,
+                                message=xd.reason,
+                                severity=xd.severity,
+                                category="specialist",
+                                suggested_action=(
+                                    f"Schedule {target_sid} activities at least "
+                                    f"{xd.buffer_hours}h after last {topic} activity"
+                                ),
+                            )
                         )
-                    )
-                    break
+                        break  # One violation per target specialist
 
     return violations
 
@@ -590,14 +422,8 @@ class ConstraintGuard:
         # Temporal constraints
         violations.extend(check_temporal_constraints(state.trip_plan, state.tiles))
 
-        # Seasonal constraints (hiking in winter, skiing in summer)
-        violations.extend(check_seasonal_constraints(state.trip_plan))
-
-        # Specialist constraints
+        # Specialist constraints (registry-driven: departure buffer + cross-domain)
         violations.extend(check_specialist_constraints(state.trip_plan, state.tiles))
-
-        # Geographic constraints
-        violations.extend(check_geographic_constraints(state.trip_plan))
 
         # Route constraints (Logic Guards - user intent errors)
         violations.extend(check_route_constraint(state.trip_plan))
@@ -625,10 +451,14 @@ async def constraint_guard(state: GraphState) -> GraphState:
 
     logger = logging.getLogger(__name__)
 
+    # Typed metadata access — turn (per-turn) + persistent (cross-turn)
+    turn = get_turn_meta(state)
+    persistent = get_persistent_meta(state)
+
     # STATE IN logging - critical for debugging state mutations between nodes
     logger.info(
         f"[GUARD] STATE IN: tiles={len(state.tiles)} "
-        f"strategy={len(state.metadata.get('strategy_sections', []))} "
+        f"strategy={len(persistent.strategy_sections)} "
         f"retry={state.guard_retry_count}"
     )
 
@@ -642,7 +472,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
 
     # RESET: Clear previous validation receipts before re-evaluation
     # Prevents stale green badges if guard runs multiple times (auto-fix loop)
-    state.metadata["constraints_validated"] = []
+    turn.constraints_validated = []
 
     # =========================================================================
     # Merge Persisted Specialist Constraints
@@ -652,7 +482,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
     # =========================================================================
     from app.debug_utils import log
 
-    persisted = state.metadata.get("specialist_constraints", {})
+    persisted = persistent.specialist_constraints
     existing_rules = {canonicalize_rule(c.rule) for c in state.trip_plan.constraints}
     merged_count = 0
     for topic, constraint_dicts in persisted.items():
@@ -681,7 +511,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
     log(
         "GUARD",
         f"Constraint sources: trip_plan={[c.rule for c in state.trip_plan.constraints]}, "
-        f"executed_topics={state.metadata.get('executed_strategy_topics', [])}",
+        f"executed_topics={persistent.executed_strategy_topics}",
     )
     log("GUARD", "Validation (pure Python, no LLM)...")
 
@@ -689,57 +519,62 @@ async def constraint_guard(state: GraphState) -> GraphState:
     violations, has_blocking = guard.check_all(state)
 
     # =========================================================================
-    # Flight-Independent Diving Capacity Check
-    # Pure math: validates diving is physically possible given trip duration
+    # Registry-Driven Capacity Check (Flight-Independent)
+    # Pure math: validates specialist activities are physically possible
+    # given trip duration and buffer requirements.
     # Works even before flights are added (Turn 1-2 of demo arc)
     # =========================================================================
-    has_diving_constraint_for_capacity = any(
-        canonicalize_rule(c.rule) == "min_24h_buffer_after_dive"
-        for c in state.trip_plan.constraints
+    from app.planner.specialist_registry import (
+        get as get_config,
     )
-    if (
-        has_diving_constraint_for_capacity
-        and state.trip_plan.start_date
-        and state.trip_plan.end_date
-        and not any(v.code == "DIVING_SURFACE_INTERVAL" for v in violations)
-    ):
-        try:
-            from datetime import datetime
+    from app.planner.specialist_registry import (
+        get_nofly_buffer_hours,
+    )
 
+    if state.trip_plan.start_date and state.trip_plan.end_date:
+        try:
             start = datetime.fromisoformat(state.trip_plan.start_date)
             end = datetime.fromisoformat(state.trip_plan.end_date)
             total_days = (end - start).days + 1
             usable_days = total_days - 2  # arrival + departure
-            diving_available = max(0, usable_days - 1)  # 24h no-fly buffer
 
-            # Count diving content blocks from strategy sections
-            strategy_sections = state.metadata.get("strategy_sections", [])
-            diving_blocks = [
-                b
-                for s in strategy_sections
-                if s.get("specialist_type") == "diving"
-                for b in s.get("content_added", [])
-                if b.get("type") == "activity"
-            ]
+            for section in persistent.strategy_sections:
+                topic = section.get("specialist_type")
+                config = get_config(topic) if topic else None
+                if not config or not config.has_nofly_buffer:
+                    continue
 
-            if len(diving_blocks) > diving_available:
-                violations.append(
-                    ConstraintViolation(
-                        code="DIVING_SURFACE_INTERVAL",
-                        severity="blocking",
-                        category="capacity",
-                        message=(
-                            f"Need {len(diving_blocks)} dive days but only {diving_available} "
-                            f"available (24h no-fly buffer requires 1 rest day before departure)"
-                        ),
+                violation_code = f"{topic.upper()}_SURFACE_INTERVAL"
+                if any(v.code == violation_code for v in violations):
+                    continue  # Already caught by departure buffer check
+
+                buffer_hours = get_nofly_buffer_hours(topic) or 24
+                buffer_days = buffer_hours // 24
+                available = max(0, usable_days - buffer_days)
+
+                activity_blocks = [
+                    b for b in section.get("content_added", []) if b.get("type") == "activity"
+                ]
+
+                if len(activity_blocks) > available:
+                    violations.append(
+                        ConstraintViolation(
+                            code=violation_code,
+                            severity="blocking",
+                            category="capacity",
+                            message=(
+                                f"Need {len(activity_blocks)} {topic} days but only "
+                                f"{available} available ({buffer_hours}h buffer requires "
+                                f"{buffer_days} rest day(s) before departure)"
+                            ),
+                        )
                     )
-                )
-                has_blocking = True
-                log(
-                    "CONSTRAINT",
-                    f"❌ DIVING_SURFACE_INTERVAL (blocking) - capacity check: "
-                    f"{len(diving_blocks)} dives > {diving_available} available days",
-                )
+                    has_blocking = True
+                    log(
+                        "CONSTRAINT",
+                        f"FAIL {violation_code} (blocking) - capacity: "
+                        f"{len(activity_blocks)} > {available} available days",
+                    )
         except Exception as e:
             log("GUARD", f"Capacity check error (non-fatal): {e}")
 
@@ -756,34 +591,12 @@ async def constraint_guard(state: GraphState) -> GraphState:
         log("GUARD", "All constraints satisfied")
 
     # =========================================================================
-    # Emit Validation Receipts for Constraints that PASSED
-    # These surface as green badges in the Trip DNA bar
-    #
-    # NOTE: Specialist constraints are now merged from metadata at top of guard,
-    # so trip_plan.constraints contains ALL constraints from ALL specialists.
-    # No more executed_topics fallback needed.
+    # Validation Receipts — Registry-Driven
+    # Green badges for constraints that PASSED. Surfaced in Trip DNA bar.
     # =========================================================================
     validated = []
 
-    # Diving no-fly buffer - check trip_plan.constraints (includes merged persisted)
-    has_diving_constraint = any(
-        canonicalize_rule(c.rule) == "min_24h_buffer_after_dive"
-        for c in state.trip_plan.constraints
-    )
-    has_diving_violation = any(v.code == "DIVING_SURFACE_INTERVAL" for v in violations)
-
-    if has_diving_constraint and not has_diving_violation:
-        validated.append(
-            {
-                "constraint_id": "diving_no_fly",
-                "rule": "min_24h_buffer_after_dive",  # Always canonical
-                "status": "satisfied",
-                "specialist": "diving",
-                "label": "24h No-Fly Buffer",
-            }
-        )
-
-    # Temporal validity - if no DATE_ORDER_INVALID or TRIP_TOO_* violations
+    # --- System-level receipts ---
     has_temporal_violation = any(v.code.startswith(("DATE_ORDER", "TRIP_TOO")) for v in violations)
     if state.trip_plan.start_date and not has_temporal_violation:
         validated.append(
@@ -796,7 +609,6 @@ async def constraint_guard(state: GraphState) -> GraphState:
             }
         )
 
-    # Budget - if no BUDGET_* violations
     has_budget_violation = any(v.code.startswith("BUDGET_") for v in violations)
     if state.trip_plan.budget and not has_budget_violation:
         validated.append(
@@ -809,19 +621,37 @@ async def constraint_guard(state: GraphState) -> GraphState:
             }
         )
 
-    # Store in metadata
-    state.metadata["constraints_validated"] = validated
+    # --- Specialist-level receipts (registry-driven) ---
+    for topic in persistent.specialist_constraints:
+        config = get_config(topic)
+        if not config:
+            continue
+        # Only emit receipts for specialists with enforceable constraints
+        if not (config.has_nofly_buffer or config.has_altitude_buffer):
+            continue
+        topic_upper = topic.upper()
+        has_topic_violation = any(topic_upper in v.code for v in violations)
+        if not has_topic_violation:
+            validated.append(
+                {
+                    "constraint_id": f"{topic}_constraints_ok",
+                    "rule": f"{topic}_constraints_satisfied",
+                    "status": "satisfied",
+                    "specialist": topic,
+                    "label": config.display_name or topic.replace("_", " ").title(),
+                }
+            )
 
-    # Log validated constraints (terminal visibility for demo)
+    turn.constraints_validated = validated
     for v in validated:
-        log("CONSTRAINT", f"✅ {v['constraint_id']} (satisfied) └─ {v['label']}")
+        log("CONSTRAINT", f"OK {v['constraint_id']} (satisfied) -- {v['label']}")
 
     # Update state
     state.constraints_violated = [v.message for v in violations]
 
-    # Store detailed violations in metadata
-    state.metadata["constraint_violations"] = [v.to_dict() for v in violations]
-    state.metadata["has_blocking_violations"] = has_blocking
+    # Store detailed violations in metadata (typed)
+    turn.constraint_violations = [v.to_dict() for v in violations]
+    turn.has_blocking_violations = has_blocking
 
     # ==========================================================================
     # ROUTE ERROR HANDLING (Logic Guards)
@@ -845,7 +675,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
         # UNKNOWN_DESTINATION_ERROR: Invalid destination entered
         # Fix: Clear the destination, preserve other fields
         log("GUARD", "🚫 UNKNOWN_DESTINATION_ERROR: Clearing invalid destination")
-        previous_inputs = state.metadata.get("trip_inputs", {})
+        previous_inputs = persistent.trip_inputs
         state.trip_plan.destination = previous_inputs.get("destination")  # Restore previous
         log(
             "GUARD",
@@ -854,7 +684,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
 
     # Prepare violation context for Architect retry (Auto-Fix Loop)
     if has_blocking:
-        state.metadata["violations_for_retry"] = [
+        turn.violations_for_retry = [
             {"code": v.code, "message": v.message, "severity": v.severity}
             for v in violations
             if v.severity == "blocking"
@@ -873,10 +703,13 @@ async def constraint_guard(state: GraphState) -> GraphState:
     )
     route_destination = "synth" if is_unfixable or not has_blocking else "architect"
 
+    # Flush typed per-turn values back to state.metadata
+    sync_turn_meta(state, turn)
+
     # STATE OUT logging - shows where state goes next and what changed
     logger.info(
         f"[GUARD] STATE OUT: tiles={len(state.tiles)} "
-        f"strategy={len(state.metadata.get('strategy_sections', []))} "
+        f"strategy={len(persistent.strategy_sections)} "
         f"route={route_destination}"
     )
 

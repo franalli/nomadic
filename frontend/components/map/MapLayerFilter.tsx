@@ -10,7 +10,7 @@
 'use client';
 
 import type { LucideIcon } from 'lucide-react';
-import { Bed, Landmark, MapPin, Mountain, Plane, Utensils, Waves } from 'lucide-react';
+import { Bed, Bike, Binoculars, Landmark, MapPin, Mountain, Plane, Sailboat, Snowflake, Utensils, Waves } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
@@ -52,6 +52,36 @@ const LAYER_CONFIG: Record<string, LayerConfig> = {
     icon: Mountain,
     label: 'Hiking',
     activeColor: 'bg-green-500 text-white border-green-500',
+  },
+  skiing: {
+    icon: Snowflake,
+    label: 'Skiing',
+    activeColor: 'bg-blue-500 text-white border-blue-500',
+  },
+  cycling: {
+    icon: Bike,
+    label: 'Cycling',
+    activeColor: 'bg-lime-500 text-white border-lime-500',
+  },
+  surfing: {
+    icon: Waves,
+    label: 'Surfing',
+    activeColor: 'bg-indigo-500 text-white border-indigo-500',
+  },
+  climbing: {
+    icon: Mountain,
+    label: 'Climbing',
+    activeColor: 'bg-orange-500 text-white border-orange-500',
+  },
+  sailing: {
+    icon: Sailboat,
+    label: 'Sailing',
+    activeColor: 'bg-cyan-500 text-white border-cyan-500',
+  },
+  wildlife_safari: {
+    icon: Binoculars,
+    label: 'Safari',
+    activeColor: 'bg-amber-500 text-white border-amber-500',
   },
   hotel: {
     icon: Bed,

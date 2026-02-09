@@ -83,19 +83,21 @@ def _cache_set(key: str, value: list) -> None:
 # =============================================================================
 
 
-def _experience_cache_key(destination: str, categories: list[str], month: str) -> str:
+def _experience_cache_key(
+    destination: str, categories: list[str], month: str, tiles_per_category: int = 2
+) -> str:
     """
-    Generate stable cache key: experience:{dest}:{sorted_cats}:{month}
+    Generate stable cache key: experience:{dest}:{sorted_cats}:{month}:n{count}
 
     Categories are sorted alphabetically for stable keys regardless of input order.
     Month granularity (not full dates) — experiences are seasonal, not date-specific.
 
-    Example: "experience:bali:cooking|nightlife|yoga:2026-03"
+    Example: "experience:bali:cooking|nightlife|yoga:2026-03:n4"
     """
     dest_normalized = destination.lower().strip() if destination else "unknown"
     cats_normalized = "|".join(sorted(c.lower().strip() for c in categories))
     month_normalized = month if month else "unknown"
-    key = f"experience:{dest_normalized}:{cats_normalized}:{month_normalized}"
+    key = f"experience:{dest_normalized}:{cats_normalized}:{month_normalized}:n{tiles_per_category}"
     logger.info(f"[EXPERIENCE_CACHE] Key: {key}")
     return key
 
@@ -219,6 +221,7 @@ def _build_user_prompt(
     month: str,
     budget: int | None = None,
     tier1_specialists: list[str] | None = None,
+    tiles_per_category: int = 2,
 ) -> str:
     """Build the user message for experience generation."""
     # Parse month name from YYYY-MM
@@ -233,12 +236,15 @@ def _build_user_prompt(
     parts = [
         f"Generate activities for {destination} in {month_name}.",
         f"Categories: {', '.join(categories)}",
-        "Generate 2 activities per category. Each must be a REAL place/experience.",
+        (
+            f"Generate {tiles_per_category} activities per category. "
+            "Each must be a REAL place/experience."
+        ),
         "Include realistic local pricing in USD.",
     ]
 
     if budget:
-        budget_per_activity = max(20, budget // (len(categories) * 4))
+        budget_per_activity = max(20, budget // (len(categories) * tiles_per_category))
         parts.append(f"Budget: each activity should be under ${budget_per_activity} USD.")
 
     if tier1_specialists:
@@ -309,6 +315,7 @@ async def generate_experiences(
     month: str,
     budget: int | None = None,
     tier1_specialists: list[str] | None = None,
+    tiles_per_category: int = 2,
 ) -> list[dict]:
     """
     Generate Tier 2 experience tiles via gpt-4o-mini structured output.
@@ -319,6 +326,7 @@ async def generate_experiences(
         month: Month string "YYYY-MM" for seasonal context
         budget: Optional total trip budget for price constraints
         tier1_specialists: Active Tier 1 specialists to avoid overlap
+        tiles_per_category: Number of tiles per category (2-4, scaled by trip length)
 
     Returns:
         List of tile dicts ready for state.tiles["activities"], or [] on failure.
@@ -326,7 +334,7 @@ async def generate_experiences(
     if not destination or not categories:
         return []
 
-    cache_key = _experience_cache_key(destination, categories, month)
+    cache_key = _experience_cache_key(destination, categories, month, tiles_per_category)
 
     # L1: Memory cache check
     cached = _cache_get(cache_key)
@@ -356,14 +364,20 @@ async def generate_experiences(
 
     start_t = time.time()
     try:
+        # Scale max_tokens proportionally to tile count
+        extra_tiles = max(0, tiles_per_category - 2) * len(categories)
+        max_tokens = min(800 + extra_tiles * 100, 1600)
+
         llm = ChatOpenAI(
             model=EXPERIENCE_MODEL,
             temperature=0.3,
-            max_tokens=800,
+            max_tokens=max_tokens,
         )
         structured_llm = llm.with_structured_output(ExperienceOutput, include_raw=True)
 
-        user_prompt = _build_user_prompt(destination, categories, month, budget, tier1_specialists)
+        user_prompt = _build_user_prompt(
+            destination, categories, month, budget, tier1_specialists, tiles_per_category
+        )
 
         result = await structured_llm.ainvoke(
             [

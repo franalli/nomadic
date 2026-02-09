@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from app.debug_utils import _debug, _debug_itinerary
+from app.planner.specialist_registry import ALL_CONSTRAINT_ALIASES
 from app.planner.state import ConstraintSeverity
 
 logger = logging.getLogger(__name__)
@@ -191,28 +192,7 @@ def calculate_hours_between(
 # LLM may output constraint rules with various naming conventions.
 # Builder normalizes to canonical rules for consistent detection.
 
-CONSTRAINT_ALIASES: Dict[str, List[str]] = {
-    # Cross-domain: diving + altitude conflict
-    "no_altitude_after_dive": [
-        "no_altitude_24h",
-        "altitude_buffer",
-        "no_altitude_after_diving",
-        "altitude_restriction_after_dive",
-    ],
-    # Diving: no-fly buffer
-    "min_24h_buffer_after_dive": [
-        "no_fly_24h",
-        "flight_buffer_24h",
-        "no_fly_after_diving",
-        "24h_no_fly_after_diving",
-        "no_fly_buffer",
-    ],
-    # Surface interval
-    "surface_interval": [
-        "min_18h_surface_interval",
-        "dive_surface_interval",
-    ],
-}
+CONSTRAINT_ALIASES = ALL_CONSTRAINT_ALIASES  # Re-export for backward compat
 
 
 def _find_constraint(
@@ -870,7 +850,7 @@ class ItineraryBuilder:
 
         # Cross-domain check: diving + high-altitude activity conflict
         diving_present = "diving" in activities_by_specialist
-        altitude_activities = ["hiking", "trekking", "mountaineering", "skiing"]
+        altitude_activities = ["hiking", "trekking", "mountaineering", "skiing", "climbing"]
         altitude_specialists_present = [
             spec for spec in altitude_activities if spec in activities_by_specialist
         ]
@@ -1010,7 +990,7 @@ class ItineraryBuilder:
 
         # Determine primary specialist (priority: diving > hiking > skiing > other)
         primary_specialist = None
-        altitude_activities = ["hiking", "trekking", "mountaineering", "skiing"]
+        altitude_activities = ["hiking", "trekking", "mountaineering", "skiing", "climbing"]
 
         if cross_domain_conflict and diving_present:
             # Diving takes priority in cross-domain conflicts
@@ -1931,6 +1911,8 @@ class ItineraryBuilder:
         Adds active_constraints metadata to blocks so frontend can show
         constraint badges directly in the timeline.
         """
+        from app.planner.specialist_registry import get as _get_config
+
         departure_day = len(days)
         _debug_itinerary(
             f"🏷️ Phase 6.5: Applying constraint tags to {len(days)} days, "
@@ -1941,32 +1923,27 @@ class ItineraryBuilder:
             for block in day_card.blocks:
                 constraints = []
 
-                # Diving activity constraints
+                # Registry-driven no-fly buffer constraint tags
                 activity_type = (block.activity_type or "").lower()
                 specialist = (block.specialist_type or "").lower()
-                is_diving = "div" in activity_type or specialist == "diving"
-                _debug(
-                    f"[ItineraryBuilder] 🏷️ Day {day_idx + 1} block: "
-                    f"activity_type='{activity_type}', specialist='{specialist}', "
-                    f"is_diving={is_diving}, is_buffer={block.is_buffer}"
-                )
 
-                if is_diving and not block.is_buffer:
-                    # Check if this is the last dive before departure
-                    is_last_dive = not any(
+                _spec_config = _get_config(specialist) if specialist else None
+                _has_nofly = _spec_config.has_nofly_buffer if _spec_config else False
+                _has_altitude = _spec_config.has_altitude_buffer if _spec_config else False
+
+                if _has_nofly and not block.is_buffer:
+                    # Check if this is the last activity for this specialist before departure
+                    is_last_for_specialist = not any(
                         any(
-                            (
-                                "div" in (b.activity_type or "").lower()
-                                or (b.specialist_type or "").lower() == "diving"
-                            )
-                            and not b.is_buffer
+                            (b.specialist_type or "").lower() == specialist and not b.is_buffer
                             for b in dc.blocks
                         )
                         for dc in days[day_idx + 1 :]
                     )
 
-                    # Last dive within 2 days of departure gets no-fly buffer warning
-                    if is_last_dive and day_idx >= departure_day - 2:
+                    # Last activity within 2 days of departure gets buffer warning
+                    buffer_label = _spec_config.display_name or specialist.title()
+                    if is_last_for_specialist and day_idx >= departure_day - 2:
                         constraints.append(
                             {
                                 "id": "no_fly_buffer",
@@ -1975,22 +1952,34 @@ class ItineraryBuilder:
                                 "title": "24h No-Fly Buffer",
                                 "description": (
                                     f"Day {departure_day} departure requires "
-                                    "finishing diving by 2pm today"
+                                    f"finishing {specialist} by 2pm today"
                                 ),
                             }
                         )
 
-                    # All dives get surface interval info
-                    if not constraints:  # Don't duplicate if already has no-fly warning
+                    # All activities for nofly specialists get safety info
+                    if not constraints:
                         constraints.append(
                             {
                                 "id": "surface_interval",
                                 "severity": "info",
                                 "icon": "ℹ️",
-                                "title": "Dive Safety",
-                                "description": "Scheduled with appropriate surface intervals",
+                                "title": f"{buffer_label}",
+                                "description": "Scheduled with appropriate safety intervals",
                             }
                         )
+
+                elif _has_altitude and not block.is_buffer:
+                    buffer_label = _spec_config.display_name or specialist.title()
+                    constraints.append(
+                        {
+                            "id": "altitude_buffer",
+                            "severity": "info",
+                            "icon": "🏔️",
+                            "title": f"{buffer_label}",
+                            "description": "Altitude acclimatization schedule applied",
+                        }
+                    )
 
                 # Hiking activity constraints
                 is_hiking = (

@@ -34,35 +34,13 @@ These constraints MUST be passed to the Architect:
    - Rebreathers require specialty training
 
 ==============================
-DIVING DESTINATION KNOWLEDGE
-==============================
-Top diving destinations by region:
-
-SOUTHEAST ASIA:
-- Bali, Indonesia: USAT Liberty wreck, Manta Point, Nusa Penida
-- Raja Ampat: World's highest marine biodiversity
-- Sipadan, Malaysia: Barracuda Point, turtle tomb
-- Thailand (Similan): Richelieu Rock, whale sharks
-
-CARIBBEAN:
-- Bonaire: Shore diving paradise, 60+ named sites
-- Cozumel: Drift diving, giant coral formations
-- Roatan: Blue hole, reef walls
-
-RED SEA:
-- Egypt: SS Thistlegorm, Ras Mohammed
-- Dahab: Blue Hole, The Bells
-- Sudan: Sha'ab Rumi, hammerhead sharks
-
-PACIFIC:
-- Palau: Jellyfish Lake, Blue Corner
-- Fiji: Soft coral capital
-- Galapagos: Hammerheads, mantas, marine iguanas
-
-==============================
 OUTPUT REQUIREMENTS
 ==============================
-Generate diving activities with REAL dive site names for the destination.
+Generate diving activities for the user's SPECIFIC destination.
+Use your world knowledge to identify real dive sites.
+Do NOT limit yourself to a predefined list.
+
+For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates.
 Include topic-specific fields:
 - depth_meters: Maximum depth of the dive
 - certification_required: e.g., "Open Water", "Advanced", "Deep Diver"

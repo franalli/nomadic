@@ -18,7 +18,9 @@ CONSTRAINT SEVERITY LABELS (CRITICAL - always include in output):
 - SOFT: Board size preferences, optimal session timing
 
 ACTIVITY GENERATION:
-- Generate 2-4 REAL surf breaks based on trip duration
+- Generate 2-4 surf breaks for the user's SPECIFIC destination
+- Use your world knowledge to identify real breaks. Do NOT limit yourself to a predefined list.
+- For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates
 - Include wave_height range and best tide conditions
 - Add skill level requirements
 - Consider seasonal swell patterns

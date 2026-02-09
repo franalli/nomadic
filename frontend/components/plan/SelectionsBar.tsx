@@ -13,6 +13,7 @@
 import { Heart, Loader2, X } from 'lucide-react';
 import { useMemo } from 'react';
 
+import { activityMatchesSpecialist as registryMatch, getSpecialistConfig } from '@/lib/specialists';
 import { cn, isFlightType, isHotelType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
@@ -101,39 +102,11 @@ function TileCard({
   );
 }
 
-/** Specialist keyword mappings for activity filtering and grouping */
-const SPECIALIST_KEYWORDS: Record<string, string[]> = {
-  diving: ['div', 'scuba', 'snorkel', 'reef', 'underwater', 'wreck'],
-  hiking: ['hik', 'trek', 'trail', 'climb', 'summit', 'mountain'],
-  skiing: ['ski', 'snow', 'slope', 'piste', 'powder', 'chairlift', 'gondola'],
-  surfing: ['surf', 'wave', 'beach', 'board', 'swell'],
-  climbing: ['climb', 'boulder', 'crag', 'via ferrata', 'rope'],
-  cycling: ['cycl', 'bike', 'biking', 'pedal', 'mtb'],
-};
-
-/** Check if activity category matches specialist type */
+/** Check if activity category matches specialist type (with component-specific pass-throughs) */
 function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boolean {
   if (isHotelType(tile.type)) return true;
-  if (!specialistTypes || specialistTypes.length === 0) return true;
-
-  // Experience tiles always pass through (Tier 2, purpose-generated for user's selection)
   if (tile.tags?.includes('experience')) return true;
-
-  const category = (tile.type || '').toLowerCase();
-  const title = (tile.title || '').toLowerCase();
-
-  for (const specialist of specialistTypes) {
-    const s = specialist.toLowerCase();
-    if (s === 'local_expert') return true;
-
-    const keywords = SPECIALIST_KEYWORDS[s] || [];
-    for (const keyword of keywords) {
-      if (category.includes(keyword) || title.includes(keyword)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return registryMatch(tile, specialistTypes);
 }
 
 /** Detect which specialist type a tile belongs to */
@@ -142,12 +115,10 @@ function detectSpecialistType(tile: Tile, activeSpecialists: string[]): string {
   const title = (tile.title || '').toLowerCase();
 
   for (const specialist of activeSpecialists) {
-    const s = specialist.toLowerCase();
-    const keywords = SPECIALIST_KEYWORDS[s] || [];
-    for (const keyword of keywords) {
-      if (category.includes(keyword) || title.includes(keyword)) {
-        return specialist;
-      }
+    const config = getSpecialistConfig(specialist);
+    if (!config) continue;
+    for (const kw of config.filterKeywords) {
+      if (category.includes(kw) || title.includes(kw)) return specialist;
     }
   }
   return 'activities';

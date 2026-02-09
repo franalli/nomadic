@@ -16,21 +16,9 @@ import { Pencil } from 'lucide-react';
 import { memo, useMemo } from 'react';
 
 import { formatDateRangeForPills } from '@/lib/format-utils';
+import { getSpecialistConfig } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Specialist emoji map
-// ─────────────────────────────────────────────────────────────────────────────
-
-const SPECIALIST_EMOJI: Record<string, string> = {
-  diving: '🤿',
-  hiking: '🥾',
-  skiing: '⛷️',
-  cycling: '🚴',
-  boating: '⛵',
-  surfing: '🏄',
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -75,7 +63,7 @@ function TripStatusBarInner({
   const specialistIcons = useMemo(() => {
     return specialists
       .filter((s) => s !== 'local_expert')
-      .map((s) => SPECIALIST_EMOJI[s])
+      .map((s) => getSpecialistConfig(s)?.emoji)
       .filter(Boolean);
   }, [specialists]);
 

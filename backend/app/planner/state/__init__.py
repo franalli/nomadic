@@ -31,11 +31,25 @@ from app.planner.state.schemas import (
     SynthesizerOutput,
     TripPlan,
     TripSegment,
+    # Settings
+    TripSettings,
     UIEvent,
     create_missing_fields_response,
     get_missing_fields,
     # Helpers
     trip_plan_is_ready,
+)
+
+# Typed metadata (shadow-mode migration)
+from app.planner.state.typed_meta import (
+    PersistentMeta,
+    TurnMeta,
+    get_persistent_meta,
+    get_trip_settings,
+    get_turn_meta,
+    reset_turn_metadata,
+    sync_persistent_meta,
+    sync_turn_meta,
 )
 
 __all__ = [
@@ -61,4 +75,15 @@ __all__ = [
     # LLM Extraction
     "ExtractedTripFields",
     "ExtractedSettingsFields",
+    # Settings
+    "TripSettings",
+    # Typed Metadata
+    "TurnMeta",
+    "PersistentMeta",
+    "get_turn_meta",
+    "get_trip_settings",
+    "sync_turn_meta",
+    "reset_turn_metadata",
+    "get_persistent_meta",
+    "sync_persistent_meta",
 ]

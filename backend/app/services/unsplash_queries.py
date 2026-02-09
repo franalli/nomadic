@@ -37,6 +37,7 @@ ACTIVITY_QUERIES: dict[str, str] = {
     "wellness": "spa wellness retreat relaxation",
     "culture": "cultural tour temple museum heritage",
     "music": "live music concert venue",
+    "wildlife_safari": "african safari wildlife savanna elephant lion",
 }
 
 # Curated mapping for common destinations

@@ -22,9 +22,51 @@ from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from app.planner.specialist_registry import (
+    ALL_CATEGORY_TO_SPECIALIST,
+    ALL_SPECIALIST_KEYWORDS,
+    TIER1_SPECIALIST_NAMES,
+)
 from app.planner.state import GraphState, TripPlan
+from app.planner.state.typed_meta import get_trip_settings
 
 logger = logging.getLogger(__name__)
+
+# Tier 2 activities — not in ALL_SPECIALIST_KEYWORDS (Tier 1 only).
+# "sailing" included: Tier 1 in registry but KNOWN_CATEGORIES lists it,
+# and logistics treats it as Tier 2 for tile generation.
+TIER2_ACTIVITY_KEYWORDS: set[str] = {
+    "yoga",
+    "cooking",
+    "nightlife",
+    "temples",
+    "beach",
+    "shopping",
+    "photography",
+    "sailing",
+    "wellness",
+    "culture",
+    "music",
+    "wine",
+    "food",
+}
+
+# Derived prompt fragments — single source of truth from registry
+_SPECIALIST_NAMES_CSV = ", ".join(sorted(TIER1_SPECIALIST_NAMES))
+_SPECIALIST_HINTS_JSON = json.dumps(sorted(TIER1_SPECIALIST_NAMES))
+_TIER2_NAMES_CSV = ", ".join(sorted(TIER2_ACTIVITY_KEYWORDS))
+
+
+def _build_specialist_keyword_prompt() -> str:
+    lines = []
+    for topic in sorted(ALL_SPECIALIST_KEYWORDS):
+        aliases = ALL_SPECIALIST_KEYWORDS[topic][:5]
+        quoted = ", ".join(f'"{a}"' for a in aliases)
+        lines.append(f'- {quoted} -> "{topic}"')
+    return "\n".join(lines)
+
+
+_SPECIALIST_KEYWORD_PROMPT = _build_specialist_keyword_prompt()
 
 
 # =============================================================================
@@ -32,7 +74,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-def _compute_constraint_hash(trip_plan: TripPlan, trip_inputs: dict) -> str:
+def _compute_constraint_hash(trip_plan: TripPlan, settings: Any) -> str:
     """
     Hash inputs that affect SPECIALIST output (not just pricing/filtering).
 
@@ -46,19 +88,22 @@ def _compute_constraint_hash(trip_plan: TripPlan, trip_inputs: dict) -> str:
     - adults/children (only affects capacity/pricing)
     - budget (only affects filtering)
     - full dates (only month matters for seasonal)
+
+    Args:
+        trip_plan: The TripPlan instance.
+        settings: A TripSettings instance (typed).
     """
     # Sort categories to ensure ["a", "b"] == ["b", "a"]
-    activity_cats = sorted(trip_inputs.get("activity_settings", {}).get("categories", []))
+    activity_cats = sorted(settings.activity_settings.categories)
 
     # Check if flights are enabled
-    booking_types = trip_inputs.get("booking_types", {})
-    flights_enabled = booking_types.get("flights") != "off"
+    flights_enabled = settings.booking_types.flights != "off"
 
     hash_payload = {
         "dest": (trip_plan.destination or "").lower().strip(),
         "month": (trip_plan.start_date or "")[:7],  # YYYY-MM only (seasonal)
         "activities": activity_cats,
-        "skill": trip_inputs.get("activity_settings", {}).get("skill_level"),
+        "skill": settings.activity_settings.skill_level,
     }
 
     # Only include origin if flights enabled (affects diving no-fly constraints)
@@ -109,7 +154,7 @@ class IntentClassification(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
     reasoning: str = Field(description="Brief explanation of classification")
     # Multiple specialist hints (e.g., "diving and hiking trip")
-    specialist_hints: List[Literal["diving", "hiking", "skiing", "cycling", "surfing"]] = Field(
+    specialist_hints: List[str] = Field(
         default_factory=list, description="List of detected specialist activities (can be multiple)"
     )
 
@@ -129,22 +174,33 @@ class RouterOutput(BaseModel):
     reasoning: str = Field(description="Brief explanation of classification")
 
     # Specialist hints
-    specialist_hints: List[Literal["diving", "hiking", "skiing", "cycling", "surfing"]] = Field(
+    specialist_hints: List[str] = Field(
         default_factory=list, description="List of detected specialist activities"
     )
 
     # Tier 2 activity categories (yoga, cooking, nightlife, etc.)
     activity_categories: List[str] = Field(
         default_factory=list,
-        description=(
-            "Activity categories mentioned: yoga, cooking, nightlife, temples, beach, "
-            "shopping, photography, sailing, wellness, culture, music, wine, food"
-        ),
+        description=f"Activity categories mentioned: {_TIER2_NAMES_CSV}",
     )
 
     # Extracted trip fields (populated when intent=PLANNING)
     destination: Optional[str] = Field(None, description="Destination city/country if mentioned")
     origin: Optional[str] = Field(None, description="Origin city if mentioned")
+    origin_iata: Optional[str] = Field(
+        None,
+        description=(
+            "IATA airport code for origin city (e.g. SFO, LHR, CDG). "
+            "Use primary international airport."
+        ),
+    )
+    destination_iata: Optional[str] = Field(
+        None,
+        description=(
+            "IATA airport code for destination (e.g. DPS, CDG, DXB). "
+            "Use primary international airport."
+        ),
+    )
     start_date: Optional[str] = Field(
         None, description="Start date in YYYY-MM-DD format (resolve 'March 1' to full date)"
     )
@@ -322,21 +378,6 @@ DATE_INDICATORS = [
     r"\b\d{1,2}[/-]\d{1,2}\b",
 ]
 
-ACTIVITY_INDICATORS = [
-    r"\b(diving|dive|scuba|snorkel|divng|diveing|snorkle|scubba)\b",
-    r"\b(hiking|trek|climb|trail|hikeing|hikng|trekk|treking)\b",
-    r"\b(skiing|snowboard|ski|skii|skiig|skking|sking|snowbord)\b",
-]
-
-# Specialist detection patterns (map activity words to specialist type)
-# Include common typos for demo safety
-SPECIALIST_PATTERNS = {
-    "diving": [r"\b(diving|dive|scuba|snorkel|underwater|divng|diveing|snorkle|scubba)\b"],
-    "hiking": [r"\b(hiking|hike|trek|trekking|climb|trail|mountain|hikeing|hikng|trekk|treking)\b"],
-    "skiing": [r"\b(skiing|ski|snowboard|snow|slopes|skii|skiig|skking|sking|snowbord)\b"],
-    "cycling": [r"\b(cycling|bike|bicycle|biking)\b"],
-    "surfing": [r"\b(surfing|surf|surfer|wave riding)\b"],
-}
 
 # Origin specification patterns - detect "from [city]" as departure city
 # These patterns identify when user is specifying origin, NOT a destination to explore
@@ -391,6 +432,34 @@ FLIGHT_PATTERNS = [
     r"(?:morning|afternoon|evening|red-?eye|overnight)\s*(?:flight|departure)?",
     r"(?:flexible|fixed)\s*(?:dates|schedule)?",
 ]
+
+# =============================================================================
+# ACTIONABLE INPUT PATTERNS — Catch Tier 2 activities, skill levels, removals,
+# and setting resets that regex settings detection (above) doesn't handle.
+# Runs before exploration short-circuit to prevent swallowing valid input.
+# =============================================================================
+
+SKILL_LEVEL_MAP: dict[str, str] = {
+    "beginner": "beginner",
+    "intermediate": "intermediate",
+    "advanced": "advanced",
+    "expert": "advanced",
+    "novice": "beginner",
+    "first time": "beginner",
+}
+
+REMOVAL_PATTERN = re.compile(
+    r"(?:skip|remove|drop|no more|cancel|don't want|without)\s+(?:the\s+)?(\w+)"
+)
+# Tightened to avoid false positives: "any budget tips?" should NOT trigger reset.
+# Require explicit reset language OR "is fine/works/ok" confirmation.
+RESET_BUDGET_PATTERN = re.compile(
+    r"(?:no|remove|clear|unlimited|reset)\s+(?:budget|spending)\s*(?:limit)?"
+)
+RESET_HOTEL_PATTERN = re.compile(
+    r"(?:no|remove|clear|reset)\s+(?:hotel|star)\s*(?:preference|filter|requirement)?"
+    r"|any\s+(?:star|hotel)\s+(?:is fine|works|ok)"
+)
 
 # =============================================================================
 # Suggestion Pool (registry-driven chip generation)
@@ -520,13 +589,11 @@ def _build_specialist_suggestions(state: "GraphState") -> list[dict]:
         return []
 
     # Only suggest specialists the user explicitly chose in the activity pill
-    trip_inputs = state.metadata.get("trip_inputs", {})
-    activity_settings = trip_inputs.get("activity_settings", {})
-    selected_categories = activity_settings.get("categories", [])
+    selected_categories = get_trip_settings(state).activity_settings.categories
 
     pending = []
     for category in selected_categories:
-        specialist_id = ACTIVITY_CATEGORY_TO_SPECIALIST.get(category.lower())
+        specialist_id = ALL_CATEGORY_TO_SPECIALIST.get(category.lower())
         if specialist_id and specialist_id not in executed:
             pending.append(specialist_id)
 
@@ -640,14 +707,12 @@ def _build_plan_progression_suggestions(state: "GraphState") -> list[dict]:
     if not dest or not state.trip_plan.start_date:
         return []
 
-    trip_inputs = state.metadata.get("trip_inputs", {})
-    hotel_settings = trip_inputs.get("hotel_settings") or {}
-    flight_settings = trip_inputs.get("flight_settings") or {}
+    _settings = get_trip_settings(state)
 
     suggestions = []
 
     # Hotel preference (if min_stars not set)
-    if not hotel_settings.get("min_stars"):
+    if not _settings.hotel_settings.min_stars:
         suggestions.append(
             {
                 "template": "5-star hotels only",
@@ -659,7 +724,7 @@ def _build_plan_progression_suggestions(state: "GraphState") -> list[dict]:
         )
 
     # Flight preference (if direct_only not set)
-    if not flight_settings.get("direct_only"):
+    if not _settings.flight_settings.direct_only:
         suggestions.append(
             {
                 "template": "Direct flights only",
@@ -671,8 +736,7 @@ def _build_plan_progression_suggestions(state: "GraphState") -> list[dict]:
         )
 
     # Activity exploration (if no categories selected and destination has activities)
-    activity_settings = trip_inputs.get("activity_settings") or {}
-    if not activity_settings.get("categories"):
+    if not _settings.activity_settings.categories:
         suggestions.append(
             {
                 "template": "What are must-do activities in {destination}?",
@@ -827,6 +891,45 @@ def _detect_settings_from_message(user_text: str, state: "GraphState") -> Option
     return detected if detected else None
 
 
+def _detect_actionable_input(user_text: str, state: "GraphState") -> Optional[dict]:
+    """Catch actionable trip modifications that keyword/regex settings detection misses.
+
+    Runs BEFORE exploration short-circuit to prevent swallowing valid input.
+    Returns dict of changes if found, None if message is truly exploratory.
+    """
+    if not state.trip_plan.destination:
+        return None
+
+    text_lower = user_text.lower().strip()
+    changes: dict = {}
+
+    # 1. Tier 2 activity additions (word-boundary match)
+    detected_t2 = {kw for kw in TIER2_ACTIVITY_KEYWORDS if re.search(rf"\b{kw}\b", text_lower)}
+    if detected_t2:
+        changes["add_categories"] = detected_t2
+
+    # 2. Activity removals
+    for m in REMOVAL_PATTERN.finditer(text_lower):
+        target = m.group(1)
+        all_known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALISTS
+        if target in all_known:
+            changes.setdefault("remove_categories", set()).add(target)
+
+    # 3. Skill level
+    for keyword, level in SKILL_LEVEL_MAP.items():
+        if keyword in text_lower:
+            changes["skill_level"] = level
+            break
+
+    # 4. Setting resets
+    if RESET_BUDGET_PATTERN.search(text_lower):
+        changes["reset_budget"] = True
+    if RESET_HOTEL_PATTERN.search(text_lower):
+        changes["reset_hotel"] = True
+
+    return changes if changes else None
+
+
 def get_new_specialists_from_text(text: str, existing_specialists: List[str]) -> List[str]:
     """
     Get list of NEW specialists mentioned in text that aren't already in the plan.
@@ -841,14 +944,12 @@ def get_new_specialists_from_text(text: str, existing_specialists: List[str]) ->
     text_lower = text.lower()
     new_specialists = []
 
-    for specialist_type, patterns in SPECIALIST_PATTERNS.items():
+    for specialist_type, keywords in ALL_SPECIALIST_KEYWORDS.items():
         if specialist_type in existing_specialists:
             continue  # Already have this specialist
 
-        for pattern in patterns:
-            if re.search(pattern, text_lower):
-                new_specialists.append(specialist_type)
-                break  # Found match, move to next specialist type
+        if any(kw in text_lower for kw in keywords):
+            new_specialists.append(specialist_type)
 
     return new_specialists
 
@@ -875,7 +976,7 @@ def detect_planning_intent(text: str, state: "GraphState") -> str:
 
     # Has dates AND activities
     has_date = any(re.search(p, text_lower) for p in DATE_INDICATORS)
-    has_activity = any(re.search(p, text_lower) for p in ACTIVITY_INDICATORS)
+    has_activity = any(kw in text_lower for kws in ALL_SPECIALIST_KEYWORDS.values() for kw in kws)
 
     if has_date and has_activity:
         return "ready"  # "diving in February" → planning mode
@@ -1044,147 +1145,11 @@ def _check_speculate_trigger(text: str) -> Optional[IntentClassification]:
 # Specialist Keywords (for hint detection)
 # =============================================================================
 
-SPECIALIST_KEYWORDS = {
-    "diving": [
-        "dive",
-        "diving",
-        "scuba",
-        "snorkel",
-        "wreck",
-        "reef",
-        "padi",
-        "ssi",
-        "freedive",
-        "underwater",
-        "coral",
-        "marine",
-        "decompression",
-        "nitrox",
-        "liveaboard",
-        "drift dive",
-        "night dive",
-        "cave dive",
-        "cenote",
-        # Common typos (demo safety)
-        "divng",
-        "diveing",
-        "snorkle",
-        "snorkeling",
-        "scubba",
-    ],
-    "hiking": [
-        "hike",
-        "hiking",
-        "trek",
-        "trekking",
-        "trail",
-        "mountain",
-        "summit",
-        "backpack",
-        "backpacking",
-        "camping",
-        "wilderness",
-        "scramble",
-        "peak",
-        "ridge",
-        "alpine",
-        "elevation",
-        "altitude",
-        # Common typos (demo safety)
-        "hikeing",
-        "hikng",
-        "trekk",
-        "treking",
-    ],
-    "skiing": [
-        "ski",
-        "skiing",
-        "snowboard",
-        "snowboarding",
-        "slope",
-        "piste",
-        "powder",
-        "resort",
-        "lift",
-        "chairlift",
-        "gondola",
-        "apres",
-        "black diamond",
-        "mogul",
-        "backcountry",
-        "off-piste",
-        # Common typos (demo safety)
-        "skii",
-        "skiig",
-        "skking",
-        "sking",
-        "snowbord",
-    ],
-    "cycling": [
-        "cycle",
-        "cycling",
-        "bike",
-        "biking",
-        "bicycle",
-        "mtb",
-        "road bike",
-        "gravel",
-        "velodrome",
-        "peloton",
-        "criterium",
-        "sportive",
-    ],
-    "boating": [
-        "sail",
-        "sailing",
-        "boat",
-        "boating",
-        "yacht",
-        "charter",
-        "catamaran",
-        "anchor",
-        "marina",
-        "mooring",
-        "regatta",
-        "cruising",
-    ],
-}
-
-# =============================================================================
-# Activity Category to Specialist Mapping (for UI pill selection)
-# =============================================================================
-
-# Maps activity category strings (from UI) to specialist types
-# These are the canonical category names that should show in the activity pill
-ACTIVITY_CATEGORY_TO_SPECIALIST = {
-    # Diving
-    "diving": "diving",
-    "scuba": "diving",
-    "scuba diving": "diving",
-    "freediving": "diving",
-    # Hiking
-    "hiking": "hiking",
-    "trekking": "hiking",
-    "mountaineering": "hiking",
-    "camping": "hiking",
-    "backpacking": "hiking",
-    # Skiing
-    "skiing": "skiing",
-    "snowboarding": "skiing",
-    "snow sports": "skiing",
-    "winter sports": "skiing",
-    # Cycling
-    "cycling": "cycling",
-    "biking": "cycling",
-    "mountain biking": "cycling",
-    "road cycling": "cycling",
-    # Surfing
-    "surfing": "surfing",
-    "surf": "surfing",
-}
-
-# Canonical Tier 1 specialist set — single source of truth
-TIER1_SPECIALISTS = frozenset({"diving", "hiking", "skiing", "cycling", "surfing"})
+# Re-export for backward compat (logistics_node.py, synthesizer.py, tests import these)
+TIER1_SPECIALISTS = TIER1_SPECIALIST_NAMES
+SPECIALIST_KEYWORDS = ALL_SPECIALIST_KEYWORDS
+# SPECIALIST_PATTERNS replaced by keyword matching; re-export for test compat
+SPECIALIST_PATTERNS = {topic: kws for topic, kws in ALL_SPECIALIST_KEYWORDS.items()}
 
 # Canonical specialist activity categories (should appear at top of activity pill)
 SPECIALIST_ACTIVITY_CATEGORIES = sorted(TIER1_SPECIALISTS)
@@ -1196,10 +1161,8 @@ def _detect_specialists_from_activity_settings(state: GraphState) -> List[str]:
 
     Returns list of all matching specialist types (can be multiple).
     """
-    # Get activity categories from trip_inputs in metadata
-    trip_inputs = state.metadata.get("trip_inputs", {})
-    activity_settings = trip_inputs.get("activity_settings", {})
-    categories = activity_settings.get("categories", [])
+    # Get activity categories from typed settings
+    categories = get_trip_settings(state).activity_settings.categories
 
     if not categories:
         return []
@@ -1208,8 +1171,8 @@ def _detect_specialists_from_activity_settings(state: GraphState) -> List[str]:
     detected: List[str] = []
     for category in categories:
         category_lower = category.lower().strip()
-        if category_lower in ACTIVITY_CATEGORY_TO_SPECIALIST:
-            specialist = ACTIVITY_CATEGORY_TO_SPECIALIST[category_lower]
+        if category_lower in ALL_CATEGORY_TO_SPECIALIST:
+            specialist = ALL_CATEGORY_TO_SPECIALIST[category_lower]
             if specialist not in detected:
                 detected.append(specialist)
                 logger.debug(
@@ -1223,7 +1186,8 @@ def _detect_specialists_from_activity_settings(state: GraphState) -> List[str]:
 # LLM Classification
 # =============================================================================
 
-CLASSIFICATION_PROMPT = """You are an intent classifier for a travel planning assistant.
+CLASSIFICATION_PROMPT = (
+    """You are an intent classifier for a travel planning assistant.
 
 ## Classification Rules
 
@@ -1241,7 +1205,9 @@ Classify the user message into ONE of:
    - Destinations, dates, preferences, questions
    - Affirmations WITH context: "Yes, Paris sounds good" = PLANNING
    - Negations WITH alternatives: "No, I prefer Rome" = PLANNING
-   - Activity mentions: "diving", "hiking", "skiing", etc.
+   - Activity mentions: """
+    + _SPECIALIST_NAMES_CSV
+    + """, etc.
 
 ## CRITICAL RULES
 
@@ -1252,7 +1218,9 @@ Classify the user message into ONE of:
 
 ## Specialist Detection
 
-If the message mentions activities like diving, hiking, skiing, cycling, or boating,
+If the message mentions activities like """
+    + _SPECIALIST_NAMES_CSV
+    + """,
 include ALL matching specialists in the specialist_hints array.
 For example, "diving and hiking trip" should return ["diving", "hiking"].
 
@@ -1264,12 +1232,16 @@ Respond with valid JSON matching this schema:
   "intent": "GREETING" | "RESET" | "PLANNING",
   "confidence": 0.0-1.0,
   "reasoning": "brief explanation",
-  "specialist_hints": ["diving", "hiking", "skiing", "cycling", "boating"]
-}}"""  # specialist_hints: array of matching activities, empty if none
+  "specialist_hints": """
+    + _SPECIALIST_HINTS_JSON
+    + """
+}}"""
+)  # specialist_hints: array of matching activities, empty if none
 
 
 # Extended prompt for full field extraction (used when we need dates/destination too)
-ROUTER_EXTRACTION_PROMPT = """You are an intent classifier AND field extractor \
+ROUTER_EXTRACTION_PROMPT = (
+    """You are an intent classifier AND field extractor \
 for a travel planning assistant.
 Today's date is {today_date}.
 
@@ -1292,6 +1264,10 @@ Extract ANY trip-related fields mentioned:
   - For country-only queries, use primary city: "Indonesia" → "Bali", "UAE" → "Dubai"
   - Edge cases to keep as-is: "Mexico City", "Kansas City", "Washington DC"
 - **origin**: Same normalization rules as destination
+- **origin_iata**: IATA airport code for origin (e.g. "San Francisco" → "SFO", "London" → "LHR")
+  - Use the PRIMARY/closest international airport
+  - Mountain resorts use nearest major airport: "Chamonix" → "GVA", "Whistler" → "YVR"
+- **destination_iata**: Same rules (e.g. "Bali" → "DPS", "Paris" → "CDG")
 - **start_date**: Convert to YYYY-MM-DD format. Examples:
   - "March 1" → "{current_year}-03-01"
   - "next Friday" → calculate from today
@@ -1315,17 +1291,16 @@ Set these boolean flags:
 ## Specialist Detection
 
 Include all matching specialists (use CANONICAL lowercase names):
-- "scuba diving", "scuba", "dive", "snorkeling" → "diving"
-- "trekking", "trek", "climbing", "trail" → "hiking"
-- "snowboarding", "ski", "slopes" → "skiing"
-- "biking", "bicycle", "bike tour" → "cycling"
-- "sailing", "yacht", "cruise" → "boating"
+"""
+    + _SPECIALIST_KEYWORD_PROMPT
+    + """
 
 ## Task 4: Activity Categories
 
 Extract any activity categories the user mentions or implies. Use these canonical names:
-yoga, cooking, nightlife, temples, beach, shopping, photography, sailing, wellness,
-culture, music, wine, food
+"""
+    + _TIER2_NAMES_CSV
+    + """
 
 Examples:
 - "I want to party" → ["nightlife"]
@@ -1334,13 +1309,16 @@ Examples:
 - "diving and cooking" → ["cooking"] (diving goes in specialist_hints, not here)
 - "temple tours and wine tasting" → ["temples", "wine"]
 
-Do NOT include Tier 1 specialist activities (diving, hiking, skiing, cycling, surfing) here — \
+Do NOT include Tier 1 specialist activities ("""
+    + _SPECIALIST_NAMES_CSV
+    + """) here — \
 those go in specialist_hints.
 
 ## User Message
 "{user_message}"
 
 Respond with valid JSON. Only include fields that are explicitly mentioned."""
+)
 
 
 def _get_router_llm() -> ChatOpenAI:
@@ -1592,7 +1570,9 @@ async def _classify_and_extract_with_llm(
         # Create fallback with keyword detection
         text_lower = user_text.lower()
         has_dates = any(re.search(p, text_lower) for p in DATE_INDICATORS)
-        has_activity = any(re.search(p, text_lower) for p in ACTIVITY_INDICATORS)
+        has_activity = any(
+            kw in text_lower for kws in ALL_SPECIALIST_KEYWORDS.values() for kw in kws
+        )
 
         return (
             RouterOutput(
@@ -2208,6 +2188,11 @@ def _populate_trip_plan_from_router_output(
     if router_output.origin:
         state.trip_plan.origin = router_output.origin
 
+    if router_output.origin_iata:
+        state.trip_plan.origin_iata = router_output.origin_iata
+    if router_output.destination_iata:
+        state.trip_plan.destination_iata = router_output.destination_iata
+
     if router_output.adults is not None:
         state.trip_plan.adults = router_output.adults
 
@@ -2219,21 +2204,7 @@ def _populate_trip_plan_from_router_output(
 
     # Persist activity categories to activity_settings (Tier 2 pipeline activation)
     if router_output.activity_categories:
-        KNOWN_CATEGORIES = TIER1_SPECIALISTS | {
-            "yoga",
-            "cooking",
-            "nightlife",
-            "temples",
-            "beach",
-            "shopping",
-            "photography",
-            "sailing",
-            "wellness",
-            "culture",
-            "music",
-            "wine",
-            "food",
-        }
+        KNOWN_CATEGORIES = TIER1_SPECIALISTS | TIER2_ACTIVITY_KEYWORDS
         validated = [c for c in router_output.activity_categories if c.lower() in KNOWN_CATEGORIES]
         if validated:
             trip_inputs = state.metadata.get("trip_inputs", {})
@@ -2245,6 +2216,8 @@ def _populate_trip_plan_from_router_output(
             activity_settings["categories"] = merged
             trip_inputs["activity_settings"] = activity_settings
             state.metadata["trip_inputs"] = trip_inputs
+            state.metadata.pop("trip_settings", None)  # Clear so fallback reads trip_inputs
+            state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
             logger.info(f"[ROUTER] Categories: {merged} (from LLM: {validated})")
 
     logger.debug(
@@ -2381,6 +2354,18 @@ async def intent_router(state: GraphState) -> GraphState:
             trip_inputs["booking_types"] = {}
         trip_inputs["booking_types"]["flights"] = "suggested"
         state.metadata["trip_inputs"] = trip_inputs
+        state.metadata.pop("trip_settings", None)  # Clear so fallback reads trip_inputs
+        state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
+
+        # Resolve IATA codes before fast-path to logistics (avoids LLM call in data-fetch node)
+        if state.trip_plan.destination:
+            from app.planner.services.iata_resolver import resolve_iata_codes
+
+            await resolve_iata_codes(detected_origin, state.trip_plan.destination, state)
+            # Sync IATA to metadata.trip_inputs so it survives session boundary
+            trip_inputs["origin_iata"] = state.trip_plan.origin_iata
+            trip_inputs["destination_iata"] = state.trip_plan.destination_iata
+            state.metadata["trip_inputs"] = trip_inputs
 
         # ROUTE TO LOGISTICS: Only use fast-path if destination exists (allows flight search)
         # Otherwise, fall through to Architect for destination extraction
@@ -2471,6 +2456,8 @@ async def intent_router(state: GraphState) -> GraphState:
                 }
 
             state.metadata["trip_inputs"] = trip_inputs
+            state.metadata.pop("trip_settings", None)  # Clear so fallback reads trip_inputs
+            state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
 
             # Populate extracted_settings so _format_result includes them in
             # the output trip_inputs and they persist across graph runs.
@@ -2502,8 +2489,8 @@ async def intent_router(state: GraphState) -> GraphState:
             if "budget" in detected_settings:
                 changes.append(f"budget of **${detected_settings['budget']:,}**")
             if "adults" in detected_settings or "children" in detected_settings:
-                adults = detected_settings.get("adults", trip_inputs.get("adults", 1))
-                children = detected_settings.get("children", trip_inputs.get("children", 0))
+                adults = detected_settings.get("adults", state.trip_plan.adults or 1)
+                children = detected_settings.get("children", state.trip_plan.children or 0)
                 traveler_str = f"{adults} adult{'s' if adults > 1 else ''}"
                 if children:
                     traveler_str += f" and {children} child{'ren' if children > 1 else ''}"
@@ -2539,6 +2526,107 @@ async def intent_router(state: GraphState) -> GraphState:
         # ======================================================================
         # END SETTINGS DETECTION
         # ======================================================================
+
+        # ==================================================================
+        # ACTIONABLE INPUT DETECTION: Tier 2 activities, removals, skill level
+        # Catches inputs that settings detection misses but that are NOT
+        # exploratory. Must run before detect_planning_intent() to prevent
+        # the exploration short-circuit from swallowing valid input.
+        # ==================================================================
+        actionable = _detect_actionable_input(user_text, state)
+        if actionable:
+            trip_inputs = state.metadata.get("trip_inputs", {})
+            activity_settings = trip_inputs.get("activity_settings", {})
+            existing_cats = set(activity_settings.get("categories", []))
+
+            # Apply additions
+            if "add_categories" in actionable:
+                existing_cats |= actionable["add_categories"]
+
+            # Apply removals
+            if "remove_categories" in actionable:
+                existing_cats -= actionable["remove_categories"]
+                # Clear strategy sections for removed Tier 1 specialists
+                for cat in actionable["remove_categories"]:
+                    if cat in TIER1_SPECIALISTS:
+                        sections = state.metadata.get("strategy_sections", [])
+                        state.metadata["strategy_sections"] = [
+                            s for s in sections if s.get("specialist_type") != cat
+                        ]
+
+            # Apply skill level
+            if "skill_level" in actionable:
+                activity_settings["skill_level"] = actionable["skill_level"]
+
+            # Apply setting resets
+            if "reset_budget" in actionable:
+                trip_inputs["budget"] = None
+                state.trip_plan.budget = None
+            if "reset_hotel" in actionable:
+                trip_inputs["hotel_settings"] = {}
+
+            # Write back categories
+            activity_settings["categories"] = sorted(existing_cats)
+            trip_inputs["activity_settings"] = activity_settings
+            state.metadata["trip_inputs"] = trip_inputs
+            state.metadata.pop("trip_settings", None)
+            state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
+
+            # Check if message ALSO contains Tier 1 keywords.
+            # If so, don't return — let SOFT_TRANSITION handle specialist queuing.
+            has_tier1 = any(
+                any(kw in user_text.lower() for kw in kws)
+                for kws in ALL_SPECIALIST_KEYWORDS.values()
+            )
+            # But if we're REMOVING a Tier 1, don't let SOFT_TRANSITION re-add it
+            removing_tier1 = bool(actionable.get("remove_categories", set()) & TIER1_SPECIALISTS)
+
+            if not has_tier1 or removing_tier1:
+                # Pure Tier 2 / removal / skill / reset → route to logistics
+                state.metadata["origin_only_logistics"] = True
+                state.metadata["skip_architect"] = True
+                state.metadata["skip_specialists"] = True
+
+                # Build confirmation message
+                parts = []
+                added = actionable.get("add_categories", set())
+                removed = actionable.get("remove_categories", set())
+                if added:
+                    parts.append(f"Added **{', '.join(sorted(added))}**")
+                if removed:
+                    parts.append(f"Removed **{', '.join(sorted(removed))}**")
+                if "skill_level" in actionable:
+                    parts.append(f"Skill level: **{actionable['skill_level']}**")
+                if "reset_budget" in actionable:
+                    parts.append("Budget limit removed")
+                if "reset_hotel" in actionable:
+                    parts.append("Hotel preferences reset")
+
+                state.last_summary = f"{'. '.join(parts)}. Refreshing options..."
+                state.suggested_replies = [
+                    "Show me more options",
+                    "Change preferences",
+                ]
+                state.metadata["settings_just_updated"] = True
+
+                log("ROUTER", f"[ACTIONABLE] {actionable}")
+                _debug_node_end(
+                    "router",
+                    "🧭",
+                    intent="ACTIONABLE_TO_LOGISTICS",
+                    changes=list(actionable.keys()),
+                )
+                return state
+
+            # Mixed Tier 1 + Tier 2: categories already updated, fall through
+            # to detect_planning_intent → SOFT_TRANSITION which handles Tier 1
+            log(
+                "ROUTER",
+                f"[ACTIONABLE] Tier 2 categories set, continuing for Tier 1: {actionable}",
+            )
+        # ==================================================================
+        # END ACTIONABLE INPUT DETECTION
+        # ==================================================================
 
         # Check for planning readiness
         planning_intent = detect_planning_intent(user_text, state)
@@ -2653,8 +2741,8 @@ async def intent_router(state: GraphState) -> GraphState:
 
                 # CRITICAL: Set constraint hash for future change detection
                 # This ensures subsequent destination changes trigger tile clearing
-                trip_inputs = state.metadata.get("trip_inputs", {})
-                state.last_constraint_hash = _compute_constraint_hash(state.trip_plan, trip_inputs)
+                settings = get_trip_settings(state)
+                state.last_constraint_hash = _compute_constraint_hash(state.trip_plan, settings)
                 log("ROUTER", f"[READY] Constraint hash set: {state.last_constraint_hash[:8]}")
 
                 _debug_node_end(
@@ -2947,6 +3035,19 @@ async def intent_router(state: GraphState) -> GraphState:
                     state.active_specialist = "local_expert"
                     state.active_agent_id = "local_expert"
 
+                # SYNC: Write detected specialists to activity_settings.categories
+                # Without this, logistics sees categories=[] and suppresses all tiles
+                if new_specialists:
+                    _ti = state.metadata.get("trip_inputs", {})
+                    _as = _ti.get("activity_settings", {})
+                    _cats = set(_as.get("categories", []))
+                    _merged = sorted(_cats | set(new_specialists))
+                    _as["categories"] = _merged
+                    _ti["activity_settings"] = _as
+                    state.metadata["trip_inputs"] = _ti
+                    state.metadata.pop("trip_settings", None)
+                    state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
+
                 state.ui_events.append("SPECIALIST_ACTIVE")
 
                 # Ensure we don't short-circuit so the specialist actually runs
@@ -2981,7 +3082,7 @@ async def intent_router(state: GraphState) -> GraphState:
 
             activity_prompt = (
                 "What activities are you interested in? "
-                "I specialize in diving, hiking, and skiing trips."
+                f"I specialize in {_SPECIALIST_NAMES_CSV} trips."
             )
             if has_date:
                 # Has date, needs activity
@@ -3127,9 +3228,8 @@ async def intent_router(state: GraphState) -> GraphState:
     # CONSTRAINT CHANGE DETECTION: Re-run specialists when inputs change
     # =========================================================================
     # Check if critical inputs changed since the last run
-    # NOTE: Hash is computed from trip_inputs (from frontend) which has latest values
-    trip_inputs = state.metadata.get("trip_inputs", {})
-    current_hash = _compute_constraint_hash(state.trip_plan, trip_inputs)
+    # NOTE: Hash is computed from typed trip_settings which has latest values
+    current_hash = _compute_constraint_hash(state.trip_plan, get_trip_settings(state))
     previous_hash = state.last_constraint_hash
     executed = state.metadata.get("executed_strategy_topics", [])
     # Include requested specialists that may have been infeasible
@@ -3144,12 +3244,12 @@ async def intent_router(state: GraphState) -> GraphState:
         f"[REACTIVITY] Hash: prev={prev_hash_str} → curr={current_hash[:8]}",
     )
     log("ROUTER", f"[REACTIVITY] executed_strategy_topics={executed}")
-    dest = trip_inputs.get("destination")
-    start = trip_inputs.get("start_date")
-    end = trip_inputs.get("end_date")
+    dest = state.trip_plan.destination
+    start = state.trip_plan.start_date
+    end = state.trip_plan.end_date
     log(
         "ROUTER",
-        f"[REACTIVITY] trip_inputs: dest={dest}, dates={start} to {end}",
+        f"[REACTIVITY] trip_plan: dest={dest}, dates={start} to {end}",
     )
     log("ROUTER", f"[REACTIVITY] is_generate_trigger={is_generate_trigger}")
 

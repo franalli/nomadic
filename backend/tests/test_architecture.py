@@ -332,24 +332,20 @@ class TestSynthesizer:
 class TestFeasibilityChecks:
     """Test feasibility checking for specialists (Red/Amber/Green card states)."""
 
-    def test_dubai_diving_caveat(self):
-        """Dubai should return CAVEAT status for diving (indoor pool recommended)."""
+    def test_diving_has_geographic_constraint(self):
+        """Diving should be gated by has_geographic_constraint (LLM-only feasibility)."""
+        from app.planner.specialist_registry import get as get_specialist_config
+
+        config = get_specialist_config("diving")
+        assert config is not None
+        assert config.has_geographic_constraint is True
+
+    def test_cycling_no_geographic_constraint(self):
+        """Cycling should skip feasibility (no geographic constraint)."""
         from app.planner.nodes.vertical_specialist import check_feasibility
 
-        status, reason, alternative = check_feasibility("diving", "Dubai")
-
-        assert status == "caveat", f"Expected 'caveat', got '{status}'"
-        assert reason is not None
-        assert "Deep Dive Dubai" in reason, f"Should mention Deep Dive Dubai: {reason}"
-
-    def test_landlocked_diving_infeasible(self):
-        """Landlocked countries should return INFEASIBLE for diving."""
-        from app.planner.nodes.vertical_specialist import check_feasibility
-
-        status, reason, alternative = check_feasibility("diving", "Switzerland")
-
-        assert status == "infeasible", f"Expected 'infeasible', got '{status}'"
-        assert alternative is not None  # Should suggest alternative destinations
+        status, reason, alternative = check_feasibility("cycling", "Switzerland")
+        assert status == "feasible", f"Expected 'feasible', got '{status}'"
 
     def test_bali_diving_feasible(self):
         """Bali should return FEASIBLE for diving (prime destination)."""

@@ -30,7 +30,7 @@ class TestCacheKeyGeneration:
         from app.services.experience_generator import _experience_cache_key
 
         key = _experience_cache_key("Bali", ["yoga", "cooking"], "2026-03")
-        assert key == "experience:bali:cooking|yoga:2026-03"
+        assert key == "experience:bali:cooking|yoga:2026-03:n2"
 
     def test_categories_sorted_alphabetically(self):
         from app.services.experience_generator import _experience_cache_key
@@ -64,7 +64,7 @@ class TestCacheKeyGeneration:
         from app.services.experience_generator import _experience_cache_key
 
         key = _experience_cache_key("Bali", ["yoga"], "")
-        assert key.endswith(":unknown")
+        assert ":unknown:" in key
 
     def test_different_categories_different_keys(self):
         from app.services.experience_generator import _experience_cache_key

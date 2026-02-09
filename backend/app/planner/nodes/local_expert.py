@@ -21,6 +21,11 @@ from pydantic import BaseModel, Field
 
 from app.data.demo_curation import DEMO_MANIFEST
 from app.placeholders import get_destination_gallery
+from app.planner.services.section_builder import (
+    build_local_expert_section,
+    mark_topic_executed,
+    upsert_section,
+)
 from app.planner.state import GraphState
 
 # =============================================================================
@@ -1538,27 +1543,22 @@ Travelers: {plan.adults} adults{f", {plan.children} children" if plan.children e
     # NOTE: Local Expert uses Magazine Layout (gallery + tips), NOT General Layout (stats grid)
     # trip_summary is intentionally OMITTED - frontend renders different layout for local_expert
     # @see docs/ux_unified_architecture.md Section XII - Magazine Layout for Local Expert
-    section = {
-        "id": "strategy_local_expert",
-        "specialist_type": "local_expert",
-        "title": f"{plan.destination} Trip Overview",
-        "one_liner": (
-            response.destination_overview.tagline
-            if response.destination_overview and response.destination_overview.tagline
-            else f"Your adventure in {plan.destination}"
-        ),
-        "bullets": [c.description for c in response.constraints[:3]],
-        "principles": [],
-        "must_dos": [r.title for r in response.recommendations[:5]],
-        "optional_upgrades": [],
-        "logistics_notes": [r.description for r in response.recommendations],
-        "constraints_applied": constraints_applied,
-        "content_added": content_added,
-        "impact_areas": ["Logistics", "Timing", "Culture"],
-        "destination_gallery": gallery_images,  # "Vibe Trio" images for Magazine Layout
-        # NEW: Comprehensive 12-category travel intelligence
-        "travel_intelligence": travel_intelligence,
-    }
+    one_liner = (
+        response.destination_overview.tagline
+        if response.destination_overview and response.destination_overview.tagline
+        else f"Your adventure in {plan.destination}"
+    )
+    section = build_local_expert_section(
+        destination=plan.destination,
+        one_liner=one_liner,
+        bullets=[c.description for c in response.constraints[:3]],
+        must_dos=[r.title for r in response.recommendations[:5]],
+        logistics_notes=[r.description for r in response.recommendations],
+        constraints_applied=constraints_applied,
+        content_added=content_added,
+        gallery_images=gallery_images,
+        travel_intelligence=travel_intelligence,
+    )
 
     # ==========================================================================
     # Update State
@@ -1573,15 +1573,7 @@ Travelers: {plan.adults} adults{f", {plan.children} children" if plan.children e
         f"types={[s.get('specialist_type') for s in incoming_sections]}"
     )
 
-    # Initialize strategy_sections if needed
-    if "strategy_sections" not in state.metadata:
-        state.metadata["strategy_sections"] = []
-
-    # Remove existing local_expert section (avoid duplicates on re-run)
-    state.metadata["strategy_sections"] = [
-        s for s in state.metadata["strategy_sections"] if s.get("specialist_type") != "local_expert"
-    ]
-    state.metadata["strategy_sections"].append(section)
+    upsert_section(state.metadata, section, mode="appendable")
 
     # DEBUG: Log outgoing strategy_sections
     outgoing_sections = state.metadata.get("strategy_sections", [])
@@ -1590,12 +1582,7 @@ Travelers: {plan.adults} adults{f", {plan.children} children" if plan.children e
         f"types={[s.get('specialist_type') for s in outgoing_sections]}"
     )
 
-    # Mark as executed
-    executed = state.metadata.get("executed_strategy_topics", [])
-    if "local_expert" not in executed:
-        executed = list(executed)  # Make a copy
-        executed.append("local_expert")
-        state.metadata["executed_strategy_topics"] = executed
+    mark_topic_executed(state.metadata, "local_expert")
 
     log(
         "LOCAL_EXPERT",

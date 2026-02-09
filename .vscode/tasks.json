@@ -70,6 +70,16 @@
                 "panel": "shared"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "Copy Key Backend Files",
+            "type": "shell",
+            "command": "bash ${workspaceFolder}/scripts/copy-key-files.sh",
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            },
+            "problemMatcher": []
         }
     ]
 }

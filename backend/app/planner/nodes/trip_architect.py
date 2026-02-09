@@ -129,53 +129,69 @@ RULES:
    - "No flights" / "Turn off flights" / "I don't need flights" → flights_toggle: "off"
    - "Include flights" / "I want flights" / "Turn on flights" → flights_toggle: "on"
    - Same pattern for hotels_toggle, activities_toggle
+   - CRITICAL: A toggle is "off" ONLY when the user EXPLICITLY asks to remove/disable it.
+     Mentioning activities does NOT mean hotels should be off.
+     Mentioning flights does NOT mean activities should be off.
+     If the user does not mention a category AT ALL, leave its toggle null.
+   - WRONG: "yoga and cooking in Bali" → hotels_toggle: "off" (user never said no hotels!)
+   - WRONG: "I want to go diving" → flights_toggle: "off" (user never said no flights!)
+   - RIGHT: "no hotels, just activities" → hotels_toggle: "off", activities_toggle: "on"
+   - RIGHT: "skip flights" → flights_toggle: "off"
 
 2. FLIGHT SETTINGS:
    - "Direct flights only" / "No layovers" → flight_direct_only: true
    - flight_cabin_class MUST be one of: "economy", "premium_economy", "business", "first"
-     - "Business class" → "business"
+     - "Business class flights" → "business"
      - "First class" → "first"
      - "Economy" / "Coach" → "economy"
    - "One way" / "Not round trip" → flight_round_trip: false
 
 3. HOTEL SETTINGS (hotel_min_stars: 0-5):
-   - "5 star" / "Luxury" / "Five star" → hotel_min_stars: 5
-   - "4 star or better" / "Upscale" → hotel_min_stars: 4
-   - "3 star" / "Mid-range" → hotel_min_stars: 3
-   - "Budget" / "Cheap" → hotel_min_stars: 0
+   - "5 star hotel" / "Luxury resort" → hotel_min_stars: 5
+   - "4 star or better" / "Upscale hotel" → hotel_min_stars: 4
+   - "3 star" / "Mid-range hotel" → hotel_min_stars: 3
+   - "Budget hotel" / "Cheap stay" → hotel_min_stars: 0
    - Ambiguous terms like "nice" or "good" → DO NOT set (leave null)
 
 4. Only extract fields EXPLICITLY mentioned. Return null for anything ambiguous.
+   When in doubt, return null. Never infer a toggle from context — only from direct statements.
 
 USER MESSAGE: {user_text}
 """
 
-# Keywords that indicate settings-related content
+# Keywords that indicate EXPLICIT settings/toggle intent.
+# Must be specific enough to avoid false positives on activity descriptions
+# like "yoga class", "cooking activity", "business district".
 SETTINGS_KEYWORDS = [
-    "flight",
-    "flights",
-    "hotel",
-    "hotels",
-    "stay",
-    "stays",
-    "direct",
-    "layover",
-    "class",
-    "star",
-    "activity",
-    "activities",
+    # Explicit toggle phrases
     "turn off",
     "turn on",
     "no need",
     "don't need",
-    "include",
-    "business",
+    "skip flights",
+    "skip hotels",
+    "no flights",
+    "no hotels",
+    "include flights",
+    "include hotels",
+    # Flight preferences (require "flight" context)
+    "direct flight",
+    "nonstop flight",
+    "no layover",
+    "layovers",
     "first class",
-    "economy",
-    "luxury",
-    "budget",
+    "business class",
+    "economy class",
     "one way",
     "round trip",
+    # Hotel preferences (require "hotel"/"star" context)
+    "star hotel",
+    "star resort",
+    "luxury hotel",
+    "luxury resort",
+    "budget hotel",
+    "budget stay",
+    "mid-range hotel",
 ]
 
 

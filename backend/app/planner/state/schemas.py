@@ -17,6 +17,14 @@ from typing import Any, Dict, List, Literal, Optional
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 
+from app.schemas import (
+    ActivitySettings,
+    BookingTypes,
+    FlightSettings,
+    HotelSettings,
+    TransportSettings,
+)
+
 # =============================================================================
 # Constraint Severity Enum
 # =============================================================================
@@ -161,6 +169,24 @@ class SpecialistConstraint(BaseModel):
     buffer_hours: Optional[int] = None  # For temporal constraints e.g., 24
 
 
+class TripSettings(BaseModel):
+    """User-owned booking/filtering settings. SSoT lives on the frontend document.
+
+    Replaces the untyped metadata['trip_inputs'] settings sub-dicts.
+    Reuses the same Pydantic sub-models already used by DocumentTripInputs.
+    """
+
+    booking_types: BookingTypes = Field(default_factory=BookingTypes)
+    flight_settings: FlightSettings = Field(default_factory=FlightSettings)
+    hotel_settings: HotelSettings = Field(default_factory=HotelSettings)
+    activity_settings: ActivitySettings = Field(default_factory=ActivitySettings)
+    transport_settings: TransportSettings = Field(default_factory=TransportSettings)
+    date_flex: bool = False
+    trip_duration: Optional[int] = None
+    date_window_start: Optional[str] = None
+    date_window_end: Optional[str] = None
+
+
 class TripPlan(BaseModel):
     """
     The Single Source of Truth (SSoT) for the trip.
@@ -171,6 +197,8 @@ class TripPlan(BaseModel):
     # Core fields (required for booking)
     destination: Optional[str] = None
     origin: Optional[str] = None
+    origin_iata: Optional[str] = None
+    destination_iata: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
 
@@ -189,7 +217,8 @@ class TripPlan(BaseModel):
     # Booked segments
     segments: List[TripSegment] = Field(default_factory=list)
 
-    # Specialist-generated content
+    # DEPRECATED Stage 2B: content now lives on strategy_sections[].content_blocks
+    # Delete in Stage 3 after confirming no consumers remain
     itinerary_blocks: List[ItineraryBlock] = Field(default_factory=list)
 
     # Constraints from Specialist

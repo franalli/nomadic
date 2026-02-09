@@ -2163,7 +2163,7 @@ Used in Full Mode when tiles exist, and **always in S3 (itinerary ready)**. The 
 │ ▼ Local Expert - Trip Overview (collapsed)             │
 │ ▼ Diving Expert - PADI Certification (collapsed)       │
 ├─────────────────────────────────────────────────────────┤
-│ TRIP DNA BAR                                            │
+│ TRIP DNA BAR (flex-wrap pills, no horizontal scroll)    │
 │ Trip DNA:  [🌊 Diving (3)] [🏔️ Hiking (2)] [🧭 Local Expert (5)] │
 ├─────────────────────────────────────────────────────────┤
 │ ITINERARY                                               │
@@ -2211,7 +2211,7 @@ return <SearchingSkeleton />;
 ┌─────────────────────────────────────────────────────┐
 │ HEADER (Hero + Stepper)                             │
 ├─────────────────────────────────────────────────────┤
-│ TRIP DNA BAR (h-14) - Compact Strategy              │
+│ TRIP DNA BAR (flex-wrap pills) - Compact Strategy   │
 ├─────────────────────────────────────────────────────┤
 │ BOOKING TILES (Primary Focus - 85% of screen)       │
 └─────────────────────────────────────────────────────┘

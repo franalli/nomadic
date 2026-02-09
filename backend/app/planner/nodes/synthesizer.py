@@ -32,6 +32,7 @@ from app.planner.state import (
     GraphState,
     SynthesizerOutput,
     UIEvent,
+    get_trip_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -182,12 +183,8 @@ def _build_synthesis_context(state: GraphState) -> str:
         parts.append(f"- Trip Type: {plan.trip_type}")
 
     # User's activity selections (from pill UI) — MUST acknowledge, never re-ask
-    trip_inputs = state.metadata.get("trip_inputs", {})
-    activity_settings = trip_inputs.get("activity_settings", {})
-    if isinstance(activity_settings, dict):
-        categories = activity_settings.get("categories", [])
-    else:
-        categories = []
+    settings = get_trip_settings(state)
+    categories = settings.activity_settings.categories
     if categories:
         parts.append("\n## User's Activity Selections (from UI)")
         parts.append(f"- Selected activities: {', '.join(categories)}")
@@ -469,7 +466,7 @@ def generate_suggestions(state: GraphState) -> List[str]:
     # ── Step 2: Route violations ──
     route_violations = [v for v in constraint_violations if v.get("category") == "route"]
     if route_violations:
-        prev_dest = state.metadata.get("trip_inputs", {}).get("destination")
+        prev_dest = state.trip_plan.destination
         if prev_dest:
             return [f"Back to {prev_dest}", "Different city", "Help me choose"]
         return ["Paris", "Tokyo", "Barcelona"]

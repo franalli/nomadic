@@ -12,6 +12,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES
+
 
 class ConstraintType(str, Enum):
     """Severity level of a constraint."""
@@ -92,9 +94,17 @@ class FeasibilityAssessment(BaseModel):
 class SpecialistOutput(BaseModel):
     """Complete output from a vertical specialist LLM call."""
 
-    specialist_type: Literal["diving", "hiking", "skiing", "surfing", "cycling"] = Field(
-        ..., description="Type of specialist"
+    specialist_type: str = Field(
+        ..., description="Type of specialist (must match a registered specialist)"
     )
+
+    @field_validator("specialist_type")
+    @classmethod
+    def validate_specialist_type(cls, v: str) -> str:
+        if v not in TIER1_SPECIALIST_NAMES:
+            raise ValueError(f"Unknown specialist '{v}'. Valid: {sorted(TIER1_SPECIALIST_NAMES)}")
+        return v
+
     constraints: list[ConstraintOutput] = Field(
         default_factory=list, description="Safety and logistical constraints"
     )

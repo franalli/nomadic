@@ -69,6 +69,7 @@ These three docs override your assumptions. Read before generating code.
 5. **Safe Routing** — LLM-based intent classification (GPT-4o-mini), no regex
 6. **Constraint Injector** — Specialist runs BEFORE Architect calls tools
 7. **One Voice** — Synthesizer ensures consistent tone across all nodes
+8. **No hard-coded world data** — never hard-code locations, airports, geolocation, or any potentially infinite dataset — always write generic LLM logic to handle these cases
 
 ### Stack
 

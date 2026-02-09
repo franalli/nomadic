@@ -49,36 +49,13 @@ These constraints MUST be passed to the Architect:
    - Example: "Alps in July" → INFEASIBLE unless glacier skiing specified.
 
 ==============================
-SKIING DESTINATION KNOWLEDGE
-==============================
-Top skiing destinations by region:
-
-EUROPE:
-- Chamonix (France): Vallée Blanche, Grands Montets
-- Zermatt (Switzerland): Matterhorn views, high altitude
-- St. Anton (Austria): Legendary après-ski, challenging terrain
-- Verbier (Switzerland): Freeride paradise
-
-NORTH AMERICA:
-- Jackson Hole: Steep terrain, expert paradise
-- Whistler: Huge terrain, reliable snow
-- Aspen: Four mountains, luxury experience
-- Park City: Largest US ski area
-
-JAPAN:
-- Niseko: Legendary powder, 15m+ annual snowfall
-- Hakuba: 1998 Olympics, varied terrain
-- Nozawa Onsen: Traditional village, hot springs
-
-OTHER:
-- Queenstown (NZ): Southern hemisphere, adventure capital
-- Las Leñas (Argentina): Steep terrain, powder in August
-- Verbier (Switzerland): Extreme skiing, Mont Fort
-
-==============================
 OUTPUT REQUIREMENTS
 ==============================
-Generate skiing activities with REAL resort/run names for the destination.
+Generate skiing activities for the user's SPECIFIC destination.
+Use your world knowledge to identify real resorts, runs, and ski areas.
+Do NOT limit yourself to a predefined list.
+
+For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates.
 Include topic-specific fields:
 - elevation_meters: Resort base/peak altitude
 - vertical_meters: Vertical drop

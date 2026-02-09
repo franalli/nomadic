@@ -10,4 +10,4 @@ export { GhostSlot } from './GhostSlot';
 export { LogisticsBlock } from './LogisticsBlock';
 export { SafetyBlock } from './SafetyBlock';
 export { SuggestionBlock } from './SuggestionBlock';
-export { type DisplayTime, getDisplayTime, getTopicColor, type TimeSlot,TOPIC_COLORS } from './types';
+export { type DisplayTime, getDisplayTime, type TimeSlot } from './types';

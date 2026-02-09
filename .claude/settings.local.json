@@ -99,7 +99,10 @@
       "Bash(.venv/bin/pytest:*)",
       "Bash(.venv/bin/python -m pytest tests/test_experience_generator.py -v)",
       "Bash(.venv/bin/python -m pytest:*)",
-      "Bash(poetry env info:*)"
+      "Bash(poetry env info:*)",
+      "Bash(PYTHONPATH=. .venv/bin/python:*)",
+      "Bash(PYTHONPATH=. .venv/bin/pytest:*)",
+      "Bash(bash:*)"
     ],
     "deny": [],
     "ask": []

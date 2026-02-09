@@ -417,6 +417,8 @@ These colors should NOT be used:
 ### Specialist Color Palette
 
 Multi-specialist trips use color-coded visual indicators to distinguish activity sources.
+All specialist data (colors, icons, keywords, display names) lives in a single registry:
+**`frontend/lib/specialists.ts`**
 
 | Specialist | Color Name | Hex | Usage |
 |------------|------------|-----|-------|
@@ -425,19 +427,25 @@ Multi-specialist trips use color-coded visual indicators to distinguish activity
 | `hiking` | Forest Green | `#10B981` | Terrestrial activities |
 | `skiing` | Snow Blue | `#3B82F6` | Alpine activities |
 | `cycling` | Lime | `#84CC16` | Cycling activities |
-| `surfing` | Indigo | `#6366F1` | Surfing activities (Tier 1) |
-| `boating` | Indigo | `#6366F1` | Boating/sailing activities (legacy frontend key, Tier 2) |
+| `surfing` | Indigo | `#6366F1` | Surfing activities |
+| `climbing` | Orange | `#F97316` | Rock/mountain climbing |
+| `sailing` | Cyan | `#06B6D4` | Sailing/yacht activities |
+| `wildlife_safari` | Amber | `#D97706` | Safari activities |
 | `default` | Zinc | `#71717A` | Fallback for unknown types |
+
+> Legacy: `boating` is a backward-compat alias for `sailing`. Backend no longer sends it.
 
 #### Timeline Block Styling
 
 Each activity block in the S3 Itinerary View shows specialist attribution via colored borders:
 
 ```tsx
-// 4px colored left-border per specialist
+// 4px colored left-border per specialist — color from registry
+import { getSpecialistColor } from '@/lib/specialists';
+
 <div
   className="rounded-xl border bg-white dark:bg-zinc-800/50"
-  style={{ borderLeftWidth: '4px', borderLeftColor: SPECIALIST_COLORS[block.specialist_type] }}
+  style={{ borderLeftWidth: '4px', borderLeftColor: getSpecialistColor(block.specialist_type) }}
 >
 ```
 
@@ -449,30 +457,24 @@ Each activity block in the S3 Itinerary View shows specialist attribution via co
 
 #### Implementation Reference
 
-**Frontend:** `frontend/components/plan/timeline/blocks/types.ts`
+**Single Source of Truth:** `frontend/lib/specialists.ts`
 
 ```typescript
-export const SPECIALIST_COLORS: Record<string, string> = {
-  local_expert: '#6B7280',
-  diving: '#0EA5E9',
-  hiking: '#10B981',
-  skiing: '#3B82F6',
-  cycling: '#84CC16',
-  surfing: '#6366F1',
-  boating: '#6366F1',  // legacy — frontend migration pending
-  default: '#71717A',
-};
+import { getSpecialistColor, getSpecialistConfig, SPECIALIST_IDS } from '@/lib/specialists';
 
-export function getSpecialistBorderColor(specialistType?: string): string {
-  return SPECIALIST_COLORS[specialistType || ''] || SPECIALIST_COLORS.default;
-}
+getSpecialistColor('diving')     // '#0EA5E9'
+getSpecialistConfig('diving')    // { id, displayName, icon, emoji, color, filterKeywords }
+getSpecialistConfig('boating')   // returns sailing config (backward compat)
+SPECIALIST_IDS                   // ['diving', 'hiking', 'skiing', 'cycling', 'surfing', 'climbing', 'sailing', 'wildlife_safari']
 ```
 
-**Note:** These hex values are deliberately NOT Tailwind classes—they're used for inline `style` props to ensure precise color matching across the timeline.
+**CSS Topic Color System:** `--topic-color` is set inline via `getSpecialistColorRgb()`, consumed by `.topic-badge`, `.topic-border-left`, `.topic-header-tint` classes in `globals.css`.
+
+**Note:** Hex values are used for inline `style` props—NOT Tailwind classes—to ensure precise color matching and avoid dynamic class generation.
 
 #### Trip DNA Bar
 
-The Trip DNA bar shows engine constraints from niche specialists (diving, hiking, skiing). It appears BELOW the specialist accordion cards and ABOVE the itinerary.
+The Trip DNA bar shows engine constraints from niche specialists (all entries in `SPECIALIST_IDS`). It appears BELOW the specialist accordion cards and ABOVE the itinerary. Filtering uses `NICHE_SPECIALIST_IDS` from `lib/specialists.ts`.
 
 **Layout Order (StrategyStageRenderer):**
 1. Specialist Analysis (collapsed accordion cards, hidden in S3 by default)

@@ -15,6 +15,7 @@
 import {
   AlertCircle,
   Bike,
+  Binoculars,
   Briefcase,
   Building,
   ChevronDown,
@@ -42,6 +43,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
+import { SPECIALIST_IDS, getSpecialistColorRgb } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
 import {
@@ -93,29 +95,27 @@ const formatConstraintTitle = (rule: string): string => {
   return mappings[rule] || rule.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 };
 
-// Topic priority for stable ordering
 // Topic priority: Local Expert first (foundation/logistics), then niche specialists, general last
-const TOPIC_PRIORITY = ['local_expert', 'skiing', 'hiking', 'diving', 'boating', 'cycling', 'general'];
+const TOPIC_PRIORITY = ['local_expert', ...SPECIALIST_IDS, 'general'];
 
-// Topic configuration with icons and labels
+// Topic configuration with icons and UI copy (readyAction/updatingAction are component-local)
 const TOPIC_CONFIG: Record<string, {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
-  // Default action log for demo visibility
   readyAction: string;
   updatingAction: string;
 }> = {
-  hiking: {
-    icon: Mountain,
-    label: 'Hiking',
-    readyAction: 'Verified trail conditions and permits',
-    updatingAction: 'Checking seasonal trail access...',
-  },
   diving: {
     icon: Waves,
     label: 'Diving',
     readyAction: 'Confirmed dive sites and safety intervals',
     updatingAction: 'Checking dive site availability...',
+  },
+  hiking: {
+    icon: Mountain,
+    label: 'Hiking',
+    readyAction: 'Verified trail conditions and permits',
+    updatingAction: 'Checking seasonal trail access...',
   },
   skiing: {
     icon: Snowflake,
@@ -123,17 +123,35 @@ const TOPIC_CONFIG: Record<string, {
     readyAction: 'Verified resort conditions and lift passes',
     updatingAction: 'Checking snow conditions...',
   },
-  boating: {
-    icon: Sailboat,
-    label: 'Boating',
-    readyAction: 'Confirmed marina availability and weather',
-    updatingAction: 'Checking marina schedules...',
-  },
   cycling: {
     icon: Bike,
     label: 'Cycling',
     readyAction: 'Mapped routes and elevation profiles',
     updatingAction: 'Analyzing route conditions...',
+  },
+  surfing: {
+    icon: Waves,
+    label: 'Surfing',
+    readyAction: 'Checked swell forecasts and beach conditions',
+    updatingAction: 'Checking surf conditions...',
+  },
+  climbing: {
+    icon: Mountain,
+    label: 'Climbing',
+    readyAction: 'Verified crag access and route grades',
+    updatingAction: 'Checking climbing conditions...',
+  },
+  sailing: {
+    icon: Sailboat,
+    label: 'Sailing',
+    readyAction: 'Confirmed marina availability and weather',
+    updatingAction: 'Checking marina schedules...',
+  },
+  wildlife_safari: {
+    icon: Binoculars,
+    label: 'Wildlife Safari',
+    readyAction: 'Verified game drive availability and seasons',
+    updatingAction: 'Checking safari conditions...',
   },
   local_expert: {
     icon: Building,
@@ -147,6 +165,13 @@ const TOPIC_CONFIG: Record<string, {
     readyAction: 'Optimized itinerary and logistics',
     updatingAction: 'Planning logistics...',
   },
+};
+
+const DEFAULT_TOPIC_CONFIG = {
+  icon: Sparkles,
+  label: 'Specialist',
+  readyAction: 'Analysis complete',
+  updatingAction: 'Analyzing...',
 };
 
 interface S2StrategyViewProps {
@@ -475,7 +500,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
       : section.bullets.slice(0, 3);
 
   const topic = section.specialist_type || 'general';
-  const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
+  const config = TOPIC_CONFIG[topic] ?? DEFAULT_TOPIC_CONFIG;
   const Icon = config.icon;
 
   // Feasibility state from Constraint Engine
@@ -489,6 +514,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
     <div
       ref={cardRef}
       data-topic={topic}
+      style={{ '--topic-color': getSpecialistColorRgb(topic) } as React.CSSProperties}
       className={cn(
         "rounded-2xl border overflow-hidden topic-border-left transition-all duration-200",
         // Light: Pure white card with premium soft shadow
@@ -1009,12 +1035,13 @@ function StrategyStack({
 
       {/* Pending topics placeholder (updating state) */}
       {filteredPendingTopics.map(topic => {
-        const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
+        const config = TOPIC_CONFIG[topic] ?? DEFAULT_TOPIC_CONFIG;
         const TopicIcon = config.icon;
         return (
           <div
             key={`pending-${topic}`}
             data-topic={topic}
+            style={{ '--topic-color': getSpecialistColorRgb(topic) } as React.CSSProperties}
             className="bg-card rounded-lg border border-border px-4 py-3 topic-border-left"
           >
             <div className="flex items-center gap-2">
@@ -1341,7 +1368,7 @@ export function S2StrategyView({
 
           {/* Pending topics placeholder */}
           {pendingTopics.map((topic) => {
-            const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
+            const config = TOPIC_CONFIG[topic] ?? DEFAULT_TOPIC_CONFIG;
             const TopicIcon = config.icon;
             return (
               <div

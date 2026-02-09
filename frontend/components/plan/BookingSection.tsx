@@ -31,6 +31,7 @@ import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { type TileFilters } from '@/components/tiles/TileFilterBar';
 import { TileSectionHeader } from '@/components/tiles/TileSectionHeader';
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
+import { activityMatchesSpecialist as registryMatch } from '@/lib/specialists';
 import { getActiveSpecialists } from '@/lib/specialist-utils';
 import { getTotalTileCount, normalizeTileType, selectTilesByType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
@@ -46,45 +47,10 @@ import { isGenerating } from './planStateHelpers';
 import { BookableCard, type PartnerPrice } from './tiles/BookableCard';
 import { SuggestionCard } from './tiles/SuggestionCard';
 
-// Specialist keyword mappings for activity filtering
-// When a specialist is active, only show activities matching these keywords
-const SPECIALIST_KEYWORDS: Record<string, string[]> = {
-  diving: ['div', 'scuba', 'snorkel', 'reef', 'underwater', 'wreck'],
-  hiking: ['hik', 'trek', 'trail', 'climb', 'summit', 'mountain'],
-  skiing: ['ski', 'snow', 'slope', 'piste', 'powder', 'chairlift', 'gondola'],
-  surfing: ['surf', 'wave', 'beach', 'board', 'swell'],
-  climbing: ['climb', 'boulder', 'crag', 'via ferrata', 'rope'],
-  cycling: ['cycl', 'bike', 'biking', 'pedal', 'mtb'],
-};
-
-/**
- * Check if an activity tile matches active specialist types.
- * When domain specialists (diving, hiking, etc.) are active, only show
- * activities relevant to those specialists. local_expert shows all.
- */
+/** Check if an activity tile matches active specialist types (with experience pass-through) */
 function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boolean {
-  if (!specialistTypes || specialistTypes.length === 0) return true;
-
-  // Experience tiles always pass through (Tier 2, purpose-generated for user's selection)
   if (tile.tags?.includes('experience')) return true;
-
-  const category = (tile.type || '').toLowerCase();
-  const title = (tile.title || '').toLowerCase();
-  const subtitle = (tile.subtitle || '').toLowerCase();
-  const searchText = `${category} ${title} ${subtitle}`;
-
-  for (const specialist of specialistTypes) {
-    const s = specialist.toLowerCase();
-    if (s === 'local_expert') return true; // Local expert shows all activities
-
-    const keywords = SPECIALIST_KEYWORDS[s] || [];
-    for (const keyword of keywords) {
-      if (searchText.includes(keyword)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return registryMatch(tile, specialistTypes);
 }
 
 // Category types for S2 preview
