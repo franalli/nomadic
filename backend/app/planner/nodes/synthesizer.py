@@ -21,6 +21,7 @@ Architect, Specialist, and Guard outputs into a coherent narrative.
 
 import logging
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import List
 
@@ -43,15 +44,36 @@ logger = logging.getLogger(__name__)
 
 SYNTHESIZER_MODEL = os.getenv("SYNTHESIZER_MODEL", "gpt-4o")
 
+# Model selection by response complexity
+# Note: Greeting responses are gated by _should_use_llm_synthesis() and never reach this logic
+_MODEL_BY_COMPLEXITY = {
+    "exploration": "gpt-4o-mini",  # Simple conversational
+    "specialist_update": "gpt-4o-mini",  # Acknowledge specialist + counts
+    "planning": "gpt-4o",  # Complex synthesis with constraints
+}
 
-def _get_synthesizer_llm() -> ChatOpenAI:
-    """Get the LLM for synthesis with streaming enabled."""
+
+def _get_synthesizer_llm(response_type: str = "planning") -> ChatOpenAI:
+    """
+    Get the LLM for synthesis based on response complexity.
+    Falls back to gpt-4o for unknown response types.
+    """
+    model = _MODEL_BY_COMPLEXITY.get(response_type, "gpt-4o")
+
     return ChatOpenAI(
-        model=SYNTHESIZER_MODEL,
+        model=model,
         temperature=0.7,  # Slightly creative for natural voice
         streaming=True,  # Enable token streaming
         max_tokens=500,  # Keep responses concise
     )
+
+
+# Conversation history depth by response type
+_HISTORY_DEPTH_BY_TYPE = {
+    "exploration": 4,  # 2 turns (4 messages)
+    "specialist_update": 4,  # 2 turns
+    "planning": 8,  # 4 turns (full context)
+}
 
 
 def _get_response_type(state) -> str:
@@ -60,12 +82,30 @@ def _get_response_type(state) -> str:
 
     GAP 2 FIX: This enables Jinja2 conditionals in synthesizer.txt
     to scope solver-identity tone to planning modes only.
+
+    Uses flag-based classification to avoid fragile turn counting.
     """
     meta = state.metadata or {}
 
     # Check for greeting/reset short circuits
     if meta.get("short_circuit_type") in ("greeting", "reset"):
         return "greeting"
+
+    # Planning mode when blocking violations exist
+    if meta.get("constraint_violations"):
+        return "planning"
+
+    # Planning mode: first time all core fields are set (one-time flag)
+    has_full_trip = (
+        state.trip_plan
+        and state.trip_plan.destination
+        and state.trip_plan.start_date
+        and state.trip_plan.end_date
+    )
+
+    if has_full_trip and not meta.get("_planning_response_given"):
+        state.metadata["_planning_response_given"] = True
+        return "planning"
 
     # Check for exploration mode (pre-destination)
     if meta.get("exploration_mode"):
@@ -81,42 +121,71 @@ def _get_response_type(state) -> str:
 
     # Check for active planning (has destination)
     if state.trip_plan and state.trip_plan.destination:
-        return "planning"
+        return "specialist_update"  # Changed from "planning" to avoid always using gpt-4o
 
     # Safe default: warm conversational tone
     return "exploration"
 
 
-def _load_system_prompt(state=None) -> str:
+@lru_cache(maxsize=1)
+def _load_prompt_template() -> Template:
     """
-    Load and render the synthesizer system prompt from file.
-
-    If state is provided, renders Jinja2 conditionals based on response_type.
+    Load and compile Jinja2 template (cached).
+    Cache invalidation: Process restart only.
     """
     prompt_path = Path(__file__).parent.parent.parent / "prompts" / "synthesizer.txt"
     if not prompt_path.exists():
-        return (
+        fallback = (
             "You are a helpful travel assistant. "
             "Synthesize the trip information into a friendly response."
         )
+        return Template(fallback)
 
     prompt_text = prompt_path.read_text(encoding="utf-8")
-
-    # If state provided, render Jinja2 conditionals
-    if state is not None:
-        try:
-            response_type = _get_response_type(state)
-            template = Template(prompt_text)
-            return template.render(response_type=response_type)
-        except Exception as e:
-            logger.warning(f"Jinja2 render failed, using raw prompt: {e}")
-            return prompt_text
-
-    return prompt_text
+    return Template(prompt_text)
 
 
-def _build_synthesis_context(state: GraphState) -> str:
-    """Build context string from all graph sources for LLM synthesis."""
+@lru_cache(maxsize=4)
+def _render_prompt_for_response_type(response_type: str) -> str:
+    """
+    Render prompt template for specific response_type (cached).
+
+    Cache size: 4 (greeting/exploration/specialist_update/planning)
+
+    SAFETY: This cache assumes response_type is the ONLY variable passed to template.render().
+    If you add more Jinja2 variables in the future, this cache will serve stale content.
+    Current: template.render(response_type=response_type) ✓
+    """
+    template = _load_prompt_template()
+    try:
+        return template.render(response_type=response_type)
+    except Exception as e:
+        logger.warning(f"Jinja2 render failed for response_type={response_type}: {e}")
+        return template.source if hasattr(template, "source") else str(template)
+
+
+def _load_system_prompt(state=None) -> str:
+    """
+    Load and render the synthesizer system prompt.
+    Uses cached template loading and rendering for performance.
+    """
+    if state is None:
+        template = _load_prompt_template()
+        return template.source if hasattr(template, "source") else str(template)
+
+    # Get response type and use cached rendered prompt
+    response_type = _get_response_type(state)
+    return _render_prompt_for_response_type(response_type)
+
+
+def _build_synthesis_context(state: GraphState, response_type: str | None = None) -> str:
+    """
+    Build context string from all graph sources for LLM synthesis.
+
+    Args:
+        state: Current graph state
+        response_type: Response type for history depth selection (auto-detected if None)
+    """
     parts = []
     plan = state.trip_plan
 
@@ -163,7 +232,14 @@ def _build_synthesis_context(state: GraphState) -> str:
         parts.append("- YOUR TASK: Summarize progress and guide to next steps")
 
     # Conversation history — gives LLM awareness of what was already said
-    recent = state.messages[-8:]  # ~4 turns
+    # Auto-detect response type if not provided
+    if response_type is None:
+        response_type = _get_response_type(state)
+
+    # Get history depth for this response type
+    history_depth = _HISTORY_DEPTH_BY_TYPE.get(response_type, 8)
+    recent = state.messages[-history_depth:] if history_depth > 0 else []
+
     if recent:
         parts.append("\n## Conversation History (last few turns)")
         for msg in recent:
@@ -356,18 +432,31 @@ def _build_synthesis_context(state: GraphState) -> str:
     return "\n".join(parts)
 
 
-async def synthesize_with_llm(state: GraphState) -> tuple[str | None, dict]:
+async def synthesize_with_llm(
+    state: GraphState,
+    response_type: str | None = None,
+) -> tuple[str | None, dict]:
     """
     Generate response using LLM for coherent synthesis.
 
     Weaves together Architect, Specialist, and Guard outputs
     into a single, natural-sounding response.
 
+    Args:
+        state: Current graph state
+        response_type: Response type for model selection (auto-detected if None)
+
     Returns tuple of (response_content, token_usage_dict).
     """
-    llm = _get_synthesizer_llm()
+    # Auto-detect response type if not provided
+    if response_type is None:
+        response_type = _get_response_type(state)
+
+    # Get model for this response type
+    llm = _get_synthesizer_llm(response_type)
+
     system_prompt = _load_system_prompt(state)  # GAP 2: Pass state for Jinja2 rendering
-    context = _build_synthesis_context(state)
+    context = _build_synthesis_context(state, response_type)  # Pass response_type for 8C
 
     messages = [
         SystemMessage(content=system_prompt),
@@ -375,11 +464,25 @@ async def synthesize_with_llm(state: GraphState) -> tuple[str | None, dict]:
     ]
 
     try:
+        # Log model selection for debugging
+        logger.debug(f"Using model={llm.model_name} for response_type={response_type}")
+
         # Use non-streaming for the node (streaming handled by astream_events)
         response = await llm.ainvoke(messages)
         token_usage = {}
-        if hasattr(response, "response_metadata"):
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            # LangChain 0.2+ provides usage_metadata
+            token_usage = {
+                "prompt_tokens": response.usage_metadata.get("input_tokens", 0),
+                "completion_tokens": response.usage_metadata.get("output_tokens", 0),
+                "total_tokens": response.usage_metadata.get("total_tokens", 0),
+                "model": llm.model_name,
+            }
+        elif hasattr(response, "response_metadata"):
+            # Fallback for older LangChain versions
             token_usage = response.response_metadata.get("token_usage", {})
+            if token_usage:
+                token_usage["model"] = llm.model_name  # Track model in usage
         content = response.content
         # Strip wrapping quotes — LLM sometimes mirrors example formatting
         if content and len(content) > 2 and content[0] == '"' and content[-1] == '"':
@@ -816,29 +919,35 @@ async def synthesizer(state: GraphState) -> GraphState:
     from app.debug_utils import log, log_tokens
 
     try:
-        # Settings update shortcut — preserve router's acknowledgment
-        # Skips LLM to avoid repeating tile counts / constraint warnings
-        # BUT: if violations exist, route to LLM so they surface in the response
-        if state.metadata.get("settings_just_updated") and not state.metadata.get(
-            "constraint_violations"
-        ):
+        # Settings update gate — check if new content was generated
+        # Terse ack OK for pure settings changes (e.g., "4-star hotels only")
+        # Full LLM synthesis needed when tiles/categories generated or violations exist
+        has_new_content = (
+            state.metadata.get("constraint_violations")  # Violations exist
+            or state.metadata.get("tier2_tiles_generated")  # NEW Tier 2 tiles generated
+            or len(state.metadata.get("added_categories", [])) > 0  # NEW categories added
+        )
+
+        if state.metadata.get("settings_just_updated") and not has_new_content:
+            # Only use terse ack for pure settings changes
             message = state.metadata.get("actionable_acknowledgment", "") or state.last_summary
-            log("SYNTH", f"Settings update ({len(message)} chars)")
-        elif state.metadata.get("settings_just_updated") and state.metadata.get(
-            "constraint_violations"
-        ):
+            log("SYNTH", "Settings update (terse ack OK, no new content)")
+        elif state.metadata.get("settings_just_updated") and has_new_content:
             # Violations override settings shortcut — use full LLM response
             log("SYNTH", "Settings update has violations — routing to LLM")
-            llm_response, token_usage = await synthesize_with_llm(state)
+            response_type = _get_response_type(state)
+            llm_response, token_usage = await synthesize_with_llm(state, response_type)
             if llm_response:
                 message = llm_response
                 if token_usage:
+                    model_used = token_usage.get("model", "unknown")
                     log_tokens(
                         "SYNTH",
                         token_usage.get("prompt_tokens", 0),
                         token_usage.get("completion_tokens", 0),
                         token_usage.get("total_tokens", 0),
                     )
+                    log("SYNTH", f"Model: {model_used}, Response type: {response_type}")
             else:
                 output = synth.generate_response(state)
                 message = output.message
@@ -847,16 +956,19 @@ async def synthesizer(state: GraphState) -> GraphState:
             # Use LLM for complex planning responses
             logger.debug("Using LLM synthesis for response generation")
             log("SYNTH", "Generating LLM response...")
-            llm_response, token_usage = await synthesize_with_llm(state)
+            response_type = _get_response_type(state)
+            llm_response, token_usage = await synthesize_with_llm(state, response_type)
             if llm_response:
                 message = llm_response
                 if token_usage:
+                    model_used = token_usage.get("model", "unknown")
                     log_tokens(
                         "SYNTH",
                         token_usage.get("prompt_tokens", 0),
                         token_usage.get("completion_tokens", 0),
                         token_usage.get("total_tokens", 0),
                     )
+                    log("SYNTH", f"Model: {model_used}, Response type: {response_type}")
             else:
                 # Fallback to template
                 output = synth.generate_response(state)
@@ -894,13 +1006,8 @@ async def synthesizer(state: GraphState) -> GraphState:
             await image_task
 
     # Generate suggestion chips (always template-based for consistency)
-    # Always regenerate when violations exist (even on settings updates)
-    if not state.metadata.get("settings_just_updated") or state.metadata.get(
-        "constraint_violations"
-    ):
-        suggested_replies = generate_suggestions(state)
-    else:
-        suggested_replies = state.suggested_replies or generate_suggestions(state)
+    # Always regenerate to ensure fresh suggestions on every turn
+    suggested_replies = generate_suggestions(state)
 
     # Log response details
     log("SYNTH", f"Response: {len(message)} chars")

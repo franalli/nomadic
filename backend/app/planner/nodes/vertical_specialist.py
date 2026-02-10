@@ -16,7 +16,6 @@ The Specialist runs BEFORE the Architect calls tools.
 
 import json
 import os
-from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel
@@ -505,7 +504,7 @@ class FeasibilityCheck(BaseModel):
     reason: str
 
 
-def _check_feasibility_llm(topic: str, destination: str) -> FeasibilityCheck:
+async def _check_feasibility_llm(topic: str, destination: str) -> FeasibilityCheck:
     """
     LLM determines if activity is geographically possible.
 
@@ -535,7 +534,7 @@ Be strict. Landlocked cities cannot have diving. Alpine towns without coast cann
 
 Respond JSON only: {{"possible": true/false, "reason": "brief"}}"""
 
-        response = llm.invoke(prompt)
+        response = await llm.ainvoke(prompt)
         content = response.content.strip()
 
         # Parse JSON response
@@ -559,19 +558,28 @@ Respond JSON only: {{"possible": true/false, "reason": "brief"}}"""
         return FeasibilityCheck(possible=True, reason="Unknown, proceeding")
 
 
-@lru_cache(maxsize=1000)
-def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
+# Simple async cache for feasibility checks
+_feasibility_cache: Dict[str, Tuple[bool, str]] = {}
+
+
+async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
     """
     Cached LLM feasibility check.
 
-    Cache key: f"{topic}:{destination}" (implicit via lru_cache)
+    Cache key: f"{topic}:{destination}"
     Returns: (possible, reason)
     """
-    result = _check_feasibility_llm(topic, destination)
-    return (result.possible, result.reason)
+    cache_key = f"{topic}:{destination}"
+    if cache_key in _feasibility_cache:
+        return _feasibility_cache[cache_key]
+
+    result = await _check_feasibility_llm(topic, destination)
+    cached_result = (result.possible, result.reason)
+    _feasibility_cache[cache_key] = cached_result
+    return cached_result
 
 
-def check_feasibility(
+async def check_feasibility(
     topic: str,
     destination: str,
 ) -> tuple:
@@ -595,7 +603,7 @@ def check_feasibility(
 
     # All feasibility decisions delegated to LLM
     _debug_log(f"[FEASIBILITY] LLM check for {topic} in {destination}")
-    possible, reason = get_feasibility_llm(topic, destination)
+    possible, reason = await get_feasibility_llm(topic, destination)
 
     if not possible:
         return (
@@ -1153,7 +1161,7 @@ class VerticalSpecialist:
         _debug_log(f"[SPECIALIST] Using hardcoded fallback for {self.topic}")
 
         # Check feasibility using hardcoded data
-        status, reason, alternative = check_feasibility(self.topic, destination)
+        status, reason, alternative = await check_feasibility(self.topic, destination)
         _debug_log(
             f"[SPECIALIST] feasibility: status={status}, reason={reason[:50] if reason else None}"
         )

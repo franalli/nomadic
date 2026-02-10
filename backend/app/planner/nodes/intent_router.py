@@ -2692,6 +2692,12 @@ async def intent_router(state: GraphState) -> GraphState:
                     except Exception as e:
                         log("ROUTER", f"[ACTIONABLE] LLM resolution failed: {e}")
 
+                # TIER 2 PREFETCH: Fire after alias resolution with fully resolved categories
+                if actionable.get("add_categories") and state.trip_plan.destination:
+                    tier2_detected = actionable["add_categories"] & TIER2_ACTIVITY_KEYWORDS
+                    if tier2_detected:
+                        _prefetch_tier2_experiences(state, tier2_detected)
+
                 # Bail if nothing was actually resolved
                 has_real_changes = (
                     actionable.get("add_categories")
@@ -2734,6 +2740,9 @@ async def intent_router(state: GraphState) -> GraphState:
                     state.suggested_replies = []
 
                     state.metadata["settings_just_updated"] = True
+                    # Track added categories for synthesizer gate
+                    if added:
+                        state.metadata["added_categories"] = list(added)
 
                     log("ROUTER", f"[ACTIONABLE] {actionable}")
                     _debug_node_end(
@@ -3502,3 +3511,56 @@ async def intent_router(state: GraphState) -> GraphState:
     )
 
     return state
+
+
+def _prefetch_tier2_experiences(state: "GraphState", categories: set[str]) -> None:
+    """Start Tier 2 experience generation speculatively to mask latency.
+
+    CRITICAL: Passes state=None to avoid dict mutation race condition.
+    Prefetch populates L1 cache. Logistics awaits task, then calls generate_experiences()
+    with state=state, hits L1 cache instantly, and populates state.metadata safely.
+    """
+    import asyncio
+
+    from app.debug_utils import log
+    from app.services.experience_generator import generate_experiences
+
+    plan = state.trip_plan
+    if not plan.destination:
+        return
+
+    month = str(plan.start_date)[:7] if plan.start_date else ""
+    tiles_per_category = 2  # Logistics refines this based on trip length
+
+    log(
+        "ROUTER",
+        f"[PREFETCH] Starting Tier 2 generation: dest={plan.destination}, categories={categories}",
+    )
+
+    task = asyncio.create_task(
+        generate_experiences(
+            destination=plan.destination,
+            categories=list(categories),
+            month=month,
+            budget=plan.budget,
+            tier1_specialists=None,
+            tiles_per_category=tiles_per_category,
+            state=None,  # ← CRITICAL: No state to avoid race condition
+        )
+    )
+
+    # Add exception handler to surface errors from fire-and-forget task
+    def _log_task_exception(t: asyncio.Task) -> None:
+        if t.exception():
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"[PREFETCH] Task failed with exception: {t.exception()}",
+                exc_info=t.exception(),
+            )
+
+    task.add_done_callback(_log_task_exception)
+
+    state.metadata["tier2_prefetch_task"] = task
+    state.metadata["tier2_prefetch_categories"] = list(categories)

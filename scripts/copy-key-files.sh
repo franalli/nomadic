@@ -39,5 +39,27 @@ find "$SRC/prompts" \
     cp "$src" "$DEST/$(basename "$src")"
   done
 
+# --- Everything in services/ (flat, skip __init__ and cache) ---
+find "$SRC/services" \
+  -type f \
+  ! -name '__init__.py' \
+  ! -name '*.pyc' \
+  ! -name '.DS_Store' \
+  ! -path '*/__pycache__/*' \
+  | while read -r src; do
+    cp "$src" "$DEST/$(basename "$src")"
+  done
+
+# --- Everything in tools/ (flat, skip __init__ and cache) ---
+find "$SRC/tools" \
+  -type f \
+  ! -name '__init__.py' \
+  ! -name '*.pyc' \
+  ! -name '.DS_Store' \
+  ! -path '*/__pycache__/*' \
+  | while read -r src; do
+    cp "$src" "$DEST/$(basename "$src")"
+  done
+
 echo "Copied key files to $DEST"
 find "$DEST" -type f | wc -l | xargs printf "  %s files total\n"

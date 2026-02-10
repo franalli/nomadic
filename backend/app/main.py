@@ -602,7 +602,9 @@ class DestinationImageResponse(BaseModel):
 
 
 @app.post("/api/destination-image", response_model=DestinationImageResponse)
-async def get_destination_image(req: DestinationImageRequest, db: AsyncSession = db_dependency):
+async def get_destination_image(
+    req: DestinationImageRequest, db: AsyncSession = async_db_dependency
+):
     """
     Get the Unsplash image URL for a destination.
 
@@ -613,7 +615,13 @@ async def get_destination_image(req: DestinationImageRequest, db: AsyncSession =
     if not dest_name:
         raise HTTPException(status_code=400, detail="Destination is required")
 
-    image_url = await get_image_for_destination(dest_name, variant=0, db=db, width=1600, height=900)
+    image_url = await get_image_for_destination(
+        dest_name,
+        variant=0,
+        db=db,
+        width=1600,
+        height=900,
+    )
 
     return DestinationImageResponse(
         image_url=image_url,

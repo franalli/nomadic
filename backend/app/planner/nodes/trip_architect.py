@@ -571,7 +571,7 @@ class TripArchitect:
         logger.debug("should_fetch_tiles: returning False (waiting for Build Plan click)")
         return False
 
-    def fetch_tiles_for_plan(self, state: GraphState) -> Dict[str, List[Dict]]:
+    async def fetch_tiles_for_plan(self, state: GraphState) -> Dict[str, List[Dict]]:
         """
         Fetch tiles for the current plan.
 
@@ -618,7 +618,7 @@ class TripArchitect:
 
             _debug_info("FETCH_TILES", f"Fetching {category}...")
             logger.debug(f"fetch_tiles_for_plan: fetching {category}...")
-            result = fetch_travel_tiles.invoke(
+            result = await fetch_travel_tiles.ainvoke(
                 {
                     "category": category,
                     "location": plan.destination or "",
@@ -917,7 +917,7 @@ async def trip_architect(state: GraphState) -> GraphState:
         if architect.should_fetch_tiles(state, intent):
             state.ui_events.append("TILES_LOADING")
             _debug_log("🏛️ ARCHITECT fetching tiles...")
-            tiles = architect.fetch_tiles_for_plan(state)
+            tiles = await architect.fetch_tiles_for_plan(state)
             state.tiles = tiles
             state.ui_events.append("TILES_READY")
             tile_counts = {k: len(v) for k, v in tiles.items()}

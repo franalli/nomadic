@@ -24,7 +24,7 @@ from app.schemas import (
     TileType,
 )
 from app.tile_service.service import search_tiles
-from app.validation import validate_input
+from app.validation import validate_input_async
 
 
 class TileSearchInput(BaseModel):
@@ -86,7 +86,7 @@ def _map_category_to_vertical(category: str) -> TileType:
     return mapping.get(category, category)
 
 
-def _validate_location(
+async def _validate_location(
     location: str, field_type: str = "destination"
 ) -> tuple[bool, str, Optional[str]]:
     """
@@ -96,7 +96,7 @@ def _validate_location(
         (is_valid, validated_name, error_message)
     """
     try:
-        result = validate_input(location, field_type)
+        result = await validate_input_async(location, field_type)
         if result.is_valid and result.corrected_values:
             # Use first corrected value
             return True, result.corrected_values[0], None
@@ -194,7 +194,7 @@ def _apply_specialist_constraints(
 
 
 @tool("fetch_travel_tiles", args_schema=TileSearchInput)
-def fetch_travel_tiles(
+async def fetch_travel_tiles(
     category: str,
     location: str,
     start_date: str,
@@ -238,7 +238,7 @@ def fetch_travel_tiles(
         Dict with: success, tiles, error, location_validated, tile_count, summary
     """
     # 1. Validate destination
-    is_valid, validated_location, error = _validate_location(location, "destination")
+    is_valid, validated_location, error = await _validate_location(location, "destination")
     if not is_valid:
         return TileSearchOutput(
             success=False,
@@ -255,7 +255,7 @@ def fetch_travel_tiles(
                 error="Origin is required for flight searches",
                 location_validated=validated_location,
             ).model_dump()
-        is_valid_origin, validated_origin, origin_error = _validate_location(origin, "origin")
+        is_valid_origin, validated_origin, origin_error = await _validate_location(origin, "origin")
         if not is_valid_origin:
             return TileSearchOutput(
                 success=False,

@@ -19,6 +19,7 @@ Key responsibilities:
 5. Store results in state.tiles for frontend display
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
@@ -433,43 +434,24 @@ def _tile_to_dict(tile) -> Dict[str, Any]:
     }
 
 
-async def _search_hotels_and_activities(state: GraphState, plan) -> None:
+async def _fetch_hotels(
+    async_session_factory,
+    plan,
+    hotel_settings,
+    provider,
+    dest_key,
+    curated_manifest,
+    start_date,
+    end_date,
+    activity_settings,
+    flight_settings,
+):
     """
-    Search for hotels and activities with L1+L2 caching.
+    Fetch hotel tiles with L1+L2 caching.
 
-    Provider routing strategy (consistent with tile_service):
-    1. Curated destinations (Dubai, Rome, Chamonix) → CuratedProvider (4K images, prices)
-    2. Non-curated + Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
-    3. Fallback → MockProviders
-
-    Caching strategy:
-    - Check cache before provider calls
-    - Store raw results in cache (filter post-retrieval)
-    - 24h TTL for tile data (prices change daily)
-
-    @see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
+    Runs in parallel with _fetch_activities() for latency optimization.
     """
-    from app.db import _get_async_session_factory
     from app.services.tile_cache import get_cached_tiles, set_cached_tiles
-
-    _debug_log(f"Searching hotels/activities for {plan.destination}...")
-
-    # Read user settings for provider filtering
-    _settings = get_trip_settings(state)
-    hotel_settings = _settings.hotel_settings.model_dump()
-    activity_settings = _settings.activity_settings.model_dump()
-    flight_settings = _settings.flight_settings.model_dump()
-
-    # Determine provider and cache key parameters
-    dest_key = plan.destination.lower().strip() if plan.destination else ""
-    curated_manifest = DEMO_MANIFEST.get(dest_key, {})
-    provider = "curated" if curated_manifest else "amadeus"
-
-    start_date = str(plan.start_date) if plan.start_date else ""
-    end_date = str(plan.end_date) if plan.end_date else ""
-
-    # Get database session for caching
-    async_session_factory = _get_async_session_factory()
 
     async with async_session_factory() as db:
         # =====================================================================
@@ -547,6 +529,29 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     db, provider, "hotel", plan.destination, start_date, end_date, hotel_dicts
                 )
 
+    return hotel_dicts
+
+
+async def _fetch_activities(
+    async_session_factory,
+    plan,
+    activity_settings,
+    provider,
+    dest_key,
+    curated_manifest,
+    start_date,
+    end_date,
+    hotel_settings,
+    flight_settings,
+):
+    """
+    Fetch activity tiles with L1+L2 caching.
+
+    Runs in parallel with _fetch_hotels() for latency optimization.
+    """
+    from app.services.tile_cache import get_cached_tiles, set_cached_tiles
+
+    async with async_session_factory() as db:
         # =====================================================================
         # ACTIVITIES CACHE CHECK
         # =====================================================================
@@ -567,22 +572,21 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
         else:
             _debug_log(f"[TILE_CACHE] Activities MISS - fetching from {provider}")
 
-            # Build search context if not already built
-            if "ctx" not in locals():
-                ctx = SearchContext(
-                    destination=plan.destination,
-                    origin=plan.origin,
-                    start_date=start_date or None,
-                    end_date=end_date or None,
-                    adults=plan.adults or 1,
-                    children=plan.children or 0,
-                    currency="USD",
-                    verticals=["hotel", "activity"],
-                    max_results_per_vertical=5,
-                    hotel_settings=hotel_settings or None,
-                    activity_settings=activity_settings or None,
-                    flight_settings=flight_settings or None,
-                )
+            # Build search context
+            ctx = SearchContext(
+                destination=plan.destination,
+                origin=plan.origin,
+                start_date=start_date or None,
+                end_date=end_date or None,
+                adults=plan.adults or 1,
+                children=plan.children or 0,
+                currency="USD",
+                verticals=["hotel", "activity"],
+                max_results_per_vertical=5,
+                hotel_settings=hotel_settings or None,
+                activity_settings=activity_settings or None,
+                flight_settings=flight_settings or None,
+            )
 
             activity_tiles = []
 
@@ -603,6 +607,76 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 await set_cached_tiles(
                     db, provider, "activity", plan.destination, start_date, end_date, activity_dicts
                 )
+
+    return activity_dicts
+
+
+async def _search_hotels_and_activities(state: GraphState, plan) -> None:
+    """
+    Search for hotels and activities with L1+L2 caching.
+
+    Provider routing strategy (consistent with tile_service):
+    1. Curated destinations (Dubai, Rome, Chamonix) → CuratedProvider (4K images, prices)
+    2. Non-curated + Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
+    3. Fallback → MockProviders
+
+    Caching strategy:
+    - Check cache before provider calls
+    - Store raw results in cache (filter post-retrieval)
+    - 24h TTL for tile data (prices change daily)
+
+    Hotels and activities are fetched in PARALLEL using asyncio.gather() for latency optimization.
+
+    @see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
+    """
+    from app.db import _get_async_session_factory
+
+    _debug_log(f"Searching hotels/activities for {plan.destination}...")
+
+    # Read user settings for provider filtering
+    _settings = get_trip_settings(state)
+    hotel_settings = _settings.hotel_settings.model_dump()
+    activity_settings = _settings.activity_settings.model_dump()
+    flight_settings = _settings.flight_settings.model_dump()
+
+    # Determine provider and cache key parameters
+    dest_key = plan.destination.lower().strip() if plan.destination else ""
+    curated_manifest = DEMO_MANIFEST.get(dest_key, {})
+    provider = "curated" if curated_manifest else "amadeus"
+
+    start_date = str(plan.start_date) if plan.start_date else ""
+    end_date = str(plan.end_date) if plan.end_date else ""
+
+    # Get database session factory for caching
+    async_session_factory = _get_async_session_factory()
+
+    # Fetch hotels and activities in PARALLEL
+    hotel_dicts, activity_dicts = await asyncio.gather(
+        _fetch_hotels(
+            async_session_factory,
+            plan,
+            hotel_settings,
+            provider,
+            dest_key,
+            curated_manifest,
+            start_date,
+            end_date,
+            activity_settings,
+            flight_settings,
+        ),
+        _fetch_activities(
+            async_session_factory,
+            plan,
+            activity_settings,
+            provider,
+            dest_key,
+            curated_manifest,
+            start_date,
+            end_date,
+            hotel_settings,
+            flight_settings,
+        ),
+    )
 
     # Post-fetch hotel star filter (curated provider filters at search time,
     # but mock/Amadeus/cached tiles need post-fetch filtering)
@@ -665,14 +739,47 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             month = str(plan.start_date)[:7] if plan.start_date else ""
             active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
             tiles_per_cat = _compute_tiles_per_category(state, tier2_cats)
-            experience_tiles = await generate_experiences(
-                destination=plan.destination,
-                categories=list(tier2_cats),
-                month=month,
-                budget=plan.budget,
-                tier1_specialists=active_niche,
-                tiles_per_category=tiles_per_cat,
-            )
+
+            # Check for prefetch task from Router
+            prefetch_task = state.metadata.get("tier2_prefetch_task")
+            prefetch_cats = set(state.metadata.get("tier2_prefetch_categories", []))
+
+            if prefetch_task and prefetch_cats == tier2_cats:
+                log(
+                    "LOGISTICS",
+                    f"[PREFETCH] Awaiting Router prefetch for {len(tier2_cats)} categories",
+                )
+                try:
+                    experience_tiles = await asyncio.wait_for(prefetch_task, timeout=10.0)
+                    log(
+                        "LOGISTICS",
+                        f"[PREFETCH] Retrieved {len(experience_tiles)} tiles from prefetch",
+                    )
+                except asyncio.TimeoutError:
+                    log("LOGISTICS", "[PREFETCH] Timeout - falling back to normal generation")
+                    experience_tiles = await generate_experiences(
+                        destination=plan.destination,
+                        categories=list(tier2_cats),
+                        month=month,
+                        budget=plan.budget,
+                        tier1_specialists=active_niche,
+                        tiles_per_category=tiles_per_cat,
+                        state=state,
+                    )
+                finally:
+                    state.metadata.pop("tier2_prefetch_task", None)
+                    state.metadata.pop("tier2_prefetch_categories", None)
+            else:
+                # No prefetch or category mismatch - normal generation
+                experience_tiles = await generate_experiences(
+                    destination=plan.destination,
+                    categories=list(tier2_cats),
+                    month=month,
+                    budget=plan.budget,
+                    tier1_specialists=active_niche,
+                    tiles_per_category=tiles_per_cat,
+                    state=state,
+                )
 
             if experience_tiles:
                 log(
@@ -682,6 +789,8 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 )
                 state.tiles["activities"] = experience_tiles
                 activity_dicts = experience_tiles
+                # Mark that Tier 2 tiles were generated (for synthesizer gate)
+                state.metadata["tier2_tiles_generated"] = True
             else:
                 # Fallback: keyword match existing tiles (original behavior)
                 matching = [t for t in activity_dicts if _tile_matches_categories(t, tier2_cats)]
@@ -712,13 +821,45 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
             month = str(plan.start_date)[:7] if plan.start_date else ""
             tiles_per_cat = _compute_tiles_per_category(state, tier2_only)
-            experience_tiles = await generate_experiences(
-                destination=plan.destination,
-                categories=list(tier2_only),
-                month=month,
-                budget=plan.budget,
-                tiles_per_category=tiles_per_cat,
-            )
+
+            # Check for prefetch task from Router
+            prefetch_task = state.metadata.get("tier2_prefetch_task")
+            prefetch_cats = set(state.metadata.get("tier2_prefetch_categories", []))
+
+            if prefetch_task and prefetch_cats == tier2_only:
+                log(
+                    "LOGISTICS",
+                    f"[PREFETCH] Awaiting Router prefetch for {len(tier2_only)} categories",
+                )
+                try:
+                    experience_tiles = await asyncio.wait_for(prefetch_task, timeout=10.0)
+                    log(
+                        "LOGISTICS",
+                        f"[PREFETCH] Retrieved {len(experience_tiles)} tiles from prefetch",
+                    )
+                except asyncio.TimeoutError:
+                    log("LOGISTICS", "[PREFETCH] Timeout - falling back to normal generation")
+                    experience_tiles = await generate_experiences(
+                        destination=plan.destination,
+                        categories=list(tier2_only),
+                        month=month,
+                        budget=plan.budget,
+                        tiles_per_category=tiles_per_cat,
+                        state=state,
+                    )
+                finally:
+                    state.metadata.pop("tier2_prefetch_task", None)
+                    state.metadata.pop("tier2_prefetch_categories", None)
+            else:
+                # No prefetch or category mismatch - normal generation
+                experience_tiles = await generate_experiences(
+                    destination=plan.destination,
+                    categories=list(tier2_only),
+                    month=month,
+                    budget=plan.budget,
+                    tiles_per_category=tiles_per_cat,
+                    state=state,
+                )
             if experience_tiles:
                 log(
                     "LOGISTICS",
@@ -727,6 +868,8 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 )
                 state.tiles["activities"] = experience_tiles
                 activity_dicts = experience_tiles
+                # Mark that Tier 2 tiles were generated (for synthesizer gate)
+                state.metadata["tier2_tiles_generated"] = True
 
     log("LOGISTICS", f"Found {len(activity_dicts)} activities for {plan.destination}")
     _debug_log(f"Activities found: {len(activity_dicts)}")

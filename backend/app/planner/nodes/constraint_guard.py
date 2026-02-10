@@ -29,7 +29,7 @@ from app.planner.state.schemas import SpecialistConstraint
 # =============================================================================
 
 
-def validate_place_exists(place: str) -> tuple[bool, str | None]:
+async def validate_place_exists(place: str) -> tuple[bool, str | None]:
     """
     Check if a place exists using the validation cache.
 
@@ -39,12 +39,12 @@ def validate_place_exists(place: str) -> tuple[bool, str | None]:
     """
     import logging
 
-    from app.validation import validate_input
+    from app.validation import validate_input_async
 
     logger = logging.getLogger(__name__)
 
     try:
-        result = validate_input(place, "destination")
+        result = await validate_input_async(place, "destination")
         logger.info(
             f"[GUARD] validate_place_exists('{place}'): "
             f"is_valid={result.is_valid}, reason={result.reason}"
@@ -397,7 +397,7 @@ def _check_cross_domain_from_sections(
     return violations
 
 
-def check_route_constraint(plan: TripPlan) -> List[ConstraintViolation]:
+async def check_route_constraint(plan: TripPlan) -> List[ConstraintViolation]:
     """
     Check route validity (Logic Guards).
 
@@ -427,7 +427,7 @@ def check_route_constraint(plan: TripPlan) -> List[ConstraintViolation]:
 
     # 2. Unknown Place Check (uses LLM-backed validation)
     if plan.destination and len(plan.destination) > 1:
-        is_valid, reason = validate_place_exists(plan.destination)
+        is_valid, reason = await validate_place_exists(plan.destination)
         if not is_valid:
             violations.append(
                 ConstraintViolation(
@@ -454,7 +454,7 @@ class ConstraintGuard:
     Runs all constraint checks and collects violations.
     """
 
-    def check_all(
+    async def check_all(
         self,
         state: GraphState,
     ) -> Tuple[List[ConstraintViolation], bool]:
@@ -476,7 +476,7 @@ class ConstraintGuard:
         violations.extend(check_specialist_constraints(state.trip_plan, state.tiles))
 
         # Route constraints (Logic Guards - user intent errors)
-        violations.extend(check_route_constraint(state.trip_plan))
+        violations.extend(await check_route_constraint(state.trip_plan))
 
         # Check for blocking violations
         has_blocking = any(v.severity == "blocking" for v in violations)
@@ -566,7 +566,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
     log("GUARD", "Validation (pure Python, no LLM)...")
 
     # Run all checks (pure Python, no LLM)
-    violations, has_blocking = guard.check_all(state)
+    violations, has_blocking = await guard.check_all(state)
 
     # =========================================================================
     # Stateless Cross-Domain Check (Strategy-Section-Driven)

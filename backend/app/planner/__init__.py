@@ -102,54 +102,81 @@ from app.planner.test_mode import (
 # Type checking imports (no runtime cost)
 if TYPE_CHECKING:
     from app.plan_graph import (
+        clear_all_caches,
+        run_turn,
+        run_turn_streaming,
+    )
+    from app.planner.services.admin_utils import (
         CACHE_SCHEMA_VERSION,
         PLANNER_BUILD_ID,
         PROMPT_BUNDLE_HASH,
         checkpoint_stats,
-        clear_all_caches,
         clear_all_checkpoints,
         clear_response_caches,
         clear_session_checkpoint,
         condense_long_message,
         get_graph_stats,
         get_planner_debug_info,
-        get_planner_snapshot,
         prewarm_prompts,
         prune_stale_checkpoints,
         response_cache_stats,
-        run_turn,
-        run_turn_streaming,
         validate_template_coverage,
+    )
+    from app.planner.services.state_serde import (
+        restore_graph_state,
+        state_to_session_state,
+        trip_plan_to_trip_inputs,
     )
 
 
 def __getattr__(name: str):
-    """Lazy import for plan_graph exports to avoid circular imports."""
+    """Lazy import for plan_graph and admin_utils exports to avoid circular imports."""
+    # Functions still in plan_graph.py
     _PLAN_GRAPH_EXPORTS = {
+        "clear_all_caches",  # Kept in plan_graph (mutates global _graph)
+        "run_turn",
+        "run_turn_streaming",
+    }
+
+    # Functions extracted to admin_utils.py
+    _ADMIN_UTILS_EXPORTS = {
         "CACHE_SCHEMA_VERSION",
         "PLANNER_BUILD_ID",
         "PROMPT_BUNDLE_HASH",
         "checkpoint_stats",
-        "clear_all_caches",
         "clear_all_checkpoints",
         "clear_response_caches",
         "clear_session_checkpoint",
         "condense_long_message",
         "get_graph_stats",
         "get_planner_debug_info",
-        "get_planner_snapshot",
         "prewarm_prompts",
         "prune_stale_checkpoints",
         "response_cache_stats",
-        "run_turn",
-        "run_turn_streaming",
         "validate_template_coverage",
+    }
+
+    # Functions extracted to state_serde.py
+    _STATE_SERDE_EXPORTS = {
+        "restore_graph_state",
+        "state_to_session_state",
+        "trip_plan_to_trip_inputs",
     }
 
     if name in _PLAN_GRAPH_EXPORTS:
         from app import plan_graph
 
         return getattr(plan_graph, name)
+
+    if name in _ADMIN_UTILS_EXPORTS:
+        from app.planner.services import admin_utils
+
+        return getattr(admin_utils, name)
+
+    if name in _STATE_SERDE_EXPORTS:
+        from app.planner.services import state_serde
+
+        return getattr(state_serde, name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -174,7 +201,6 @@ __all__ = [
     "create_missing_fields_response",
     # Debug/observability
     "get_planner_debug_info",
-    "get_planner_snapshot",
     # Cache utilities
     "clear_all_caches",
     "clear_all_checkpoints",
@@ -193,6 +219,10 @@ __all__ = [
     "condense_long_message",
     "prewarm_prompts",
     "validate_template_coverage",
+    # State serialization
+    "restore_graph_state",
+    "state_to_session_state",
+    "trip_plan_to_trip_inputs",
     # Metadata
     "init_turn_metadata",
     "meta_get",
