@@ -17,8 +17,9 @@ Key Principles:
 - "One Voice" - Synthesizer ensures consistent tone
 
 Usage:
-    from app.plan_graph import run_turn, run_turn_streaming
-    result = await run_turn(user_message, session_state)
+    from app.plan_graph import run_turn_streaming
+    async for event in run_turn_streaming(user_message, session_state):
+        ...
 """
 
 import asyncio
@@ -29,7 +30,6 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, Literal, Optional
 
 from langgraph.graph import END, StateGraph
-from pydantic import BaseModel, Field
 
 from app.placeholders import get_hero_image
 from app.planner.nodes.constraint_guard import constraint_guard
@@ -187,56 +187,13 @@ PROMPT_BUNDLE_HASH = "optimized"
 
 
 # =============================================================================
-# Input Types (for main.py interface)
+# Input Types
 # =============================================================================
 
 
-class TripInputs(BaseModel):
-    """TripInputs for main.py interface."""
-
-    destination: Optional[str] = None
-    origin: Optional[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    adults: Optional[int] = None
-    children: Optional[int] = None
-    requires_assistance: Optional[bool] = None
-    budget: Optional[float] = None
-    currency: Optional[str] = None
-    booking_types: Dict[str, Any] = Field(default_factory=dict)
-    flight_settings: Dict[str, Any] = Field(default_factory=dict)
-    hotel_settings: Dict[str, Any] = Field(default_factory=dict)
-    activity_settings: Dict[str, Any] = Field(default_factory=lambda: {"categories": []})
-    transport_settings: Dict[str, Any] = Field(default_factory=dict)
-    strategy_settings: Dict[str, Any] = Field(default_factory=dict)
-    date_flex: bool = False
-    trip_duration: Optional[int] = None
-    date_window_start: Optional[str] = None
-    date_window_end: Optional[str] = None
-
-
 def _trip_plan_to_trip_inputs(plan: TripPlan) -> Dict[str, Any]:
-    """Convert TripPlan to trip_inputs dict with display fields."""
-    # Calculate travelers count
-    total_travelers = (plan.adults or 1) + (plan.children or 0)
-
-    # Build dates_text for display
-    dates_text = None
-    if plan.start_date and plan.end_date:
-        dates_text = f"{plan.start_date} - {plan.end_date}"
-    elif plan.start_date:
-        dates_text = plan.start_date
-
-    # Build budget_text for display
-    budget_text = None
-    if plan.budget:
-        budget_text = f"${plan.budget:,.0f}"
-
-    # Build travelers_text for display
-    travelers_text = f"{total_travelers} traveler{'s' if total_travelers != 1 else ''}"
-
+    """Convert TripPlan to trip_inputs dict for frontend document envelope."""
     return {
-        # Structured fields (from TripPlan only)
         "destination": plan.destination,
         "origin": plan.origin,
         "origin_iata": plan.origin_iata,
@@ -247,18 +204,8 @@ def _trip_plan_to_trip_inputs(plan: TripPlan) -> Dict[str, Any]:
         "children": plan.children,
         "budget": plan.budget,
         "currency": plan.currency,
-        # NOTE: Settings fields (booking_types, flight_settings, hotel_settings,
-        # activity_settings, transport_settings, strategy_settings) are intentionally
-        # OMITTED here. They live on the document (set via PATCH from frontend sheets),
-        # not on TripPlan. Including empty defaults here caused them to overwrite
-        # the real document values during session merge at graph startup.
-        # @see main.py graph_plan_stream_endpoint — doc_inputs merge
-        #
-        # Legacy display fields for V1 frontend pills
-        "destination_text": plan.destination,
-        "dates_text": dates_text,
-        "travelers_text": travelers_text,
-        "budget_text": budget_text,
+        # NOTE: Settings fields (booking_types, flight_settings, etc.) intentionally
+        # OMITTED — they live on the document (set via PATCH from frontend sheets).
     }
 
 
@@ -887,7 +834,7 @@ def compile_graph(workflow: StateGraph) -> Any:
 
 
 # =============================================================================
-# Execution Interface (V1-Compatible)
+# Execution Interface (Non-Streaming)
 # =============================================================================
 
 
@@ -896,22 +843,16 @@ async def run_turn(
     session_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Run a single turn of the conversation (V1-compatible interface).
+    Run a single turn of the conversation (non-streaming).
 
-    This is the main entry point for main.py. Returns a dict with:
-    - assistant_message: The response text
-    - suggested_responses: Quick reply options
-    - session_state: Updated state for persistence
-    - branches: Empty list (not used)
-    - trip_inputs: Extracted trip parameters
-    - ready_to_generate: Whether plan is complete
+    Used by main.py POST /api/graph_plan endpoint.
 
     Args:
         user_message: User's message text
         session_state: Optional previous state to continue from
 
     Returns:
-        V1-compatible result dict
+        Result dict with assistant_message, session_state, document, etc.
     """
     from langchain_core.messages import HumanMessage
 
@@ -971,7 +912,6 @@ async def run_turn(
                 "tiles": {},
                 "ready_to_generate": False,
             },
-            "version": 1,
             "updated_by": "ai",
             "updated_at": datetime.now().isoformat(),
             "changes_made": False,
@@ -982,7 +922,7 @@ async def run_turn(
         logger.error(f"Graph execution failed: {e}")
         raise
 
-    # Convert result to V1 format
+    # Convert result to response format
     return _format_result(result_state, session_state)
 
 
@@ -1403,28 +1343,12 @@ def _resolve_blocking_violations(
 # =============================================================================
 
 
-def _build_section_bullets(
-    plan: "TripPlan",
-    flattened_tiles: Dict[str, Any],
-) -> tuple:
-    """Build section bullets from trip params + tile counts.
+def _count_tiles_by_type(flattened_tiles: Dict[str, Any]) -> tuple:
+    """Count tiles by category for principles generation.
 
     Returns:
-        (bullets, hotels_count, flights_count, activities_count)
+        (hotels_count, flights_count, activities_count)
     """
-    bullets = []
-    if plan.destination:
-        bullets.append(f"Trip to {plan.destination}")
-    if plan.start_date:
-        date_str = plan.start_date
-        if plan.end_date:
-            date_str = f"{plan.start_date} to {plan.end_date}"
-        bullets.append(f"Dates: {date_str}")
-    if plan.adults or plan.children:
-        travelers = (plan.adults or 0) + (plan.children or 0)
-        bullets.append(f"{travelers} traveler{'s' if travelers > 1 else ''}")
-
-    # Count tiles by type
     hotels_count = len(
         [t for t in flattened_tiles.values() if t.get("type") in ("hotel", "stay", "accommodation")]
     )
@@ -1436,15 +1360,7 @@ def _build_section_bullets(
             if t.get("type") in ("activity", "experience", "tour", "attraction")
         ]
     )
-
-    if hotels_count:
-        bullets.append(f"{hotels_count} accommodation options found")
-    if flights_count:
-        bullets.append(f"{flights_count} flight options found")
-    if activities_count:
-        bullets.append(f"{activities_count} activities available")
-
-    return bullets, hotels_count, flights_count, activities_count
+    return hotels_count, flights_count, activities_count
 
 
 def _build_trip_summary(plan: "TripPlan") -> Dict[str, Any]:
@@ -1715,9 +1631,7 @@ def _build_new_section(
     plan = state.trip_plan
 
     # Build all sub-components
-    bullets, hotels_count, flights_count, activities_count = _build_section_bullets(
-        plan, flattened_tiles
-    )
+    hotels_count, flights_count, activities_count = _count_tiles_by_type(flattened_tiles)
     trip_summary = _build_trip_summary(plan)
     constraints_applied, content_added, must_dos = _extract_section_content(
         state, specialist_type, strategy_sections

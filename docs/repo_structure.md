@@ -209,10 +209,8 @@ frontend/
 │   │   ├── ChatSkeleton.tsx
 │   │   ├── CollapsedSetupSummary.tsx
 │   │   ├── HoldToDeleteButton.tsx
-│   │   ├── MobileChatCompactHeader.tsx
 │   │   ├── MobileChatInput.tsx
 │   │   ├── MobileSetupCollapsedHeader.tsx
-│   │   ├── PlanModeHint.tsx
 │   │   ├── SmartLoader.tsx
 │   │   ├── SystemAckLine.tsx
 │   │   ├── SystemReceipt.tsx
@@ -264,12 +262,10 @@ frontend/
 │   │   ├── ExplorationProgress.tsx
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── NextStepBar.tsx
-│   │   ├── NextStepPanel.tsx
 │   │   ├── OnboardingChips.tsx
 │   │   ├── OptionalRefinementsSection.tsx
 │   │   ├── OriginPromptCard.tsx
 │   │   ├── PlanDocument.tsx
-│   │   ├── PlanGhostPreview.tsx
 │   │   ├── PlanHeader.tsx
 │   │   ├── PlanningProgress.tsx
 │   │   ├── planStateHelpers.ts
@@ -277,7 +273,6 @@ frontend/
 │   │   ├── Segment.tsx
 │   │   ├── SelectionsBar.tsx       # Hearted tiles carousel (sticky bar of preferred tiles)
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
-│   │   ├── TimelineDivider.tsx     # Visual separator before timeline (unused)
 │   │   ├── TimelineThread.tsx
 │   │   ├── TripHealthBar.tsx
 │   │   ├── TripHealthDashboard.tsx
@@ -310,23 +305,14 @@ frontend/
 │   │   │   └── TripSettingsSheet.tsx
 │   │   │
 │   │   ├── stages/             # Stage-specific views
-│   │   │   ├── BookingAnchorCard.tsx
-│   │   │   ├── BookView.tsx
-│   │   │   ├── CulturalProtocolCard.tsx
 │   │   │   ├── index.ts
-│   │   │   ├── InfoCard.tsx
-│   │   │   ├── LogisticsGrid.tsx
-│   │   │   ├── NeighborhoodStrategyCard.tsx
-│   │   │   ├── PriorityBookingsSection.tsx
 │   │   │   ├── S1FramingView.tsx
 │   │   │   ├── S2BlockedView.tsx
 │   │   │   ├── S2StrategyView.tsx
 │   │   │   ├── S3BlockedView.tsx
 │   │   │   ├── S3EditingView.tsx
 │   │   │   ├── S3ItineraryView.tsx
-│   │   │   ├── ScarcityRadarCard.tsx
-│   │   │   ├── StrategyHero.tsx
-│   │   │   └── TransportStrategyCard.tsx
+│   │   │   └── StrategyHero.tsx
 │   │   │
 │   │   ├── tiles/
 │   │   │   ├── BookableCard.tsx
@@ -388,7 +374,6 @@ frontend/
 │   ├── useShortlist.ts         # Heart preferences - backed by documentStore.preferredTileIds
 │   ├── useSpecialistDeepLink.ts
 │   ├── useTripInputsWithFallback.ts
-│   ├── useTripValidation.ts    # Unified trip date/destination validation
 │   └── useViewNavigation.ts
 │
 ├── lib/                        # Utility functions

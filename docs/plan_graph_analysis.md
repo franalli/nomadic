@@ -973,7 +973,7 @@ Data flow: `registry (CrossDomainBlock) → guard (violation detection) → Spec
 
 LLMs generate constraint names with natural variation (e.g., `"no_altitude_24h"`, `"altitude_buffer"`, `"no-altitude-after-diving"`). The builder normalizes these via **alias mapping** to ensure robust constraint detection regardless of LLM phrasing.
 
-**Location:** Defined in `backend/app/planner/specialist_registry.py` per specialist, aggregated into `ALL_CONSTRAINT_ALIASES`. Re-exported in `itinerary_builder.py` as `CONSTRAINT_ALIASES`.
+**Location:** Defined in `backend/app/planner/specialist_registry.py` per specialist, aggregated into `ALL_CONSTRAINT_ALIASES`. Used directly by `itinerary_builder.py`.
 
 ```python
 # In specialist_registry.py (per specialist config):
@@ -994,7 +994,7 @@ def _find_constraint(
     canonical_rule: str,
 ) -> Optional["MergedConstraint"]:
     """Find constraint by canonical rule name or any of its aliases."""
-    aliases = CONSTRAINT_ALIASES.get(canonical_rule, [])
+    aliases = ALL_CONSTRAINT_ALIASES.get(canonical_rule, [])
     all_names = [canonical_rule] + aliases
     for c in constraints:
         rule_lower = c.rule.lower().replace("-", "_").replace(" ", "_")
@@ -2629,21 +2629,11 @@ Multi-specialist trips require conflict resolution when constraints clash.
 | **STRONG** | Best weather timing, equipment availability, opening hours | Negotiates |
 | **SOFT** | Scenic routes, photo opportunities, early starts | Defers |
 
-### Timezone Handling Infrastructure
+### Timezone Handling
 
-The itinerary builder includes timezone infrastructure for cross-timezone constraint calculations:
+MVP assumes all times are in destination local timezone. This is correct for most scenarios where dive/activity times and flight times are shown in local time.
 
-**Available Helpers:**
-- `get_destination_utc_offset(destination)` - Returns UTC offset for common destinations
-- `normalize_to_destination_tz(dt, destination)` - Converts datetime to destination local time
-- `calculate_hours_between(time1, time2, destination, use_timezone)` - Calculates hours with optional timezone normalization
-
-**Current Status:** MVP assumes all times are in destination local timezone. This is correct for most dive trip scenarios where:
-- Dive times are local
-- Flight departure times shown in local time by airlines
-- Users think in local time
-
-**Enable Full Timezone Support:** Set `use_timezone=True` in `calculate_hours_between()` for cross-timezone flight calculations.
+If cross-timezone constraint calculations are needed in the future, add timezone-aware helpers at that time (e.g., using `zoneinfo` stdlib). Do not hardcode destination timezone maps — violates "no hard-coded world data" rule.
 
 **Resolution Example:**
 ```
@@ -2791,7 +2781,7 @@ class Resolution(BaseModel):
 
 | Module | Exports |
 |--------|---------|
-| `planner` | `run_turn`, `run_turn_streaming`, `GraphState`, `TripInputs` |
+| `planner` | `run_turn`, `run_turn_streaming`, `GraphState` |
 | `planner.state` | `GraphState`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistOutput`, `UIEvent`, `MissingFieldsResponse`, `SynthesizerOutput` |
 | `planner.hashing` | `stable_hash`, `stable_hash_int`, `stable_hash_index`, `make_cache_key` |
 | `planner.telemetry` | `TraceEnvelope`, `create_envelope`, `emit_event`, `emit_node_start`, `emit_node_end` |
@@ -2971,7 +2961,6 @@ from app.planner import (
     run_turn,              # Main entry point
     run_turn_streaming,    # SSE streaming entry point
     GraphState,            # State type
-    TripInputs,            # Input type
     get_planner_debug_info,
     validate_template_coverage,
     clear_all_caches,

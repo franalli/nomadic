@@ -1225,14 +1225,9 @@ def _check_speculate_trigger(text: str) -> Optional[IntentClassification]:
 # Specialist Keywords (for hint detection)
 # =============================================================================
 
-# Re-export for backward compat (logistics_node.py, synthesizer.py, tests import these)
+# Re-export for backward compat (logistics_node.py, synthesizer.py import these)
 TIER1_SPECIALISTS = TIER1_SPECIALIST_NAMES
 SPECIALIST_KEYWORDS = ALL_SPECIALIST_KEYWORDS
-# SPECIALIST_PATTERNS replaced by keyword matching; re-export for test compat
-SPECIALIST_PATTERNS = {topic: kws for topic, kws in ALL_SPECIALIST_KEYWORDS.items()}
-
-# Canonical specialist activity categories (should appear at top of activity pill)
-SPECIALIST_ACTIVITY_CATEGORIES = sorted(TIER1_SPECIALISTS)
 
 
 def _detect_specialists_from_activity_settings(state: GraphState) -> List[str]:

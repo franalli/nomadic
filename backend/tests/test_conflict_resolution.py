@@ -17,9 +17,9 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
+from app.planner.specialist_registry import ALL_CONSTRAINT_ALIASES as CONSTRAINT_ALIASES
 from app.planner.state import ConstraintSeverity
 from app.services.itinerary_builder import (
-    CONSTRAINT_ALIASES,
     ItineraryBuilder,
     ItineraryBuilderInput,
     MergedConstraint,

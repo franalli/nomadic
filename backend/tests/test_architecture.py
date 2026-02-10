@@ -232,7 +232,7 @@ class TestSynthesizer:
         from app.planner.nodes.intent_router import (
             PLANNING_READINESS_SIGNALS,
             QUESTION_TYPE_MAPPING,
-            SPECIALIST_PATTERNS,
+            SPECIALIST_KEYWORDS,
         )
 
         def is_routable(text: str) -> bool:
@@ -241,10 +241,10 @@ class TestSynthesizer:
             for signal in PLANNING_READINESS_SIGNALS:
                 if signal in text_lower:
                     return True
-            # Specialist patterns
-            for patterns in SPECIALIST_PATTERNS.values():
-                for pattern in patterns:
-                    if re.search(pattern, text_lower):
+            # Specialist keyword matching
+            for keywords in SPECIALIST_KEYWORDS.values():
+                for keyword in keywords:
+                    if keyword in text_lower:
                         return True
             # Question type mapping
             for keywords in QUESTION_TYPE_MAPPING:

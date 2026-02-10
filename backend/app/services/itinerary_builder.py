@@ -14,10 +14,6 @@ Algorithm Phases:
 5. Activity Distribution - Round-robin interleaving
 6. Tile Matching - Hotels span all days
 
-Timezone Handling:
-- Infrastructure added for timezone-aware constraint calculations
-- Currently assumes local destination time (sufficient for MVP)
-- Enable full timezone support by calling normalize_to_destination_tz()
 """
 
 import logging
@@ -34,165 +30,10 @@ from app.planner.state import ConstraintSeverity
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# Timezone Handling Infrastructure
-# =============================================================================
-
-# Common destination timezone offsets (UTC offset in hours)
-# Note: For production, consider using pytz or zoneinfo for DST handling
-DESTINATION_TIMEZONES: Dict[str, float] = {
-    # Asia-Pacific
-    "bali": 8.0,  # WITA (UTC+8)
-    "indonesia": 8.0,
-    "thailand": 7.0,
-    "bangkok": 7.0,
-    "phuket": 7.0,
-    "vietnam": 7.0,
-    "singapore": 8.0,
-    "japan": 9.0,
-    "tokyo": 9.0,
-    "niseko": 9.0,
-    "australia": 10.0,  # AEST
-    "sydney": 10.0,
-    "melbourne": 10.0,
-    "maldives": 5.0,
-    "dubai": 4.0,
-    "uae": 4.0,
-    # Europe
-    "london": 0.0,  # GMT (no DST adjustment)
-    "paris": 1.0,
-    "france": 1.0,
-    "chamonix": 1.0,
-    "switzerland": 1.0,
-    "zermatt": 1.0,
-    "austria": 1.0,
-    "spain": 1.0,
-    "italy": 1.0,
-    "greece": 2.0,
-    # Americas
-    "new york": -5.0,
-    "usa": -5.0,  # EST default
-    "california": -8.0,
-    "los angeles": -8.0,
-    "colorado": -7.0,
-    "aspen": -7.0,
-    "hawaii": -10.0,
-    "mexico": -6.0,
-    "cancun": -5.0,
-    "costa rica": -6.0,
-    "brazil": -3.0,
-    "argentina": -3.0,
-    "patagonia": -3.0,
-    "chile": -4.0,
-    # Africa/Middle East
-    "egypt": 2.0,
-    "red sea": 2.0,
-    "south africa": 2.0,
-    "kenya": 3.0,
-    "morocco": 1.0,
-    # South Asia
-    "nepal": 5.75,  # UTC+5:45
-    "india": 5.5,
-    "sri lanka": 5.5,
-}
-
-
-def get_destination_utc_offset(destination: str) -> float:
-    """
-    Get UTC offset for a destination.
-
-    Args:
-        destination: Destination name (case-insensitive)
-
-    Returns:
-        UTC offset in hours. Defaults to 0.0 (UTC) if unknown.
-    """
-    if not destination:
-        return 0.0
-
-    dest_lower = destination.lower().strip()
-
-    # Direct match
-    if dest_lower in DESTINATION_TIMEZONES:
-        return DESTINATION_TIMEZONES[dest_lower]
-
-    # Partial match
-    for key, offset in DESTINATION_TIMEZONES.items():
-        if key in dest_lower or dest_lower in key:
-            return offset
-
-    # Default to UTC
-    logger.debug(f"[Timezone] Unknown destination '{destination}', using UTC")
-    return 0.0
-
-
-def normalize_to_destination_tz(
-    dt: datetime,
-    destination: str,
-    source_offset: float = 0.0,
-) -> datetime:
-    """
-    Convert datetime to destination local time.
-
-    Args:
-        dt: Datetime to convert (assumed naive or with source_offset)
-        destination: Destination name for timezone lookup
-        source_offset: UTC offset of source timezone (default: 0.0 = UTC)
-
-    Returns:
-        Datetime adjusted to destination local time (naive datetime).
-
-    Note:
-        For MVP, this function is available but not actively used.
-        Current implementation assumes all times are in destination local time.
-        Enable for cross-timezone flight calculations if needed.
-    """
-    dest_offset = get_destination_utc_offset(destination)
-
-    # Calculate total adjustment
-    adjustment_hours = dest_offset - source_offset
-
-    # Apply adjustment
-    return dt + timedelta(hours=adjustment_hours)
-
-
-def calculate_hours_between(
-    time1: datetime,
-    time2: datetime,
-    destination: str = "",
-    use_timezone: bool = False,
-) -> float:
-    """
-    Calculate hours between two times, optionally with timezone awareness.
-
-    Args:
-        time1: Earlier datetime
-        time2: Later datetime
-        destination: Destination for timezone lookup (used if use_timezone=True)
-        use_timezone: Whether to apply timezone normalization
-
-    Returns:
-        Hours between the two times (positive if time2 > time1).
-
-    Note:
-        When use_timezone=False (default), assumes both times are in local time.
-        This is the current MVP behavior.
-    """
-    if use_timezone and destination:
-        # Normalize both to destination time
-        time1 = normalize_to_destination_tz(time1, destination)
-        time2 = normalize_to_destination_tz(time2, destination)
-
-    delta = time2 - time1
-    return delta.total_seconds() / 3600
-
-
-# =============================================================================
 # Constraint Rule Normalization
 # =============================================================================
 # LLM may output constraint rules with various naming conventions.
 # Builder normalizes to canonical rules for consistent detection.
-
-CONSTRAINT_ALIASES = ALL_CONSTRAINT_ALIASES  # Re-export for backward compat
 
 
 def _find_constraint(
@@ -212,7 +53,7 @@ def _find_constraint(
     Returns:
         Matching constraint or None
     """
-    aliases = CONSTRAINT_ALIASES.get(canonical_rule, [])
+    aliases = ALL_CONSTRAINT_ALIASES.get(canonical_rule, [])
     all_names = [canonical_rule] + aliases
 
     for c in constraints:

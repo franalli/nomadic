@@ -35,37 +35,6 @@ export function canExpandToItinerary(
   return state === 'S2_STRATEGY_READY' && !isGenerating(generation);
 }
 
-/**
- * Can user view booking tiles? (primary display in S3)
- * @deprecated Use `effectiveMode === 'booking'` instead.
- * State-based check replaced by mode-based check per two-mode system.
- * @see docs/ux_unified_architecture.md Section I.B - Mode is SSoT for UI variant
- */
-export function canShowBookingTiles(state: PlanViewState): boolean {
-  return state === 'S3_ITINERARY_READY';
-}
-
-/**
- * Can show tiles preview? When S2 READY and has tiles, not generating.
- * Strategy content check removed - tiles should show as soon as available.
- * @deprecated Use `effectiveMode === 'planning' && tileCount > 0 && !isGenerating(generation)` instead.
- * State-based check replaced by mode-based check per two-mode system.
- * @see docs/ux_unified_architecture.md Section I.B - Mode is SSoT for UI variant
- */
-export function canShowTilesPreview(
-  state: PlanViewState,
-  tileCount: number,
-  generation?: GenerationState | null,
-  _hasStrategyContent?: boolean
-): boolean {
-  void _hasStrategyContent; // Unused - tiles show regardless of strategy sections
-  return (
-    state === 'S2_STRATEGY_READY' &&
-    tileCount > 0 &&
-    !isGenerating(generation)
-  );
-}
-
 /** Get the appropriate stage label */
 export function getStageFromState(state: PlanViewState): 'bootstrap' | 'structure' | 'strategy' | 'itinerary' {
   if (state === 'S0_BOOTSTRAP') return 'bootstrap';
@@ -127,7 +96,7 @@ export function isMultiSpecialistTrip(executedTopics: string[] | undefined): boo
  * is rendered inline at the bottom of the timeline, not in NextStepBar.
  *
  * IMPORTANT: Returns action type based on state alone. NextStepBar handles
- * validation gating (disabled state + messaging) via useTripValidation hook.
+ * validation gating (disabled state + messaging).
  */
 export function getNextAction(
   state: PlanViewState,

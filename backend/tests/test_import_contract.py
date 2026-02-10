@@ -164,12 +164,6 @@ class TestPlannerFacadeExports:
 
         assert GraphState is not None
 
-    def test_facade_exports_trip_inputs(self):
-        """TripInputs should be exported from facade."""
-        from app.planner import TripInputs
-
-        assert TripInputs is not None
-
     def test_facade_exports_debug_info(self):
         """get_planner_debug_info should be exported from facade."""
         from app.planner import get_planner_debug_info
@@ -235,7 +229,6 @@ class TestPlannerFacadeExports:
             "run_turn",
             "run_turn_streaming",
             "GraphState",
-            "TripInputs",
             "get_planner_debug_info",
             "meta_get",
             "meta_set",

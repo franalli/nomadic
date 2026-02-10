@@ -7,7 +7,7 @@ External code should import from here, not from plan_graph.py directly.
 
 Usage:
     from app.planner import run_turn, run_turn_streaming
-    from app.planner import GraphState, TripInputs
+    from app.planner import GraphState
     from app.planner import get_planner_debug_info
 """
 
@@ -105,7 +105,6 @@ if TYPE_CHECKING:
         CACHE_SCHEMA_VERSION,
         PLANNER_BUILD_ID,
         PROMPT_BUNDLE_HASH,
-        TripInputs,
         checkpoint_stats,
         clear_all_caches,
         clear_all_checkpoints,
@@ -130,7 +129,6 @@ def __getattr__(name: str):
         "CACHE_SCHEMA_VERSION",
         "PLANNER_BUILD_ID",
         "PROMPT_BUNDLE_HASH",
-        "TripInputs",
         "checkpoint_stats",
         "clear_all_caches",
         "clear_all_checkpoints",
@@ -162,7 +160,6 @@ __all__ = [
     "run_turn_streaming",
     # State types
     "GraphState",
-    "TripInputs",
     # State models
     "TripPlan",
     "TripSegment",
