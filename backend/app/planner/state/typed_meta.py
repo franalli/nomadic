@@ -44,6 +44,8 @@ class TurnMeta(BaseModel):
     # --- Node execution flags ---
     architect_ran_this_turn: bool = False
     origin_only_logistics: bool = False
+    is_generate_trigger: bool = False
+    logistics_attempted: bool = False
 
     # --- Constraint guard outputs ---
     constraints_validated: List[Dict[str, Any]] = Field(default_factory=list)

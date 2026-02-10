@@ -928,42 +928,84 @@ def _detect_actionable_input(user_text: str, state: "GraphState") -> Optional[di
         changes["reset_hotel"] = True
 
     # 5. Detect unresolved activity-like tokens
-    # If we matched SOME keywords but the message has other content words
-    # that could be activities, flag for LLM alias resolution
-    if changes.get("add_categories") or changes.get("remove_categories"):
-        all_known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALISTS
-        stop_words = {
-            "also",
-            "and",
-            "too",
-            "as",
-            "well",
-            "add",
-            "want",
-            "with",
-            "some",
-            "plus",
-            "the",
-            "i",
-            "we",
-            "me",
-            "my",
-            "a",
-            "in",
-            "let",
-            "can",
-            "like",
-            "maybe",
-            "please",
-            "for",
-            "trip",
-        }
-        remaining = set(re.findall(r"\b[a-z]{3,}\b", text_lower))
-        remaining -= all_known
-        remaining -= stop_words
-        remaining -= set(SKILL_LEVEL_MAP.keys())
-        if remaining:
-            changes["unresolved_tokens"] = remaining
+    # Runs even with zero keyword matches — catches synonyms like
+    # "party" → nightlife, "clubbing" → nightlife, "spa" → wellness
+    # that the LLM alias resolver can map to known categories.
+    # The ≤5 words guard prevents questions like "what's the party scene
+    # like in Bali" from being swallowed — those still reach exploration.
+    all_known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALISTS
+    stop_words = {
+        # intent/filler
+        "also",
+        "and",
+        "too",
+        "as",
+        "well",
+        "add",
+        "want",
+        "with",
+        "some",
+        "plus",
+        "the",
+        "i",
+        "we",
+        "me",
+        "my",
+        "a",
+        "in",
+        "let",
+        "can",
+        "like",
+        "maybe",
+        "please",
+        "for",
+        "trip",
+        # conversational — prevent chip/UI text from triggering ACTIONABLE
+        "show",
+        "more",
+        "options",
+        "change",
+        "preferences",
+        "other",
+        "help",
+        "what",
+        "how",
+        "about",
+        "tell",
+        "any",
+        "get",
+        "give",
+        "see",
+        "look",
+        "try",
+        "need",
+        "could",
+        "would",
+        "should",
+        "keep",
+        "make",
+        "take",
+        "budget",
+        "dates",
+        "plan",
+        "yes",
+        "no",
+        "sure",
+        "okay",
+        "thanks",
+        "thank",
+        "you",
+        "that",
+        "build",
+        "itinerary",
+        "set",
+    }
+    remaining = set(re.findall(r"\b[a-z]{3,}\b", text_lower))
+    remaining -= all_known
+    remaining -= stop_words
+    remaining -= set(SKILL_LEVEL_MAP.keys())
+    if remaining and len(text_lower.split()) <= 5:
+        changes["unresolved_tokens"] = remaining
 
     return changes if changes else None
 
@@ -2305,6 +2347,10 @@ async def intent_router(state: GraphState) -> GraphState:
         if hasattr(last_msg, "content"):
             user_text = last_msg.content
 
+    # Clear stale per-turn flags from previous turn
+    state.metadata.pop("settings_just_updated", None)
+    state.metadata.pop("actionable_acknowledgment", None)
+
     _debug_node_start(
         "router",
         "🧭",
@@ -2621,7 +2667,7 @@ async def intent_router(state: GraphState) -> GraphState:
 
             if not has_tier1 or removing_tier1:
                 # If unresolved tokens exist, resolve aliases via inline LLM call.
-                # Can't fall through — exploration short-circuit would swallow it.
+                # If LLM resolves nothing, bail out to detect_planning_intent.
                 if actionable.get("unresolved_tokens"):
                     log(
                         "ROUTER",
@@ -2638,6 +2684,8 @@ async def intent_router(state: GraphState) -> GraphState:
                             }
                             if resolved - existing_cats:
                                 existing_cats |= resolved
+                                # Track resolved additions for confirmation message
+                                actionable.setdefault("add_categories", set()).update(resolved)
                                 activity_settings["categories"] = sorted(existing_cats)
                                 trip_inputs["activity_settings"] = activity_settings
                                 state.metadata["trip_inputs"] = trip_inputs
@@ -2649,41 +2697,57 @@ async def intent_router(state: GraphState) -> GraphState:
                     except Exception as e:
                         log("ROUTER", f"[ACTIONABLE] LLM resolution failed: {e}")
 
-                # Route to logistics (both exact-match and post-LLM-resolution)
-                state.metadata["origin_only_logistics"] = True
-                state.metadata["skip_architect"] = True
-                state.metadata["skip_specialists"] = True
-
-                # Build confirmation message
-                parts = []
-                added = actionable.get("add_categories", set())
-                removed = actionable.get("remove_categories", set())
-                if added:
-                    parts.append(f"Added **{', '.join(sorted(added))}**")
-                if removed:
-                    parts.append(f"Removed **{', '.join(sorted(removed))}**")
-                if "skill_level" in actionable:
-                    parts.append(f"Skill level: **{actionable['skill_level']}**")
-                if "reset_budget" in actionable:
-                    parts.append("Budget limit removed")
-                if "reset_hotel" in actionable:
-                    parts.append("Hotel preferences reset")
-
-                state.last_summary = f"{'. '.join(parts)}. Refreshing options..."
-                state.suggested_replies = [
-                    "Show me more options",
-                    "Change preferences",
-                ]
-                state.metadata["settings_just_updated"] = True
-
-                log("ROUTER", f"[ACTIONABLE] {actionable}")
-                _debug_node_end(
-                    "router",
-                    "🧭",
-                    intent="ACTIONABLE_TO_LOGISTICS",
-                    changes=list(actionable.keys()),
+                # Bail if nothing was actually resolved
+                has_real_changes = (
+                    actionable.get("add_categories")
+                    or actionable.get("remove_categories")
+                    or actionable.get("skill_level")
+                    or actionable.get("reset_budget")
+                    or actionable.get("reset_hotel")
                 )
-                return state
+                if not has_real_changes:
+                    log(
+                        "ROUTER",
+                        f"[ACTIONABLE] Nothing resolved from "
+                        f"{actionable.get('unresolved_tokens')} — falling through",
+                    )
+                else:
+                    # Route to logistics (both exact-match and post-LLM-resolution)
+                    state.metadata["origin_only_logistics"] = True
+                    state.metadata["skip_architect"] = True
+                    state.metadata["skip_specialists"] = True
+
+                    # Build confirmation message
+                    parts = []
+                    added = actionable.get("add_categories", set())
+                    removed = actionable.get("remove_categories", set())
+                    if added:
+                        parts.append(f"Added **{', '.join(sorted(added))}**")
+                    if removed:
+                        parts.append(f"Removed **{', '.join(sorted(removed))}**")
+                    if "skill_level" in actionable:
+                        parts.append(f"Skill level: **{actionable['skill_level']}**")
+                    if "reset_budget" in actionable:
+                        parts.append("Budget limit removed")
+                    if "reset_hotel" in actionable:
+                        parts.append("Hotel preferences reset")
+
+                    state.last_summary = f"{'. '.join(parts)}. Refreshing options..."
+                    state.metadata["actionable_acknowledgment"] = state.last_summary
+
+                    # No chips — canvas auto-updates with new tiles
+                    state.suggested_replies = []
+
+                    state.metadata["settings_just_updated"] = True
+
+                    log("ROUTER", f"[ACTIONABLE] {actionable}")
+                    _debug_node_end(
+                        "router",
+                        "🧭",
+                        intent="ACTIONABLE_TO_LOGISTICS",
+                        changes=list(actionable.keys()),
+                    )
+                    return state
 
             # Mixed Tier 1 + Tier 2: categories already updated, fall through
             # to detect_planning_intent → SOFT_TRANSITION which handles Tier 1

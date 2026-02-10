@@ -578,7 +578,7 @@ export function StrategyStageRenderer({
       return (
         <div className="p-4 space-y-6">
           {/* Status indicator */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
             <span className="text-sm text-muted-foreground">
               Searching live availability...
@@ -664,7 +664,7 @@ export function StrategyStageRenderer({
             onOpenStaysSettings={onOpenStaysSettings}
             onOpenFlightsSettings={onOpenFlightsSettings}
           />
-          <div className="text-center pt-4 pb-8">
+          <div className="text-center pt-4 pb-6">
             <p className="text-sm text-muted-foreground">
               Activities from your specialists. Click &ldquo;Build Plan&rdquo; to see the full itinerary.
             </p>
@@ -994,7 +994,7 @@ export function StrategyStageRenderer({
             {/* Regeneration overlay - unified for plan AND itinerary regeneration */}
             {isAnyRegenerating && (
               <div className="absolute inset-0 z-10 flex items-start justify-center pt-20 bg-background/60 backdrop-blur-[1px]">
-                <div className="flex flex-col items-center gap-3 rounded-lg bg-card/90 px-6 py-4 shadow-lg border border-border">
+                <div className="flex flex-col items-center gap-4 rounded-lg bg-card/90 px-6 py-4 shadow-lg border border-border">
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                   <p className="text-sm font-medium text-muted-foreground">
                     {isRegenUpdating ? 'Updating itinerary...' : 'Updating plan...'}
@@ -1113,7 +1113,7 @@ export function StrategyStageRenderer({
             /* Skeleton reserves ~300px BEFORE day_cards arrive - prevents layout jump */
             <section ref={timelineSectionRef} className="px-4 py-6 space-y-4 animate-pulse">
               {[1, 2].map(i => (
-                <div key={i} className="space-y-3">
+                <div key={i} className="space-y-2">
                   <div className="h-6 w-24 bg-zinc-800 rounded" />
                   <div className="h-20 bg-zinc-800/40 rounded-lg" />
                   <div className="h-20 bg-zinc-800/40 rounded-lg" />

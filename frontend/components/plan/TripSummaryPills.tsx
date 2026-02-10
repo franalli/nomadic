@@ -76,7 +76,6 @@ export function TripSummaryPills({
         onClick={destination ? undefined : () => onOpenSheet('destination')}
         disabled={disabled}
         variant={variant}
-        className={variant === 'onImage' ? 'text-white font-semibold' : undefined}
       />
 
       {showOrigin && (
@@ -89,7 +88,6 @@ export function TripSummaryPills({
           onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('origin')}
           disabled={disabled || readOnlyExceptDestination}
           variant={variant}
-          className={variant === 'onImage' ? 'text-zinc-300 font-normal' : 'text-zinc-400 dark:text-zinc-500 font-normal'}
         />
       )}
 
@@ -102,7 +100,6 @@ export function TripSummaryPills({
         onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('dates')}
         disabled={disabled || readOnlyExceptDestination}
         variant={variant}
-        className={variant === 'onImage' ? 'text-white font-semibold' : undefined}
       />
 
       <CoreChip
@@ -114,7 +111,6 @@ export function TripSummaryPills({
         onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('travelers')}
         disabled={disabled || readOnlyExceptDestination}
         variant={variant}
-        className={variant === 'onImage' ? 'text-zinc-300 font-normal' : 'text-zinc-400 dark:text-zinc-500 font-normal'}
       />
 
       <CoreChip
@@ -126,7 +122,7 @@ export function TripSummaryPills({
         onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('budget')}
         disabled={disabled || readOnlyExceptDestination}
         variant={variant}
-        className={variant === 'onImage' ? 'text-zinc-400 font-normal italic' : 'text-zinc-500 dark:text-zinc-600 font-normal italic'}
+        className="italic"
       />
     </div>
   );

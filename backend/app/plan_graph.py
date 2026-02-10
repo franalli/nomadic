@@ -46,7 +46,7 @@ from app.planner.services.section_builder import (
 )
 from app.planner.specialist_registry import ALL_DOMAIN_DEFAULT_PRINCIPLES, DOMAIN_DEFAULT_FALLBACK
 from app.planner.state import GraphState, TripPlan, TripSettings, reset_turn_metadata
-from app.planner.state.typed_meta import get_trip_settings
+from app.planner.state.typed_meta import get_persistent_meta, get_trip_settings, get_turn_meta
 from app.schemas import (
     ActivitySettings,
     BookingTypes,
@@ -436,10 +436,12 @@ def route_after_router(
     """
     from app.debug_utils import _debug_log
 
+    turn = get_turn_meta(state)
+
     # ORIGIN/SETTINGS FAST PATH: Route directly to logistics for flight/hotel fetch
     # Skips architect/specialists - only fetches tiles and rebuilds itinerary
     # @see intent_router origin detection block
-    if state.metadata.get("origin_only_logistics"):
+    if turn.origin_only_logistics:
         _debug_log(
             f"Origin/settings change detected - fast path to logistics "
             f"(origin={state.trip_plan.origin})"
@@ -447,7 +449,7 @@ def route_after_router(
         return "logistics"
 
     # Short-circuit responses (GREETING/RESET) skip to synthesizer
-    if state.metadata.get("short_circuit_response"):
+    if turn.short_circuit_response:
         return "synthesizer"
 
     has_destination = bool(state.trip_plan.destination)
@@ -499,6 +501,8 @@ def route_after_specialist(
     """
     from app.debug_utils import _debug_log
 
+    turn = get_turn_meta(state)
+
     # Check if there are more specialists to process
     # NOTE: We just peek, we don't pop - the specialist node handles that
     if state.pending_specialists:
@@ -522,7 +526,7 @@ def route_after_specialist(
 
     # Check if this is a "booking" intent (Build Plan button) or just general chat
     is_booking_intent = state.intent == "booking"
-    is_generate_trigger = state.metadata.get("is_generate_trigger", False)
+    is_generate_trigger = turn.is_generate_trigger
 
     # AUTO-FETCH RULE: Route to logistics when we have enough data to search
     # @see docs/ux_unified_architecture.md Section VI - "Dates = Search Trigger"
@@ -564,7 +568,7 @@ def route_after_specialist(
 
     # OPTIMIZATION: If architect already ran this turn, skip to guard/synthesizer
     # Prevents double-call: router→logistics(skip)→architect→local_expert→architect(again)
-    if state.metadata.get("architect_ran_this_turn", False):
+    if turn.architect_ran_this_turn:
         _debug_log("[SPECIALIST→] Skipping architect (already ran this turn)")
         return _should_run_guard(state)
 
@@ -598,13 +602,16 @@ def route_after_architect(
     """
     from app.debug_utils import _debug_log
 
+    turn = get_turn_meta(state)
+    persistent = get_persistent_meta(state)
+
     has_destination = bool(state.trip_plan.destination)
     has_origin = bool(state.trip_plan.origin)
     has_dates = bool(state.trip_plan.start_date)
     has_tiles = bool(state.tiles)
     is_speculative = state.intent == "speculative"
-    local_expert_ran = state.metadata.get("local_expert_ran", False)  # Persistent flag
-    logistics_attempted = state.metadata.get("logistics_attempted", False)
+    local_expert_ran = persistent.local_expert_ran
+    logistics_attempted = turn.logistics_attempted
 
     # SPECIALIST DISPATCH: If specialists were queued but deferred (no destination),
     # now route to them since architect has extracted the destination.
@@ -694,8 +701,10 @@ def route_after_logistics(state: GraphState) -> Literal["architect", "guard", "s
     """
     from app.debug_utils import _debug_log
 
+    turn = get_turn_meta(state)
+
     # If architect already ran this turn, skip to guard/synthesizer
-    if state.metadata.get("architect_ran_this_turn", False):
+    if turn.architect_ran_this_turn:
         _debug_log("[LOGISTICS→] Skipping architect (already ran this turn)")
         return _should_run_guard(state)  # Reuse existing helper
     return "architect"
@@ -711,9 +720,10 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     2. Budget/Time Errors → Architect (auto-fix loop, max 1 retry)
     3. No Errors → Synthesizer (success)
     """
-    has_blocking = state.metadata.get("has_blocking_violations", False)
+    turn = get_turn_meta(state)
+    has_blocking = turn.has_blocking_violations
     retry_count = state.guard_retry_count
-    violations = state.metadata.get("constraint_violations", [])
+    violations = turn.constraint_violations
 
     # 1. UNFIXABLE CONSTRAINT SHORT-CIRCUIT
     # Route and specialist errors are unfixable by Architect - skip auto-fix loop.

@@ -1514,17 +1514,23 @@ All ephemeral flags are cleared in `_restore_graph_state()` at turn start.
 
 ```python
 def route_after_router(state: GraphState) -> Literal["specialist", "local_expert", "logistics", "architect", "synthesizer"]:
+    turn = get_turn_meta(state)
+
     # ORIGIN/SETTINGS/ACTIONABLE FAST PATH: Route directly to logistics
     # Used by: origin detection, settings changes, Tier 2 activity additions,
     # activity removals, skill level changes, setting resets.
     # Skips architect/specialists - only fetches tiles and rebuilds itinerary.
-    # Flag is cleared in _restore_graph_state() to prevent bleed.
-    if state.metadata.get("origin_only_logistics"):
+    if turn.origin_only_logistics:
         return "logistics"
 
     # Short-circuits (greeting, reset, exploration, question_answer) skip to synthesizer
-    if state.metadata.get("short_circuit_response"):
+    if turn.short_circuit_response:
         return "synthesizer"
+
+    # CRITICAL: If specialists are queued BUT destination is missing,
+    # route to Architect FIRST to extract destination from user message.
+    if state.active_specialist and not state.trip_plan.destination:
+        return "architect"
 
     # First pass: active_specialist is "local_expert" (always first in queue)
     # Niche specialists (diving, etc.) wait in pending_specialists
@@ -1533,7 +1539,7 @@ def route_after_router(state: GraphState) -> Literal["specialist", "local_expert
             return "local_expert"
         return "specialist"  # For niche specialists in multi-specialist loop
 
-    # Default → architect (shouldn't happen if router sets local_expert)
+    # Default → architect
     return "architect"
 ```
 
@@ -1544,6 +1550,8 @@ are processed in queue order. Each specialist clears `active_specialist` at end.
 
 ```python
 def route_after_specialist(state: GraphState):
+    turn = get_turn_meta(state)
+
     # 1. Multi-specialist: If pending specialists exist, run the next one
     #    e.g., after local_expert, pending_specialists = ["diving"]
     if state.pending_specialists:
@@ -1556,13 +1564,14 @@ def route_after_specialist(state: GraphState):
     if state.intent == "speculative":
         return "synthesizer"
 
-    # 3. Booking Intent: Fetch tiles via Logistics
-    if state.intent == "booking" or state.is_generate_trigger:
+    # 3. Auto-fetch: destination + (booking intent OR generate trigger OR dates)
+    can_search = has_destination and (is_booking or turn.is_generate_trigger or has_dates)
+    if can_search:
         return "logistics"
 
     # 4. Skip architect if it already ran this turn
     #    Prevents double-call: router→logistics(skip)→architect→local_expert→architect(again)
-    if state.metadata.get("architect_ran_this_turn", False):
+    if turn.architect_ran_this_turn:
         return _should_run_guard(state)
 
     # 5. General Intent: Extract fields in Architect (skip tiles)
@@ -1592,12 +1601,9 @@ if architect already ran earlier in the same turn, skip directly to guard/synthe
 ```python
 def route_after_logistics(state: GraphState) -> Literal["architect", "guard", "synthesizer"]:
     """Skip architect if fields already extracted this turn."""
-    # Flag is cleared in _restore_graph_state(), set at end of architect node
-    # NOTE: _restore_graph_state() clears these ephemeral per-turn flags:
-    #   - architect_ran_this_turn
-    #   - origin_only_logistics (prevents flag bleed from origin changes)
-    #   - short_circuit_response (prevents stale short-circuit state)
-    if state.metadata.get("architect_ran_this_turn", False):
+    turn = get_turn_meta(state)
+    # Per-turn flags are reset via reset_turn_metadata() at turn boundary
+    if turn.architect_ran_this_turn:
         return _should_run_guard(state)  # Reuse existing helper
     return "architect"
 ```
@@ -1607,8 +1613,11 @@ def route_after_logistics(state: GraphState) -> Literal["architect", "guard", "s
 ### Should Run Guard
 
 ```python
-def should_run_guard(state: GraphState) -> Literal["guard", "synthesizer"]:
-    # Run guard if we have tiles or constraints to validate
+def _should_run_guard(state: GraphState) -> Literal["guard", "synthesizer"]:
+    # Always run guard if destination is set (route validation)
+    if state.trip_plan.destination:
+        return "guard"
+    # Also run for tiles/constraints
     if state.tiles or state.trip_plan.constraints:
         return "guard"
     return "synthesizer"
@@ -1618,14 +1627,16 @@ def should_run_guard(state: GraphState) -> Literal["guard", "synthesizer"]:
 
 ```python
 def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
-    has_blocking = state.metadata.get("has_blocking_violations", False)
+    turn = get_turn_meta(state)
+    has_blocking = turn.has_blocking_violations
     retry_count = state.guard_retry_count
-    violations = state.metadata.get("constraint_violations", [])
+    violations = turn.constraint_violations  # List[Dict[str, Any]]
 
-    # 1. ROUTE ERROR SHORT-CIRCUIT (Logic Guards)
-    # User Intent errors (Rome->Rome, Atlantis) are UNFIXABLE by the Architect.
-    # They must bypass the auto-fix loop and go straight to rejection.
-    if any(v.get("category") == "route" for v in violations):
+    # 1. UNFIXABLE SHORT-CIRCUIT (route + specialist errors)
+    # User Intent errors (Rome->Rome, Atlantis) and specialist conflicts
+    # are UNFIXABLE by the Architect — bypass auto-fix loop.
+    unfixable_categories = {"route", "specialist"}
+    if any(v.get("category") in unfixable_categories for v in violations):
         return "synthesizer"  # Triggers Amber "REJECTED" receipt
 
     # 2. OPTIMIZATION AUTO-FIX
@@ -2248,6 +2259,12 @@ which preserves non-empty categories in the document. The input merge guard
 - All nodes read settings via `get_trip_settings()` instead of raw `metadata["trip_inputs"]` dicts
 - `metadata["trip_inputs"]` is deprecated but preserved for backward compat with old sessions
 - After any write to `metadata["trip_inputs"]`, nodes rebuild typed settings via `state.metadata["trip_settings"] = get_trip_settings(state).model_dump()`
+
+**Stage 5 additions (routing typed accessors):**
+- All 5 routing functions now use `get_turn_meta(state)` / `get_persistent_meta(state)` instead of raw `state.metadata.get()` reads
+- `TurnMeta` expanded with 2 new fields: `is_generate_trigger` (frontend Build Plan flag), `logistics_attempted` (prevents architect→logistics loop)
+- `route_after_architect` uses both accessors: `turn` for `logistics_attempted`, `persistent` for `local_expert_ran`
+- Regression tests: `tests/test_routing.py` (30 parameterized cases covering all routing branches)
 
 **Input merge pattern (both endpoints in `main.py`):**
 ```python
@@ -3066,7 +3083,9 @@ Called by `_format_result()` step 6.5 (shadow mode — exception → warning, do
 
 | Component | Mode Support | Purpose | Location |
 |-----------|--------------|---------|----------|
-| `PlanHeader` | Both | Optional ModeIndicator (PLANNING/BOOKING pills) vs legacy GlassCommandBar | `components/plan/` |
+| `PlanHeader` | Both | Hero image with enriched overlay (title, route+duration, specialist pills), TripSummaryPills strip | `components/plan/` |
+| `TripStatusBar` | Mobile-only | Two-tier: collapsed plain-text summary, expandable detail card with per-field edit buttons | `components/chat/` |
+| `MobileModeHeader` | Mobile-only | Branding header + floating status pill (RESOLVING only — STABLE pill hidden) | `components/layout/` |
 | `UnifiedChipRow` | Both | Chips disabled (read-only) in BOOKING mode | `components/plan/` |
 | `TileDetailsModal` | Both | "Why this?" in PLANNING, price comparison in BOOKING | `components/tiles/` |
 | `StrategyStageRenderer` | Both | Derives mode from activeView, passes to BookingSection | `components/plan/` |

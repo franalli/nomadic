@@ -39,7 +39,7 @@ const STATUS_CONFIG: Record<
     className: 'text-primary/80',
   },
   STABLE: {
-    text: 'Up to date',
+    text: '',
     icon: <Check className="h-3 w-3" />,
     className: 'text-green-600/80',
   },

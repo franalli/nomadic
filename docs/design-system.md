@@ -1740,49 +1740,78 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
 
 ---
 
-## 17.5. Hero Chip Bar ("Frosted Glass Strip")
+## 17.5. Hero Header ("Vertical Stack")
 
-Trip summary chips displayed on the hero image need special treatment for readability against varying photo backgrounds.
+The hero header uses a **vertical stack** layout: compact image above, summary pills below on the solid app background. No text overlays on images.
 
 ### Design Philosophy
 
-**Problem:** Semi-transparent chips on a photo create text competition with the image. Different photos have different light/dark areas, making chip readability inconsistent.
+**Problem:** Overlaying text/chips on destination photos creates readability issues across varying light/dark areas. Gradient overlays "fight the image" and reduce visual impact.
 
-**Solution:** A frosted glass strip behind the entire chip row creates consistent readability while maintaining the "postcard on desk" aesthetic.
+**Solution:** Separate image and text into distinct layers. The image stands alone; pills below it serve as the sole trip summary (no title, no subtitle).
 
 ### Visual Specifications
 
-**Container:**
+**Three states:**
+
+| State | Condition | Rendering |
+|-------|-----------|-----------|
+| **Collapsed** | Mobile scroll / compact mode | `bg-secondary` bar with title + date range text |
+| **Topo** | No destination image | Animated topographic background + "Build Your Itinerary" |
+| **Vertical Stack** | Destination image ready | Compact image + pill row below |
+
+**Vertical Stack layout:**
 ```tsx
-<div className="backdrop-blur-md bg-black/30 rounded-xl px-3 py-2 flex items-center gap-2 flex-wrap">
-  <TripSummaryPills variant="onImage" ... />
+{/* Compact rounded image */}
+<div className="mx-4 mt-4 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-black/10 dark:ring-white/10">
+  <img className="w-full max-h-[15vh] min-h-[120px] object-cover" />
+</div>
+
+{/* Pills ARE the summary — no title, no subtitle */}
+<div className="px-6 py-2">
+  <TripSummaryPills variant="default" />
 </div>
 ```
 
-**Chip Hierarchy (onImage variant):**
-| Chip | Class | Visual Weight |
-|------|-------|---------------|
-| **Destination** | `text-white font-semibold` | Primary - pops |
-| **Dates** | `text-white font-semibold` | Primary - pops |
-| **Origin** | `text-zinc-300 font-normal` | Secondary - recedes |
-| **Travelers** | `text-zinc-300 font-normal` | Secondary - recedes |
-| **Budget** | `text-zinc-400 font-normal italic` | Tertiary - most subtle |
+**Key rules:**
+- Image height: `max-h-[15vh] min-h-[120px]` — viewport-relative, never dominates
+- No title or subtitle rendered — pills contain all trip info
+- No specialist pills — Trip DNA bar below already shows specialists
+- Hero hidden on mobile — `TripStatusBar` provides trip context instead
 
-### Hero Subtitle Logic
+### CoreChip Sizing (default variant)
 
-The subtitle under the destination title follows this priority:
-1. **Route** (when origin is set): "Rome → Bali" with ArrowRight icon
-2. **Hidden** (when no origin): Date is redundant with chip below
+| Property | Value |
+|----------|-------|
+| Height | `h-8` |
+| Padding | `px-3.5` |
+| Font | `text-sm` |
+| Icon | `h-3.5 w-3.5` |
+| Gap | `gap-1.5` |
+| Shape | `rounded-full border` |
 
-```tsx
-const subtitle = origin ? `${origin} → ${title}` : null;
-```
+**Active state:** Uses CSS custom properties `--chip-active-*` for theming.
+**Budget pill:** Always `italic` class, `tone="optional"`.
 
 ### Implementation Reference
 
 - Hero header: `frontend/components/plan/PlanHeader.tsx`
 - Chip components: `frontend/components/plan/TripSummaryPills.tsx`
 - CoreChip: `frontend/components/plan/CoreChip.tsx`
+
+---
+
+## 17.6. Right Panel Spacing Standard
+
+Three spacing tiers for consistent vertical rhythm:
+
+| Tier | Value | Use For |
+|------|-------|---------|
+| **Within** | `gap-2` / `space-y-2` | Related elements inside a section (icon+text, chip rows, skeleton bones) |
+| **Between** | `gap-4` / `space-y-4` | Between sections (cards, tile groups, content blocks) |
+| **Major** | `gap-6` / `space-y-6` | Major boundaries (hero→content, grid columns, manifest sections) |
+
+**Rule:** No `gap-3`, `space-y-3`, `gap-5`, `space-y-5`, or `pb-8` in the right panel. Round to the nearest tier.
 
 ---
 

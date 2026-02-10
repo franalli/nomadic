@@ -86,7 +86,7 @@ function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = fal
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Tab bar */}
-      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-border/30">
+      <div className="flex items-center gap-1 px-3 py-1 border-b border-white/10">
         <button
           type="button"
           onClick={() => goToPage(0)}

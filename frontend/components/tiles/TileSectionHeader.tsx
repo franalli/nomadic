@@ -38,7 +38,7 @@ export function TileSectionHeader({
   const { title, subtitle } = generateTileHeader(category, specialists);
 
   return (
-    <div className={cn('flex items-start justify-between mb-4', className)}>
+    <div className={cn('flex items-start justify-between mb-2', className)}>
       <div>
         <h3 className="text-lg font-semibold text-zinc-100">{title}</h3>
         <p className="text-sm text-zinc-400 mt-0.5">

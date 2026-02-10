@@ -71,6 +71,7 @@ class ConstraintViolation:
         category: str = "general",
         suggested_action: str | None = None,
         suggested_specialist: str | None = None,
+        conflicting_specialists: list[str] | None = None,
     ):
         self.code = code
         self.message = message
@@ -78,6 +79,7 @@ class ConstraintViolation:
         self.category = category  # "budget", "temporal", "geographic", "specialist", "seasonal"
         self.suggested_action = suggested_action  # Human-readable action
         self.suggested_specialist = suggested_specialist  # Alternative specialist to switch to
+        self.conflicting_specialists = conflicting_specialists or []
 
     def to_dict(self) -> Dict[str, Any]:
         result = {
@@ -90,6 +92,8 @@ class ConstraintViolation:
             result["suggested_action"] = self.suggested_action
         if self.suggested_specialist:
             result["suggested_specialist"] = self.suggested_specialist
+        if self.conflicting_specialists:
+            result["conflicting_specialists"] = self.conflicting_specialists
         return result
 
 
@@ -340,6 +344,7 @@ def check_specialist_constraints(
                                     f"Schedule {target_sid} activities at least "
                                     f"{xd.buffer_hours}h after last {topic} activity"
                                 ),
+                                conflicting_specialists=[target_sid],
                             )
                         )
                         break  # One violation per target specialist
@@ -386,6 +391,7 @@ def _check_cross_domain_from_sections(
                             f"Schedule {', '.join(sorted(conflicting))} activities at least "
                             f"{xd.buffer_hours}h after last {topic} activity"
                         ),
+                        conflicting_specialists=sorted(conflicting),
                     )
                 )
     return violations

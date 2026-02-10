@@ -1135,17 +1135,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // New state from response - MUST use specialist_type (not title) for consistent comparison
               // Filter out undefined specialist_types (shouldn't happen, but TypeScript safety)
               const newSpecialistTypes = (doc.strategy_sections?.map(s => s.specialist_type).filter((t): t is string => !!t)) ?? [];
-              const newTileTypes = new Set(Object.values(doc.tiles ?? {}).map(t => t.type));
+              // Use meta.category for activity tiles (yoga, nightlife, diving...)
+              // to detect new specialists. Fall back to type for non-activity tiles.
+              const getTileCategory = (t: { type: string; meta?: Record<string, unknown> }) =>
+                t.type === 'activity' && t.meta?.category ? String(t.meta.category) : t.type;
+              const newTileCategories = new Set(Object.values(doc.tiles ?? {}).map(getTileCategory));
 
               // Detect new content
               const hasNewSpecialist = newSpecialistTypes.some(t => !prevSpecialistTypes.has(t));
-              const hasNewTileType = [...newTileTypes].some(t => !prevTileTypes.has(t));
+              const hasNewTileType = [...newTileCategories].some(t => !prevTileTypes.has(t));
               // Flights are additive data, not a constraint change - don't trigger structural rebuild
-              const hasStructuralNewTileType = [...newTileTypes].some(t => t !== 'flight' && !prevTileTypes.has(t));
+              const hasStructuralNewTileType = [...newTileCategories].some(t => t !== 'flight' && !prevTileTypes.has(t));
 
               // Update refs for next comparison (use specialist_type consistently)
               prevSpecialistTypesRef.current = new Set(newSpecialistTypes);
-              prevTileTypesRef.current = newTileTypes;
+              prevTileTypesRef.current = newTileCategories;
 
               // EXPAND gate check logging - shows why expand fires or skips
               const tileCount = Object.keys(doc.tiles ?? {}).length;
@@ -1168,7 +1172,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               console.log(
                 `[EXPAND] gate check: strategy=${newSpecialistTypes.length} tiles=${tileCount} ` +
                 `viewState=${viewState} hasItinerary=${hasItinerary} freshHasDates=${freshHasDates} silent=${isSilentPlanGeneration} ` +
-                `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!_datesChanged} → ${expandPath}`
+                `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!_datesChanged} ` +
+                `prevCategories=[${[...prevTileTypes]}] newCategories=[${[...newTileCategories]}] → ${expandPath}`
               );
 
               // BLOCK: Don't auto-expand when blocking constraint violations exist

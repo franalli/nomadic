@@ -29,7 +29,6 @@ import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 // TileFilterBar hidden for demo - re-enable post-launch
 import { type TileFilters } from '@/components/tiles/TileFilterBar';
-import { TileSectionHeader } from '@/components/tiles/TileSectionHeader';
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
 import { activityMatchesSpecialist as registryMatch } from '@/lib/specialists';
 import { getActiveSpecialists } from '@/lib/specialist-utils';
@@ -343,14 +342,8 @@ export function BookingSection({
   if (effectiveMode === 'planning' && totalTiles > 0 && !isGenerating(generation)) {
     return (
       <>
-        <div id="booking-section" className="border-t border-border">
-          {/* Contextual Header - specialist-aware */}
-          <div className="px-4 pt-4 pb-1">
-            <TileSectionHeader
-              category={activeCategory}
-              specialists={activeSpecialists}
-              count={categoryCounts[activeCategory]}
-            />
+        <div id="booking-section">
+          <div className="px-4 pt-2 pb-1">
             {savedTileIds.size > 0 && (
               <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 mt-2">
                 {savedTileIds.size} in trip
@@ -420,7 +413,7 @@ export function BookingSection({
 
           {/* Tile cards grid - mode-aware rendering */}
           {isExpanded && (
-            <div className="px-4 pb-4 space-y-3">
+            <div className="px-4 pb-4 space-y-4">
               {previewTiles.length > 0 ? (
                 <>
                   {previewTiles.map((tile) => (
@@ -505,7 +498,7 @@ export function BookingSection({
   if (state.startsWith('S2_') && isGenerating(generation)) {
     const message = totalTiles > 0 ? 'Refreshing deals…' : 'Searching deals…';
     return (
-      <div id="booking-section" className="px-4 py-2 space-y-3 animate-in fade-in duration-500">
+      <div id="booking-section" className="px-4 py-2 space-y-4 animate-in fade-in duration-500">
         <p className="text-xs text-muted-foreground">{message}</p>
         <MiniCardSkeleton />
         <MiniCardSkeleton />

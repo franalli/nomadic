@@ -39,13 +39,14 @@ If a task requires touching BOTH zones, stop and confirm scope before proceeding
 
 ## 🛡️ Governance — Single Sources of Truth
 
-These three docs override your assumptions. Read before generating code.
+These four docs override your assumptions. Read before generating code.
 
 | SSoT Doc                           | Governs                                | Rule                                                                     |
 | ---------------------------------- | -------------------------------------- | ------------------------------------------------------------------------ |
 | `@docs/plan_graph_analysis.md`     | Backend architecture, node structure   | MUST verify plan against spec before writing planner code                |
 | `@docs/design-system.md`           | UI styling, tokens, component patterns | ALL React components use these tokens — no invented Tailwind values      |
 | `@docs/ux_unified_architecture.md` | View states, rendering logic, UX flow  | Never swap renderers — use `UnifiedStageRenderer`, adapt by data density |
+| `@docs/data-contracts.md`          | API routes, schemas, state store       | Check before modifying API endpoints, schemas, or state shape            |
 
 **Invariants from these docs:**
 

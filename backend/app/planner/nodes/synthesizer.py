@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import List
 
 from jinja2 import Template
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.planner.state import (
@@ -162,14 +162,21 @@ def _build_synthesis_context(state: GraphState) -> str:
     elif architect_mode == "core_planning":
         parts.append("- YOUR TASK: Summarize progress and guide to next steps")
 
-    # User's latest message (find the last HumanMessage)
-    from langchain_core.messages import HumanMessage
-
-    for msg in reversed(state.messages):
-        if isinstance(msg, HumanMessage):
-            parts.append("\n## User's Latest Message")
-            parts.append(f'"{msg.content}"')
-            break
+    # Conversation history — gives LLM awareness of what was already said
+    recent = state.messages[-8:]  # ~4 turns
+    if recent:
+        parts.append("\n## Conversation History (last few turns)")
+        for msg in recent:
+            if isinstance(msg, HumanMessage):
+                parts.append(f"USER: {msg.content}")
+            elif isinstance(msg, AIMessage):
+                parts.append(f"ASSISTANT: {msg.content}")
+        parts.append(
+            "\n- CRITICAL: Do NOT repeat information already said in previous "
+            "ASSISTANT messages. If you already mentioned tile counts, "
+            "constraints, or warnings, do NOT say them again. Acknowledge "
+            "only what is NEW this turn."
+        )
 
     # Core trip info
     parts.append("\n## TripPlan")
@@ -459,9 +466,28 @@ def generate_suggestions(state: GraphState) -> List[str]:
         if v.get("severity") == "blocking" and v.get("category") != "route"
     ]
     if blocking:
-        first = blocking[0]
-        action = first.get("suggested_action", "Adjust your dates")
-        return [action, "Change dates", "Change destination"]
+        chips = []
+        plan = state.trip_plan
+
+        # "Extend to Feb 24" — concrete date the router can parse
+        if plan.end_date:
+            from datetime import datetime, timedelta
+
+            end = datetime.strptime(plan.end_date, "%Y-%m-%d")
+            extended = end + timedelta(days=2)
+            chips.append(f"Extend to {extended.strftime('%b %-d')}")
+
+        # "Remove hiking" — from violation's conflicting specialists
+        settings = get_trip_settings(state)
+        active_cats = set(settings.activity_settings.categories)
+        for v in blocking:
+            for cat in sorted(v.get("conflicting_specialists", [])):
+                if cat in active_cats:
+                    chip = f"Remove {cat}"
+                    if chip not in chips:
+                        chips.append(chip)
+
+        return chips[:3] if chips else [blocking[0].get("suggested_action", "Adjust your dates")]
 
     # ── Step 2: Route violations ──
     route_violations = [v for v in constraint_violations if v.get("category") == "route"]
@@ -744,8 +770,6 @@ async def synthesizer(state: GraphState) -> GraphState:
     """
     import asyncio
 
-    from langchain_core.messages import AIMessage
-
     from app.debug_utils import _debug_node_end, _debug_node_start
 
     _debug_node_start(
@@ -789,7 +813,12 @@ async def synthesizer(state: GraphState) -> GraphState:
     from app.debug_utils import log, log_tokens
 
     try:
-        if use_llm:
+        # Settings update shortcut — preserve router's acknowledgment
+        # Skips LLM to avoid repeating tile counts / constraint warnings
+        if state.metadata.get("settings_just_updated"):
+            message = state.metadata.get("actionable_acknowledgment", "") or state.last_summary
+            log("SYNTH", f"Settings update ({len(message)} chars)")
+        elif use_llm:
             # Use LLM for complex planning responses
             logger.debug("Using LLM synthesis for response generation")
             log("SYNTH", "Generating LLM response...")
@@ -840,7 +869,10 @@ async def synthesizer(state: GraphState) -> GraphState:
             await image_task
 
     # Generate suggestion chips (always template-based for consistency)
-    suggested_replies = generate_suggestions(state)
+    if not state.metadata.get("settings_just_updated"):
+        suggested_replies = generate_suggestions(state)
+    else:
+        suggested_replies = state.suggested_replies or generate_suggestions(state)
 
     # Log response details
     log("SYNTH", f"Response: {len(message)} chars")

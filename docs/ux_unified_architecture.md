@@ -1564,7 +1564,7 @@ The renderer uses data density to determine what to show:
 
 | Density | Condition | Renders |
 | --- | --- | --- |
-| `empty` | S0 + no specialist content | Topo background + "Build Your Itinerary" tagline (PlanHeader) |
+| `empty` | S0 + no specialist content | Topo background + "Build Your Itinerary" tagline (PlanHeader, desktop only) |
 | `ghost` | S0 + specialist content | Strategy cards + ghost timeline |
 | `bridge` | S2 + specialist + no tiles + no dates | Strategy cards + sample timeline + POI map |
 | `full` | S2 + tiles exist | Strategy cards + real timeline + tiles + full map |
@@ -1819,7 +1819,7 @@ The "Split Screen" desktop architecture translates to a **horizontal swipe layou
 | --- | --- | --- |
 | `MobileSwipeLayout` | `components/layout/MobileSwipeLayout.tsx` | CSS scroll-snap horizontal container with tab bar |
 | `MobileChatInput` | `components/chat/MobileChatInput.tsx` | Detached chat input below swipe container (visible on both pages) |
-| `TripStatusBar` | `components/chat/TripStatusBar.tsx` | Compact trip summary above swipe container (shared across pages) |
+| `TripStatusBar` | `components/chat/TripStatusBar.tsx` | Two-tier expand/collapse trip summary above swipe container |
 | `mobileNavStore` | `state/mobileNavStore.ts` | Zustand store: `activePage`, `hasNewPlanContent` badge |
 | `useIsDesktop` | `hooks/useIsDesktop.ts` | Viewport detection hook (`useSyncExternalStore` + `matchMedia`) |
 
@@ -1828,7 +1828,7 @@ The "Split Screen" desktop architecture translates to a **horizontal swipe layou
 ```
 ┌──────────────────────────┐
 │  MobileModeHeader     48px│
-│  TripStatusBar      ~40px│  ← conditional (after first input)
+│  TripStatusBar      ~40px│  ← two-tier: plain text (tap to expand detail rows)
 │  [Chat]  [Plan ●]   ~36px│  ← tab bar inside MobileSwipeLayout
 ├──────────────────────────┤
 │                          │
@@ -1904,6 +1904,8 @@ Plan tab is **locked** until first real plan content arrives:
 4. **Safe Areas:** Chat input uses `pb-[max(0.5rem,env(safe-area-inset-bottom))]`. Header uses `pt-[env(safe-area-inset-top)]`.
 5. **Chat Input Always Visible:** Users can type commands from either page without swiping back.
 6. **Height Constraint:** Root div MUST use fixed `h-[100dvh]` (NOT `min-h-[100dvh]`) to prevent input clipping below viewport.
+7. **Status Pill:** `MobileModeHeader` STABLE state has empty text (pill hidden). Only RESOLVING ("Planning...") shows a visible pill.
+8. **TripStatusBar:** Two-tier expand/collapse. Tier 1: plain text summary (`Bali · Rome · Feb 14-22 · 1 adult`). Tier 2: tap to reveal labeled rows with per-row edit buttons via `onOpenSheet`.
 
 ### Deleted Components (replaced by swipe layout)
 
@@ -2118,22 +2120,20 @@ The Strategy Section adapts its visual presentation based on Data Density (see S
 
 | Density | Variant | Visual | Purpose |
 | --- | --- | --- | --- |
-| `bridge` / `ghost` | **Hero** | Full-width image, editorial typography, constraint pills | Maximum inspiration |
-| `full` | **Compact** | Single-row bar (~56px), specialist pills, constraint count | Get out of the way |
+| `bridge` / `ghost` / `full` | **Vertical Stack** | Compact rounded image + `TripSummaryPills` below (desktop); hidden on mobile | Clean, scannable |
 
-#### A. Hero Mode ("The Magazine Cover")
+#### A. Vertical Stack Mode ("Image + Pills")
 
-Used in Bridge Mode when user has intent but no dates/tiles. The goal is **maximum inspiration**.
+Used when destination image is available. Clean separation of image and text.
 
-* **Image:** `aspect-[16/9]` or `aspect-[2/1]` full-width hero from `destination_gallery` or `content_added[0].image_url`
-* **Overlay:** Gradient `from-black/90 via-black/40 to-transparent`
-* **Badge:** Frosted glass pill (`bg-white/20 backdrop-blur-md border-white/20`)
-* **Title:** White text, `text-2xl md:text-3xl font-bold`
-* **Constraints:** Horizontal scroll pills at bottom (`bg-black/40 backdrop-blur-md`)
-  - Uses `getShortConstraintLabel()` for concise 3-4 word labels (e.g., "No-Fly 24h")
-  - Full constraint text available on hover via `title` attribute
+* **Image:** `max-h-[15vh] min-h-[120px]` rounded card (`rounded-2xl shadow-2xl ring-1`)
+* **No overlay:** Image stands alone — no gradients, no text on image
+* **No title/subtitle:** Pills below serve as the sole trip summary
+* **Pills:** `TripSummaryPills variant="default"` using CSS custom property theming
+* **No specialist pills:** Trip DNA bar below already shows specialist info
+* **Mobile:** Hero hidden entirely — `TripStatusBar` provides trip context
 
-**Rationale:** In Inspiration mode, we want the user to feel excited about their trip. The Magazine Cover creates emotional connection before logistics.
+**Rationale:** Moving text below the image eliminates readability issues across varying photo backgrounds while keeping the layout clean and scannable.
 
 #### B. Compact Mode ("Trip DNA Bar")
 
@@ -2476,29 +2476,27 @@ When niche specialists run alongside Local Expert (see Section III.A), the UI re
 
 **Invariant:** Trip Overview is NEVER replaced by niche specialists - they are ADDITIVE.
 
-### 7. Fixed-Height Banner Pattern (Image Sizing)
+### 7. Viewport-Relative Image Sizing
 
-**Problem:** Using `aspect-video` or `aspect-[16/9]` causes hero images to scale with viewport width, creating "giant images" that dominate the screen on desktop.
+**Problem:** Using `aspect-video` or fixed pixel heights causes images to either dominate small screens or look tiny on large screens.
 
-**Solution:** Use fixed pixel heights instead of aspect ratios:
+**Solution:** Use viewport-height-relative sizing with min/max bounds:
 
-| Breakpoint | Hero Mode | Compact/BottomSheet |
-|------------|-----------|---------------------|
-| Mobile (<768px) | `h-56` (224px) | `h-48` (192px) |
-| Desktop (≥768px) | `h-72` (288px) | `h-64` (256px) |
+| Context | Sizing | Rationale |
+|---------|--------|-----------|
+| **Hero image** (PlanHeader) | `max-h-[15vh] min-h-[120px]` | Compact card, never dominates |
+| **Topo background** (PlanHeader) | `h-[clamp(180px,25vh,280px)]` | Scales with screen height |
+| **Strategy card images** | `max-h-[30vh]` | Never exceed ~30% viewport |
 
 **Implementation:**
 ```tsx
-// WRONG: Scales with viewport width
-<div className="aspect-video w-full">
-
-// CORRECT: Fixed height, won't exceed ~30% viewport
-<div className="h-48 md:h-64 w-full">
-  <Image fill className="object-cover" />
+// Hero: Compact rounded card
+<div className="mx-4 mt-4 rounded-2xl overflow-hidden">
+  <img className="w-full max-h-[15vh] min-h-[120px] object-cover" />
 </div>
 ```
 
-**Invariant:** Strategy card images must NEVER exceed ~30% of vertical viewport space.
+**Invariant:** No image should exceed ~30% of vertical viewport space.
 
 ### 8. Anchor Card Safety Net
 
@@ -3144,28 +3142,26 @@ function StatusBadge({ status, mode }) {
 
 The following components also support the two-mode system:
 
-### 1. PlanHeader with ModeIndicator
+### 1. PlanHeader (Vertical Stack)
 
 **File:** `components/plan/PlanHeader.tsx`
 
-Supports both legacy GlassCommandBar and new ModeIndicator for the two-mode system.
+Three-state header for the right panel (desktop only — hidden on mobile).
 
-```typescript
-interface PlanHeaderProps {
-  // ... existing props ...
+**States:**
+| State | Condition | Renders |
+|-------|-----------|---------|
+| Collapsed | `isCollapsed=true` | Compact bar: title + date range + status pill |
+| Topo | No destination image | Animated topographic bg + "Build Your Itinerary" |
+| Vertical Stack | Destination image ready | Rounded image card + `TripSummaryPills` below |
 
-  // Two-mode system props
-  mode?: ViewMode;                    // 'planning' | 'booking'
-  planningPhase?: PlanningPhase;      // Progress tracking
-  progress?: number;                  // 0-100
-  useModeIndicator?: boolean;         // Toggle new vs legacy nav
-  onModeChange?: (mode: ViewMode) => void;
-}
-```
+**Key props:** `destinationCard`, `planViewState`, `tripInputs`, `onOpenSheet`, `isStreaming`, `isCollapsed`
 
-**Behavior:**
-- When `useModeIndicator=true` and `mode`/`planningPhase` provided: Shows PLANNING/BOOKING pills with progress bar
-- Otherwise: Shows legacy GlassCommandBar with three tabs
+**Rules:**
+- No text overlaid on images — pills below are the sole summary
+- No specialist pills — Trip DNA bar handles that
+- Image height: `max-h-[15vh] min-h-[120px]` (viewport-relative)
+- Pills use `variant="default"` with CSS custom property theming
 
 ### 2. UnifiedChipRow (Mode-Aware Disabled State)
 

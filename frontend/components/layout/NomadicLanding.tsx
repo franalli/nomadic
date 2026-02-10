@@ -1495,7 +1495,7 @@ export function NomadicLanding() {
               <TripStatusBar
                 tripInputs={tripInputs}
                 specialists={docExecutedTopics ?? []}
-                onEditTap={() => openSheet('trip-settings')}
+                onOpenSheet={openSheet}
               />
             ) : undefined
           }
