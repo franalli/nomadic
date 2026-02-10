@@ -723,6 +723,8 @@ else:
 
 Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output (`tiles_per_category` param, default 2). `LogisticsNode._compute_tiles_per_category()` scales the count based on placeable days (free days + co-schedulable specialist days): `clamp(total_placeable // num_categories, 2, 4)` where `free_days = trip_days − specialist_activity_days − 2` and `total_placeable = free_days + specialist_days`. Each tile includes title, subtitle, category, duration, price estimate, time of day, and skill level. Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
 
+**Duration constraint:** System prompt enforces 1–4 hour single-session activities. Post-processing clamps `duration_hours > 4` to 4h to prevent multi-day retreats from being generated (e.g., "Bali Yoga Retreat" at 48h).
+
 | Trip Type | Categories | `executed_strategy_topics` | Activities |
 |-----------|-----------|---------------------------|------------|
 | "diving in Bali" | `["diving"]` | `["local_expert", "diving"]` | **Suppressed** (pure Tier 1) |
@@ -801,7 +803,7 @@ Zero hardcoded specialist names — adding a specialist to `specialist_registry.
 to `QUESTION_TYPE_MAPPING` automatically makes it available as a suggestion.
 
 Priority cascade:
-1. Blocking violations → `[suggested_action, "Change dates", "Change destination"]`
+1. Blocking violations → `["Extend to {date}", "Add buffer day between activities", "Remove {specialist}"]`
 2. Route violations → `["Back to {prev}", "Different city", "Help me choose"]`
 3. Pool-based (condition × priority × category dedup):
    - P0: destination_choice / date_contextual / date_prompt
@@ -819,6 +821,8 @@ backfill and are actionable post-planning (routed through the `question_answer` 
 **Logic Guard Voice:** When a blocking route violation is detected (`category="route"`), the Synthesizer shifts to **"Architectural Safety Mode"**. It refuses to generate enthusiasm or itinerary content and instead provides a firm, corrective statement (e.g., "I cannot generate a route where Origin and Destination are identical.").
 
 **Safety Constraint Surfacing:** When non-route blocking violations are detected (e.g., diving surface interval), the synthesis context includes a `⚠️ SAFETY CONSTRAINT VIOLATION` section prompting the LLM to mention the safety issue and suggest plan adjustments.
+
+**Settings-Update Violation Override:** When `settings_just_updated` is true AND `constraint_violations` exist (e.g., user adds hiking to a diving trip), the synthesizer routes to the full LLM path instead of using the short acknowledgment string. This ensures violations are surfaced in the chat response even during settings updates. Suggestion chips are also always regenerated when violations are present.
 
 **True Streaming:**
 Uses LangGraph's `astream_events` to tap into the LLM token stream:
@@ -852,7 +856,8 @@ Transforms specialist content + tiles into day-by-day timeline.
 │  1.   Temporal Scaffolding - Create DayCard[] from dates         │
 │  2.   Anchor Placement - Arrival/departure from flight tiles     │
 │  3.   Buffer Injection - Safety blocks (no-fly, acclimatization) │
-│  4.   Activity Distribution - Round-robin interleaving by day    │
+│  4.   Activity Distribution - Constraint-aware clustering OR     │
+│       round-robin interleaving (see Cross-Domain Clustering)     │
 │  5.   Free Day Placeholders - Add placeholders for empty days    │
 │  5.25 Preferred Activity Placement - Fill free days with hearts  │
 │  6.   Tile Matching - Hotels span all days, preferences weighted │
@@ -886,6 +891,30 @@ if total_activity_days > max_capacity:
 **Two-Layer No-Fly Enforcement:**
 1. **Phase 2b (Count):** Truncates diving activity count to fit available slots (`diving_slots = usable_days - buffer_days`)
 2. **Phase 4 (Placement):** Restricts diving to days at or before `departure - 1 - buffer_days` (e.g., Day 2 at latest for a 4-day trip). If the round-robin lands on a restricted day for diving, it wraps to an earlier valid day. Other specialists (hiking, etc.) are unaffected and can still use those days.
+
+**Cross-Domain Clustering (Phase 4 — `no_altitude_after_dive`):**
+
+When the `no_altitude_after_dive` constraint is present and both diving and altitude activities (hiking, trekking, mountaineering, skiing, climbing) exist, `_distribute_activities` bypasses round-robin and uses ordered clustering:
+
+1. **Phase A:** All diving activities placed on earliest available days
+2. **Phase B:** One buffer/rest day inserted after last dive day
+3. **Phase C:** All altitude activities placed after the buffer
+4. **Phase D:** Remaining specialists (non-dive, non-altitude) placed on remaining slots
+
+This ensures the 24h decompression gap is respected in the schedule layout. The constraint is detected via `_find_constraint(constraints, "no_altitude_after_dive")` and the `constraints` parameter is now passed from the call site at Phase 5.
+
+```
+Example: 9-day Bali trip with diving + hiking
+Day 1: Arrival
+Day 2: Dive 1 (Tulamben)
+Day 3: Dive 2 (Nusa Penida)
+Day 4: Dive 3 (Menjangan)
+Day 5: REST — decompression buffer
+Day 6: Hike 1 (Mt Batur)
+Day 7: Hike 2 (Campuhan Ridge)
+Day 8: Hike 3 (Sekumpul)
+Day 9: Departure
+```
 
 **Phase 5.25: Preferred Activity Placement (Two-Pass)**
 
@@ -963,9 +992,11 @@ Each specialist type has its own constraint generator:
 
 Two enforcement layers in the guard:
 1. **Block-level** (`check_specialist_constraints()`): Reads `plan.itinerary_blocks` for day-level scheduling conflicts. Only effective when blocks are populated (specialist just ran).
-2. **Section-level** (`_check_cross_domain_from_sections()`): Reads `persistent.strategy_sections` to detect specialist co-existence. Fires every turn regardless of execution path (survives fast paths like ACTIONABLE_TO_LOGISTICS where specialists don't re-run). Deduplicated against block-level violations by `code`.
+2. **Section-level** (`_check_cross_domain_from_sections()`): Reads `persistent.strategy_sections` to detect specialist co-existence. Deduplicated against block-level violations by `code`. **Suppressed on subsequent turns** when the corresponding builder constraint is already persisted in `existing_rules` (meaning the builder is enforcing it via clustering). Mapping: `_violation_to_constraint_rule = {"ALTITUDE_AFTER_DIVE": "no_altitude_after_dive"}`.
 
-**Constraint Injection:** When a cross-domain violation is detected, the guard injects a `SpecialistConstraint` (e.g. `rule="altitude_after_dive"`) into `trip_plan.constraints` and persists it in `specialist_constraints`. This enables the ItineraryBuilder to enforce scheduling separation via `_find_constraint()` → `_detect_early_conflicts()`.
+**Violation lifecycle:** Turn N (first co-existence): violation fires → constraint injected → user informed. Turn N+1+: constraint already in `existing_rules` → section-level violation suppressed → no misleading chips/warnings for constraints the builder already enforces.
+
+**Constraint Injection:** When a cross-domain violation is detected, the guard injects a `SpecialistConstraint` (e.g. `rule="no_altitude_after_dive"`) into `trip_plan.constraints` and persists it in `specialist_constraints`. This enables the ItineraryBuilder to enforce scheduling separation via `_find_constraint()` → `_detect_early_conflicts()`.
 
 Data flow: `registry (CrossDomainBlock) → guard (violation detection) → SpecialistConstraint injection → builder (_find_constraint)`
 
@@ -1916,6 +1947,8 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Inline wi
 1. L1 in-memory (thread-safe) → ~1ms
 2. L2 PostgreSQL → ~50ms (promotes to L1 on hit)
 3. `gpt-4o-mini` structured output → ~2-3s (writes to both layers)
+
+**Duration clamping on cache reads:** `_clamp_tile_durations()` runs on both L1 and L2 cache returns, capping `meta.duration_hours` to 4h. Defensive against stale cache entries from before the generation-time clamp was added (LLM sometimes generates 48h multi-day retreats). Generation-time clamping at line 418-424 handles fresh tiles; cache-read clamping handles stale ones.
 
 **Integration Point:** `logistics_node.py` → Tier 2 activity block (both mixed Tier 1+2 and pure Tier 2 paths)
 

@@ -123,6 +123,7 @@ class DayCardOutput(BaseModel):
     day_number: int
     date: Optional[str] = None  # ISO date string, e.g. "2025-02-12"
     label: str
+    subtitle: Optional[str] = None  # Explanatory context for special days
     blocks: List[DayBlockOutput] = Field(default_factory=list)
 
 
@@ -454,7 +455,7 @@ class ItineraryBuilder:
             days = self._inject_safety_buffers(days, merged_constraints)
 
             # Phase 5: Distribute activities across days (interleaved)
-            days = self._distribute_activities(days, activities)
+            days = self._distribute_activities(days, activities, merged_constraints)
 
             # Phase 5.5: Handle empty days (add FreeDay placeholders)
             # Compute Tier 2 categories: user selections minus scheduled specialists
@@ -538,16 +539,20 @@ class ItineraryBuilder:
             # Default labels
             if day_num == 1:
                 label = "Arrival Day"
+                subtitle = "Travel day — settle in"
             elif day_num == duration:
                 label = "Departure Day"
+                subtitle = "Safe travels home"
             else:
                 label = f"Day {day_num}"
+                subtitle = None
 
             days.append(
                 DayCardOutput(
                     day_number=day_num,
                     date=day_date.isoformat(),
                     label=label,
+                    subtitle=subtitle,
                     blocks=[],
                 )
             )
@@ -1060,6 +1065,7 @@ class ItineraryBuilder:
                         intensity="light",
                     )
                     days[accl_day_idx].blocks.insert(0, buffer_block)
+                    days[accl_day_idx].subtitle = buffer_block.buffer_reason
 
         return days
 
@@ -1071,6 +1077,7 @@ class ItineraryBuilder:
         self,
         days: List[DayCardOutput],
         activities_by_specialist: Dict[str, List[ActivityBlock]],
+        constraints: Optional[List["MergedConstraint"]] = None,
     ) -> List[DayCardOutput]:
         """
         Distribute activities from multiple specialists across days.
@@ -1078,8 +1085,9 @@ class ItineraryBuilder:
         Strategy:
         1. Calculate available slots per day (respecting buffers)
         2. Weight and sort activities by user preference (preferred first)
-        3. Alternate between specialists for variety
-        4. Respect max activities per day (2-3)
+        3. If cross-domain constraints exist (dive+altitude), cluster activities
+        4. Otherwise alternate between specialists for variety
+        5. Respect max activities per day (2-3)
         """
         if not activities_by_specialist:
             return days
@@ -1123,6 +1131,164 @@ class ItineraryBuilder:
         # Flatten and copy activities
         specialists = list(activities_by_specialist.keys())
         remaining = {s: list(acts) for s, acts in activities_by_specialist.items()}
+
+        # ─────────────────────────────────────────────────────────
+        # Cross-domain clustering: diving before altitude with buffer
+        # ─────────────────────────────────────────────────────────
+        altitude_constraint = _find_constraint(constraints or [], "no_altitude_after_dive")
+        diving_specialists = {"diving"}
+        altitude_specialist_names = {
+            "hiking",
+            "trekking",
+            "mountaineering",
+            "skiing",
+            "climbing",
+        }
+
+        has_diving = any(s in diving_specialists for s in remaining if remaining[s])
+        has_altitude = any(s in altitude_specialist_names for s in remaining if remaining[s])
+
+        if altitude_constraint and has_diving and has_altitude:
+            _debug("[ItineraryBuilder] 🏔️ Cross-domain clustering: diving → buffer → altitude")
+            periods = ["morning", "afternoon", "evening"]
+            period_ptr = 0
+            slot_ptr = 0  # index into available_day_indices
+
+            # Phase A: Place all diving activities on earliest days
+            for spec in list(diving_specialists):
+                for activity in remaining.get(spec, []):
+                    if slot_ptr >= len(available_day_indices):
+                        break
+                    day_idx = available_day_indices[slot_ptr]
+                    day = days[day_idx]
+
+                    is_user_preferred = getattr(activity, "is_user_preferred", False)
+                    preference_status = "user_preferred" if is_user_preferred else None
+                    block = DayBlockOutput(
+                        id=f"act_{spec}_{day_idx}_{len(day.blocks)}",
+                        period=periods[period_ptr % len(periods)],
+                        activity_type=activity.title.lower().replace(" ", "_"),
+                        intensity=activity.intensity,
+                        summary=activity.title,
+                        specialist_type=spec,
+                        image_url=activity.image_url,
+                        duration=f"{activity.duration_hours}h" if activity.duration_hours else None,
+                        constraints=activity.constraints,
+                        preference_status=preference_status,
+                    )
+                    if activity.coordinates:
+                        block.coordinates = {
+                            "lat": activity.coordinates[1],
+                            "lng": activity.coordinates[0],
+                        }
+                    day.blocks.append(block)
+                    period_ptr += 1
+                    slot_ptr += 1
+                    _debug(
+                        f"[ItineraryBuilder] 🤿 Clustered dive "
+                        f"'{activity.title}' on Day {day_idx + 1}"
+                    )
+                remaining.pop(spec, None)
+
+            # Phase B: Skip one day as decompression buffer
+            if slot_ptr < len(available_day_indices):
+                buffer_day_idx = available_day_indices[slot_ptr]
+                buffer_day = days[buffer_day_idx]
+                # Only insert rest buffer if the day is empty (Phase 4 may have already placed one)
+                has_rest = any(
+                    b.is_buffer and b.buffer_type == "rest_day" for b in buffer_day.blocks
+                )
+                if not has_rest:
+                    buffer_day.label = "Rest Day — Decompression before altitude"
+                    rest_block = DayBlockOutput(
+                        id=f"buffer_cross_domain_{buffer_day_idx}",
+                        period="morning",
+                        activity_type="rest",
+                        summary="Rest day — decompression safety before altitude activities",
+                        is_buffer=True,
+                        buffer_type="rest_day",
+                        buffer_reason="No high-altitude activities within 24h of diving",
+                        intensity="light",
+                    )
+                    buffer_day.blocks.append(rest_block)
+                    buffer_day.subtitle = rest_block.buffer_reason
+                    _debug(
+                        f"[ItineraryBuilder] 🛑 Buffer day on Day "
+                        f"{buffer_day_idx + 1} (cross-domain)"
+                    )
+                slot_ptr += 1
+
+            # Phase C: Place all altitude activities after buffer
+            for spec in list(altitude_specialist_names):
+                for activity in remaining.get(spec, []):
+                    if slot_ptr >= len(available_day_indices):
+                        break
+                    day_idx = available_day_indices[slot_ptr]
+                    day = days[day_idx]
+
+                    is_user_preferred = getattr(activity, "is_user_preferred", False)
+                    preference_status = "user_preferred" if is_user_preferred else None
+                    block = DayBlockOutput(
+                        id=f"act_{spec}_{day_idx}_{len(day.blocks)}",
+                        period=periods[period_ptr % len(periods)],
+                        activity_type=activity.title.lower().replace(" ", "_"),
+                        intensity=activity.intensity,
+                        summary=activity.title,
+                        specialist_type=spec,
+                        image_url=activity.image_url,
+                        duration=f"{activity.duration_hours}h" if activity.duration_hours else None,
+                        constraints=activity.constraints,
+                        preference_status=preference_status,
+                    )
+                    if activity.coordinates:
+                        block.coordinates = {
+                            "lat": activity.coordinates[1],
+                            "lng": activity.coordinates[0],
+                        }
+                    day.blocks.append(block)
+                    period_ptr += 1
+                    slot_ptr += 1
+                    _debug(
+                        f"[ItineraryBuilder] 🏔️ Clustered altitude "
+                        f"'{activity.title}' on Day {day_idx + 1}"
+                    )
+                remaining.pop(spec, None)
+
+            # Phase D: Place remaining specialists (non-dive, non-altitude) normally
+            for spec in list(remaining.keys()):
+                for activity in remaining.get(spec, []):
+                    if slot_ptr >= len(available_day_indices):
+                        break
+                    day_idx = available_day_indices[slot_ptr]
+                    day = days[day_idx]
+
+                    is_user_preferred = getattr(activity, "is_user_preferred", False)
+                    preference_status = "user_preferred" if is_user_preferred else None
+                    block = DayBlockOutput(
+                        id=f"act_{spec}_{day_idx}_{len(day.blocks)}",
+                        period=periods[period_ptr % len(periods)],
+                        activity_type=activity.title.lower().replace(" ", "_"),
+                        intensity=activity.intensity,
+                        summary=activity.title,
+                        specialist_type=spec,
+                        image_url=activity.image_url,
+                        duration=f"{activity.duration_hours}h" if activity.duration_hours else None,
+                        constraints=activity.constraints,
+                        preference_status=preference_status,
+                    )
+                    if activity.coordinates:
+                        block.coordinates = {
+                            "lat": activity.coordinates[1],
+                            "lng": activity.coordinates[0],
+                        }
+                    day.blocks.append(block)
+                    period_ptr += 1
+                    slot_ptr += 1
+                remaining.pop(spec, None)
+
+            _debug("[ItineraryBuilder] ✅ Cross-domain clustering complete")
+            # Skip to time-of-day sorting (bypass round-robin)
+            remaining = {}  # Clear so round-robin loop is skipped
 
         # Even distribution: spread activities across all available days
         # Strategy: cycle through days, placing 1 activity per day per round
@@ -1364,18 +1530,19 @@ class ItineraryBuilder:
             return (0.0, 0)
 
         activity_hours = 0.0
-        activity_blocks = 0
+        total_blocks = 0
         for b in day.blocks:
             if b.activity_type == "free_day":
                 continue
-            if b.is_buffer:
-                continue
-            activity_hours += _parse_duration_hours(b.duration, 3.0)
-            activity_blocks += 1
+            # Count ALL blocks (including buffers) toward the per-day cap
+            # to match the frontend content policy guard
+            total_blocks += 1
+            if not b.is_buffer:
+                activity_hours += _parse_duration_hours(b.duration, 3.0)
 
         return (
             max(0.0, DAY_CAPACITY_HOURS - activity_hours),
-            max(0, MAX_BLOCKS_PER_DAY - activity_blocks),
+            max(0, MAX_BLOCKS_PER_DAY - total_blocks),
         )
 
     def _time_slot_score(self, day: DayCardOutput, tile_time_of_day: str) -> float:
@@ -1410,7 +1577,7 @@ class ItineraryBuilder:
         return DayBlockOutput(
             id=tile.get("id", f"exp_block_{day_number}_{count}"),
             period=period_map.get(time_of_day, "afternoon"),
-            activity_type="activity",
+            activity_type=tile.get("title", "Experience Activity"),
             summary=tile.get("title", "Experience Activity"),
             specialist_type=category,
             intensity="light",

@@ -247,7 +247,7 @@ async def _get_all_variants_from_db(db: AsyncSession, destination: str) -> List[
             .where(UnsplashImageCache.destination == normalized)
             .order_by(UnsplashImageCache.variant)
         )
-        cached_list = result.scalars().all()
+        cached_list = list(result.scalars().all())
     except Exception as e:
         logger.warning(f"[UNSPLASH-DB] Query failed (table may not exist): {e}")
         return []

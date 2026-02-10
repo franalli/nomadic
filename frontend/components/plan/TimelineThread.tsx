@@ -313,7 +313,9 @@ export function TimelineThread({
       }
 
       // 4. ACTIVITY LAYER - Rich activity cards
-      const isBooked = !!block.booked_tile || !!(block.id && savedTileIds?.has(block.id));
+      const isBooked = mode === 'booking'
+        ? (!!block.booked_tile || !!(block.id && savedTileIds?.has(block.id)))
+        : (block.preference_status === 'user_preferred' || !!(block.id && savedTileIds?.has(block.id)));
 
       // Compute preference status for attribution badge
       // Priority: 1) Backend-computed status (includes AI override), 2) Local preference check
@@ -420,6 +422,9 @@ export function TimelineThread({
                 </h3>
                 {card.label && !/^Day \d+$/i.test(card.label) && (
                   <p className="text-sm text-muted-foreground truncate">{card.label}</p>
+                )}
+                {card.subtitle && (
+                  <p className="text-xs text-muted-foreground/60 truncate">{card.subtitle}</p>
                 )}
               </div>
             </button>

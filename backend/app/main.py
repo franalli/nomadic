@@ -641,7 +641,7 @@ def admin_clear_validation_cache():
 
 
 @app.post("/api/admin/fresh-start")
-def admin_fresh_start():
+async def admin_fresh_start():
     """
     Perform a complete system cache and checkpoint cleanup.
 
@@ -662,7 +662,7 @@ def admin_fresh_start():
     validation_cleared = clear_cache(preserve_rate_limiting=True)
 
     # Clear response caches
-    response_cleared = clear_response_caches()
+    response_cleared = await clear_response_caches()
 
     # Prune stale checkpoints
     checkpoints_pruned = prune_stale_checkpoints()
@@ -2365,7 +2365,7 @@ async def graph_plan_stream_endpoint(
 
 
 @app.delete("/api/session", status_code=204)
-def reset_session(
+async def reset_session(
     request: Request,
     db: Session = db_dependency,
 ):
@@ -2379,13 +2379,13 @@ def reset_session(
 
     # Clear LangGraph checkpoint for this session (even if session not in DB)
     if session_id:
-        clear_session_checkpoint(session_id)
+        await clear_session_checkpoint(session_id)
 
     # Clear response caches (or all caches in dev mode)
     if settings.aggressive_cache_clear:
-        clear_all_caches()  # Clear everything including validation caches
+        await clear_all_caches()  # Clear everything including validation caches
     else:
-        clear_response_caches()  # Preserve validation cache in production
+        await clear_response_caches()  # Preserve validation cache in production
 
     # Prune stale checkpoints to prevent memory overflow
     prune_stale_checkpoints()

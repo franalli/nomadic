@@ -1321,7 +1321,7 @@ automatically generates the corresponding chip.
 | Has destination, month detected | "{Month} 1-8", "{Month} 10-17", "I'm flexible" |
 | S2+ (active plan, dates set) | "5-star hotels only", "Direct flights only", "What are must-do activities?" |
 | After specialist ran | Cross-sell other specialists, plan progression, question chips |
-| Blocking violation | `[suggested_action]`, "Change dates", "Change destination" |
+| Blocking violation | "Extend to {date}", "Add buffer day between activities", "Remove {specialist}" |
 
 **S2+ Plan Progression:** Once dates are set, chips shift from exploration questions to plan-refinement actions.
 `_build_plan_progression_suggestions()` checks which settings are unconfigured (hotel stars, flight preferences,
@@ -1641,6 +1641,7 @@ plan_documents.document (JSONB)
 │       ├── day_number: int
 │       ├── date: string
 │       ├── title: string                   # "Arrival Day"
+│       ├── subtitle?: string              # Explanatory context (e.g., buffer_reason)
 │       └── blocks: List[Block]             # Activities, logistics
 ├── can_expand_to_itinerary: bool           # ✅ PERSISTED
 │
@@ -2902,7 +2903,7 @@ Shows tile with price comparison across booking partners.
 - `tile: Tile` - The bookable tile
 - `partnerPrices?: PartnerPrice[]` - Multi-partner pricing
 - `isInCart?: boolean` - Cart state
-- `isBooked?: boolean` - Booking state
+- `isBooked?: boolean` - Booking state (PLANNING mode: only true for `user_preferred` tiles; BOOKING mode: true when `booked_tile` exists)
 - `onBook?: (tile, partner) => void` - External booking redirect
 - `onCartToggle?: (tile) => void` - Cart toggle callback
 
@@ -3060,6 +3061,12 @@ The `BookingSection` component adapts rendering based on `mode` prop:
 |------|----------------|----------|---------|
 | PLANNING | SuggestionCard | Hidden | Save, Change, Details |
 | BOOKING | BookableCard | Visible | Book, Cart, Details |
+
+**Smart Tab Auto-Switch:** When new tiles arrive from a backend response, the active category tab automatically switches to the tab with the biggest growth (e.g., user says "yoga and nightlife" → Activities tab auto-selects). Respects manual selection: once a user clicks a tab, auto-switch is disabled for that session. First load always defaults to Stays. Implementation: `useEffect` comparing `prevCountsRef` with current tile counts per category.
+
+**isBooked Semantics (Planning vs Booking):**
+- **PLANNING mode:** Green checkmark (`CheckCircle`) only appears for `user_preferred` tiles or user-saved tiles (via `savedTileIds`). AI-placed tiles (`booked_tile` present but no user preference) do NOT show the checkmark.
+- **BOOKING mode:** Green checkmark appears when `booked_tile` exists or tile is in `savedTileIds` (legacy behavior).
 
 #### F.1 Mode-Based Conditional Rendering (SSoT)
 

@@ -576,8 +576,19 @@ async def constraint_guard(state: GraphState) -> GraphState:
     # =========================================================================
     existing_codes = {v.code for v in violations}
     section_violations = _check_cross_domain_from_sections(persistent.strategy_sections)
+    # Map violation codes to the constraint rules the builder enforces
+    # TODO: derive from specialist registry when more cross-domain constraints exist
+    _violation_to_constraint_rule = {
+        "ALTITUDE_AFTER_DIVE": "no_altitude_after_dive",
+    }
     for sv in section_violations:
         if sv.code not in existing_codes:
+            # If the builder's constraint is already persisted from a previous turn,
+            # the builder is enforcing it via clustering — suppress the violation.
+            constraint_rule = _violation_to_constraint_rule.get(sv.code)
+            if constraint_rule and canonicalize_rule(constraint_rule) in existing_rules:
+                log("GUARD", f"⏭️ {sv.code} suppressed: builder enforces {constraint_rule}")
+                continue
             violations.append(sv)
             existing_codes.add(sv.code)
             if sv.severity == "blocking":

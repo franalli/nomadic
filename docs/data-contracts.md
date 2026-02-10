@@ -119,12 +119,15 @@ PlanDocumentData
   |     '-- destination_gallery[], trip_summary?
   |
   |-- day_cards: DayCard[]
-  |     |-- day_number, date?, label
+  |     |-- day_number, date?, label, subtitle?
   |     '-- blocks: DayBlock[]
   |           |-- period (morning|afternoon|evening), activity_type, summary
   |           |-- is_buffer, buffer_type?, coordinates: {lat, lng}?
   |           |-- booked_tile?, preference_status?, scheduled_time?
   |           '-- specialist_type?, requires_booking, booking_category?
+  |           NOTE: activity_type carries the display title for the card
+  |           (e.g. "Potato Head Beach Club"). specialist_type carries the
+  |           category for filtering/coloring (e.g. "nightlife", "diving").
   |
   |-- plan_state: PlanState, ui_phase: UIPhase, plan_view_state: PlanViewState
   |-- readiness: ReadinessItem[], destination_card?, booking_status?

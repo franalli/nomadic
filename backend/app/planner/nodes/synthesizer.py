@@ -477,6 +477,9 @@ def generate_suggestions(state: GraphState) -> List[str]:
             extended = end + timedelta(days=2)
             chips.append(f"Extend to {extended.strftime('%b %-d')}")
 
+        # "Add buffer day between activities" — restructure without extending
+        chips.append("Add buffer day between activities")
+
         # "Remove hiking" — from violation's conflicting specialists
         settings = get_trip_settings(state)
         active_cats = set(settings.activity_settings.categories)
@@ -815,9 +818,31 @@ async def synthesizer(state: GraphState) -> GraphState:
     try:
         # Settings update shortcut — preserve router's acknowledgment
         # Skips LLM to avoid repeating tile counts / constraint warnings
-        if state.metadata.get("settings_just_updated"):
+        # BUT: if violations exist, route to LLM so they surface in the response
+        if state.metadata.get("settings_just_updated") and not state.metadata.get(
+            "constraint_violations"
+        ):
             message = state.metadata.get("actionable_acknowledgment", "") or state.last_summary
             log("SYNTH", f"Settings update ({len(message)} chars)")
+        elif state.metadata.get("settings_just_updated") and state.metadata.get(
+            "constraint_violations"
+        ):
+            # Violations override settings shortcut — use full LLM response
+            log("SYNTH", "Settings update has violations — routing to LLM")
+            llm_response, token_usage = await synthesize_with_llm(state)
+            if llm_response:
+                message = llm_response
+                if token_usage:
+                    log_tokens(
+                        "SYNTH",
+                        token_usage.get("prompt_tokens", 0),
+                        token_usage.get("completion_tokens", 0),
+                        token_usage.get("total_tokens", 0),
+                    )
+            else:
+                output = synth.generate_response(state)
+                message = output.message
+                log("SYNTH", "Using template (LLM failed for violation response)")
         elif use_llm:
             # Use LLM for complex planning responses
             logger.debug("Using LLM synthesis for response generation")
@@ -869,7 +894,10 @@ async def synthesizer(state: GraphState) -> GraphState:
             await image_task
 
     # Generate suggestion chips (always template-based for consistency)
-    if not state.metadata.get("settings_just_updated"):
+    # Always regenerate when violations exist (even on settings updates)
+    if not state.metadata.get("settings_just_updated") or state.metadata.get(
+        "constraint_violations"
+    ):
         suggested_replies = generate_suggestions(state)
     else:
         suggested_replies = state.suggested_replies or generate_suggestions(state)

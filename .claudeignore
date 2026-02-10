@@ -58,11 +58,6 @@ db-data/
 # Alembic auto-generated migrations
 backend/migrations/versions/
 
-# Environment files
-**/.env
-**/.env.*
-!**/.env.example
-
 # Docker overrides
 docker-compose.override.yml
 

@@ -212,7 +212,11 @@ class ExperienceOutput(BaseModel):
 SYSTEM_PROMPT = """You are a travel activity generator. Generate real, bookable experience \
 activities for a specific destination. Each activity must be a REAL place or experience that \
 exists at the destination. Include realistic local pricing. Vary time_of_day across activities \
-(morning, afternoon, evening)."""
+(morning, afternoon, evening).
+
+Each activity must be a single session (1-4 hours max). Generate specific classes, sessions, \
+or tours — NOT multi-day retreats or packages.
+Example: "Sunrise Yoga at Ubud Studio" (2h), NOT "Bali Yoga Retreat" (48h)."""
 
 
 def _build_user_prompt(
@@ -260,6 +264,19 @@ def _build_user_prompt(
 # =============================================================================
 # Tile Conversion
 # =============================================================================
+
+
+def _clamp_tile_durations(tiles: list, max_hours: float = 4.0) -> list:
+    """Clamp duration_hours in cached tile dicts. Defensive against stale cache."""
+    for tile in tiles:
+        meta = tile.get("meta") or {}
+        if meta.get("duration_hours", 0) > max_hours:
+            logger.info(
+                f"[EXPERIENCE] Clamped cached '{tile.get('title')}': "
+                f"{meta['duration_hours']}h → {max_hours}h"
+            )
+            meta["duration_hours"] = max_hours
+    return tiles
 
 
 def _experience_to_tile_dict(
@@ -341,7 +358,7 @@ async def generate_experiences(
     if cached is not None:
         _increment_stat("l1_hits")
         logger.info(f"[EXPERIENCE] Cache HIT (L1): {len(cached)} tiles")
-        return cached
+        return _clamp_tile_durations(cached)
 
     _increment_stat("l1_misses")
 
@@ -354,7 +371,7 @@ async def generate_experiences(
         l2_cached = await _get_cached(db, cache_key)
         if l2_cached is not None:
             logger.info(f"[EXPERIENCE] Cache HIT (L2): {len(l2_cached)} tiles")
-            return l2_cached
+            return _clamp_tile_durations(l2_cached)
 
     # Cache miss — generate via LLM
     logger.info(
@@ -410,6 +427,14 @@ async def generate_experiences(
     if not parsed.activities:
         logger.warning("[EXPERIENCE] LLM returned 0 activities")
         return []
+
+    # Clamp durations: LLM sometimes generates multi-day retreats (48h)
+    for tile in parsed.activities:
+        if tile.duration_hours > 4:
+            logger.info(
+                f"[EXPERIENCE] Clamped '{tile.title}' duration: {tile.duration_hours}h → 4h"
+            )
+            tile.duration_hours = 4
 
     # Prefetch Unsplash images per category (non-fatal)
     try:

@@ -219,8 +219,9 @@ export function enforceRightViewPolicy(
     // Day cards should exist but be constrained
     if (viewModel.day_cards) {
       for (const card of viewModel.day_cards) {
-        // Max 3 blocks per day
-        assertMaxLength(card.blocks, 3, `blocks in Day ${card.day_number}`, state);
+        // Max 3 non-buffer blocks per day (buffer blocks are structural safety constraints)
+        const contentBlocks = card.blocks?.filter((b) => !b.is_buffer);
+        assertMaxLength(contentBlocks, 3, `blocks in Day ${card.day_number}`, state);
       }
     }
 

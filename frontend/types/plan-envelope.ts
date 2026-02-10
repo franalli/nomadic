@@ -727,6 +727,7 @@ export interface DayCard {
   day_number: number;
   date?: string; // ISO date string, e.g. "2025-02-12"
   label: string; // e.g., "Arrival + light activity", "Main hike day"
+  subtitle?: string; // Explanatory context for special days (e.g., buffer_reason)
   blocks: DayBlock[]; // Max 3 blocks
 }
 

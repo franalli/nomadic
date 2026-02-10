@@ -23,7 +23,7 @@
 'use client';
 
 import { ChevronDown, ChevronUp, Lock, Package } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
@@ -133,6 +133,8 @@ export function BookingSection({
 
   const [isExpanded, setIsExpanded] = useState(true);
   const [activeCategory, setActiveCategory] = useState<TileCategory>('stays');
+  const [userSelectedTab, setUserSelectedTab] = useState(false);
+  const prevCountsRef = useRef<Record<TileCategory, number> | null>(null);
   const [selectedTile, setSelectedTile] = useState<Tile | null>(null);
   const [alternativesTile, setAlternativesTile] = useState<Tile | null>(null);
   const [filters, setFilters] = useState<TileFilters>({
@@ -154,6 +156,30 @@ export function BookingSection({
   const stayTiles = tileArray.filter(t => normalizeTileType(t.type) === 'hotel');
   const flightTiles = tileArray.filter(t => normalizeTileType(t.type) === 'flight');
   const activityTiles = tileArray.filter(t => normalizeTileType(t.type) === 'activity');
+
+  // Auto-switch to tab with biggest growth when new tiles arrive
+  useEffect(() => {
+    const counts: Record<TileCategory, number> = {
+      stays: stayTiles.length,
+      flights: flightTiles.length,
+      activities: activityTiles.length,
+    };
+    const prev = prevCountsRef.current;
+    prevCountsRef.current = counts;
+
+    if (!prev || userSelectedTab) return;
+    // First load: all previous counts are 0 — keep default 'stays'
+    if (Object.values(prev).every(v => v === 0)) return;
+
+    const deltas: [TileCategory, number][] = [
+      ['activities', counts.activities - prev.activities],
+      ['flights', counts.flights - prev.flights],
+      ['stays', counts.stays - prev.stays],
+    ];
+
+    const best = deltas.reduce((a, b) => (b[1] > a[1] ? b : a));
+    if (best[1] > 0) setActiveCategory(best[0]);
+  }, [stayTiles.length, flightTiles.length, activityTiles.length, userSelectedTab]);
 
   // Get saved tiles for checkout sidebar
   const savedTiles = useMemo(() => {
@@ -385,7 +411,7 @@ export function BookingSection({
                   return (
                     <button
                       key={category}
-                      onClick={() => setActiveCategory(category)}
+                      onClick={() => { setActiveCategory(category); setUserSelectedTab(true); }}
                       className={cn(
                         chipBase,
                         'font-medium',
