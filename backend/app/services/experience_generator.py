@@ -78,6 +78,14 @@ def _cache_set(key: str, value: list) -> None:
         _experience_cache[key] = value
 
 
+def clear_experience_cache() -> int:
+    """Clear L1 experience cache. Returns count of cleared entries."""
+    with _cache_lock:
+        count = len(_experience_cache)
+        _experience_cache.clear()
+    return count
+
+
 # =============================================================================
 # Cache Key
 # =============================================================================

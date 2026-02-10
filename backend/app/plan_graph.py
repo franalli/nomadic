@@ -2045,6 +2045,7 @@ async def clear_all_caches() -> None:
     """Clear all caches."""
     global _graph
     _graph = None
+    await clear_response_caches()
 
 
 async def clear_all_checkpoints() -> None:
@@ -2052,9 +2053,32 @@ async def clear_all_checkpoints() -> None:
     pass
 
 
-async def clear_response_caches() -> None:
-    """Clear response caches (no-op)."""
-    pass
+async def clear_response_caches() -> int:
+    """Clear response caches (experience L1 + L2)."""
+    from app.services.experience_generator import clear_experience_cache
+
+    # L1: in-memory
+    l1_cleared = clear_experience_cache()
+
+    # L2: database (experience entries only)
+    l2_cleared = 0
+    try:
+        from sqlalchemy import delete
+
+        from app.db import _get_async_session_factory
+        from app.db_models import ResponseCache
+
+        factory = _get_async_session_factory()
+        async with factory() as db:
+            result = await db.execute(
+                delete(ResponseCache).where(ResponseCache.cache_type == "experience")
+            )
+            l2_cleared = result.rowcount
+            await db.commit()
+    except Exception:
+        pass
+
+    return l1_cleared + l2_cleared
 
 
 async def clear_session_checkpoint(session_id: str) -> None:
