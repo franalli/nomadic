@@ -4,7 +4,7 @@ Thread-safe two-tier caching for Vertical Specialist LLM outputs.
 L1: In-memory TTLCache with RLock (1h TTL, 128 entries) - hot path
 L2: PostgreSQL response_cache (7d TTL) - warm persistence across restarts
 
-Cache key format: specialist:{topic}:{destination}:{month}:{duration}
+Cache key format: specialist:{topic}:{dest}:{start}:{end}:{skill}:{phash}
 
 Usage:
     from app.services.specialist_cache import (
@@ -13,12 +13,16 @@ Usage:
     )
 
     # In vertical_specialist.py
-    cached = await get_cached_specialist_output(db, topic, dest, start, end)
+    cached = await get_cached_specialist_output(
+        db, topic, dest, start, end, skill_level=skill
+    )
     if cached:
         return LLMSpecialistOutput.model_validate(cached)
 
     # After LLM call
-    await set_cached_specialist_output(db, topic, dest, start, end, output.model_dump())
+    await set_cached_specialist_output(
+        db, topic, dest, start, end, output.model_dump(), skill_level=skill
+    )
 """
 
 import logging
@@ -76,28 +80,29 @@ def _cache_set(key: str, value: dict) -> None:
 
 
 def _specialist_cache_key(
-    topic: str, destination: str, start_date: Optional[str], end_date: Optional[str]
+    topic: str,
+    destination: str,
+    start_date: Optional[str],
+    end_date: Optional[str],
+    skill_level: Optional[str] = None,
 ) -> str:
     """
-    Generate stable cache key: specialist:{topic}:{dest}:{start}:{end}
+    Generate stable cache key including skill level and prompt hash.
 
-    Key components:
-    - topic: "diving", "hiking", "skiing", etc.
-    - destination: normalized lowercase, stripped
-    - start_date: full date "2025-02-11" (exact trip dates matter)
-    - end_date: full date "2025-02-14" (duration affects activity count)
+    Format: specialist:{topic}:{dest}:{start}:{end}:{skill}:{phash}
 
-    Example: "specialist:diving:bali:2025-02-11:2025-02-14"
-
-    NOTE: Using full dates instead of month:duration to avoid cache collisions
-    when trip dates change within the same month (e.g., 8 days → 4 days).
+    - skill: user skill level or "any" if unset
+    - phash: 8-char hash of prompt file content (auto-invalidates on edit)
     """
+    from app.planner.specialist_registry import prompt_hash
+
     dest_normalized = destination.lower().strip() if destination else "unknown"
     start = start_date if start_date else "unknown"
     end = end_date if end_date else "unknown"
+    skill = skill_level or "any"
+    phash = prompt_hash(topic)
 
-    key = f"specialist:{topic}:{dest_normalized}:{start}:{end}"
-    # Debug: Log full cache key for diagnosing stale cache issues
+    key = f"specialist:{topic}:{dest_normalized}:{start}:{end}:{skill}:{phash}"
     logger.info(f"[CACHE_KEY] Generated: {key}")
     return key
 
@@ -113,6 +118,7 @@ async def get_cached_specialist_output(
     destination: str,
     start_date: Optional[str],
     end_date: Optional[str],
+    skill_level: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Get cached specialist output: L1 → L2 fallback.
@@ -123,6 +129,7 @@ async def get_cached_specialist_output(
         destination: Trip destination
         start_date: Trip start date (YYYY-MM-DD)
         end_date: Trip end date (YYYY-MM-DD)
+        skill_level: User skill level (differentiates beginner vs expert cache)
 
     Returns:
         Cached dict (LLMSpecialistOutput.model_dump()) or None if not found
@@ -132,7 +139,11 @@ async def get_cached_specialist_output(
     # Import here to avoid circular imports
     from app.db_models import ResponseCache
 
-    cache_key = _specialist_cache_key(topic, destination, start_date, end_date)
+    cache_key = _specialist_cache_key(topic, destination, start_date, end_date, skill_level)
+
+    from app.debug_utils import _debug_log
+
+    _debug_log(f"[SPECIALIST_CACHE] key={cache_key}")
 
     # L1: Thread-safe memory check
     cached = _cache_get(cache_key)
@@ -191,6 +202,7 @@ async def set_cached_specialist_output(
     start_date: Optional[str],
     end_date: Optional[str],
     output: dict,
+    skill_level: Optional[str] = None,
 ) -> None:
     """
     Cache specialist output to both L1 and L2.
@@ -202,13 +214,14 @@ async def set_cached_specialist_output(
         start_date: Trip start date
         end_date: Trip end date
         output: LLMSpecialistOutput.model_dump() dict
+        skill_level: User skill level (differentiates beginner vs expert cache)
     """
     global _cache_stats
 
     # Import here to avoid circular imports
     from app.db_models import ResponseCache
 
-    cache_key = _specialist_cache_key(topic, destination, start_date, end_date)
+    cache_key = _specialist_cache_key(topic, destination, start_date, end_date, skill_level)
     expires_at = datetime.now(UTC) + timedelta(days=L2_TTL_DAYS)
 
     # L1: Thread-safe write

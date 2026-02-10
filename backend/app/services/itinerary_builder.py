@@ -439,6 +439,25 @@ CONSTRAINT_SEVERITY_MAP = {
     "minimize_walking": ConstraintSeverity.SOFT,
 }
 
+# Default duration for experience tiles when meta.duration_hours is missing
+DEFAULT_EXPERIENCE_HOURS = 1.5
+
+# Max same-category experience tiles per day (prevents 3x yoga on one day)
+MAX_SAME_CATEGORY_PER_DAY = 2
+
+# Time-of-day slot order for complementarity scoring
+_TIME_SLOT_ORDER = {"morning": 0, "afternoon": 1, "evening": 2}
+
+
+def _parse_duration_hours(duration_str: Optional[str], default: float = 3.0) -> float:
+    """Parse '4h' → 4.0, '1.5h' → 1.5. Falls back to default."""
+    if not duration_str:
+        return default
+    try:
+        return float(duration_str.replace("h", "").strip())
+    except (ValueError, AttributeError):
+        return default
+
 
 # =============================================================================
 # Itinerary Builder
@@ -1476,6 +1495,102 @@ class ItineraryBuilder:
         return days
 
     # =========================================================================
+    # Co-Scheduling Helpers (used by Phase 5.6 and Phase 5.25)
+    # =========================================================================
+
+    def _day_remaining_capacity(self, day: DayCardOutput) -> tuple[float, int]:
+        """
+        Remaining (hours, block_slots) for a day.
+        Returns (0, 0) for arrival/departure anchor days.
+        """
+        if not day.blocks:
+            return (DAY_CAPACITY_HOURS, MAX_BLOCKS_PER_DAY)
+
+        # Skip logistics anchor days
+        anchor_types = (
+            "arrival",
+            "departure",
+            "check_in",
+            "check_out",
+            "check-in",
+            "check-out",
+        )
+        buffer_types = ("arrival", "departure")
+        if any(
+            (b.activity_type in anchor_types) or ((b.buffer_type or "") in buffer_types)
+            for b in day.blocks
+        ):
+            return (0.0, 0)
+
+        activity_hours = 0.0
+        activity_blocks = 0
+        for b in day.blocks:
+            if b.activity_type == "free_day":
+                continue
+            if b.is_buffer:
+                continue
+            activity_hours += _parse_duration_hours(b.duration, 3.0)
+            activity_blocks += 1
+
+        return (
+            max(0.0, DAY_CAPACITY_HOURS - activity_hours),
+            max(0, MAX_BLOCKS_PER_DAY - activity_blocks),
+        )
+
+    def _time_slot_score(self, day: DayCardOutput, tile_time_of_day: str) -> float:
+        """
+        Score 0.0-1.0 for how well a tile's time_of_day complements existing blocks.
+
+        1.0 = no overlap (evening tile on morning-only day)
+        0.5 = adjacent slot (afternoon tile on morning day)
+        0.1 = same slot (morning tile on morning day)
+        """
+        tile_slot = _TIME_SLOT_ORDER.get(tile_time_of_day, 1)
+        occupied = set()
+        for b in day.blocks:
+            p = (b.period or "").lower()
+            if p in _TIME_SLOT_ORDER:
+                occupied.add(_TIME_SLOT_ORDER[p])
+        if not occupied:
+            return 1.0
+        if tile_slot in occupied:
+            return 0.1
+        min_dist = min(abs(tile_slot - s) for s in occupied)
+        return 1.0 if min_dist >= 2 else 0.5
+
+    def _experience_tile_to_block(
+        self, tile: dict, day_number: int, count: int = 0
+    ) -> DayBlockOutput:
+        """Convert an experience_generator tile dict into a DayBlockOutput."""
+        meta = tile.get("meta") or {}
+        time_of_day = meta.get("time_of_day", "afternoon")
+        category = meta.get("category", "experience")
+        period_map = {"morning": "morning", "afternoon": "afternoon", "evening": "evening"}
+        return DayBlockOutput(
+            id=tile.get("id", f"exp_block_{day_number}_{count}"),
+            period=period_map.get(time_of_day, "afternoon"),
+            activity_type="activity",
+            summary=tile.get("title", "Experience Activity"),
+            specialist_type=category,
+            intensity="light",
+            duration=f"{meta.get('duration_hours', 2)}h",
+            image_url=tile.get("image_url"),
+            booked_tile=tile,
+            requires_booking=True,
+            booking_category="activity",
+        )
+
+    @staticmethod
+    def _category_count_on_day(day: DayCardOutput, category: str) -> int:
+        """Count experience blocks of a given category already on a day."""
+        return sum(
+            1
+            for b in day.blocks
+            if getattr(b, "specialist_type", None) == category
+            and getattr(b, "booking_category", None) == "activity"
+        )
+
+    # =========================================================================
     # Phase 5.6: Place Experience Tiles on Free Days
     # =========================================================================
 
@@ -1485,18 +1600,18 @@ class ItineraryBuilder:
         tiles: Dict[str, Any],
     ) -> List[DayCardOutput]:
         """
-        Phase 5.6: Auto-place LLM-generated experience tiles on free days.
+        Phase 5.6: Place experience tiles (Tier 2 activities from experience_generator).
 
-        Finds tiles with source_agent="experience_generator" in the flat tile map
-        and distributes them across days that currently have free_day placeholder blocks.
-        Replaces the placeholder with actual activity blocks.
+        Two-pass strategy:
+          Pass 1: Fill free days (days with free_day placeholder)
+          Pass 2: Co-schedule remaining tiles onto specialist days with spare capacity
 
         Args:
             days: Day cards from previous phases
             tiles: Flat {tile_id: tile_dict} map from input_data.tiles
 
         Returns:
-            Updated day cards with experience tiles placed on free days.
+            Updated day cards with experience tiles placed.
         """
         if not tiles:
             _debug_itinerary("⏭️ Phase 5.6 skipped: no tiles")
@@ -1516,92 +1631,151 @@ class ItineraryBuilder:
         _debug_itinerary(f"📅 Phase 5.6: Found {len(experience_tiles)} experience tiles")
 
         # Sort by time_of_day: morning first, then afternoon, then evening
-        TIME_ORDER = {"morning": 0, "afternoon": 1, "evening": 2}
         experience_tiles.sort(
-            key=lambda t: TIME_ORDER.get((t.get("meta") or {}).get("time_of_day", "afternoon"), 1)
+            key=lambda t: _TIME_SLOT_ORDER.get(
+                (t.get("meta") or {}).get("time_of_day", "afternoon"), 1
+            )
         )
 
-        # Find free day indices (days with a free_day block, excluding arrival/departure)
+        unplaced = list(experience_tiles)
+
+        # ─────────────────────────────────────────────────────────
+        # Pass 1: Free Day Placement (preserves existing behavior)
+        # ─────────────────────────────────────────────────────────
         free_day_indices = []
         for i, day in enumerate(days):
             if i == 0 or i == len(days) - 1:
                 continue
-            has_free_day = any(b.activity_type == "free_day" for b in day.blocks)
-            if has_free_day:
+            if any(b.activity_type == "free_day" for b in day.blocks):
                 free_day_indices.append(i)
 
-        if not free_day_indices:
-            _debug_itinerary("📅 Phase 5.6: No free days available")
-            return days
-
-        # Distribute experience tiles across free days — even spread
-        # Pass 1: 1 tile per free day
-        tile_idx = 0
+        placed_on_free = 0
         for day_idx in free_day_indices:
-            if tile_idx >= len(experience_tiles):
+            if not unplaced:
                 break
             day = days[day_idx]
             day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
-            tile = experience_tiles[tile_idx]
-            meta = tile.get("meta", {})
-            block = DayBlockOutput(
-                id=tile.get("id", f"exp_block_{day.day_number}_0"),
-                period=meta.get("time_of_day", "afternoon"),
-                activity_type=meta.get("category", "experience"),
-                summary=tile.get("title", "Experience Activity"),
-                specialist_type="experience",
-                intensity="light",
-                duration=f"{meta.get('duration_hours', 2)}h",
-                image_url=tile.get("image_url"),
-                booked_tile=tile,
-                requires_booking=True,
-                booking_category="activity",
-            )
-            day.blocks.append(block)
-            tile_idx += 1
 
-        # Pass 2: remaining tiles round-robin from the top
-        for i, tile in enumerate(experience_tiles[tile_idx:]):
-            target_day_idx = free_day_indices[i % len(free_day_indices)]
-            day = days[target_day_idx]
-            meta = tile.get("meta", {})
-            placed_count = sum(1 for b in day.blocks if b.specialist_type == "experience")
-            block = DayBlockOutput(
-                id=tile.get("id", f"exp_block_{day.day_number}_{placed_count}"),
-                period=meta.get("time_of_day", "afternoon"),
-                activity_type=meta.get("category", "experience"),
-                summary=tile.get("title", "Experience Activity"),
-                specialist_type="experience",
-                intensity="light",
-                duration=f"{meta.get('duration_hours', 2)}h",
-                image_url=tile.get("image_url"),
-                booked_tile=tile,
-                requires_booking=True,
-                booking_category="activity",
-            )
+            tile = unplaced.pop(0)
+            block = self._experience_tile_to_block(tile, day.day_number, 0)
             day.blocks.append(block)
+            placed_on_free += 1
 
-        # Update day labels
+            # Place second tile on same free day if available, fits, and under category cap
+            if unplaced:
+                tile2 = unplaced[0]
+                t1_hours = (tile.get("meta") or {}).get("duration_hours", DEFAULT_EXPERIENCE_HOURS)
+                t2_hours = (tile2.get("meta") or {}).get("duration_hours", DEFAULT_EXPERIENCE_HOURS)
+                t2_cat = (tile2.get("meta") or {}).get("category", "experience")
+                cat_ok = self._category_count_on_day(day, t2_cat) < MAX_SAME_CATEGORY_PER_DAY
+                if t1_hours + t2_hours <= DAY_CAPACITY_HOURS and cat_ok:
+                    block2 = self._experience_tile_to_block(unplaced.pop(0), day.day_number, 1)
+                    day.blocks.append(block2)
+                    placed_on_free += 1
+
+        # Update day labels for free days that got experience tiles
         for day_idx in free_day_indices:
             day = days[day_idx]
             placed_categories = []
             for b in day.blocks:
-                if b.specialist_type == "experience" and b.activity_type != "free_day":
-                    cat_title = b.activity_type.replace("_", " ").title()
+                if b.specialist_type and b.specialist_type != "experience":
+                    cat_title = b.specialist_type.replace("_", " ").title()
                     if cat_title not in placed_categories:
                         placed_categories.append(cat_title)
             if placed_categories:
                 day.label = " & ".join(placed_categories) + " Day"
+
+        if placed_on_free:
             _debug_itinerary(
-                f"📅 Phase 5.6: Day {day.day_number} — placed "
-                f"{sum(1 for b in day.blocks if b.specialist_type == 'experience')} "
-                f"experience tiles"
+                f"📅 Phase 5.6 Pass 1: Placed {placed_on_free} tiles on "
+                f"{len(free_day_indices)} free days"
             )
 
-        placed_total = len(experience_tiles)
+        if not unplaced:
+            _debug_itinerary(f"✅ Phase 5.6: All {placed_on_free} tiles placed on free days")
+            return days
+
+        # ─────────────────────────────────────────────────────────
+        # Pass 2: Co-Schedule on Specialist Days
+        # ─────────────────────────────────────────────────────────
         _debug_itinerary(
-            f"✅ Phase 5.6: Placed {placed_total}/{len(experience_tiles)} experience tiles "
-            f"across {len(free_day_indices)} free days"
+            f"📅 Phase 5.6 Pass 2: {len(unplaced)} tiles remaining, "
+            f"scanning specialist days for capacity"
+        )
+
+        # Build candidate list with capacity
+        candidates: list[list] = []  # [[day_idx, remaining_hours, remaining_blocks]]
+        for i, day in enumerate(days):
+            remaining_hours, remaining_blocks = self._day_remaining_capacity(day)
+            if remaining_hours >= 1.0 and remaining_blocks >= 1:
+                candidates.append([i, remaining_hours, remaining_blocks])
+
+        if not candidates:
+            _debug_itinerary(
+                f"📅 Phase 5.6 Pass 2: No days have capacity. Dropping {len(unplaced)} tiles."
+            )
+            return days
+
+        placed_on_specialist = 0
+        still_unplaced = []
+
+        for tile in unplaced:
+            meta = tile.get("meta") or {}
+            tile_hours = meta.get("duration_hours", DEFAULT_EXPERIENCE_HOURS)
+            tile_tod = meta.get("time_of_day", "afternoon")
+            tile_cat = meta.get("category", "experience")
+
+            best_cand_idx = None
+            best_score = -1.0
+
+            for cand_idx, (day_idx, rem_hours, rem_blocks) in enumerate(candidates):
+                if tile_hours > rem_hours or rem_blocks < 1:
+                    continue
+
+                # Skip if day already at category cap for this tile's
+                # category.
+                if (
+                    self._category_count_on_day(days[day_idx], tile_cat)
+                    >= MAX_SAME_CATEGORY_PER_DAY
+                ):
+                    continue
+
+                complement = self._time_slot_score(days[day_idx], tile_tod)
+                headroom = rem_hours / DAY_CAPACITY_HOURS
+                score = complement * 0.7 + headroom * 0.3
+
+                if score > best_score:
+                    best_score = score
+                    best_cand_idx = cand_idx
+
+            if best_cand_idx is None:
+                _debug_itinerary(
+                    f"📅 Phase 5.6 Pass 2: Cannot fit "
+                    f"'{tile.get('title')}' ({tile_hours}h) — dropped"
+                )
+                still_unplaced.append(tile)
+                continue
+
+            day_idx = candidates[best_cand_idx][0]
+            day = days[day_idx]
+            exp_count = sum(1 for b in day.blocks if b.activity_type == "activity")
+            block = self._experience_tile_to_block(tile, day.day_number, exp_count)
+            day.blocks.append(block)
+            placed_on_specialist += 1
+
+            # Update candidate capacity
+            candidates[best_cand_idx][1] -= tile_hours
+            candidates[best_cand_idx][2] -= 1
+
+            _debug_itinerary(
+                f"📅 Phase 5.6 Pass 2: Placed '{tile.get('title')}' "
+                f"on Day {day_idx + 1} (score={best_score:.2f})"
+            )
+
+        dropped = len(still_unplaced)
+        _debug_itinerary(
+            f"✅ Phase 5.6 complete: {placed_on_free} on free days, "
+            f"{placed_on_specialist} co-scheduled, {dropped} dropped"
         )
 
         return days
@@ -1707,6 +1881,7 @@ class ItineraryBuilder:
         # ROUND-ROBIN PLACEMENT: Spread activities across days
         # =====================================================================
         dropped_count = 0
+        deferred: list[dict] = []  # Tiles that couldn't fit in Pass 1
 
         # Safety net: Track specialist count per day to prevent activity cramming
         # Max 1 activity per specialist per day (e.g., 1 dive + 1 hike per day is OK)
@@ -1718,8 +1893,8 @@ class ItineraryBuilder:
             # Find day with LEAST occupied slots (most capacity), then by day index
             available_days = [d for d in day_slots if len(day_slots[d]) < MAX_SLOTS_PER_DAY]
             if not available_days:
-                _debug_itinerary(f"📅 Dropping '{tile.get('title')}' (all days full)")
-                dropped_count += 1
+                _debug_itinerary(f"📅 Phase 5.25: Deferring '{tile.get('title')}' (all slots full)")
+                deferred.append(tile)
                 continue
 
             best_day = min(available_days, key=lambda d: (len(day_slots[d]), d))
@@ -1730,10 +1905,10 @@ class ItineraryBuilder:
             )
             if source_specialist and specialist_count_per_day[best_day][source_specialist] >= 1:
                 _debug_itinerary(
-                    f"📅 Dropping '{tile.get('title')}' "
+                    f"📅 Phase 5.25: Deferring '{tile.get('title')}' "
                     f"(already have {source_specialist} on day {best_day + 1})"
                 )
-                dropped_count += 1
+                deferred.append(tile)
                 continue
             if source_specialist:
                 specialist_count_per_day[best_day][source_specialist] += 1
@@ -1782,6 +1957,67 @@ class ItineraryBuilder:
                 day.label = f"Day {day.day_number}"
 
             _debug_itinerary(f"📅 Placed '{tile.get('title')}' on day {best_day + 1} ({period})")
+
+        # =====================================================================
+        # PASS 2: Co-schedule deferred tiles using capacity-based fallback
+        # =====================================================================
+        if deferred:
+            _debug_itinerary(
+                f"📅 Phase 5.25 Pass 2: {len(deferred)} deferred tiles, "
+                f"scanning days for hour-based capacity"
+            )
+            for tile in deferred:
+                meta = tile.get("meta") or {}
+                tile_hours = _parse_duration_hours(
+                    tile.get("duration"), meta.get("duration_hours", DEFAULT_EXPERIENCE_HOURS)
+                )
+                tile_tod = meta.get("time_of_day", "afternoon")
+
+                best_idx = None
+                best_score = -1.0
+
+                for i, day in enumerate(days):
+                    remaining_hours, remaining_blocks = self._day_remaining_capacity(day)
+                    if tile_hours > remaining_hours or remaining_blocks < 1:
+                        continue
+                    score = self._time_slot_score(day, tile_tod)
+                    if score > best_score:
+                        best_score = score
+                        best_idx = i
+
+                if best_idx is not None:
+                    day = days[best_idx]
+                    tod = meta.get("time_of_day", "afternoon")
+                    period_map = {
+                        "morning": "morning",
+                        "afternoon": "afternoon",
+                        "evening": "evening",
+                    }
+                    period = period_map.get(tod, "afternoon")
+
+                    activity_block = DayBlockOutput(
+                        id=f"pref_{tile['id']}_{best_idx}_{period}",
+                        period=period,
+                        activity_type=tile.get("title", "Activity").lower().replace(" ", "_"),
+                        intensity=tile.get("intensity"),
+                        summary=tile.get("title", "Activity"),
+                        image_url=tile.get("image_url"),
+                        duration=tile.get("duration"),
+                        coordinates=tile.get("coordinates"),
+                        preference_status="user_preferred",
+                        booking_category="activity",
+                        booked_tile=tile,
+                    )
+                    day.blocks.append(activity_block)
+                    _debug_itinerary(
+                        f"📅 Phase 5.25 Pass 2: Co-scheduled '{tile.get('title')}' "
+                        f"on Day {best_idx + 1} (score={best_score:.2f})"
+                    )
+                else:
+                    dropped_count += 1
+                    _debug_itinerary(
+                        f"📅 Phase 5.25 Pass 2: Cannot fit '{tile.get('title')}' — dropped"
+                    )
 
         return days, dropped_count
 

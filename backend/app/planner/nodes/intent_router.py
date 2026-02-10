@@ -927,6 +927,44 @@ def _detect_actionable_input(user_text: str, state: "GraphState") -> Optional[di
     if RESET_HOTEL_PATTERN.search(text_lower):
         changes["reset_hotel"] = True
 
+    # 5. Detect unresolved activity-like tokens
+    # If we matched SOME keywords but the message has other content words
+    # that could be activities, flag for LLM alias resolution
+    if changes.get("add_categories") or changes.get("remove_categories"):
+        all_known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALISTS
+        stop_words = {
+            "also",
+            "and",
+            "too",
+            "as",
+            "well",
+            "add",
+            "want",
+            "with",
+            "some",
+            "plus",
+            "the",
+            "i",
+            "we",
+            "me",
+            "my",
+            "a",
+            "in",
+            "let",
+            "can",
+            "like",
+            "maybe",
+            "please",
+            "for",
+            "trip",
+        }
+        remaining = set(re.findall(r"\b[a-z]{3,}\b", text_lower))
+        remaining -= all_known
+        remaining -= stop_words
+        remaining -= set(SKILL_LEVEL_MAP.keys())
+        if remaining:
+            changes["unresolved_tokens"] = remaining
+
     return changes if changes else None
 
 
@@ -2582,7 +2620,36 @@ async def intent_router(state: GraphState) -> GraphState:
             removing_tier1 = bool(actionable.get("remove_categories", set()) & TIER1_SPECIALISTS)
 
             if not has_tier1 or removing_tier1:
-                # Pure Tier 2 / removal / skill / reset → route to logistics
+                # If unresolved tokens exist, resolve aliases via inline LLM call.
+                # Can't fall through — exploration short-circuit would swallow it.
+                if actionable.get("unresolved_tokens"):
+                    log(
+                        "ROUTER",
+                        f"[ACTIONABLE] Resolving: {actionable['unresolved_tokens']}",
+                    )
+                    try:
+                        router_output, _ = await _classify_and_extract_with_llm(user_text, state)
+                        if router_output and router_output.activity_categories:
+                            known = TIER1_SPECIALISTS | TIER2_ACTIVITY_KEYWORDS
+                            resolved = {
+                                c.lower()
+                                for c in router_output.activity_categories
+                                if c.lower() in known
+                            }
+                            if resolved - existing_cats:
+                                existing_cats |= resolved
+                                activity_settings["categories"] = sorted(existing_cats)
+                                trip_inputs["activity_settings"] = activity_settings
+                                state.metadata["trip_inputs"] = trip_inputs
+                                state.metadata.pop("trip_settings", None)
+                                state.metadata["trip_settings"] = get_trip_settings(
+                                    state
+                                ).model_dump()
+                                log("ROUTER", f"[ACTIONABLE] LLM resolved: {resolved}")
+                    except Exception as e:
+                        log("ROUTER", f"[ACTIONABLE] LLM resolution failed: {e}")
+
+                # Route to logistics (both exact-match and post-LLM-resolution)
                 state.metadata["origin_only_logistics"] = True
                 state.metadata["skip_architect"] = True
                 state.metadata["skip_specialists"] = True

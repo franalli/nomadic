@@ -16,6 +16,7 @@ from app.services.itinerary_builder import (
     ItineraryBuilder,
     ItineraryBuilderInput,
     PreferenceOverrideInput,
+    _parse_duration_hours,
 )
 
 # =============================================================================
@@ -758,3 +759,591 @@ class TestSpecialistContentExtraction:
         rules = {c["rule"] for c in constraints}
         assert "visa_requirement" in rules
         assert "min_24h_buffer_after_dive" in rules
+
+
+# =============================================================================
+# Test: Duration Parsing Helper
+# =============================================================================
+
+
+class TestParseDurationHours:
+    """Test _parse_duration_hours utility."""
+
+    def test_parse_standard(self):
+        assert _parse_duration_hours("4h") == 4.0
+
+    def test_parse_decimal(self):
+        assert _parse_duration_hours("1.5h") == 1.5
+
+    def test_parse_none(self):
+        assert _parse_duration_hours(None) == 3.0
+
+    def test_parse_none_custom_default(self):
+        assert _parse_duration_hours(None, 5.0) == 5.0
+
+    def test_parse_empty(self):
+        assert _parse_duration_hours("") == 3.0
+
+    def test_parse_invalid(self):
+        assert _parse_duration_hours("abc") == 3.0
+
+
+# =============================================================================
+# Test: Day Remaining Capacity
+# =============================================================================
+
+
+class TestDayRemainingCapacity:
+    """Test _day_remaining_capacity helper."""
+
+    def test_arrival_day_zero_capacity(self, builder: ItineraryBuilder):
+        """Arrival day returns (0, 0)."""
+        day = DayCardOutput(
+            day_number=1,
+            label="Arrival",
+            blocks=[
+                DayBlockOutput(
+                    period="morning",
+                    activity_type="arrival",
+                    summary="Arrive",
+                    is_buffer=True,
+                    buffer_type="arrival",
+                )
+            ],
+        )
+        hours, blocks = builder._day_remaining_capacity(day)
+        assert hours == 0.0
+        assert blocks == 0
+
+    def test_departure_day_zero_capacity(self, builder: ItineraryBuilder):
+        """Departure day returns (0, 0)."""
+        day = DayCardOutput(
+            day_number=8,
+            label="Departure",
+            blocks=[
+                DayBlockOutput(
+                    period="morning",
+                    activity_type="departure",
+                    summary="Depart",
+                    is_buffer=True,
+                    buffer_type="departure",
+                )
+            ],
+        )
+        hours, blocks = builder._day_remaining_capacity(day)
+        assert hours == 0.0
+        assert blocks == 0
+
+    def test_specialist_day_remaining(self, builder: ItineraryBuilder):
+        """Day with 4h specialist has 7h remaining, 2 block slots."""
+        day = DayCardOutput(
+            day_number=2,
+            label="Diving Day",
+            blocks=[
+                DayBlockOutput(
+                    period="morning",
+                    activity_type="usat_liberty_wreck",
+                    summary="USAT Liberty Wreck",
+                    specialist_type="diving",
+                    duration="4h",
+                )
+            ],
+        )
+        hours, blocks = builder._day_remaining_capacity(day)
+        assert hours == 7.0
+        assert blocks == 2
+
+    def test_free_day_full_capacity(self, builder: ItineraryBuilder):
+        """Free day placeholder doesn't consume capacity."""
+        day = DayCardOutput(
+            day_number=3,
+            label="Free Day",
+            blocks=[
+                DayBlockOutput(
+                    period="morning",
+                    activity_type="free_day",
+                    summary="Free Day",
+                )
+            ],
+        )
+        hours, blocks = builder._day_remaining_capacity(day)
+        assert hours == DAY_CAPACITY_HOURS
+        assert blocks == MAX_BLOCKS_PER_DAY
+
+    def test_full_day_zero_capacity(self, builder: ItineraryBuilder):
+        """Day at capacity returns (0, 0)."""
+        day = DayCardOutput(
+            day_number=2,
+            label="Full Day",
+            blocks=[
+                DayBlockOutput(
+                    period="morning", activity_type="hike1", summary="Hike 1", duration="5h"
+                ),
+                DayBlockOutput(
+                    period="afternoon", activity_type="hike2", summary="Hike 2", duration="4h"
+                ),
+                DayBlockOutput(
+                    period="evening", activity_type="yoga", summary="Yoga", duration="2h"
+                ),
+            ],
+        )
+        hours, blocks = builder._day_remaining_capacity(day)
+        assert hours == 0.0
+        assert blocks == 0
+
+    def test_buffer_blocks_dont_consume(self, builder: ItineraryBuilder):
+        """Buffer blocks (no-fly) don't consume capacity."""
+        day = DayCardOutput(
+            day_number=4,
+            label="Buffer Day",
+            blocks=[
+                DayBlockOutput(
+                    period="morning",
+                    activity_type="dive",
+                    summary="Dive",
+                    specialist_type="diving",
+                    duration="4h",
+                ),
+                DayBlockOutput(
+                    period="evening",
+                    activity_type="no_fly_buffer",
+                    summary="No-Fly Buffer",
+                    is_buffer=True,
+                    buffer_type="no_fly",
+                ),
+            ],
+        )
+        hours, blocks = builder._day_remaining_capacity(day)
+        # Only the dive counts: 11 - 4 = 7h, and buffer doesn't count as a block
+        assert hours == 7.0
+        assert blocks == 2
+
+
+# =============================================================================
+# Test: Time Slot Complementarity Score
+# =============================================================================
+
+
+class TestTimeSlotScore:
+    """Test _time_slot_score helper."""
+
+    def test_evening_on_morning_max_score(self, builder: ItineraryBuilder):
+        """Evening tile on morning-only day scores 1.0."""
+        day = DayCardOutput(
+            day_number=2,
+            label="Dive Day",
+            blocks=[
+                DayBlockOutput(
+                    period="morning", activity_type="dive", summary="Dive", duration="4h"
+                )
+            ],
+        )
+        assert builder._time_slot_score(day, "evening") == 1.0
+
+    def test_same_slot_low_score(self, builder: ItineraryBuilder):
+        """Same-slot tile scores 0.1."""
+        day = DayCardOutput(
+            day_number=2,
+            label="Dive Day",
+            blocks=[
+                DayBlockOutput(
+                    period="morning", activity_type="dive", summary="Dive", duration="4h"
+                )
+            ],
+        )
+        assert builder._time_slot_score(day, "morning") == 0.1
+
+    def test_adjacent_slot_mid_score(self, builder: ItineraryBuilder):
+        """Adjacent slot scores 0.5."""
+        day = DayCardOutput(
+            day_number=2,
+            label="Dive Day",
+            blocks=[
+                DayBlockOutput(
+                    period="morning", activity_type="dive", summary="Dive", duration="4h"
+                )
+            ],
+        )
+        assert builder._time_slot_score(day, "afternoon") == 0.5
+
+    def test_empty_day_max_score(self, builder: ItineraryBuilder):
+        """Empty day accepts any slot at max score."""
+        day = DayCardOutput(day_number=3, label="Empty", blocks=[])
+        assert builder._time_slot_score(day, "evening") == 1.0
+
+
+# =============================================================================
+# Test: Phase 5.6 Co-Scheduling
+# =============================================================================
+
+
+class TestPhase56CoScheduling:
+    """Test two-pass experience tile placement."""
+
+    def _make_specialist_day(
+        self, day_num: int, specialist: str, duration: str = "4h", period: str = "morning"
+    ) -> DayCardOutput:
+        """Helper: create a day with one specialist block."""
+        return DayCardOutput(
+            day_number=day_num,
+            label=f"{specialist.title()} Day",
+            blocks=[
+                DayBlockOutput(
+                    period=period,
+                    activity_type=f"{specialist}_activity",
+                    summary=f"{specialist.title()} Activity",
+                    specialist_type=specialist,
+                    duration=duration,
+                )
+            ],
+        )
+
+    def _make_experience_tile(
+        self,
+        tile_id: str,
+        title: str,
+        category: str = "yoga",
+        time_of_day: str = "evening",
+        duration_hours: float = 1.5,
+    ) -> dict:
+        """Helper: create an experience tile dict."""
+        return {
+            "id": tile_id,
+            "title": title,
+            "type": "activity",
+            "source_agent": "experience_generator",
+            "image_url": None,
+            "meta": {
+                "category": category,
+                "time_of_day": time_of_day,
+                "duration_hours": duration_hours,
+            },
+        }
+
+    def test_coschedule_no_free_days(self, builder: ItineraryBuilder):
+        """With 0 free days and experience tiles, tiles are co-scheduled on specialist days."""
+        days = [
+            DayCardOutput(
+                day_number=1,
+                label="Arrival",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="arrival",
+                        summary="Arrive",
+                        is_buffer=True,
+                        buffer_type="arrival",
+                    )
+                ],
+            ),
+            self._make_specialist_day(2, "diving"),
+            self._make_specialist_day(3, "diving"),
+            self._make_specialist_day(4, "hiking", duration="3h"),
+            DayCardOutput(
+                day_number=5,
+                label="Departure",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="departure",
+                        summary="Depart",
+                        is_buffer=True,
+                        buffer_type="departure",
+                    )
+                ],
+            ),
+        ]
+
+        tiles = {
+            "exp_1": self._make_experience_tile("exp_1", "Sunset Yoga", "yoga", "evening", 1.5),
+            "exp_2": self._make_experience_tile(
+                "exp_2", "Cooking Class", "cooking", "afternoon", 2.0
+            ),
+        }
+
+        result = builder._place_experience_tiles(days, tiles)
+
+        # Arrival and departure untouched
+        assert len(result[0].blocks) == 1
+        assert len(result[-1].blocks) == 1
+
+        # Specialist days should have co-scheduled blocks
+        all_exp_blocks = [
+            b for dc in result[1:-1] for b in dc.blocks if b.activity_type == "activity"
+        ]
+        assert len(all_exp_blocks) == 2
+
+    def test_mixed_free_and_specialist(self, builder: ItineraryBuilder):
+        """Free days filled first, overflow co-scheduled on specialist days."""
+        days = [
+            DayCardOutput(
+                day_number=1,
+                label="Arrival",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="arrival",
+                        summary="Arrive",
+                        is_buffer=True,
+                        buffer_type="arrival",
+                    )
+                ],
+            ),
+            self._make_specialist_day(2, "diving"),
+            DayCardOutput(
+                day_number=3,
+                label="Free Day",
+                blocks=[
+                    DayBlockOutput(period="morning", activity_type="free_day", summary="Free Day")
+                ],
+            ),
+            self._make_specialist_day(4, "hiking"),
+            DayCardOutput(
+                day_number=5,
+                label="Departure",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="departure",
+                        summary="Depart",
+                        is_buffer=True,
+                        buffer_type="departure",
+                    )
+                ],
+            ),
+        ]
+
+        # 3 tiles: 2 fit on free day, 1 overflows to specialist day
+        tiles = {
+            "exp_1": self._make_experience_tile("exp_1", "Yoga AM", "yoga", "morning", 1.5),
+            "exp_2": self._make_experience_tile("exp_2", "Yoga PM", "yoga", "evening", 1.5),
+            "exp_3": self._make_experience_tile(
+                "exp_3", "Cooking Class", "cooking", "afternoon", 2.0
+            ),
+        }
+
+        result = builder._place_experience_tiles(days, tiles)
+
+        # Free day should have gotten tiles, no more free_day placeholder
+        free_day = result[2]
+        assert not any(b.activity_type == "free_day" for b in free_day.blocks)
+        assert any(b.activity_type == "activity" for b in free_day.blocks)
+
+        # Third tile co-scheduled on a specialist day
+        specialist_exp = [
+            b for dc in [result[1], result[3]] for b in dc.blocks if b.activity_type == "activity"
+        ]
+        assert len(specialist_exp) == 1
+
+    def test_preserves_current_behavior_all_free(self, builder: ItineraryBuilder):
+        """With only free days, tiles placed on free days (Pass 1 only, no Pass 2)."""
+        days = [
+            DayCardOutput(
+                day_number=1,
+                label="Arrival",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="arrival",
+                        summary="Arrive",
+                        is_buffer=True,
+                        buffer_type="arrival",
+                    )
+                ],
+            ),
+            DayCardOutput(
+                day_number=2,
+                label="Free Day",
+                blocks=[
+                    DayBlockOutput(period="morning", activity_type="free_day", summary="Free Day")
+                ],
+            ),
+            DayCardOutput(
+                day_number=3,
+                label="Free Day",
+                blocks=[
+                    DayBlockOutput(period="morning", activity_type="free_day", summary="Free Day")
+                ],
+            ),
+            DayCardOutput(
+                day_number=4,
+                label="Departure",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="departure",
+                        summary="Depart",
+                        is_buffer=True,
+                        buffer_type="departure",
+                    )
+                ],
+            ),
+        ]
+
+        tiles = {
+            "exp_1": self._make_experience_tile("exp_1", "Yoga", "yoga", "morning", 1.5),
+        }
+
+        result = builder._place_experience_tiles(days, tiles)
+
+        # Tile placed on a free day
+        exp_blocks = [b for dc in result for b in dc.blocks if b.activity_type == "activity"]
+        assert len(exp_blocks) == 1
+
+        # No free_day placeholders remain on days that got tiles
+        day2_free = any(b.activity_type == "free_day" for b in result[1].blocks)
+        day3_free = any(b.activity_type == "free_day" for b in result[2].blocks)
+        # One of them should still have free_day (only 1 tile for 2 free days)
+        assert day2_free != day3_free or (not day2_free and not day3_free)
+
+    def test_no_tiles_noop(self, builder: ItineraryBuilder):
+        """No experience tiles → no-op."""
+        days = [
+            DayCardOutput(
+                day_number=1,
+                label="Day 1",
+                blocks=[
+                    DayBlockOutput(period="morning", activity_type="free_day", summary="Free Day")
+                ],
+            )
+        ]
+        result = builder._place_experience_tiles(days, {})
+        assert len(result) == 1
+        assert result[0].blocks[0].activity_type == "free_day"
+
+    def test_complementarity_scoring(self, builder: ItineraryBuilder):
+        """Evening tile prefers morning-specialist day over afternoon-specialist day."""
+        days = [
+            DayCardOutput(
+                day_number=1,
+                label="Arrival",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="arrival",
+                        summary="Arrive",
+                        is_buffer=True,
+                        buffer_type="arrival",
+                    )
+                ],
+            ),
+            # Morning specialist — evening tile = max complement (score 1.0)
+            self._make_specialist_day(2, "diving", "4h", "morning"),
+            # Afternoon specialist — evening tile = adjacent (score 0.5)
+            self._make_specialist_day(3, "hiking", "4h", "afternoon"),
+            DayCardOutput(
+                day_number=4,
+                label="Departure",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="departure",
+                        summary="Depart",
+                        is_buffer=True,
+                        buffer_type="departure",
+                    )
+                ],
+            ),
+        ]
+
+        tiles = {
+            "exp_1": self._make_experience_tile("exp_1", "Sunset Yoga", "yoga", "evening", 1.5),
+        }
+
+        result = builder._place_experience_tiles(days, tiles)
+
+        # Evening yoga should land on Day 2 (morning specialist, max complement)
+        day2_exp = [b for b in result[1].blocks if b.activity_type == "activity"]
+        assert len(day2_exp) == 1
+        assert day2_exp[0].summary == "Sunset Yoga"
+
+
+# =============================================================================
+# Test: Phase 5.25 Co-Scheduling Fallback
+# =============================================================================
+
+
+class TestPhase525CoScheduling:
+    """Test deferred co-scheduling in preferred activities placement."""
+
+    def test_preferred_coschedule_no_free_days(self, builder: ItineraryBuilder):
+        """Hearted activity is co-scheduled when no free days exist."""
+        days = [
+            DayCardOutput(
+                day_number=1,
+                label="Arrival",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="arrival",
+                        summary="Arrive",
+                        is_buffer=True,
+                        buffer_type="arrival",
+                    )
+                ],
+            ),
+            DayCardOutput(
+                day_number=2,
+                label="Diving Day",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="dive",
+                        summary="Dive",
+                        specialist_type="diving",
+                        duration="4h",
+                    )
+                ],
+            ),
+            DayCardOutput(
+                day_number=3,
+                label="Hiking Day",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="hike",
+                        summary="Hike",
+                        specialist_type="hiking",
+                        duration="4h",
+                    )
+                ],
+            ),
+            DayCardOutput(
+                day_number=4,
+                label="Departure",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="departure",
+                        summary="Depart",
+                        is_buffer=True,
+                        buffer_type="departure",
+                    )
+                ],
+            ),
+        ]
+
+        tiles = {
+            "yoga_1": {
+                "id": "yoga_1",
+                "title": "Sunset Yoga",
+                "type": "activity",
+                "image_url": None,
+                "duration": "1.5h",
+                "meta": {"time_of_day": "evening", "duration_hours": 1.5},
+            },
+        }
+
+        preferences = PreferenceOverrideInput(preferred_activity_ids=["yoga_1"])
+
+        result, dropped = builder._populate_free_days_with_preferences(days, tiles, preferences)
+
+        # Yoga should be co-scheduled via Pass 2 (all slots full in Pass 1)
+        assert dropped == 0
+
+        # Find the preferred block
+        pref_blocks = [
+            b for dc in result for b in dc.blocks if b.preference_status == "user_preferred"
+        ]
+        assert len(pref_blocks) == 1
+        assert pref_blocks[0].summary == "Sunset Yoga"

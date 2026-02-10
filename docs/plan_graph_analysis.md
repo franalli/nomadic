@@ -721,7 +721,7 @@ else:
 
 **Experience Generator Service:** `backend/app/services/experience_generator.py`
 
-Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output (`tiles_per_category` param, default 2). `LogisticsNode._compute_tiles_per_category()` scales the count based on free days: `clamp(free_days // num_categories, 2, 4)` where `free_days = trip_days − specialist_activity_days − 2`. Each tile includes title, subtitle, category, duration, price estimate, time of day, and skill level. Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
+Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output (`tiles_per_category` param, default 2). `LogisticsNode._compute_tiles_per_category()` scales the count based on placeable days (free days + co-schedulable specialist days): `clamp(total_placeable // num_categories, 2, 4)` where `free_days = trip_days − specialist_activity_days − 2` and `total_placeable = free_days + specialist_days`. Each tile includes title, subtitle, category, duration, price estimate, time of day, and skill level. Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
 
 | Trip Type | Categories | `executed_strategy_topics` | Activities |
 |-----------|-----------|---------------------------|------------|
@@ -746,6 +746,7 @@ All checks are registry-driven. Geographic and seasonal checks were deleted — 
 | Temporal | Duration < 30 days | info |
 | Specialist | Departure buffer (any `has_nofly_buffer` specialist) | blocking |
 | Specialist | Cross-domain blocks (declarative via registry) | blocking |
+| Specialist | Cross-domain from strategy sections (stateless fallback) | blocking |
 | Capacity | Activity count > available days (registry-driven) | blocking |
 
 **Auto-Fix Loop with Route Error Short-Circuit:**
@@ -840,14 +841,14 @@ Transforms specialist content + tiles into day-by-day timeline.
 
 **Why No LLM:** Deterministic scheduling is faster and more predictable than LLM-based generation. The specialists provide the "what", the builder provides the "when".
 
-**Algorithm (8 phases):**
+**Algorithm (7 phases with sub-phases):**
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  ItineraryBuilder (Pure Python - No LLM)                        │
 │  Transforms specialist content + tiles into day-by-day timeline  │
 │                                                                  │
-│  Algorithm (8 phases):                                           │
+│  Algorithm (7 phases with sub-phases):                                           │
 │  1.   Temporal Scaffolding - Create DayCard[] from dates         │
 │  2.   Anchor Placement - Arrival/departure from flight tiles     │
 │  3.   Buffer Injection - Safety blocks (no-fly, acclimatization) │
@@ -886,14 +887,12 @@ if total_activity_days > max_capacity:
 1. **Phase 2b (Count):** Truncates diving activity count to fit available slots (`diving_slots = usable_days - buffer_days`)
 2. **Phase 4 (Placement):** Restricts diving to days at or before `departure - 1 - buffer_days` (e.g., Day 2 at latest for a 4-day trip). If the round-robin lands on a restricted day for diving, it wraps to an earlier valid day. Other specialists (hiking, etc.) are unaffected and can still use those days.
 
-**Phase 5.25: Preferred Activity Placement**
+**Phase 5.25: Preferred Activity Placement (Two-Pass)**
 
-After creating free day placeholders, the builder populates free days with user-preferred activities (hearted tiles). This ensures hearted activities appear in the itinerary:
+After creating free day placeholders, the builder populates days with user-preferred activities (hearted tiles). Uses a two-pass strategy:
 
-1. Collects preferred tiles from `preferences.preferred_activity_ids` (ordered by user preference)
-2. Finds free days (days with only FreeDay placeholder, skipping arrival/departure)
-3. Replaces FreeDay placeholders with activity blocks from preferred tiles
-4. If more preferred activities than free days, extras are dropped (no conflicts created)
+1. **Pass 1 (Unified Slot Model):** Collects preferred tiles from `preferences.preferred_activity_ids`. Builds slot map (3 periods per day), places via round-robin on least-loaded days. Arrival/departure days have locked periods. Buffer blocks don't lock periods.
+2. **Pass 2 (Co-Schedule Fallback):** Tiles that couldn't fit in Pass 1 (all slots full or specialist-per-day cap) are deferred. Re-scans using `_day_remaining_capacity()` + `_time_slot_score()` for hour-based placement on specialist days with spare capacity.
 
 Activity blocks created this way have `preference_status: "user_preferred"` for UI attribution.
 
@@ -960,7 +959,15 @@ Each specialist type has its own constraint generator:
 - Cross-domain constraint clash (diving + hiking within 24h buffer via `no_altitude_after_dive`)
 - Insufficient days for planned activities
 
-**Cross-Domain Constraints:** Declarative `CrossDomainBlock` entries on the specialist registry enforce temporal buffers between specialists. Diving's `ALTITUDE_AFTER_DIVE` block prevents scheduling hiking/skiing/climbing within 24h. Enforced by `check_specialist_constraints()` in the guard (blocking severity) and also by `_detect_early_conflicts()` in ItineraryBuilder.
+**Cross-Domain Constraints:** Declarative `CrossDomainBlock` entries on the specialist registry enforce temporal buffers between specialists. Diving's `ALTITUDE_AFTER_DIVE` block prevents scheduling hiking/skiing/climbing within 24h.
+
+Two enforcement layers in the guard:
+1. **Block-level** (`check_specialist_constraints()`): Reads `plan.itinerary_blocks` for day-level scheduling conflicts. Only effective when blocks are populated (specialist just ran).
+2. **Section-level** (`_check_cross_domain_from_sections()`): Reads `persistent.strategy_sections` to detect specialist co-existence. Fires every turn regardless of execution path (survives fast paths like ACTIONABLE_TO_LOGISTICS where specialists don't re-run). Deduplicated against block-level violations by `code`.
+
+**Constraint Injection:** When a cross-domain violation is detected, the guard injects a `SpecialistConstraint` (e.g. `rule="altitude_after_dive"`) into `trip_plan.constraints` and persists it in `specialist_constraints`. This enables the ItineraryBuilder to enforce scheduling separation via `_find_constraint()` → `_detect_early_conflicts()`.
+
+Data flow: `registry (CrossDomainBlock) → guard (violation detection) → SpecialistConstraint injection → builder (_find_constraint)`
 
 #### Constraint Alias Normalization
 
@@ -1744,7 +1751,8 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 | Temporal | `duration > 30 days` | info | |
 | Temporal | `duration < 1 day` | warning | |
 | Specialist | Departure buffer (registry: `has_nofly_buffer`) | blocking | Unfixable |
-| Specialist | Cross-domain (registry: `cross_domain_blocks`) | blocking | Unfixable |
+| Specialist | Cross-domain via blocks (registry: `cross_domain_blocks`) | blocking | Unfixable |
+| Specialist | Cross-domain via sections (stateless fallback) | blocking | Unfixable |
 | Capacity | Activity count > available days | blocking | Auto-fixable |
 
 **Deleted checks (handled by specialist LLM feasibility):**
@@ -1767,7 +1775,7 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 **Two-Tier LLM/API Caches (Cross-Session):**
 | Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
 |-------|-------------|---------|--------|--------|------------|---------|
-| Specialist | `specialist_cache.py` | 128 | 1h | 7 days | `specialist:{topic}:{dest}:{month}:{duration}` | LLM outputs |
+| Specialist | `specialist_cache.py` | 128 | 1h | 7 days | `specialist:{topic}:{dest}:{start}:{end}:{skill}:{phash}` | LLM outputs |
 | Experience | `experience_generator.py` | 128 | 1h | 7 days | `experience:{dest}:{sorted_cats}:{month}` | Tier 2 tiles |
 | Tile | `tile_cache.py` | 256 | 24h | 24h | `tiles:{provider}:{type}:{dest}:{dates}` | Provider API data |
 | Router | `router_cache.py` | 500 | 1h | N/A | `SHA256({text}:{date})` | NL extraction |
@@ -1834,7 +1842,7 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 - Separate `_stats_lock` RLock for hit/miss counters (prevents counter race conditions)
 - Max size: 128 entries
 - TTL: 1 hour
-- Key format: `specialist:{topic}:{destination}:{month}:{duration}`
+- Key format: `specialist:{topic}:{dest}:{start}:{end}:{skill}:{phash}`
 
 **Tier 2: Database Cache**
 - Table: `response_cache` (filtered by `cache_type = 'specialist'`)
@@ -1847,8 +1855,10 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 |-----------|---------|---------|
 | topic | `diving` | Specialist type |
 | destination | `bali` | Normalized lowercase |
-| month | `2025-02` | Seasonal context |
-| duration | `14` | Trip length affects activity count |
+| start_date | `2025-02-11` | Exact trip start |
+| end_date | `2025-02-14` | Exact trip end (duration affects activity count) |
+| skill | `advanced` / `any` | User skill level (prevents cross-skill cache poisoning) |
+| phash | `9c22ff5f` | 8-char blake2s hash of prompt file (auto-invalidates on edit) |
 
 **Lookup Order:**
 1. L1 in-memory (thread-safe) → ~1ms
@@ -2529,15 +2539,22 @@ Phase 5: Tile Matching
 ├─ Flights attached to arrival/departure
 └─ Hotel preference attribution (user_preferred metadata)
 
-Phase 5.6: Experience Tile Placement (NEW)
+Phase 5.6: Experience Tile Placement — Two-Pass Co-Scheduling
 ├─ Filter tiles by source_agent == "experience_generator"
-├─ Tile count scaled by _compute_tiles_per_category(): clamp(free_days // cats, 2, 4)
 ├─ Sort by time_of_day: morning → afternoon → evening
-├─ Find free day indices (days with free_day placeholder blocks)
-├─ Round-robin distribute 1-2 experience tiles per free day
-├─ Remove free_day placeholder, create activity DayBlockOutput
-├─ Update day.label from "Free Day" to category title (e.g., "Yoga Day")
-└─ Leftover tiles (more tiles than free days) are dropped
+├─ Pass 1 (Free Days):
+│   ├─ Find free day indices (days with free_day placeholder blocks)
+│   ├─ Place 1-2 tiles per free day (if hours fit)
+│   ├─ Remove free_day placeholder, create activity DayBlockOutput
+│   └─ Update day.label to category title (e.g., "Yoga Day")
+├─ Pass 2 (Co-Schedule on Specialist Days):
+│   ├─ For remaining unplaced tiles, scan all days via _day_remaining_capacity()
+│   ├─ Score candidates: complement * 0.7 + headroom * 0.3
+│   │   ├─ _time_slot_score(): evening on morning-day = 1.0, same slot = 0.1
+│   │   └─ headroom: remaining_hours / DAY_CAPACITY_HOURS
+│   ├─ Place on best-scoring day, update candidate capacity
+│   └─ Specialist day labels NOT relabeled (keep "Diving Day", etc.)
+└─ Tiles that don't fit anywhere are dropped with debug log
 
 Phase 6: Constraint Tagging (Inline Display)
 ├─ Tag blocks with relevant constraints for frontend display

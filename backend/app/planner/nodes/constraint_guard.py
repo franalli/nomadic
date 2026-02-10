@@ -347,6 +347,50 @@ def check_specialist_constraints(
     return violations
 
 
+def _check_cross_domain_from_sections(
+    strategy_sections: List[Dict[str, Any]],
+) -> List[ConstraintViolation]:
+    """Stateless cross-domain check using persisted strategy sections.
+
+    Unlike check_specialist_constraints() which reads itinerary_blocks
+    (may be empty on fast paths), this reads strategy_sections which
+    persist across turns. If diving + hiking both exist as executed
+    specialists, the cross-domain conflict is flagged every turn.
+    """
+    from app.planner.specialist_registry import get as get_config
+
+    active_specialists = {
+        s.get("specialist_type")
+        for s in strategy_sections
+        if s.get("specialist_type") not in ("local_expert", "general", None)
+    }
+
+    if len(active_specialists) < 2:
+        return []
+
+    violations: List[ConstraintViolation] = []
+    for topic in active_specialists:
+        config = get_config(topic)
+        if not config:
+            continue
+        for xd in config.cross_domain_blocks:
+            conflicting = active_specialists & set(xd.target_specialists)
+            if conflicting:
+                violations.append(
+                    ConstraintViolation(
+                        code=xd.violation_code,
+                        message=xd.reason,
+                        severity=xd.severity,
+                        category="specialist",
+                        suggested_action=(
+                            f"Schedule {', '.join(sorted(conflicting))} activities at least "
+                            f"{xd.buffer_hours}h after last {topic} activity"
+                        ),
+                    )
+                )
+    return violations
+
+
 def check_route_constraint(plan: TripPlan) -> List[ConstraintViolation]:
     """
     Check route validity (Logic Guards).
@@ -519,6 +563,21 @@ async def constraint_guard(state: GraphState) -> GraphState:
     violations, has_blocking = guard.check_all(state)
 
     # =========================================================================
+    # Stateless Cross-Domain Check (Strategy-Section-Driven)
+    # check_specialist_constraints() reads itinerary_blocks which may be empty
+    # on fast paths (ACTIONABLE_TO_LOGISTICS). This fallback reads persisted
+    # strategy_sections to detect specialist co-existence every turn.
+    # =========================================================================
+    existing_codes = {v.code for v in violations}
+    section_violations = _check_cross_domain_from_sections(persistent.strategy_sections)
+    for sv in section_violations:
+        if sv.code not in existing_codes:
+            violations.append(sv)
+            existing_codes.add(sv.code)
+            if sv.severity == "blocking":
+                has_blocking = True
+
+    # =========================================================================
     # Registry-Driven Capacity Check (Flight-Independent)
     # Pure math: validates specialist activities are physically possible
     # given trip duration and buffer requirements.
@@ -577,6 +636,66 @@ async def constraint_guard(state: GraphState) -> GraphState:
                     )
         except Exception as e:
             log("GUARD", f"Capacity check error (non-fatal): {e}")
+
+    # =========================================================================
+    # Cross-Domain Constraint Injection for Builder
+    # When a cross-domain violation is detected (e.g. ALTITUDE_AFTER_DIVE),
+    # inject a SpecialistConstraint so the ItineraryBuilder can enforce
+    # scheduling separation via _find_constraint("no_altitude_after_dive").
+    # =========================================================================
+    for v in violations:
+        if v.category != "specialist":
+            continue
+        # Find source config that owns this violation code
+        for topic in persistent.executed_strategy_topics:
+            src_config = get_config(topic)
+            if not src_config:
+                continue
+            for xd in src_config.cross_domain_blocks:
+                if xd.violation_code != v.code:
+                    continue
+                # Use canonical rule name that builder's _find_constraint() expects
+                canonical_rule = "no_altitude_after_dive"
+                constraint = SpecialistConstraint(
+                    constraint_id=canonical_rule,
+                    type="temporal",
+                    rule=canonical_rule,
+                    severity="blocking",
+                    applies_to_categories=["activities"],
+                    buffer_hours=xd.buffer_hours,
+                    reason=xd.reason,
+                )
+                rule_canon = canonicalize_rule(constraint.rule)
+                if rule_canon not in existing_rules:
+                    state.trip_plan.constraints.append(constraint)
+                    existing_rules.add(rule_canon)
+                    # Persist for future turns
+                    if topic not in persisted:
+                        persisted[topic] = []
+                    persisted[topic].append(constraint.model_dump())
+                    # Also inject into strategy section so expand-itinerary
+                    # builder can find it (builder reads constraints_applied,
+                    # not trip_plan.constraints).
+                    # StrategySection.constraints_applied is List[Dict[str, str]]
+                    # so we serialize to string-only dict format.
+                    section_constraint = {
+                        "constraint_id": canonical_rule,
+                        "type": "temporal",
+                        "rule": canonical_rule,
+                        "severity": "blocking",
+                        "reason": xd.reason or "",
+                    }
+                    for section in persistent.strategy_sections:
+                        if section.get("specialist_type") == topic:
+                            section_rules = {
+                                c.get("rule") for c in section.get("constraints_applied", [])
+                            }
+                            if canonical_rule not in section_rules:
+                                section.setdefault("constraints_applied", []).append(
+                                    section_constraint
+                                )
+                            break
+                    log("GUARD", f"Injected cross-domain constraint: {constraint.rule}")
 
     log("GUARD", f"Violations found: {len(violations)}")
     for v in violations:

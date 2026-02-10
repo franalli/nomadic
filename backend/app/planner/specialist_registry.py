@@ -162,6 +162,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
                 "altitude_buffer",
                 "no_altitude_after_diving",
                 "altitude_restriction_after_dive",
+                "altitude_after_dive",
             ],
             "surface_interval": [
                 "min_18h_surface_interval",
@@ -629,6 +630,17 @@ def get_nofly_buffer_hours(topic: str) -> int | None:
         if c.get("buffer_hours"):
             return c["buffer_hours"]
     return 24  # default fallback
+
+
+def prompt_hash(topic: str) -> str:
+    """8-char stable hash of prompt file content for cache key versioning.
+
+    Returns 'noprompt' if file missing (fallback specialists).
+    """
+    from app.planner.hashing import stable_hash_short
+
+    content = load_prompt(topic)
+    return stable_hash_short(content) if content else "noprompt"
 
 
 def canonicalize_rule(rule: str) -> str:

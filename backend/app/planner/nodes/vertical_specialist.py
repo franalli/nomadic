@@ -144,6 +144,7 @@ async def generate_all_specialists_parallel(
                     destination=destination,
                     start_date=trip_plan.start_date,
                     end_date=trip_plan.end_date,
+                    skill_level=skill_level,
                 )
                 if cached is not None:
                     try:
@@ -218,6 +219,7 @@ async def generate_all_specialists_parallel(
                         start_date=trip_plan.start_date,
                         end_date=trip_plan.end_date,
                         output=llm_output.model_dump(),
+                        skill_level=skill_level,
                     )
                 except Exception as e:
                     _debug_log(f"[LLM_SPECIALIST] Cache write failed for {topic}: {e}")
@@ -260,6 +262,7 @@ async def generate_specialist_output_llm(
                 destination=destination,
                 start_date=trip_plan.start_date,
                 end_date=trip_plan.end_date,
+                skill_level=skill_level,
             )
 
             if cached is not None:
@@ -360,6 +363,7 @@ set feasibility_status to "infeasible" with reason"""
                     start_date=trip_plan.start_date,
                     end_date=trip_plan.end_date,
                     output=output.model_dump(),
+                    skill_level=skill_level,
                 )
             except Exception as cache_err:
                 _debug_log(f"[LLM_SPECIALIST] Cache write failed (non-fatal): {cache_err}")
@@ -1496,12 +1500,18 @@ async def vertical_specialist(state: GraphState) -> GraphState:
                         f"in {state.trip_plan.destination} "
                         f"dates={state.trip_plan.start_date}→{state.trip_plan.end_date}"
                     )
+                    _skill = (
+                        state.metadata.get("trip_inputs", {})
+                        .get("activity_settings", {})
+                        .get("skill_level")
+                    )
                     cached_result = await get_cached_specialist_output(
                         db=db,
                         topic=topic,
                         destination=state.trip_plan.destination,
                         start_date=state.trip_plan.start_date,
                         end_date=state.trip_plan.end_date,
+                        skill_level=_skill,
                     )
 
                     if cached_result:
@@ -1509,13 +1519,6 @@ async def vertical_specialist(state: GraphState) -> GraphState:
                         state.metadata["parallel_llm_results"] = {topic: cached_result}
                     else:
                         _debug_log(f"[SPECIALIST_CACHE] ❌ MISS for {topic} - calling LLM")
-
-                        # STEP 2: Call LLM with db session for cache write
-                        _skill = (
-                            state.metadata.get("trip_inputs", {})
-                            .get("activity_settings", {})
-                            .get("skill_level")
-                        )
                         llm_result = await generate_specialist_output_llm(
                             topic=topic,
                             destination=state.trip_plan.destination,

@@ -674,18 +674,19 @@ When there are only 1-2 selections, the bar renders as a slim one-line badge to 
 
 ### Specialist Filtering (Domain Mode)
 
-When Tier 1 domain specialists (diving, hiking, skiing, cycling, surfing) are active, both SelectionsBar and BookingSection filter activities to show only specialist-relevant items. Hotels always pass through. Tier 2 categories (sailing, cooking, yoga, temples, nightlife, beach, shopping, photography) do not trigger specialists — they bias tile selection via tag-based filtering in LogisticsNode.
+When Tier 1 domain specialists (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) are active, both SelectionsBar and BookingSection filter activities to show only specialist-relevant items. Hotels always pass through. Tier 2 categories (yoga, cooking, nightlife, temples, beach, shopping, photography, wellness, culture, music, wine, food) do not trigger specialists — they bias tile selection via tag-based filtering in LogisticsNode.
 
-**Keyword Mappings:**
+**Keyword Mappings (from `frontend/lib/specialists.ts` registry):**
 ```typescript
-const SPECIALIST_KEYWORDS: Record<string, string[]> = {
-  diving: ['div', 'scuba', 'snorkel', 'reef', 'underwater', 'wreck'],
-  hiking: ['hik', 'trek', 'trail', 'climb', 'summit', 'mountain'],
-  skiing: ['ski', 'snow', 'slope', 'piste', 'powder', 'chairlift', 'gondola'],
-  surfing: ['surf', 'wave', 'beach', 'board', 'swell'],
-  climbing: ['climb', 'boulder', 'crag', 'via ferrata', 'rope'],
-  cycling: ['cycl', 'bike', 'biking', 'pedal', 'mtb'],
-};
+// filterKeywords per specialist in SPECIALIST_REGISTRY:
+diving:          ['div', 'scuba', 'snorkel', 'reef', 'underwater', 'wreck'],
+hiking:          ['hik', 'trek', 'trail', 'climb', 'summit', 'mountain'],
+skiing:          ['ski', 'snow', 'slope', 'piste', 'powder', 'chairlift', 'gondola'],
+cycling:         ['cycl', 'bike', 'biking', 'pedal', 'mtb'],
+surfing:         ['surf', 'wave', 'board', 'swell'],
+climbing:        ['climb', 'boulder', 'crag', 'via ferrata', 'rope', 'ascent'],
+sailing:         ['sail', 'yacht', 'charter', 'catamaran', 'marina', 'regatta'],
+wildlife_safari: ['safari', 'wildlife', 'game drive', 'big five', 'savanna'],
 ```
 
 **Filtering Logic:**
@@ -709,14 +710,14 @@ function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boole
 ```
 
 **Where Applied:**
-- **Backend (Two-Tier Suppression):** `LogisticsNode` applies tier-aware filtering when niche specialists (diving, hiking, skiing, cycling, surfing) are active. Pure Tier 1 → suppress all generic tiles. Mixed Tier 1+2 → keep only tiles matching Tier 2 selections. `local_expert` does NOT trigger suppression.
+- **Backend (Two-Tier Suppression):** `LogisticsNode` applies tier-aware filtering when niche specialists (all 8 Tier 1 specialists) are active. Pure Tier 1 → suppress all generic tiles. Mixed Tier 1+2 → keep only tiles matching Tier 2 selections. `local_expert` does NOT trigger suppression.
 - `SelectionsBar.tsx`: Filters hearted activities by specialist before grouping
 - `BookingSection.tsx`: Filters activity tiles in `tilesByCategory` when specialists are active
 
 **Backend Two-Tier Suppression Logic:**
 ```python
 # logistics_node.py - after fetching activities
-NICHE_SPECIALISTS = TIER1_SPECIALISTS  # frozenset({"diving", "hiking", "skiing", "cycling", "surfing"})
+NICHE_SPECIALISTS = TIER1_SPECIALISTS  # 8 specialists from specialist_registry.py
 TIER1_CATEGORIES = TIER1_SPECIALISTS
 
 executed = state.metadata.get("executed_strategy_topics", [])
@@ -823,7 +824,7 @@ In S3 (itinerary ready), full specialist strategy cards are replaced with a comp
 - **S3 (itinerary ready):** Compact DNA bar showing **constraint pills** (not specialist pills)
 - Pills show: icon + constraint short label (full text, horizontally scrollable)
 - Hover: Native `title` tooltip shows full constraint text
-- **Filtering:** Only shows constraints from **niche specialists** (diving, hiking, skiing, cycling, surfing) — filters out Local Expert tips to focus on hard constraints
+- **Filtering:** Only shows constraints from **niche specialists** (all 8 Tier 1 specialists via `NICHE_SPECIALIST_IDS`) — filters out Local Expert tips to focus on hard constraints
 
 **Icon Selection (Priority-Based):**
 
@@ -839,11 +840,11 @@ Icons are selected based on constraint priority/severity, not validation state:
 
 **Implementation:**
 ```tsx
-// Frontend still uses 'boating' key — pending frontend migration to 'surfing'
-const NICHE_SPECIALISTS = ['diving', 'hiking', 'skiing', 'cycling', 'boating'];
+// NICHE_SPECIALIST_IDS from lib/specialists.ts — all 8 Tier 1 specialists (registry-driven)
+import { NICHE_SPECIALIST_IDS } from '@/lib/specialists';
 
 const engineConstraints = fullModeSections
-  .filter((s) => NICHE_SPECIALISTS.includes(s.specialist_type || ''))
+  .filter((s) => NICHE_SPECIALIST_IDS.includes(s.specialist_type || ''))
   .flatMap((s) => s.constraints_applied || []);
 
 // Short label extraction: label > reason (truncated) > rule (title-cased)
@@ -1140,6 +1141,9 @@ Each activity block shows a 4px colored left-border indicating its specialist so
 | `skiing` | Snow Blue | `#3B82F6` |
 | `cycling` | Lime | `#84CC16` |
 | `surfing` | Indigo | `#6366F1` |
+| `climbing` | Orange | `#F97316` |
+| `sailing` | Cyan | `#06B6D4` |
+| `wildlife_safari` | Amber | `#D97706` |
 
 **Visual Treatment:**
 - 4px colored left-border on each block

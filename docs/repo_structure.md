@@ -58,7 +58,7 @@ backend/
 │   │   ├── hashing.py          # Hash utilities
 │   │   ├── meta.py             # Metadata utilities
 │   │   ├── meta_keys.py        # Metadata key constants
-│   │   ├── season.py           # Season detection logic
+│   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
 │   │   ├── telemetry.py        # Telemetry/logging
 │   │   ├── test_mode.py        # Test mode utilities
 │   │   │
@@ -72,25 +72,37 @@ backend/
 │   │   │   ├── specialist_schemas.py  # Specialist Pydantic schemas
 │   │   │   ├── synthesizer.py         # Response synthesizer
 │   │   │   ├── trip_architect.py      # Main planning architect
-│   │   │   └── vertical_specialist.py # Domain experts (diving/hiking/skiing)
+│   │   │   └── vertical_specialist.py # Domain experts (8 specialists, registry-driven)
+│   │   │
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed)
+│   │   │   ├── itinerary_adapter.py # Thin bridge: GraphState → ItineraryBuilder
+│   │   │   └── section_builder.py   # Strategy section CRUD
 │   │   │
 │   │   └── state/
 │   │       ├── __init__.py
-│   │       └── schemas.py      # Planner state schemas
+│   │       ├── schemas.py      # Planner state schemas
+│   │       └── typed_meta.py   # Typed metadata bridge (TurnMeta, get_trip_settings)
 │   │
 │   ├── prompts/                # LLM prompt templates
 │   │   ├── synthesizer.txt
 │   │   └── specialists/
+│   │       ├── climbing.txt
+│   │       ├── cycling.txt
 │   │       ├── diving.txt
 │   │       ├── hiking.txt
 │   │       ├── local_expert.txt
-│   │       └── skiing.txt
+│   │       ├── sailing.txt
+│   │       ├── skiing.txt
+│   │       ├── surfing.txt
+│   │       └── wildlife_safari.txt
 │   │
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── base_cache.py           # Base cache class
 │   │   ├── experience_generator.py # Tier 2 experience tile generation via gpt-4o-mini (L1+L2 cache)
-│   │   ├── itinerary_builder.py    # Itinerary construction + constraint alias normalization
+│   │   ├── itinerary_builder.py    # Itinerary construction service
 │   │   ├── regen_strategy.py       # Selective regeneration strategy computation
 │   │   ├── router_cache.py         # Thread-safe L1 cache for router extraction (context-aware)
 │   │   ├── specialist_cache.py     # Thread-safe L1+L2 cache for specialist LLM outputs
@@ -139,20 +151,24 @@ backend/
 ├── tests/
 │   ├── conftest.py                       # Pytest fixtures
 │   ├── llm_stub.py                       # LLM mock for testing
+│   ├── run_curl_flows.sh                 # End-to-end curl flow tests
 │   ├── test_architecture.py              # Architecture tests
-│   ├── test_cross_domain_constraints.py  # Cross-domain constraint tests (Part 0)
 │   ├── test_conflict_resolution.py       # Conflict resolution & constraint alias tests
-│   ├── test_llm_feasibility.py           # LLM geographic feasibility tests
+│   ├── test_cross_domain_constraints.py  # Cross-domain constraint tests
 │   ├── test_demo_dataset.py              # Demo data tests
+│   ├── test_experience_generator.py      # Experience generator tests
 │   ├── test_hash_ban.py                  # Hash ban tests
 │   ├── test_import_contract.py           # Import contract tests
 │   ├── test_itinerary_builder.py         # Itinerary builder tests
+│   ├── test_llm_feasibility.py           # LLM geographic feasibility tests
 │   ├── test_multi_specialist_integration.py  # Multi-specialist tests
 │   ├── test_plan_schema.py               # Plan schema tests
 │   ├── test_router_cache.py              # Router cache tests (context-dependency detection)
 │   ├── test_specialist_cache.py          # Specialist LLM cache tests (thread safety, L1/L2)
 │   ├── test_specialist_structured.py     # Specialist structured output tests
+│   ├── test_stage2_integration.py        # Stage 2 integration tests
 │   ├── test_tile_cache.py                # Tile cache tests (L1/L2, thread safety)
+│   ├── test_typed_meta.py                # Typed metadata bridge tests
 │   └── db/
 │       └── test_plan_document_api.py
 │
@@ -193,23 +209,21 @@ frontend/
 │   │   ├── ChatSkeleton.tsx
 │   │   ├── CollapsedSetupSummary.tsx
 │   │   ├── HoldToDeleteButton.tsx
-│   │   ├── MinimizedChatInput.tsx
 │   │   ├── MobileChatCompactHeader.tsx
+│   │   ├── MobileChatInput.tsx
 │   │   ├── MobileSetupCollapsedHeader.tsx
 │   │   ├── PlanModeHint.tsx
 │   │   ├── SmartLoader.tsx
 │   │   ├── SystemAckLine.tsx
 │   │   ├── SystemReceipt.tsx
+│   │   ├── TripStatusBar.tsx
 │   │   └── useChatStateMachine.ts
 │   │
 │   ├── layout/                 # Layout components
 │   │   ├── FloatingBuildButton.tsx
 │   │   ├── MobileModeHeader.tsx
-│   │   ├── MobilePlanFooter.tsx
-│   │   ├── MobileTabBar.tsx
+│   │   ├── MobileSwipeLayout.tsx
 │   │   ├── NomadicLanding.tsx
-│   │   ├── SetupDrawer.tsx
-│   │   ├── SetupProgressIndicator.tsx
 │   │   ├── SplitLayoutView.tsx
 │   │   ├── TripDetailsForm.tsx
 │   │   └── hooks/              # Layout-specific hooks
@@ -244,11 +258,10 @@ frontend/
 │   │   ├── BookingSection.tsx
 │   │   ├── ConflictResolutionBanner.tsx  # Path A: Conflict resolution options for constraint clashes
 │   │   ├── CoreChip.tsx
-│   │   ├── ExplorationProgress.tsx
 │   │   ├── DaySection.tsx
 │   │   ├── DestinationMapPlaceholder.tsx
 │   │   ├── DocumentHeader.tsx
-│   │   ├── GlassCommandBar.tsx
+│   │   ├── ExplorationProgress.tsx
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── NextStepBar.tsx
 │   │   ├── NextStepPanel.tsx
@@ -256,13 +269,13 @@ frontend/
 │   │   ├── OptionalRefinementsSection.tsx
 │   │   ├── OriginPromptCard.tsx
 │   │   ├── PlanDocument.tsx
+│   │   ├── PlanGhostPreview.tsx
 │   │   ├── PlanHeader.tsx
 │   │   ├── PlanningProgress.tsx
 │   │   ├── planStateHelpers.ts
 │   │   ├── ReadyToPlanBanner.tsx
 │   │   ├── Segment.tsx
 │   │   ├── SelectionsBar.tsx       # Hearted tiles carousel (sticky bar of preferred tiles)
-│   │   ├── StatusBadge.tsx
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
 │   │   ├── TimelineDivider.tsx     # Visual separator before timeline (unused)
 │   │   ├── TimelineThread.tsx
@@ -293,7 +306,8 @@ frontend/
 │   │   │   ├── index.ts
 │   │   │   ├── OriginSheet.tsx
 │   │   │   ├── StaysSheet.tsx
-│   │   │   └── TravelersSheet.tsx
+│   │   │   ├── TravelersSheet.tsx
+│   │   │   └── TripSettingsSheet.tsx
 │   │   │
 │   │   ├── stages/             # Stage-specific views
 │   │   │   ├── BookingAnchorCard.tsx
@@ -365,13 +379,14 @@ frontend/
 ├── hooks/                      # Custom React hooks
 │   ├── useActionLoader.ts
 │   ├── useDelayedLoader.ts
+│   ├── useIsDesktop.ts
 │   ├── useMapSync.ts
+│   ├── usePreferenceAutoRegen.ts # Auto-triggers itinerary regen on heart changes
 │   ├── useScrollCollapse.ts
 │   ├── useScrollSpy.ts
 │   ├── useSheetManager.ts
 │   ├── useShortlist.ts         # Heart preferences - backed by documentStore.preferredTileIds
 │   ├── useSpecialistDeepLink.ts
-│   ├── useSpeculativeExecution.ts
 │   ├── useTripInputsWithFallback.ts
 │   ├── useTripValidation.ts    # Unified trip date/destination validation
 │   └── useViewNavigation.ts
@@ -395,6 +410,7 @@ frontend/
 │   ├── route-utils.ts          # Routing utilities
 │   ├── specialist-utils.ts     # Specialist topic utilities
 │   ├── specialistLinkParser.ts
+│   ├── specialists.ts          # Specialist registry SSoT (colors, icons, keywords, IDs)
 │   ├── statusCopyMap.ts        # Status text mappings
 │   ├── streamParser.ts         # Stream parsing utilities
 │   ├── summary.ts              # Summary utilities
@@ -411,6 +427,7 @@ frontend/
 ├── state/                      # Zustand stores
 │   ├── chatStore.ts            # Chat state
 │   ├── documentStore.ts        # Document/plan state
+│   ├── mobileNavStore.ts       # Mobile navigation state
 │   └── uiStore.ts              # UI state
 │
 ├── types/                      # TypeScript types
@@ -448,6 +465,7 @@ frontend/
 ```
 docs/
 ├── design-system.md            # Frontend styling SSoT
+├── key_backend_files/          # Backend reference snapshots (prompts, nodes, services)
 ├── plan_graph_analysis.md      # Backend architecture SSoT
 ├── repo_structure.md           # This file
 └── ux_unified_architecture.md  # UX/view states SSoT

@@ -739,10 +739,11 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
 
 def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
-    """Scale experience tile count based on free days available.
+    """Scale experience tile count based on placeable days.
 
     free_days = trip_days - specialist_activity_days - 2 (arrival/departure)
-    tiles_per_category = clamp(free_days // len(tier2_cats), 2, 4)
+    total_placeable = free_days + specialist_days (co-scheduling capacity)
+    tiles_per_category = clamp(total_placeable // len(tier2_cats), 2, 4)
     """
     plan = state.trip_plan
     if not plan.start_date or not plan.end_date or not tier2_cats:
@@ -762,12 +763,15 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
             continue
         specialist_days += len(section.get("content_added", []))
 
-    free_days = max(1, trip_days - specialist_days - 2)
-    tiles_per_cat = min(max(2, free_days // len(tier2_cats)), 4)
+    free_days = max(0, trip_days - specialist_days - 2)
+    # Specialist days can hold ~1 co-scheduled experience tile each
+    total_placeable = free_days + specialist_days
+    tiles_per_cat = min(max(2, total_placeable // len(tier2_cats)), 4)
     log(
         "LOGISTICS",
         f"Tile scaling: trip={trip_days}d, specialist={specialist_days}d, "
-        f"free={free_days}d, cats={len(tier2_cats)}, tiles/cat={tiles_per_cat}",
+        f"free={free_days}d, placeable={total_placeable}d, "
+        f"cats={len(tier2_cats)}, tiles/cat={tiles_per_cat}",
     )
     return tiles_per_cat
 
