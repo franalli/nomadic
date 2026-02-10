@@ -29,6 +29,19 @@ from app.planner.nodes.router_extraction import (
     _normalize_city_name,
     _populate_trip_plan_from_router_output,
 )
+from app.planner.nodes.router_category_sync import (
+    DATE_INDICATORS,
+    ORIGIN_PATTERNS,
+    PLANNING_READINESS_SIGNALS,
+    REMOVAL_PATTERN,
+    RESET_BUDGET_PATTERN,
+    RESET_HOTEL_PATTERN,
+    SKILL_LEVEL_MAP,
+    TIER2_ACTIVITY_KEYWORDS,
+    _detect_actionable_input,
+    _prefetch_tier2_experiences,
+    detect_planning_intent,
+)
 from app.planner.specialist_registry import (
     ALL_CATEGORY_TO_SPECIALIST,
     ALL_SPECIALIST_KEYWORDS,
@@ -42,21 +55,8 @@ logger = logging.getLogger(__name__)
 # Tier 2 activities — not in ALL_SPECIALIST_KEYWORDS (Tier 1 only).
 # "sailing" included: Tier 1 in registry but KNOWN_CATEGORIES lists it,
 # and logistics treats it as Tier 2 for tile generation.
-TIER2_ACTIVITY_KEYWORDS: set[str] = {
-    "yoga",
-    "cooking",
-    "nightlife",
-    "temples",
-    "beach",
-    "shopping",
-    "photography",
-    "sailing",
-    "wellness",
-    "culture",
-    "music",
-    "wine",
-    "food",
-}
+# Now imported from router_category_sync.py
+
 
 # Derived constant for suggestion prompts
 _SPECIALIST_NAMES_CSV = ", ".join(sorted(TIER1_SPECIALIST_NAMES))
@@ -244,59 +244,16 @@ def classify_question_type(text: str) -> Tuple[str, str]:
 # Exploration Mode: Planning Readiness Detection
 # =============================================================================
 
-PLANNING_READINESS_SIGNALS = [
-    # Plan signals
-    "plan my trip",
-    "help me plan",
-    "let's plan",
-    "plan this",
-    "plan it",  # Common short form
-    # Readiness signals
-    "i'm ready",
-    "let's do it",
-    "let's go",
-    "book",
-    "what are my options",
-    "show me options",
-    # Affirmative signals
-    "go ahead",
-    "yes let's",
-    "sounds good",
-    "do it",
-    "create it",
-    "build it",
-    "make it",
-    # Build/create signals
-    "build the itinerary",
-    "build itinerary",
-    "build my itinerary",
-    "create the itinerary",
-    "create itinerary",
-    "create my itinerary",
-    "generate itinerary",
-    "generate the itinerary",
-    "make the plan",
-    "make my plan",
-    "make a plan",
-]
+# PLANNING_READINESS_SIGNALS now imported from router_category_sync.py
+
 
 # Split into separate constants for clarity and maintainability
-DATE_INDICATORS = [
-    r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\b",
-    r"\b(next week|next month|this weekend|tomorrow)\b",
-    r"\b\d{1,2}[/-]\d{1,2}\b",
-]
-
+# DATE_INDICATORS now imported from router_category_sync.py
 
 # Origin specification patterns - detect "from [city]" as departure city
 # These patterns identify when user is specifying origin, NOT a destination to explore
-ORIGIN_PATTERNS = [
-    r"^(?:i(?:'m|'m| am)\s+)?(?:leaving|departing|flying|coming|traveling)?\s*from\s+(\S.+)$",
-    r"^(?:departure|depart(?:ing)?|leav(?:e|ing))\s+from\s+(\S.+)$",
-    r"^from\s+(\S.+)$",  # Most common: "from rome"
-]
+# ORIGIN_PATTERNS now imported from router_category_sync.py
 
-# =============================================================================
 # SETTINGS PATTERNS - Detect trip setting changes from chat messages
 # These trigger LogisticsNode to refetch tiles with updated parameters
 # =============================================================================
@@ -348,27 +305,11 @@ FLIGHT_PATTERNS = [
 # Runs before exploration short-circuit to prevent swallowing valid input.
 # =============================================================================
 
-SKILL_LEVEL_MAP: dict[str, str] = {
-    "beginner": "beginner",
-    "intermediate": "intermediate",
-    "advanced": "advanced",
-    "expert": "advanced",
-    "novice": "beginner",
-    "first time": "beginner",
-}
+# SKILL_LEVEL_MAP now imported from router_category_sync.py
 
-REMOVAL_PATTERN = re.compile(
-    r"(?:skip|remove|drop|no more|cancel|don't want|without)\s+(?:the\s+)?(\w+)"
-)
-# Tightened to avoid false positives: "any budget tips?" should NOT trigger reset.
-# Require explicit reset language OR "is fine/works/ok" confirmation.
-RESET_BUDGET_PATTERN = re.compile(
-    r"(?:no|remove|clear|unlimited|reset)\s+(?:budget|spending)\s*(?:limit)?"
-)
-RESET_HOTEL_PATTERN = re.compile(
-    r"(?:no|remove|clear|reset)\s+(?:hotel|star)\s*(?:preference|filter|requirement)?"
-    r"|any\s+(?:star|hotel)\s+(?:is fine|works|ok)"
-)
+
+# REMOVAL_PATTERN, RESET_BUDGET_PATTERN, RESET_HOTEL_PATTERN now imported from router_category_sync.py
+
 
 # =============================================================================
 # Suggestion Pool (registry-driven chip generation)
@@ -800,121 +741,7 @@ def _detect_settings_from_message(user_text: str, state: "GraphState") -> Option
     return detected if detected else None
 
 
-def _detect_actionable_input(user_text: str, state: "GraphState") -> Optional[dict]:
-    """Catch actionable trip modifications that keyword/regex settings detection misses.
-
-    Runs BEFORE exploration short-circuit to prevent swallowing valid input.
-    Returns dict of changes if found, None if message is truly exploratory.
-    """
-    if not state.trip_plan.destination:
-        return None
-
-    text_lower = user_text.lower().strip()
-    changes: dict = {}
-
-    # 1. Tier 2 activity additions (word-boundary match)
-    detected_t2 = {kw for kw in TIER2_ACTIVITY_KEYWORDS if re.search(rf"\b{kw}\b", text_lower)}
-    if detected_t2:
-        changes["add_categories"] = detected_t2
-
-    # 2. Activity removals
-    for m in REMOVAL_PATTERN.finditer(text_lower):
-        target = m.group(1)
-        all_known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALISTS
-        if target in all_known:
-            changes.setdefault("remove_categories", set()).add(target)
-
-    # 3. Skill level
-    for keyword, level in SKILL_LEVEL_MAP.items():
-        if keyword in text_lower:
-            changes["skill_level"] = level
-            break
-
-    # 4. Setting resets
-    if RESET_BUDGET_PATTERN.search(text_lower):
-        changes["reset_budget"] = True
-    if RESET_HOTEL_PATTERN.search(text_lower):
-        changes["reset_hotel"] = True
-
-    # 5. Detect unresolved activity-like tokens
-    # Runs even with zero keyword matches — catches synonyms like
-    # "party" → nightlife, "clubbing" → nightlife, "spa" → wellness
-    # that the LLM alias resolver can map to known categories.
-    # The ≤5 words guard prevents questions like "what's the party scene
-    # like in Bali" from being swallowed — those still reach exploration.
-    all_known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALISTS
-    stop_words = {
-        # intent/filler
-        "also",
-        "and",
-        "too",
-        "as",
-        "well",
-        "add",
-        "want",
-        "with",
-        "some",
-        "plus",
-        "the",
-        "i",
-        "we",
-        "me",
-        "my",
-        "a",
-        "in",
-        "let",
-        "can",
-        "like",
-        "maybe",
-        "please",
-        "for",
-        "trip",
-        # conversational — prevent chip/UI text from triggering ACTIONABLE
-        "show",
-        "more",
-        "options",
-        "change",
-        "preferences",
-        "other",
-        "help",
-        "what",
-        "how",
-        "about",
-        "tell",
-        "any",
-        "get",
-        "give",
-        "see",
-        "look",
-        "try",
-        "need",
-        "could",
-        "would",
-        "should",
-        "keep",
-        "make",
-        "take",
-        "budget",
-        "dates",
-        "plan",
-        "yes",
-        "no",
-        "sure",
-        "okay",
-        "thanks",
-        "thank",
-        "you",
-        "that",
-        "build",
-        "itinerary",
-        "set",
-    }
-    remaining = set(re.findall(r"\b[a-z]{3,}\b", text_lower))
-    remaining -= all_known
-    remaining -= stop_words
-    remaining -= set(SKILL_LEVEL_MAP.keys())
-    if remaining and len(text_lower.split()) <= 5:
-        changes["unresolved_tokens"] = remaining
+# _detect_actionable_input now imported from router_category_sync.py
 
     return changes if changes else None
 
@@ -943,37 +770,7 @@ def get_new_specialists_from_text(text: str, existing_specialists: List[str]) ->
     return new_specialists
 
 
-def detect_planning_intent(text: str, state: "GraphState") -> str:
-    """
-    Detect if user is ready to plan or still exploring.
-
-    Returns:
-    - "ready" → User explicitly wants to plan
-    - "soft_transition" → Has dates/activities, natural transition
-    - "exploring" → Still asking questions
-    """
-    text_lower = text.lower()
-
-    # Explicit planning signals
-    for signal in PLANNING_READINESS_SIGNALS:
-        if signal in text_lower:
-            return "ready"
-
-    # Pattern: "plan [destination] trip" (e.g., "Plan Bali trip", "plan the trip")
-    if re.search(r"\bplan\b.*\btrip\b", text_lower):
-        return "ready"
-
-    # Has dates AND activities
-    has_date = any(re.search(p, text_lower) for p in DATE_INDICATORS)
-    has_activity = any(kw in text_lower for kws in ALL_SPECIALIST_KEYWORDS.values() for kw in kws)
-
-    if has_date and has_activity:
-        return "ready"  # "diving in February" → planning mode
-    if has_date or has_activity:
-        return "soft_transition"  # Just date or just activity
-
-    return "exploring"
-
+# detect_planning_intent now imported from router_category_sync.py
 
 def _extract_destination_context(text: str, state: "GraphState") -> Optional[str]:
     """
@@ -2922,54 +2719,4 @@ async def intent_router(state: GraphState) -> GraphState:
     return state
 
 
-def _prefetch_tier2_experiences(state: "GraphState", categories: set[str]) -> None:
-    """Start Tier 2 experience generation speculatively to mask latency.
-
-    CRITICAL: Passes state=None to avoid dict mutation race condition.
-    Prefetch populates L1 cache. Logistics awaits task, then calls generate_experiences()
-    with state=state, hits L1 cache instantly, and populates state.metadata safely.
-    """
-    import asyncio
-
-    from app.debug_utils import log
-    from app.services.experience_generator import generate_experiences
-
-    plan = state.trip_plan
-    if not plan.destination:
-        return
-
-    month = str(plan.start_date)[:7] if plan.start_date else ""
-    tiles_per_category = 2  # Logistics refines this based on trip length
-
-    log(
-        "ROUTER",
-        f"[PREFETCH] Starting Tier 2 generation: dest={plan.destination}, categories={categories}",
-    )
-
-    task = asyncio.create_task(
-        generate_experiences(
-            destination=plan.destination,
-            categories=list(categories),
-            month=month,
-            budget=plan.budget,
-            tier1_specialists=None,
-            tiles_per_category=tiles_per_category,
-            state=None,  # ← CRITICAL: No state to avoid race condition
-        )
-    )
-
-    # Add exception handler to surface errors from fire-and-forget task
-    def _log_task_exception(t: asyncio.Task) -> None:
-        if t.exception():
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.error(
-                f"[PREFETCH] Task failed with exception: {t.exception()}",
-                exc_info=t.exception(),
-            )
-
-    task.add_done_callback(_log_task_exception)
-
-    state.metadata["tier2_prefetch_task"] = task
-    state.metadata["tier2_prefetch_categories"] = list(categories)
+# _prefetch_tier2_experiences now imported from router_category_sync.py
