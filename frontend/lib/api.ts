@@ -421,6 +421,29 @@ export async function refreshTiles(
 }
 
 /**
+ * Fill a free day with activity tiles (no LangGraph execution).
+ *
+ * Calls experience_generator directly to produce Tier 2 tiles,
+ * replaces the free_day block with activity blocks, and persists.
+ */
+export async function fillDay(
+  dayNumber: number,
+  categories?: string[]
+): Promise<{
+  day_number: number;
+  tiles_added: number;
+  day_card: import('@/types/plan-envelope').DayCard;
+  version: number;
+}> {
+  const res = await apiFetch('/api/document/fill-day', {
+    method: 'POST',
+    body: JSON.stringify({ day_number: dayNumber, categories }),
+  });
+  if (!res.ok) throw new Error(`fill-day failed: ${res.status}`);
+  return res.json();
+}
+
+/**
  * SSE Event types for streaming graph plan responses.
  */
 export interface SSETokenEvent {

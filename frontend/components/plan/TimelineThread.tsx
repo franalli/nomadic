@@ -14,9 +14,11 @@ import {
   Utensils,
   Waves,
 } from 'lucide-react';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
+import { fillDay } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useDocumentStore } from '@/state/documentStore';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
 import {
@@ -222,6 +224,27 @@ export function TimelineThread({
   // Compute effective variant: prefer explicit variant, fall back to isDraft for backward compatibility
   const effectiveVariant: TimelineVariant = variant ?? (isDraft ? 'draft' : 'real');
   const { badge, badgeClass } = variantConfig[effectiveVariant];
+
+  // Fill-day: Zustand selectors + local loading state
+  const [fillingDay, setFillingDay] = useState<number | null>(null);
+  const destination = useDocumentStore(s => s.document?.trip_inputs?.destination ?? null);
+  const categories = useDocumentStore(s => s.document?.trip_inputs?.activity_settings?.categories);
+  const replaceDayCard = useDocumentStore(s => s.replaceDayCard);
+
+  // V1: categories from trip_inputs (Zustand). FreeDayCard's selectedCats arg intentionally ignored.
+  const handleFillDay = useCallback(async (dayNumber: number) => {
+    setFillingDay(dayNumber);
+    try {
+      const result = await fillDay(dayNumber, categories?.length ? categories : undefined);
+      if (result.day_card) {
+        replaceDayCard(result.day_number, result.day_card, result.version);
+      }
+    } catch (err) {
+      console.warn('[TimelineThread] fill-day failed:', err);
+    } finally {
+      setFillingDay(null);
+    }
+  }, [categories, replaceDayCard]);
   const sortedDays = useMemo(() => {
     return [...dayCards].sort((a, b) => a.day_number - b.day_number);
   }, [dayCards]);
@@ -440,7 +463,11 @@ export function TimelineThread({
                   return (
                     <FreeDayCard
                       dayNumber={card.day_number}
+                      dayDate={card.date ?? null}
+                      destination={destination}
                       onBrowse={() => onOpenBookingDrawer?.('activity')}
+                      onFillDay={handleFillDay}
+                      isFilling={fillingDay === card.day_number}
                     />
                   );
                 }

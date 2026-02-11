@@ -1661,7 +1661,18 @@ class ItineraryBuilder:
             )
         )
 
-        unplaced = list(experience_tiles)
+        # Deduplicate by normalised title — the experience generator can
+        # produce tiles with different IDs but identical titles.
+        seen_titles: set[str] = set()
+        deduped: list[dict] = []
+        for t in experience_tiles:
+            title_key = (t.get("title") or "").strip().lower()
+            if title_key and title_key in seen_titles:
+                continue
+            if title_key:
+                seen_titles.add(title_key)
+            deduped.append(t)
+        unplaced = deduped
 
         # ─────────────────────────────────────────────────────────
         # Pass 1: Free Day Placement (preserves existing behavior)

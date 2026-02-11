@@ -18,6 +18,3 @@ export { TravelersSheet, type TravelersSheetProps } from './TravelersSheet';
 export { ActivitiesSheet, type ActivitiesSheetProps } from './ActivitiesSheet';
 export { FlightsSheet, type FlightsSheetProps } from './FlightsSheet';
 export { StaysSheet, type StaysSheetProps } from './StaysSheet';
-
-// Checkout flow
-export { CheckoutSheet, type CheckoutSheetProps, type GuestDetails } from './CheckoutSheet';

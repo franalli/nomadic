@@ -307,6 +307,9 @@ type DocumentState = {
   /** Check if a runId is the current run (ignore late events from stale runs) */
   isCurrentRun: (runId: string) => boolean;
 
+  // Fill-day: surgical single day card replacement
+  replaceDayCard: (dayNumber: number, newCard: DayCard, newVersion?: number) => void;
+
   // Reset
   reset: () => void;
 };
@@ -1754,6 +1757,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   clearCart: () => {
     set({ cartTileIds: new Set() });
+  },
+
+  replaceDayCard: (dayNumber, newCard, newVersion) => {
+    const { document: doc } = get();
+    if (!doc?.day_cards) return;
+    const cards = [...doc.day_cards];
+    const idx = cards.findIndex(c => c.day_number === dayNumber);
+    if (idx === -1) return;
+    cards[idx] = newCard;
+    set({
+      document: { ...doc, day_cards: cards },
+      ...(newVersion !== undefined && { version: newVersion }),
+    });
   },
 
   reset: () => {

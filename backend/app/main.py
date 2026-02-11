@@ -1444,6 +1444,12 @@ async def graph_plan_endpoint(
                 logger.info(
                     f"[{request_id}] _doc_settings injected: activity_settings.categories={_cats}"
                 )
+            # ── Sync last_builder_success from document state ──
+            # expand-itinerary persists plan_view_state to the document but
+            # never updates session_state.metadata.  Bridge the gap here so the
+            # constraint guard sees builder success on the next graph turn.
+            if fresh_data.plan_view_state == "S3_ITINERARY_READY":
+                session_state.setdefault("metadata", {})["last_builder_success"] = True
         except Exception as e:
             logger.error(f"[{request_id}] _doc_settings injection FAILED: {e}")
 
@@ -2144,6 +2150,9 @@ async def graph_plan_stream_endpoint(
                             f"[{request_id}] _doc_settings injected: "
                             f"activity_settings.categories={_cats}"
                         )
+                    # ── Sync last_builder_success from document state ──
+                    if fresh_data.plan_view_state == "S3_ITINERARY_READY":
+                        session_state.setdefault("metadata", {})["last_builder_success"] = True
                 except Exception as e:
                     logger.error(f"[{request_id}] _doc_settings injection FAILED: {e}")
 

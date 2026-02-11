@@ -1553,14 +1553,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   exit={{ opacity: 0, y: -20 }}
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                   className={cn(
-                    'sticky top-0 z-40',
-                    '-mx-4 -mt-4 mb-2',
+                    'z-40 shrink-0',
+                    '-mx-4 -mt-4 mb-0',
                     'w-[calc(100%+2rem)]',
                     'h-14 px-4',
-                    'bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md',
+                    'bg-white dark:bg-zinc-900',
                     'border-b border-zinc-200 dark:border-white/5',
                     'flex items-center',
-                    'transition-all duration-300',
                   )}
                 >
                   <div className="flex items-center gap-2">

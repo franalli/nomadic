@@ -35,7 +35,6 @@ import { useToast } from '@/components/ui/toast';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { usePreferenceAutoRegen } from '@/hooks/usePreferenceAutoRegen';
 import { useSheetManager } from '@/hooks/useSheetManager';
-import { useShortlist } from '@/hooks/useShortlist';
 import { useSpecialistDeepLink } from '@/hooks/useSpecialistDeepLink';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { apiFetch, fetchDestinationImage } from '@/lib/api';
@@ -226,9 +225,6 @@ export function NomadicLanding() {
     handleRemoveActivity,
   } = useLocalBookingSettings(storeTripInputs, addToast);
 
-  // Shortlist hook - manages user's saved tiles in S2
-  const shortlist = useShortlist();
-
   // Destination image state - fetched from Unsplash when destination changes
   const [destinationImageUrl, setDestinationImageUrl] = useState<string | null>(null);
   const lastFetchedDestination = useRef<string | null>(null);
@@ -303,8 +299,6 @@ export function NomadicLanding() {
       console.log(
         '[handleStartNewSession] ✅ documentStore.reset() + chatStore.resetChat() done'
       );
-      // Clear shortlist (saved tiles)
-      shortlist.clear();
       // Clear local UI generation state
       setUiGeneration(null);
       setLastGenerationError(null);
@@ -340,7 +334,6 @@ export function NomadicLanding() {
       console.error('[handleStartNewSession] ❌ Reset failed:', error);
     }
   }, [
-    shortlist,
     branchManagerStartNewSession,
     closeSheet,
     documentStore,
@@ -1058,7 +1051,7 @@ export function NomadicLanding() {
       }
       // PERF: No storeDocument in deps - function uses getState() for live reads
     },
-    [shortlist.savedTileIds, documentStore]
+    [documentStore]
   );
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1312,8 +1305,6 @@ export function NomadicLanding() {
       onReset={handleStartNewSession}
       lastError={lastGenerationError}
       onRetry={handleExpandToItinerary}
-      savedTileIds={shortlist.savedTileIds}
-      onSaveTile={shortlist.toggleItem}
       tripInputs={tripInputs}
       isCommitting={isCommitting}
       onOpenSheet={openSheet}

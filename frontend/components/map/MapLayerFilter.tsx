@@ -190,48 +190,4 @@ export function MapLayerFilter({
   );
 }
 
-/**
- * Compact variant for mobile - just icons
- */
-export function MapLayerFilterCompact({
-  visibleLayers,
-  onToggle,
-  availableTypes,
-  className,
-}: Omit<MapLayerFilterProps, 'showAllButton' | 'onShowAll'>) {
-  if (availableTypes.length === 0) return null;
-
-  return (
-    <div
-      className={cn(
-        'flex items-center gap-1 p-1 rounded-lg backdrop-blur-md',
-        'bg-black/40 border border-white/10',
-        className
-      )}
-    >
-      {availableTypes.map((type) => {
-        const config = LAYER_CONFIG[type] || { icon: MapPin, activeColor: 'bg-zinc-500' };
-        const Icon = config.icon;
-        const isActive = visibleLayers.has(type);
-
-        return (
-          <button
-            key={type}
-            type="button"
-            onClick={() => onToggle(type)}
-            className={cn(
-              'p-1.5 rounded-md transition-all duration-200',
-              isActive
-                ? `${config.activeColor.split(' ')[0]} text-white`
-                : 'bg-transparent text-white/40 hover:bg-white/10 hover:text-white/60'
-            )}
-          >
-            <Icon className="w-4 h-4" />
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 export default MapLayerFilter;
