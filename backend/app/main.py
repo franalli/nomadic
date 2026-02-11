@@ -2,7 +2,9 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 import warnings
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,8 +21,11 @@ if _debug_mode != "full":
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import StreamingResponse  # noqa: E402
+from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
+from slowapi import Limiter  # noqa: E402
+from slowapi.errors import RateLimitExceeded  # noqa: E402
+from slowapi.util import get_remote_address  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
@@ -502,6 +507,62 @@ db_dependency = Depends(get_db)
 async_db_dependency = Depends(get_async_db)
 
 
+# =============================================================================
+# Rate Limiting (slowapi)
+# =============================================================================
+
+
+def _rate_key(request: Request) -> str:
+    """Session cookie -> IP fallback for rate limit keying."""
+    return request.cookies.get("session_id") or get_remote_address(request)
+
+
+limiter = Limiter(key_func=_rate_key, enabled=settings.rate_limit_enabled)
+app.state.limiter = limiter
+
+
+def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please slow down."},
+        headers={"Retry-After": str(exc.detail)},
+    )
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# =============================================================================
+# Admin Endpoint Gate
+# =============================================================================
+
+
+async def require_admin(request: Request) -> None:
+    """FastAPI dependency: reject requests without valid X-Admin-Key header.
+
+    In local/development/test environments, admin routes are open if ADMIN_API_KEY is unset.
+    In production, ADMIN_API_KEY must be configured or all admin routes return 403.
+    """
+    key = settings.admin_api_key
+    if not key:
+        # No key configured — allow in dev, block in prod
+        if settings.env not in ("local", "development", "test"):
+            raise HTTPException(403, "Admin API key not configured")
+        return
+    if not secrets.compare_digest(request.headers.get("X-Admin-Key", ""), key):
+        raise HTTPException(403, "Invalid admin key")
+
+
+# =============================================================================
+# SSE Concurrent Connection Limiter
+# =============================================================================
+
+_sse_connections: dict[str, int] = defaultdict(int)
+
+MAX_SSE_PER_SESSION = 2
+MAX_SSE_PER_IP = 5
+
+
 # Build allowed origins list from config
 # In production, this should be a single explicit origin
 def _get_allowed_origins() -> List[str]:
@@ -541,6 +602,33 @@ app.add_middleware(SessionMiddleware)
 app.add_middleware(CSRFMiddleware)
 
 
+# =============================================================================
+# Security Middleware (added after CSRF — LIFO means these run before CSRF)
+# =============================================================================
+
+MAX_BODY_BYTES = 524_288  # 512KB — expand-itinerary sends tiles + strategy_sections
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
+
+
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    """Reject payloads exceeding MAX_BODY_BYTES before Pydantic parses them."""
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"detail": "Payload too large"})
+    return await call_next(request)
+
+
 @app.get("/health")
 def health():
     return {
@@ -558,7 +646,8 @@ def health():
 
 
 @app.post("/api/validate-trip-input", response_model=TripInputValidationResponse)
-async def validate_trip_input(req: TripInputValidationRequest, request: Request):
+@limiter.limit("15/minute")
+async def validate_trip_input(request: Request, req: TripInputValidationRequest):
     """
     Validate a trip input (origin or destination).
 
@@ -602,8 +691,9 @@ class DestinationImageResponse(BaseModel):
 
 
 @app.post("/api/destination-image", response_model=DestinationImageResponse)
+@limiter.limit("15/minute")
 async def get_destination_image(
-    req: DestinationImageRequest, db: AsyncSession = async_db_dependency
+    request: Request, req: DestinationImageRequest, db: AsyncSession = async_db_dependency
 ):
     """
     Get the Unsplash image URL for a destination.
@@ -629,8 +719,9 @@ async def get_destination_image(
     )
 
 
-@app.post("/api/admin/clear-validation-cache")
-def admin_clear_validation_cache():
+@app.post("/api/admin/clear-validation-cache", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+def admin_clear_validation_cache(request: Request):
     """
     Clear the validation cache. For development/debugging only.
     """
@@ -648,8 +739,9 @@ def admin_clear_validation_cache():
     }
 
 
-@app.post("/api/admin/fresh-start")
-async def admin_fresh_start():
+@app.post("/api/admin/fresh-start", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_fresh_start(request: Request):
     """
     Perform a complete system cache and checkpoint cleanup.
 
@@ -698,8 +790,9 @@ async def admin_fresh_start():
     }
 
 
-@app.get("/api/admin/graph-stats")
-def admin_graph_stats():
+@app.get("/api/admin/graph-stats", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+def admin_graph_stats(request: Request):
     """
     Get comprehensive graph statistics for observability.
 
@@ -726,8 +819,9 @@ def admin_graph_stats():
     return get_graph_stats()
 
 
-@app.get("/api/admin/planner")
-def admin_planner_debug():
+@app.get("/api/admin/planner", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+def admin_planner_debug(request: Request):
     """
     Get planner configuration and build identifiers for ops debugging.
 
@@ -751,8 +845,9 @@ def admin_planner_debug():
     return get_planner_debug_info()
 
 
-@app.post("/api/admin/clear-all-checkpoints")
-def admin_clear_all_checkpoints():
+@app.post("/api/admin/clear-all-checkpoints", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+def admin_clear_all_checkpoints(request: Request):
     """
     Clear ALL LangGraph checkpoints regardless of age.
 
@@ -768,8 +863,9 @@ def admin_clear_all_checkpoints():
     }
 
 
-@app.post("/api/admin/clear-all-caches")
-async def admin_clear_all_caches(db: AsyncSession = async_db_dependency):
+@app.post("/api/admin/clear-all-caches", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_clear_all_caches(request: Request, db: AsyncSession = async_db_dependency):
     """
     Clear ALL caches in the system - comprehensive cache reset.
 
@@ -860,8 +956,9 @@ async def admin_clear_all_caches(db: AsyncSession = async_db_dependency):
 # =============================================================================
 
 
-@app.get("/api/admin/specialist-cache-stats")
-async def admin_specialist_cache_stats(db: AsyncSession = async_db_dependency):
+@app.get("/api/admin/specialist-cache-stats", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_specialist_cache_stats(request: Request, db: AsyncSession = async_db_dependency):
     """
     Get specialist LLM cache statistics for observability.
 
@@ -890,8 +987,9 @@ async def admin_specialist_cache_stats(db: AsyncSession = async_db_dependency):
     return stats
 
 
-@app.post("/api/admin/clear-specialist-cache")
-async def admin_clear_specialist_cache(db: AsyncSession = async_db_dependency):
+@app.post("/api/admin/clear-specialist-cache", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_clear_specialist_cache(request: Request, db: AsyncSession = async_db_dependency):
     """
     Clear both L1 (memory) and L2 (database) specialist caches.
 
@@ -916,8 +1014,9 @@ async def admin_clear_specialist_cache(db: AsyncSession = async_db_dependency):
 # =============================================================================
 
 
-@app.get("/api/admin/tile-cache-stats")
-async def admin_tile_cache_stats(db: AsyncSession = async_db_dependency):
+@app.get("/api/admin/tile-cache-stats", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_tile_cache_stats(request: Request, db: AsyncSession = async_db_dependency):
     """
     Get tile data cache statistics for observability.
 
@@ -944,8 +1043,9 @@ async def admin_tile_cache_stats(db: AsyncSession = async_db_dependency):
     return stats
 
 
-@app.post("/api/admin/clear-tile-cache")
-async def admin_clear_tile_cache(db: AsyncSession = async_db_dependency):
+@app.post("/api/admin/clear-tile-cache", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_clear_tile_cache(request: Request, db: AsyncSession = async_db_dependency):
     """
     Clear both L1 (memory) and L2 (database) tile caches.
 
@@ -977,8 +1077,9 @@ async def admin_clear_tile_cache(db: AsyncSession = async_db_dependency):
 # =============================================================================
 
 
-@app.get("/api/admin/router-cache-stats")
-async def admin_router_cache_stats():
+@app.get("/api/admin/router-cache-stats", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_router_cache_stats(request: Request):
     """
     Get router extraction cache statistics for observability.
 
@@ -990,8 +1091,9 @@ async def admin_router_cache_stats():
     return get_cache_stats()
 
 
-@app.post("/api/admin/clear-router-cache")
-async def admin_clear_router_cache():
+@app.post("/api/admin/clear-router-cache", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_clear_router_cache(request: Request):
     """
     Clear router extraction cache (L1 memory only).
 
@@ -1014,8 +1116,9 @@ async def admin_clear_router_cache():
 # =============================================================================
 
 
-@app.get("/api/admin/cache-stats")
-async def admin_all_cache_stats(db: AsyncSession = async_db_dependency):
+@app.get("/api/admin/cache-stats", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_all_cache_stats(request: Request, db: AsyncSession = async_db_dependency):
     """
     Get all cache statistics in one call.
 
@@ -1064,6 +1167,7 @@ async def admin_all_cache_stats(db: AsyncSession = async_db_dependency):
 
 
 @app.post("/api/tiles/click")
+@limiter.limit("60/minute")
 def track_tile_click(
     request: Request,
     event: schemas.TileClickEvent,
@@ -1087,6 +1191,7 @@ def track_tile_click(
 
 
 @app.post("/api/suggestions/click")
+@limiter.limit("60/minute")
 def track_suggestion_click(
     request: Request,
     event: schemas.SuggestionClickEvent,
@@ -1111,6 +1216,7 @@ def track_suggestion_click(
 
 
 @app.post("/api/graph_plan", response_model=GraphPlanResponse)
+@limiter.limit("3/minute;15/hour")
 async def graph_plan_endpoint(
     request: Request,
     response: Response,
@@ -1764,6 +1870,7 @@ async def graph_plan_endpoint(
 
 
 @app.post("/api/graph_plan/stream")
+@limiter.limit("3/minute;15/hour")
 async def graph_plan_stream_endpoint(
     request: Request,
     req: GraphPlanRequest,
@@ -1848,6 +1955,19 @@ async def graph_plan_stream_endpoint(
     # --- Get session from request for document persistence ---
     session_id = get_session_from_request(request)
 
+    # --- SSE concurrent connection limit ---
+    client_ip = request.client.host if request.client else "unknown"
+    session_key = f"session:{session_id}"
+    ip_key = f"ip:{client_ip}"
+
+    if _sse_connections[session_key] >= MAX_SSE_PER_SESSION:
+        return JSONResponse(429, {"detail": "Too many concurrent streams for this session"})
+    if _sse_connections[ip_key] >= MAX_SSE_PER_IP:
+        return JSONResponse(429, {"detail": "Too many concurrent streams from this IP"})
+
+    _sse_connections[session_key] += 1
+    _sse_connections[ip_key] += 1
+
     async def generate_sse():
         """Generator that yields SSE events from the streaming graph execution."""
         try:
@@ -1930,6 +2050,23 @@ async def graph_plan_stream_endpoint(
                             if v is not None and k not in _USER_OWNED_SETTINGS:
                                 merged[k] = v
                         session_state["trip_inputs"] = normalize_trip_inputs(merged)
+
+                        # req.trip_inputs is the freshest source for user-owned
+                        # settings (Zustand snapshot at send time).  The document
+                        # may be stale if ensureSettingsFlushed PATCH hasn't
+                        # committed yet, or if get_or_create_document created a
+                        # default doc with empty categories.
+                        if req.trip_inputs:
+                            req_ti = dict(req.trip_inputs)
+                            current = session_state["trip_inputs"]
+                            for field in _USER_OWNED_SETTINGS:
+                                if field in req_ti and req_ti[field] is not None:
+                                    val = req_ti[field]
+                                    current[field] = (
+                                        val.model_dump() if hasattr(val, "model_dump") else val
+                                    )
+                            session_state["trip_inputs"] = normalize_trip_inputs(current)
+
                         # HARD TRACE: Log doc's activity categories at merge time
                         _doc_cats = doc_inputs.get("activity_settings", {}).get("categories", [])
                         _final_cats = (
@@ -1973,8 +2110,31 @@ async def graph_plan_stream_endpoint(
                             if ti.booking_types
                             else {},
                         }
+                        # Override _doc_settings with req.trip_inputs (most
+                        # current source — Zustand snapshot at send time).
+                        # Prevents stale/empty doc values from clobbering
+                        # correct pill selections in state_serde.restore_graph_state.
+                        if req.trip_inputs:
+                            req_ti = dict(req.trip_inputs)
+                            for field in (
+                                "activity_settings",
+                                "hotel_settings",
+                                "flight_settings",
+                                "transport_settings",
+                                "booking_types",
+                            ):
+                                if field in req_ti and req_ti[field] is not None:
+                                    val = req_ti[field]
+                                    session_state["_doc_settings"][field] = (
+                                        val.model_dump() if hasattr(val, "model_dump") else val
+                                    )
+
                         # HARD TRACE: Log what we're injecting
-                        _cats = ti.activity_settings.categories if ti.activity_settings else []
+                        _cats = (
+                            session_state["_doc_settings"]
+                            .get("activity_settings", {})
+                            .get("categories", [])
+                        )
                         logger.info(
                             f"[{request_id}] _doc_settings injected: "
                             f"activity_settings.categories={_cats}"
@@ -2360,6 +2520,9 @@ async def graph_plan_stream_endpoint(
             logger.error(f"[{request_id}] run_turn_streaming failed: {e}")
             error_payload = json.dumps({"type": "error", "message": str(e)})
             yield f"event: error\ndata: {error_payload}\n\n"
+        finally:
+            _sse_connections[session_key] = max(0, _sse_connections[session_key] - 1)
+            _sse_connections[ip_key] = max(0, _sse_connections[ip_key] - 1)
 
     return StreamingResponse(
         generate_sse(),
@@ -2373,6 +2536,7 @@ async def graph_plan_stream_endpoint(
 
 
 @app.delete("/api/session", status_code=204)
+@limiter.limit("60/minute")
 async def reset_session(
     request: Request,
     db: Session = db_dependency,
@@ -2448,6 +2612,7 @@ async def reset_session(
 
 
 @app.get("/api/chat", response_model=ChatHistoryResponse)
+@limiter.limit("60/minute")
 async def get_chat_history(
     request: Request,
     db: AsyncSession = async_db_dependency,
@@ -2485,6 +2650,7 @@ async def get_chat_history(
 
 
 @app.delete("/api/chat/last", response_model=DeleteLastMessageResponse)
+@limiter.limit("60/minute")
 async def delete_last_message(
     request: Request,
     db: AsyncSession = async_db_dependency,
@@ -2555,6 +2721,7 @@ async def delete_last_message(
 
 
 @app.get("/api/document", response_model=PlanDocumentResponse)
+@limiter.limit("60/minute")
 async def get_plan_document(
     request: Request,
     db: AsyncSession = async_db_dependency,
@@ -2584,6 +2751,7 @@ async def get_plan_document(
 
 
 @app.patch("/api/document", response_model=PlanDocumentResponse)
+@limiter.limit("60/minute")
 async def patch_plan_document(
     request: Request,
     patch: PlanDocumentPatch,
@@ -2594,20 +2762,25 @@ async def patch_plan_document(
     Uses CRDT-style merge: additions win, deletions require explicit flags.
     """
     session_id = get_session_from_request(request)
-    session = await get_session_by_token(db, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    # get_or_create_session: the frontend may PATCH pill settings before the
+    # first graph_plan call, which is the only other path that creates the
+    # DB session row.  Without this, the PATCH returns 404 after a session
+    # reset (DELETE /api/session) because the cookie exists but the row doesn't.
+    session = await get_or_create_session(db, session_id)
 
     doc = await get_document(db, session=session)
     if not doc:
-        raise HTTPException(status_code=404, detail="No plan document for this session")
-
-    # Optimistic locking: reject if client's version is stale
-    if patch.version != doc.version:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Version mismatch: client={patch.version}, server={doc.version}",
-        )
+        # Create document for first-time PATCH (pill settings before first chat).
+        # Frontend sends settings via PATCH before graph_plan creates the doc.
+        doc = await get_or_create_document(db, session=session, updated_by="user")
+        # Skip version check — frontend couldn't know version of a new doc
+    else:
+        # Optimistic locking: reject if client's version is stale
+        if patch.version != doc.version:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Version mismatch: client={patch.version}, server={doc.version}",
+            )
 
     # Apply the patch using CRDT merge
     updated_doc = await apply_user_patch(db, doc=doc, patch=patch)
@@ -2707,6 +2880,7 @@ async def patch_plan_document(
 
 
 @app.post("/api/document/tiles/{branch_id}", response_model=PlanDocumentResponse)
+@limiter.limit("60/minute")
 async def fetch_tiles_for_branch(
     request: Request,
     branch_id: str,
@@ -2827,6 +3001,7 @@ async def fetch_tiles_for_branch(
 
 
 @app.post("/api/tiles/refresh", response_model=TileRefreshResponse)
+@limiter.limit("15/minute")
 async def refresh_tiles(
     request: Request,
     body: TileRefreshRequest,
@@ -2934,6 +3109,7 @@ def _check_idempotency(key: str) -> bool:
 
 
 @app.post("/api/expand-itinerary")
+@limiter.limit("3/minute;15/hour")
 async def expand_itinerary_endpoint(
     request: Request,
     req: ExpandItineraryRequest,
@@ -3402,6 +3578,7 @@ async def expand_itinerary_endpoint(
 
 
 @app.post("/api/remove-specialist")
+@limiter.limit("3/minute;15/hour")
 async def remove_specialist_endpoint(
     request: Request,
     req: RemoveSpecialistRequest,

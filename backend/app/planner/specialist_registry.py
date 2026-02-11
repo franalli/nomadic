@@ -385,6 +385,45 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
             "surfing": "surfing",
             "surf": "surfing",
         },
+        hardcoded_constraints=[
+            {
+                "constraint_id": "tide_and_swell_check",
+                "type": "safety",
+                "rule": "tide_and_swell_check",
+                "severity": "soft",
+                "applies_to_categories": ["activities"],
+                "reason": "Check tide charts and swell forecasts before each session",
+                "label": "Tide & Swell Check",
+                "icon": "🌊",
+            },
+            {
+                "constraint_id": "reef_awareness",
+                "type": "safety",
+                "rule": "reef_awareness",
+                "severity": "strong",
+                "applies_to_categories": ["activities"],
+                "reason": (
+                    "Shallow reef breaks require booties and awareness of"
+                    " tide-dependent depth — avoid surfing reef breaks at low tide"
+                    " without experience"
+                ),
+                "label": "Reef Safety",
+                "icon": "🪸",
+            },
+            {
+                "constraint_id": "skill_appropriate_breaks",
+                "type": "equipment",
+                "rule": "skill_appropriate_breaks",
+                "severity": "soft",
+                "applies_to_categories": ["activities"],
+                "reason": (
+                    "Match surf spot difficulty to skill level — beginners"
+                    " should avoid heavy reef breaks like Uluwatu or Padang Padang"
+                ),
+                "label": "Skill-Appropriate Breaks",
+                "icon": "🏄",
+            },
+        ],
         enhancements=[
             "Check swell forecast and tide charts before each session",
             "Book a surf lesson if visiting a new break",

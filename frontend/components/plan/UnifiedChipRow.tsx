@@ -169,7 +169,7 @@ function getActivityChipSummary(settings?: ActivitySettings): string | null {
 
   const categories = settings.categories.map(c => c.charAt(0).toUpperCase() + c.slice(1));
   if (categories.length <= 4) return categories.join(' · ');
-  return `${categories.length} selected`;
+  return `${categories.slice(0, 3).join(' · ')} +${categories.length - 3}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

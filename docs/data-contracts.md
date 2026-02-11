@@ -47,9 +47,11 @@
 | DELETE | `/api/session` | Reset session & clear state | 204 No Content |
 | GET | `/health` | Health check | JSON |
 
-### Admin (12 endpoints, dev/debug only)
+### Admin (13 endpoints, gated by `X-Admin-Key` header)
 
-Cache management: `GET/POST /api/admin/{specialist,tile,router}-cache-stats`, `clear-*-cache`, `clear-all-caches`, `clear-all-checkpoints`, `clear-validation-cache`, `fresh-start`. Config: `GET /api/admin/planner`, `GET /api/admin/graph-stats`.
+All admin routes require `X-Admin-Key` header matching `ADMIN_API_KEY` env var. Rate limited: 10/min.
+
+Cache management: `GET/POST /api/admin/{specialist,tile,router}-cache-stats`, `clear-*-cache`, `clear-all-caches`, `clear-all-checkpoints`, `clear-validation-cache`, `fresh-start`, `cache-stats`. Config: `GET /api/admin/planner`, `GET /api/admin/graph-stats`.
 
 ---
 
@@ -81,6 +83,26 @@ Media type: `application/x-ndjson`. Events:
 
 - Reads `csrf` cookie (JS-readable, not HttpOnly)
 - Adds `X-CSRF-Token` header on unsafe methods (POST, PUT, PATCH, DELETE)
+- Exempt paths: `/health`, `/docs`, `/redoc`, `/openapi.json` only
+
+### Rate Limiting (`slowapi`)
+
+Keyed by session cookie → IP fallback. Tiered:
+
+| Tier | Endpoints | Limit |
+|------|-----------|-------|
+| **Heavy** | `graph_plan/*`, `expand-itinerary`, `remove-specialist` | 3/min, 15/hr |
+| **Medium** | `validate-trip-input`, `destination-image`, `tiles/refresh` | 15/min |
+| **Light** | `document`, `chat`, `session`, `tiles/click`, `suggestions/click` | 60/min |
+| **Admin** | `/api/admin/*` | 10/min (+ `X-Admin-Key` required) |
+
+### Security Middleware
+
+- **Body size limit:** 16KB max (`Content-Length` check before Pydantic parsing)
+- **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+- **Session throttle:** Max 10 new sessions per IP per hour
+- **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP
+- **Frontend CSP:** Configured in `next.config.mjs` — `unsafe-eval` allowed in dev only
 
 ---
 
@@ -162,6 +184,12 @@ P0_MINIMAL -> P1_ENRICHED -> P2_LOGISTICS -> P3_FINALIZED
 
 Legacy aliases (still emitted): S0_BOOTSTRAP, S1_FRAMING, S2_STRATEGY_READY,
                                  S2_BLOCKED, S3_ITINERARY_READY, S3_EDITING, S3_BLOCKED
+
+Hydration guards:
+  Downgrade protection (setFromPlanResponse, mergeEnvelope): S3→S2 blocked when day_cards exist
+  Upward reconciliation (fetchDocument): stale state promoted when data contradicts it
+    - day_cards exist + state < S3 (not BLOCKED/S3 variant) → S3_ITINERARY_READY
+    - strategy_sections exist + state < S2 (not BLOCKED) → S2_STRATEGY_READY
 ```
 
 ### Other Enums

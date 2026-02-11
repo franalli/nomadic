@@ -303,6 +303,10 @@ export function useLocalBookingSettings(
       // Mark as having pending changes
       pendingRef.current = true;
 
+      // Always sync to zustand immediately so ensureSettingsFlushed can
+      // PATCH these to the backend before the graph starts (race fix).
+      documentStore.updateTripInputs(updates);
+
       // Clear existing timer
       if (timerRef.current) {
         clearTimeout(timerRef.current);

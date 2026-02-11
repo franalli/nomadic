@@ -131,6 +131,12 @@ class Settings(BaseSettings):
     auto_correct_typo_threshold: int = 100  # Levenshtein distance for typo correction
     confidence_threshold_skip_router: float = 0.92  # Confidence to skip LLM router
 
+    # =============================================================================
+    # Security: Rate Limiting & Admin Access
+    # =============================================================================
+    rate_limit_enabled: bool = True
+    admin_api_key: str = os.getenv("ADMIN_API_KEY", "")
+
     # Validation cache settings
     validation_cache_size: int = 5000  # Increased for progressive learning of unknown places
     validation_cache_ttl: int = 604800  # 7 days - keeps verified places longer

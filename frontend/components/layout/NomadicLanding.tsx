@@ -518,6 +518,7 @@ export function NomadicLanding() {
   // Tiles indicate plan is ready
   // Using state ensures useMemo re-computes when this changes
   const hasTilesReady = Object.keys(docTiles ?? {}).length > 0;
+  const hasDayCardsReady = (docDayCards?.length ?? 0) > 0;
   useEffect(() => {
     // Legacy path: branches + strategy
     if (
@@ -532,12 +533,17 @@ export function NomadicLanding() {
     if (hasTilesReady && !hasEverHadPlan) {
       setHasEverHadPlan(true);
     }
+    // Day cards path: itinerary was previously built (e.g., hydration from DB)
+    if (hasDayCardsReady && !hasEverHadPlan) {
+      setHasEverHadPlan(true);
+    }
   }, [
     hasBranchesReady,
     hasStrategyContent,
     hasEverHadPlan,
     userRequestedGeneration,
     hasTilesReady,
+    hasDayCardsReady,
   ]);
 
   // Clear local pending topics when backend responds with executed_strategy_topics
@@ -574,9 +580,10 @@ export function NomadicLanding() {
     // =========================================================================
     // Auto-transitions when tiles are available
 
-    // Tiles path: If tiles exist, trust backend's plan_view_state
+    // Fast path: If plan content exists (tiles OR day_cards), trust backend's plan_view_state
+    // After hydration reconciliation in fetchDocument(), backendPlanViewState is already corrected
     if (
-      hasTilesReady &&
+      (hasTilesReady || hasDayCardsReady) &&
       backendPlanViewState &&
       backendPlanViewState !== 'S0_BOOTSTRAP'
     ) {
@@ -627,6 +634,7 @@ export function NomadicLanding() {
     hasEverHadPlan,
     userRequestedGeneration,
     hasTilesReady,
+    hasDayCardsReady,
   ]);
 
   // Auto-switch to Plan view when generation is in progress

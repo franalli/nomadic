@@ -59,7 +59,14 @@ if (!globalThis.crypto) {
 process.env.NEXT_PUBLIC_API_URL = 'http://test.local';
 
 beforeEach(() => {
-  localStorage.clear();
+  // Node 25+ native localStorage may lack clear(); guard for compat
+  if (typeof localStorage.clear === 'function') {
+    localStorage.clear();
+  } else {
+    for (const key of Object.keys(localStorage)) {
+      localStorage.removeItem(key);
+    }
+  }
 });
 
 afterEach(() => {

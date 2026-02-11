@@ -269,6 +269,11 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
           branchesCount: doc?.branches?.length ?? 0,
           tilesCount: Object.keys(doc?.tiles ?? {}).length,
         });
+        // Log hydrated plan_view_state for debugging session restoration
+        const hydratedViewState = (doc as unknown as Record<string, unknown>)?.plan_view_state;
+        console.log(
+          `[useSessionHydration] plan_view_state restored: ${hydratedViewState ?? 'none'}`
+        );
         if (cancelled) return;
 
         // Handle no document case

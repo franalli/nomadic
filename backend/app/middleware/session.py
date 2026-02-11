@@ -23,6 +23,7 @@ CSRF Protection:
 import secrets
 from typing import Callable
 
+from cachetools import TTLCache
 from fastapi import HTTPException, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -34,6 +35,10 @@ from app.config import generate_session_token, settings
 SESSION_COOKIE_NAME = "session_id"
 CSRF_COOKIE_NAME = "csrf"
 SESSION_MAX_AGE = 14 * 24 * 60 * 60  # 14 days in seconds
+
+# Session creation throttle: max 10 new sessions per IP per hour
+_session_creation_counter: TTLCache = TTLCache(maxsize=10_000, ttl=3600)
+_MAX_SESSIONS_PER_IP_PER_HOUR = 10
 
 
 def _get_cookie_kwargs() -> dict:
@@ -91,6 +96,15 @@ class SessionMiddleware(BaseHTTPMiddleware):
         new_csrf = csrf_token is None
 
         if new_session:
+            # Throttle session creation by IP
+            client_ip = request.client.host if request.client else "unknown"
+            count = _session_creation_counter.get(client_ip, 0) + 1
+            if count > _MAX_SESSIONS_PER_IP_PER_HOUR:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many sessions created. Please try again later."},
+                )
+            _session_creation_counter[client_ip] = count
             session_id = generate_session_token()
         if new_csrf:
             csrf_token = _generate_csrf_token()
@@ -149,17 +163,12 @@ def get_session_from_request(request: Request) -> str:
 # HTTP methods that modify state and require CSRF protection
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-# Paths that are exempt from CSRF protection (e.g., health checks, stateless validation)
+# Paths that are exempt from CSRF protection (health checks, docs only)
 CSRF_EXEMPT_PATHS = {
     "/health",
     "/docs",
     "/redoc",
     "/openapi.json",
-    "/api/validate-trip-input",
-    "/api/admin/clear-validation-cache",
-    "/api/admin/clear-all-caches",
-    "/api/admin/clear-all-checkpoints",
-    "/api/admin/fresh-start",
 }
 
 # Header name for CSRF token

@@ -247,6 +247,8 @@ type DocumentState = {
   updateTripInputs: (updates: Partial<DocumentTripInputs>) => void;
   /** Async commit trip inputs to backend with validation. */
   commitTripInputs: (updates: DocumentTripInputsPatch) => Promise<boolean>;
+  /** Flush all user-owned settings to backend. Call before graph runs to prevent race conditions. */
+  ensureSettingsFlushed: () => Promise<void>;
 
   // Actions
   fetchDocument: () => Promise<PlanDocumentData | null>;
@@ -528,10 +530,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   // Used for immediate state updates before validation completes
   updateTripInputs: (updates) => {
     console.log('[documentStore] 🔄 updateTripInputs CALLED with:', updates);
-    const { document } = get();
+    let { document } = get();
     if (!document) {
-      console.warn('[documentStore] updateTripInputs: No document exists yet');
-      return;
+      // Create minimal document so pill settings are stored before first graph run.
+      // commitTripInputs uses the same pattern (lines 582-594).
+      document = {
+        trip_context_id: null,
+        trip_inputs: { ...DEFAULT_TRIP_INPUTS },
+        branches: [],
+        tiles: {},
+        plan_view_state: 'S0_BOOTSTRAP' as const,
+      };
+      set({ document, version: 0 });
     }
 
     const previousDestination = document.trip_inputs?.destination;
@@ -747,6 +757,36 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
+  ensureSettingsFlushed: async () => {
+    console.log('[ensureSettingsFlushed] START');
+    // Wait for any in-flight commit to complete
+    if (_commitLock) {
+      console.log('[ensureSettingsFlushed] waiting for _commitLock...');
+      await _commitLock;
+    }
+
+    const doc = get().document;
+    if (!doc?.trip_inputs) {
+      console.log('[ensureSettingsFlushed] BAIL — no document or trip_inputs in zustand');
+      return;
+    }
+    const ti = doc.trip_inputs;
+    console.log('[ensureSettingsFlushed] FLUSHING settings to backend:', {
+      activity_categories: ti.activity_settings?.categories,
+      hotel_stars: ti.hotel_settings?.min_stars,
+      flight_class: ti.flight_settings?.cabin_class,
+      booking_types: ti.booking_types,
+    });
+    await get().commitTripInputs({
+      activity_settings: ti.activity_settings,
+      hotel_settings: ti.hotel_settings,
+      flight_settings: ti.flight_settings,
+      transport_settings: ti.transport_settings,
+      booking_types: ti.booking_types,
+    });
+    console.log('[ensureSettingsFlushed] DONE — PATCH sent before graph');
+  },
+
   fetchDocument: async () => {
     console.log('[documentStore.fetchDocument] 🚀 Starting fetch...');
     set({ isLoading: true, error: null });
@@ -777,12 +817,58 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         tilesCount: Object.keys(response.document.tiles ?? {}).length,
         preferredTileIds: response.document.preferred_tile_ids,
         branchesCount: response.document.branches?.length ?? 0,
+        plan_view_state: response.document.plan_view_state,
+        dayCardsCount: response.document.day_cards?.length ?? 0,
       });
+
+      // ============================================================
+      // VIEW STATE UPWARD RECONCILIATION (stale DB state repair)
+      // ============================================================
+      // If the backend persisted a stale plan_view_state that contradicts
+      // the actual data present, promote it. Guards against lateral/blocked
+      // states that should not be overridden.
+      const fetchedViewState = response.document.plan_view_state;
+      const fetchedDayCards = response.document.day_cards ?? [];
+      const fetchedSections = response.document.strategy_sections ?? [];
+      let reconciledViewState = fetchedViewState;
+
+      // Day cards promotion: only from states below S3 that aren't already S3 variants
+      // S3_BLOCKED, S3_EDITING, S3_PARTIAL_CONFLICT are lateral S3 states — don't override
+      const isAlreadyS3 = fetchedViewState?.startsWith('S3_');
+      if (
+        fetchedDayCards.length > 0 &&
+        !isAlreadyS3 &&
+        !fetchedViewState?.includes('BLOCKED') &&
+        (VIEW_STATE_ORDER[fetchedViewState ?? 'S0_EMPTY'] ?? 0) < VIEW_STATE_ORDER['S3_ITINERARY_READY']
+      ) {
+        reconciledViewState = 'S3_ITINERARY_READY';
+        console.log(
+          `[documentStore.fetchDocument] 🔧 Reconciled stale view state: ${fetchedViewState} → S3_ITINERARY_READY (${fetchedDayCards.length} day_cards exist)`
+        );
+      }
+
+      // Strategy sections promotion: only from states below S2, skip BLOCKED
+      if (
+        reconciledViewState === fetchedViewState && // no day_cards promotion happened
+        fetchedSections.length > 0 &&
+        !fetchedViewState?.includes('BLOCKED') &&
+        (VIEW_STATE_ORDER[fetchedViewState ?? 'S0_EMPTY'] ?? 0) < VIEW_STATE_ORDER['S2_STRATEGY_READY']
+      ) {
+        reconciledViewState = 'S2_STRATEGY_READY';
+        console.log(
+          `[documentStore.fetchDocument] 🔧 Reconciled stale view state: ${fetchedViewState} → S2_STRATEGY_READY (${fetchedSections.length} strategy_sections exist)`
+        );
+      }
+
+      const documentToStore = reconciledViewState !== fetchedViewState
+        ? { ...response.document, plan_view_state: reconciledViewState as typeof fetchedViewState }
+        : response.document;
+
       set({
         version: response.version,
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
-        document: response.document,
+        document: documentToStore,
         isLoading: false,
         // Auto-select primary branch if none selected
         selectedBranchId:

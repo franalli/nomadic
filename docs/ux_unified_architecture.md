@@ -1673,7 +1673,7 @@ plan_documents.document (JSONB)
 | `tiles` | ✅ Yes | ✅ Yes | Amadeus/Curated providers |
 | `strategy_sections` | ✅ Yes | ✅ Yes | Specialist nodes |
 | `day_cards` | ✅ Yes | ✅ Yes | Itinerary builder |
-| `plan_view_state` | ✅ Yes | ✅ Yes | State machine |
+| `plan_view_state` | ✅ Yes | ✅ Yes | State machine (reconciled on hydration) |
 | `executed_strategy_topics` | ✅ Yes | ✅ Yes | Graph execution |
 | `can_expand_to_itinerary` | ✅ Yes | ✅ Yes | Stage 3 gate |
 | `preferred_tile_ids` | ✅ Yes | ✅ Yes | Heart actions (PATCH /api/document) |
@@ -1697,8 +1697,13 @@ useSessionHydration() runs
     ├── GET /api/document
     │   └── Returns full PlanDocumentData from DB
     │
-    ├── documentStore.set({ document: response.document })
-    │   └── Zustand store populated
+    ├── fetchDocument() upward reconciliation
+    │   ├── day_cards exist + state < S3 → promote to S3_ITINERARY_READY
+    │   ├── strategy_sections exist + state < S2 → promote to S2_STRATEGY_READY
+    │   └── Guards: skip BLOCKED states, skip existing S3 variants
+    │
+    ├── documentStore.set({ document: reconciledDocument })
+    │   └── Zustand store populated (with reconciled plan_view_state)
     │
     └── StrategyStageRenderer reads from store
         ├── viewModel = useDocumentStore(s => s.document)
@@ -3011,6 +3016,15 @@ Backend may return S2 for benign reasons (e.g., "from rome" only runs LogisticsN
 - `S3 → S2` with day_cards → **Blocked** (itinerary preserved)
 - `S3 → S0` (RESET) → **Allowed** (user explicit intent)
 - Destination change → **Tiles replaced**, day_cards cleared (clean slate)
+
+**View State Upward Reconciliation (fetchDocument):**
+On page refresh, `fetchDocument()` applies upward reconciliation to repair stale persisted state. If the data in the document contradicts the stored `plan_view_state`, it promotes:
+- `day_cards` exist + state below S3 → promote to `S3_ITINERARY_READY`
+- `strategy_sections` exist + state below S2 → promote to `S2_STRATEGY_READY`
+
+Guards prevent false promotion:
+- Already S3 variant (S3_BLOCKED, S3_EDITING, S3_PARTIAL_CONFLICT) → **Not promoted** (lateral states respected)
+- BLOCKED states (S2_BLOCKED) → **Not promoted** (blocking violation preserved)
 
 **Expand-In-Progress Mutex:**
 ```typescript

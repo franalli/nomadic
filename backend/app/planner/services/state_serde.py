@@ -132,13 +132,13 @@ def restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
     # fields — main.py reads the latest doc and passes them here.
     doc_settings = session_state.get("_doc_settings", {})
     for field, value in doc_settings.items():
-        if value:
+        if value is not None:
             state.metadata["trip_inputs"][field] = value
 
     # ── Shadow-write: build typed TripSettings from merged trip_inputs ──
     _merged = {**trip_inputs}
     for field, value in doc_settings.items():
-        if value:
+        if value is not None:
             _merged[field] = value
     state.metadata["trip_settings"] = TripSettings(
         booking_types=BookingTypes(**(_merged.get("booking_types") or {})),

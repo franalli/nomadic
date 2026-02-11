@@ -107,13 +107,9 @@ export function getActivitiesSummary(
     return isEnabled ? 'Enabled' : undefined;
   }
 
-  if (settings.categories.length <= 2) {
-    return settings.categories
-      .map((c) => c.charAt(0).toUpperCase() + c.slice(1))
-      .join(', ');
-  }
-
-  return `${settings.categories.length} categories`;
+  const formatted = settings.categories.map((c) => c.charAt(0).toUpperCase() + c.slice(1));
+  if (formatted.length <= 4) return formatted.join(', ');
+  return `${formatted.slice(0, 3).join(', ')} +${formatted.length - 3}`;
 }
 
 /**

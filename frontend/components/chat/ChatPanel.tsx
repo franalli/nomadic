@@ -937,6 +937,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           setHasReceivedFirstToken(false); // Reset for new streaming message
         }
 
+        // Flush any pending pill/settings PATCH to the backend document before
+        // the graph starts. Without this, the graph reads a stale document that
+        // doesn't have the user's latest pill selections (race condition).
+        await useDocumentStore.getState().ensureSettingsFlushed();
+
         // Use SSE streaming for real-time token display
         const currentTripInputs = useDocumentStore.getState().document?.trip_inputs;
 
