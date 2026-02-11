@@ -15,7 +15,6 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { ExplorationProgress } from '@/components/plan/ExplorationProgress';
 import {
   ActivitiesSheet,
   FlightsSheet,
@@ -1404,17 +1403,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // }, [isDeleting, isLoading, deleteLastMessageFromStore, restoreTripInputs]);
     // const lastUserMessageId = messages.filter((m) => m.role === 'user').at(-1)?.id ?? null;
 
-    // Count user messages for exploration progress indicator
-    const userMessageCount = messages.filter((m) => m.role === 'user').length;
-
-    // Exploration mode: user has destination, asked questions, but no dates/plan yet
-    const isExplorationMode = Boolean(
-      hasDestination &&
-      !hasDates &&
-      !hasBranches &&
-      userMessageCount > 0
-    );
-
     useImperativeHandle(
       ref,
       () => ({
@@ -1882,16 +1870,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           {/* Exploration Progress + Action Bar — desktop only (mobile uses MobileChatInput) */}
           {isDesktop && (
             <>
-              {/* Exploration Progress - shows after 3+ questions during exploration mode */}
-              {isExplorationMode && userMessageCount >= 3 && !isLoading && (
-                <ExplorationProgress
-                  questionCount={userMessageCount}
-                  destination={destination}
-                  onPlanNow={() => sendMessageCore("Let's plan my trip!")}
-                  className="mx-4 mb-3"
-                />
-              )}
-
               {/* Action Bar: Unified Capsule Design with "Living Void" Effect */}
               {/* Input and button merged into one continuous capsule (like Perplexity/ChatGPT) */}
               {/* During AI processing: the input BECOMES the status indicator (emerald glow + pulse) */}

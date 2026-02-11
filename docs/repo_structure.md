@@ -64,10 +64,12 @@ backend/
 │   │   │
 │   │   ├── nodes/              # LangGraph nodes (7-node structure)
 │   │   │   ├── __init__.py
-│   │   │   ├── constraint_guard.py    # Constraint validation
-│   │   │   ├── intent_router.py       # Intent classification
-│   │   │   ├── local_expert.py        # Local knowledge node
-│   │   │   ├── logistics_node.py      # Flights/hotels data fetcher
+│   │   │   ├── constraint_guard.py         # Constraint validation
+│   │   │   ├── intent_router.py            # Intent classification (main orchestration)
+│   │   │   ├── router_extraction.py        # LLM extraction & field validation (Stage 9A)
+│   │   │   ├── router_category_sync.py     # Tier 2 detection & actionable input (Stage 9B)
+│   │   │   ├── local_expert.py             # Local knowledge node
+│   │   │   ├── logistics_node.py           # Flights/hotels data fetcher
 │   │   │   ├── specialist_llm.py      # Specialist LLM generation logic
 │   │   │   ├── specialist_schemas.py  # Specialist Pydantic schemas
 │   │   │   ├── synthesizer.py         # Response synthesizer

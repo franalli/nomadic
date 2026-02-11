@@ -527,58 +527,80 @@ possible, reason = get_feasibility_llm("diving", "Chamonix")
 - Red border and "Unavailable" badge
 - `feasibility_reason` message from backend (no hardcoded frontend destination suggestions)
 
-#### Parallel LLM Execution (Multi-Specialist Optimization)
+#### Multi-Specialist Optimization (Single-Entry Batch Processing)
 
-When multiple specialists are queued (e.g., "diving and hiking in Bali"), the system uses parallel LLM execution to reduce latency from ~8-12s (sequential) to ~4-6s (parallel).
+When multiple specialists are queued (e.g., "diving and hiking in Bali"), the system uses two key optimizations:
 
-**Implementation:**
-```python
-async def generate_all_specialists_parallel(
-    topics: List[str],
-    destination: str,
-    trip_plan: TripPlan,
-) -> Dict[str, Optional[LLMSpecialistOutput]]:
-    """Run all specialist LLM calls in parallel using asyncio.gather()."""
+1. **Parallel LLM execution:** All specialist LLM calls run concurrently via `asyncio.gather()`, cached in `state.metadata["parallel_llm_results"]`
+2. **Single-entry batch processing:** All specialists are processed in ONE graph entry instead of re-entering the node per specialist. The `pending_specialists` queue is drained upfront and processed in a sequential loop within `_merge_specialist_into_state()`.
 
-    async def safe_generate(topic: str) -> Tuple[str, Optional[LLMSpecialistOutput]]:
-        try:
-            result = await generate_specialist_output_llm(topic, destination, trip_plan)
-            return (topic, result)
-        except Exception as e:
-            _debug_log(f"[SPECIALIST] Parallel call failed for {topic}: {e}")
-            return (topic, None)
+**Architecture:**
+```
+# OLD: Multiple graph re-entries (sequential Unsplash + assembly per entry)
+Router → specialist(diving) → route_after_specialist → specialist(hiking) → route_after_specialist → logistics
+              920ms                                        1133ms
 
-    tasks = [safe_generate(topic) for topic in topics]
-    results = await asyncio.gather(*tasks)
-    return {topic: output for topic, output in results}
+# NEW: Single graph entry (parallel Unsplash + sequential assembly)
+Router → specialist(diving+hiking) → route_after_specialist → logistics
+              ~1400ms
 ```
 
+**Implementation (`vertical_specialist()`):**
+```python
+# 1. Parallel LLM trigger (unchanged - first specialist triggers all)
+all_specialists = [topic] + list(state.pending_specialists)
+parallel_results = await generate_all_specialists_parallel(...)
+state.metadata["parallel_llm_results"] = {...}
+
+# 2. Drain queue and batch process
+all_topics = [topic] + list(state.pending_specialists)
+state.pending_specialists = []  # Drain — handle all in this entry
+
+# 3. Parallel Unsplash prefetch (skip cached topics)
+topics_to_prefetch = [t for t in all_topics if not _is_selectively_cached(t)]
+if len(topics_to_prefetch) > 1:
+    await asyncio.gather(*[prefetch_destination_images(dest, activities=[t]) for t in topics_to_prefetch])
+
+# 4. Sequential processing loop
+for current_topic in all_topics:
+    await _merge_specialist_into_state(state, current_topic, ...)
+```
+
+**`_merge_specialist_into_state()` helper:**
+- Selective regeneration check at top (skip cached topics via `return`, not `return state`)
+- Creates `VerticalSpecialist(topic)`, calls `generate_output(state)` (Unsplash cache already warm)
+- Handles infeasible (`return` — loop continues), caveat, feasible paths
+- Assembles strategy section, injects constraints/content blocks, builds UI state
+
 **Cache Strategy:**
-- Results are cached in `state.metadata["parallel_llm_results"]` as serialized dicts
-- Subsequent specialist node calls deserialize cached results using `LLMSpecialistOutput.model_validate()`
-- **Multi-specialist:** First specialist triggers parallel fetch for all; others use in-memory cache
-- **Single specialist:** Uses L1+L2 database cache directly (same path as parallel, ensures cache hits across sessions)
+- LLM results cached in `state.metadata["parallel_llm_results"]` as serialized dicts
+- Subsequent specialist processing deserializes cached results using `LLMSpecialistOutput.model_validate()`
+- Unsplash images cached in `_memory_cache` dict — parallel prefetch warms cache for all topics at once
+- **Single specialist:** Uses L1+L2 database cache directly (same path as parallel)
 
 **Debug Output (DEBUG=full):**
 ```
-# Multi-specialist (parallel)
+# Multi-specialist (single entry, parallel Unsplash)
 [DEBUG] [SPECIALIST] PARALLEL TRIGGER: 2 specialists detected
-[DEBUG] 🤿 SPECIALIST END | duration=8432ms | topic=diving feasibility=feasible activities=3
-[DEBUG] 🥾 SPECIALIST END | duration=10ms | topic=hiking (cached)
+[DEBUG] [SPECIALIST] Parallel Unsplash prefetch: 2 topics (['diving', 'hiking'])
+[DEBUG] Processing diving (1/2)
+[DEBUG] Processing hiking (2/2)
+[DEBUG] ✓ SPECIALIST | ~1400ms | topics=diving,hiking
 
 # Single specialist (L1+L2 cache)
 [DEBUG] [SPECIALIST] Single specialist 'diving' - using cached LLM path
-[DEBUG] [SPECIALIST_CACHE] Looking up cache for diving in Bali
 [DEBUG] [SPECIALIST_CACHE] ✅ HIT for diving - skipping LLM
-[DEBUG] 🤿 SPECIALIST END | duration=10ms | topic=diving
+[DEBUG] ✓ SPECIALIST | ~10ms | topic=diving
 ```
 
 **Performance Impact:**
 | Scenario | Cold (no cache) | Warm (L2 hit) | Hot (L1 hit) |
 |----------|-----------------|---------------|--------------|
 | 1 specialist | ~5s (LLM) | ~50ms (DB) | ~10ms (memory) |
-| 2 specialists | ~5s (parallel) | ~100ms | ~20ms |
-| 3 specialists | ~6s (parallel) | ~150ms | ~30ms |
+| 2 specialists | ~5s (parallel LLM) + ~1.4s (batch) | ~100ms | ~20ms |
+| 3 specialists | ~6s (parallel LLM) + ~2s (batch) | ~150ms | ~30ms |
+
+**Key constraint:** Specialists are processed sequentially within the batch because `generate_output()` reads state (constraints, activity days) that prior specialists may have modified. Only Unsplash I/O is parallelized.
 
 ### LocalExpert
 
@@ -1590,15 +1612,20 @@ def route_after_router(state: GraphState) -> Literal["specialist", "local_expert
 
 ### Route After Specialist
 
-**Multi-Specialist Loop:** After LocalExpert completes, niche specialists (diving, etc.)
-are processed in queue order. Each specialist clears `active_specialist` at end.
+**Multi-Specialist Batch:** After LocalExpert completes, the specialist node processes ALL
+niche specialists (diving, hiking, etc.) in a single graph entry via `_merge_specialist_into_state()`.
+The `pending_specialists` queue is drained at the start of the batch, so `route_after_specialist`
+sees an empty queue and routes forward (to logistics/architect/synthesizer).
+
+The `pending_specialists` check below is kept as a **safety guard** but should never fire
+under normal operation — the batch loop handles all specialists before returning.
 
 ```python
 def route_after_specialist(state: GraphState):
     turn = get_turn_meta(state)
 
-    # 1. Multi-specialist: If pending specialists exist, run the next one
-    #    e.g., after local_expert, pending_specialists = ["diving"]
+    # 1. Safety guard: If pending specialists somehow remain, run the next one
+    #    (Should not fire — batch loop in vertical_specialist drains the queue)
     if state.pending_specialists:
         next_specialist = state.pending_specialists[0]
         if next_specialist == "local_expert":
@@ -1630,7 +1657,8 @@ Entry: router
 
 router → logistics (origin/settings/actionable fast path)
        → specialist/local_expert/architect/synthesizer (conditional)
-specialist → specialist (recursion) OR logistics (booking) OR architect (general) OR synthesizer (speculative)
+specialist → logistics (booking) OR architect (general) OR synthesizer (speculative)
+         NOTE: specialist no longer self-loops — all niche specialists processed in single entry
 local_expert → specialist (recursion) OR logistics (booking) OR architect (general) OR synthesizer (speculative)
 logistics → architect/guard/synthesizer (conditional - skip architect if already ran)
 architect → guard/synthesizer (conditional)

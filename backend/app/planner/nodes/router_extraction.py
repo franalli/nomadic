@@ -611,8 +611,8 @@ def _populate_trip_plan_from_router_output(
         router_output: Extracted fields from LLM
         fallback_destination: Destination from context extraction (used if LLM didn't extract one)
     """
-    # Import TIER1_SPECIALISTS to avoid circular dependency
-    from app.planner.specialist_registry import TIER1_SPECIALISTS
+    # TIER1_SPECIALIST_NAMES already imported at module level
+    TIER1_SPECIALISTS = TIER1_SPECIALIST_NAMES
 
     # Set destination (prefer extracted, fallback to context)
     if router_output.destination:

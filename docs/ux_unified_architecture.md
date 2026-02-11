@@ -1103,7 +1103,7 @@ if specialist_hints:
 ### Invariants
 
 1. **Local Expert runs before ANY niche specialist** - even if user only mentions "diving"
-2. **Multi-specialist support preserved** - multiple niche specialists can still queue after local_expert
+2. **Multi-specialist batch processing** - all niche specialists are processed in a single graph entry via `_merge_specialist_into_state()` loop (no graph re-entry per specialist)
 3. **Trip Overview card is NEVER missing** - this is the visual anchor for the right panel
 
 ### Multi-Specialist Display

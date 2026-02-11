@@ -21,6 +21,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
+from app.planner.nodes.router_category_sync import (
+    DATE_INDICATORS,
+    ORIGIN_PATTERNS,
+    TIER2_ACTIVITY_KEYWORDS,
+    _detect_actionable_input,
+    _prefetch_tier2_experiences,
+    detect_planning_intent,
+)
 from app.planner.nodes.router_extraction import (
     CLASSIFICATION_PROMPT,
     IntentClassification,
@@ -28,19 +36,6 @@ from app.planner.nodes.router_extraction import (
     _get_router_llm,
     _normalize_city_name,
     _populate_trip_plan_from_router_output,
-)
-from app.planner.nodes.router_category_sync import (
-    DATE_INDICATORS,
-    ORIGIN_PATTERNS,
-    PLANNING_READINESS_SIGNALS,
-    REMOVAL_PATTERN,
-    RESET_BUDGET_PATTERN,
-    RESET_HOTEL_PATTERN,
-    SKILL_LEVEL_MAP,
-    TIER2_ACTIVITY_KEYWORDS,
-    _detect_actionable_input,
-    _prefetch_tier2_experiences,
-    detect_planning_intent,
 )
 from app.planner.specialist_registry import (
     ALL_CATEGORY_TO_SPECIALIST,
@@ -308,7 +303,8 @@ FLIGHT_PATTERNS = [
 # SKILL_LEVEL_MAP now imported from router_category_sync.py
 
 
-# REMOVAL_PATTERN, RESET_BUDGET_PATTERN, RESET_HOTEL_PATTERN now imported from router_category_sync.py
+# REMOVAL_PATTERN, RESET_BUDGET_PATTERN, RESET_HOTEL_PATTERN
+# are now imported from router_category_sync.py
 
 
 # =============================================================================
@@ -740,10 +736,7 @@ def _detect_settings_from_message(user_text: str, state: "GraphState") -> Option
 
     return detected if detected else None
 
-
-# _detect_actionable_input now imported from router_category_sync.py
-
-    return changes if changes else None
+    # _detect_actionable_input now imported from router_category_sync.py
 
 
 def get_new_specialists_from_text(text: str, existing_specialists: List[str]) -> List[str]:
@@ -771,6 +764,7 @@ def get_new_specialists_from_text(text: str, existing_specialists: List[str]) ->
 
 
 # detect_planning_intent now imported from router_category_sync.py
+
 
 def _extract_destination_context(text: str, state: "GraphState") -> Optional[str]:
     """
@@ -967,12 +961,6 @@ def _detect_specialists_from_activity_settings(state: GraphState) -> List[str]:
 # LLM Classification — Extracted to router_extraction.py
 # =============================================================================
 # CLASSIFICATION_PROMPT and ROUTER_EXTRACTION_PROMPT now in router_extraction.py
-
-
-
-
-
-
 
 
 async def _classify_intent_with_llm(
@@ -1504,7 +1492,6 @@ def _get_date_suggestions(user_text: str) -> List[str]:
 # =============================================================================
 # State Population from RouterOutput
 # =============================================================================
-
 
 
 # =============================================================================

@@ -146,7 +146,6 @@ import {
   isGenerating,
   isMultiSpecialistTrip,
 } from './planStateHelpers';
-import { ReadyToPlanBanner } from './ReadyToPlanBanner';
 import { S2StrategyView } from './stages/S2StrategyView';
 import { getShortConstraintLabel } from './stages/StrategyHero';
 // import { S3BlockedView } from './stages/S3BlockedView';
@@ -614,16 +613,6 @@ export function StrategyStageRenderer({
     if (density === 'ghost') {
       return (
         <div className="p-4 space-y-4">
-          {/* READY TO PLAN BANNER - prompts user to set dates after exploration */}
-          {destinationCard?.title && fullModeSections.length > 0 && (
-            <ReadyToPlanBanner
-              destination={destinationCard.title}
-              questionsAsked={fullModeSections.length}
-              onStartPlanning={() => onOpenSheet?.('dates')}
-              className="mb-2"
-            />
-          )}
-
           {/* PLANNING INTELLIGENCE HEADER */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -712,9 +701,6 @@ export function StrategyStageRenderer({
         <div className="flex flex-col lg:flex-row gap-6 p-4">
           {/* Left Column: Strategy Cards Only (no timeline) */}
           <div className="flex-1 min-w-0 space-y-4">
-            {/* NOTE: ReadyToPlanBanner removed from bridge mode - P1_ENRICHED means planning started
-                The banner belongs only in ghost mode (P0_MINIMAL exploration phase) */}
-
             {/* PLANNING INTELLIGENCE HEADER (SETUP mode only - before dates) */}
             {!displayLogic.hasDates && (
               <div className="flex items-center justify-between">

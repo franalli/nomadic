@@ -1274,6 +1274,276 @@ def _get_curated_image(topic: str, destination: str, title: str) -> Optional[str
 
 
 # =============================================================================
+# Helper: Merge one specialist's output into state (for multi-specialist loop)
+# =============================================================================
+
+
+async def _merge_specialist_into_state(
+    state: GraphState,
+    topic: str,
+    node_start_time: float,
+    clog,  # CompactLogger
+) -> None:
+    """
+    Process a single specialist topic and merge its output into state.
+
+    Extracted from vertical_specialist() to support batched multi-specialist
+    processing in a single graph entry. Returns None — mutates state in place.
+
+    On infeasible: returns early (caller loop continues to next specialist).
+    On cache hit (selective regen): returns early (topic already in state).
+    """
+    import time
+
+    from app.debug_utils import (
+        _debug_log,
+        _debug_node_timer_end,
+        log,
+    )
+
+    # ─── Selective regeneration: skip if cached section still valid ───────
+    existing_sections = state.metadata.get("strategy_sections", [])
+    cached_section = next((s for s in existing_sections if s.get("specialist_type") == topic), None)
+    if cached_section:
+        cached_destination = cached_section.get("subtitle")
+        cached_dates = cached_section.get("_cache_dates")
+        current_destination = state.trip_plan.destination
+        current_dates = f"{state.trip_plan.start_date}:{state.trip_plan.end_date}"
+
+        if (
+            cached_destination
+            and cached_destination == current_destination
+            and cached_dates
+            and cached_dates == current_dates
+        ):
+            _debug_log(
+                f"🤿 SPECIALIST [{topic}] Cache HIT: Reusing cached output "
+                f"(destination={current_destination}, dates={current_dates})"
+            )
+            state.metadata["last_executed_specialist"] = topic
+
+            _debug_node_timer_end(
+                "specialist",
+                "🤿",
+                topic=topic,
+                cache_hit=True,
+            )
+
+            clog.event("cache_hit", f"Specialist ({topic})", dest=current_destination)
+            duration_ms = int((time.time() - node_start_time) * 1000)
+            clog.node_end("SPECIALIST", duration_ms, topic=topic, status="cache_hit")
+            return  # skip this topic, loop continues to next
+
+        _debug_log(
+            f"🤿 SPECIALIST [{topic}] Cache MISS: context changed "
+            f"(dest: {cached_destination}->{current_destination}, "
+            f"dates: {cached_dates}->{current_dates})"
+        )
+
+    # ─── Create specialist and generate output ────────────────────────────
+    specialist = VerticalSpecialist(topic)
+    output = await specialist.generate_output(state)
+
+    # Store specialist output in metadata (always, for UI rendering)
+    state.metadata["specialist_output"] = output.model_dump()
+
+    # Handle INFEASIBLE case - activity not possible at destination
+    if output.feasibility_status == "infeasible":
+        log("SPECIALIST", f"⛔ {topic.title()} INFEASIBLE in {state.trip_plan.destination}")
+        log("SPECIALIST", f"   Reason: {output.feasibility_reason}")
+        if output.alternative_suggestion:
+            log("SPECIALIST", f"   Alternative: {output.alternative_suggestion}")
+
+        state.constraints_violated.append(
+            output.feasibility_reason or f"{topic.title()} not available at this destination"
+        )
+
+        state.metadata["specialist_infeasible"] = True
+        state.metadata["specialist_infeasible_reason"] = output.feasibility_reason
+        state.metadata["specialist_alternative"] = output.alternative_suggestion
+
+        state.active_agent_id = topic
+        state.ui_events.append("SPECIALIST_INFEASIBLE")
+
+        state.metadata["specialist_message"] = (
+            f"{topic.title()} is not available in {state.trip_plan.destination}. "
+            f"{output.alternative_suggestion or 'Consider a different destination.'}"
+        )
+
+        _debug_node_timer_end(
+            "specialist",
+            "🤿",
+            topic=topic,
+            feasibility_status="infeasible",
+            reason=output.feasibility_reason,
+        )
+
+        duration_ms = int((time.time() - node_start_time) * 1000)
+        clog.node_end("SPECIALIST", duration_ms, topic=topic, status="infeasible")
+
+        state.metadata["last_executed_specialist"] = topic
+        return  # infeasible — loop continues to next specialist
+
+    # Handle CAVEAT case - activity possible with limitations
+    if output.feasibility_status == "caveat":
+        log("SPECIALIST", f"⚠️ {topic.title()} CAVEAT: {output.feasibility_reason}")
+        state.metadata["specialist_caveat"] = True
+        state.metadata["specialist_caveat_reason"] = output.feasibility_reason
+
+    # FEASIBLE or CAVEAT: Inject constraints into trip plan
+    for constraint in output.constraints:
+        if constraint not in state.trip_plan.constraints:
+            state.trip_plan.constraints.append(constraint)
+
+    # Add content blocks to trip plan
+    for block in output.content_blocks:
+        if block not in state.trip_plan.itinerary_blocks:
+            state.trip_plan.itinerary_blocks.append(block)
+
+    # Persist specialist constraints to metadata for cross-turn survival
+    if output.constraints:
+        specialist_store = state.metadata.setdefault("specialist_constraints", {})
+        specialist_store[topic] = [c.model_dump() for c in output.constraints]
+        log("SPECIALIST", f"Persisted {len(output.constraints)} constraints to metadata['{topic}']")
+
+    # Log constraints and content
+    if output.constraints:
+        constraint_rules = ", ".join([c.rule for c in output.constraints])
+        log("SPECIALIST", "Constraints injected", data=constraint_rules)
+    if output.content_blocks:
+        log("SPECIALIST", f"Content blocks: {len(output.content_blocks)}")
+        for block in output.content_blocks[:3]:
+            log("SPECIALIST", f"  Day {block.day}: {block.title}", sleep=0.1)
+
+    # Update UI state
+    state.active_agent_id = topic
+    state.ui_events.append("SPECIALIST_DONE")
+
+    # Build strategy_section for UI display (with images from curated content)
+    content_added = []
+    for block in output.content_blocks:
+        if block.is_buffer:
+            continue
+        image_url = block.image_url or _get_curated_image(
+            topic, state.trip_plan.destination, block.title
+        )
+        skill_to_intensity = {
+            "beginner": "light",
+            "easy": "light",
+            "intermediate": "moderate",
+            "moderate": "moderate",
+            "advanced": "challenging",
+            "hard": "challenging",
+            "challenging": "challenging",
+        }
+        default_intensity = {
+            "diving": "moderate",
+            "hiking": "moderate",
+            "skiing": "challenging",
+            "cycling": "moderate",
+            "surfing": "moderate",
+        }
+        skill_key = block.skill_level.lower() if block.skill_level else None
+        intensity = (
+            skill_to_intensity.get(skill_key)
+            if skill_key
+            else default_intensity.get(topic, "moderate")
+        )
+
+        content_item = {
+            "title": block.title,
+            "description": block.description,
+            "logic_hook": block.logic_hook,
+            "type": block.type,
+            "day": block.day,
+            "image_url": image_url,
+            "coordinates": block.coordinates,
+            "intensity": intensity,
+            "duration_hours": block.duration_hours,
+        }
+        content_added.append(content_item)
+
+    # TRIM: Limit activities to what fits in the trip duration
+    max_activities = specialist._calculate_activity_days(state)
+    if max_activities > 0 and len(content_added) > max_activities:
+        original_count = len(content_added)
+        content_added = content_added[:max_activities]
+        log("SPECIALIST", f"Trimmed activities: {original_count} → {max_activities}")
+
+    # Determine hero_image
+    hero_image = None
+    if content_added:
+        hero_image = content_added[0].get("image_url")
+    if not hero_image:
+        hero_image = get_activity_image(topic, state.trip_plan.destination or "", topic)
+
+    section = build_specialist_section(
+        topic=topic,
+        destination=state.trip_plan.destination,
+        start_date=state.trip_plan.start_date,
+        end_date=state.trip_plan.end_date,
+        feasibility_status=output.feasibility_status,
+        feasibility_reason=output.feasibility_reason,
+        alternative_suggestion=output.alternative_suggestion,
+        constraints=[
+            {"rule": c.rule, "reason": c.reason, "type": c.type} for c in output.constraints
+        ],
+        content_added=content_added,
+        enhancements=output.enhancements,
+        hero_image=hero_image,
+    )
+
+    upsert_section(state.metadata, section, mode="appendable")
+    mark_topic_executed(state.metadata, topic)
+
+    _debug_log(f"Strategy section created for {topic} with {len(content_added)} recommendations")
+    reason_preview = output.feasibility_reason[:50] if output.feasibility_reason else None
+    _debug_log(
+        f"  feasibility_status={output.feasibility_status}, feasibility_reason={reason_preview}"
+    )
+    _debug_log(
+        f"  constraints_count={len(output.constraints)}, "
+        f"content_blocks_count={len(output.content_blocks)}"
+    )
+    _debug_log(f"  content_added titles: {[c.get('title') for c in content_added]}")
+    _debug_log(f"  content_added has images: {[bool(c.get('image_url')) for c in content_added]}")
+
+    # Generate specialist message for UI
+    if output.content_blocks:
+        block_titles = [b.title for b in output.content_blocks[:3]]
+        caveat_note = (
+            f" Note: {output.feasibility_reason}" if output.feasibility_status == "caveat" else ""
+        )
+        state.metadata["specialist_message"] = (
+            f"I've added some {topic} experiences: {', '.join(block_titles)}. "
+            f"I've also noted {len(output.constraints)} safety considerations.{caveat_note}"
+        )
+
+    _debug_node_timer_end(
+        "specialist",
+        "🤿",
+        topic=topic,
+        constraints_added=len(output.constraints),
+        content_blocks_added=len(output.content_blocks),
+        critique=output.critique[:50] if output.critique else None,
+    )
+
+    # Compact logging: success
+    duration_ms = int((time.time() - node_start_time) * 1000)
+    clog.node_end(
+        "SPECIALIST",
+        duration_ms,
+        topic=topic,
+        status=output.feasibility_status,
+        constraints=len(output.constraints),
+        activities=len(output.content_blocks),
+    )
+
+    # Track for downstream nodes (synthesizer, _v2_result_to_v1_format)
+    state.metadata["last_executed_specialist"] = topic
+
+
+# =============================================================================
 # Node Function (for graph registration)
 # =============================================================================
 
@@ -1298,7 +1568,6 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         CompactLogger,
         _debug_log,
         _debug_node_start,
-        _debug_node_timer_end,
         _debug_node_timer_start,
         log,
     )
@@ -1360,56 +1629,8 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     # Compact logging: node start
     clog.node_start("SPECIALIST", topic=topic, dest=state.trip_plan.destination)
 
-    # =========================================================================
-    # SELECTIVE REGENERATION: Check if cached output can be reused
-    # =========================================================================
-    # If strategy_sections already contains this specialist's output AND
-    # destination hasn't changed since last generation, skip LLM call.
-    # This is the node-level cache awareness for selective regeneration.
-    # @see docs/plan_graph_analysis.md - Selective Regeneration
-    #
-    existing_sections = state.metadata.get("strategy_sections", [])
-    cached_section = next((s for s in existing_sections if s.get("specialist_type") == topic), None)
-
-    if cached_section:
-        # Check if destination AND dates match cached section
-        # CRITICAL: Dates must match - same destination with different dates = different content
-        cached_destination = cached_section.get("subtitle")  # subtitle = destination
-        cached_dates = cached_section.get("_cache_dates")  # dates when section was generated
-        current_destination = state.trip_plan.destination
-        current_dates = f"{state.trip_plan.start_date}:{state.trip_plan.end_date}"
-
-        destination_match = cached_destination and cached_destination == current_destination
-        dates_match = cached_dates and cached_dates == current_dates
-
-        if destination_match and dates_match:
-            _debug_log(
-                f"🤿 SPECIALIST [{topic}] Cache HIT: Reusing cached output "
-                f"(destination={current_destination}, dates={current_dates})"
-            )
-
-            # Still need to track execution for downstream nodes
-            state.metadata["last_executed_specialist"] = topic
-            state.active_specialist = None  # Clear for multi-specialist support
-
-            _debug_node_timer_end(
-                "specialist",
-                "🤿",
-                topic=topic,
-                cache_hit=True,
-            )
-
-            # Compact logging: cache hit
-            clog.event("cache_hit", f"Specialist ({topic})", dest=current_destination)
-            duration_ms = int((time.time() - node_start_time) * 1000)
-            clog.node_end("SPECIALIST", duration_ms, topic=topic, status="cache_hit")
-            return state  # No-op, output already in state
-
-        _debug_log(
-            f"🤿 SPECIALIST [{topic}] Cache MISS: context changed "
-            f"(dest: {cached_destination}->{current_destination}, "
-            f"dates: {cached_dates}->{current_dates})"
-        )
+    # NOTE: Selective regeneration check moved into _merge_specialist_into_state()
+    # to support batched multi-specialist processing without orphaning specialists.
 
     _debug_node_start(
         "specialist",
@@ -1555,232 +1776,60 @@ async def vertical_specialist(state: GraphState) -> GraphState:
                 _debug_log(f"[SPECIALIST_CACHE] Error: {e}")
                 state.metadata["parallel_llm_results"] = {}
 
-    # Create specialist for this topic
-    specialist = VerticalSpecialist(topic)
+    # =========================================================================
+    # MULTI-SPECIALIST BATCH: Process all specialists in a single graph entry
+    # =========================================================================
+    all_topics = [topic] + list(state.pending_specialists)
+    state.pending_specialists = []  # Drain queue — we handle all of them here
 
-    # Generate output (includes feasibility check)
-    output = await specialist.generate_output(state)
+    # ─── Filter out selectively-cached topics (no point prefetching images) ───
+    existing_sections = state.metadata.get("strategy_sections", [])
+    current_destination = state.trip_plan.destination
+    current_dates = f"{state.trip_plan.start_date}:{state.trip_plan.end_date}"
 
-    # Store specialist output in metadata (always, for UI rendering)
-    state.metadata["specialist_output"] = output.model_dump()
+    topics_to_prefetch = []
+    for t in all_topics:
+        cached = next((s for s in existing_sections if s.get("specialist_type") == t), None)
+        if cached:
+            cached_dest = cached.get("subtitle")
+            cached_dt = cached.get("_cache_dates")
+            if cached_dest == current_destination and cached_dt == current_dates:
+                continue  # cached — skip prefetch
+        topics_to_prefetch.append(t)
 
-    # Handle INFEASIBLE case - activity not possible at destination
-    if output.feasibility_status == "infeasible":
-        log("SPECIALIST", f"⛔ {topic.title()} INFEASIBLE in {state.trip_plan.destination}")
-        log("SPECIALIST", f"   Reason: {output.feasibility_reason}")
-        if output.alternative_suggestion:
-            log("SPECIALIST", f"   Alternative: {output.alternative_suggestion}")
+    # ─── Parallel Unsplash prefetch for non-cached topics ─────────────────
+    if len(topics_to_prefetch) > 1:
+        import asyncio
 
-        # Add as a constraint violation for UI display
-        state.constraints_violated.append(
-            output.feasibility_reason or f"{topic.title()} not available at this destination"
+        from app.services.unsplash import prefetch_destination_images
+
+        unsplash_tasks = [
+            prefetch_destination_images(state.trip_plan.destination, activities=[t])
+            for t in topics_to_prefetch
+        ]
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*unsplash_tasks, return_exceptions=True),
+                timeout=10.0,
+            )
+            _debug_log(
+                f"[SPECIALIST] Parallel Unsplash prefetch: "
+                f"{len(topics_to_prefetch)} topics ({topics_to_prefetch})"
+            )
+        except asyncio.TimeoutError:
+            _debug_log("[SPECIALIST] Unsplash prefetch timeout (non-fatal)")
+
+    # ─── Sequential processing loop ──────────────────────────────────────
+    for current_topic in all_topics:
+        state.active_specialist = current_topic
+        state.active_agent_id = current_topic
+        state.ui_events.append("SPECIALIST_ACTIVE")
+        log(
+            "SPECIALIST",
+            f"Processing {current_topic} ({all_topics.index(current_topic) + 1}/{len(all_topics)})",
         )
 
-        # Store infeasibility metadata for frontend
-        state.metadata["specialist_infeasible"] = True
-        state.metadata["specialist_infeasible_reason"] = output.feasibility_reason
-        state.metadata["specialist_alternative"] = output.alternative_suggestion
+        await _merge_specialist_into_state(state, current_topic, node_start_time, clog)
 
-        # Update UI state
-        state.active_agent_id = topic
-        state.ui_events.append("SPECIALIST_INFEASIBLE")
-
-        # Generate message for UI
-        state.metadata["specialist_message"] = (
-            f"{topic.title()} is not available in {state.trip_plan.destination}. "
-            f"{output.alternative_suggestion or 'Consider a different destination.'}"
-        )
-
-        _debug_node_timer_end(
-            "specialist",
-            "🤿",
-            topic=topic,
-            feasibility_status="infeasible",
-            reason=output.feasibility_reason,
-        )
-
-        # Compact logging: infeasible
-        duration_ms = int((time.time() - node_start_time) * 1000)
-        clog.node_end("SPECIALIST", duration_ms, topic=topic, status="infeasible")
-
-        state.metadata["last_executed_specialist"] = topic  # Track for downstream nodes
-        state.active_specialist = None  # Clear for multi-specialist support
-        return state
-
-    # Handle CAVEAT case - activity possible with limitations
-    if output.feasibility_status == "caveat":
-        log("SPECIALIST", f"⚠️ {topic.title()} CAVEAT: {output.feasibility_reason}")
-        state.metadata["specialist_caveat"] = True
-        state.metadata["specialist_caveat_reason"] = output.feasibility_reason
-
-    # FEASIBLE or CAVEAT: Inject constraints into trip plan
-    for constraint in output.constraints:
-        if constraint not in state.trip_plan.constraints:
-            state.trip_plan.constraints.append(constraint)
-
-    # Add content blocks to trip plan
-    for block in output.content_blocks:
-        if block not in state.trip_plan.itinerary_blocks:
-            state.trip_plan.itinerary_blocks.append(block)
-
-    # Persist specialist constraints to metadata for cross-turn survival
-    # Guard will merge these back if trip_plan.constraints gets cleared on subsequent turns
-    if output.constraints:
-        specialist_store = state.metadata.setdefault("specialist_constraints", {})
-        # Store full model dict for proper reconstruction
-        specialist_store[topic] = [c.model_dump() for c in output.constraints]
-        log("SPECIALIST", f"Persisted {len(output.constraints)} constraints to metadata['{topic}']")
-
-    # Log constraints and content
-    if output.constraints:
-        constraint_rules = ", ".join([c.rule for c in output.constraints])
-        log("SPECIALIST", "Constraints injected", data=constraint_rules)
-    if output.content_blocks:
-        log("SPECIALIST", f"Content blocks: {len(output.content_blocks)}")
-        for block in output.content_blocks[:3]:
-            log("SPECIALIST", f"  Day {block.day}: {block.title}", sleep=0.1)
-
-    # Update UI state
-    state.active_agent_id = topic
-    state.ui_events.append("SPECIALIST_DONE")
-
-    # Build strategy_section for UI display (with images from curated content)
-    # This enables the frontend to render specialist cards with thumbnails
-    content_added = []
-    for block in output.content_blocks:
-        # Skip buffer blocks (arrival/departure/no-fly) - only show activities
-        if block.is_buffer:
-            continue
-        # Use image_url from block if already set (from curated content),
-        # otherwise fall back to lookup by title (for hardcoded knowledge)
-        image_url = block.image_url or _get_curated_image(
-            topic, state.trip_plan.destination, block.title
-        )
-        # Map skill_level to intensity for frontend display
-        # Handles both formats: beginner/intermediate/advanced AND easy/moderate/hard
-        skill_to_intensity = {
-            "beginner": "light",
-            "easy": "light",
-            "intermediate": "moderate",
-            "moderate": "moderate",
-            "advanced": "challenging",
-            "hard": "challenging",
-            "challenging": "challenging",
-        }
-        # Default intensity by specialist type if skill_level not set
-        default_intensity = {
-            "diving": "moderate",
-            "hiking": "moderate",
-            "skiing": "challenging",
-            "cycling": "moderate",
-            "surfing": "moderate",
-        }
-        # Normalize skill_level to lowercase for case-insensitive matching
-        skill_key = block.skill_level.lower() if block.skill_level else None
-        intensity = (
-            skill_to_intensity.get(skill_key)
-            if skill_key
-            else default_intensity.get(topic, "moderate")
-        )
-
-        content_item = {
-            "title": block.title,
-            "description": block.description,
-            "logic_hook": block.logic_hook,
-            "type": block.type,
-            "day": block.day,
-            "image_url": image_url,
-            "coordinates": block.coordinates,  # [lng, lat] for Mapbox POI pins
-            "intensity": intensity,  # light/moderate/challenging for difficulty badge
-            "duration_hours": block.duration_hours,
-        }
-        content_added.append(content_item)
-
-    # TRIM: Limit activities to what fits in the trip duration.
-    # Cached/hardcoded content may have more activities than the current dates allow
-    # (e.g. dates shortened from 6 to 4 days but content was generated for 6).
-    max_activities = specialist._calculate_activity_days(state)
-    if max_activities > 0 and len(content_added) > max_activities:
-        original_count = len(content_added)
-        content_added = content_added[:max_activities]
-        log("SPECIALIST", f"Trimmed activities: {original_count} → {max_activities}")
-
-    # Determine hero_image: use first content image or generate fallback
-    hero_image = None
-    if content_added:
-        hero_image = content_added[0].get("image_url")
-    if not hero_image:
-        hero_image = get_activity_image(topic, state.trip_plan.destination or "", topic)
-
-    section = build_specialist_section(
-        topic=topic,
-        destination=state.trip_plan.destination,
-        start_date=state.trip_plan.start_date,
-        end_date=state.trip_plan.end_date,
-        feasibility_status=output.feasibility_status,
-        feasibility_reason=output.feasibility_reason,
-        alternative_suggestion=output.alternative_suggestion,
-        constraints=[
-            {"rule": c.rule, "reason": c.reason, "type": c.type} for c in output.constraints
-        ],
-        content_added=content_added,
-        enhancements=output.enhancements,
-        hero_image=hero_image,
-    )
-
-    upsert_section(state.metadata, section, mode="appendable")
-    mark_topic_executed(state.metadata, topic)
-
-    _debug_log(f"Strategy section created for {topic} with {len(content_added)} recommendations")
-    reason_preview = output.feasibility_reason[:50] if output.feasibility_reason else None
-    _debug_log(
-        f"  feasibility_status={output.feasibility_status}, feasibility_reason={reason_preview}"
-    )
-    _debug_log(
-        f"  constraints_count={len(output.constraints)}, "
-        f"content_blocks_count={len(output.content_blocks)}"
-    )
-    _debug_log(f"  content_added titles: {[c.get('title') for c in content_added]}")
-    _debug_log(f"  content_added has images: {[bool(c.get('image_url')) for c in content_added]}")
-
-    # Generate specialist message for UI
-    if output.content_blocks:
-        block_titles = [b.title for b in output.content_blocks[:3]]
-        caveat_note = (
-            f" Note: {output.feasibility_reason}" if output.feasibility_status == "caveat" else ""
-        )
-        state.metadata["specialist_message"] = (
-            f"I've added some {topic} experiences: {', '.join(block_titles)}. "
-            f"I've also noted {len(output.constraints)} safety considerations.{caveat_note}"
-        )
-
-    _debug_node_timer_end(
-        "specialist",
-        "🤿",
-        topic=topic,
-        constraints_added=len(output.constraints),
-        content_blocks_added=len(output.content_blocks),
-        critique=output.critique[:50] if output.critique else None,
-    )
-
-    # Compact logging: success
-    duration_ms = int((time.time() - node_start_time) * 1000)
-    clog.node_end(
-        "SPECIALIST",
-        duration_ms,
-        topic=topic,
-        status=output.feasibility_status,
-        constraints=len(output.constraints),
-        activities=len(output.content_blocks),
-    )
-
-    # Track for downstream nodes (synthesizer, _v2_result_to_v1_format)
-    state.metadata["last_executed_specialist"] = topic
-
-    # CRITICAL: Clear active_specialist after processing
-    # This allows the routing function to know we're done with this one.
-    # If pending_specialists has more items, routing will send us back here,
-    # and we'll pop the next one at the start of the function.
-    state.active_specialist = None
-
+    state.active_specialist = None  # Clear after all specialists processed
     return state
