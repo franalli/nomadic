@@ -30,6 +30,7 @@
 | POST | `/api/tiles/refresh` | Refresh tiles for branch | `TileRefreshRequest` | `TileRefreshResponse` |
 | POST | `/api/document/tiles/{branch_id}` | Fetch tiles for branch | -- | `PlanDocumentResponse` |
 | POST | `/api/suggestions/click` | Track suggestion click | `SuggestionClickEvent` | `{status: "ok"}` |
+| POST | `/api/document/fill-day` | Generate activity tiles for a free day | `FillDayRequest{day_number, categories?}` | `{day_number, tiles_added, day_card, version}` |
 
 ### Documents (Plan State)
 
@@ -92,7 +93,7 @@ Keyed by session cookie → IP fallback. Tiered:
 | Tier | Endpoints | Limit |
 |------|-----------|-------|
 | **Heavy** | `graph_plan/*`, `expand-itinerary`, `remove-specialist` | 3/min, 15/hr |
-| **Medium** | `validate-trip-input`, `destination-image`, `tiles/refresh` | 15/min |
+| **Medium** | `validate-trip-input`, `destination-image`, `tiles/refresh`, `document/fill-day` | 10/min |
 | **Light** | `document`, `chat`, `session`, `tiles/click`, `suggestions/click` | 60/min |
 | **Admin** | `/api/admin/*` | 10/min (+ `X-Admin-Key` required) |
 

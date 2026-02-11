@@ -162,6 +162,7 @@ def check_budget_constraint(
                     ),
                     severity="warning",
                     category="budget",
+                    suggested_action=f"Look for more affordable {category} options",
                 )
             )
 
@@ -175,6 +176,9 @@ def check_budget_constraint(
                 message=f"Total cost (${total_cost:.0f}) exceeds budget (${plan.budget:.0f})",
                 severity="blocking",
                 category="budget",
+                suggested_action=(
+                    f"Reduce total spend by ${total_cost - plan.budget:.0f} or increase budget"
+                ),
             )
         )
 

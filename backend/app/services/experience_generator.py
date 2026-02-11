@@ -403,6 +403,69 @@ async def generate_single_category(
     return tile_dicts
 
 
+async def generate_experience_tiles_for_day(
+    destination: str,
+    categories: list[str],
+    month: str,
+    day_number: int,
+    budget: int | None = None,
+    tiles_per_day: int = 3,
+) -> list[dict]:
+    """
+    Generate experience tiles for a single free day.
+
+    Lightweight endpoint-oriented function that:
+    1. Round-robin distributes tiles across user's selected categories
+    2. Calls generate_single_category() for each (reuses L1/L2 cache)
+    3. Returns up to tiles_per_day tile dicts
+
+    Does NOT run the LangGraph pipeline. Does NOT modify state.
+    """
+    if not destination or not categories:
+        logger.warning(f"[EXPERIENCE] fill-day skip: dest={destination}, cats={categories}")
+        return []
+
+    # Round-robin categories across tile slots
+    cat_tile_counts: dict[str, int] = {}
+    for i in range(tiles_per_day):
+        cat = categories[i % len(categories)]
+        cat_tile_counts[cat] = cat_tile_counts.get(cat, 0) + 1
+
+    logger.info(
+        f"[EXPERIENCE] fill-day: day={day_number}, cats={cat_tile_counts}, dest={destination}"
+    )
+
+    # Generate per-category in parallel (reuses L1/L2 cache)
+    tasks = []
+    base_index = day_number * 100  # Offset for unique tile IDs
+    for cat, count in cat_tile_counts.items():
+        tasks.append(
+            generate_single_category(
+                destination=destination,
+                category=cat,
+                month=month,
+                budget=budget,
+                tiles_per_category=count,
+                base_index=base_index,
+            )
+        )
+        base_index += count
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    all_tiles = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            cat = list(cat_tile_counts.keys())[i]
+            logger.warning(f"[EXPERIENCE] fill-day category '{cat}' failed: {result}")
+            continue
+        all_tiles.extend(result)
+
+    all_tiles = all_tiles[:tiles_per_day]
+    logger.info(f"[EXPERIENCE] fill-day: generated {len(all_tiles)} tiles for day {day_number}")
+    return all_tiles
+
+
 # =============================================================================
 # Main Entry Point
 # =============================================================================

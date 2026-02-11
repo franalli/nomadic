@@ -13,7 +13,7 @@ rm -rf "$DEST"
 mkdir -p "$DEST"
 
 # --- Explicit file list ---
-for f in plan_graph.py validation.py planner/state/schemas.py crud_document.py crud_trip.py; do
+for f in plan_graph.py validation.py planner/state/graph_state.py crud_document.py crud_trip.py; do
   cp "$SRC/$f" "$DEST/$(basename "$f")"
 done
 

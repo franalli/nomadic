@@ -11,6 +11,7 @@
 import { AlertCircle, Ticket } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
+import { Stepper } from '@/components/ui/stepper';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -139,6 +140,9 @@ function ActivitiesSheetInner({
     settings.categories || []
   );
   const [localSkillLevel, setLocalSkillLevel] = useState<string | null>(settings.skill_level || null);
+  const [localDayPreferences, setLocalDayPreferences] = useState<Record<string, number>>(
+    settings.day_preferences || {}
+  );
 
   // Check if prerequisites met
   const prerequisitesMet = hasDestination;
@@ -149,6 +153,7 @@ function ActivitiesSheetInner({
       setLocalEnabled(enabled);
       setLocalCategories(settings.categories || []);
       setLocalSkillLevel(settings.skill_level || null);
+      setLocalDayPreferences(settings.day_preferences || {});
     }
   }, [open, enabled, settings]);
 
@@ -170,10 +175,11 @@ function ActivitiesSheetInner({
     onSaveSettings({
       categories: localCategories,
       skill_level: localSkillLevel,
+      day_preferences: localDayPreferences,
     });
     toast('Activity preferences saved');
     onOpenChange(false);
-  }, [localCategories, localSkillLevel, onSaveSettings, toast, onOpenChange]);
+  }, [localCategories, localSkillLevel, localDayPreferences, onSaveSettings, toast, onOpenChange]);
 
   // Toggle category
   const toggleCategory = useCallback((category: string) => {
@@ -182,6 +188,17 @@ function ActivitiesSheetInner({
         ? prev.filter((c) => c !== category)
         : [...prev, category]
     );
+  }, []);
+
+  // Handle day preference changes
+  const handleDayPreferenceChange = useCallback((category: string, days: number) => {
+    setLocalDayPreferences(prev => {
+      if (days === 0) {
+        const { [category]: _, ...rest } = prev;
+        return rest; // Remove key when 0 (no preference)
+      }
+      return { ...prev, [category]: days };
+    });
   }, []);
 
   return (
@@ -289,6 +306,41 @@ function ActivitiesSheetInner({
               </p>
             )}
           </div>
+
+          {/* Day preferences — only when categories selected */}
+          {localCategories.length > 0 && (
+            <div>
+              <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
+                Days per activity
+              </h3>
+              <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2">
+                Set 0 for no preference
+              </p>
+              <div className="space-y-1">
+                {localCategories.map((catValue) => {
+                  const catDef = ALL_CATEGORIES.find(c => c.value === catValue);
+                  return (
+                    <div key={catValue} className="flex items-center justify-between py-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">{catDef?.icon || '🏷️'}</span>
+                        <span className="text-sm font-medium text-zinc-900 dark:text-white">
+                          {catDef?.label || catValue}
+                        </span>
+                      </div>
+                      <Stepper
+                        value={localDayPreferences[catValue] || 0}
+                        min={0}
+                        max={7}
+                        size="sm"
+                        onChange={(val) => handleDayPreferenceChange(catValue, val)}
+                        label={`${catDef?.label || catValue} days`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Skill Level */}
           <div>

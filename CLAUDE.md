@@ -4,7 +4,7 @@
 
 - **Focus:** [describe focus]
 - **Secondary:** [secondary priority or "none"]
-- **Active work:** Stage 11 shipped — activity day preferences (router, builder, constraint guard), smart suggestion chips (synthesizer metadata, response envelope, ChatPanel CTA). Renamed state/schemas.py → graph_state.py. Router resilience: retry loop + skeleton fallback removal + `_debug` observability envelope. Fuzzy typo resolution: rapidfuzz pre-LLM matching in router_category_sync + router_extraction (threshold in config.py).
+- **Active work:** Stage 12 shipped — synthesizer voice polish (no system jargon), per-response-type token limits, budget context enrichment + structured constraint violations in synthesis context, budget suggestion chips, static FALLBACK_MESSAGE replacing template fallbacks, `suggested_action` on budget constraint violations, fill-day endpoint (`POST /api/document/fill-day`), `generate_experience_tiles_for_day()`, Stepper UI component, day preference steppers in ActivitiesSheet, FreeDayCard fill button + category picker.
 - **Known broken:** none
 - **DO NOT touch this sprint:** [frozen files/features]
 

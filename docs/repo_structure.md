@@ -363,6 +363,7 @@ frontend/
 │       ├── sheet.tsx
 │       ├── skeleton.tsx
 │       ├── switch.tsx
+│       ├── stepper.tsx         # +/- stepper (Glass Fill, sm/default sizes)
 │       ├── toast.tsx
 │       └── tooltip.tsx
 │

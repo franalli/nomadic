@@ -3081,6 +3081,119 @@ async def refresh_tiles(
 
 
 # =============================================================================
+# Fill Day Endpoint (Stage 12B)
+# =============================================================================
+
+
+class FillDayRequest(BaseModel):
+    """Request to fill a free day with activity tiles."""
+
+    day_number: int
+    categories: List[str] | None = None
+
+
+@app.post("/api/document/fill-day")
+@limiter.limit("10/minute")
+async def fill_day_endpoint(
+    request: Request,
+    body: FillDayRequest,
+    db: AsyncSession = async_db_dependency,
+):
+    """Fill a free day with activity tiles. No LangGraph execution."""
+    session_id = get_session_from_request(request)
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = await get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document")
+
+    doc_data = get_document_data(doc)
+    ti = doc_data.trip_inputs
+
+    destination = ti.destination
+    if not destination:
+        raise HTTPException(status_code=400, detail="No destination set")
+
+    # Find target day card
+    day_card_idx = next(
+        (i for i, dc in enumerate(doc_data.day_cards) if dc.day_number == body.day_number),
+        None,
+    )
+    if day_card_idx is None:
+        raise HTTPException(status_code=404, detail=f"Day {body.day_number} not found")
+
+    day_card = doc_data.day_cards[day_card_idx]
+
+    # Check day is actually free (no non-buffer blocks)
+    real_blocks = [b for b in day_card.blocks if not b.is_buffer]
+    if real_blocks:
+        raise HTTPException(status_code=409, detail=f"Day {body.day_number} already has activities")
+
+    # Determine categories
+    categories = body.categories or (
+        ti.activity_settings.categories if ti.activity_settings else []
+    )
+    if not categories:
+        raise HTTPException(status_code=400, detail="No activity categories specified")
+
+    # Determine month
+    date_str = day_card.date or ti.start_date
+    month = date_str[:7] if date_str and len(date_str) >= 7 else "unknown"
+
+    # Generate tiles
+    from app.services.experience_generator import generate_experience_tiles_for_day
+
+    budget_int = int(ti.budget) if ti.budget else None
+    tiles = await generate_experience_tiles_for_day(
+        destination=destination,
+        categories=categories,
+        month=month,
+        day_number=body.day_number,
+        budget=budget_int,
+        tiles_per_day=3,
+    )
+
+    if not tiles:
+        return {"day_number": body.day_number, "tiles_added": 0, "version": doc.version}
+
+    # Convert tiles to DayBlocks
+    period_cycle = ["morning", "afternoon", "evening"]
+    new_blocks = []
+    for i, tile in enumerate(tiles[:3]):
+        meta = tile.get("meta", {})
+        new_blocks.append(
+            DayBlock(
+                id=tile["id"],
+                period=period_cycle[i % 3],
+                activity_type=meta.get("category", "activity"),
+                intensity="moderate",
+                summary=tile.get("title", "Activity")[:60],
+            )
+        )
+
+    # Preserve buffer blocks, append new activity blocks
+    buffer_blocks = [b for b in day_card.blocks if b.is_buffer]
+    day_card.blocks = buffer_blocks + new_blocks
+    day_card.label = f"Day {body.day_number} — Filled"
+    doc_data.day_cards[day_card_idx] = day_card
+
+    # Save
+    from app.crud_document import save_document_data
+
+    updated_doc = await save_document_data(db, doc=doc, data=doc_data, updated_by="planner")
+    await db.commit()
+
+    return {
+        "day_number": body.day_number,
+        "tiles_added": len(new_blocks),
+        "day_card": day_card.model_dump(),
+        "version": updated_doc.version,
+    }
+
+
+# =============================================================================
 # Expand Itinerary Endpoint (Stage 2 -> Stage 3)
 # =============================================================================
 

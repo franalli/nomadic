@@ -52,6 +52,13 @@ _MODEL_BY_COMPLEXITY = {
     "planning": "gpt-4o",  # Complex synthesis with constraints
 }
 
+# Per-type max_tokens — exploration is terse, planning needs room for constraint reasoning
+_MAX_TOKENS_BY_TYPE = {
+    "exploration": 300,  # Short conversational (2-3 sentences)
+    "specialist_update": 400,  # Acknowledge specialist + counts
+    "planning": 600,  # Complex synthesis with constraints + budget reasoning
+}
+
 
 def _get_synthesizer_llm(response_type: str = "planning") -> ChatOpenAI:
     """
@@ -59,12 +66,13 @@ def _get_synthesizer_llm(response_type: str = "planning") -> ChatOpenAI:
     Falls back to gpt-4o for unknown response types.
     """
     model = _MODEL_BY_COMPLEXITY.get(response_type, "gpt-4o")
+    max_tokens = _MAX_TOKENS_BY_TYPE.get(response_type, 500)
 
     return ChatOpenAI(
         model=model,
         temperature=0.7,  # Slightly creative for natural voice
         streaming=True,  # Enable token streaming
-        max_tokens=500,  # Keep responses concise
+        max_tokens=max_tokens,
     )
 
 
@@ -262,6 +270,36 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
     parts.append(f"- Travelers: {plan.adults} adults, {plan.children} children")
     if plan.budget:
         parts.append(f"- Budget: {plan.currency} {plan.budget}")
+    if plan.budget and state.tiles:
+        budget_parts = []
+        grand_total = 0.0
+        for cat, cat_tiles in state.tiles.items():
+            if not isinstance(cat_tiles, list):
+                continue
+            cat_total = sum(
+                t.get("price_estimate") or t.get("live_price") or 0
+                for t in cat_tiles
+                if isinstance(t, dict)
+            )
+            if cat_total > 0:
+                allocation = plan.budget * {
+                    "flights": 0.30,
+                    "hotels": 0.40,
+                    "activities": 0.30,
+                }.get(cat, 0.25)
+                status = "over" if cat_total > allocation else "within"
+                budget_parts.append(
+                    f"  - {cat.title()}: ${cat_total:.0f} / ${allocation:.0f} "
+                    f"allocated ({status} budget)"
+                )
+                grand_total += cat_total
+        if budget_parts:
+            remaining = plan.budget - grand_total
+            parts.append(
+                f"- Budget breakdown (${grand_total:.0f} of ${plan.budget:.0f} used, "
+                f"${remaining:.0f} remaining):"
+            )
+            parts.extend(budget_parts)
     if plan.trip_type:
         parts.append(f"- Trip Type: {plan.trip_type}")
 
@@ -276,6 +314,17 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
             "Acknowledge naturally (e.g., 'Great picks — diving and surfing "
             "are perfect for Bali'). Do NOT ask what activities they want. "
             "Move on to the next missing field."
+        )
+
+    # Day preferences (user-specified activity day counts)
+    day_prefs = settings.activity_settings.day_preferences
+    if day_prefs:
+        prefs_str = ", ".join(f"{k}: {v} days" for k, v in day_prefs.items())
+        parts.append("\n## Activity Day Allocations (user-requested)")
+        parts.append(f"- {prefs_str}")
+        parts.append(
+            "- Acknowledge these naturally (e.g., '3 days of diving and 2 days of hiking — "
+            "great balance'). Do NOT re-ask how many days."
         )
 
     # Specialist content - COUNTS ONLY (descriptions are in the plan view)
@@ -311,8 +360,35 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
         for c in plan.constraints:
             parts.append(f"- {c.rule}: {c.reason or 'No reason provided'}")
 
-    # Constraint violations from Guard
-    if state.constraints_violated:
+    # Constraint violations from Guard (structured format with reasoning)
+    constraint_violations_meta = state.metadata.get("constraint_violations", [])
+    if constraint_violations_meta:
+        budget_violations = [v for v in constraint_violations_meta if v.get("category") == "budget"]
+        other_violations = [
+            v for v in constraint_violations_meta if v.get("category") not in ("budget", "route")
+        ]
+
+        if budget_violations:
+            parts.append("\n## Budget Issue (address naturally — no system jargon)")
+            for v in budget_violations:
+                parts.append(f"- {v.get('message', '')}")
+                if v.get("suggested_action"):
+                    parts.append(f"  Suggested fix: {v['suggested_action']}")
+            parts.append(
+                "YOUR TASK: Mention the budget issue conversationally "
+                "(e.g., 'The current options run about $X over budget — "
+                "I can look for more affordable hotels if you'd like'). "
+                "Do NOT use words like 'violation', 'exceeded', 'constraint'."
+            )
+
+        if other_violations:
+            parts.append("\n## Constraint Alerts (address these naturally!)")
+            for v in other_violations:
+                parts.append(f"- {v.get('code', '')}: {v.get('message', '')}")
+                if v.get("suggested_action"):
+                    parts.append(f"  Suggested fix: {v['suggested_action']}")
+    elif state.constraints_violated:
+        # Fallback: plain string list (older sessions without metadata)
         parts.append("\n## Constraint Violations (address these naturally!)")
         for v in state.constraints_violated:
             parts.append(f"- {v}")
@@ -505,39 +581,11 @@ GREETING_TEMPLATE = (
     "mountain hiking, cultural exploration, or something else entirely?"
 )
 
-# Template for inspiration (pre-core) responses
-INSPIRATION_TEMPLATES = {
-    "diving": (
-        "For diving adventures, {destination} is incredible! "
-        "You could explore {activities}. When are you thinking of going?"
-    ),
-    "hiking": (
-        "For hiking, {destination} offers world-class trails! "
-        "Consider {activities}. When would you like to go?"
-    ),
-    "skiing": (
-        "For skiing, {destination} has fantastic conditions! "
-        "You could try {activities}. What dates work for you?"
-    ),
-    "default": (
-        "I'd love to help you explore {destination}! "
-        "There's so much to see and do. When are you planning to travel?"
-    ),
-}
-
-# Template for planning responses
-PLANNING_TEMPLATE = """I'm putting together your {trip_type} trip to {destination}!
-
-{specialist_content}
-
-{tiles_summary}
-
-{constraint_warnings}
-
-What would you like to focus on next?"""
-
-# Template for constraint warnings
-CONSTRAINT_WARNING_TEMPLATE = """⚠️ Just a heads up: {warning}"""
+# Single fallback for when LLM synthesis fails (reachable in production if OpenAI returns None)
+FALLBACK_MESSAGE = (
+    "I've updated your trip plan — check the itinerary on the right. "
+    "Let me know if you'd like to adjust anything."
+)
 
 
 # =============================================================================
@@ -560,13 +608,61 @@ def generate_suggestions(state: GraphState) -> List[str]:
     )
 
     dest = state.trip_plan.destination or ""
+    constraint_violations = state.metadata.get("constraint_violations", [])
+
+    # ── Step 0: Budget blocking violations (budget-specific chips) ──
+    budget_blocking = [
+        v
+        for v in constraint_violations
+        if v.get("severity") == "blocking" and v.get("category") == "budget"
+    ]
+    if budget_blocking:
+        chips = []
+        plan = state.trip_plan
+
+        # "Increase budget to $X" — suggest 120% of current total cost rounded to nearest 100
+        total_cost = 0.0
+        for cat_tiles in (state.tiles or {}).values():
+            if not isinstance(cat_tiles, list):
+                continue
+            for t in cat_tiles:
+                if isinstance(t, dict):
+                    total_cost += t.get("price_estimate") or t.get("live_price") or 0
+        if plan.budget and total_cost > plan.budget:
+            suggested_budget = int(total_cost * 1.2 / 100) * 100
+            chips.append(f"Increase budget to ${suggested_budget:,}")
+
+        # "Find cheaper {largest_cat}" — target the largest overspent category
+        category_costs: dict[str, float] = {}
+        for cat, cat_tiles in (state.tiles or {}).items():
+            if not isinstance(cat_tiles, list):
+                continue
+            cat_total = sum(
+                t.get("price_estimate") or t.get("live_price") or 0
+                for t in cat_tiles
+                if isinstance(t, dict)
+            )
+            if cat_total > 0:
+                category_costs[cat] = cat_total
+        if category_costs:
+            largest_cat = max(category_costs, key=category_costs.get)
+            chips.append(f"Find cheaper {largest_cat}")
+
+        # "Fewer activity days" — if activities exist
+        if state.tiles.get("activities"):
+            chips.append("Fewer activity days")
+
+        result = chips[:3]
+        state.metadata["suggestion_chip_meta"] = [
+            {"chip_type": "cta", "category": "budget_fix", "icon": "dollar-sign"}
+        ] * len(result)
+        return result
 
     # ── Step 1: Blocking violations (highest priority) ──
-    constraint_violations = state.metadata.get("constraint_violations", [])
     blocking = [
         v
         for v in constraint_violations
-        if v.get("severity") == "blocking" and v.get("category") != "route"
+        if v.get("severity") == "blocking" and v.get("category") not in ("route", "budget")
     ]
     if blocking:
         chips = []
@@ -794,74 +890,15 @@ class Synthesizer:
 
     def synthesize_inspiration(self, state: GraphState) -> str:
         """Generate inspiration (pre-core) response."""
-        plan = state.trip_plan
-        specialist = state.active_specialist or state.metadata.get("last_executed_specialist")
-
-        # Get template
-        template = INSPIRATION_TEMPLATES.get(specialist, INSPIRATION_TEMPLATES["default"])
-
-        # Build activities string from content blocks
-        activities = ""
-        if plan.itinerary_blocks:
-            activity_titles = [b.title for b in plan.itinerary_blocks[:3]]
-            activities = ", ".join(activity_titles)
-        else:
-            activities = "amazing experiences"
-
-        return template.format(
-            destination=plan.destination or "your dream destination",
-            activities=activities,
-        )
+        return FALLBACK_MESSAGE
 
     def synthesize_planning(self, state: GraphState) -> str:
         """Generate planning response."""
-        plan = state.trip_plan
-        parts = []
-
-        # Opening
-        trip_type = (
-            plan.trip_type
-            or state.active_specialist
-            or state.metadata.get("last_executed_specialist")
-            or "travel"
-        )
-        parts.append(f"I'm working on your {trip_type} trip to {plan.destination}!")
-
-        # Specialist content
-        if plan.itinerary_blocks:
-            block_titles = [b.title for b in plan.itinerary_blocks[:3]]
-            parts.append(f"\n\nI've found some great experiences: {', '.join(block_titles)}.")
-
-        # Tiles summary
-        if state.tiles:
-            tile_counts = []
-            for category, tiles in state.tiles.items():
-                if tiles:
-                    tile_counts.append(f"{len(tiles)} {category}")
-            if tile_counts:
-                parts.append(f"\n\nI found {', '.join(tile_counts)} options for you.")
-
-        # Constraint warnings
-        if state.constraints_violated:
-            for warning in state.constraints_violated[:2]:  # Max 2 warnings
-                parts.append(f"\n\n⚠️ {warning}")
-
-        # Closing
-        parts.append("\n\nWhat would you like to focus on next?")
-
-        return "".join(parts)
+        return FALLBACK_MESSAGE
 
     def synthesize_constraint_warning(self, state: GraphState) -> str:
         """Generate response highlighting constraint violations."""
-        warnings = state.constraints_violated
-
-        if not warnings:
-            return ""
-
-        if len(warnings) == 1:
-            return f"Just a heads up: {warnings[0]}"
-
-        return "A few things to note:\n" + "\n".join(f"• {w}" for w in warnings[:3])
+        return FALLBACK_MESSAGE
 
     def generate_response(self, state: GraphState) -> SynthesizerOutput:
         """

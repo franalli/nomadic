@@ -228,10 +228,10 @@ class TestSynthesizer:
         import re
 
         from app.planner.nodes.intent_router import (
-            PLANNING_READINESS_SIGNALS,
             QUESTION_TYPE_MAPPING,
             SPECIALIST_KEYWORDS,
         )
+        from app.planner.nodes.router_category_sync import PLANNING_READINESS_SIGNALS
 
         def is_routable(text: str) -> bool:
             text_lower = text.lower()
@@ -307,14 +307,15 @@ class TestSynthesizer:
         assert "trip" in response.lower() or "adventure" in response.lower()
 
     def test_planning_response_with_tiles(self):
-        """Should mention tiles in planning response."""
+        """Should return fallback message when LLM is not available."""
         synth = Synthesizer()
         state = GraphState()
         state.trip_plan.destination = "Bali"
         state.tiles = {"hotels": [{"id": "1"}, {"id": "2"}]}
 
         response = synth.synthesize_planning(state)
-        assert "2" in response or "hotel" in response.lower()
+        # Template fallbacks replaced with static FALLBACK_MESSAGE (12A-4)
+        assert "trip plan" in response.lower() or "itinerary" in response.lower()
 
 
 # =============================================================================
@@ -338,26 +339,29 @@ class TestFeasibilityChecks:
         assert config is not None
         assert config.has_geographic_constraint is True
 
-    def test_cycling_no_geographic_constraint(self):
+    @pytest.mark.asyncio
+    async def test_cycling_no_geographic_constraint(self):
         """Cycling should skip feasibility (no geographic constraint)."""
         from app.planner.nodes.vertical_specialist import check_feasibility
 
-        status, reason, alternative = check_feasibility("cycling", "Switzerland")
+        status, reason, alternative = await check_feasibility("cycling", "Switzerland")
         assert status == "feasible", f"Expected 'feasible', got '{status}'"
 
-    def test_bali_diving_feasible(self):
+    @pytest.mark.asyncio
+    async def test_bali_diving_feasible(self):
         """Bali should return FEASIBLE for diving (prime destination)."""
         from app.planner.nodes.vertical_specialist import check_feasibility
 
-        status, reason, alternative = check_feasibility("diving", "Bali")
+        status, reason, alternative = await check_feasibility("diving", "Bali")
 
         assert status == "feasible", f"Expected 'feasible', got '{status}'"
 
-    def test_miami_skiing_infeasible(self):
+    @pytest.mark.asyncio
+    async def test_miami_skiing_infeasible(self):
         """Miami should return INFEASIBLE for skiing."""
         from app.planner.nodes.vertical_specialist import check_feasibility
 
-        status, reason, alternative = check_feasibility("skiing", "Miami")
+        status, reason, alternative = await check_feasibility("skiing", "Miami")
 
         assert status == "infeasible", f"Expected 'infeasible', got '{status}'"
 

@@ -2687,7 +2687,7 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Safety Buffer | `SafetyBlock` | Red zone, "No Flights until" | Constraint visualization |
 | Activity | `ActivityMiniCard` | Thumbnail, duration, inline constraints, book button | Rich activity display |
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
-| Empty Day | `FreeDayCard` | "Free Day" with browse CTA | Spontaneous exploration |
+| Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker | Quick-fill with generated activities or browse |
 
 #### C.1 Inline Constraints
 
@@ -2752,7 +2752,7 @@ frontend/components/plan/timeline/blocks/
 ├── SafetyBlock.tsx       # No-fly/rest-day constraints
 ├── ActivityMiniCard.tsx  # Rich activity with context menu
 ├── GhostSlot.tsx         # Unbooked placeholder
-└── FreeDayCard.tsx       # Empty day state
+└── FreeDayCard.tsx       # Empty day state with fill-day CTA + inline category picker
 ```
 
 **Settings Gear Icons:**

@@ -622,7 +622,7 @@ When applying this system to existing components:
 | BudgetSheet | `DS.materials.inputLarge`, `DS.pills.*` |
 | FlightsSheet | `DS.infoBox.*`, `DS.actions.toggle`, `DS.pills.*` |
 | StaysSheet | Same as Flights |
-| ActivitiesSheet | Same as Flights |
+| ActivitiesSheet | Same as Flights, `DS.stepper.*` (day preference steppers per category) |
 | ChatPanel | `DS.materials.input`, `DS.pills.*` (suggestions) |
 | UnifiedChipRow | `DS.pills.*` |
 | DatesSheet | `DS.materials.glass`, `DS.pills.*`, `DS.actions.primary` |

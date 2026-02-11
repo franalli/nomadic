@@ -121,6 +121,7 @@ export type HotelSettings = {
 export type ActivitySettings = {
   categories: string[]; // e.g., ['tours', 'experiences', 'outdoor']
   skill_level: string | null; // "beginner", "intermediate", "advanced"
+  day_preferences?: Record<string, number>; // {"diving": 3, "hiking": 2}
 };
 
 // Ground transport settings - which modes to include
