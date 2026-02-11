@@ -67,55 +67,6 @@ def stable_hash_short(value: Any) -> str:
     return stable_hash(value, length=8)
 
 
-def stable_hash_int(value: Any, *, modulo: int = 100) -> int:
-    """
-    Generate a stable integer hash, suitable for cohort assignment.
-
-    Replaces patterns like: hash(session_id) % 100
-
-    Args:
-        value: Any hashable value
-        modulo: Range for output (0 to modulo-1)
-
-    Returns:
-        Integer in range [0, modulo)
-
-    Example:
-        >>> stable_hash_int("session-123", modulo=100)
-        42
-    """
-    if modulo < 1:
-        raise ValueError(f"modulo must be >= 1, got {modulo}")
-
-    # Use first 8 bytes of blake2s as integer
-    try:
-        serialized = json.dumps(value, sort_keys=True, default=str, ensure_ascii=True)
-    except (TypeError, ValueError):
-        serialized = repr(value)
-
-    digest = hashlib.blake2s(serialized.encode("utf-8"), digest_size=8).digest()
-    hash_int = int.from_bytes(digest, byteorder="big")
-    return hash_int % modulo
-
-
-def stable_hash_index(value: Any, length: int) -> int:
-    """
-    Generate a stable index into a list of given length.
-
-    Replaces patterns like: hash(msg) % len(items)
-
-    Args:
-        value: Any value to hash
-        length: Length of target list
-
-    Returns:
-        Integer in range [0, length)
-    """
-    if length < 1:
-        raise ValueError(f"length must be >= 1, got {length}")
-    return stable_hash_int(value, modulo=length)
-
-
 def canonicalize_destinations(destinations: Optional[Sequence[str]]) -> str:
     """
     Create a canonical string representation of destinations for cache keys.
@@ -139,30 +90,6 @@ def canonicalize_destinations(destinations: Optional[Sequence[str]]) -> str:
 
     # Normalize: lowercase, strip, sort
     normalized = sorted(d.strip().lower() for d in destinations if d and d.strip())
-    return "|".join(normalized)
-
-
-def canonicalize_missing_fields(fields: Optional[Sequence[str]]) -> str:
-    """
-    Create a canonical string representation of missing fields for cache keys.
-
-    Ensures consistent ordering regardless of input order.
-
-    Args:
-        fields: List of field names, or None
-
-    Returns:
-        Sorted, joined string for cache key component
-
-    Example:
-        >>> canonicalize_missing_fields(["dates", "destinations"])
-        "dates|destinations"
-    """
-    if not fields:
-        return ""
-
-    # Sort alphabetically for consistency
-    normalized = sorted(f.strip().lower() for f in fields if f and f.strip())
     return "|".join(normalized)
 
 

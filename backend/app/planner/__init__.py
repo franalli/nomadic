@@ -33,11 +33,8 @@ from app.planner.cache_access import (
 from app.planner.hashing import (
     canonicalize_destinations,
     canonicalize_dict,
-    canonicalize_missing_fields,
     make_cache_key,
     stable_hash,
-    stable_hash_index,
-    stable_hash_int,
     stable_hash_short,
 )
 
@@ -49,7 +46,6 @@ from app.planner.meta import (
     meta_increment,
     meta_set,
     meta_set_once,
-    validate_turn_metadata,
 )
 from app.planner.meta_keys import (
     ALL_META_KEYS,
@@ -96,7 +92,6 @@ from app.planner.telemetry import (
 # Test mode detection
 from app.planner.test_mode import (
     is_test_mode,
-    raise_if_test_mode,
 )
 
 # Type checking imports (no runtime cost)
@@ -118,7 +113,6 @@ if TYPE_CHECKING:
         get_graph_stats,
         get_planner_debug_info,
         prewarm_prompts,
-        prune_stale_checkpoints,
         response_cache_stats,
         validate_template_coverage,
     )
@@ -151,7 +145,6 @@ def __getattr__(name: str):
         "get_graph_stats",
         "get_planner_debug_info",
         "prewarm_prompts",
-        "prune_stale_checkpoints",
         "response_cache_stats",
         "validate_template_coverage",
     }
@@ -206,7 +199,6 @@ __all__ = [
     "clear_all_checkpoints",
     "clear_response_caches",
     "clear_session_checkpoint",
-    "prune_stale_checkpoints",
     # Cache stats
     "checkpoint_stats",
     "response_cache_stats",
@@ -230,13 +222,11 @@ __all__ = [
     "meta_set_once",
     "meta_append",
     "meta_increment",
-    "validate_turn_metadata",
     "ALL_META_KEYS",
     "PER_TURN_KEYS",
     "TRACE_ENVELOPE",
     # Test mode
     "is_test_mode",
-    "raise_if_test_mode",
     # Cache access
     "init_cache_handles",
     "cache_get",
@@ -251,10 +241,7 @@ __all__ = [
     # Stable hashing
     "stable_hash",
     "stable_hash_short",
-    "stable_hash_int",
-    "stable_hash_index",
     "canonicalize_destinations",
-    "canonicalize_missing_fields",
     "canonicalize_dict",
     "make_cache_key",
     # Telemetry

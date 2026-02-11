@@ -136,8 +136,3 @@ def checkpoint_stats() -> Dict[str, Any]:
 def response_cache_stats() -> Dict[str, Any]:
     """Return response cache statistics."""
     return {"hits": 0, "misses": 0, "version": "1.0"}
-
-
-def prune_stale_checkpoints(max_age_hours: int = 24) -> int:
-    """Prune stale checkpoints (no-op)."""
-    return 0

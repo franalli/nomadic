@@ -51,17 +51,3 @@ def assert_invariant(
     # Production mode - log and continue
     if log_fn is not None:
         log_fn(f"INVARIANT WARNING: {message}")
-
-
-def raise_if_test_mode(message: str) -> None:
-    """
-    Raise AssertionError if in test mode.
-
-    Use this at points where production code logs+skips but tests
-    should fail immediately.
-
-    Args:
-        message: Error message for the assertion
-    """
-    if is_test_mode():
-        raise AssertionError(message)

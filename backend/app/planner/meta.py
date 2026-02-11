@@ -11,7 +11,7 @@ PR2: Metadata helpers + centralized turn init
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
 from uuid import uuid4
 
 from app.planner.meta_keys import (
@@ -237,46 +237,3 @@ def init_turn_metadata(
     metadata[CACHE_EVENTS] = []
 
     return turn_canary
-
-
-def validate_turn_metadata(metadata: Dict[str, Any]) -> List[str]:
-    """
-    Validate that all required per-turn metadata keys exist and have correct types.
-
-    Args:
-        metadata: The metadata dict to validate
-
-    Returns:
-        List of validation error messages (empty if valid)
-    """
-    errors = []
-
-    # Required keys with expected types
-    required_keys = {
-        LLM_CALLS_THIS_TURN: int,
-        LLM_CALL_SITES: list,
-        LLM_CALL_BLOCKED_REASON: dict,
-        NODE_RUN_JOURNAL: list,
-        VISITED_NODES: set,
-        STEP_COUNT: int,
-        RESPONSE_CLAIMED_BY: (type(None), str),
-        TURN_CANARY: str,
-        MUTATION_COUNTER: int,
-        DELTAS_APPLIED_THIS_TURN: list,
-    }
-
-    for key, expected_type in required_keys.items():
-        if key not in metadata:
-            errors.append(f"Missing required key: {key}")
-        elif isinstance(expected_type, tuple):
-            if not isinstance(metadata[key], expected_type):
-                errors.append(
-                    f"Key {key} has wrong type: expected one of {expected_type}, "
-                    f"got {type(metadata[key])}"
-                )
-        elif not isinstance(metadata[key], expected_type):
-            errors.append(
-                f"Key {key} has wrong type: expected {expected_type}, got {type(metadata[key])}"
-            )
-
-    return errors

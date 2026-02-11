@@ -87,7 +87,6 @@ from app.planner import (  # noqa: E402
     get_graph_stats,
     get_planner_debug_info,
     prewarm_prompts,
-    prune_stale_checkpoints,
     response_cache_stats,
     run_turn,
     run_turn_streaming,
@@ -769,9 +768,6 @@ async def admin_fresh_start(request: Request):
     # Clear response caches
     response_cleared = await clear_response_caches()
 
-    # Prune stale checkpoints
-    checkpoints_pruned = prune_stale_checkpoints()
-
     # Re-populate validation cache with common values
     validation_repopulated = prewarm_cache()
 
@@ -788,7 +784,6 @@ async def admin_fresh_start(request: Request):
             "after": response_cache_stats(),
         },
         "checkpoints": {
-            "pruned": checkpoints_pruned,
             "before": before_checkpoints,
             "after": checkpoint_stats(),
         },
@@ -2574,9 +2569,6 @@ async def reset_session(
         await clear_all_caches()  # Clear everything including validation caches
     else:
         await clear_response_caches()  # Preserve validation cache in production
-
-    # Prune stale checkpoints to prevent memory overflow
-    prune_stale_checkpoints()
 
     # Lock the session row first to prevent deadlocks with concurrent operations
     session = await get_session_by_token(db, session_id, lock_for_update=True)
