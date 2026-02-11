@@ -485,6 +485,8 @@ if (hasItinerary && structureChanged && !isSilentPlanGeneration) {
 }
 ```
 
+> **Note:** `isSilentPlanGeneration` is a local variable inside `ChatPanel.tsx` (derived from `isGenerateTrigger`), not a store field.
+
 **Example flows:**
 - "from rome" with existing plan → Flights added (tiles only) → **No auto-expand** → Itinerary preserved
 - "add hiking" with itinerary → Hiking specialist runs (structure change) → Itinerary auto-updates
@@ -577,8 +579,7 @@ if (expandInProgress) {
 - `documentStore.preferredTileIds` - Current preferences (Set)
 - `documentStore.lastGeneratedPreferences` - Preferences at last generation
 - `documentStore.expandInProgress` - Mutex flag for expand-itinerary calls
-- `hasPreferenceChanges()` - Computed: true if sets differ
-- `markPreferencesAsApplied()` - Snapshots current preferences after regeneration
+- `markPreferencesAsApplied()` - Snapshots current preferences after regeneration (compares `preferredTileIds` vs `lastGeneratedPreferences` inline to detect changes)
 
 **Visual feedback:**
 - SelectionsBar shows "Updating..." during regeneration
@@ -1314,6 +1315,12 @@ and derives up to 3 executable suggestions based on current state. No hardcoded 
 mappings — adding a new question type to `SUGGESTABLE_QUESTION_TYPES` in `intent_router.py`
 automatically generates the corresponding chip.
 
+**Chip Metadata (`suggested_response_meta`):** Each chip has a parallel `SuggestionChipMeta` entry
+with `chip_type` (`"cta"` | `"follow_up"` | `"setting"`), `category`, and optional `icon` (Lucide name).
+The frontend uses metadata for CTA styling (emerald accent) with regex fallback for backward compatibility.
+Metadata is stored on `state.metadata["suggestion_chip_meta"]` during generation and passed through
+`response_envelope.py` as `suggested_response_meta`.
+
 | State | Example Chips |
 |-------|---------------|
 | No destination | "I want a beach vacation", "mountain adventure", "city break" |
@@ -1322,6 +1329,7 @@ automatically generates the corresponding chip.
 | S2+ (active plan, dates set) | "5-star hotels only", "Direct flights only", "What are must-do activities?" |
 | After specialist ran | Cross-sell other specialists, plan progression, question chips |
 | Blocking violation | "Extend to {date}", "Add buffer day between activities", "Remove {specialist}" |
+| Day preference overflow | "Reduce {activity} to N days" (from `DAY_PREFERENCE_EXCEEDS_CAPACITY`) |
 
 **S2+ Plan Progression:** Once dates are set, chips shift from exploration questions to plan-refinement actions.
 `_build_plan_progression_suggestions()` checks which settings are unconfigured (hotel stars, flight preferences,
@@ -1393,15 +1401,13 @@ To support the Map and Cards in "Bridge Mode," the backend MUST serialize this d
 
 ---
 
-## V.A Unified Trip Validation (useTripValidation Hook)
+## V.A Trip Validation (Inline in NextStepBar)
 
-Single source of truth for date/destination validation across all components.
+Date/destination validation is computed inline — there is no `useTripValidation` hook.
 
 ### Overview
 
-**File:** `hooks/useTripValidation.ts`
-
-The `useTripValidation` hook provides consistent validation state across the application, ensuring components show identical messaging for incomplete trip inputs.
+`NextStepBar` reads `tripInputs` directly from `useDocumentStore` and computes date display and validation inline. There is no shared validation hook; each consumer that needs trip input state reads from the store directly.
 
 ### Validation States
 
@@ -1414,53 +1420,22 @@ The `useTripValidation` hook provides consistent validation state across the app
 | `too_short` | Duration < 1 day | "Trip must be at least 2 days" | "Adjust Dates" |
 | `valid` | All requirements met | (empty) | "Build Itinerary" |
 
-### Special Case: Flexible Dates
-
-If `date_flex === true` AND `trip_duration >= 2`, validation passes without specific dates:
-```typescript
-if (dateFlex === true && tripDuration != null && tripDuration >= 2) {
-  return { valid: true, reason: 'valid', duration: tripDuration, ... };
-}
-```
-
-### Hook Interface
-
-```typescript
-interface TripValidation {
-  valid: boolean;           // Whether itinerary can be generated
-  reason: ValidationReason; // Machine-readable reason code
-  message: string;          // Human-readable message for UI
-  action: string;           // CTA button text when invalid
-  duration: number | null;  // Trip duration in days (null if invalid)
-}
-
-function useTripValidation(): TripValidation;
-```
-
 ### Usage Pattern
 
 ```typescript
-// In any component needing validation state
-const validation = useTripValidation();
+// NextStepBar reads tripInputs directly from the store
+const { tripInputs } = useDocumentStore();
 
-// Gate button/action
-<Button disabled={!validation.valid}>
-  {validation.valid ? 'Build Itinerary' : validation.action}
-</Button>
-
-// Show helper text
-{!validation.valid && (
-  <p className="text-amber-500">{validation.message}</p>
-)}
+// Date display and validation are computed inline
+// No shared hook — components read from useDocumentStore as needed
 ```
 
 ### Consumers
 
 | Component | Usage |
 |-----------|-------|
-| `NextStepBar` | Validation-aware CTA states (amber/green) |
-| `PlanHeader` | Progress indicator messaging |
-| `ChatInput` | Build button gating |
+| `NextStepBar` | Reads `tripInputs` from `useDocumentStore`, computes date display/validation inline |
+| `ChatInput` | Build button gating (reads store directly) |
 
 ---
 
@@ -1514,6 +1489,9 @@ const canViewBook = isPlanFinalized && (hasTiles || inBookableState);
 
 **Backend (`plan_graph.py`):**
 ```python
+# NOTE: Conceptual simplification. The actual implementation in plan_graph.py
+# handles additional cases including specialist dispatch, local expert rules,
+# and speculative intent routing.
 def route_after_architect(state: GraphState) -> str:
     # If dates were just extracted, auto-trigger logistics search
     if state.trip_inputs_changed and state.trip_plan.start_date:
@@ -1761,7 +1739,7 @@ useSessionHydration() runs
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available |
-| `NextStepBar` | Validation-aware CTA (uses `useTripValidation` for gating) |
+| `NextStepBar` | CTA bar — accepts `nextAction` prop, renders for `finalize_plan` action |
 
 ### TimelineVariant Mapping
 
@@ -1785,7 +1763,7 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 | `canShowTilesPreview(state, tileCount)` | Gates tile preview visibility | **Deprecated** |
 | `canShowBookingTiles(state)` | Gates booking tiles visibility | **Deprecated** |
 
-**IMPORTANT:** `getNextAction()` returns action type based on state alone. Validation gating (enabled/disabled) is handled by `NextStepBar` via the `useTripValidation` hook. This ensures the CTA is always visible in S2_STRATEGY_READY state.
+**IMPORTANT:** `getNextAction()` returns action type based on state alone. `NextStepBar` accepts the result as its `nextAction` prop. It filters out `expand_itinerary` (auto-expand handles that) and only renders when `nextAction` is `finalize_plan`.
 
 **DEPRECATION NOTICE:** `canShowBookingTiles()` and `canShowTilesPreview()` are deprecated. Mode is the SSoT for tile rendering, not state. Use `effectiveMode === 'planning'` or `effectiveMode === 'booking'` instead. See Section XI.11.F.1 for details.
 
@@ -1794,7 +1772,7 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 export function getNextAction(
   state: PlanViewState,
   generation?: GenerationState | null,
-  _hasTripContext?: boolean // Deprecated - validation now in NextStepBar
+  _hasTripContext?: boolean // Deprecated - NextStepBar reads tripInputs from useDocumentStore
 ): 'expand_itinerary' | 'finalize_plan' | null {
   if (isGenerating(generation)) return null;
   if (state === 'S2_STRATEGY_READY') return 'expand_itinerary';
@@ -1976,9 +1954,15 @@ The standalone RefreshButton FAB has been removed. Regeneration is now handled b
 | --- | --- |
 | **Label** | "Finalize & Book" |
 | **Location** | Right Panel (Sticky Footer - "Command Island") |
-| **Visibility** | Visible ONLY in S3_ITINERARY_READY state |
+| **Visibility** | Renders when `nextAction` prop is `finalize_plan` |
 | **Action** | Transitions to Checkout/Booking phase |
 | **Component** | `NextStepBar.tsx` |
+
+**How it works:**
+- `NextStepBar` accepts a `nextAction` prop (from `getNextAction()`)
+- `getNextAction()` returns `'expand_itinerary'` for `S2_STRATEGY_READY`, `null` otherwise
+- NextStepBar filters out `expand_itinerary` (auto-expand handles it) and only renders for `finalize_plan`
+- In practice, NextStepBar renders when `finalize_plan` is passed as `nextAction`
 
 **Context Display:**
 - Left side shows "TIMELINE" label with date range (e.g., "Feb 5 — Feb 12")

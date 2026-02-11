@@ -994,37 +994,9 @@ async def _classify_intent_with_llm(
         return parsed, token_usage
 
     except Exception as e:
-        logger.warning(f"LLM classification failed, defaulting to PLANNING: {e}")
-        # Default to PLANNING on error - let the architect handle it
-        return (
-            IntentClassification(
-                intent="PLANNING",
-                confidence=0.5,
-                reasoning=f"LLM classification failed: {e}",
-                specialist_hints=_detect_specialist_keywords(user_text),
-            ),
-            {},
-        )
-
-
-def _detect_specialist_keywords(user_text: str) -> List[str]:
-    """
-    Fallback keyword detection for specialist hints.
-
-    Used when LLM fails or for quick detection.
-    Returns all matching specialist types (can be multiple).
-    """
-    text_lower = user_text.lower()
-    detected: List[str] = []
-
-    for topic, keywords in SPECIALIST_KEYWORDS.items():
-        for keyword in keywords:
-            if re.search(rf"\b{re.escape(keyword)}\b", text_lower):
-                if topic not in detected:
-                    detected.append(topic)
-                break  # Found a match for this topic, move to next
-
-    return detected
+        logger.error(f"[ROUTER] Intent classification FAILED: {e}")
+        state.metadata["router_extraction_failed"] = True
+        raise
 
 
 # =============================================================================
@@ -1884,6 +1856,7 @@ async def intent_router(state: GraphState) -> GraphState:
                                 log("ROUTER", f"[ACTIONABLE] LLM resolved: {resolved}")
                     except Exception as e:
                         log("ROUTER", f"[ACTIONABLE] LLM resolution failed: {e}")
+                        state.metadata["router_extraction_failed"] = True
 
                 # TIER 2 PREFETCH: Fire after alias resolution with fully resolved categories
                 if actionable.get("add_categories") and state.trip_plan.destination:
@@ -2009,6 +1982,7 @@ async def intent_router(state: GraphState) -> GraphState:
                 )
             except Exception as e:
                 logger.warning(f"[OPPORTUNISTIC] Extraction failed: {e}")
+                state.metadata["router_extraction_failed"] = True
                 # Continue with normal flow even if extraction fails
         # =====================================================================
         # END OPPORTUNISTIC EXTRACTION
@@ -2471,29 +2445,38 @@ async def intent_router(state: GraphState) -> GraphState:
     if classification is None:
         from app.debug_utils import log, log_tokens
 
-        classification, token_usage = await _classify_intent_with_llm(user_text, state)
-        if token_usage:
-            log_tokens(
+        try:
+            classification, token_usage = await _classify_intent_with_llm(user_text, state)
+            if token_usage:
+                log_tokens(
+                    "ROUTER",
+                    token_usage.get("prompt_tokens", 0),
+                    token_usage.get("completion_tokens", 0),
+                    token_usage.get("total_tokens", 0),
+                )
+                # Compact logging: LLM call
+                clog.llm_call(
+                    model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
+                    prompt_tokens=token_usage.get("prompt_tokens", 0),
+                    completion_tokens=token_usage.get("completion_tokens", 0),
+                    purpose="intent_classification",
+                )
+            else:
+                log("ROUTER", "No LLM call (exact match or error)")
+                clog.event("cache_hit", "Intent (exact match)")
+            log(
                 "ROUTER",
-                token_usage.get("prompt_tokens", 0),
-                token_usage.get("completion_tokens", 0),
-                token_usage.get("total_tokens", 0),
+                f"Intent: {classification.intent}",
+                data=f"specialist_hints={classification.specialist_hints}",
             )
-            # Compact logging: LLM call
-            clog.llm_call(
-                model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
-                prompt_tokens=token_usage.get("prompt_tokens", 0),
-                completion_tokens=token_usage.get("completion_tokens", 0),
-                purpose="intent_classification",
+        except Exception as e:
+            logger.error(f"[ROUTER] Intent LLM failed, defaulting to PLANNING: {e}")
+            classification = IntentClassification(
+                intent="PLANNING",
+                confidence=0.3,
+                reasoning=f"Intent classification failed: {e}",
+                specialist_hints=[],
             )
-        else:
-            log("ROUTER", "No LLM call (exact match or error)")
-            clog.event("cache_hit", "Intent (exact match)")
-        log(
-            "ROUTER",
-            f"Intent: {classification.intent}",
-            data=f"specialist_hints={classification.specialist_hints}",
-        )
 
     # Handle GREETING - return static response, skip architect
     if classification.intent == "GREETING":

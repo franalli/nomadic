@@ -9,10 +9,8 @@ Run with: pytest tests/test_architecture.py -v
 
 import pytest
 
-from app.planner.nodes.intent_router import (
-    IntentClassification,
-    _detect_specialist_keywords,
-)
+from app.planner.nodes.intent_router import IntentClassification
+from app.planner.nodes.router_extraction import _detect_specialist_keywords
 from app.planner.nodes.synthesizer import Synthesizer, generate_suggestions
 from app.planner.nodes.trip_architect import TripArchitect
 from app.planner.nodes.vertical_specialist import VerticalSpecialist

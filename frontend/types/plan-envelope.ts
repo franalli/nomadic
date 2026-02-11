@@ -7,6 +7,7 @@
  * IMPORTANT: Frontend must NEVER infer plan_state from other fields.
  */
 
+import type { SuggestionChipMeta } from './document';
 import type { Tile } from './tile';
 
 // =============================================================================
@@ -866,6 +867,7 @@ export interface PlanEnvelope {
 
   // Suggestions (backend emits, frontend displays only in bootstrap)
   suggested_responses?: string[];
+  suggested_response_meta?: SuggestionChipMeta[];
 
   // ==========================================================================
   // Generation State (Progress Tracking)

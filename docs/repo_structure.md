@@ -13,7 +13,6 @@ nomadic/
 ├── docs/                       # Architecture documentation
 ├── frontend/                   # Next.js frontend
 ├── scripts/                    # Root-level utility scripts
-├── tests/                      # Root-level tests
 ├── CLAUDE.md                   # AI assistant instructions
 ├── docker-compose.yml          # Docker configuration
 ├── README.md                   # Project readme
@@ -78,13 +77,16 @@ backend/
 │   │   │
 │   │   ├── services/
 │   │   │   ├── __init__.py
+│   │   │   ├── admin_utils.py       # Admin utility functions
 │   │   │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed)
 │   │   │   ├── itinerary_adapter.py # Thin bridge: GraphState → ItineraryBuilder
-│   │   │   └── section_builder.py   # Strategy section CRUD
+│   │   │   ├── response_envelope.py # Response envelope builder for plan state
+│   │   │   ├── section_builder.py   # Strategy section CRUD
+│   │   │   └── state_serde.py       # State serialization/deserialization
 │   │   │
 │   │   └── state/
 │   │       ├── __init__.py
-│   │       ├── schemas.py      # Planner state schemas
+│   │       ├── graph_state.py   # Planner state schemas (renamed from schemas.py)
 │   │       └── typed_meta.py   # Typed metadata bridge (TurnMeta, get_trip_settings)
 │   │
 │   ├── prompts/                # LLM prompt templates
@@ -129,6 +131,8 @@ backend/
 │
 ├── migrations/                 # Alembic database migrations
 │   ├── env.py
+│   ├── README                  # Alembic migrations readme
+│   ├── script.py.mako          # Alembic migration template
 │   └── versions/               # Migration version files
 │       ├── 0cc367f7e2df_add_suggestion_clicks_table.py
 │       ├── 297678ec8f79_add_plan_documents_table.py
@@ -166,6 +170,7 @@ backend/
 │   ├── test_multi_specialist_integration.py  # Multi-specialist tests
 │   ├── test_plan_schema.py               # Plan schema tests
 │   ├── test_router_cache.py              # Router cache tests (context-dependency detection)
+│   ├── test_routing.py                   # Routing tests
 │   ├── test_specialist_cache.py          # Specialist LLM cache tests (thread safety, L1/L2)
 │   ├── test_specialist_structured.py     # Specialist structured output tests
 │   ├── test_stage2_integration.py        # Stage 2 integration tests
@@ -174,7 +179,8 @@ backend/
 │   └── db/
 │       └── test_plan_document_api.py
 │
-├── test_artifacts/             # Test output artifacts
+├── alembic.ini                 # Alembic migration config
+├── Dockerfile                  # Backend Docker image
 ├── pyproject.toml              # Python project config
 ├── requirements.txt            # Python dependencies
 ├── start.py                    # Server startup script
@@ -191,6 +197,7 @@ Next.js 16 / React 19 application with Zustand state management.
 frontend/
 ├── app/                        # Next.js App Router
 │   ├── globals.css             # Global styles
+│   ├── icon.png                # App icon
 │   ├── layout.tsx              # Root layout
 │   ├── page.tsx                # Home page
 │   ├── contact/page.tsx
@@ -261,7 +268,6 @@ frontend/
 │   │   ├── DaySection.tsx
 │   │   ├── DestinationMapPlaceholder.tsx
 │   │   ├── DocumentHeader.tsx
-│   │   ├── ExplorationProgress.tsx
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── NextStepBar.tsx
 │   │   ├── OnboardingChips.tsx
@@ -271,7 +277,6 @@ frontend/
 │   │   ├── PlanHeader.tsx
 │   │   ├── PlanningProgress.tsx
 │   │   ├── planStateHelpers.ts
-│   │   ├── ReadyToPlanBanner.tsx
 │   │   ├── Segment.tsx
 │   │   ├── SelectionsBar.tsx       # Hearted tiles carousel (sticky bar of preferred tiles)
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
@@ -361,9 +366,6 @@ frontend/
 │       ├── toast.tsx
 │       └── tooltip.tsx
 │
-├── contexts/
-│   └── MobileModeContext.tsx
-│
 ├── hooks/                      # Custom React hooks
 │   ├── useActionLoader.ts
 │   ├── useDelayedLoader.ts
@@ -406,7 +408,8 @@ frontend/
 │   └── utils.ts                # General utilities (cn, etc.)
 │
 ├── public/
-│   └── assets/                 # Static assets
+│   ├── assets/                 # Static assets
+│   └── nomadic_logo.png        # Nomadic logo
 │
 ├── scripts/
 │   └── generate-contours.ts    # Map contour generation
@@ -431,8 +434,11 @@ frontend/
 ├── __tests__/                  # Frontend tests
 │   ├── anti-fragmentation.test.tsx
 │   ├── constraint-states.test.tsx
-│   └── plan-copy.test.tsx
+│   ├── documentStore.test.ts
+│   ├── plan-copy.test.tsx
+│   └── streaming.test.ts
 │
+├── Dockerfile                  # Frontend Docker image
 ├── eslint.config.mjs
 ├── next.config.mjs
 ├── next-env.d.ts
@@ -451,6 +457,7 @@ frontend/
 
 ```
 docs/
+├── data-contracts.md           # API routes, schemas, state store contracts
 ├── design-system.md            # Frontend styling SSoT
 ├── key_backend_files/          # Backend reference snapshots (prompts, nodes, services)
 ├── plan_graph_analysis.md      # Backend architecture SSoT
@@ -479,6 +486,7 @@ docs/
 ### VS Code (`.vscode/`)
 | File | Purpose |
 |------|---------|
+| `extensions.json` | Recommended extensions |
 | `settings.json` | Editor settings |
 | `tasks.json` | Task definitions |
 

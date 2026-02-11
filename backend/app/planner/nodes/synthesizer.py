@@ -593,15 +593,35 @@ def generate_suggestions(state: GraphState) -> List[str]:
                     if chip not in chips:
                         chips.append(chip)
 
-        return chips[:3] if chips else [blocking[0].get("suggested_action", "Adjust your dates")]
+        # "Reduce diving to 2 days" — for day preference capacity violations
+        day_prefs = settings.activity_settings.day_preferences
+        for v in blocking:
+            if v.get("code") == "DAY_PREFERENCE_EXCEEDS_CAPACITY" and day_prefs:
+                largest = max(day_prefs, key=day_prefs.get)
+                reduced = day_prefs[largest] - 1
+                if reduced > 0:
+                    chip = f"Reduce {largest} to {reduced} days"
+                    if chip not in chips:
+                        chips.append(chip)
+
+        result = chips[:3] if chips else [blocking[0].get("suggested_action", "Adjust your dates")]
+        state.metadata["suggestion_chip_meta"] = [
+            {"chip_type": "cta", "category": "blocking_fix", "icon": "alert-triangle"}
+        ] * len(result)
+        return result
 
     # ── Step 2: Route violations ──
     route_violations = [v for v in constraint_violations if v.get("category") == "route"]
     if route_violations:
         prev_dest = state.trip_plan.destination
         if prev_dest:
-            return [f"Back to {prev_dest}", "Different city", "Help me choose"]
-        return ["Paris", "Tokyo", "Barcelona"]
+            result = [f"Back to {prev_dest}", "Different city", "Help me choose"]
+        else:
+            result = ["Paris", "Tokyo", "Barcelona"]
+        state.metadata["suggestion_chip_meta"] = [
+            {"chip_type": "follow_up", "category": "route_fix", "icon": "map-pin"}
+        ] * len(result)
+        return result
 
     # ── Step 3: Assemble candidate pool ──
     candidates = []
@@ -675,14 +695,40 @@ def generate_suggestions(state: GraphState) -> List[str]:
                 break
             final.append(f)
 
-    # ── Step 6: Render templates ──
+    # ── Step 6: Render templates + collect chip metadata ──
+    CTA_CATEGORIES = {"destination_choice", "date_prompt", "date_contextual"}
+    SETTING_CATEGORIES = {"plan_hotel_pref", "plan_flight_pref", "plan_budget"}
+
     month = state.metadata.get("detected_month", "")
     result = []
+    meta_list = []
     for c in final:
         text = c["template"]
         text = text.replace("{destination}", dest)
         text = text.replace("{month}", month)
         result.append(text)
+
+        cat = c.get("category", "")
+        if cat in CTA_CATEGORIES or c.get("priority", 10) <= 1:
+            chip_type = "cta"
+        elif cat in SETTING_CATEGORIES:
+            chip_type = "setting"
+        else:
+            chip_type = "follow_up"
+
+        icon = None
+        if cat.startswith("specialist_"):
+            icon = "compass"
+        elif cat.startswith("plan_"):
+            icon = "sliders-horizontal"
+        elif cat.startswith("question_"):
+            icon = "help-circle"
+        elif cat in {"date_prompt", "date_contextual"}:
+            icon = "calendar"
+
+        meta_list.append({"chip_type": chip_type, "category": cat, "icon": icon})
+
+    state.metadata["suggestion_chip_meta"] = meta_list
 
     # ── Step 7: Track shown question types for rotation ──
     shown_qtypes = [

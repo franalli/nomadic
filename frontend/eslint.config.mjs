@@ -59,6 +59,11 @@ export default [
     },
     rules: {
       ...typescriptEslint.configs.recommended.rules,
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        destructuredArrayIgnorePattern: '^_',
+      }],
       'no-console': ['warn', { allow: ['warn', 'error'] }],
       'no-debugger': 'warn',
       'import/order': 'off',

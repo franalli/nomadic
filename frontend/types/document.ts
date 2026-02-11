@@ -155,6 +155,12 @@ export type DocumentTripInputs = {
 
 export type DocumentTripInputsPatch = Partial<DocumentTripInputs>;
 
+export type SuggestionChipMeta = {
+  chip_type: 'cta' | 'follow_up' | 'setting';
+  category: string;
+  icon?: string | null;
+};
+
 export type PlanDocumentData = {
   trip_context_id?: number | null;
   trip_inputs: DocumentTripInputs;
@@ -164,6 +170,7 @@ export type PlanDocumentData = {
   assistant_message_id?: string | null;
   ready_to_generate?: boolean;
   suggested_responses?: string[];
+  suggested_response_meta?: SuggestionChipMeta[];
 
   // Change tracking for UI receipts (existing)
   applied_updates?: AppliedUpdateKey[];

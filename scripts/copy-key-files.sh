@@ -17,6 +17,9 @@ for f in plan_graph.py validation.py planner/state/schemas.py crud_document.py c
   cp "$SRC/$f" "$DEST/$(basename "$f")"
 done
 
+# --- Root CLAUDE.md ---
+cp "$ROOT/CLAUDE.md" "$DEST/CLAUDE.md"
+
 # --- Everything in planner/ (flat, skip __init__ and cache) ---
 find "$SRC/planner" \
   -type f \

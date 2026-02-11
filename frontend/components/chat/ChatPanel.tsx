@@ -22,9 +22,9 @@ import {
 } from '@/components/plan/sheets';
 import { UnifiedChipRow } from '@/components/plan/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
-import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
@@ -42,6 +42,7 @@ import {
   type GraphPlanResponse,
   type HotelSettings,
   isBookingEnabled,
+  type SuggestionChipMeta,
   type TransportSettings,
 } from '@/types/document';
 import type { TriggerContext } from '@/types/loader';
@@ -516,6 +517,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [generateTriggered, setGenerateTriggered] = useState(false);
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
+    const [suggestedResponseMeta, setSuggestedResponseMeta] = useState<SuggestionChipMeta[]>([]);
     // Mobile Setup header collapse state - triggers when scroll > 50px
     const [isSetupHeaderCollapsed, setIsSetupHeaderCollapsed] = useState(false);
     // Track last user message ID for ack updates
@@ -924,6 +926,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onUserMessageSubmit?.(trimmed);
         }
         setSuggestedResponses([]); // Clear suggestions when user sends a message
+        setSuggestedResponseMeta([]);
         setLastUserMessage(trimmed); // Tier 11.12: Track for retry capability
         setIsLoading(true);
         isSendingRef.current = true; // Set ref to prevent duplicate sends
@@ -1114,6 +1117,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
               // Update suggested responses from LLM (if provided)
               setSuggestedResponses(doc.suggested_responses || []);
+              setSuggestedResponseMeta(doc.suggested_response_meta || []);
 
               // Origin update from chat (e.g., "from rome") is handled by backend
               // Backend routes through LogisticsNode to fetch flights automatically
@@ -1374,7 +1378,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           });
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, collapseSetupMessages, hasEverHadPlan, onUserMessageSubmit, tripInputs?.adults, tripInputs?.destination, tripInputs?.start_date]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, collapseSetupMessages, hasEverHadPlan, onUserMessageSubmit, onAutoExpandItinerary, tripInputs?.adults, tripInputs?.destination, tripInputs?.start_date]
     );
 
     const addAssistantMessage = useCallback((message: string) => {
@@ -1827,8 +1831,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               className="flex flex-wrap justify-center gap-2 pt-3 pb-1 px-2"
             >
               {effectiveSuggestions.map((suggestion, idx) => {
-                // Detect planning-trigger suggestions (e.g., "Plan Bali trip", "Let's plan it")
-                const isPlanningTrigger = /\bplan\b/i.test(suggestion) || suggestion.toLowerCase().includes("let's plan");
+                // Metadata-driven CTA detection, with regex fallback for old responses
+                const meta = suggestedResponseMeta[idx];
+                const isCta = meta?.chip_type === 'cta';
+                const isPlanningTrigger = isCta || /\bplan\b/i.test(suggestion) || suggestion.toLowerCase().includes("let's plan");
 
                 return (
                   <button

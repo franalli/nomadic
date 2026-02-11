@@ -101,7 +101,7 @@ export function isMultiSpecialistTrip(executedTopics: string[] | undefined): boo
 export function getNextAction(
   state: PlanViewState,
   generation?: GenerationState | null,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   _hasTripContext?: boolean // Deprecated: validation now handled by NextStepBar
 ): 'expand_itinerary' | 'finalize_plan' | null {
   if (isGenerating(generation)) return null;

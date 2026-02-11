@@ -51,9 +51,11 @@ import { DS } from '@/lib/design-system';
 | Token | Light Mode | Dark Mode | Use For |
 |-------|------------|-----------|---------|
 | `DS.pills.active` | Black bg, white text, shadow | White bg, black text | Selected chips |
-| `DS.pills.inactive` | White bg, zinc-200 border, zinc-600 text | Transparent, white/10 border, zinc-400 text | Unselected chips |
+| `DS.pills.inactive` | White bg, zinc-200 border, zinc-600 text | Transparent, white/15 border, zinc-400 text | Unselected chips |
 | `DS.pills.shape` | px-4 py-2 rounded-lg text-sm | Same | Base pill structure |
 | `DS.pills.shapeFull` | px-4 py-2 rounded-full text-sm | Same | Rounded pill structure |
+
+> **Note:** `rounded-lg` is overridden in `tailwind.config.mts` from the Tailwind default of `0.5rem` (8px) to `0.75rem` (12px). All `rounded-lg` usage in this system resolves to 12px.
 
 ### The Tactile Rule (IMPORTANT)
 
@@ -65,7 +67,7 @@ import { DS } from '@/lib/design-system';
 |-------|------------|-----------|
 | **Inactive Default** | `bg-white border-2 border-zinc-200 text-zinc-600` | `bg-transparent border-2 border-white/15 text-zinc-400` |
 | **Inactive Hover** | `hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900` | `hover:border-white/40 hover:text-white` |
-| **Active/Selected** | `bg-zinc-900 text-white border-2 border-zinc-900 shadow-md` | `bg-white text-black border-2 border-white` |
+| **Active/Selected** | `bg-zinc-900 text-white border-2 border-transparent shadow-md` | `bg-white text-black border-2 border-transparent` |
 
 **Key Principles:**
 
@@ -83,7 +85,7 @@ import { DS } from '@/lib/design-system';
   'transition-all duration-150',
   isSelected
     // Selected: Solid Black (maximum contrast)
-    ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+    ? 'bg-zinc-900 text-white border-2 border-transparent shadow-md dark:bg-white dark:text-black dark:border-transparent'
     // Tactile: Crisp border, snap-to-black hover
     : 'bg-white dark:bg-transparent border-2 border-zinc-200 dark:border-white/15 text-zinc-600 dark:text-zinc-400 hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 dark:hover:border-white/40 dark:hover:text-white'
 )}>
@@ -143,7 +145,7 @@ Info boxes should feel like a **recessed technical panel**, not a warning sign.
 | Token | Light Mode | Dark Mode | Description |
 |-------|------------|-----------|-------------|
 | `DS.infoBox.container` | `bg-zinc-50 border border-zinc-100 p-4` | `bg-white/[0.02] border border-white/5` | Clean, cool surface |
-| `DS.infoBox.icon` | `text-zinc-400` | `text-zinc-400` | Subtle icon, not alarming |
+| `DS.infoBox.icon` | `text-zinc-500` | `text-zinc-400` | Subtle icon, not alarming |
 | `DS.infoBox.text` | `text-zinc-600` | `text-zinc-400` | Body text |
 
 **Code Example:**
@@ -154,7 +156,7 @@ Info boxes should feel like a **recessed technical panel**, not a warning sign.
   'bg-zinc-50 dark:bg-white/[0.02]',
   'border border-zinc-100 dark:border-white/5'
 )}>
-  <AlertCircle className="h-5 w-5 text-zinc-400 dark:text-zinc-400" />
+  <AlertCircle className="h-5 w-5 text-zinc-500 dark:text-zinc-400" />
   <div>
     <p className="text-sm text-zinc-600 dark:text-zinc-400">
       To include flights, set Origin + Destination.
@@ -165,6 +167,15 @@ Info boxes should feel like a **recessed technical panel**, not a warning sign.
   </div>
 </div>
 ```
+
+### Custom Shadows
+
+These shadow tokens are defined in `tailwind.config.mts` and available as `shadow-soft` / `shadow-card`:
+
+| Token | Value | Use For |
+|-------|-------|---------|
+| `shadow-soft` | `0 20px 45px rgba(10, 14, 18, 0.08)` | Glass panels, modals, elevated surfaces |
+| `shadow-card` | `0 15px 35px rgba(10, 14, 18, 0.08)` | Cards, tiles, smaller elevated elements |
 
 ---
 
@@ -403,16 +414,12 @@ export function Stepper({ value, min, max, onChange }) {
 | Primary Glow | Emerald | `shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]` |
 | Input Focus Glow | Emerald | `shadow-[0_0_20px_-5px_rgba(16,185,129,0.1)]` |
 
-### BANNED Colors
+### Restricted Colors
 
-These colors should NOT be used:
-
-| Color | Hex | Reason |
-|-------|-----|--------|
-| amber-500 | `#F59E0B` | "Construction zone" look |
-| orange-400 | `#FB923C` | Warning sign aesthetic |
-| teal-500 | `#14B8A6` | Replaced by emerald |
-| Any amber/orange | - | Clashes with premium aesthetic |
+| Color | Hex | Rule |
+|-------|-----|------|
+| amber/orange | `#E86A1F` (accent) | Used ONLY as brand accent (`--accent`), specialist highlight pulse, and semantic warning/rejection states (Logic Guards, constraint badges, RefreshButton). Do not introduce new amber/orange usage outside these patterns. |
+| teal-500 | `#14B8A6` | BANNED — replaced by emerald |
 
 ### Specialist Color Palette
 
@@ -547,7 +554,7 @@ Activity and logistics blocks display inline constraint badges to show constrain
 | `info` | `bg-blue-50 dark:bg-blue-900/10` | `border-blue-200 dark:border-blue-800/40` | `text-blue-700 dark:text-blue-400` | Emoji |
 | `success` | `bg-emerald-50 dark:bg-emerald-900/10` | `border-emerald-200 dark:border-emerald-800/40` | `text-emerald-700 dark:text-emerald-400` | Emoji |
 
-**Exception to Amber Ban:** Amber is permitted for constraint severity badges where its "caution" connotation is semantically correct (warnings, safety constraints). The general ban applies to buttons and decorative elements.
+**Amber here is an approved semantic usage** — constraint severity badges where "caution" connotation is correct (warnings, safety constraints). See Restricted Colors in Section 4.
 
 **Visual Treatment:**
 ```tsx
@@ -573,13 +580,13 @@ Activity and logistics blocks display inline constraint badges to show constrain
 
 When applying this system to existing components:
 
-### Eliminate Orange/Amber
-- [ ] Remove all `bg-amber-X`, `border-amber-X`, `text-amber-X`
-- [ ] Remove all `bg-orange-X`, `border-orange-X`, `text-orange-X`
-- [ ] Replace with `DS.actions.primary` (black/emerald)
+### Audit Amber/Orange Usage
+- [ ] Verify amber/orange only appears in brand accent, specialist highlight, and semantic warning/rejection patterns
+- [ ] Remove any decorative or button amber/orange usage not in the approved patterns
+- [ ] Replace stray amber/orange with `DS.actions.primary` (black/emerald)
 
 ### Fix Inputs
-- [ ] Remove colored focus rings (`focus:ring-amber-500`)
+- [ ] Remove decorative colored focus rings (`focus:ring-amber-500`)
 - [ ] Use `DS.materials.input` for background-depth styling
 - [ ] Ensure dark mode uses `bg-black/40` (void look)
 
@@ -596,10 +603,10 @@ When applying this system to existing components:
 ### Verify Chips/Pills
 - [ ] Selected state uses `DS.pills.active`
 - [ ] Unselected uses `DS.pills.inactive`
-- [ ] No teal/amber colored selections
+- [ ] No teal colored selections; amber only in approved semantic patterns
 
-### Remove Warning Boxes
-- [ ] Replace `bg-amber-500/10 border border-amber-500/30` with `DS.infoBox.container`
+### Remove Decorative Warning Boxes
+- [ ] Replace decorative `bg-amber-500/10 border border-amber-500/30` with `DS.infoBox.container` (semantic amber warnings are fine)
 - [ ] Use `DS.actions.smallAction` for action buttons inside
 
 ---
@@ -788,7 +795,7 @@ function CustomDayButton({ modifiers, ...props }: DayButtonProps) {
 
 | State | Old (Wrong) | New (Correct) |
 |-------|-------------|---------------|
-| **Inactive Pill** | `dark:bg-transparent dark:border-white/10` | `dark:bg-white/5 dark:border-white/5` |
+| **Inactive Pill** | `dark:bg-transparent dark:border-white/10` | `dark:bg-white/5 dark:border-white/15` |
 | **Inactive Hover** | `dark:hover:border-white/30` | `dark:hover:bg-white/10 dark:hover:text-white` |
 
 **Code Example:**
@@ -799,13 +806,13 @@ function CustomDayButton({ modifiers, ...props }: DayButtonProps) {
   'px-4 py-2.5 rounded-lg text-sm font-medium',
   'transition-all duration-150',
   isSelected
-    ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+    ? 'bg-zinc-900 text-white border-2 border-transparent shadow-md dark:bg-white dark:text-black dark:border-transparent'
     // Glass Fill: visible substance, not just outline
     : cn(
         'bg-white border-2 border-zinc-200 text-zinc-600',
         'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
         // Dark: Glass Fill
-        'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
+        'dark:bg-white/5 dark:border-white/15 dark:text-zinc-400',
         'dark:hover:bg-white/10 dark:hover:text-white'
       )
 )}>
@@ -2022,7 +2029,7 @@ The RefreshButton is a Floating Action Button (FAB) that appears when trip input
 
 **Solution:** An Amber gradient FAB that appears only when inputs have changed, using portal rendering to escape scroll containers and position at a fixed screen location.
 
-> **Note:** Amber is intentionally used here for semantic "attention needed" states. This is an exception to the "BANNED Colors" rule in Section 4, similar to Logic Guards.
+> **Note:** Amber is intentionally used here for semantic "attention needed" states. This is an approved pattern per the Restricted Colors rule in Section 4.
 
 ### Visual Specifications
 
@@ -2129,7 +2136,7 @@ const { hasChanges, isRefreshing, regenerate, resetState } = useManualRegenerati
 * **Banned:** Red error alerts, blocking popups, or silent failures.
 * **Architect Way:** A "Rejected" System Receipt (Amber) + Explanatory Assistant Message.
 
-> **Note:** Amber is intentionally introduced for semantic rejection/warning states. This is an exception to the "BANNED Colors" rule in Section 4.
+> **Note:** Amber is intentionally used for semantic rejection/warning states. This is an approved pattern per the Restricted Colors rule in Section 4.
 
 ### Visual Specifications ("The Amber Warning")
 

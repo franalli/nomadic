@@ -525,7 +525,7 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 
 def create_optimized_graph() -> StateGraph:
     """
-    Create the optimized 6-node graph.
+    Create the optimized 7-node graph.
 
     Flow:
     START → router → [specialist →] architect → [guard →] synthesizer → END

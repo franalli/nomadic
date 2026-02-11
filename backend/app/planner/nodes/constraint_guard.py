@@ -19,10 +19,11 @@ from app.planner.state import (
     GraphState,
     TripPlan,
     get_persistent_meta,
+    get_trip_settings,
     get_turn_meta,
     sync_turn_meta,
 )
-from app.planner.state.schemas import SpecialistConstraint
+from app.planner.state.graph_state import SpecialistConstraint
 
 # =============================================================================
 # Place Validation Helper
@@ -653,6 +654,53 @@ async def constraint_guard(state: GraphState) -> GraphState:
                     )
         except Exception as e:
             log("GUARD", f"Capacity check error (non-fatal): {e}")
+
+    # =========================================================================
+    # Day Preference Capacity Check
+    # Validates that requested activity day counts fit within trip duration
+    # =========================================================================
+    settings = get_trip_settings(state)
+    day_prefs = settings.activity_settings.day_preferences
+    if day_prefs and state.trip_plan.start_date and state.trip_plan.end_date:
+        try:
+            start = datetime.fromisoformat(state.trip_plan.start_date)
+            end = datetime.fromisoformat(state.trip_plan.end_date)
+            total_days = (end - start).days + 1
+            usable = total_days - 2  # arrival + departure
+
+            # Recompute max buffer from active specialists (independent of loop above)
+            max_buffer = 0
+            for section in persistent.strategy_sections:
+                topic = section.get("specialist_type")
+                config = get_config(topic) if topic else None
+                if config and config.has_nofly_buffer:
+                    hours = get_nofly_buffer_hours(topic) or 24
+                    max_buffer = max(max_buffer, hours // 24)
+
+            effective = usable - max_buffer
+            total_requested = sum(day_prefs.values())
+
+            if total_requested > effective:
+                violations.append(
+                    ConstraintViolation(
+                        code="DAY_PREFERENCE_EXCEEDS_CAPACITY",
+                        message=(
+                            f"Requested {total_requested} activity days but only "
+                            f"{effective} available ({max_buffer} buffer day(s) required)"
+                        ),
+                        severity="blocking",
+                        category="capacity",
+                        suggested_action=f"Extend trip by {total_requested - effective} days",
+                    )
+                )
+                has_blocking = True
+                log(
+                    "CONSTRAINT",
+                    f"FAIL DAY_PREFERENCE_EXCEEDS_CAPACITY (blocking) - "
+                    f"requested {total_requested} > {effective} effective days",
+                )
+        except Exception as e:
+            log("GUARD", f"Day preference capacity check error (non-fatal): {e}")
 
     # =========================================================================
     # Cross-Domain Constraint Injection for Builder

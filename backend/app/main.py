@@ -3379,6 +3379,9 @@ async def expand_itinerary_endpoint(
                 activity_categories = trip_inputs_data.get("activity_settings", {}).get(
                     "categories"
                 )
+                day_preferences = trip_inputs_data.get("activity_settings", {}).get(
+                    "day_preferences"
+                )
                 builder_input = ItineraryBuilderInput(
                     start_date=start_date,
                     end_date=end_date,
@@ -3388,6 +3391,7 @@ async def expand_itinerary_endpoint(
                     origin=trip_inputs_data.get("origin"),
                     preferences=preferences_input,
                     activity_categories=activity_categories,
+                    activity_day_preferences=day_preferences,
                 )
 
                 try:
@@ -3742,6 +3746,9 @@ async def remove_specialist_endpoint(
                 activity_categories = trip_inputs_data.get("activity_settings", {}).get(
                     "categories"
                 )
+                day_preferences = trip_inputs_data.get("activity_settings", {}).get(
+                    "day_preferences"
+                )
                 builder_input = ItineraryBuilderInput(
                     start_date=start_date,
                     end_date=end_date,
@@ -3751,6 +3758,7 @@ async def remove_specialist_endpoint(
                     origin=trip_inputs_data.get("origin"),
                     preferences=preferences_input,
                     activity_categories=activity_categories,
+                    activity_day_preferences=day_preferences,
                 )
 
                 try:

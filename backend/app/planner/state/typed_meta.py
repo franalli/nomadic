@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from app.planner.state.schemas import TripSettings
+    from app.planner.state.graph_state import TripSettings
 
 # =============================================================================
 # TurnMeta — reset via TurnMeta() at each turn boundary
@@ -169,7 +169,7 @@ def get_trip_settings(state: Any) -> TripSettings:
     canonical source.  If absent (old sessions), falls back to extracting
     settings from the legacy ``metadata["trip_inputs"]`` dict.
     """
-    from app.planner.state.schemas import TripSettings
+    from app.planner.state.graph_state import TripSettings
     from app.schemas import (
         ActivitySettings,
         BookingTypes,

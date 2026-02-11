@@ -15,7 +15,7 @@ rm -rf "$CLAUDE_DIR/shell-snapshots"
 rm -rf "$CLAUDE_DIR/todos"
 rm -f  "$CLAUDE_DIR/stats-cache.json"
 
-# ❌ NOT touched: ide/, session-env, settings.json
+# ❌ NOT touched: ide/, session-env, settings.json, settings.local.json, agents/
 
 echo "Done. Cleaned: projects, plans, file-history, debug, shell-snapshots, todos, stats-cache.json"
 

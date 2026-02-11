@@ -692,6 +692,7 @@ def _build_response_envelope(
         "assistant_message": state.last_summary or "",
         "ready_to_generate": trip_plan_is_ready(state.trip_plan),
         "suggested_responses": state.suggested_replies,
+        "suggested_response_meta": state.metadata.get("suggestion_chip_meta", []),
         # Plan view state for right panel stage rendering
         "plan_view_state": plan_view_state,
         # Strategy content for AgentCards
@@ -705,6 +706,10 @@ def _build_response_envelope(
         "constraint_violations": state.metadata.get("constraint_violations", []),
         # Itinerary day cards (computed by ItineraryBuilder, None until S2_STRATEGY_READY)
         "itinerary_day_cards": itinerary_day_cards,
+        # Debug observability (visible in SSE payloads + browser dev tools)
+        "_debug": {
+            "router_extraction_failed": state.metadata.get("router_extraction_failed", False),
+        },
     }
 
     # DEBUG: Log origin_just_set for troubleshooting

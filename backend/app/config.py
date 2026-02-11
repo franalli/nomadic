@@ -129,6 +129,7 @@ class Settings(BaseSettings):
     # =============================================================================
     default_trip_currency: str = "USD"  # Default currency for trip budgets
     auto_correct_typo_threshold: int = 100  # Levenshtein distance for typo correction
+    fuzzy_match_score_cutoff: int = 76  # rapidfuzz typo resolution threshold
     confidence_threshold_skip_router: float = 0.92  # Confidence to skip LLM router
 
     # =============================================================================

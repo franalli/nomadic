@@ -279,6 +279,14 @@ class SuggestionClickEvent(BaseModel):
     request_id: Optional[str] = None
 
 
+class SuggestionChipMeta(BaseModel):
+    """Metadata for frontend chip styling. Parallel array to suggested_responses."""
+
+    chip_type: Literal["cta", "follow_up", "setting"] = "follow_up"
+    category: str = ""
+    icon: Optional[str] = None  # Lucide icon name (e.g., "calendar", "compass")
+
+
 class GraphPlanRequest(BaseModel):
     """Request schema for graph-based planning entrypoint."""
 
@@ -424,6 +432,7 @@ class ActivitySettings(BaseModel):
 
     categories: List[str] = Field(default_factory=list)  # empty = all categories
     skill_level: Optional[str] = None  # "beginner", "intermediate", "advanced"
+    day_preferences: Dict[str, int] = Field(default_factory=dict)  # {"diving": 3, "hiking": 2}
 
 
 class TransportSettings(BaseModel):
@@ -727,6 +736,7 @@ class PlanDocumentData(BaseModel):
     ready_to_generate: bool = False
     # Suggested user responses for quick replies (1-3 contextual suggestions)
     suggested_responses: List[str] = Field(default_factory=list)
+    suggested_response_meta: List[Dict[str, Any]] = Field(default_factory=list)
     # Change tracking for UI receipts
     applied_updates: List[CanonicalUIKey] = Field(default_factory=list)  # Typed keys only
     conflicts: List[Conflict] = Field(default_factory=list)

@@ -140,7 +140,7 @@ export function SelectionsBar({
   );
 
   // Filter and group preferred tiles by type and specialist
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   const { staySelections, flightSelections, activitySelectionsBySpecialist, filteredOutCount: _filteredOutCount, totalCount } = useMemo(() => {
     const stays: Tile[] = [];
     const flights: Tile[] = [];

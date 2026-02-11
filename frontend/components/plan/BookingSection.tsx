@@ -30,8 +30,8 @@ import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 // TileFilterBar hidden for demo - re-enable post-launch
 import { type TileFilters } from '@/components/tiles/TileFilterBar';
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
-import { activityMatchesSpecialist as registryMatch } from '@/lib/specialists';
 import { getActiveSpecialists } from '@/lib/specialist-utils';
+import { activityMatchesSpecialist as registryMatch } from '@/lib/specialists';
 import { getTotalTileCount, normalizeTileType, selectTilesByType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
@@ -110,7 +110,7 @@ export function BookingSection({
   state,
   tiles: propTiles,
   generation,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   hasStrategyContent: _hasStrategyContent, // Deprecated: mode is now SSoT, not state
   savedTileIds = new Set(),
   onSaveTile,

@@ -5,7 +5,7 @@ import logging
 
 from langchain_openai import ChatOpenAI
 
-from app.planner.state.schemas import GraphState
+from app.planner.state.graph_state import GraphState
 
 logger = logging.getLogger(__name__)
 

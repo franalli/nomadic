@@ -59,6 +59,7 @@ def build_itinerary_from_state(state: GraphState) -> Optional[ItineraryResult]:
         destination=plan.destination,
         origin=plan.origin,
         activity_categories=settings.activity_settings.categories or None,
+        activity_day_preferences=settings.activity_settings.day_preferences or None,
     )
     builder = ItineraryBuilder()
     return builder.build(builder_input)

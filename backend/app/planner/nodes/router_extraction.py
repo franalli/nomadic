@@ -20,6 +20,7 @@ from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
@@ -76,6 +77,21 @@ def _detect_specialist_keywords(user_text: str) -> List[str]:
                     detected.append(topic)
                 break  # Found a match for this topic, move to next
 
+    # Fuzzy fallback for unmatched words
+    if not detected:
+        try:
+            from rapidfuzz import fuzz, process
+
+            words = re.findall(r"\b[a-z]{3,}\b", text_lower)
+            all_topics = sorted(ALL_SPECIALIST_KEYWORDS.keys())
+            for word in words:
+                cutoff = settings.fuzzy_match_score_cutoff
+                match = process.extractOne(word, all_topics, scorer=fuzz.ratio, score_cutoff=cutoff)
+                if match and match[0] not in detected:
+                    detected.append(match[0])
+        except ImportError:
+            pass
+
     return detected
 
 
@@ -131,6 +147,15 @@ class RouterOutput(BaseModel):
     activity_categories: List[str] = Field(
         default_factory=list,
         description=f"Activity categories mentioned: {_TIER2_NAMES_CSV}",
+    )
+
+    # Activity day preferences as JSON string (gpt-4o-mini handles str better than Dict)
+    activity_day_preferences: Optional[str] = Field(
+        None,
+        description=(
+            "JSON string of day counts per activity when user explicitly states numbers. "
+            'E.g., "3 days diving" -> \'{"diving": 3}\'. null if not specified.'
+        ),
     )
 
     # Extracted trip fields (populated when intent=PLANNING)
@@ -312,6 +337,14 @@ Do NOT include Tier 1 specialist activities ("""
     + """) here — \
 those go in specialist_hints.
 
+## Task 5: Activity Day Preferences
+
+If the user specifies day counts for activities, return a JSON STRING (not object):
+- "3 days diving, 2 days hiking" → '{{"diving": 3, "hiking": 2}}'
+- "mostly diving with a bit of hiking" → null (no explicit counts)
+- "a week of surfing" → '{{"surfing": 7}}'
+Only populate when user explicitly states numbers. null otherwise.
+
 ## User Message
 "{user_message}"
 
@@ -481,6 +514,19 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
     return extracted
 
 
+def _parse_day_preferences(raw: Optional[str]) -> dict[str, int]:
+    """Parse activity_day_preferences JSON string → dict. Returns {} on failure."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return {k.lower().strip(): int(v) for k, v in parsed.items()}
+    except (json.JSONDecodeError, TypeError, ValueError):
+        logger.warning(f"Invalid activity_day_preferences JSON: {raw}")
+    return {}
+
+
 # =============================================================================
 # LLM Extraction
 # =============================================================================
@@ -523,73 +569,71 @@ async def _classify_and_extract_with_llm(
             logger.debug(f"[ROUTER] Cache deserialize failed: {e}")
 
     # =========================================================================
-    # CACHE MISS - LLM CALL
+    # CACHE MISS - LLM CALL (with retry)
     # =========================================================================
-    try:
-        llm = _get_router_extraction_llm()
+    MAX_RETRIES = 1
+    last_exc: Exception | None = None
 
-        # Use structured output for reliable JSON parsing
-        structured_llm = llm.with_structured_output(RouterOutput, include_raw=True)
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            llm = _get_router_extraction_llm()
 
-        # Format prompt with current date context
-        current_year = today.year
-        prompt = ROUTER_EXTRACTION_PROMPT.format(
-            user_message=user_text,
-            today_date=today_date,
-            current_year=current_year,
-        )
+            # Use structured output for reliable JSON parsing
+            structured_llm = llm.with_structured_output(RouterOutput, include_raw=True)
 
-        result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
+            # Format prompt with current date context
+            current_year = today.year
+            prompt = ROUTER_EXTRACTION_PROMPT.format(
+                user_message=user_text,
+                today_date=today_date,
+                current_year=current_year,
+            )
 
-        # Extract parsed result and token usage
-        parsed = result["parsed"]
-        raw = result["raw"]
-        token_usage = {}
-        if hasattr(raw, "response_metadata"):
-            token_usage = raw.response_metadata.get("token_usage", {})
+            result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
 
-        # =====================================================================
-        # VALIDATE & NORMALIZE EXTRACTED FIELDS
-        # Ensures consistent cache keys (e.g., "Bali, Indonesia" → "Bali")
-        # =====================================================================
-        parsed_dict = parsed.model_dump()
-        validated_dict = _validate_extraction(parsed_dict, today_date)
-        parsed = RouterOutput.model_validate(validated_dict)
+            # Extract parsed result and token usage
+            parsed = result["parsed"]
+            raw = result["raw"]
+            token_usage = {}
+            if hasattr(raw, "response_metadata"):
+                token_usage = raw.response_metadata.get("token_usage", {})
 
-        logger.debug(
-            f"Router extraction: intent={parsed.intent}, "
-            f"dest={parsed.destination}, dates={parsed.start_date}->{parsed.end_date}, "
-            f"has_dates={parsed.has_dates_in_message}, planning_ready={parsed.planning_ready}"
-        )
+            # =================================================================
+            # VALIDATE & NORMALIZE EXTRACTED FIELDS
+            # Ensures consistent cache keys (e.g., "Bali, Indonesia" → "Bali")
+            # =================================================================
+            parsed_dict = parsed.model_dump()
+            validated_dict = _validate_extraction(parsed_dict, today_date)
+            parsed = RouterOutput.model_validate(validated_dict)
 
-        # =====================================================================
-        # CACHE WRITE (only if self-contained query)
-        # =====================================================================
-        set_cached_extraction(user_text, today_date, parsed.model_dump())
+            if attempt > 0:
+                logger.warning(f"[ROUTER] Extraction succeeded on retry {attempt + 1}")
 
-        return parsed, token_usage
+            logger.debug(
+                f"Router extraction: intent={parsed.intent}, "
+                f"dest={parsed.destination}, dates={parsed.start_date}->{parsed.end_date}, "
+                f"has_dates={parsed.has_dates_in_message}, planning_ready={parsed.planning_ready}"
+            )
 
-    except Exception as e:
-        logger.warning(f"Router extraction failed, using fallback: {e}")
-        # Create fallback with keyword detection
-        text_lower = user_text.lower()
-        has_dates = any(re.search(p, text_lower) for p in DATE_INDICATORS)
-        has_activity = any(
-            kw in text_lower for kws in ALL_SPECIALIST_KEYWORDS.values() for kw in kws
-        )
+            # =================================================================
+            # CACHE WRITE (only if self-contained query)
+            # =================================================================
+            set_cached_extraction(user_text, today_date, parsed.model_dump())
 
-        return (
-            RouterOutput(
-                intent="PLANNING",
-                confidence=0.5,
-                reasoning=f"LLM extraction failed: {e}",
-                specialist_hints=_detect_specialist_keywords(user_text),
-                has_dates_in_message=has_dates,
-                has_activity_in_message=has_activity,
-                planning_ready=has_dates and has_activity,
-            ),
-            {},
-        )
+            return parsed, token_usage
+
+        except Exception as e:
+            last_exc = e
+            raw_text = getattr(e, "response", None) or str(e)
+            logger.error(
+                f"[ROUTER] Extraction attempt {attempt + 1}/{MAX_RETRIES + 1} FAILED: {raw_text}"
+            )
+            if attempt < MAX_RETRIES:
+                continue
+
+    # All retries exhausted — raise, let caller handle
+    logger.error("[ROUTER] ALL extraction attempts failed — raising to caller")
+    raise last_exc  # type: ignore[misc]
 
 
 # =============================================================================
@@ -696,6 +740,20 @@ def _populate_trip_plan_from_router_output(
             state.metadata.pop("trip_settings", None)  # Clear so fallback reads trip_inputs
             state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
             logger.info(f"[ROUTER] Categories: {merged} (from LLM: {validated})")
+
+    # Persist activity day preferences (count-based, parsed from JSON string)
+    day_prefs = _parse_day_preferences(router_output.activity_day_preferences)
+    if day_prefs:
+        trip_inputs = state.metadata.get("trip_inputs", {})
+        activity_settings = trip_inputs.get("activity_settings", {})
+        existing_prefs = activity_settings.get("day_preferences", {})
+        merged_prefs = {**existing_prefs, **day_prefs}
+        activity_settings["day_preferences"] = merged_prefs
+        trip_inputs["activity_settings"] = activity_settings
+        state.metadata["trip_inputs"] = trip_inputs
+        state.metadata.pop("trip_settings", None)
+        state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
+        logger.info(f"[ROUTER] Day preferences: {merged_prefs}")
 
     logger.debug(
         f"Populated trip_plan: dest={state.trip_plan.destination}, "

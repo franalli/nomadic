@@ -2,11 +2,11 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** Web desktop polish for YC demo readiness
-- **Secondary:** Mobile triage — fix structural breaks only, no optimization
-- **Active work:** [update per session]
-- **Known broken:** [update per session]
-- **DO NOT touch this sprint:** Mobile drawer UX, Google Places autocomplete, progressive disclosure, mobile header collapse, toast notification system
+- **Focus:** [describe focus]
+- **Secondary:** [secondary priority or "none"]
+- **Active work:** Stage 11 shipped — activity day preferences (router, builder, constraint guard), smart suggestion chips (synthesizer metadata, response envelope, ChatPanel CTA). Renamed state/schemas.py → graph_state.py. Router resilience: retry loop + skeleton fallback removal + `_debug` observability envelope. Fuzzy typo resolution: rapidfuzz pre-LLM matching in router_category_sync + router_extraction (threshold in config.py).
+- **Known broken:** none
+- **DO NOT touch this sprint:** [frozen files/features]
 
 ---
 
@@ -18,7 +18,7 @@
 4. DO NOT create new LangGraph nodes — 7-node invariant is law
 5. DO NOT touch mobile-specific components unless explicitly asked
 6. DO NOT modify API contracts or shared schemas without explicit approval
-7. LIMIT changes to ≤5 files per task unless approved
+7. LIMIT changes to ≤8 files per task unless approved
 8. NEVER do broad directory scans or read node_modules — reference specific files
 9. DO NOT modify Synthesizer model routing (`_MODEL_BY_COMPLEXITY`) without measuring quality impact
 
@@ -115,17 +115,20 @@ ruff check . --fix   # Lint + fix
 ### Synthesizer Latency Optimization (Stage 8)
 
 The Synthesizer uses intelligent model routing for faster response times:
+
 - **greeting**: Template only (no LLM, <50ms)
 - **exploration**: gpt-4o-mini (~150ms, $0.15/1M tokens)
 - **specialist_update**: gpt-4o-mini (~150ms, $0.15/1M tokens)
 - **planning**: gpt-4o (~600ms, $2.50/1M tokens)
 
 Prompt templates are cached in-memory:
+
 - Cache cleared on process restart
 - If you modify `backend/app/prompts/synthesizer.txt`, restart the server
 - Cache safety: template.render() must only use `response_type` variable
 
 Context window dynamically trims history:
+
 - greeting: 0 turns (bypassed entirely)
 - exploration/specialist_update: 2 turns (4 messages)
 - planning: 4 turns (8 messages)

@@ -237,6 +237,7 @@ class ItineraryBuilderInput:
     origin: Optional[str] = None
     preferences: Optional[PreferenceOverrideInput] = None  # User heart preferences
     activity_categories: Optional[List[str]] = None  # User-selected categories from pills
+    activity_day_preferences: Optional[Dict[str, int]] = None  # {"diving": 3, "hiking": 2}
 
 
 # =============================================================================
@@ -350,6 +351,7 @@ class ItineraryBuilder:
         # Track warnings for user display (e.g., "Reduced diving from 4 to 1")
         self._warnings: List[str] = []
         self._nofly_buffer_days: int = 0
+        self._day_preferences = input_data.activity_day_preferences or {}
 
         try:
             # Parse dates
@@ -1131,6 +1133,20 @@ class ItineraryBuilder:
         # Flatten and copy activities
         specialists = list(activities_by_specialist.keys())
         remaining = {s: list(acts) for s, acts in activities_by_specialist.items()}
+
+        # ─────────────────────────────────────────────────────────
+        # Day preference capping: trim activity lists to user's requested counts
+        # e.g., day_preferences={"diving": 3} → keep at most 3 diving activities
+        # ─────────────────────────────────────────────────────────
+        if self._day_preferences:
+            for spec, max_days in self._day_preferences.items():
+                if spec in remaining and len(remaining[spec]) > max_days:
+                    trimmed = remaining[spec][:max_days]
+                    _debug(
+                        f"[ItineraryBuilder] Day preference: capped {spec} "
+                        f"from {len(remaining[spec])} to {max_days} activities"
+                    )
+                    remaining[spec] = trimmed
 
         # ─────────────────────────────────────────────────────────
         # Cross-domain clustering: diving before altitude with buffer

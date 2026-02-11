@@ -43,7 +43,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
-import { SPECIALIST_IDS, getSpecialistColorRgb } from '@/lib/specialists';
+import { getSpecialistColorRgb,SPECIALIST_IDS } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
 import {

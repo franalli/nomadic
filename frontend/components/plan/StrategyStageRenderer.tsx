@@ -26,20 +26,18 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertTriangle, CheckCircle, Clock, Shield } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Clock, Loader2,Shield  } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-
-import { useToast } from '@/components/ui/toast';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
+import { useToast } from '@/components/ui/toast';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { getDestinationCoords } from '@/lib/destination-coords';
-import { NICHE_SPECIALIST_IDS } from '@/lib/specialists';
 import {
   calculateMapCenter,
   extractPOIsFromDayCards,
@@ -47,6 +45,7 @@ import {
   generateGhostDayCards,
   hasSpecialistContent,
 } from '@/lib/ghost-timeline-adapter';
+import { NICHE_SPECIALIST_IDS } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
@@ -121,7 +120,6 @@ export function computeDataDensity(
   return 'full';
 }
 
-import { Loader2 } from 'lucide-react';
 
 import {
   REVEAL_TIMING,

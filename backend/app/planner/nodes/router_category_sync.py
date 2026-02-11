@@ -16,6 +16,7 @@ import logging
 import re
 from typing import List, Optional
 
+from app.config import settings
 from app.planner.nodes.router_extraction import (
     IntentClassification,
     _normalize_city_name,
@@ -48,6 +49,29 @@ TIER2_ACTIVITY_KEYWORDS: set[str] = {
     "wine",
     "food",
 }
+
+try:
+    from rapidfuzz import fuzz, process
+
+    _FUZZY_AVAILABLE = True
+except ImportError:
+    _FUZZY_AVAILABLE = False
+
+_FUZZY_VOCAB = sorted(TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALIST_NAMES)
+
+
+def _fuzzy_resolve_token(token: str) -> Optional[str]:
+    """Resolve misspelled token to nearest known category/specialist. None if no match."""
+    if not _FUZZY_AVAILABLE or len(token) < 3:
+        return None
+    match = process.extractOne(
+        token.lower(),
+        _FUZZY_VOCAB,
+        scorer=fuzz.ratio,
+        score_cutoff=settings.fuzzy_match_score_cutoff,
+    )
+    return match[0] if match else None
+
 
 EXACT_MATCH_GREETINGS = frozenset(
     {
@@ -271,8 +295,19 @@ def _detect_actionable_input(user_text: str, state: "GraphState") -> Optional[di
     remaining -= all_known
     remaining -= stop_words
     remaining -= set(SKILL_LEVEL_MAP.keys())
-    if remaining and len(text_lower.split()) <= 5:
-        changes["unresolved_tokens"] = remaining
+
+    # Fuzzy-match before declaring unresolved
+    still_unresolved = set()
+    for token in remaining:
+        match = _fuzzy_resolve_token(token)
+        if match:
+            logger.info(f"[CATEGORY_SYNC] Fuzzy: '{token}' → '{match}'")
+            changes.setdefault("add_categories", set()).add(match)
+        else:
+            still_unresolved.add(token)
+
+    if still_unresolved and len(text_lower.split()) <= 5:
+        changes["unresolved_tokens"] = still_unresolved
 
     return changes if changes else None
 

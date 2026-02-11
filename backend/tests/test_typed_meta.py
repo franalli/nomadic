@@ -1,6 +1,6 @@
 """Tests for typed metadata models and bridge functions."""
 
-from app.planner.state.schemas import TripSettings
+from app.planner.state.graph_state import TripSettings
 from app.planner.state.typed_meta import (
     _PERSISTENT_FIELDS,
     _TURN_FIELDS,

@@ -14,7 +14,7 @@ vi.mock('@/state/chatStore', () => ({
 
 import { apiFetch } from '@/lib/api';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
-import type { DocumentTripInputs, PlanDocumentData, PlanDocumentResponse } from '@/types/document';
+import type { PlanDocumentData, PlanDocumentResponse } from '@/types/document';
 import type { DayCard, StrategySection } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 

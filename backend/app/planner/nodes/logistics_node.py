@@ -35,7 +35,7 @@ from app.debug_utils import (
 )
 from app.planner.hashing import stable_hash
 from app.planner.services.iata_resolver import resolve_iata_codes
-from app.planner.state.schemas import GraphState
+from app.planner.state.graph_state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
 from app.tile_service.curated_provider import CuratedProvider
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider

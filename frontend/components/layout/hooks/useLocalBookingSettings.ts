@@ -483,7 +483,7 @@ export function useLocalBookingSettings(
         }
       }
     },
-    [commitWithDebounce, ensureBookingTypeEnabled, onToast]
+    [commitWithDebounce, document, documentStore, ensureBookingTypeEnabled, onToast]
   );
 
   // Transport settings update handler

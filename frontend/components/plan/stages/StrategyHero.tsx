@@ -52,6 +52,11 @@ function getTopicIcon(specialistType: string): React.ComponentType<{ className?:
   return Sparkles;
 }
 
+function renderTopicIcon(specialistType: string, className?: string) {
+  const Icon = getTopicIcon(specialistType);
+  return <Icon className={className} />;
+}
+
 function getTopicLabel(specialistType: string): string {
   const config = getSpecialistConfig(specialistType);
   if (config) return config.displayName;
@@ -688,7 +693,6 @@ export function StrategyHero({
   onExpand
 }: StrategyHeroProps) {
   const topic = section.specialist_type || 'general';
-  const TopicIcon = getTopicIcon(topic);
   const topicLabel = getTopicLabel(topic);
   const heroImage = getHeroImage(section);
   // Deduplicate constraints — backend may emit the same rule twice
@@ -808,7 +812,7 @@ export function StrategyHero({
               'dark:bg-white/10'
             )}
           >
-            <TopicIcon className={cn('w-4 h-4', specialistColors.icon)} />
+            {renderTopicIcon(topic, cn('w-4 h-4', specialistColors.icon))}
           </div>
 
           {/* Title and Summary */}
@@ -1019,7 +1023,7 @@ export function StrategyHero({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               {/* Topic Icon */}
-              <TopicIcon className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              {renderTopicIcon(topic, "w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0")}
 
               {/* Title */}
               <span className="text-xs font-bold text-zinc-900 dark:text-white truncate">
@@ -1317,7 +1321,7 @@ export function StrategyHero({
                         'bg-white/20 backdrop-blur-md text-white border border-white/20'
                       )}
                     >
-                      <TopicIcon className="w-3 h-3" />
+                      {renderTopicIcon(topic, "w-3 h-3")}
                       {topicLabel}
                     </span>
                   </div>
@@ -1482,7 +1486,7 @@ export function StrategyHero({
               'bg-white/20 backdrop-blur-md text-white border border-white/20'
             )}
           >
-            <TopicIcon className="w-3 h-3" />
+            {renderTopicIcon(topic, "w-3 h-3")}
             {topicLabel} Strategy
           </span>
 
@@ -1678,7 +1682,7 @@ export function StrategyHero({
                   'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest',
                   'bg-white/20 backdrop-blur-md text-white border border-white/20'
                 )}>
-                  <TopicIcon className="w-3 h-3" />
+                  {renderTopicIcon(topic, "w-3 h-3")}
                   {topicLabel}
                 </span>
               </div>

@@ -13,7 +13,7 @@ Usage:
 """
 
 # State Models
-from app.planner.state.schemas import (
+from app.planner.state.graph_state import (
     # Core models
     Activity,
     # Enums
