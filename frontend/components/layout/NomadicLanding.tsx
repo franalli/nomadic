@@ -139,7 +139,13 @@ export function NomadicLanding() {
   const { activeSheet, openSheet, closeSheet } = useSheetManager();
 
   // View navigation - decoupled from plan_view_state
-  const { navigateTo, hasLeftSetup: _hasLeftSetup, finalizePlan, canViewPlan, activeView } = useViewNavigation();
+  const {
+    navigateTo,
+    hasLeftSetup: _hasLeftSetup,
+    finalizePlan,
+    canViewPlan,
+    activeView,
+  } = useViewNavigation();
 
   // ChatPanel ref - defined early so regeneration can trigger via it
   const chatPanelRef = useRef<ChatPanelHandle | null>(null);
@@ -188,11 +194,14 @@ export function NomadicLanding() {
 
   // Wrapper for legacy addToast signature (message, type) -> toast(message, { type })
   // Maps 'confirmation' type to 'success' since ToastProvider only supports standard types
-  const addToast = useCallback((message: string, type: ToastType = 'info') => {
-    // Map legacy 'confirmation' type to 'success' for the unified toast system
-    const mappedType = type === 'confirmation' ? 'success' : type;
-    toast(message, { type: mappedType as 'success' | 'info' | 'warning' | 'error' });
-  }, [toast]);
+  const addToast = useCallback(
+    (message: string, type: ToastType = 'info') => {
+      // Map legacy 'confirmation' type to 'success' for the unified toast system
+      const mappedType = type === 'confirmation' ? 'success' : type;
+      toast(message, { type: mappedType as 'success' | 'info' | 'warning' | 'error' });
+    },
+    [toast]
+  );
 
   // Local UI generation state (fallback if backend doesn't emit generation in envelope)
   const [uiGeneration, setUiGeneration] = useState<GenerationState | null>(null);
@@ -239,7 +248,10 @@ export function NomadicLanding() {
     fetchDestinationImage(destination)
       .then((res) => {
         // Only update if not aborted and this is still the current destination
-        if (!controller.signal.aborted && lastFetchedDestination.current === destination) {
+        if (
+          !controller.signal.aborted &&
+          lastFetchedDestination.current === destination
+        ) {
           setDestinationImageUrl(res.image_url);
         }
       })
@@ -288,7 +300,9 @@ export function NomadicLanding() {
       // Reset chat store synchronously so empty state ("Where to next?") shows
       // immediately — don't wait for async branchManagerStartNewSession network calls
       useChatStore.getState().resetChat();
-      console.log('[handleStartNewSession] ✅ documentStore.reset() + chatStore.resetChat() done');
+      console.log(
+        '[handleStartNewSession] ✅ documentStore.reset() + chatStore.resetChat() done'
+      );
       // Clear shortlist (saved tiles)
       shortlist.clear();
       // Clear local UI generation state
@@ -346,7 +360,13 @@ export function NomadicLanding() {
     if (!isDesktop) {
       mobileNavigateToPlan();
     }
-  }, [storeTripInputs, handleGeneratePlanStart, navigateTo, isDesktop, mobileNavigateToPlan]);
+  }, [
+    storeTripInputs,
+    handleGeneratePlanStart,
+    navigateTo,
+    isDesktop,
+    mobileNavigateToPlan,
+  ]);
 
   // Compare inputs after plan result and show receipt
   const handlePlanResultWithReceipt = useCallback(
@@ -440,7 +460,9 @@ export function NomadicLanding() {
   const docGeneration = useDocumentStore((s) => s.document?.generation);
   const docOpenDecisions = useDocumentStore((s) => s.document?.open_decisions);
   const docItineraryOverview = useDocumentStore((s) => s.document?.itinerary_overview);
-  const docItineraryAssumptions = useDocumentStore((s) => s.document?.itinerary_assumptions);
+  const docItineraryAssumptions = useDocumentStore(
+    (s) => s.document?.itinerary_assumptions
+  );
   const docNeedsRefresh = useDocumentStore((s) => s.document?.needs_refresh);
   const docCanExpand = useDocumentStore((s) => s.document?.can_expand_to_itinerary);
 
@@ -757,7 +779,14 @@ export function NomadicLanding() {
       }
       setActiveView('planning');
     }
-  }, [hasDates, canViewPlan, activeView, isDesktop, mobileSetHasNewContent, setActiveView]);
+  }, [
+    hasDates,
+    canViewPlan,
+    activeView,
+    isDesktop,
+    mobileSetHasNewContent,
+    setActiveView,
+  ]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Itinerary Generation Flow
@@ -773,240 +802,264 @@ export function NomadicLanding() {
 
   // Actual itinerary generation logic - accepts optional override to avoid state race
   const STREAM_TIMEOUT_MS = 30000;
-  const proceedWithItineraryGeneration = useCallback(async (options?: { forceFullRebuild?: boolean }) => {
-    // RACE GUARD: Check if generation is already in progress via store
-    // (checking store directly avoids stale closure issues)
-    const existingRunId = useDocumentStore.getState().currentRunId;
-    if (existingRunId) {
-      console.log('[proceedWithItineraryGeneration] ⏭️ Skipped - generation already registered:', existingRunId);
-      return;
-    }
-
-    // RACE GUARD: Check if expand is already in progress (prevents cascade)
-    if (useDocumentStore.getState().expandInProgress) {
-      console.log('[proceedWithItineraryGeneration] ⏭️ Skipped - expandInProgress flag set');
-      return;
-    }
-
-    // Generate runId for this generation (also serves as idempotency key)
-    const runId = crypto.randomUUID();
-
-    // Start generation in documentStore - gets AbortController and registers runId
-    // ATOMIC: startGeneration returns null if another generation is already running
-    const abortController = documentStore.startGeneration(runId);
-
-    if (!abortController) {
-      console.log('[proceedWithItineraryGeneration] ⏭️ Skipped - startGeneration returned null');
-      return;
-    }
-
-    // Set expand-in-progress flag to prevent cascade with preference auto-regen
-    useDocumentStore.getState().setExpandInProgress(true);
-
-    // Set local UI generation state immediately
-    setUiGeneration({ active: true, stage: 'itinerary' });
-    setLastGenerationError(null);
-
-    // Timeout handling
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const resetTimeout = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
-        if (documentStore.isCurrentRun(runId)) {
-          setUiGeneration({
-            active: true,
-            stage: 'itinerary',
-            message: 'Still working...',
-          });
-        }
-      }, STREAM_TIMEOUT_MS);
-    };
-
-    resetTimeout();
-
-    try {
-      // FIX: Read LIVE state from store to avoid stale closure
-      // The callback can be triggered immediately after a Zustand merge, but before
-      // React re-renders. Using getState() ensures we get the merged strategy_sections.
-      const freshState = useDocumentStore.getState();
-      const currentDoc = freshState.document;
-      const preferredTileIds = freshState.preferredTileIds;
-
-      // Build preferences from heart state
-      const tiles = currentDoc?.tiles ?? {};
-      const preferredHotelIds: string[] = [];
-      const preferredActivityIds: string[] = [];
-
-      // Categorize preferred tiles by type (handle various type variants)
-      for (const tileId of preferredTileIds) {
-        const tile = tiles[tileId];
-        const tileType = (tile?.type || '').toLowerCase();
-        if (tile) {
-          // Match hotel variants
-          if (tileType === 'hotel' || tileType === 'stay' || tileType === 'accommodation') {
-            preferredHotelIds.push(tileId);
-          }
-          // Match activity variants
-          else if (
-            tileType === 'activity' ||
-            tileType === 'experience' ||
-            tileType === 'tour' ||
-            tileType === 'attraction' ||
-            tileType === 'excursion' ||
-            tileType === 'ticket' ||
-            tileType === 'event'
-          ) {
-            preferredActivityIds.push(tileId);
-          }
-        }
-      }
-
-      // SAFETY: Check if signal was aborted before making the fetch
-      if (abortController.signal.aborted) return;
-
-      // SAFETY: Verify we're still the current run right before fetch
-      if (!documentStore.isCurrentRun(runId)) return;
-
-      // Debug: Log what we're sending (using fresh state)
-      console.log('[proceedWithItineraryGeneration] 📦 Sending (fresh state):', {
-        strategy_sections: currentDoc?.strategy_sections?.map(s => ({
-          type: s.specialist_type,
-          content_added_count: s.content_added?.length ?? 0
-        })),
-        force_full_rebuild: options?.forceFullRebuild ?? false,
-      });
-
-      const response = await apiFetch('/api/expand-itinerary', {
-        method: 'POST',
-        body: JSON.stringify({
-          idempotency_key: runId,
-          // Pass document context so backend can generate itinerary
-          trip_inputs: currentDoc?.trip_inputs,
-          strategy_sections: currentDoc?.strategy_sections,
-          tiles: currentDoc?.tiles,
-          // Pass user heart preferences for AI weighting
-          preferences:
-            preferredHotelIds.length > 0 || preferredActivityIds.length > 0
-              ? {
-                  preferred_hotel_ids: preferredHotelIds,
-                  preferred_activity_ids: preferredActivityIds,
-                }
-              : null,
-          // Force full rebuild when structural change detected (new specialist added)
-          force_full_rebuild: options?.forceFullRebuild ?? false,
-        }),
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      if (!response.body) {
-        setLastGenerationError('Streaming not supported. Please retry.');
-        setUiGeneration(null);
-        if (timeoutId) clearTimeout(timeoutId);
+  const proceedWithItineraryGeneration = useCallback(
+    async (options?: { forceFullRebuild?: boolean }) => {
+      // RACE GUARD: Check if generation is already in progress via store
+      // (checking store directly avoids stale closure issues)
+      const existingRunId = useDocumentStore.getState().currentRunId;
+      if (existingRunId) {
+        console.log(
+          '[proceedWithItineraryGeneration] ⏭️ Skipped - generation already registered:',
+          existingRunId
+        );
         return;
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
+      // RACE GUARD: Check if expand is already in progress (prevents cascade)
+      if (useDocumentStore.getState().expandInProgress) {
+        console.log(
+          '[proceedWithItineraryGeneration] ⏭️ Skipped - expandInProgress flag set'
+        );
+        return;
+      }
 
-      const parser = createStreamParser((event: StreamEvent) => {
-        if (!documentStore.isCurrentRun(runId)) {
-          console.debug('Ignoring late event from stale run');
+      // Generate runId for this generation (also serves as idempotency key)
+      const runId = crypto.randomUUID();
+
+      // Start generation in documentStore - gets AbortController and registers runId
+      // ATOMIC: startGeneration returns null if another generation is already running
+      const abortController = documentStore.startGeneration(runId);
+
+      if (!abortController) {
+        console.log(
+          '[proceedWithItineraryGeneration] ⏭️ Skipped - startGeneration returned null'
+        );
+        return;
+      }
+
+      // Set expand-in-progress flag to prevent cascade with preference auto-regen
+      useDocumentStore.getState().setExpandInProgress(true);
+
+      // Set local UI generation state immediately
+      setUiGeneration({ active: true, stage: 'itinerary' });
+      setLastGenerationError(null);
+
+      // Timeout handling
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      const resetTimeout = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+          if (documentStore.isCurrentRun(runId)) {
+            setUiGeneration({
+              active: true,
+              stage: 'itinerary',
+              message: 'Still working...',
+            });
+          }
+        }, STREAM_TIMEOUT_MS);
+      };
+
+      resetTimeout();
+
+      try {
+        // FIX: Read LIVE state from store to avoid stale closure
+        // The callback can be triggered immediately after a Zustand merge, but before
+        // React re-renders. Using getState() ensures we get the merged strategy_sections.
+        const freshState = useDocumentStore.getState();
+        const currentDoc = freshState.document;
+        const preferredTileIds = freshState.preferredTileIds;
+
+        // Build preferences from heart state
+        const tiles = currentDoc?.tiles ?? {};
+        const preferredHotelIds: string[] = [];
+        const preferredActivityIds: string[] = [];
+
+        // Categorize preferred tiles by type (handle various type variants)
+        for (const tileId of preferredTileIds) {
+          const tile = tiles[tileId];
+          const tileType = (tile?.type || '').toLowerCase();
+          if (tile) {
+            // Match hotel variants
+            if (
+              tileType === 'hotel' ||
+              tileType === 'stay' ||
+              tileType === 'accommodation'
+            ) {
+              preferredHotelIds.push(tileId);
+            }
+            // Match activity variants
+            else if (
+              tileType === 'activity' ||
+              tileType === 'experience' ||
+              tileType === 'tour' ||
+              tileType === 'attraction' ||
+              tileType === 'excursion' ||
+              tileType === 'ticket' ||
+              tileType === 'event'
+            ) {
+              preferredActivityIds.push(tileId);
+            }
+          }
+        }
+
+        // SAFETY: Check if signal was aborted before making the fetch
+        if (abortController.signal.aborted) return;
+
+        // SAFETY: Verify we're still the current run right before fetch
+        if (!documentStore.isCurrentRun(runId)) return;
+
+        // Debug: Log what we're sending (using fresh state)
+        console.log('[proceedWithItineraryGeneration] 📦 Sending (fresh state):', {
+          strategy_sections: currentDoc?.strategy_sections?.map((s) => ({
+            type: s.specialist_type,
+            content_added_count: s.content_added?.length ?? 0,
+          })),
+          force_full_rebuild: options?.forceFullRebuild ?? false,
+        });
+
+        const response = await apiFetch('/api/expand-itinerary', {
+          method: 'POST',
+          body: JSON.stringify({
+            idempotency_key: runId,
+            // Pass document context so backend can generate itinerary
+            trip_inputs: currentDoc?.trip_inputs,
+            strategy_sections: currentDoc?.strategy_sections,
+            tiles: currentDoc?.tiles,
+            // Pass user heart preferences for AI weighting
+            preferences:
+              preferredHotelIds.length > 0 || preferredActivityIds.length > 0
+                ? {
+                    preferred_hotel_ids: preferredHotelIds,
+                    preferred_activity_ids: preferredActivityIds,
+                  }
+                : null,
+            // Force full rebuild when structural change detected (new specialist added)
+            force_full_rebuild: options?.forceFullRebuild ?? false,
+          }),
+          signal: abortController.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        if (!response.body) {
+          setLastGenerationError('Streaming not supported. Please retry.');
+          setUiGeneration(null);
+          if (timeoutId) clearTimeout(timeoutId);
           return;
         }
 
-        resetTimeout();
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
 
-        console.debug('[expand-itinerary] Received event:', event.type, event);
-        if (event.type === 'envelope') {
-          console.debug('[expand-itinerary] Merging envelope:', {
-            day_cards: event.plan_envelope?.day_cards?.length ?? 0,
-            plan_view_state: event.plan_envelope?.plan_view_state,
-          });
-          documentStore.mergeEnvelope(event.plan_envelope);
-        } else if (event.type === 'progress') {
-          setUiGeneration({
-            active: true,
-            stage: event.stage,
-            message: event.message,
-            pct: event.pct,
-          });
-        } else if (event.type === 'done') {
-          console.debug('[expand-itinerary] Generation complete');
-          setUiGeneration(null);
-          setLastGenerationError(null);
-          // Sync version from backend to prevent 409 on next PATCH
-          // expand-itinerary persists changes which increments version
-          if (typeof event.version === 'number') {
-            useDocumentStore.setState({ version: event.version });
+        const parser = createStreamParser((event: StreamEvent) => {
+          if (!documentStore.isCurrentRun(runId)) {
+            console.debug('Ignoring late event from stale run');
+            return;
           }
-          // Sync preferences to track which were used in this generation
-          documentStore.markPreferencesAsApplied();
-          // Log warning if some preferred activities couldn't fit
-          if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
-            console.warn(
-              `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
-            );
-          }
-          // Show toast for activity reductions (e.g., diving truncated due to no-fly buffer)
-          if (event.warnings && event.warnings.length > 0) {
-            event.warnings.forEach((warning: string) => {
-              addToast(warning, 'info');
+
+          resetTimeout();
+
+          console.debug('[expand-itinerary] Received event:', event.type, event);
+          if (event.type === 'envelope') {
+            console.debug('[expand-itinerary] Merging envelope:', {
+              day_cards: event.plan_envelope?.day_cards?.length ?? 0,
+              plan_view_state: event.plan_envelope?.plan_view_state,
             });
-          }
-        } else if (event.type === 'error') {
-          // CONSTRAINT_CONFLICT is a business-logic response, not an actual error.
-          // It contains partial day_cards (what CAN fit) + conflict resolutions.
-          let parsed: Record<string, unknown> | null = null;
-          try {
-            parsed = typeof event.message === 'string' ? JSON.parse(event.message) : event.message;
-          } catch { /* not JSON — treat as generic error */ }
-
-          if (parsed && parsed.error === 'CONSTRAINT_CONFLICT') {
-            console.warn('[expand-itinerary] Constraint conflict:', parsed);
-            const dayCards = parsed.day_cards as Array<Record<string, unknown>> | undefined;
-            if (dayCards && dayCards.length > 0) {
-              console.debug(`[expand-itinerary] Storing ${dayCards.length} partial day cards from conflict`);
-              documentStore.mergeEnvelope({
-                day_cards: dayCards as unknown as PlanDocumentData['day_cards'],
-                plan_view_state: 'S3_PARTIAL_CONFLICT' as PlanDocumentData['plan_view_state'],
+            documentStore.mergeEnvelope(event.plan_envelope);
+          } else if (event.type === 'progress') {
+            setUiGeneration({
+              active: true,
+              stage: event.stage,
+              message: event.message,
+              pct: event.pct,
+            });
+          } else if (event.type === 'done') {
+            console.debug('[expand-itinerary] Generation complete');
+            setUiGeneration(null);
+            setLastGenerationError(null);
+            // Sync version from backend to prevent 409 on next PATCH
+            // expand-itinerary persists changes which increments version
+            if (typeof event.version === 'number') {
+              useDocumentStore.setState({ version: event.version });
+            }
+            // Sync preferences to track which were used in this generation
+            documentStore.markPreferencesAsApplied();
+            // Log warning if some preferred activities couldn't fit
+            if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
+              console.warn(
+                `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
+              );
+            }
+            // Show toast for activity reductions (e.g., diving truncated due to no-fly buffer)
+            if (event.warnings && event.warnings.length > 0) {
+              event.warnings.forEach((warning: string) => {
+                addToast(warning, 'info');
               });
             }
-          } else {
-            console.error('[expand-itinerary] Error received:', event.message);
-            setLastGenerationError(event.message || 'Failed to generate itinerary');
-          }
-        }
-      });
+          } else if (event.type === 'error') {
+            // CONSTRAINT_CONFLICT is a business-logic response, not an actual error.
+            // It contains partial day_cards (what CAN fit) + conflict resolutions.
+            let parsed: Record<string, unknown> | null = null;
+            try {
+              parsed =
+                typeof event.message === 'string'
+                  ? JSON.parse(event.message)
+                  : event.message;
+            } catch {
+              /* not JSON — treat as generic error */
+            }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        parser.feed(decoder.decode(value, { stream: true }));
+            if (parsed && parsed.error === 'CONSTRAINT_CONFLICT') {
+              console.warn('[expand-itinerary] Constraint conflict:', parsed);
+              const dayCards = parsed.day_cards as
+                | Array<Record<string, unknown>>
+                | undefined;
+              if (dayCards && dayCards.length > 0) {
+                console.debug(
+                  `[expand-itinerary] Storing ${dayCards.length} partial day cards from conflict`
+                );
+                documentStore.mergeEnvelope({
+                  day_cards: dayCards as unknown as PlanDocumentData['day_cards'],
+                  plan_view_state:
+                    'S3_PARTIAL_CONFLICT' as PlanDocumentData['plan_view_state'],
+                });
+              }
+            } else {
+              console.error('[expand-itinerary] Error received:', event.message);
+              setLastGenerationError(event.message || 'Failed to generate itinerary');
+            }
+          }
+        });
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          parser.feed(decoder.decode(value, { stream: true }));
+        }
+        parser.flush();
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          console.debug('Itinerary generation aborted');
+          return;
+        }
+        console.error('Failed to expand to itinerary:', error);
+        setLastGenerationError('Something went wrong. Please try again.');
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        // Clear expand-in-progress flag
+        useDocumentStore.getState().setExpandInProgress(false);
+        if (documentStore.isCurrentRun(runId)) {
+          // Clear generation state to allow re-entry (e.g., structural change auto-expand)
+          documentStore.completeGeneration();
+          setUiGeneration(null);
+        }
       }
-      parser.flush();
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        console.debug('Itinerary generation aborted');
-        return;
-      }
-      console.error('Failed to expand to itinerary:', error);
-      setLastGenerationError('Something went wrong. Please try again.');
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-      // Clear expand-in-progress flag
-      useDocumentStore.getState().setExpandInProgress(false);
-      if (documentStore.isCurrentRun(runId)) {
-        // Clear generation state to allow re-entry (e.g., structural change auto-expand)
-        documentStore.completeGeneration();
-        setUiGeneration(null);
-      }
-    }
-  // PERF: No storeDocument in deps - function uses getState() for live reads
-  }, [shortlist.savedTileIds, documentStore]);
+      // PERF: No storeDocument in deps - function uses getState() for live reads
+    },
+    [shortlist.savedTileIds, documentStore]
+  );
 
   // ─────────────────────────────────────────────────────────────────────────────
   // PATH A: Auto-Trigger Itinerary for Multi-Specialist Trips
@@ -1066,7 +1119,9 @@ export function NomadicLanding() {
         // RE-CHECK: If itinerary was generated by another path (e.g., ChatPanel CATCH_ALL), skip
         const freshDayCards = useDocumentStore.getState().document?.day_cards;
         if (freshDayCards && freshDayCards.length > 0) {
-          console.log('[auto-trigger] ⏭️ Skipped - itinerary already exists from another trigger');
+          console.log(
+            '[auto-trigger] ⏭️ Skipped - itinerary already exists from another trigger'
+          );
           return;
         }
         proceedWithItineraryGeneration();
@@ -1194,7 +1249,7 @@ export function NomadicLanding() {
         hasStartDate && hasEndDate
           ? `${formatDateForDisplay(tripInputs.start_date)} - ${formatDateForDisplay(tripInputs.end_date)}`
           : hasStartDate
-            ? `${formatDateForDisplay(tripInputs.start_date)} → ?`  // Incomplete state
+            ? `${formatDateForDisplay(tripInputs.start_date)} → ?` // Incomplete state
             : undefined
       }
       budget={
@@ -1288,7 +1343,10 @@ export function NomadicLanding() {
           bookTabEnabled={bookTabEnabled}
           onSelectDates={() => openSheet('dates')}
           mobileStatusBar={
-            !isDesktop && (hasDestination || Boolean(tripInputs.origin) || Boolean(tripInputs.start_date)) ? (
+            !isDesktop &&
+            (hasDestination ||
+              Boolean(tripInputs.origin) ||
+              Boolean(tripInputs.start_date)) ? (
               <TripStatusBar
                 tripInputs={tripInputs}
                 specialists={docExecutedTopics ?? []}
@@ -1324,7 +1382,7 @@ export function NomadicLanding() {
                 variant="ghost"
                 size="sm"
                 onClick={handleStartNewSession}
-                className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-500 dark:hover:text-white dark:hover:bg-white/5"
+                className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-500 dark:hover:bg-white/5 dark:hover:text-white"
               >
                 <RotateCcw className="mr-1.5 h-3 w-3" />
                 Reset
@@ -1400,7 +1458,8 @@ export function NomadicLanding() {
           closeSheet();
 
           // Trigger itinerary rebuild if one exists
-          const hasItinerary = (useDocumentStore.getState().document?.day_cards?.length ?? 0) > 0;
+          const hasItinerary =
+            (useDocumentStore.getState().document?.day_cards?.length ?? 0) > 0;
           if (hasItinerary) {
             proceedWithItineraryGeneration({ forceFullRebuild: true });
           }
@@ -1482,7 +1541,13 @@ export function NomadicLanding() {
         open={gearFlightsSheetOpen}
         onOpenChange={setGearFlightsSheetOpen}
         enabled={true}
-        settings={tripInputs.flight_settings || { round_trip: true, cabin_class: 'economy', direct_only: false }}
+        settings={
+          tripInputs.flight_settings || {
+            round_trip: true,
+            cabin_class: 'economy',
+            direct_only: false,
+          }
+        }
         hasOrigin={hasOrigin}
         hasDestination={hasDestination}
         hasDates={hasDates}
@@ -1517,9 +1582,7 @@ function AppWithStartup() {
       {!hasBooted && <StartupSequence onComplete={() => setHasBooted(true)} />}
       <div
         className={
-          hasBooted
-            ? 'opacity-100 transition-opacity duration-300'
-            : 'opacity-0'
+          hasBooted ? 'opacity-100 transition-opacity duration-300' : 'opacity-0'
         }
       >
         <NomadicLanding />

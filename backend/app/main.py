@@ -512,7 +512,13 @@ async_db_dependency = Depends(get_async_db)
 
 
 def _rate_key(request: Request) -> str:
-    """Session cookie -> IP fallback for rate limit keying."""
+    """Session cookie -> IP fallback for rate limit keying.
+
+    OPTIONS preflights share a single bucket so CORS preflight requests
+    never exhaust a real user's rate limit.
+    """
+    if request.method == "OPTIONS":
+        return "__preflight__"
     return request.cookies.get("session_id") or get_remote_address(request)
 
 
@@ -521,10 +527,6 @@ app.state.limiter = limiter
 
 
 def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
-    # Never rate-limit CORS preflight — browser sends OPTIONS before the actual
-    # request and a 429 here blocks the entire flow with a CORS error.
-    if request.method == "OPTIONS":
-        return Response(status_code=200)
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Please slow down."},

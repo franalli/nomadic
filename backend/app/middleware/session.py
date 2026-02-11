@@ -21,7 +21,6 @@ CSRF Protection:
 """
 
 import secrets
-import threading
 from typing import Callable
 
 from cachetools import TTLCache
@@ -38,8 +37,9 @@ CSRF_COOKIE_NAME = "csrf"
 SESSION_MAX_AGE = 14 * 24 * 60 * 60  # 14 days in seconds
 
 # Session creation throttle: max 10 new sessions per IP per hour
+# TTLCache is not thread-safe but uvicorn runs a single event loop thread,
+# so no lock is needed. Using threading.Lock here deadlocks BaseHTTPMiddleware.
 _session_creation_counter: TTLCache = TTLCache(maxsize=10_000, ttl=3600)
-_session_counter_lock = threading.Lock()
 _MAX_SESSIONS_PER_IP_PER_HOUR = 10
 
 
@@ -89,6 +89,10 @@ class SessionMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable,
     ) -> Response:
+        # Skip session management for infrastructure endpoints
+        if request.url.path == "/health":
+            return await call_next(request)
+
         # Read existing cookies
         session_id = request.cookies.get(SESSION_COOKIE_NAME)
         csrf_token = request.cookies.get(CSRF_COOKIE_NAME)
@@ -100,14 +104,13 @@ class SessionMiddleware(BaseHTTPMiddleware):
         if new_session:
             # Throttle session creation by IP
             client_ip = request.client.host if request.client else "unknown"
-            with _session_counter_lock:
-                count = _session_creation_counter.get(client_ip, 0) + 1
-                if count > _MAX_SESSIONS_PER_IP_PER_HOUR:
-                    return JSONResponse(
-                        status_code=429,
-                        content={"detail": "Too many sessions created. Please try again later."},
-                    )
-                _session_creation_counter[client_ip] = count
+            count = _session_creation_counter.get(client_ip, 0) + 1
+            if count > _MAX_SESSIONS_PER_IP_PER_HOUR:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many sessions created. Please try again later."},
+                )
+            _session_creation_counter[client_ip] = count
             session_id = generate_session_token()
         if new_csrf:
             csrf_token = _generate_csrf_token()

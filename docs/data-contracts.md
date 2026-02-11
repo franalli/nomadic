@@ -88,7 +88,7 @@ Media type: `application/x-ndjson`. Events:
 
 ### Rate Limiting (`slowapi`)
 
-Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests are exempt — a 429 on preflight blocks the entire flow with a browser CORS error. Tiered:
+Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests share a single `__preflight__` bucket so they never exhaust a real user's rate limit. Tiered:
 
 | Tier | Endpoints | Limit |
 |------|-----------|-------|
@@ -101,7 +101,7 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests are
 
 - **Body size limit:** 200KB max (`Content-Length` check before Pydantic parsing)
 - **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
-- **Session throttle:** Max 10 new sessions per IP per hour
+- **Session middleware:** Skips `/health` (no session cookie overhead on health checks). Max 10 new sessions per IP per hour
 - **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP
 - **Frontend CSP:** Configured in `next.config.mjs` — `unsafe-eval` allowed in dev only
 

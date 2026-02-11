@@ -4,7 +4,7 @@
 
 - **Focus:** [describe focus]
 - **Secondary:** [secondary priority or "none"]
-- **Active work:** Builder-aware constraint guard (re-surfaces violations when builder fails via `last_builder_success` metadata), day preference hallucination guard in router extraction, "Expedition Leader" synthesizer voice (no system jargon), builder-derived "Extend to" suggestion chips, `price_display` pre-formatting on tiles, CORS preflight rate-limit fix, removed ConflictResolutionBanner (conflict resolution now chat-driven via suggestion chips), dirty settings tracker (`markSettingDirty`) preventing overwrite of backend-derived values.
+- **Active work:** Builder-aware constraint guard (re-surfaces violations when builder fails via `last_builder_success` metadata), day preference hallucination guard in router extraction, "Expedition Leader" synthesizer voice (no system jargon), builder-derived "Extend to" suggestion chips, `price_display` pre-formatting on tiles, removed ConflictResolutionBanner (conflict resolution now chat-driven via suggestion chips), dirty settings tracker (`markSettingDirty`) preventing overwrite of backend-derived values. Shipped: CORS preflight rate-limit fix (dedicated `__preflight__` bucket), removed unnecessary `threading.Lock` from db.py and session middleware (single event loop), session middleware skips `/health`.
 - **Known broken:** none
 - **DO NOT touch this sprint:** [frozen files/features]
 
