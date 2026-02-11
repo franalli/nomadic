@@ -126,7 +126,7 @@ const ToastItem = memo(function ToastItem({ toast, onDismiss }: ToastItemProps) 
       </div>
 
       {/* Message */}
-      <span className="flex-1 min-w-0 truncate">{message}</span>
+      <span className="flex-1 min-w-0 break-words">{message}</span>
 
       {/* Dismiss button - min 44px touch target per design-system.md */}
       <button
@@ -170,7 +170,9 @@ const ToastContainer = memo(function ToastContainer({
         // Desktop: bottom-right (system notification tray area)
         'md:bottom-8 md:right-8 md:top-auto md:left-auto md:translate-x-0',
         // Mobile: top-center, safe-area aware (avoids keyboard/chat input)
-        'top-[calc(env(safe-area-inset-top)+16px)] left-1/2 -translate-x-1/2'
+        'top-[calc(env(safe-area-inset-top)+16px)] left-1/2 -translate-x-1/2',
+        // Mobile width constraint — never exceed viewport
+        'w-[calc(100vw-32px)] md:w-auto md:max-w-sm'
       )}
     >
       <div className="flex flex-col gap-2 items-end pointer-events-auto">

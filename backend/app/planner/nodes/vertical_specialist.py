@@ -1382,6 +1382,25 @@ async def _merge_specialist_into_state(
         clog.node_end("SPECIALIST", duration_ms, topic=topic, status="infeasible")
 
         state.metadata["last_executed_specialist"] = topic
+
+        # Upsert an empty infeasible section so any stale cached section
+        # (from a prior turn where this specialist was feasible) gets replaced.
+        infeasible_section = build_specialist_section(
+            topic=topic,
+            destination=state.trip_plan.destination,
+            start_date=state.trip_plan.start_date,
+            end_date=state.trip_plan.end_date,
+            feasibility_status="infeasible",
+            feasibility_reason=output.feasibility_reason,
+            alternative_suggestion=output.alternative_suggestion,
+            constraints=[],
+            content_added=[],
+            enhancements=[],
+            hero_image=None,
+        )
+        upsert_section(state.metadata, infeasible_section, mode="appendable")
+        mark_topic_executed(state.metadata, topic)
+
         return  # infeasible — loop continues to next specialist
 
     # Handle CAVEAT case - activity possible with limitations
