@@ -87,6 +87,10 @@ class SessionMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable,
     ) -> Response:
+        # Skip session management for infrastructure endpoints
+        if request.url.path == "/health":
+            return await call_next(request)
+
         # Read existing cookies
         session_id = request.cookies.get(SESSION_COOKIE_NAME)
         csrf_token = request.cookies.get(CSRF_COOKIE_NAME)

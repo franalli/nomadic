@@ -6,7 +6,7 @@
  * them to deep links that navigate to the Plan tab and scroll to the card.
  */
 
-import { SPECIALIST_DISPLAY_NAMES, getSpecialistConfig } from './specialists';
+import { getSpecialistConfig,SPECIALIST_DISPLAY_NAMES } from './specialists';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

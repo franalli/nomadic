@@ -22,9 +22,9 @@ import {
 } from '@/components/plan/sheets';
 import { UnifiedChipRow } from '@/components/plan/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
-import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';

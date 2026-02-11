@@ -14,10 +14,9 @@ import Image from 'next/image';
 import { useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { getSpecialistColor } from '@/lib/specialists';
 import { cn, normalizeTitle } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
-
-import { getSpecialistColor } from '@/lib/specialists';
 
 import { PreferenceAttributionBadge, type PreferenceStatus } from './PreferenceAttributionBadge';
 import type { DisplayTime } from './types';
