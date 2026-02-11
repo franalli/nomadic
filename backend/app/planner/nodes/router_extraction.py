@@ -514,9 +514,17 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
     return extracted
 
 
-def _parse_day_preferences(raw: Optional[str]) -> dict[str, int]:
-    """Parse activity_day_preferences JSON string → dict. Returns {} on failure."""
+def _parse_day_preferences(raw: Optional[str], user_text: str = "") -> dict[str, int]:
+    """Parse activity_day_preferences JSON string → dict. Returns {} on failure.
+
+    Guards against LLM hallucination: day preferences require the user to state
+    a number (e.g. "3 days diving"). If the user message contains no digits,
+    the LLM is inferring counts from trip duration — reject those.
+    """
     if not raw:
+        return {}
+    if user_text and not any(c.isdigit() for c in user_text):
+        logger.info(f"[ROUTER] Ignoring hallucinated day_preferences: {raw} (no digits)")
         return {}
     try:
         parsed = json.loads(raw)
@@ -642,7 +650,10 @@ async def _classify_and_extract_with_llm(
 
 
 def _populate_trip_plan_from_router_output(
-    state: "GraphState", router_output: RouterOutput, fallback_destination: Optional[str]
+    state: "GraphState",
+    router_output: RouterOutput,
+    fallback_destination: Optional[str],
+    user_text: str = "",
 ) -> None:
     """
     Populate state.trip_plan fields from RouterOutput extraction.
@@ -742,7 +753,7 @@ def _populate_trip_plan_from_router_output(
             logger.info(f"[ROUTER] Categories: {merged} (from LLM: {validated})")
 
     # Persist activity day preferences (count-based, parsed from JSON string)
-    day_prefs = _parse_day_preferences(router_output.activity_day_preferences)
+    day_prefs = _parse_day_preferences(router_output.activity_day_preferences, user_text)
     if day_prefs:
         trip_inputs = state.metadata.get("trip_inputs", {})
         activity_settings = trip_inputs.get("activity_settings", {})

@@ -669,11 +669,20 @@ def generate_suggestions(state: GraphState) -> List[str]:
         plan = state.trip_plan
 
         # "Extend to Feb 24" — concrete date the router can parse
+        # Use builder's new_duration if available (more accurate than +2 heuristic)
         if plan.end_date:
             from datetime import datetime, timedelta
 
             end = datetime.strptime(plan.end_date, "%Y-%m-%d")
-            extended = end + timedelta(days=2)
+            builder_resolutions = state.metadata.get("last_builder_resolutions", [])
+            extend_res = next(
+                (r for r in builder_resolutions if r.get("action") == "extend_trip"), None
+            )
+            if extend_res and extend_res.get("new_duration") and plan.start_date:
+                start = datetime.strptime(plan.start_date, "%Y-%m-%d")
+                extended = start + timedelta(days=extend_res["new_duration"] - 1)
+            else:
+                extended = end + timedelta(days=2)
             chips.append(f"Extend to {extended.strftime('%b %-d')}")
 
         # "Add buffer day between activities" — restructure without extending

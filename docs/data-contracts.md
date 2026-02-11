@@ -88,7 +88,7 @@ Media type: `application/x-ndjson`. Events:
 
 ### Rate Limiting (`slowapi`)
 
-Keyed by session cookie → IP fallback. Tiered:
+Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests are exempt — a 429 on preflight blocks the entire flow with a browser CORS error. Tiered:
 
 | Tier | Endpoints | Limit |
 |------|-----------|-------|
@@ -136,6 +136,7 @@ PlanDocumentData
   |-- tiles: {tile_id -> Tile}
   |     |-- id, type (flight|hotel|activity), title, subtitle?
   |     |-- price_estimate?, live_price?, currency, deeplink_url
+  |     |-- price_display? (pre-formatted: "$120" or null, added by response_envelope)
   |     |-- geo: {lat, lon}?, tags[], source_agent? (specialist origin)
   |     '-- provider (expedia|booking|unknown), cancel_policy_summary?
   |
@@ -255,10 +256,15 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | `setFromPlanResponse()` | Merge backend GraphPlanResponse into store |
 | `mergeEnvelope()` | Streaming update: tiles, sections, day_cards, plan_view_state |
 | `commitTripInputs()` | Async PATCH with optimistic update + rollback |
+| `ensureSettingsFlushed()` | Flush only **dirty** settings before graph run (prevents overwriting backend-derived values) |
 | `fetchDocument()` | GET /api/document |
 | `patchDocument()` | PATCH /api/document |
 | `toggleTilePreference()` | Heart/unheart a tile |
 | `startGeneration()` / `abortGeneration()` / `completeGeneration()` | Streaming lifecycle |
+
+### User-Dirty Settings Tracker
+
+Module-level `_userDirtySettings: Set<string>` (not Zustand state — avoids re-renders). Each settings handler calls `markSettingDirty(key)` (e.g., `'activity_settings'`, `'hotel_settings'`). `ensureSettingsFlushed()` only PATCHes keys in the dirty set, then clears it. This prevents empty frontend defaults from overwriting backend-derived values (e.g., specialist-extracted categories like `["diving", "hiking"]`).
 
 ### State Guards
 

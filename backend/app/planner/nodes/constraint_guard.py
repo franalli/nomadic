@@ -590,10 +590,19 @@ async def constraint_guard(state: GraphState) -> GraphState:
         if sv.code not in existing_codes:
             # If the builder's constraint is already persisted from a previous turn,
             # the builder is enforcing it via clustering — suppress the violation.
+            # BUT: only suppress if the builder SUCCESSFULLY enforced the constraint
+            # last turn. If the builder failed (trip too short), re-surface the
+            # violation so the synthesizer can generate resolution chips.
             constraint_rule = _violation_to_constraint_rule.get(sv.code)
             if constraint_rule and canonicalize_rule(constraint_rule) in existing_rules:
-                log("GUARD", f"⏭️ {sv.code} suppressed: builder enforces {constraint_rule}")
-                continue
+                if state.metadata.get("last_builder_success", False):
+                    log("GUARD", f"⏭️ {sv.code} suppressed: builder enforces {constraint_rule}")
+                    continue
+                else:
+                    log(
+                        "GUARD",
+                        f"🔄 {sv.code} re-surfaced: builder failed to enforce {constraint_rule}",
+                    )
             violations.append(sv)
             existing_codes.add(sv.code)
             if sv.severity == "blocking":

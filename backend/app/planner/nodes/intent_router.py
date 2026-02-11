@@ -1969,7 +1969,7 @@ async def intent_router(state: GraphState) -> GraphState:
                     )
 
                 # Immediately persist to state.trip_plan
-                _populate_trip_plan_from_router_output(state, router_output, destination)
+                _populate_trip_plan_from_router_output(state, router_output, destination, user_text)
 
                 # Store for downstream reference
                 state.metadata["router_output"] = router_output.model_dump()

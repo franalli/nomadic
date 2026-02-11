@@ -1039,13 +1039,16 @@ def get_graph():
 # =============================================================================
 
 _graph = None
+_graph_lock = __import__("threading").Lock()
 
 
 def get_or_create_graph():
     """Get or create the graph instance (singleton pattern)."""
     global _graph
     if _graph is None:
-        _graph = get_graph()
+        with _graph_lock:
+            if _graph is None:
+                _graph = get_graph()
     return _graph
 
 

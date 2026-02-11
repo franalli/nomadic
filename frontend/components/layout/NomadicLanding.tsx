@@ -16,7 +16,6 @@ import {
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
-import type { ConflictData, ConflictResolution } from '@/components/plan/ConflictResolutionBanner';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { shouldAutoTriggerItinerary } from '@/components/plan/planStateHelpers';
 import {
@@ -47,7 +46,7 @@ import { formatDateForDisplay } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import { useMobileNavStore } from '@/state/mobileNavStore';
-import type { DocumentTripInputs } from '@/types/document';
+import type { DocumentTripInputs, PlanDocumentData } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { PlanState, PlanViewModel, PlanViewState } from '@/types/plan-envelope';
 
@@ -199,9 +198,6 @@ export function NomadicLanding() {
   const [uiGeneration, setUiGeneration] = useState<GenerationState | null>(null);
   const [lastGenerationError, setLastGenerationError] = useState<string | null>(null);
 
-  // Conflict state for Path A UX - shows conflict resolution banner when ItineraryBuilder fails
-  const [conflictData, setConflictData] = useState<ConflictData | null>(null);
-
   const [chatKey, setChatKey] = useState(0);
   const chatPanelContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -298,8 +294,6 @@ export function NomadicLanding() {
       // Clear local UI generation state
       setUiGeneration(null);
       setLastGenerationError(null);
-      // Clear conflict state
-      setConflictData(null);
       // Clear receipt data
       setReceiptData(null);
       previousTripInputsRef.current = null;
@@ -964,56 +958,28 @@ export function NomadicLanding() {
             });
           }
         } else if (event.type === 'error') {
-          // Check if this is a conflict error (Path A UX)
+          // CONSTRAINT_CONFLICT is a business-logic response, not an actual error.
+          // It contains partial day_cards (what CAN fit) + conflict resolutions.
+          let parsed: Record<string, unknown> | null = null;
           try {
-            const parsed = JSON.parse(event.message || '{}');
-            if (parsed.error === 'CONSTRAINT_CONFLICT' && parsed.conflicts) {
-              console.debug('[expand-itinerary] Conflict detected, showing partial timeline');
-              // Convert backend conflict to ConflictData format
-              const conflict = parsed.conflicts[0];
-              // Keep original backend actions - frontend now supports them
-              const resolutions = (parsed.resolutions || []).map((r: {
-                action: string;
-                description: string;
-                new_duration?: number;
-                keep_specialist?: string;
-                feasibility?: string;
-              }) => ({
-                action: r.action as 'extend_dates' | 'extend_trip' | 'remove_specialist' | 'reduce_activities',
-                label: r.description,
-                description: r.description,
-                new_duration: r.new_duration,
-                keep_specialist: r.keep_specialist,
-                feasibility: r.feasibility,
-              }));
-              setConflictData({
-                type: conflict.type || 'constraint_clash',
-                message: conflict.message || 'Constraint conflict detected',
-                specialists: conflict.specialists || [],
-                resolutions: resolutions.length > 0 ? resolutions : undefined,
+            parsed = typeof event.message === 'string' ? JSON.parse(event.message) : event.message;
+          } catch { /* not JSON — treat as generic error */ }
+
+          if (parsed && parsed.error === 'CONSTRAINT_CONFLICT') {
+            console.warn('[expand-itinerary] Constraint conflict:', parsed);
+            const dayCards = parsed.day_cards as Array<Record<string, unknown>> | undefined;
+            if (dayCards && dayCards.length > 0) {
+              console.debug(`[expand-itinerary] Storing ${dayCards.length} partial day cards from conflict`);
+              documentStore.mergeEnvelope({
+                day_cards: dayCards as unknown as PlanDocumentData['day_cards'],
+                plan_view_state: 'S3_PARTIAL_CONFLICT' as PlanDocumentData['plan_view_state'],
               });
-              // Store partial day_cards if present (auto-render partial timeline)
-              if (parsed.day_cards && parsed.day_cards.length > 0) {
-                console.debug(`[expand-itinerary] Storing ${parsed.day_cards.length} partial day cards`);
-                documentStore.mergeEnvelope({
-                  day_cards: parsed.day_cards,
-                  plan_view_state: 'S3_PARTIAL_CONFLICT',
-                });
-              }
-              setLastGenerationError(null); // Clear error - conflict banner handles it
-            } else {
-              console.error('[expand-itinerary] Error received:', event.message);
-              setLastGenerationError(event.message || 'Failed to generate itinerary');
-              setConflictData(null);
             }
-          } catch {
+          } else {
             console.error('[expand-itinerary] Error received:', event.message);
             setLastGenerationError(event.message || 'Failed to generate itinerary');
-            setConflictData(null);
           }
         }
-        // Note: 'conflict' event type would be handled here if backend supports it
-        // Currently conflicts are returned via error events with CONSTRAINT_CONFLICT code
       });
 
       while (true) {
@@ -1173,181 +1139,6 @@ export function NomadicLanding() {
     chatPanelRef.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
   }, []);
 
-  // Handler for conflict resolution (Path A UX)
-  // User selects how to resolve the constraint conflict
-  const handleResolveConflict = useCallback(async (resolution: ConflictResolution) => {
-    // Clear conflict state
-    setConflictData(null);
-    // Reset auto-trigger flag to allow re-generation
-    hasAutoTriggeredRef.current = false;
-
-    switch (resolution.action) {
-      case 'extend_dates':
-      case 'extend_trip': {
-        // Use backend's new_duration, or calculate fallback from conflict specialists
-        const startDate = tripInputs.start_date;
-        // Fallback heuristic: each specialist needs ~3 days, plus buffer
-        const fallbackDuration = conflictData?.specialists?.length
-          ? Math.max(5, conflictData.specialists.length * 3 + 2)
-          : undefined;
-        const newDuration = resolution.new_duration ?? fallbackDuration;
-
-        if (startDate && newDuration) {
-          const endDateStr = addDaysUTC(startDate, newDuration - 1);
-          await documentStore.commitTripInputs({ end_date: endDateStr });
-          addToast(`Trip extended to ${newDuration} days`, 'success');
-        } else {
-          // Last resort: show info toast
-          addToast('Unable to calculate extension - adjust dates manually', 'info');
-        }
-        // Auto-trigger will re-fire due to state change
-        break;
-      }
-      case 'remove_specialist': {
-        // Backend suggests which specialist to keep - call remove-specialist endpoint
-        const keepSpecialist = resolution.keep_specialist || conflictData?.specialists[0];
-        if (!keepSpecialist) {
-          addToast('Unable to determine which activity to focus on', 'error');
-          break;
-        }
-
-        // Generate runId for this operation (also serves as idempotency key)
-        const runId = crypto.randomUUID();
-
-        // Start generation in documentStore
-        const abortController = documentStore.startGeneration(runId);
-        if (!abortController) {
-          console.log('[handleResolveConflict] ⏭️ SKIPPED - another generation running');
-          return;
-        }
-        setUiGeneration({ active: true, stage: 'itinerary' });
-        setLastGenerationError(null);
-
-        try {
-          // Get current document state
-          const currentDoc = documentStore.document;
-          const tiles = currentDoc?.tiles ?? {};
-
-          // Build preferences (filtered to kept specialist if needed)
-          const preferredTileIds = useDocumentStore.getState().preferredTileIds;
-          const preferredHotelIds: string[] = [];
-          const preferredActivityIds: string[] = [];
-          for (const tileId of preferredTileIds) {
-            const tile = tiles[tileId];
-            const tileType = (tile?.type || '').toLowerCase();
-            if (tileType === 'hotel' || tileType === 'stay') {
-              preferredHotelIds.push(tileId);
-            } else if (['activity', 'experience', 'tour'].includes(tileType)) {
-              preferredActivityIds.push(tileId);
-            }
-          }
-
-          const response = await apiFetch('/api/remove-specialist', {
-            method: 'POST',
-            body: JSON.stringify({
-              idempotency_key: runId,
-              keep_specialist: keepSpecialist,
-              remove_hearted_tiles: false, // Keep hearted tiles for now
-              trip_inputs: currentDoc?.trip_inputs,
-              strategy_sections: currentDoc?.strategy_sections,
-              tiles: currentDoc?.tiles,
-              preferences:
-                preferredHotelIds.length > 0 || preferredActivityIds.length > 0
-                  ? {
-                      preferred_hotel_ids: preferredHotelIds,
-                      preferred_activity_ids: preferredActivityIds,
-                    }
-                  : undefined,
-            }),
-            signal: abortController.signal,
-          });
-
-          if (!response.ok) {
-            throw new Error(`Remove specialist failed: ${response.status}`);
-          }
-
-          // Process NDJSON streaming response
-          const reader = response.body?.getReader();
-          if (!reader) {
-            throw new Error('No response body');
-          }
-
-          const decoder = new TextDecoder();
-          let buffer = '';
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (!line.trim()) continue;
-              try {
-                const event = JSON.parse(line);
-                console.debug('[remove-specialist] Received event:', event.type, event);
-
-                if (event.type === 'envelope') {
-                  documentStore.mergeEnvelope(event.plan_envelope);
-                } else if (event.type === 'progress') {
-                  setUiGeneration({
-                    active: true,
-                    stage: event.stage || 'itinerary',
-                    message: event.message,
-                    pct: event.pct,
-                  });
-                } else if (event.type === 'done') {
-                  console.debug('[remove-specialist] Complete');
-                  setUiGeneration(null);
-                  setLastGenerationError(null);
-                  // Sync version from backend to prevent 409 on next PATCH
-                  if (typeof event.version === 'number') {
-                    useDocumentStore.setState({ version: event.version });
-                  }
-                  addToast(`Focused on ${keepSpecialist}`, 'success');
-                  // Log warning if some preferred activities couldn't fit
-                  if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
-                    console.warn(
-                      `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
-                    );
-                  }
-                  // Show toast for activity reductions
-                  if (event.warnings && event.warnings.length > 0) {
-                    event.warnings.forEach((warning: string) => {
-                      addToast(warning, 'info');
-                    });
-                  }
-                } else if (event.type === 'error') {
-                  console.error('[remove-specialist] Error:', event.message);
-                  setUiGeneration(null);
-                  setLastGenerationError(event.message);
-                  addToast('Failed to regenerate plan', 'error');
-                }
-              } catch {
-                // Ignore parse errors for incomplete lines
-              }
-            }
-          }
-        } catch (error) {
-          if ((error as DOMException)?.name === 'AbortError') {
-            console.log('[remove-specialist] Aborted');
-          } else {
-            console.error('[remove-specialist] Error:', error);
-            setLastGenerationError(String(error));
-            addToast('Failed to regenerate plan', 'error');
-          }
-          setUiGeneration(null);
-        } finally {
-          documentStore.abortGeneration();
-        }
-        break;
-      }
-      // Note: 'show_partial' removed - partial timeline auto-renders when conflicts exist
-    }
-  }, [tripInputs.start_date, documentStore, addToast, addDaysUTC, conflictData, setUiGeneration, setLastGenerationError]);
-
   // Handler for "Finalize & Unlock Booking" CTA (The Bridge)
   // Sets plan as finalized and navigates to Book view
   const handleFinalizePlan = useCallback(async () => {
@@ -1474,8 +1265,6 @@ export function NomadicLanding() {
       hasEverHadPlan={hasEverHadPlan}
       isRegenerating={isRegenerating}
       onSelectNights={handleSelectNights}
-      conflictData={conflictData}
-      onResolveConflict={handleResolveConflict}
       onOpenActivitySettings={() => setGearActivitiesSheetOpen(true)}
       onOpenStaysSettings={() => setGearStaysSheetOpen(true)}
       onOpenFlightsSettings={() => setGearFlightsSheetOpen(true)}

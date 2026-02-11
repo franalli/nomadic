@@ -4,7 +4,7 @@
 
 - **Focus:** [describe focus]
 - **Secondary:** [secondary priority or "none"]
-- **Active work:** Stage 12 shipped — synthesizer voice polish (no system jargon), per-response-type token limits, budget context enrichment + structured constraint violations in synthesis context, budget suggestion chips, static FALLBACK_MESSAGE replacing template fallbacks, `suggested_action` on budget constraint violations, fill-day endpoint (`POST /api/document/fill-day`), `generate_experience_tiles_for_day()`, Stepper UI component, day preference steppers in ActivitiesSheet, FreeDayCard fill button + category picker.
+- **Active work:** Builder-aware constraint guard (re-surfaces violations when builder fails via `last_builder_success` metadata), day preference hallucination guard in router extraction, "Expedition Leader" synthesizer voice (no system jargon), builder-derived "Extend to" suggestion chips, `price_display` pre-formatting on tiles, CORS preflight rate-limit fix, removed ConflictResolutionBanner (conflict resolution now chat-driven via suggestion chips), dirty settings tracker (`markSettingDirty`) preventing overwrite of backend-derived values.
 - **Known broken:** none
 - **DO NOT touch this sprint:** [frozen files/features]
 

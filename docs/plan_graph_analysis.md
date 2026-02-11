@@ -216,8 +216,9 @@ backend/app/planner/
 │  • planning: trip_plan.destination exists (default solver tone)             │
 │                                                                             │
 │  Solver Identity (planning/specialist_update):                              │
-│  - Lead with what the ENGINE DID, not what the destination IS               │
-│  - Mention constraints by name (24h no-fly buffer, surface intervals)       │
+│  - "Expedition Leader" voice: SHOW expertise through specifics              │
+│  - NEVER say "Specialist active", "Buffer applied" — system jargon          │
+│  - Explain constraints naturally within recommendations                     │
 │  - 2-3 sentences max, no travel-brochure adjectives                         │
 │                                                                             │
 │  Key Principle: "One voice, regardless of which agents contributed"         │
@@ -333,7 +334,7 @@ When `has_dates_in_message` is detected (via regex), the Router calls `_classify
 1. Uses `llm.with_structured_output(RouterOutput)` for guaranteed schema extraction
 2. Retries once on failure (`MAX_RETRIES = 1`) with raw error logging per attempt
 3. Extracts dates, destination, origin, travelers, budget, activity_day_preferences in ONE call
-4. Populates `state.trip_plan` immediately via `_populate_trip_plan_from_router_output()`
+4. Populates `state.trip_plan` immediately via `_populate_trip_plan_from_router_output(state, router_output, destination, user_text)`
 5. Sets `router_extracted_fields = True` flag for TripArchitect to skip duplicate extraction
 
 **Error Handling (no silent fallbacks):**
@@ -878,7 +879,7 @@ to `QUESTION_TYPE_MAPPING` automatically makes it available as a suggestion.
 
 Priority cascade (each path also stores `suggestion_chip_meta` on `state.metadata` for frontend styling):
 1. **Budget blocking** → `["Increase budget to ${suggested}", "Find cheaper {largest_cat}", "Fewer activity days"]` (icon: `dollar-sign`; fires before generic blocking handler)
-2. Non-budget blocking violations → `["Extend to {date}", "Add buffer day between activities", "Remove {specialist}"]` (includes `DAY_PREFERENCE_EXCEEDS_CAPACITY` → "Reduce {largest} to N days")
+2. Non-budget blocking violations → `["Extend to {date}", "Add buffer day between activities", "Remove {specialist}"]` (includes `DAY_PREFERENCE_EXCEEDS_CAPACITY` → "Reduce {largest} to N days"). "Extend to" date uses builder's `new_duration` from `state.metadata["last_builder_resolutions"]` when available (more accurate than +2 heuristic).
 3. Route violations → `["Back to {prev}", "Different city", "Help me choose"]`
 4. Pool-based (condition × priority × category dedup):
    - P0: destination_choice / date_contextual / date_prompt
@@ -992,6 +993,8 @@ Day 9: Departure
 ```
 
 **Phase 5.24: Day Preference Capping**
+
+**Hallucination Guard:** `_parse_day_preferences(raw, user_text)` rejects LLM-inferred day counts when the user message contains no digits — the LLM is hallucinating counts from trip duration. Only explicit user statements like "3 days diving" produce valid preferences.
 
 When `activity_day_preferences` are set (e.g., `{"diving": 3, "hiking": 2}`), the builder caps each specialist's activity list to the user-requested count BEFORE cross-domain clustering or round-robin. The cap is a maximum — if only 2 diving activities exist but user asked for 3, all 2 are placed. Remaining specialists (without day preferences) fill leftover days via the existing distribution logic.
 
@@ -1871,6 +1874,9 @@ No hardcoded constraints (LLM-generated only)
 | Specialist | Cross-domain via sections (stateless fallback) | blocking | Unfixable |
 | Capacity | Activity count > available days | blocking | Auto-fixable |
 | Capacity | Day preference count > effective days (`DAY_PREFERENCE_EXCEEDS_CAPACITY`) | blocking | Auto-fixable |
+
+**Builder-Aware Suppression:**
+When the ItineraryBuilder persists a constraint rule (e.g., `no_fly_buffer`) and succeeds (`state.metadata["last_builder_success"] == True`), the guard suppresses duplicate violations on the next turn — the builder is already enforcing the constraint via clustering. If the builder **failed** (trip too short), the violation is re-surfaced so the synthesizer can generate resolution chips (e.g., "Extend to Mar 12").
 
 **Deleted checks (handled by specialist LLM feasibility):**
 - ~~Geographic: Diving in landlocked country~~ → specialist `check_feasibility()` returns `infeasible`
@@ -2905,7 +2911,7 @@ class Resolution(BaseModel):
     feasibility: Literal["recommended", "possible", "not_recommended"]
 ```
 
-**Frontend Handling:** `ConflictResolutionModal` displays conflicts and resolution options.
+**Frontend Handling:** Constraint conflicts are handled inline — partial `day_cards` auto-render at `S3_PARTIAL_CONFLICT` view state, and blocking violations are re-surfaced by the constraint guard on the next chat turn (via `last_builder_success` metadata) so the synthesizer generates resolution suggestion chips.
 
 ---
 
@@ -3146,7 +3152,7 @@ Thin bridge from `GraphState` to `ItineraryBuilder`. Avoids circular import by d
 |----------|---------------|
 | `build_itinerary_from_state(state)` | Build `ItineraryResult` from graph state. Returns `None` if preconditions not met (no dates/sections). |
 
-Called by `_format_result()` step 6.5 (shadow mode — exception → warning, doesn't block response).
+Called by `_format_result()` step 6.5 (shadow mode — exception → warning, doesn't block response). On success, sets `state.metadata["last_builder_success"] = True`; on failure, sets it to `False` and stores `state.metadata["last_builder_resolutions"]` (serialized `Resolution[]`) so the constraint guard on the next turn can decide whether to suppress or re-surface cross-domain violations.
 
 ```python
 {
@@ -3160,7 +3166,7 @@ Called by `_format_result()` step 6.5 (shadow mode — exception → warning, do
     "errors": [...],
     "document": {
         "plan_view_state": "P0_MINIMAL" | "P1_ENRICHED" | "P2_LOGISTICS" | "P3_FINALIZED",
-        "tiles": {...},           # Flattened ID-based map
+        "tiles": {...},           # Flattened ID-based map (each tile gets `price_display` field: "$120" or null)
         "strategy_sections": [...], # Agent cards data (content_blocks dual-written)
         "itinerary_day_cards": [...] | null,  # ItineraryBuilder output (null until S2_STRATEGY_READY)
     },

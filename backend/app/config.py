@@ -1,4 +1,5 @@
 import os
+import threading
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -321,6 +322,7 @@ def configure_langsmith_tracing(
 # =============================================================================
 
 _openai_client: Optional[OpenAI] = None
+_openai_client_lock = threading.Lock()
 
 
 def get_openai_client() -> Optional[OpenAI]:
@@ -340,7 +342,9 @@ def get_openai_client() -> Optional[OpenAI]:
         return None
 
     if _openai_client is None:
-        _openai_client = OpenAI(api_key=api_key)
+        with _openai_client_lock:
+            if _openai_client is None:
+                _openai_client = OpenAI(api_key=api_key)
 
     return _openai_client
 
@@ -350,6 +354,7 @@ def get_openai_client() -> Optional[OpenAI]:
 # =============================================================================
 
 _async_openai_client: Optional[AsyncOpenAI] = None
+_async_openai_client_lock = threading.Lock()
 
 
 def get_async_openai_client() -> Optional[AsyncOpenAI]:
@@ -369,7 +374,9 @@ def get_async_openai_client() -> Optional[AsyncOpenAI]:
         return None
 
     if _async_openai_client is None:
-        _async_openai_client = AsyncOpenAI(api_key=api_key)
+        with _async_openai_client_lock:
+            if _async_openai_client is None:
+                _async_openai_client = AsyncOpenAI(api_key=api_key)
 
     return _async_openai_client
 

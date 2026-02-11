@@ -127,7 +127,6 @@ import {
 } from '@/lib/animation-config';
 
 import { BookingSection } from './BookingSection';
-import { type ConflictData, type ConflictResolution,ConflictResolutionBanner } from './ConflictResolutionBanner';
 import { DestinationMapPlaceholder } from './DestinationMapPlaceholder';
 import { ItineraryProgressIndicator, type ProgressStage } from './ItineraryProgressIndicator';
 import { NextStepBar } from './NextStepBar';
@@ -215,10 +214,6 @@ interface StrategyStageRendererProps {
   onSelectNights?: (nights: number) => void;
   /** Two-mode system: explicit mode override (if not using view navigation) */
   mode?: ViewMode;
-  /** Conflict data from ItineraryBuilder (Path A) */
-  conflictData?: ConflictData | null;
-  /** Callback when user selects a conflict resolution */
-  onResolveConflict?: (resolution: ConflictResolution) => void;
   /** Callback to open activity settings sheet (for specialist gear icons) */
   onOpenActivitySettings?: () => void;
   /** Callback to open stays/hotel settings sheet (for hotel gear icons) */
@@ -261,8 +256,6 @@ export function StrategyStageRenderer({
   isRegenerating = false,
   onSelectNights,
   mode: explicitMode,
-  conflictData,
-  onResolveConflict,
   onOpenActivitySettings,
   onOpenStaysSettings,
   onOpenFlightsSettings,
@@ -441,13 +434,9 @@ export function StrategyStageRenderer({
   // of showing the "Build Itinerary" button. Show progress indicator instead.
   const isMultiSpecialist = isMultiSpecialistTrip(viewModel.executed_strategy_topics);
   const shouldShowAutoProgress = isMultiSpecialist && state === 'S2_STRATEGY_READY' && hasDates && generating;
-  const shouldShowConflictBanner = conflictData != null;
-
-  // Hide NextStepBar when:
-  // 1. Multi-specialist trip in S2 (auto-trigger handles it)
-  // 2. Conflict banner is showing
+  // Hide NextStepBar when multi-specialist trip in S2 (auto-trigger handles it)
   // NextStepBar still shows for single-specialist trips (manual trigger)
-  const hideNextStepBar = (isMultiSpecialist && state === 'S2_STRATEGY_READY' && hasDates) || shouldShowConflictBanner;
+  const hideNextStepBar = isMultiSpecialist && state === 'S2_STRATEGY_READY' && hasDates;
 
   // Compute progress stage for indicator
   const progressStage: ProgressStage = useMemo(() => {
@@ -1302,30 +1291,6 @@ export function StrategyStageRenderer({
                 specialists={viewModel.executed_strategy_topics ?? []}
                 progress={generation?.pct}
                 message={generation?.message}
-              />
-            </div>
-          </motion.div>
-        )}
-
-        {/* PATH A: Conflict Resolution Banner */}
-        {shouldShowConflictBanner && effectiveMode === 'planning' && (
-          <motion.div
-            key="conflict-banner"
-            initial={{ y: 80, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 80, opacity: 0 }}
-            transition={{
-              type: 'spring',
-              stiffness: SPRING_CONFIG.SLIDE.stiffness,
-              damping: SPRING_CONFIG.SLIDE.damping,
-            }}
-            className="sticky bottom-6 z-40 w-full justify-center pointer-events-none mt-8 hidden lg:flex"
-          >
-            <div className="pointer-events-auto w-fit mx-auto max-w-lg">
-              <ConflictResolutionBanner
-                conflict={conflictData!}
-                currentDays={effectiveTripInputs?.trip_duration ?? undefined}
-                onResolve={(resolution) => onResolveConflict?.(resolution)}
               />
             </div>
           </motion.div>

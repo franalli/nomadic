@@ -9,6 +9,7 @@ import {
 } from '@/lib/utils';
 import {
   DEFAULT_TRIP_INPUTS,
+  markSettingDirty,
   useDocumentStore,
 } from '@/state/documentStore';
 import {
@@ -359,6 +360,7 @@ export function useLocalBookingSettings(
   // Booking types update handler
   const handleUpdateBookingTypes = useCallback(
     (settings: Partial<BookingTypes>) => {
+      markSettingDirty('booking_types');
       const currentSettings = bookingTypesRef.current;
       const newSettings = { ...currentSettings, ...settings };
       // Update ref and state synchronously so rapid clicks work correctly
@@ -400,6 +402,7 @@ export function useLocalBookingSettings(
   // Flight settings update handler
   const handleUpdateFlightSettings = useCallback(
     (settings: Partial<FlightSettings>) => {
+      markSettingDirty('flight_settings');
       ensureBookingTypeEnabled('flights');
       const currentSettings = flightSettingsRef.current;
       const newSettings = { ...currentSettings, ...settings };
@@ -441,6 +444,7 @@ export function useLocalBookingSettings(
   // Hotel settings update handler
   const handleUpdateHotelSettings = useCallback(
     (settings: Partial<HotelSettings>) => {
+      markSettingDirty('hotel_settings');
       ensureBookingTypeEnabled('hotels');
       const currentSettings = hotelSettingsRef.current;
       const newSettings = { ...currentSettings, ...settings };
@@ -489,6 +493,7 @@ export function useLocalBookingSettings(
   // Transport settings update handler
   const handleUpdateTransportSettings = useCallback(
     (settings: Partial<TransportSettings>) => {
+      markSettingDirty('transport_settings');
       ensureBookingTypeEnabled('ground_transport');
       const currentSettings = transportSettingsRef.current;
       const newSettings = { ...currentSettings, ...settings };
@@ -525,6 +530,7 @@ export function useLocalBookingSettings(
   // Activity settings update handler
   const handleUpdateActivitySettings = useCallback(
     (settings: Partial<ActivitySettings>) => {
+      markSettingDirty('activity_settings');
       ensureBookingTypeEnabled('activities');
       const currentSettings = activitySettingsRef.current;
       const newSettings = { ...currentSettings, ...settings };

@@ -54,6 +54,7 @@ function makeSection(id: string, overrides: Partial<StrategySection> = {}): Stra
     must_dos: [],
     optional_upgrades: [],
     logistics_notes: [],
+    bullets: [],
     ...overrides,
   };
 }
@@ -213,7 +214,7 @@ describe('mergeEnvelope', () => {
     });
 
     useDocumentStore.getState().mergeEnvelope({
-      trip_inputs: { destination: 'Tokyo' },
+      trip_inputs: { destination: 'Tokyo', missing_fields: [] },
     });
 
     expect(useDocumentStore.getState().document!.trip_inputs.destination).toBe('Lisbon');

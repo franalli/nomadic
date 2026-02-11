@@ -47,7 +47,6 @@ from app.crud_trip import (  # noqa: E402
     get_latest_trip_context_for_session,
     get_or_create_session,
     get_session_by_token,
-    get_session_by_token_sync,
     record_chat_message,
 )
 from app.db import _get_async_session_factory, get_async_db, get_db  # noqa: E402
@@ -522,6 +521,10 @@ app.state.limiter = limiter
 
 
 def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    # Never rate-limit CORS preflight — browser sends OPTIONS before the actual
+    # request and a 429 here blocks the entire flow with a CORS error.
+    if request.method == "OPTIONS":
+        return Response(status_code=200)
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Please slow down."},
@@ -847,7 +850,7 @@ def admin_planner_debug(request: Request):
 
 @app.post("/api/admin/clear-all-checkpoints", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-def admin_clear_all_checkpoints(request: Request):
+async def admin_clear_all_checkpoints(request: Request):
     """
     Clear ALL LangGraph checkpoints regardless of age.
 
@@ -855,7 +858,7 @@ def admin_clear_all_checkpoints(request: Request):
     For emergency maintenance only.
     """
     before = checkpoint_stats()
-    cleared = clear_all_checkpoints()
+    cleared = await clear_all_checkpoints()
     return {
         "cleared": cleared,
         "before": before,
@@ -2539,7 +2542,7 @@ async def graph_plan_stream_endpoint(
 @limiter.limit("60/minute")
 async def reset_session(
     request: Request,
-    db: Session = db_dependency,
+    db: AsyncSession = async_db_dependency,
 ):
     """
     Reset/delete a planning session and all associated data.
@@ -2547,6 +2550,8 @@ async def reset_session(
     Uses row-level locking to prevent deadlocks with concurrent plan operations.
     Also clears session cookies from the browser and LangGraph checkpoint state.
     """
+    from sqlalchemy import delete
+
     session_id = get_session_from_request(request)
 
     # Clear LangGraph checkpoint for this session (even if session not in DB)
@@ -2563,43 +2568,35 @@ async def reset_session(
     prune_stale_checkpoints()
 
     # Lock the session row first to prevent deadlocks with concurrent operations
-    session = get_session_by_token_sync(db, session_id, lock_for_update=True)
+    session = await get_session_by_token(db, session_id, lock_for_update=True)
     if not session:
         # Clear cookies even if session not found in DB
         response = Response(status_code=204)
         return clear_session_cookies(response)
 
     # Delete PlanDocument for this session
-    (
-        db.query(db_models.PlanDocument)
-        .filter(db_models.PlanDocument.session_id == session.id)
-        .delete(synchronize_session=False)
+    await db.execute(
+        delete(db_models.PlanDocument).where(db_models.PlanDocument.session_id == session.id)
     )
 
     # Delete ChatMessages for this session
-    (
-        db.query(db_models.ChatMessage)
-        .filter(db_models.ChatMessage.session_id == session.id)
-        .delete(synchronize_session=False)
+    await db.execute(
+        delete(db_models.ChatMessage).where(db_models.ChatMessage.session_id == session.id)
     )
 
     # Delete TripContexts for this session
-    (
-        db.query(db_models.TripContext)
-        .filter(db_models.TripContext.session_id == session.id)
-        .delete(synchronize_session=False)
+    await db.execute(
+        delete(db_models.TripContext).where(db_models.TripContext.session_id == session.id)
     )
 
     # Delete TileClicks for this session
-    (
-        db.query(db_models.TileClick)
-        .filter(db_models.TileClick.session_id == session_id)
-        .delete(synchronize_session=False)
+    await db.execute(
+        delete(db_models.TileClick).where(db_models.TileClick.session_id == session_id)
     )
 
     # Delete the session itself
-    db.delete(session)
-    db.commit()
+    await db.delete(session)
+    await db.commit()
 
     # Clear cookies from browser
     response = Response(status_code=204)

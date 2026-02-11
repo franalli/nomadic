@@ -1036,23 +1036,15 @@ P1_ENRICHED → P2_LOGISTICS → BUILD ITINERARY → P3_FINALIZED
                                     │
                           ItineraryBuilder.build()
                                     │
-                          ┌─── Success → day_cards rendered
-                          └─── Conflict → ConflictResolutionModal
+                          ┌─── Success → day_cards rendered (S3_ITINERARY_READY)
+                          └─── Conflict → partial day_cards rendered (S3_PARTIAL_CONFLICT)
 ```
 
-**Conflict Resolution Flow:**
+**Conflict Resolution Flow (Chat-Driven):**
 
-```
-ConflictResolutionModal displayed
-         │
-         ├─── "Extend Trip" → Update trip_plan.end_date → Re-run build()
-         │
-         ├─── "Keep Specialist" → Disable other specialists → Re-run build()
-         │
-         └─── "Dismiss" → Render partial itinerary with warnings
-```
+When the builder fails (trip too short for all specialists), `response_envelope` stores `last_builder_success = False` + `last_builder_resolutions` in state metadata. On the next chat turn, the constraint guard re-surfaces the blocking violation (instead of suppressing it), and the synthesizer generates resolution suggestion chips (e.g., "Extend to Mar 12", "Remove hiking"). Partial `day_cards` (what CAN fit) auto-render at `S3_PARTIAL_CONFLICT` immediately.
 
-**Invariant:** User is NEVER left with silently dropped activities. All conflicts are surfaced with actionable resolutions.
+**Invariant:** User is NEVER left with silently dropped activities. All conflicts are surfaced via suggestion chips with actionable resolutions.
 
 ---
 
@@ -2044,12 +2036,10 @@ User: "Plan diving and hiking Bali March 1-5"
    - Message: "Analyzing diving + hiking requirements..."
    - Progress bar animation
 
-2. **ConflictResolutionBanner** - Shows when constraints can't fit
-   - Message: "Cannot fit diving + 24h buffer + hiking in 5 days"
-   - **Partial timeline auto-renders:** When `conflicts.length > 0 && day_cards.length > 0`, timeline displays immediately showing schedulable activities + grayed unschedulable markers. No extra "Show partial" click needed.
-   - Resolution options:
-     - "Extend to 8 days" → Updates dates, retriggers generation
-     - "Focus on diving" → Calls `/api/remove-specialist` endpoint
+2. **Inline Conflict Handling** (replaced former ConflictResolutionBanner)
+   - Partial `day_cards` auto-render at `S3_PARTIAL_CONFLICT` showing what CAN fit
+   - Blocking violations re-surface on next chat turn via `last_builder_success` metadata
+   - Synthesizer generates actionable resolution chips: "Extend to Mar 12", "Remove hiking"
    - **Unschedulable block styling:**
      - `opacity-60` with dashed amber border (`border-2 border-dashed border-amber-500/50`)
      - "Cannot schedule" warning badge with AlertTriangle icon

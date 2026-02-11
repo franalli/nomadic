@@ -109,6 +109,12 @@ def _flatten_tiles_to_id_map(tiles_by_category: Optional[Dict[str, Any]]) -> Dic
             if isinstance(tile, dict):
                 tile_id = tile.get("id")
                 if tile_id:
+                    # Add pre-formatted price_display field for frontend
+                    tile["price_display"] = (
+                        f"${tile.get('price_estimate', 0):.0f}"
+                        if tile.get("price_estimate")
+                        else None
+                    )
                     result[tile_id] = tile
                 else:
                     tiles_without_id += 1
@@ -794,6 +800,9 @@ def format_result(
     )
 
     # 6.5 (Shadow): Build itinerary if strategy ready
+    # Stores last_builder_success in metadata so the constraint guard on the NEXT
+    # turn can decide whether to suppress cross-domain violations. If the builder
+    # failed (trip too short), the guard re-surfaces the violation for the synthesizer.
     itinerary_day_cards = None
     if plan_view_state == "S2_STRATEGY_READY" and not has_blocking:
         try:
@@ -802,8 +811,19 @@ def format_result(
             result = build_itinerary_from_state(state)
             if result and result.success:
                 itinerary_day_cards = [dc.model_dump() for dc in result.day_cards]
+                state.metadata["last_builder_success"] = True
+            else:
+                state.metadata["last_builder_success"] = False
+                if result and result.resolutions:
+                    state.metadata["last_builder_resolutions"] = [
+                        r.model_dump() for r in result.resolutions
+                    ]
         except Exception as e:
             logger.warning(f"[format_result] Itinerary build failed (shadow): {e}")
+            state.metadata["last_builder_success"] = False
+    elif has_blocking:
+        # Shadow build skipped due to blocking violations — builder can't enforce
+        state.metadata["last_builder_success"] = False
 
     # 7. Build response envelope
     return _build_response_envelope(

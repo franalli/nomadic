@@ -153,6 +153,19 @@ const VIEW_STATE_ORDER: Record<string, number> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// User-Dirty Settings Tracker
+// ─────────────────────────────────────────────────────────────────────────────
+// Tracks which settings the user has explicitly modified via the UI (pills/sheets).
+// ensureSettingsFlushed only sends dirty settings, preventing empty defaults from
+// overwriting backend-derived values (e.g., specialist-extracted categories).
+// Module-level (not Zustand state) to avoid unnecessary re-renders.
+const _userDirtySettings = new Set<string>();
+
+export function markSettingDirty(key: string) {
+  _userDirtySettings.add(key);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Commit Mutex
 // ─────────────────────────────────────────────────────────────────────────────
 // Prevents concurrent commit operations using a Promise-based lock.
@@ -770,20 +783,28 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       console.log('[ensureSettingsFlushed] BAIL — no document or trip_inputs in zustand');
       return;
     }
+
+    // Only flush settings the user explicitly changed via the UI.
+    // Prevents overwriting backend-derived values (e.g., specialist-extracted
+    // categories like ["diving", "hiking"]) with empty frontend defaults.
+    const dirty = new Set(_userDirtySettings);
+    _userDirtySettings.clear();
+
+    if (dirty.size === 0) {
+      console.log('[ensureSettingsFlushed] SKIP — no dirty settings');
+      return;
+    }
+
     const ti = doc.trip_inputs;
-    console.log('[ensureSettingsFlushed] FLUSHING settings to backend:', {
-      activity_categories: ti.activity_settings?.categories,
-      hotel_stars: ti.hotel_settings?.min_stars,
-      flight_class: ti.flight_settings?.cabin_class,
-      booking_types: ti.booking_types,
-    });
-    await get().commitTripInputs({
-      activity_settings: ti.activity_settings,
-      hotel_settings: ti.hotel_settings,
-      flight_settings: ti.flight_settings,
-      transport_settings: ti.transport_settings,
-      booking_types: ti.booking_types,
-    });
+    const payload: Partial<DocumentTripInputsPatch> = {};
+    if (dirty.has('activity_settings')) payload.activity_settings = ti.activity_settings;
+    if (dirty.has('hotel_settings')) payload.hotel_settings = ti.hotel_settings;
+    if (dirty.has('flight_settings')) payload.flight_settings = ti.flight_settings;
+    if (dirty.has('transport_settings')) payload.transport_settings = ti.transport_settings;
+    if (dirty.has('booking_types')) payload.booking_types = ti.booking_types;
+
+    console.log('[ensureSettingsFlushed] FLUSHING dirty settings:', [...dirty]);
+    await get().commitTripInputs(payload);
     console.log('[ensureSettingsFlushed] DONE — PATCH sent before graph');
   },
 
