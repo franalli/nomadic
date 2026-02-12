@@ -115,6 +115,7 @@ class DayBlockOutput(BaseModel):
     # Unschedulable marker (for partial timeline when conflicts occur)
     unschedulable: bool = False
     unschedulable_reason: Optional[str] = None
+    unschedulable_days_needed: Optional[int] = None
 
 
 class DayCardOutput(BaseModel):
@@ -722,6 +723,7 @@ class ItineraryBuilder:
             spec for spec in altitude_activities if spec in activities_by_specialist
         ]
 
+        days_shortfall = 0
         cross_domain_conflict = False
         if diving_present and altitude_specialists_present:
             # Check for no_altitude_after_dive constraint (with alias support)
@@ -749,20 +751,53 @@ class ItineraryBuilder:
                 # Calculate required days for diving + buffer + altitude activities
                 required_for_combo = diving_days + altitude_buffer + altitude_days
                 if required_for_combo > usable_days:
-                    cross_domain_conflict = True
-                    conflicts.append(
-                        Conflict(
-                            type="constraint_clash",
-                            severity=ConstraintSeverity.BLOCKING,
-                            specialists=["diving"] + altitude_specialists_present,
-                            message=(
-                                f"Cannot fit diving ({diving_days} days) + 24h buffer + "
-                                f"altitude activities ({altitude_days} days) "
-                                f"in {usable_days} activity days. "
-                                f"Need {required_for_combo} days."
-                            ),
+                    # Can we fit by trimming? Available slots after buffer:
+                    available_after_buffer = usable_days - altitude_buffer
+
+                    if available_after_buffer < 2:
+                        # Can't fit even 1 dive + 1 hike — REAL conflict
+                        cross_domain_conflict = True
+                        days_shortfall = required_for_combo - usable_days
+                        conflicts.append(
+                            Conflict(
+                                type="constraint_clash",
+                                severity=ConstraintSeverity.BLOCKING,
+                                specialists=["diving"] + altitude_specialists_present,
+                                message=(
+                                    f"Cannot fit diving + 24h buffer + altitude activities "
+                                    f"in {usable_days} activity days. "
+                                    f"Need at least 4 days total."
+                                ),
+                            )
                         )
-                    )
+                    else:
+                        # Trim activities to fit — split evenly, diving gets remainder
+                        dive_slots = (available_after_buffer + 1) // 2
+                        altitude_slots = available_after_buffer - dive_slots
+
+                        if diving_days > dive_slots:
+                            logger.info(
+                                f"[ITINERARY] Cross-domain trim: "
+                                f"diving {diving_days} -> {dive_slots}"
+                            )
+                            activities_by_specialist["diving"] = activities_by_specialist["diving"][
+                                :dive_slots
+                            ]
+
+                        for spec in altitude_specialists_present:
+                            acts = activities_by_specialist.get(spec, [])
+                            if len(acts) > altitude_slots:
+                                logger.info(
+                                    f"[ITINERARY] Cross-domain trim: "
+                                    f"{spec} {len(acts)} -> {altitude_slots}"
+                                )
+                                activities_by_specialist[spec] = acts[:altitude_slots]
+
+                        self._warnings.append(
+                            f"Adjusted to {dive_slots} dive(s) + "
+                            f"{altitude_slots} hike(s) to fit your trip "
+                            f"with the 24h safety buffer."
+                        )
 
         # Account for arrival/departure days
         usable_days = total_days - 2  # First and last day are partial
@@ -822,6 +857,7 @@ class ItineraryBuilder:
                 origin=origin,
                 cross_domain_conflict=cross_domain_conflict,
                 diving_present=diving_present,
+                days_shortfall=days_shortfall,
             )
 
         return conflicts, partial_days
@@ -835,6 +871,7 @@ class ItineraryBuilder:
         origin: Optional[str],
         cross_domain_conflict: bool,
         diving_present: bool,
+        days_shortfall: int = 0,
     ) -> List[DayCardOutput]:
         """
         Build partial timeline with schedulable activities + unschedulable markers.
@@ -887,7 +924,7 @@ class ItineraryBuilder:
                 unschedulable_block = DayBlockOutput(
                     id=f"unschedulable_{specialist}_{activity.title[:15].replace(' ', '_')}",
                     period="afternoon",
-                    activity_type="unschedulable",
+                    activity_type=specialist,
                     summary=activity.title,
                     specialist_type=specialist,
                     is_buffer=False,
@@ -895,6 +932,9 @@ class ItineraryBuilder:
                     image_url=activity.image_url,
                     unschedulable=True,
                     unschedulable_reason=reason,
+                    unschedulable_days_needed=(
+                        days_shortfall if days_shortfall > 0 else len(activities)
+                    ),
                 )
                 # Add to second-to-last day (before departure)
                 if len(partial_days) >= 2:

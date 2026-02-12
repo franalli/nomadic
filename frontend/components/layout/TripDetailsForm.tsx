@@ -379,8 +379,6 @@ function TripDetailsFormInner({
 
   return (
     <div className="flex flex-col gap-3 overflow-visible">
-      {/* Row 1 (InlineEditPill cards) removed per spec - constraints handled via OnboardingChips in ChatPanel */}
-
       {/* Row 2: Booking type expandable pills - muted in bootstrap (pre-plan) state */}
       <div
         className="filtersRow flex flex-wrap items-center gap-x-3 gap-y-2"

@@ -58,15 +58,6 @@ class UnsplashImage(BaseModel):
     download_location: Optional[str] = None  # API endpoint for download tracking
 
 
-class ImageAttribution(BaseModel):
-    """Attribution data to display with images (for frontend)."""
-
-    photographer_name: Optional[str] = None
-    photographer_link: Optional[str] = None  # With UTM params
-    unsplash_link: Optional[str] = None  # With UTM params
-    is_unsplash: bool = False  # False for Picsum fallback
-
-
 def _add_utm_params(url: Optional[str]) -> Optional[str]:
     """Add required UTM parameters to Unsplash URLs."""
     if not url:
@@ -353,88 +344,6 @@ async def _save_all_variants_to_db(
     except Exception as e:
         logger.warning(f"[UNSPLASH-DB] Save failed: {e}")
         await db.rollback()
-
-
-async def trigger_download(destination: str, variant: int = 0) -> bool:
-    """
-    Trigger Unsplash download tracking for a destination's cached image.
-
-    Required by Unsplash API guidelines when an image is "used" (displayed prominently).
-    Should be called when a tile with an Unsplash image is displayed to the user.
-
-    Returns True if tracking was successful, False otherwise.
-    """
-    cache_key = _cache_key(destination, variant)
-
-    if cache_key not in _memory_cache:
-        logger.debug(f"No cached image for download tracking: {cache_key}")
-        return False
-
-    image = _memory_cache[cache_key]
-    if not image.download_location:
-        logger.debug(f"No download_location for: {cache_key}")
-        return False
-
-    api_key = settings.unsplash_access_key
-    if not api_key:
-        return False
-
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(
-                image.download_location,
-                headers={"Authorization": f"Client-ID {api_key}"},
-            )
-            if response.status_code == 200:
-                logger.debug(f"Download tracked for: {cache_key}")
-                return True
-            else:
-                logger.warning(f"Download tracking failed for {cache_key}: {response.status_code}")
-                return False
-    except Exception as e:
-        logger.warning(f"Download tracking error for {cache_key}: {e}")
-        return False
-
-
-def get_attribution(destination: str, variant: int = 0) -> ImageAttribution:
-    """
-    Get attribution data for a destination's cached image.
-
-    Returns attribution info with UTM parameters added to links.
-    For Picsum fallback images, returns is_unsplash=False.
-    """
-    cache_key = _cache_key(destination, variant)
-
-    if cache_key not in _memory_cache:
-        return ImageAttribution(is_unsplash=False)
-
-    image = _memory_cache[cache_key]
-
-    return ImageAttribution(
-        photographer_name=image.photographer,
-        photographer_link=_add_utm_params(image.photographer_url),
-        unsplash_link=_add_utm_params(image.unsplash_url),
-        is_unsplash=True,
-    )
-
-
-def get_attribution_sync(destination: str, variant: int = 0) -> dict:
-    """
-    Synchronous version that returns attribution as a dict for tile meta.
-
-    Returns empty dict for Picsum fallback images.
-    """
-    attr = get_attribution(destination, variant)
-    if not attr.is_unsplash:
-        return {}
-
-    return {
-        "image_attribution": {
-            "photographer_name": attr.photographer_name,
-            "photographer_link": attr.photographer_link,
-            "unsplash_link": attr.unsplash_link,
-        }
-    }
 
 
 async def prefetch_destination_images(

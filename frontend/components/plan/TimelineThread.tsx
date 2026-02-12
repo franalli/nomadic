@@ -18,7 +18,7 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { fillDay } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { useDocumentStore } from '@/state/documentStore';
+import { useDocumentStore, useDocumentTripInputs } from '@/state/documentStore';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
 import {
@@ -30,6 +30,17 @@ import {
   SafetyBlock,
 } from './timeline/blocks';
 import { InlineDatePrompt } from './timeline/InlineDatePrompt';
+
+// =============================================================================
+// Category Icons (mirrors ActivitiesSheet.ALL_CATEGORIES for inline picker)
+// =============================================================================
+
+const CATEGORY_ICONS: Record<string, string> = {
+  diving: '\u{1F93F}', hiking: '\u{1F97E}', skiing: '\u26F7\uFE0F', cycling: '\u{1F6B4}',
+  sailing: '\u26F5', surfing: '\u{1F3C4}', cooking: '\u{1F373}', yoga: '\u{1F9D8}',
+  temples: '\u26E9\uFE0F', nightlife: '\u{1F389}', beach: '\u{1F3D6}\uFE0F', shopping: '\u{1F6CD}\uFE0F',
+  photography: '\u{1F4F8}',
+};
 
 // =============================================================================
 // Timeline Variant System (Grand Unification)
@@ -227,17 +238,28 @@ export function TimelineThread({
 
   // Fill-day: Zustand selectors + local loading state
   const [fillingDay, setFillingDay] = useState<number | null>(null);
-  const destination = useDocumentStore(s => s.document?.trip_inputs?.destination ?? null);
-  const categories = useDocumentStore(s => s.document?.trip_inputs?.activity_settings?.categories);
+  const tripInputs = useDocumentTripInputs();
+  const destination = tripInputs?.destination ?? null;
+  const categories = tripInputs?.activity_settings?.categories;
   const replaceDayCard = useDocumentStore(s => s.replaceDayCard);
 
   // V1: categories from trip_inputs (Zustand). FreeDayCard's selectedCats arg intentionally ignored.
+  // TODO: V2 — pass selected categories to fillDay endpoint instead of reading from trip_inputs
   const handleFillDay = useCallback(async (dayNumber: number) => {
     setFillingDay(dayNumber);
     try {
       const result = await fillDay(dayNumber, categories?.length ? categories : undefined);
       if (result.day_card) {
         replaceDayCard(result.day_number, result.day_card, result.version);
+      }
+      // Merge generated tiles into document store (enables hearting/referencing)
+      if (result.tiles && Object.keys(result.tiles).length > 0) {
+        const doc = useDocumentStore.getState().document;
+        if (doc) {
+          useDocumentStore.setState({
+            document: { ...doc, tiles: { ...doc.tiles, ...result.tiles } },
+          });
+        }
       }
     } catch (err) {
       console.warn('[TimelineThread] fill-day failed:', err);
@@ -458,13 +480,24 @@ export function TimelineThread({
                 // Filter blocks for rich rendering
                 const blocksToRender = useRichBlocks ? filterBlocks(card.blocks) : card.blocks;
 
-                // Empty day state (only for rich blocks)
-                if (useRichBlocks && blocksToRender.length === 0) {
+                // Empty day or single free_day placeholder → interactive FreeDayCard
+                const hasOnlyFreeDay = blocksToRender.length === 1
+                  && blocksToRender[0].activity_type === 'free_day';
+                if (useRichBlocks && (blocksToRender.length === 0 || hasOnlyFreeDay)) {
                   return (
                     <FreeDayCard
                       dayNumber={card.day_number}
                       dayDate={card.date ?? null}
                       destination={destination}
+                      availableCategories={
+                        categories && categories.length > 1
+                          ? categories.map(c => ({
+                              value: c,
+                              label: c.charAt(0).toUpperCase() + c.slice(1),
+                              icon: CATEGORY_ICONS[c.toLowerCase()] ?? '\u{1F3AF}',
+                            }))
+                          : undefined
+                      }
                       onBrowse={() => onOpenBookingDrawer?.('activity')}
                       onFillDay={handleFillDay}
                       isFilling={fillingDay === card.day_number}

@@ -86,8 +86,9 @@ export function useLocalBookingSettings(
   storeTripInputs: DocumentTripInputs | null | undefined,
   onToast: (message: string, type?: ToastType) => void
 ): UseLocalBookingSettingsReturn {
-  const documentStore = useDocumentStore();
-  const document = useDocumentStore((state) => state.document);
+  const document = useDocumentStore((s) => s.document);
+  const commitTripInputs = useDocumentStore((s) => s.commitTripInputs);
+  const updateTripInputs = useDocumentStore((s) => s.updateTripInputs);
 
   // Local state for booking settings - initialize from store if available, else defaults
   const [localBookingTypes, setLocalBookingTypes] = useState<BookingTypes>(
@@ -214,7 +215,7 @@ export function useLocalBookingSettings(
       const queuedCommits = pendingCommitsQueue.current;
       pendingCommitsQueue.current = null;
       // Commit all queued changes in a single batched request
-      documentStore.commitTripInputs(queuedCommits).then(() => {
+      commitTripInputs(queuedCommits).then(() => {
         // Clear all pending flags after successful commit
         hasPendingBookingTypesChanges.current = false;
         hasPendingFlightChanges.current = false;
@@ -223,7 +224,7 @@ export function useLocalBookingSettings(
         hasPendingActivityChanges.current = false;
       });
     }
-  }, [document, documentStore]);
+  }, [document, commitTripInputs]);
 
   // Clear pending flags and timers when store is reset (storeTripInputs becomes null)
   useEffect(() => {
@@ -284,7 +285,7 @@ export function useLocalBookingSettings(
 
       // Commit the auto-suggestion (if document exists)
       if (document) {
-        documentStore.commitTripInputs({ booking_types: updated });
+        commitTripInputs({ booking_types: updated });
       } else {
         pendingCommitsQueue.current = {
           ...pendingCommitsQueue.current,
@@ -292,7 +293,7 @@ export function useLocalBookingSettings(
         };
       }
     }
-  }, [storeTripInputs?.origin, document, documentStore]);
+  }, [storeTripInputs?.origin, document, commitTripInputs]);
 
   // Helper to commit settings with debounce and queue support
   const commitWithDebounce = useCallback(
@@ -306,7 +307,7 @@ export function useLocalBookingSettings(
 
       // Always sync to zustand immediately so ensureSettingsFlushed can
       // PATCH these to the backend before the graph starts (race fix).
-      documentStore.updateTripInputs(updates);
+      updateTripInputs(updates);
 
       // Clear existing timer
       if (timerRef.current) {
@@ -324,7 +325,7 @@ export function useLocalBookingSettings(
 
       // Debounce the commit to batch rapid changes
       timerRef.current = setTimeout(async () => {
-        const success = await documentStore.commitTripInputs(updates);
+        const success = await commitTripInputs(updates);
         if (success) {
           pendingRef.current = false;
         }
@@ -332,7 +333,7 @@ export function useLocalBookingSettings(
         // and sync-back won't overwrite local state
       }, COMMIT_DEBOUNCE_MS);
     },
-    [document, documentStore]
+    [document, commitTripInputs, updateTripInputs]
   );
 
   const ensureBookingTypeEnabled = useCallback(
@@ -455,7 +456,7 @@ export function useLocalBookingSettings(
       // Sync to document store immediately so trip_inputs is up-to-date
       // (commitTripInputs is debounced — this bridges the gap)
       if (document) {
-        documentStore.updateTripInputs({ hotel_settings: newSettings });
+        updateTripInputs({ hotel_settings: newSettings });
       }
 
       // Commit with debounce (handles queue for pre-document state)
@@ -487,7 +488,7 @@ export function useLocalBookingSettings(
         }
       }
     },
-    [commitWithDebounce, document, documentStore, ensureBookingTypeEnabled, onToast]
+    [commitWithDebounce, document, updateTripInputs, ensureBookingTypeEnabled, onToast]
   );
 
   // Transport settings update handler
@@ -524,7 +525,7 @@ export function useLocalBookingSettings(
         }
       }
     },
-    [commitWithDebounce, document, documentStore, ensureBookingTypeEnabled, onToast]
+    [commitWithDebounce, ensureBookingTypeEnabled, onToast]
   );
 
   // Activity settings update handler
@@ -541,7 +542,7 @@ export function useLocalBookingSettings(
       // Sync to document store immediately so trip_inputs is up-to-date
       // (commitTripInputs is debounced — this bridges the gap)
       if (document) {
-        documentStore.updateTripInputs({ activity_settings: newSettings });
+        updateTripInputs({ activity_settings: newSettings });
       }
 
       // Commit with debounce (handles queue for pre-document state)
@@ -562,7 +563,7 @@ export function useLocalBookingSettings(
         }
       }
     },
-    [commitWithDebounce, document, documentStore, ensureBookingTypeEnabled, onToast]
+    [commitWithDebounce, document, updateTripInputs, ensureBookingTypeEnabled, onToast]
   );
 
   // Add activity handler

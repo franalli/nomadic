@@ -190,10 +190,9 @@ class TestPlannerFacadeExports:
 
     def test_facade_exports_test_mode_helpers(self):
         """Test mode helpers should be exported from facade."""
-        from app.planner import is_test_mode, raise_if_test_mode
+        from app.planner import is_test_mode
 
         assert callable(is_test_mode)
-        assert callable(raise_if_test_mode)
 
     def test_facade_exports_cache_helpers(self):
         """Cache helpers should be exported from facade."""

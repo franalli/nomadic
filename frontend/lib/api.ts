@@ -433,6 +433,7 @@ export async function fillDay(
   day_number: number;
   tiles_added: number;
   day_card: import('@/types/plan-envelope').DayCard;
+  tiles?: Record<string, import('@/types/tile').Tile>;
   version: number;
 }> {
   const res = await apiFetch('/api/document/fill-day', {

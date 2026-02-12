@@ -13,11 +13,16 @@ class TestCacheKeyGeneration:
     """Test cache key generation logic."""
 
     def test_basic_key(self):
-        """Test standard cache key format."""
+        """Test standard cache key format.
+
+        Format: specialist:{topic}:{dest}:{start}:{end}:{skill}:{phash}.
+        """
         from app.services.specialist_cache import _specialist_cache_key
 
         key = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-20")
-        assert key == "specialist:diving:bali:2025-03:6"
+        # Format: specialist:{topic}:{dest}:{start}:{end}:{skill}:{prompt_hash}
+        assert key.startswith("specialist:diving:bali:2025-03-15:2025-03-20:any:")
+        assert len(key.split(":")) == 7  # 7 segments
 
     def test_normalized_destination(self):
         """Test destination is normalized (lowercase, trimmed)."""
@@ -34,21 +39,19 @@ class TestCacheKeyGeneration:
         key = _specialist_cache_key("hiking", "Alps", "2025-07-01", "2025-07-10")
         assert "2025-07" in key
 
-    def test_duration_calculation(self):
-        """Test duration is calculated correctly."""
+    def test_dates_in_key(self):
+        """Test full dates are included in cache key."""
         from app.services.specialist_cache import _specialist_cache_key
 
-        # 3-day trip (inclusive: 15, 16, 17)
         key3 = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-17")
-        assert key3.endswith(":3")
+        assert "2025-03-15" in key3
+        assert "2025-03-17" in key3
 
-        # 7-day trip
         key7 = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-21")
-        assert key7.endswith(":7")
+        assert "2025-03-21" in key7
 
-        # 14-day trip
-        key14 = _specialist_cache_key("diving", "Bali", "2025-02-01", "2025-02-14")
-        assert key14.endswith(":14")
+        # Different date ranges produce different keys
+        assert key3 != key7
 
     def test_missing_dates(self):
         """Test graceful handling of missing dates."""
@@ -56,7 +59,6 @@ class TestCacheKeyGeneration:
 
         key = _specialist_cache_key("diving", "Bali", None, None)
         assert "unknown" in key
-        assert ":5" in key  # default duration
 
     def test_different_topics_produce_different_keys(self):
         """Test different topics produce different cache keys."""

@@ -46,30 +46,30 @@ class TestRegistryGatedFeasibility:
 class TestCheckFeasibilityAutoFeasible:
     """Test that specialists without geographic constraint are auto-feasible."""
 
-    def test_hiking_always_feasible(self):
+    async def test_hiking_always_feasible(self):
         """Hiking should be feasible everywhere (no LLM check)."""
-        status, reason, alternative = check_feasibility("hiking", "Chamonix")
+        status, reason, alternative = await check_feasibility("hiking", "Chamonix")
         assert status == "feasible"
         assert reason is None
 
-        status, reason, alternative = check_feasibility("hiking", "Tokyo")
+        status, reason, alternative = await check_feasibility("hiking", "Tokyo")
         assert status == "feasible"
         assert reason is None
 
-    def test_cycling_always_feasible(self):
+    async def test_cycling_always_feasible(self):
         """Cycling should be feasible everywhere (no LLM check)."""
-        status, reason, alternative = check_feasibility("cycling", "Antarctica")
+        status, reason, alternative = await check_feasibility("cycling", "Antarctica")
         assert status == "feasible"
         assert reason is None
 
-    def test_empty_destination_always_feasible(self):
+    async def test_empty_destination_always_feasible(self):
         """Empty destination should be auto-feasible for any specialist."""
-        status, reason, alternative = check_feasibility("diving", "")
+        status, reason, alternative = await check_feasibility("diving", "")
         assert status == "feasible"
         assert reason is None
 
-    def test_unknown_specialist_always_feasible(self):
+    async def test_unknown_specialist_always_feasible(self):
         """Unknown specialist should be auto-feasible (no config)."""
-        status, reason, alternative = check_feasibility("unknown_sport", "Paris")
+        status, reason, alternative = await check_feasibility("unknown_sport", "Paris")
         assert status == "feasible"
         assert reason is None

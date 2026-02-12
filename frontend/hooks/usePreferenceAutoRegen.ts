@@ -46,6 +46,9 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
   // Track the tile that was just hearted (for UI feedback)
   const justHeartedIdRef = useRef<string | null>(null);
 
+  // Abort in-flight regen when a new one triggers or component unmounts
+  const abortRef = useRef<AbortController | null>(null);
+
   // Track if this is the initial mount
   const isInitialMount = useRef(true);
 
@@ -60,6 +63,11 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
     // Race condition guards
     if (useDocumentStore.getState().isRegenerating) return;
     if (useDocumentStore.getState().expandInProgress) return;
+
+    // Abort any in-flight regen before starting a new one
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    const signal = abortRef.current.signal;
 
     // Set expand-in-progress flag to prevent cascade
     useDocumentStore.getState().setExpandInProgress(true);
@@ -95,6 +103,7 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
 
       const response = await apiFetch('/api/expand-itinerary', {
         method: 'POST',
+        signal,
         body: JSON.stringify({
           idempotency_key: crypto.randomUUID(),
           trip_inputs: document?.trip_inputs,
@@ -157,6 +166,7 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
       // Success - mark preferences as applied
       markPreferencesAsApplied();
     } catch (error) {
+      if (signal.aborted) return; // Superseded by a newer regen — silent exit
       console.error('[usePreferenceAutoRegen] Regeneration failed:', error);
       // No toast for preference regen - it's a background operation
     } finally {
@@ -165,6 +175,11 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
       justHeartedIdRef.current = null;
     }
   }, [awaitPreferencePatch, markPreferencesAsApplied, setRegenerationState]);
+
+  // Abort in-flight regen on unmount
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
 
   // Watch for preference changes
   useEffect(() => {

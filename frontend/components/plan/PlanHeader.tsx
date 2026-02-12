@@ -227,7 +227,7 @@ export function PlanHeader({
 
       {/* Pills ARE the summary — no title, no subtitle, no specialist pills */}
       {showPills && (
-        <div className="px-6 py-2">
+        <div className="px-6 pt-3.5 pb-2">
           <TripSummaryPills
             tripInputs={tripInputs}
             onOpenSheet={onOpenSheet}

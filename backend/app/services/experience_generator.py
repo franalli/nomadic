@@ -405,7 +405,7 @@ async def generate_single_category(
 
 async def generate_experience_tiles_for_day(
     destination: str,
-    categories: list[str],
+    categories: list[str] | None,
     month: str,
     day_number: int,
     budget: int | None = None,
@@ -420,10 +420,15 @@ async def generate_experience_tiles_for_day(
     3. Returns up to tiles_per_day tile dicts
 
     Does NOT run the LangGraph pipeline. Does NOT modify state.
+    When categories is None/empty, uses a generic "activities" category
+    so the LLM picks destination-appropriate experiences.
     """
-    if not destination or not categories:
-        logger.warning(f"[EXPERIENCE] fill-day skip: dest={destination}, cats={categories}")
+    if not destination:
+        logger.warning("[EXPERIENCE] fill-day skip: no destination")
         return []
+
+    if not categories:
+        categories = ["activities"]
 
     # Round-robin categories across tile slots
     cat_tile_counts: dict[str, int] = {}

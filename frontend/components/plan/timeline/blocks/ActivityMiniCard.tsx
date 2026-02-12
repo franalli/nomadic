@@ -9,7 +9,7 @@
 
 'use client';
 
-import { AlertTriangle, CheckCircle, Clock, MoreVertical, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { CheckCircle, Clock, MoreVertical, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import Image from 'next/image';
 import { useState } from 'react';
 
@@ -101,18 +101,11 @@ export function ActivityMiniCard({
       className={cn(
         'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border transition-shadow',
         isUnschedulable
-          ? 'bg-zinc-100/50 dark:bg-zinc-900/30 border-dashed border-amber-500/50 opacity-60'
+          ? 'bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/40'
           : 'bg-white dark:bg-zinc-800/50 hover:shadow-md'
       )}
-      style={isUnschedulable ? undefined : { borderLeftWidth: '4px', borderLeftColor: borderColor }}
+      style={{ borderLeftWidth: '4px', borderLeftColor: isUnschedulable ? '#f59e0b' : borderColor }}
     >
-      {/* Unschedulable Warning Banner */}
-      {isUnschedulable && (
-        <div className="absolute -top-2 left-3 flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/30">
-          <AlertTriangle className="w-3 h-3 text-amber-500" />
-          <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">Cannot schedule</span>
-        </div>
-      )}
 
       {/* Thumbnail — full-width banner on mobile, inline 80×80 on desktop */}
       {block.image_url ? (
@@ -185,25 +178,32 @@ export function ActivityMiniCard({
           )}
         </div>
 
-        <h4 className={cn(
-          'font-semibold text-sm mt-1.5 line-clamp-2',
-          isUnschedulable && 'line-through text-zinc-500'
-        )}>
-          {normalizeTitle(block.activity_type || block.summary)}
+        <h4 className="font-semibold text-sm mt-1.5 line-clamp-2">
+          {isUnschedulable ? block.summary : normalizeTitle(block.activity_type || block.summary)}
         </h4>
 
-        {/* Description - show summary if different from title */}
-        {block.summary && block.summary !== normalizeTitle(block.activity_type || block.summary) && (
+        {/* Description - show summary if different from title (skip for unschedulable, summary IS title) */}
+        {!isUnschedulable && block.summary && block.summary !== normalizeTitle(block.activity_type || block.summary) && (
           <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
             {block.summary}
           </p>
         )}
 
-        {/* Unschedulable reason */}
+        {/* Unschedulable constraint chip — solution-first messaging */}
         {isUnschedulable && block.unschedulable_reason && (
-          <p className="text-xs text-amber-600/80 dark:text-amber-400/70 mt-1 italic">
-            {block.unschedulable_reason}
-          </p>
+          <div className="flex items-start gap-2 mt-2 p-2.5 rounded-lg text-xs bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40">
+            <Clock className="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-amber-700 dark:text-amber-400">
+                {block.unschedulable_days_needed
+                  ? `Extend trip by ${block.unschedulable_days_needed} day${block.unschedulable_days_needed > 1 ? 's' : ''} to unlock`
+                  : 'Extend trip to unlock'}
+              </div>
+              <div className="text-zinc-600 dark:text-zinc-400 mt-0.5">
+                {block.unschedulable_reason}
+              </div>
+            </div>
+          </div>
         )}
 
         {block.price_estimate && !isUnschedulable && (

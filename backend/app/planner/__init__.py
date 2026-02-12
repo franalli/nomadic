@@ -24,7 +24,6 @@ from app.planner.cache_access import (
     cache_len,
     cache_pop,
     cache_set,
-    init_cache_handles,
     update_counters_safe,
     update_nested_counters_safe,
 )
@@ -228,7 +227,6 @@ __all__ = [
     # Test mode
     "is_test_mode",
     # Cache access
-    "init_cache_handles",
     "cache_get",
     "cache_set",
     "cache_pop",

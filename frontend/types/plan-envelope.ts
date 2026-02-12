@@ -719,6 +719,7 @@ export interface DayBlock {
   // === NEW: Unschedulable marker (for partial timeline) ===
   unschedulable?: boolean;
   unschedulable_reason?: string;
+  unschedulable_days_needed?: number;
 }
 
 /**
@@ -815,7 +816,7 @@ export interface UndoSnapshot {
 /**
  * Ack status for collapsible messages.
  */
-export type AckStatus = 'applied' | 'partial' | 'no_change' | 'needs_clarification' | 'failed';
+export type AckStatus = 'pending' | 'applied' | 'partial' | 'no_change' | 'needs_clarification' | 'failed' | 'rejected';
 
 /**
  * Detailed update info for collapsible message UI.

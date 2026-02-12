@@ -35,7 +35,7 @@ class CacheHandle:
     name: str = ""
 
 
-# Global registry of cache handles (populated by init_cache_handles)
+# Global registry of cache handles
 _cache_handles: Dict[CacheName, CacheHandle] = {}
 
 # Initialization flag to guard against access before init
@@ -43,41 +43,6 @@ _initialized = False
 
 # Lock for protecting _cache_counters updates
 _cache_counters_lock = threading.Lock()
-
-
-def init_cache_handles(
-    follow_up_cache: Any,
-    router_cache: Any,
-    required_fields_cache: Any,
-    extractor_cache: Any,
-    strategy_cache: Any,
-    tile_cache: Any,
-) -> Dict[CacheName, CacheHandle]:
-    """
-    Initialize cache handles with locks for all planner caches.
-
-    Call this once at module load (from plan_graph.py) to register
-    the cache instances with their locks.
-
-    Args:
-        *_cache: The TTLCache instances from plan_graph.py
-
-    Returns:
-        Dict of CacheName -> CacheHandle
-    """
-    global _cache_handles, _initialized
-
-    _cache_handles = {
-        "follow_up": CacheHandle(cache_obj=follow_up_cache, name="follow_up"),
-        "router": CacheHandle(cache_obj=router_cache, name="router"),
-        "required_fields": CacheHandle(cache_obj=required_fields_cache, name="required_fields"),
-        "extractor": CacheHandle(cache_obj=extractor_cache, name="extractor"),
-        "strategy": CacheHandle(cache_obj=strategy_cache, name="strategy"),
-        "tile": CacheHandle(cache_obj=tile_cache, name="tile"),
-    }
-
-    _initialized = True
-    return _cache_handles
 
 
 def get_cache_handle(name: CacheName) -> Optional[CacheHandle]:
@@ -315,14 +280,3 @@ def update_nested_counters_safe(
         if outer_key not in counters:
             counters[outer_key] = {}
         counters[outer_key][inner_key] = counters[outer_key].get(inner_key, 0) + amount
-
-
-def clear_all_cache_handles() -> None:
-    """
-    Clear all registered cache handles.
-
-    Thread-safe: acquires each lock before clearing.
-    """
-    for handle in _cache_handles.values():
-        with handle.lock:
-            handle.cache_obj.clear()

@@ -179,6 +179,24 @@ class TestThreadSafety:
 class TestL2DatabaseCache:
     """Tests for L2 database cache operations."""
 
+    @pytest.fixture
+    async def async_db_session(self):
+        """Create async database session for testing.
+
+        Resets the cached engine/factory so each test gets a fresh
+        connection bound to the current event loop.
+        """
+        import app.db as db_mod
+
+        db_mod._async_engine = None
+        db_mod._async_session_factory = None
+        factory = db_mod._get_async_session_factory()
+        async with factory() as session:
+            yield session
+        await db_mod._async_engine.dispose()
+        db_mod._async_engine = None
+        db_mod._async_session_factory = None
+
     @pytest.fixture(autouse=True)
     def setup(self):
         """Clear memory cache before each test."""
@@ -187,9 +205,17 @@ class TestL2DatabaseCache:
 
     async def test_miss_write_hit_flow(self, async_db_session):
         """Test full cache miss → write → hit flow."""
+        from sqlalchemy import delete
+
+        from app.db_models import ResponseCache
         from app.services.tile_cache import get_cached_tiles, set_cached_tiles
 
-        # Clear memory to force L2 lookup
+        # Clean up stale test data from previous runs
+        cache_key = "tiles:amadeus:hotel:testcity:2025-03-01:2025-03-14"
+        await async_db_session.execute(
+            delete(ResponseCache).where(ResponseCache.cache_key == cache_key)
+        )
+        await async_db_session.commit()
         clear_memory_cache()
 
         # Miss
@@ -227,9 +253,27 @@ class TestL2DatabaseCache:
         assert len(result2) == 2
         assert result2[0]["id"] == "test-1"
 
+        # Cleanup
+        await async_db_session.execute(
+            delete(ResponseCache).where(ResponseCache.cache_key == cache_key)
+        )
+        await async_db_session.commit()
+        clear_memory_cache()
+
     async def test_l2_hit_after_l1_clear(self, async_db_session):
         """Test that L2 provides data after L1 is cleared."""
+        from sqlalchemy import delete
+
+        from app.db_models import ResponseCache
         from app.services.tile_cache import get_cached_tiles, set_cached_tiles
+
+        # Clean up stale test data
+        cache_key = "tiles:amadeus:hotel:persistcity:2025-04-01:2025-04-14"
+        await async_db_session.execute(
+            delete(ResponseCache).where(ResponseCache.cache_key == cache_key)
+        )
+        await async_db_session.commit()
+        clear_memory_cache()
 
         # Write to both L1 and L2
         tiles = [{"id": "persist-test", "type": "hotel"}]
@@ -255,3 +299,10 @@ class TestL2DatabaseCache:
 
         stats = get_cache_stats()
         assert stats["l2_hits"] >= 1
+
+        # Cleanup
+        await async_db_session.execute(
+            delete(ResponseCache).where(ResponseCache.cache_key == cache_key)
+        )
+        await async_db_session.commit()
+        clear_memory_cache()

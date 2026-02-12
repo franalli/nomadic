@@ -126,14 +126,11 @@ import {
   SPRING_CONFIG,
 } from '@/lib/animation-config';
 
+import { BookingDrawer } from './booking/BookingDrawer';
 import { BookingSection } from './BookingSection';
 import { DestinationMapPlaceholder } from './DestinationMapPlaceholder';
 import { ItineraryProgressIndicator, type ProgressStage } from './ItineraryProgressIndicator';
 import { NextStepBar } from './NextStepBar';
-// Unified Planning View: Only S2StrategyView is used (specialist cards)
-// Legacy stage views removed - timeline lives in Section 4, not embedded in stage content
-// import { S1FramingView } from './stages/S1FramingView';
-// import { S2BlockedView } from './stages/S2BlockedView';
 import { OriginPromptCard } from './OriginPromptCard';
 import { PlanHeader } from './PlanHeader';
 import {
@@ -145,9 +142,6 @@ import {
 } from './planStateHelpers';
 import { S2StrategyView } from './stages/S2StrategyView';
 import { getShortConstraintLabel } from './stages/StrategyHero';
-// import { S3BlockedView } from './stages/S3BlockedView';
-// import { S3EditingView } from './stages/S3EditingView';
-// import { S3ItineraryView } from './stages/S3ItineraryView';
 import { TimelineSkeleton } from './timeline/TimelineSkeleton';
 import { TimelineThread, type TimelineVariant } from './TimelineThread';
 
@@ -301,7 +295,6 @@ export function StrategyStageRenderer({
   const effectiveDayCards = stableDayCardsRef.current ?? viewModel.day_cards;
 
 
-  // Heart preference system for SelectionsBar
   const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
   const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
 
@@ -352,6 +345,15 @@ export function StrategyStageRenderer({
 
   // Toggle for showing/hiding specialist cards in S3 (collapsed by default)
   const [showConstraints, setShowConstraints] = useState(false);
+
+  // Booking drawer state - allows FreeDayCard "Browse Activities" to open the drawer
+  const [bookingDrawerCategory, setBookingDrawerCategory] = useState<'hotel' | 'flight' | 'activity' | null>(null);
+  const handleOpenBookingDrawer = useCallback((category: 'hotel' | 'flight' | 'activity') => {
+    setBookingDrawerCategory(category);
+  }, []);
+  const handleCloseBookingDrawer = useCallback(() => {
+    setBookingDrawerCategory(null);
+  }, []);
 
   // Debounced density state to prevent layout flash during transitions
   // Updated via requestAnimationFrame to let browser paint current frame first
@@ -461,7 +463,6 @@ export function StrategyStageRenderer({
   // UNIFIED PLANNING VIEW - Preferences & Scroll State
   // =========================================================================
 
-  // Scroll to a tile in the tiles section when clicked from SelectionsBar
   const scrollToTile = useCallback((tileId: string) => {
     const tileElement = document.querySelector(`[data-tile-id="${tileId}"]`);
     if (tileElement) {
@@ -1067,6 +1068,7 @@ export function StrategyStageRenderer({
                   variant={computeTimelineVariant(state)}
                   useRichBlocks={true}
                   savedTileIds={savedTileIds}
+                  onOpenBookingDrawer={handleOpenBookingDrawer}
                   onOpenStaysSettings={onOpenStaysSettings}
                   onOpenFlightsSettings={onOpenFlightsSettings}
                 />
@@ -1164,6 +1166,7 @@ export function StrategyStageRenderer({
     hasItineraryContent,
     showConstraints,
     preferredTileIds,
+    handleOpenBookingDrawer, // Stable (useCallback with empty deps) - wires FreeDayCard "Browse Activities"
     // NOTE: onOpenActivitySettings, onOpenFlightsSettings, onOpenStaysSettings intentionally
     // excluded - they're inline arrows in parent, adding them defeats memoization
   ]);
@@ -1189,25 +1192,35 @@ export function StrategyStageRenderer({
   // Mobile uses SplitLayoutView tab switching instead
   if (!isDesktop) {
     return (
-      <div className="flex flex-col h-full">
-        {/* Hero hidden on mobile — TripStatusBar provides trip context */}
+      <>
+        <div className="flex flex-col h-full">
+          {/* Hero hidden on mobile — TripStatusBar provides trip context */}
 
-        {/* Content - direct render, scrollable */}
-        <div
-          ref={scrollContainerRef}
-          className={cn(
-            'flex-1 overflow-y-auto',
-            nextAction && 'pb-32' // Space for sticky footer
-          )}
-        >
-          {/* Content scrim for topo visibility */}
-          <div className="relative min-h-full">
-            <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
-            <div className="relative z-[2]">{planContent}</div>
+          {/* Content - direct render, scrollable */}
+          <div
+            ref={scrollContainerRef}
+            className={cn(
+              'flex-1 overflow-y-auto',
+              nextAction && 'pb-32' // Space for sticky footer
+            )}
+          >
+            {/* Content scrim for topo visibility */}
+            <div className="relative min-h-full">
+              <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
+              <div className="relative z-[2]">{planContent}</div>
+            </div>
           </div>
-        </div>
 
-      </div>
+        </div>
+        <BookingDrawer
+          category={bookingDrawerCategory}
+          tiles={effectiveTiles}
+          savedTileIds={savedTileIds}
+          onSave={onSaveTile}
+          onClose={handleCloseBookingDrawer}
+          onOpenStaysSettings={onOpenStaysSettings}
+        />
+      </>
     );
   }
 
@@ -1318,6 +1331,15 @@ export function StrategyStageRenderer({
         )}
       </AnimatePresence>
 
+      {/* Booking Drawer - opened by FreeDayCard "Browse Activities" and GhostSlot clicks */}
+      <BookingDrawer
+        category={bookingDrawerCategory}
+        tiles={effectiveTiles}
+        savedTileIds={savedTileIds}
+        onSave={onSaveTile}
+        onClose={handleCloseBookingDrawer}
+        onOpenStaysSettings={onOpenStaysSettings}
+      />
     </div>
   );
 }

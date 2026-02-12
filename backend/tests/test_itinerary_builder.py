@@ -914,9 +914,10 @@ class TestDayRemainingCapacity:
             ],
         )
         hours, blocks = builder._day_remaining_capacity(day)
-        # Only the dive counts: 11 - 4 = 7h, and buffer doesn't count as a block
+        # Only the dive counts: 11 - 4 = 7h; buffer counts as a block slot
+        # (matches frontend content policy guard)
         assert hours == 7.0
-        assert blocks == 2
+        assert blocks == 1
 
 
 # =============================================================================
@@ -1069,7 +1070,7 @@ class TestPhase56CoScheduling:
 
         # Specialist days should have co-scheduled blocks
         all_exp_blocks = [
-            b for dc in result[1:-1] for b in dc.blocks if b.activity_type == "activity"
+            b for dc in result[1:-1] for b in dc.blocks if b.booking_category == "activity"
         ]
         assert len(all_exp_blocks) == 2
 
@@ -1127,11 +1128,14 @@ class TestPhase56CoScheduling:
         # Free day should have gotten tiles, no more free_day placeholder
         free_day = result[2]
         assert not any(b.activity_type == "free_day" for b in free_day.blocks)
-        assert any(b.activity_type == "activity" for b in free_day.blocks)
+        assert any(b.booking_category == "activity" for b in free_day.blocks)
 
         # Third tile co-scheduled on a specialist day
         specialist_exp = [
-            b for dc in [result[1], result[3]] for b in dc.blocks if b.activity_type == "activity"
+            b
+            for dc in [result[1], result[3]]
+            for b in dc.blocks
+            if b.booking_category == "activity"
         ]
         assert len(specialist_exp) == 1
 
@@ -1187,7 +1191,7 @@ class TestPhase56CoScheduling:
         result = builder._place_experience_tiles(days, tiles)
 
         # Tile placed on a free day
-        exp_blocks = [b for dc in result for b in dc.blocks if b.activity_type == "activity"]
+        exp_blocks = [b for dc in result for b in dc.blocks if b.booking_category == "activity"]
         assert len(exp_blocks) == 1
 
         # No free_day placeholders remain on days that got tiles
@@ -1253,7 +1257,7 @@ class TestPhase56CoScheduling:
         result = builder._place_experience_tiles(days, tiles)
 
         # Evening yoga should land on Day 2 (morning specialist, max complement)
-        day2_exp = [b for b in result[1].blocks if b.activity_type == "activity"]
+        day2_exp = [b for b in result[1].blocks if b.booking_category == "activity"]
         assert len(day2_exp) == 1
         assert day2_exp[0].summary == "Sunset Yoga"
 

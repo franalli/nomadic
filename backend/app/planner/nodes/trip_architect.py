@@ -736,7 +736,7 @@ async def trip_architect(state: GraphState) -> GraphState:
         )
         # Store violations for prompt injection, then clear the trigger
         state.metadata["current_violations_to_fix"] = violations_for_retry
-        state.metadata["violations_for_retry"] = None
+        state.metadata["violations_for_retry"] = []
 
         # PRESERVE TILES on guard retry - don't clear them!
         # Clearing tiles wipes hotels/flights the user already saw.

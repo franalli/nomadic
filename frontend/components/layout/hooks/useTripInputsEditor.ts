@@ -76,7 +76,8 @@ export function useTripInputsEditor(
 ): UseTripInputsEditorReturn {
   const { tripInputs, storeTripInputs, onToast } = options;
 
-  const documentStore = useDocumentStore();
+  const commitTripInputs = useDocumentStore((s) => s.commitTripInputs);
+  const updateTripInputs = useDocumentStore((s) => s.updateTripInputs);
 
   // Draft state for UI editing (kept local)
   const [tripInputsDraft, setTripInputsDraft] = useState<TripInputsDraft>(() =>
@@ -223,7 +224,7 @@ export function useTripInputsEditor(
         updates.currency = typeof parsedValue === 'string' ? parsedValue.toUpperCase() : trimmedValue.toUpperCase();
       }
 
-      const success = await documentStore.commitTripInputs(updates);
+      const success = await commitTripInputs(updates);
 
       if (!success) {
         onToast(`Failed to update ${field.replace('_', ' ')}. Please try again.`, 'error');
@@ -248,7 +249,7 @@ export function useTripInputsEditor(
         onToast(message, 'confirmation');
       }
     },
-    [tripInputs, documentStore, onToast]
+    [tripInputs, commitTripInputs, onToast]
   );
 
   const handleSetOrigin = useCallback(
@@ -282,7 +283,7 @@ export function useTripInputsEditor(
         // Auto-apply correction if provided
         const correctedValue = result.corrected_values[0];
         const valueToCommit = correctedValue || trimmedOrigin;
-        const success = await documentStore.commitTripInputs({ origin: valueToCommit });
+        const success = await commitTripInputs({ origin: valueToCommit });
 
         if (!success) {
           setPendingOrigin(null);
@@ -302,7 +303,7 @@ export function useTripInputsEditor(
         setValidationLoading(null);
       }
     },
-    [documentStore, onToast]
+    [commitTripInputs, onToast]
   );
 
   const handleRemoveOrigin = useCallback(async () => {
@@ -312,8 +313,8 @@ export function useTripInputsEditor(
       return;
     }
 
-    // Optimistically update via documentStore.commitTripInputs
-    const success = await documentStore.commitTripInputs({ origin: null });
+    // Optimistically update via commitTripInputs
+    const success = await commitTripInputs({ origin: null });
 
     if (!success) {
       onToast('Failed to remove origin. Please try again.', 'error');
@@ -324,12 +325,12 @@ export function useTripInputsEditor(
     onToast(`Origin removed: ${removedOrigin}`, 'confirmation');
 
     setSelectedLocationBadge(null);
-  }, [tripInputs.origin, documentStore, onToast]);
+  }, [tripInputs.origin, commitTripInputs, onToast]);
 
   const handleRemoveTravelers = useCallback(async () => {
     if (tripInputs.adults == null && tripInputs.children == null && tripInputs.requires_assistance == null) return;
 
-    const success = await documentStore.commitTripInputs({
+    const success = await commitTripInputs({
       adults: null,
       children: null,
       requires_assistance: null,
@@ -341,7 +342,7 @@ export function useTripInputsEditor(
     }
 
     onToast('Cleared the travelers info. 👥', 'confirmation');
-  }, [tripInputs.adults, tripInputs.children, tripInputs.requires_assistance, documentStore, onToast]);
+  }, [tripInputs.adults, tripInputs.children, tripInputs.requires_assistance, commitTripInputs, onToast]);
 
   // Refs for debouncing travelers updates to prevent rapid API calls
   const pendingTravelersUpdate = useRef<{ adults?: number | null; children?: number | null }>({});
@@ -357,11 +358,11 @@ export function useTripInputsEditor(
 
     pendingTravelersUpdate.current = {};
 
-    const success = await documentStore.commitTripInputs(updates);
+    const success = await commitTripInputs(updates);
     if (!success) {
       onToast('Failed to update travelers. Please try again.', 'error');
     }
-  }, [documentStore, onToast]);
+  }, [commitTripInputs, onToast]);
 
   const handleUpdateAdults = useCallback((value: number | null) => {
     pendingTravelersUpdate.current.adults = value;
@@ -383,7 +384,7 @@ export function useTripInputsEditor(
 
   const handleToggleRequiresAssistance = useCallback(async () => {
     const newValue = !tripInputs.requires_assistance;
-    const success = await documentStore.commitTripInputs({ requires_assistance: newValue });
+    const success = await commitTripInputs({ requires_assistance: newValue });
     if (!success) {
       onToast('Failed to update assistance setting. Please try again.', 'error');
       return;
@@ -392,12 +393,12 @@ export function useTripInputsEditor(
       ? 'Noted! Will look for accessibility options. ♿'
       : 'Removed accessibility requirement.';
     onToast(message, 'confirmation');
-  }, [tripInputs.requires_assistance, documentStore, onToast]);
+  }, [tripInputs.requires_assistance, commitTripInputs, onToast]);
 
   const handleRemoveBudget = useCallback(async () => {
     if (tripInputs.budget == null) return;
 
-    const success = await documentStore.commitTripInputs({ budget: null });
+    const success = await commitTripInputs({ budget: null });
 
     if (!success) {
       onToast('Failed to clear budget. Please try again.', 'error');
@@ -405,7 +406,7 @@ export function useTripInputsEditor(
     }
 
     onToast('Cleared the budget. 💰', 'confirmation');
-  }, [tripInputs.budget, documentStore, onToast]);
+  }, [tripInputs.budget, commitTripInputs, onToast]);
 
   const handleUpdateCurrency = useCallback(async (currency: string) => {
     const normalized = currency.toUpperCase();
@@ -417,11 +418,11 @@ export function useTripInputsEditor(
     // Optimistically update draft
     setTripInputsDraft((prev) => ({ ...prev, currency: normalized }));
 
-    const success = await documentStore.commitTripInputs({ currency: normalized });
+    const success = await commitTripInputs({ currency: normalized });
     if (!success) {
       onToast('Failed to update currency. Please try again.', 'error');
     }
-  }, [documentStore, onToast]);
+  }, [commitTripInputs, onToast]);
 
   // TODO: multi_city_intent feature is not yet implemented in DocumentTripInputs type
   const handleToggleMultiCity = useCallback(async () => {
@@ -442,7 +443,7 @@ export function useTripInputsEditor(
 
       // SYNC: Write to store immediately (before validation)
       // This ensures RefreshButton sees the new value instantly
-      documentStore.updateTripInputs({ destination: trimmedDestination });
+      updateTripInputs({ destination: trimmedDestination });
 
       // Clear pending/input state
       setPendingDestination(null);
@@ -456,7 +457,7 @@ export function useTripInputsEditor(
 
         if (!result.is_valid) {
           // Invalid destination - revert store to captured previous value (race-safe)
-          documentStore.updateTripInputs({ destination: prevDestinationRef.current });
+          updateTripInputs({ destination: prevDestinationRef.current });
           const errorMsg = result.reason || 'This doesn\'t appear to be a valid destination.';
           setValidationError({ field: 'destination', message: errorMsg });
           onToast(`Invalid destination: ${errorMsg}`, 'error');
@@ -467,11 +468,11 @@ export function useTripInputsEditor(
         // Apply correction if needed
         const correctedValue = result.corrected_values[0] || trimmedDestination;
         if (correctedValue !== trimmedDestination) {
-          documentStore.updateTripInputs({ destination: correctedValue });
+          updateTripInputs({ destination: correctedValue });
         }
 
         // Persist to backend
-        const success = await documentStore.commitTripInputs({ destination: correctedValue });
+        const success = await commitTripInputs({ destination: correctedValue });
 
         if (!success) {
           onToast('Failed to set destination. Please try again.', 'error');
@@ -483,12 +484,12 @@ export function useTripInputsEditor(
         onToast(`Destination set to "${correctedValue}" 📍`, 'confirmation');
       } catch {
         // Revert on error
-        documentStore.updateTripInputs({ destination: prevDestinationRef.current });
+        updateTripInputs({ destination: prevDestinationRef.current });
         onToast('Validation failed. Please try again.', 'error');
         setValidationLoading(null);
       }
     },
-    [tripInputs.destination, documentStore, onToast]
+    [tripInputs.destination, commitTripInputs, updateTripInputs, onToast]
   );
 
   const handleRemoveDestination = useCallback(
@@ -497,7 +498,7 @@ export function useTripInputsEditor(
       if (!currentDestination) return;
 
       // Clear the destination
-      const success = await documentStore.commitTripInputs({ destination: null });
+      const success = await commitTripInputs({ destination: null });
 
       if (!success) {
         onToast('Failed to clear destination. Please try again.', 'error');
@@ -507,7 +508,7 @@ export function useTripInputsEditor(
       onToast(`Cleared destination "${currentDestination}". 📍`, 'confirmation');
       setSelectedLocationBadge(null);
     },
-    [tripInputs.destination, documentStore, onToast]
+    [tripInputs.destination, commitTripInputs, updateTripInputs, onToast]
   );
 
   const resetDraft = useCallback(() => {

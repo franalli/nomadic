@@ -1,12 +1,63 @@
 # CLAUDE.md — Agent Operating Manual
 
+# CLAUDE.md — Agent Operating Manual
+
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
 - **Focus:** [describe focus]
 - **Secondary:** [secondary priority or "none"]
-- **Active work:** Builder-aware constraint guard (re-surfaces violations when builder fails via `last_builder_success` metadata), day preference hallucination guard in router extraction, "Expedition Leader" synthesizer voice (no system jargon), builder-derived "Extend to" suggestion chips, `price_display` pre-formatting on tiles, removed ConflictResolutionBanner (conflict resolution now chat-driven via suggestion chips), dirty settings tracker (`markSettingDirty`) preventing overwrite of backend-derived values. Shipped: CORS preflight rate-limit fix (dedicated `__preflight__` bucket), removed unnecessary `threading.Lock` from db.py and session middleware (single event loop), session middleware skips `/health`.
+- **Active work:** UI refactor phase 2: dead frontend component cleanup (~1,300 lines removed: SelectionsBar, PlanDocument, legacy stage views, SuggestionBlock, pill components, useChatStateMachine), dead backend cleanup (~337 lines: specialist_llm.py, init_cache_handles, get_response_from_state, should_skip_graph, Unsplash attribution). Fill-day endpoint enriched (adjacent-day constraint filter, rich DayBlocks, tile store merge, category-aware labels, categories optional). MOTION_VARIANTS/TRANSITIONS removed from animation-config.ts. Prior: TIER2_ACTIVITY_KEYWORDS→specialist_registry.py, router_utils.py extraction, builder trim-before-conflict, guard capacity-aware cross-domain, preference auto-regen AbortController, tile type expansion, AckStatus pending/rejected.
 - **Known broken:** none
 - **DO NOT touch this sprint:** [frozen files/features]
+
+---
+
+Updated section:
+
+```markdown
+## 🤖 Agents
+
+Three subagents in `.claude/agents/`.
+
+- **backend-specialist** — Python/planner/services/FastAPI work
+- **frontend-specialist** — React/TypeScript/Zustand/styling work
+- **code-reviewer** — Review multi-file changes after executing a plan
+
+### When to Delegate
+
+- Multi-file changes (3+ files) → delegate to specialist
+- Complex logic (constraint guard, builder, state machines) → delegate
+- Cross-stack → backend specialist first, then frontend. Never both at once.
+- Post-task review on multi-file work → always code-reviewer
+
+### When to Work Directly without Agent Delegation
+
+- Single-file fixes, one-liners, typos
+- Exploratory/interactive tasks needing inline progress
+- Reading files or answering questions about code
+
+### Parallelism
+
+Run independent operations concurrently:
+
+- Multiple file reads → parallel
+- Lint + build + test across different stacks → parallel
+- Independent changes across different node files → parallel
+- Multiple grep/find operations → parallel
+- Independent backend + frontend work → parallel
+
+DO NOT parallelize:
+
+- Frontend + backend changes to the same API contract (backend first)
+- Schema changes + dependent code (schema first)
+- Specialist delegation + code review (specialist first, reviewer after)
+- File writes to the same file (sequence always)
+
+### Agent Result Handling
+
+- After EVERY agent delegation, immediately retrieve and present the result ASAP.
+- Do not wait for the user to ask. The delegation is not complete until the
+  result is shown and any output files are confirmed.
 
 ---
 
@@ -42,16 +93,16 @@ If a task requires touching BOTH zones, stop and confirm scope before proceeding
 
 These four docs override your assumptions. Read before generating code.
 
-| SSoT Doc                           | Governs                                | Rule                                                                     |
-| ---------------------------------- | -------------------------------------- | ------------------------------------------------------------------------ |
-| `@docs/plan_graph_analysis.md`     | Backend architecture, node structure   | MUST verify plan against spec before writing planner code                |
-| `@docs/design-system.md`           | UI styling, tokens, component patterns | ALL React components use these tokens — no invented Tailwind values      |
-| `@docs/ux_unified_architecture.md` | View states, rendering logic, UX flow  | Never swap renderers — use `UnifiedStageRenderer`, adapt by data density |
-| `@docs/data-contracts.md`          | API routes, schemas, state store       | Check before modifying API endpoints, schemas, or state shape            |
+| SSoT Doc                           | Governs                                | Rule                                                                      |
+| ---------------------------------- | -------------------------------------- | ------------------------------------------------------------------------- |
+| `@docs/plan_graph_analysis.md`     | Backend architecture, node structure   | MUST verify plan against spec before writing planner code                 |
+| `@docs/design-system.md`           | UI styling, tokens, component patterns | ALL React components use these tokens — no invented Tailwind values       |
+| `@docs/ux_unified_architecture.md` | View states, rendering logic, UX flow  | Never swap renderers — use `StrategyStageRenderer`, adapt by data density |
+| `@docs/data-contracts.md`          | API routes, schemas, state store       | Check before modifying API endpoints, schemas, or state shape             |
 
-**Invariants from these docs:**
+**Invariants:**
 
-- `TripPlan` is the SSoT for all trip state
+- `TripPlan` is SSoT for all trip state
 - Right Panel NEVER empty after first user interaction
 - 7-node LangGraph structure is fixed
 - `plan_view_state` from backend determines rendering mode
@@ -59,81 +110,54 @@ These four docs override your assumptions. Read before generating code.
 
 ---
 
-## Architecture (Reference Only — Read the SSoT Docs for Details)
+## Architecture
 
 ### Design Principles
 
 0. **Keep it simple** — no over-engineering
 1. **TripPlan is SSoT** — single source of truth for all trip state
 2. **Data over Agents** — flights/hotels are data fetchers (LogisticsNode), not agents
-3. **Domain Experts ARE Agents** — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing) use VerticalSpecialist with reasoning; Tier 2 (Sailing/Cooking/Yoga) are lightweight tile filters
+3. **Domain Experts ARE Agents** — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing) use VerticalSpecialist; Tier 2 (Sailing/Cooking/Yoga) are lightweight tile filters
 4. **Architect sees the whole picture** — avoids context fracture
 5. **Safe Routing** — LLM-based intent classification (GPT-4o-mini), no regex
 6. **Constraint Injector** — Specialist runs BEFORE Architect calls tools
 7. **One Voice** — Synthesizer ensures consistent tone across all nodes
-8. **No hard-coded world data** — never hard-code locations, airports, geolocation, or any potentially infinite dataset — always write generic LLM logic to handle these cases
+8. **No hard-coded world data** — never hard-code locations, airports, geolocation, or any potentially infinite dataset
 
 ### Stack
 
 - **Frontend:** Next.js 16, React 19, TypeScript, Tailwind, Zustand, Framer Motion, Mapbox GL
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy, Alembic, LangGraph, LangChain-OpenAI
 - **Testing:** Vitest (frontend), pytest (backend)
-- **Linting:** ESLint + Prettier (frontend), Ruff + Black (backend)
+- **Linting:** ESLint + Prettier (frontend), Ruff (backend)
 
 ---
 
 ## Commands
-
-### Frontend (`/frontend`)
-
-```
-npm run dev          # Dev server
-npm run build        # Production build
-npm run lint:fix     # Lint + fix
-npm run test         # Tests
 ```
 
-### Backend (`/backend`)
+# Frontend
+
+cd frontend && npm run dev # Dev server
+cd frontend && npm run build # Production build (Render: npm ci --include=dev && npm run build)
+cd frontend && npm run lint:fix # Lint + fix
+
+# Backend
+
+cd backend && python start.py # Start server
+cd backend && pytest # Tests
+# After running pytest, delete leftover SQLite artifacts:
+rm -f backend/test_plan_document_pytest.db*
+cd backend && ruff check . --fix # Lint + fix
+
+# Environment
+
+frontend/.env.local → NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN
+backend/.env → DATABASE_URL, OPENAI_KEY
+cd backend && alembic upgrade head # DB migrations
+docker compose up db --build # Docker DB
 
 ```
-python start.py      # Start server
-pytest               # Tests
-ruff check . --fix   # Lint + fix
-```
-
-### Environment
-
-- Frontend env: `frontend/.env.local` → `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_MAPBOX_TOKEN`
-- Backend env: `backend/.env` → `DATABASE_URL`, `OPENAI_KEY`
-- DB migrations: `cd backend && alembic upgrade head`
-- Docker DB: `docker compose up db --build`
-
----
-
-## Performance Notes
-
-### Synthesizer Latency Optimization (Stage 8)
-
-The Synthesizer uses intelligent model routing for faster response times:
-
-- **greeting**: Template only (no LLM, <50ms)
-- **exploration**: gpt-4o-mini (~150ms, $0.15/1M tokens)
-- **specialist_update**: gpt-4o-mini (~150ms, $0.15/1M tokens)
-- **planning**: gpt-4o (~600ms, $2.50/1M tokens)
-
-Prompt templates are cached in-memory:
-
-- Cache cleared on process restart
-- If you modify `backend/app/prompts/synthesizer.txt`, restart the server
-- Cache safety: template.render() must only use `response_type` variable
-
-Context window dynamically trims history:
-
-- greeting: 0 turns (bypassed entirely)
-- exploration/specialist_update: 2 turns (4 messages)
-- planning: 4 turns (8 messages)
-
-**DO NOT modify `_MODEL_BY_COMPLEXITY` or `_HISTORY_DEPTH_BY_TYPE` without measuring quality impact**
 
 ---
 
@@ -144,7 +168,6 @@ Context window dynamically trims history:
 - Check `@docs/design-system.md` AND `@docs/ux_unified_architecture.md` FIRST
 - 2-space indent, named exports, `cn()` for classNames
 - Lucide React for icons (not react-icons, not heroicons)
-- `React.forwardRef` for reusable components
 - Components under 200 lines
 
 ### Python
@@ -152,7 +175,22 @@ Context window dynamically trims history:
 - Check `@docs/plan_graph_analysis.md` FIRST
 - 100 char line length, type hints on all functions
 - Async for I/O, Pydantic v2 for schemas
-- Follow ruff/black formatting
+- Follow ruff formatting
+
+---
+
+## Performance Notes
+
+Synthesizer model routing (DO NOT modify without measuring quality impact):
+
+| Response Type     | Model       | Latency | History Depth |
+| ----------------- | ----------- | ------- | ------------- |
+| greeting          | Template    | <50ms   | 0 turns       |
+| exploration       | gpt-4o-mini | ~150ms  | 2 turns       |
+| specialist_update | gpt-4o-mini | ~150ms  | 2 turns       |
+| planning          | gpt-4o      | ~600ms  | 4 turns       |
+
+Prompt templates cached in-memory — restart server after modifying `backend/app/prompts/synthesizer.txt`.
 
 ---
 
@@ -167,39 +205,35 @@ Context window dynamically trims history:
 
 ## Machine: MacBook Pro M5 — 24GB RAM
 
-This machine can handle heavier workloads. Adjust behavior accordingly:
-
-- **Parallel sessions:** Two Claude Code instances comfortably, three if one is idle/monitoring
-- **File reads:** Can load up to 8–10 files in context per task without concern
+- **Parallel sessions:** Two Claude Code instances comfortably, three if one is idle
+- **File reads:** Up to 8–10 files in context per task
 - **Builds:** `npm run build` and `pytest` can run concurrently with dev servers
 - **Docker:** DB container + both dev servers simultaneously is fine
-- **Compaction:** Less urgent than on constrained machines — compact after major milestones, not every sub-task
-- **Still avoid:** Reading entire directories, node_modules, or loading all spec docs at once unnecessarily
+- **Still avoid:** Reading entire directories, node_modules, or loading all spec docs at once
 
 ### Context Management
 
-- Run `/compact` after completing major features or switching focus areas
-- Run `/clear` when switching between frontend and backend work
+- `/compact` after completing major features or switching focus areas
+- `/clear` when switching between frontend and backend work
 - Reference specific files (`@backend/app/planner/nodes/intent_router.py`), not directories
-- If stuck or confused: re-read `@CLAUDE.md`, then ask
 
 ---
 
-## After /compact or /clear — Resumption Protocol
+## Resumption Protocol (after /compact or /clear)
 
 1. Re-read this `CLAUDE.md`
-2. Check the **Current Sprint** section above
-3. Ask what task to continue — do NOT assume or pick up where you think you left off
-4. Read the specific files involved BEFORE making any changes
+2. Check **Current Sprint** above
+3. Ask what task to continue — do NOT assume
+4. Read specific files involved BEFORE making changes
 
 ## Auto-Compact Preservation
 
-When auto-compacting, MUST preserve:
+When auto-compacting, MUST preserve verbatim:
 
-- The **Current Sprint** section verbatim
-- The **Hard Rules** section verbatim
+- Current Sprint section
+- Hard Rules section
 - SSoT governance pointers
-- The 7-node LangGraph invariant
-- Context management rules
-- Verbatim file paths and function signatures currently being modified
+- 7-node LangGraph invariant
+- File paths and function signatures currently being modified
 - Domain safety rules (e.g., diving 24h no-fly buffer)
+```

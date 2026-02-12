@@ -14,41 +14,25 @@ Handles:
 import asyncio
 import logging
 import re
-from typing import List, Optional
+from typing import Optional
 
 from app.config import settings
-from app.planner.nodes.router_extraction import (
-    IntentClassification,
-    _normalize_city_name,
+from app.planner.nodes.router_utils import (  # noqa: F401 — re-exported
+    EXACT_MATCH_GREETINGS,
+    ORIGIN_PATTERNS,
+    _check_exact_match_greeting,
+    _detect_origin_from_message,
+    _extract_destination_context,
+    get_new_specialists_from_text,
 )
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
+    TIER2_ACTIVITY_KEYWORDS,
 )
 from app.planner.state import GraphState
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# Constants
-# ============================================================================
-
-TIER2_ACTIVITY_KEYWORDS: set[str] = {
-    "yoga",
-    "cooking",
-    "nightlife",
-    "temples",
-    "beach",
-    "shopping",
-    "photography",
-    "sailing",
-    "wellness",
-    "culture",
-    "music",
-    "wine",
-    "food",
-}
 
 try:
     from rapidfuzz import fuzz, process
@@ -72,39 +56,6 @@ def _fuzzy_resolve_token(token: str) -> Optional[str]:
     )
     return match[0] if match else None
 
-
-EXACT_MATCH_GREETINGS = frozenset(
-    {
-        "hi",
-        "hello",
-        "hey",
-        "yo",
-        "sup",
-        "hi!",
-        "hello!",
-        "hey!",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "morning",
-        "afternoon",
-        "evening",
-        "thanks",
-        "thank you",
-        "thanks!",
-        "thank you!",
-        "bye",
-        "goodbye",
-        "bye!",
-        "goodbye!",
-        "cheers",
-        "ciao",
-        "hola",
-    }
-)
-
-# Generate plan trigger from frontend "Build plan" button
-GENERATE_PLAN_TRIGGER = "GENERATE_PLAN_NOW"
 
 PLANNING_READINESS_SIGNALS = [
     # Plan signals
@@ -148,11 +99,7 @@ DATE_INDICATORS = [
     r"\b\d{1,2}[/-]\d{1,2}\b",
 ]
 
-ORIGIN_PATTERNS = [
-    r"^(?:i(?:'m|'m| am)\s+)?(?:leaving|departing|flying|coming|traveling)?\s*from\s+(\S.+)$",
-    r"^(?:departure|depart(?:ing)?|leav(?:e|ing))\s+from\s+(\S.+)$",
-    r"^from\s+(\S.+)$",  # Most common: "from rome"
-]
+# ORIGIN_PATTERNS now imported from router_utils.py
 
 SKILL_LEVEL_MAP: dict[str, str] = {
     "beginner": "beginner",
@@ -312,33 +259,122 @@ def _detect_actionable_input(user_text: str, state: "GraphState") -> Optional[di
     return changes if changes else None
 
 
+# get_new_specialists_from_text now imported from router_utils.py
+
+
 # ============================================================================
-# Specialist Detection
+# Post-LLM Modification Collection (Phase 2)
+# Reads from RouterOutput dict instead of re-parsing user text with regex.
 # ============================================================================
 
 
-def get_new_specialists_from_text(text: str, existing_specialists: List[str]) -> List[str]:
+def _collect_modifications_from_extraction(
+    router_output: dict,
+    state: "GraphState",
+    pre_populate_categories: Optional[set] = None,
+) -> Optional[dict]:
     """
-    Get list of NEW specialists mentioned in text that aren't already in the plan.
+    Read LLM extraction output and collect trip modifications.
+
+    Returns dict matching _detect_actionable_input() output shape
+    (add_categories, remove_categories, skill_level, reset_budget, reset_hotel)
+    or None if no modifications detected.
 
     Args:
-        text: User message
-        existing_specialists: List of specialist types already in the plan
-
-    Returns:
-        List of new specialist types to add
+        pre_populate_categories: Snapshot of categories from BEFORE
+            _populate_trip_plan_from_router_output ran. Required for the
+            post-plan path where _populate already wrote categories to state.
+            If None, reads current categories from state (pre-plan path).
     """
-    text_lower = text.lower()
-    new_specialists = []
+    changes: dict = {}
 
-    for specialist_type, keywords in ALL_SPECIALIST_KEYWORDS.items():
-        if specialist_type in existing_specialists:
-            continue  # Already have this specialist
+    # 1. Activity additions (Tier 1 + Tier 2) — detect NEW categories only
+    known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALIST_NAMES
+    if pre_populate_categories is not None:
+        existing = pre_populate_categories
+    else:
+        existing = set(_get_current_categories(state))
 
-        if any(kw in text_lower for kw in keywords):
-            new_specialists.append(specialist_type)
+    cats = router_output.get("activity_categories", [])
+    hints = router_output.get("specialist_hints", [])
+    new_cats = {c.lower() for c in cats if c.lower() in known}
+    new_hints = {h.lower() for h in hints if h.lower() in known}
+    additions = (new_cats | new_hints) - existing
+    if additions:
+        changes["add_categories"] = additions
 
-    return new_specialists
+    # 2. Activity removals
+    removals_raw = router_output.get("removal_targets", [])
+    if removals_raw:
+        removals = {r.lower() for r in removals_raw if r.lower() in known}
+        if removals:
+            changes["remove_categories"] = removals
+
+    # 3. Skill level
+    skill = router_output.get("skill_level")
+    if skill and skill.lower() in ("beginner", "intermediate", "advanced"):
+        changes["skill_level"] = skill.lower()
+
+    # 4. Setting resets
+    if router_output.get("reset_budget"):
+        changes["reset_budget"] = True
+    if router_output.get("reset_hotel"):
+        changes["reset_hotel"] = True
+
+    return changes if changes else None
+
+
+def _get_current_categories(state: "GraphState") -> list:
+    """Get current activity categories from state."""
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    activity_settings = trip_inputs.get("activity_settings", {})
+    return activity_settings.get("categories", [])
+
+
+def _collect_settings_from_extraction(router_output: dict) -> Optional[dict]:
+    """
+    Read settings changes from LLM RouterOutput dict.
+
+    Returns dict matching _detect_settings_from_message() output shape
+    (budget, adults, children, hotel_settings, flight_settings)
+    or None if no settings detected.
+    """
+    detected: dict = {}
+
+    # Budget (new value, not reset — reset is handled by _collect_modifications)
+    budget = router_output.get("budget")
+    if budget is not None and not router_output.get("reset_budget"):
+        detected["budget"] = int(budget)
+
+    # Travelers
+    if router_output.get("adults") is not None:
+        detected["adults"] = router_output["adults"]
+    if router_output.get("children") is not None:
+        detected["children"] = router_output["children"]
+
+    # Hotel settings
+    hotel: dict = {}
+    if router_output.get("hotel_min_stars") is not None:
+        hotel["min_stars"] = router_output["hotel_min_stars"]
+    if router_output.get("hotel_style"):
+        hotel["style"] = router_output["hotel_style"]
+    if router_output.get("hotel_amenities"):
+        hotel["amenities"] = router_output["hotel_amenities"]
+    if router_output.get("hotel_location"):
+        hotel["location"] = router_output["hotel_location"]
+    if hotel:
+        detected["hotel_settings"] = hotel
+
+    # Flight settings
+    flight: dict = {}
+    if router_output.get("flight_direct_only") is not None:
+        flight["direct_only"] = router_output["flight_direct_only"]
+    if router_output.get("flight_cabin_class"):
+        flight["cabin_class"] = router_output["flight_cabin_class"]
+    if flight:
+        detected["flight_settings"] = flight
+
+    return detected if detected else None
 
 
 # ============================================================================
@@ -376,156 +412,6 @@ def detect_planning_intent(text: str, state: "GraphState") -> str:
         return "soft_transition"  # Just date or just activity
 
     return "exploring"
-
-
-# ============================================================================
-# Destination Context Extraction
-# ============================================================================
-
-
-def _extract_destination_context(text: str, state: "GraphState") -> Optional[str]:
-    """
-    Extract destination from question or use conversation context.
-
-    Priority:
-    1. Check if destination mentioned in current question (excluding origin cities)
-    2. Use last_destination_context from state
-    3. Use trip_plan.destination if set
-
-    NOTE: Cities following origin indicators (e.g., "from rome") are NOT destinations.
-    """
-    from app.planner.nodes.local_expert import LOCAL_EXPERT_KNOWLEDGE
-
-    text_lower = text.lower()
-
-    # Extract cities that follow origin patterns - these are NOT destinations
-    origin_cities = set()
-    for pattern in ORIGIN_PATTERNS:
-        match = re.match(pattern, text, re.IGNORECASE)
-        if match:
-            city = match.group(1).strip().rstrip(".!?,")
-            # Truncate at destination indicators: "rome to bali" → "rome"
-            city = re.split(r"\s+to\s+", city, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-            city = city.lower()
-            # Add both full match and first word (handles "rome italy")
-            origin_cities.add(city)
-            if city:
-                origin_cities.add(city.split()[0])
-
-    # Check LOCAL_EXPERT_KNOWLEDGE keys first (known destinations)
-    # But SKIP cities that appear in origin context
-    for dest_key in LOCAL_EXPERT_KNOWLEDGE.keys():
-        dest_lower = dest_key.lower()
-        if dest_lower in text_lower and dest_lower not in origin_cities:
-            return dest_key.capitalize()
-
-    # Fallback to conversation context
-    if state.metadata.get("last_destination_context"):
-        return state.metadata["last_destination_context"]
-
-    if state.trip_plan and state.trip_plan.destination:
-        return state.trip_plan.destination
-
-    return None
-
-
-# ============================================================================
-# Greeting Detection
-# ============================================================================
-
-
-def _check_exact_match_greeting(text: str) -> Optional[IntentClassification]:
-    """
-    Check if input matches known greeting patterns exactly.
-
-    Returns IntentClassification if matched, None otherwise.
-    Saves an LLM call for trivial inputs (~300ms, ~150 tokens).
-    """
-    normalized = text.strip().lower()
-
-    if normalized in EXACT_MATCH_GREETINGS:
-        logger.debug(f"Exact match greeting detected: '{text}'")
-        return IntentClassification(
-            intent="GREETING",
-            confidence=1.0,
-            reasoning="Exact match greeting - no LLM needed",
-            specialist_hints=[],
-        )
-
-    return None
-
-
-# ============================================================================
-# Origin Detection
-# ============================================================================
-
-
-def _detect_origin_from_message(user_text: str) -> Optional[str]:
-    """
-    Detect if user message is specifying an origin/departure city.
-    Returns normalized city name if detected, None otherwise.
-
-    Must run BEFORE exploration mode check to prevent "from rome" being
-    interpreted as exploring Rome when user means "departing from Rome".
-
-    Examples:
-        "from rome" → "Rome"
-        "flying from london" → "London"
-        "leaving from NYC" → "New York"
-        "tell me about rome" → None (not an origin pattern)
-    """
-    text = user_text.strip()
-
-    # Quick reject: if message doesn't contain "from", skip
-    if "from" not in text.lower():
-        return None
-
-    for pattern in ORIGIN_PATTERNS:
-        match = re.match(pattern, text, re.IGNORECASE)
-        if match:
-            city = match.group(1).strip().rstrip(".!?,")
-            # Truncate at destination indicators: "rome to bali" → "rome"
-            city = re.split(r"\s+to\s+", city, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-            # Truncate at date-like tokens: "rome feb 11" → "rome"
-            city = re.split(
-                r"\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}[/-])\b",
-                city,
-                maxsplit=1,
-                flags=re.IGNORECASE,
-            )[0].strip()
-            # Normalize: "rome italy" → "Rome", remove country suffixes
-            city = _normalize_city_name(city)
-            if city:
-                # Title case the city name for display
-                return city.title()
-
-    return None
-
-
-# ============================================================================
-# Generate Plan Trigger Detection
-# ============================================================================
-
-
-def _check_generate_plan_trigger(text: str) -> Optional[IntentClassification]:
-    """
-    Check if input is the generate plan trigger from frontend.
-
-    The frontend sends "GENERATE_PLAN_NOW" when user clicks "Build plan".
-    Returns IntentClassification with PLANNING intent to trigger tile fetching.
-    """
-    normalized = text.strip().upper()
-
-    if normalized == GENERATE_PLAN_TRIGGER:
-        logger.debug("Generate plan trigger detected")
-        return IntentClassification(
-            intent="PLANNING",
-            confidence=1.0,
-            reasoning="Generate plan trigger - execute plan with tiles",
-            specialist_hints=[],
-        )
-
-    return None
 
 
 # ============================================================================

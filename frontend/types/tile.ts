@@ -10,18 +10,28 @@ export type TileProvider = 'expedia' | 'booking' | 'unknown';
 export type Tile = {
   id: string;
   type: string;
+  partner?: string;
+  partner_product_id?: string;
   title: string;
   subtitle?: string;
   image_url?: string;
   price_estimate?: number;
+  live_price?: number;
   currency: string;
-  deeplink_url: string;
-  rating?: number;
-  location_label?: string;
-  tags?: string[];
-  meta?: Record<string, unknown>;
   /** Price basis: 'per_night', 'per_person', 'per_trip', etc. */
   price_basis?: string;
+  is_estimate_only?: boolean;
+  deeplink_url: string;
+  rating?: number;
+  review_count?: number;
+  location_label?: string;
+  geo?: { lat: number; lon: number };
+  tags?: string[];
+  availability_status?: 'available' | 'low' | 'unknown' | 'not_available';
+  meta?: Record<string, unknown>;
+  score?: number;
+  source?: string;
+  source_agent?: string;
 
   // Expedia Rapid API pricing fields
   /** Total price including all taxes and fees (property_inclusive from Expedia) */

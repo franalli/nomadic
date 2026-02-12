@@ -16,19 +16,3 @@ export function debugLog(...args: unknown[]): void {
     console.log(...args);
   }
 }
-
-/**
- * Console.warn wrapper that respects debug flag
- */
-export function debugWarn(...args: unknown[]): void {
-  if (DEBUG_MODE) {
-    console.warn(...args);
-  }
-}
-
-/**
- * Check if debug mode is enabled
- */
-export function isDebugMode(): boolean {
-  return DEBUG_MODE;
-}

@@ -15,7 +15,6 @@ export const REVEAL_TIMING = {
   // Tiles section
   TILES_FADE: 300, // Opacity 0→1 fade in
 
-  // SelectionsBar
   SELECTIONS_SLIDE: 250, // Slide down from top
 
   // Timeline
@@ -40,64 +39,4 @@ export const SPRING_CONFIG = {
 
   // Bouncy elements (buttons, badges)
   BOUNCE: { stiffness: 500, damping: 35 },
-} as const;
-
-// Framer Motion variant presets
-export const MOTION_VARIANTS = {
-  // Fade in from below (tiles, timeline)
-  fadeInUp: {
-    initial: { opacity: 0, y: 20 },
-    animate: { opacity: 1, y: 0 },
-    exit: { opacity: 0, y: 20 },
-  },
-
-  // Slide down from top (SelectionsBar)
-  slideDown: {
-    initial: { y: -50, opacity: 0 },
-    animate: { y: 0, opacity: 1 },
-    exit: { y: -50, opacity: 0 },
-  },
-
-  // Slide up from bottom (NextStepBar)
-  slideUp: {
-    initial: { y: 100, opacity: 0 },
-    animate: { y: 0, opacity: 1 },
-    exit: { y: 100, opacity: 0 },
-  },
-
-  // Slide in from right (Map)
-  slideInRight: {
-    initial: { x: 100, opacity: 0 },
-    animate: { x: 0, opacity: 1 },
-    exit: { x: 100, opacity: 0 },
-  },
-
-  // Simple fade (tiles section)
-  fade: {
-    initial: { opacity: 0 },
-    animate: { opacity: 1 },
-    exit: { opacity: 0 },
-  },
-} as const;
-
-// Transition presets combining timing + spring
-export const TRANSITIONS = {
-  // For content reveals (tiles, timeline)
-  reveal: {
-    duration: REVEAL_TIMING.TILES_FADE / 1000,
-    ease: 'easeOut',
-  },
-
-  // For interactive slides (SelectionsBar, NextStepBar)
-  spring: {
-    type: 'spring' as const,
-    ...SPRING_CONFIG.SLIDE,
-  },
-
-  // For staggered reveals (map after timeline)
-  staggered: {
-    type: 'spring' as const,
-    ...SPRING_CONFIG.SLIDE,
-    delay: REVEAL_TIMING.MAP_STAGGER_DELAY / 1000,
-  },
 } as const;

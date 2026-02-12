@@ -558,7 +558,7 @@ export function NomadicLanding() {
   // Clear local pending topics when backend responds with executed_strategy_topics
   // Topics that appear in executed are successfully processed
   // Topics that were pending but didn't execute stay (backend didn't process them)
-  const executedTopics = docExecutedTopics ?? [];
+  const executedTopics = useMemo(() => docExecutedTopics ?? [], [docExecutedTopics]);
   useEffect(() => {
     if (executedTopics.length > 0) {
       setLocalPendingTopics((prev) =>
@@ -727,7 +727,7 @@ export function NomadicLanding() {
   }, [envelopeGeneration, uiGeneration, isGenerating]);
 
   // Tiles from document store
-  const tiles = docTiles ?? {};
+  const tiles = useMemo(() => docTiles ?? {}, [docTiles]);
 
   // Plan tab enabled when we have branches/plan content (unlocked after Build)
   const planTabEnabled = useMemo(() => {

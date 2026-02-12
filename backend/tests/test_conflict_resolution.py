@@ -228,19 +228,22 @@ class TestScenario1ConstraintClash:
     """
     Scenario 1: Constraint Clash (Altitude After Dive)
 
-    Trigger: 5-day trip, diving + hiking (Mt. Batur 1717m)
+    Trigger: 4-day trip (too short for even 1 dive + buffer + 1 hike)
     Expected: BLOCKING conflict, partial timeline with hiking grayed
+
+    Note: 5-day trips now trim instead of conflicting (available_after_buffer=2).
+    Real conflicts only fire when available_after_buffer < 2 (≤4 day trips).
     """
 
     def test_constraint_clash_detected(self):
-        """Verify constraint_clash conflict is detected."""
-        # 5-day trip: Mar 1-5 (3 activity days after arrival/departure)
+        """Verify constraint_clash conflict is detected on short trips."""
+        # 4-day trip: Mar 1-4 (2 usable, 1 after buffer — can't fit 1+1)
         sections = make_strategy_sections(
             diving_count=2,
             hiking_count=2,
             include_altitude_constraint=True,
         )
-        input_data = make_builder_input("2026-03-01", "2026-03-05", sections)
+        input_data = make_builder_input("2026-03-01", "2026-03-04", sections)
 
         builder = ItineraryBuilder()
         result = builder.build(input_data)
@@ -256,19 +259,33 @@ class TestScenario1ConstraintClash:
         assert clash_conflict.severity == ConstraintSeverity.BLOCKING
         assert "diving" in clash_conflict.specialists
         assert "hiking" in clash_conflict.specialists
-        assert (
-            "24h buffer" in clash_conflict.message.lower()
-            or "buffer" in clash_conflict.message.lower()
-        )
+        assert "buffer" in clash_conflict.message.lower()
 
-    def test_partial_timeline_has_unschedulable_hiking(self):
-        """Verify partial timeline marks hiking as unschedulable."""
+    def test_cross_domain_trim_on_5day_trip(self):
+        """5-day trip trims to 1 dive + buffer + 1 hike instead of conflicting."""
         sections = make_strategy_sections(
             diving_count=2,
             hiking_count=2,
             include_altitude_constraint=True,
         )
         input_data = make_builder_input("2026-03-01", "2026-03-05", sections)
+
+        builder = ItineraryBuilder()
+        result = builder.build(input_data)
+
+        # Should succeed with trimming
+        assert result.success is True
+        assert len(result.day_cards) > 0
+        assert len(result.conflicts) == 0
+
+    def test_partial_timeline_has_unschedulable_hiking(self):
+        """Verify partial timeline marks hiking as unschedulable on short trips."""
+        sections = make_strategy_sections(
+            diving_count=2,
+            hiking_count=2,
+            include_altitude_constraint=True,
+        )
+        input_data = make_builder_input("2026-03-01", "2026-03-04", sections)
 
         builder = ItineraryBuilder()
         result = builder.build(input_data)
@@ -302,7 +319,7 @@ class TestScenario1ConstraintClash:
             hiking_count=2,
             include_altitude_constraint=True,
         )
-        input_data = make_builder_input("2026-03-01", "2026-03-05", sections)
+        input_data = make_builder_input("2026-03-01", "2026-03-04", sections)
 
         builder = ItineraryBuilder()
         result = builder.build(input_data)
@@ -314,7 +331,7 @@ class TestScenario1ConstraintClash:
         extend_res = next((r for r in result.resolutions if r.action == "extend_trip"), None)
         assert extend_res is not None
         assert extend_res.new_duration is not None
-        assert extend_res.new_duration > 5  # Should suggest more days
+        assert extend_res.new_duration > 4  # Should suggest more days
 
         # Check for reduce_activities resolution
         reduce_res = next((r for r in result.resolutions if r.action == "reduce_activities"), None)
@@ -490,8 +507,8 @@ class TestScenario4MultipleConflicts:
             hiking_count=2,
             include_altitude_constraint=True,
         )
-        # Use 5-day trip so builder has enough usable days for partial schedule
-        input_data = make_builder_input("2026-03-01", "2026-03-05", sections)
+        # Use 4-day trip — too short for trim (available_after_buffer=1 < 2)
+        input_data = make_builder_input("2026-03-01", "2026-03-04", sections)
 
         builder = ItineraryBuilder()
         result = builder.build(input_data)
@@ -529,7 +546,8 @@ class TestResolutionStructure:
             hiking_count=2,
             include_altitude_constraint=True,
         )
-        input_data = make_builder_input("2026-03-01", "2026-03-05", sections)
+        # 4-day trip triggers real conflict (available_after_buffer < 2)
+        input_data = make_builder_input("2026-03-01", "2026-03-04", sections)
 
         builder = ItineraryBuilder()
         result = builder.build(input_data)
@@ -538,7 +556,7 @@ class TestResolutionStructure:
 
         if extend_res:
             assert extend_res.new_duration is not None
-            assert extend_res.new_duration > 5
+            assert extend_res.new_duration > 4
             assert extend_res.description is not None
             assert "day" in extend_res.description.lower()
 
@@ -549,7 +567,7 @@ class TestResolutionStructure:
             hiking_count=2,
             include_altitude_constraint=True,
         )
-        input_data = make_builder_input("2026-03-01", "2026-03-05", sections)
+        input_data = make_builder_input("2026-03-01", "2026-03-04", sections)
 
         builder = ItineraryBuilder()
         result = builder.build(input_data)
@@ -570,7 +588,7 @@ class TestResolutionStructure:
             hiking_count=2,
             include_altitude_constraint=True,
         )
-        input_data = make_builder_input("2026-03-01", "2026-03-05", sections)
+        input_data = make_builder_input("2026-03-01", "2026-03-04", sections)
 
         builder = ItineraryBuilder()
         result = builder.build(input_data)

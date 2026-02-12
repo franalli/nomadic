@@ -609,6 +609,22 @@ TIER1_SPECIALIST_NAMES: frozenset[str] = frozenset(
     topic for topic, cfg in SPECIALIST_REGISTRY.items() if cfg.tier == 1
 )
 
+TIER2_ACTIVITY_KEYWORDS: set[str] = {
+    "yoga",
+    "cooking",
+    "nightlife",
+    "temples",
+    "beach",
+    "shopping",
+    "photography",
+    "sailing",
+    "wellness",
+    "culture",
+    "music",
+    "wine",
+    "food",
+}
+
 ALL_SPECIALIST_KEYWORDS: dict[str, list[str]] = {
     cfg.topic: cfg.keywords for cfg in SPECIALIST_REGISTRY.values() if cfg.keywords
 }

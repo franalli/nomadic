@@ -104,21 +104,6 @@ const toAgencyVoice = (rawLabel: string): string => {
 
 // Prompt suggestions - insert starter text into input, not send messages
 // These are conversation primers that disappear after first submit
-// Note: Budget removed - OnboardingChips already provides budget entry point
-const PROMPT_SUGGESTIONS = [
-  { label: 'Destination', starterText: 'going to ' },
-  { label: 'Origin', starterText: 'from ' },
-  { label: 'Dates', starterText: 'dates are ' },
-] as const;
-
-// Fallback suggestions when backend returns none but fields are missing
-const FALLBACK_SUGGESTIONS: Record<string, string[]> = {
-  start_date: ['Next weekend', 'In March', '2 weeks from now'],
-  end_date: ['1 week trip', '10 days', '2 weeks'],
-  budget: ['$2,000', '$5,000', '$10,000'],
-  origin: ['New York', 'London', 'Dubai'],
-  destination: ['Tokyo', 'Paris', 'Bali'],
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat Status Config - maps plan phase to persistent status bar content
@@ -586,27 +571,16 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       origin: string | null;
     } | null>(null);
 
-    // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
-    // Note: missingFields now derived from planState instead of tripDetails
-    const missingFields: string[] = [];
+    // Compute effective suggestions: use backend suggestions if available
     const effectiveSuggestions = useMemo(() => {
-      let suggestions: string[];
-      if (suggestedResponses.length > 0) {
-        suggestions = suggestedResponses;
-      } else if (isLoading || hasBranches) {
+      if (suggestedResponses.length === 0) {
         return [];
-      } else if (missingFields.length === 0) {
-        return [];
-      } else {
-        // Get fallback for first missing field
-        const firstMissing = missingFields[0];
-        suggestions = FALLBACK_SUGGESTIONS[firstMissing] ?? [];
       }
 
       // Dedupe: keep first occurrence of each field-type CTA (e.g., "Set budget")
       // to avoid multiple identical buttons
       const seen = new Set<string>();
-      const filtered = suggestions.filter((s) => {
+      const filtered = suggestedResponses.filter((s) => {
         const isFieldCTA = /^(set|add|change)\s/i.test(s);
         if (!isFieldCTA) return true;
         const lower = s.toLowerCase();
@@ -621,16 +595,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         return filtered.filter((s) => s.toLowerCase() !== 'build plan');
       }
       return filtered;
-    }, [suggestedResponses, isLoading, hasBranches, missingFields, isDesktop]);
-
-    // Show suggestions when: plan is incomplete, has missing fields, not generating, and has suggestions to show
-    // This gates on state + missing fields, not ui_phase
-    const showSuggestions =
-      planState === 'INCOMPLETE' &&
-      missingFields.length > 0 &&
-      effectiveSuggestions.length > 0 &&
-      !isLoadingHistory &&
-      !isGenerating;
+    }, [suggestedResponses, isDesktop]);
 
     // Dynamic height — mobile fills parent (docked input), desktop grows naturally
     const panelHeightClass = fullHeight
@@ -1554,7 +1519,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   transition={{ duration: 0.2, ease: 'easeOut' }}
                   className={cn(
                     'z-40 shrink-0',
-                    '-mx-4 -mt-4 mb-0',
+                    '-mx-4 -mt-4 mb-2',
                     'w-[calc(100%+2rem)]',
                     'h-14 px-4',
                     'bg-white dark:bg-zinc-900',
@@ -1615,7 +1580,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         <div
           ref={scrollContainerRef}
-          className={cn("min-h-0 flex-1 overflow-y-auto text-sm no-scrollbar", !isDesktop && "flex flex-col")}
+          className={cn("min-h-0 flex-1 overflow-y-auto text-sm no-scrollbar relative z-50 pt-2", !isDesktop && "flex flex-col")}
           style={{ overflowAnchor: 'none' }}
           role="log"
           aria-label="Chat messages"
@@ -1802,29 +1767,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           {isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
             <SmartLoader status={activeStatus} />
           )}
-          {/* Constraint chips - conversation primers that insert starter text */}
-          {showSuggestions && (
-            <div className="flex flex-wrap justify-center gap-2 py-1">
-              {PROMPT_SUGGESTIONS.map((suggestion) => (
-                <button
-                  key={suggestion.label}
-                  type="button"
-                  onClick={() => {
-                    // Append starter text - chips accumulate, separated by comma
-                    const separator = input.trim() ? ', ' : '';
-                    setInput(prev => prev + separator + suggestion.starterText);
-                    inputRef.current?.focus();
-                  }}
-                  className="text-xs px-3.5 py-2 rounded-lg border border-dashed border-muted-foreground/25 text-muted-foreground/70 hover:border-muted-foreground/40 hover:text-muted-foreground transition-colors"
-                >
-                  <span className="font-medium">{suggestion.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Dynamic suggestions - from backend or fallback based on missing fields */}
-          {effectiveSuggestions.length > 0 && !isLoading && !showSuggestions && (
+          {/* Dynamic suggestions - from backend suggested responses */}
+          {effectiveSuggestions.length > 0 && !isLoading && (
             <div
               key={`suggestions-container-${effectiveSuggestions.length}`}
               className="flex flex-wrap justify-center gap-2 pt-3 pb-1 px-2"

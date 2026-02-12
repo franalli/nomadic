@@ -994,29 +994,6 @@ async def run_turn_internal(
     return result
 
 
-def get_response_from_state(state: GraphState) -> Dict[str, Any]:
-    """
-    Extract the response data from state for frontend.
-
-    Returns dict with:
-    - message: The response text
-    - suggested_replies: Quick reply options
-    - tiles: Fetched inventory
-    - ui_events: Frontend events to trigger
-    - trip_plan: Current plan state
-    """
-    return {
-        "message": state.last_summary or "",
-        "suggested_replies": state.suggested_replies,
-        "tiles": state.tiles,
-        "ui_events": state.ui_events,
-        "trip_plan": state.trip_plan.model_dump() if state.trip_plan else {},
-        "constraints_violated": state.constraints_violated,
-        "active_specialist": state.active_specialist,
-        "active_agent_id": state.active_agent_id,
-    }
-
-
 # =============================================================================
 # Factory Function
 # =============================================================================

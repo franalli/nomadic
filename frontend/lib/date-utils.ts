@@ -34,32 +34,6 @@ export function parseISODateLocal(dateStr: string | null | undefined): Date | nu
 }
 
 /**
- * Format a Date object to ISO date string (yyyy-MM-dd) using local date components.
- * Avoids timezone issues with toISOString() which uses UTC.
- *
- * @example formatDateToISO(new Date(2026, 0, 31)) → "2026-01-31"
- */
-export function formatDateToISO(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-/**
- * Add days to an ISO date string, returning a new ISO date string.
- * Uses UTC internally to avoid daylight saving issues.
- *
- * @example addDaysToISODate("2026-01-31", 1) → "2026-02-01"
- */
-export function addDaysToISODate(isoDate: string, days: number): string {
-  const [y, m, d] = isoDate.split('-').map(Number);
-  const dateUTC = new Date(Date.UTC(y, m - 1, d));
-  dateUTC.setUTCDate(dateUTC.getUTCDate() + days);
-  return dateUTC.toISOString().slice(0, 10);
-}
-
-/**
  * Get day of week name from a Date object.
  *
  * @example getDayOfWeek(new Date(2026, 0, 31)) → "Saturday"

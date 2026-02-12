@@ -268,6 +268,7 @@ export type PlanDocumentPatch = {
   remove_tile_ids?: string[];
   selections?: Record<string, BranchSelections>;
   trip_inputs?: DocumentTripInputsPatch;
+  preferred_tile_ids?: string[];
 };
 
 // Graph planner types (superset of PlanDocumentResponse)

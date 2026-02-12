@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+from calendar import monthrange
 from datetime import datetime, timedelta
 from typing import List, Literal, Optional, Tuple
 
@@ -24,40 +25,17 @@ from app.config import settings
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
+    TIER2_ACTIVITY_KEYWORDS,
 )
 from app.planner.state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
 
 logger = logging.getLogger(__name__)
 
-# Tier 2 activities (for prompt fragments) - imported from main router file
-TIER2_ACTIVITY_KEYWORDS: set[str] = {
-    "yoga",
-    "cooking",
-    "nightlife",
-    "temples",
-    "beach",
-    "shopping",
-    "photography",
-    "sailing",
-    "wellness",
-    "culture",
-    "music",
-    "wine",
-    "food",
-}
-
 # Derived prompt fragments — single source of truth from registry
 _SPECIALIST_NAMES_CSV = ", ".join(sorted(TIER1_SPECIALIST_NAMES))
 _SPECIALIST_HINTS_JSON = json.dumps(sorted(TIER1_SPECIALIST_NAMES))
 _TIER2_NAMES_CSV = ", ".join(sorted(TIER2_ACTIVITY_KEYWORDS))
-
-# Date indicators for fallback detection
-DATE_INDICATORS = [
-    r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\b",
-    r"\b(next week|next month|this weekend|tomorrow)\b",
-    r"\b\d{1,2}[/-]\d{1,2}\b",
-]
 
 
 def _detect_specialist_keywords(user_text: str) -> List[str]:
@@ -204,6 +182,107 @@ class RouterOutput(BaseModel):
         description="True if user explicitly wants to plan (not just asking questions)",
     )
 
+    # ── Modification intents (Phase 2) ──
+    removal_targets: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Activities/categories user wants to REMOVE from their plan. "
+            'E.g., "skip hiking" -> ["hiking"], "remove yoga and diving" -> ["yoga", "diving"]. '
+            "Empty list if no removal."
+        ),
+    )
+    skill_level: Optional[str] = Field(
+        None,
+        description=(
+            "Skill/experience level if mentioned: "
+            "'beginner', 'intermediate', or 'advanced'. "
+            "Map synonyms: novice/first time -> beginner, "
+            "expert -> advanced. null if not mentioned."
+        ),
+    )
+    reset_budget: bool = Field(
+        default=False,
+        description=(
+            "True ONLY if user wants to REMOVE/CLEAR their budget constraint. "
+            "E.g., 'no budget limit', 'remove budget'. "
+            "NOT true when user sets a new budget amount (that goes in budget field)."
+        ),
+    )
+    reset_hotel: bool = Field(
+        default=False,
+        description=(
+            "True ONLY if user wants to CLEAR hotel preferences. "
+            "E.g., 'any hotel is fine', 'reset hotel preferences'. "
+            "NOT true when user sets new hotel prefs."
+        ),
+    )
+
+    # ── Settings extraction (Phase 2) ──
+    hotel_min_stars: Optional[int] = Field(
+        None,
+        description="Minimum hotel star rating (1-5) if mentioned. E.g., '4-star hotel' -> 4.",
+    )
+    hotel_style: Optional[str] = Field(
+        None,
+        description=(
+            "Hotel style if mentioned: 'luxury', 'boutique', "
+            "'budget', 'mid-range'. null if not mentioned."
+        ),
+    )
+    hotel_amenities: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Requested hotel amenities: pool, spa, gym, "
+            "breakfast, parking, wifi. Empty if none mentioned."
+        ),
+    )
+    hotel_location: Optional[str] = Field(
+        None,
+        description=(
+            "Hotel location preference: 'beachfront', "
+            "'city_center', 'airport'. null if not mentioned."
+        ),
+    )
+    flight_direct_only: Optional[bool] = Field(
+        None,
+        description=(
+            "True if user wants direct/non-stop flights. "
+            "False if explicitly wants connections. "
+            "null if not mentioned."
+        ),
+    )
+    flight_cabin_class: Optional[str] = Field(
+        None,
+        description=(
+            "Cabin class if mentioned: 'economy', "
+            "'premium_economy', 'business', 'first'. "
+            "null if not mentioned."
+        ),
+    )
+
+    # ── Intent classification (Phase 3) ──
+    planning_intent: Optional[str] = Field(
+        None,
+        description=(
+            "User's planning readiness. One of: "
+            "'ready' (explicitly wants to plan/build: 'plan my trip', 'let's go'), "
+            "'modifying' (changing existing plan: "
+            "'extend to Feb 17', 'skip hiking', '4-star hotel'), "
+            "'exploring' (asking questions: 'is Bali safe?', 'what's the weather?'), "
+            "'greeting' (trivial: 'hi', 'thanks'). "
+            "null if unclear."
+        ),
+    )
+    question_type: Optional[str] = Field(
+        None,
+        description=(
+            "If user asks a question about the destination, classify: "
+            "weather, safety, costs, visa, transport, cultural, activities, "
+            "accommodation, scams, packing, connectivity, money, couples, family. "
+            "null if not a destination question."
+        ),
+    )
+
 
 # =============================================================================
 # Prompts
@@ -345,6 +424,66 @@ If the user specifies day counts for activities, return a JSON STRING (not objec
 - "a week of surfing" → '{{"surfing": 7}}'
 Only populate when user explicitly states numbers. null otherwise.
 
+## Task 6: Modification Detection
+
+If the user wants to REMOVE activities from their plan, populate removal_targets:
+- "skip hiking" -> removal_targets: ["hiking"]
+- "remove yoga and diving" -> removal_targets: ["yoga", "diving"]
+- "I changed my mind about cycling" -> removal_targets: ["cycling"]
+
+If the user specifies skill/experience level, populate skill_level:
+- "I'm a beginner" -> "beginner"
+- "expert level" -> "advanced"
+- "first time diving" -> "beginner"
+
+If the user wants to CLEAR constraints (not set new ones), use reset flags:
+- "no budget limit" -> reset_budget: true
+- "any hotel is fine" -> reset_hotel: true
+- "budget of $3000" -> reset_budget: false, budget: 3000
+
+## Task 7: Settings Extraction
+
+Extract hotel/flight preferences ONLY when explicitly stated:
+- "4-star hotel" -> hotel_min_stars: 4
+- "luxury resort with pool" -> hotel_style: "luxury", hotel_amenities: ["pool"]
+- "beachfront hotel" -> hotel_location: "beachfront"
+- "direct flights only" -> flight_direct_only: true
+- "business class" -> flight_cabin_class: "business"
+
+Never infer settings that aren't stated. "Nice hotel" != hotel_min_stars: 4.
+
+## Task 8: Planning Intent Classification
+
+Assess the user's readiness to plan:
+- "ready": User explicitly wants to start/build/execute ("plan my trip", "let's do it", "book it",
+  "build the itinerary"). Also when user provides BOTH dates AND activities.
+- "modifying": User is changing parameters of an existing plan ("extend to Feb 17",
+  "skip hiking", "make it 4-star", "budget $3000", "add yoga", "from Rome")
+- "exploring": User is asking questions without committing ("is Bali safe?",
+  "what's the weather like?", "tell me about temples")
+- "greeting": Trivial social input ("hi", "thanks", "bye")
+
+If user provides dates OR activities (but not both), use "modifying" — they're refining.
+
+## Task 9: Question Classification
+
+If the user is asking about a destination, classify the topic:
+- weather/climate/rain/season/temperature → "weather"
+- safe/dangerous/crime/security → "safety"
+- cost/expensive/cheap/budget/afford/price → "costs"
+- visa/passport/entry/immigration → "visa"
+- transport/taxi/uber/scooter/getting around → "transport"
+- wear/dress/clothes/cultural/customs → "cultural"
+- must see/attractions/things to do → "activities"
+- stay/hotel/neighborhood/area/resort → "accommodation"
+- scam/rip off/tourist trap → "scams"
+- pack/bring/luggage → "packing"
+- sim/wifi/internet/phone → "connectivity"
+- tip/tipping/currency/money/atm → "money"
+- couples/romantic/honeymoon → "couples"
+- family/kids/children → "family"
+null if not a destination question.
+
 ## User Message
 "{user_message}"
 
@@ -371,7 +510,7 @@ def _get_router_extraction_llm() -> ChatOpenAI:
     return ChatOpenAI(
         model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
         temperature=0,  # Deterministic extraction
-        max_tokens=500,  # Need more tokens for field extraction + activity_categories
+        max_tokens=700,  # Need more tokens for field extraction + activity_categories
     )
 
 
@@ -649,6 +788,26 @@ async def _classify_and_extract_with_llm(
 # =============================================================================
 
 
+def _clamp_date_str(date_str: str) -> str | None:
+    """Parse YYYY-MM-DD, clamping day to last valid day of month. None if unparseable."""
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+        return date_str
+    except ValueError:
+        pass
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", date_str)
+    if not m:
+        return None
+    year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if month < 1 or month > 12:
+        return None
+    max_day = monthrange(year, month)[1]
+    clamped_day = min(day, max_day)
+    clamped = f"{year:04d}-{month:02d}-{clamped_day:02d}"
+    logger.info(f"Clamped date {date_str} -> {clamped} (month has {max_day} days)")
+    return clamped
+
+
 def _populate_trip_plan_from_router_output(
     state: "GraphState",
     router_output: RouterOutput,
@@ -677,19 +836,17 @@ def _populate_trip_plan_from_router_output(
 
     # Set dates - TripPlan expects strings in YYYY-MM-DD format
     if router_output.start_date:
-        # Validate format but keep as string
-        try:
-            datetime.strptime(router_output.start_date, "%Y-%m-%d")
-            state.trip_plan.start_date = router_output.start_date
-        except ValueError:
+        clamped = _clamp_date_str(router_output.start_date)
+        if clamped:
+            state.trip_plan.start_date = clamped
+        else:
             logger.warning(f"Invalid start_date format: {router_output.start_date}")
 
     if router_output.end_date:
-        # Validate format but keep as string
-        try:
-            datetime.strptime(router_output.end_date, "%Y-%m-%d")
-            state.trip_plan.end_date = router_output.end_date
-        except ValueError:
+        clamped = _clamp_date_str(router_output.end_date)
+        if clamped:
+            state.trip_plan.end_date = clamped
+        else:
             logger.warning(f"Invalid end_date format: {router_output.end_date}")
 
     # Calculate duration if we have both dates but no explicit duration

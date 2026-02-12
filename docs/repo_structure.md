@@ -7,12 +7,22 @@ This document provides a comprehensive overview of the Nomadic codebase structur
 ```
 nomadic/
 ├── .claude/                    # Claude Code configuration
+│   ├── agents/                 # Specialist agent specs (backend, frontend, code-reviewer)
+│   └── commands/               # Custom slash commands (audit, verify-build, etc.)
 ├── .github/                    # GitHub workflows and instructions
 ├── .vscode/                    # VS Code settings
 ├── backend/                    # Python FastAPI backend
 ├── docs/                       # Architecture documentation
 ├── frontend/                   # Next.js frontend
 ├── scripts/                    # Root-level utility scripts
+│   ├── cleanup-claude-history.ps1  # Windows history cleanup
+│   ├── cleanup-claude-history.sh   # Unix history cleanup
+│   ├── copy-key-files.sh           # Copy key backend files to docs/
+│   └── count_prompt_tokens.py      # Token counting utility
+├── .claudeignore               # Claude Code ignore patterns
+├── .gitignore                  # Git ignore patterns
+├── .pre-commit-config.yaml     # Pre-commit hooks
+├── .secrets.baseline           # detect-secrets baseline
 ├── CLAUDE.md                   # AI assistant instructions
 ├── docker-compose.yml          # Docker configuration
 ├── README.md                   # Project readme
@@ -65,11 +75,11 @@ backend/
 │   │   │   ├── __init__.py
 │   │   │   ├── constraint_guard.py         # Constraint validation
 │   │   │   ├── intent_router.py            # Intent classification (main orchestration)
-│   │   │   ├── router_extraction.py        # LLM extraction & field validation (Stage 9A)
+│   │   │   │   ├── router_extraction.py        # LLM extraction & field validation (Stage 9A)
 │   │   │   ├── router_category_sync.py     # Tier 2 detection & actionable input (Stage 9B)
+│   │   │   ├── router_utils.py             # Shared router utilities (greetings, origin detection, destination context)
 │   │   │   ├── local_expert.py             # Local knowledge node
 │   │   │   ├── logistics_node.py           # Flights/hotels data fetcher
-│   │   │   ├── specialist_llm.py      # Specialist LLM generation logic
 │   │   │   ├── specialist_schemas.py  # Specialist Pydantic schemas
 │   │   │   ├── synthesizer.py         # Response synthesizer
 │   │   │   ├── trip_architect.py      # Main planning architect
@@ -111,7 +121,6 @@ backend/
 │   │   ├── router_cache.py         # Thread-safe L1 cache for router extraction (context-aware)
 │   │   ├── specialist_cache.py     # Thread-safe L1+L2 cache for specialist LLM outputs
 │   │   ├── tile_cache.py           # Thread-safe L1+L2 cache for tile provider data (24h TTL)
-│   │   ├── unsplash.py             # Unsplash image service
 │   │   └── unsplash_queries.py     # Unsplash query helpers (includes Tier 2 activity queries)
 │   │
 │   ├── tile_service/           # Tile data providers
@@ -174,6 +183,7 @@ backend/
 │   ├── test_specialist_cache.py          # Specialist LLM cache tests (thread safety, L1/L2)
 │   ├── test_specialist_structured.py     # Specialist structured output tests
 │   ├── test_stage2_integration.py        # Stage 2 integration tests
+│   ├── test_stage11_day_preferences.py   # Stage 11 day preference tests
 │   ├── test_tile_cache.py                # Tile cache tests (L1/L2, thread safety)
 │   ├── test_typed_meta.py                # Typed metadata bridge tests
 │   └── db/
@@ -223,8 +233,7 @@ frontend/
 │   │   ├── SmartLoader.tsx
 │   │   ├── SystemAckLine.tsx
 │   │   ├── SystemReceipt.tsx
-│   │   ├── TripStatusBar.tsx
-│   │   └── useChatStateMachine.ts
+│   │   └── TripStatusBar.tsx
 │   │
 │   ├── layout/                 # Layout components
 │   │   ├── FloatingBuildButton.tsx
@@ -250,39 +259,26 @@ frontend/
 │   │
 │   ├── nomadic/                # Marketing/landing components
 │   │   ├── consent-manager.tsx
-│   │   ├── features-section.tsx
 │   │   ├── footer.tsx
 │   │   └── legal-page.tsx
 │   │
 │   ├── pill/                   # Pill/badge components
 │   │   ├── ExpandablePill.tsx
-│   │   ├── index.ts
-│   │   ├── LocationBadge.tsx
-│   │   └── TruncatedDestinationList.tsx
+│   │   └── index.ts
 │   │
 │   ├── plan/                   # Plan view components
 │   │   ├── index.ts
 │   │   ├── BookingSection.tsx
-│   │   ├── ConflictResolutionBanner.tsx  # Path A: Conflict resolution options for constraint clashes
 │   │   ├── CoreChip.tsx
-│   │   ├── DaySection.tsx
 │   │   ├── DestinationMapPlaceholder.tsx
-│   │   ├── DocumentHeader.tsx
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── NextStepBar.tsx
-│   │   ├── OnboardingChips.tsx
-│   │   ├── OptionalRefinementsSection.tsx
 │   │   ├── OriginPromptCard.tsx
-│   │   ├── PlanDocument.tsx
 │   │   ├── PlanHeader.tsx
-│   │   ├── PlanningProgress.tsx
 │   │   ├── planStateHelpers.ts
-│   │   ├── Segment.tsx
-│   │   ├── SelectionsBar.tsx       # Hearted tiles carousel (sticky bar of preferred tiles)
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
 │   │   ├── TimelineThread.tsx
 │   │   ├── TripHealthBar.tsx
-│   │   ├── TripHealthDashboard.tsx
 │   │   ├── TripSummaryPills.tsx
 │   │   ├── UnifiedChipRow.tsx
 │   │   │
@@ -293,15 +289,12 @@ frontend/
 │   │   │
 │   │   ├── modals/
 │   │   │   ├── AlternativesModal.tsx
-│   │   │   ├── ConflictResolutionModal.tsx
-│   │   │   ├── index.ts
-│   │   │   └── RegenerateConfirmModal.tsx
+│   │   │   └── index.ts
 │   │   │
 │   │   ├── sheets/             # Bottom sheets
 │   │   │   ├── ActivitiesSheet.tsx
 │   │   │   ├── BaseSheet.tsx
 │   │   │   ├── BudgetSheet.tsx
-│   │   │   ├── CheckoutSheet.tsx
 │   │   │   ├── DatesSheet.tsx
 │   │   │   ├── DestinationSheet.tsx
 │   │   │   ├── FlightsSheet.tsx
@@ -313,11 +306,7 @@ frontend/
 │   │   │
 │   │   ├── stages/             # Stage-specific views
 │   │   │   ├── index.ts
-│   │   │   ├── S1FramingView.tsx
-│   │   │   ├── S2BlockedView.tsx
 │   │   │   ├── S2StrategyView.tsx
-│   │   │   ├── S3BlockedView.tsx
-│   │   │   ├── S3EditingView.tsx
 │   │   │   ├── S3ItineraryView.tsx
 │   │   │   └── StrategyHero.tsx
 │   │   │
@@ -337,7 +326,6 @@ frontend/
 │   │           ├── LogisticsBlock.tsx
 │   │           ├── PreferenceAttributionBadge.tsx  # "You preferred this" badge
 │   │           ├── SafetyBlock.tsx
-│   │           ├── SuggestionBlock.tsx
 │   │           └── types.ts
 │   │
 │   ├── providers/
@@ -348,9 +336,7 @@ frontend/
 │   │   ├── TaxesFeesTooltip.tsx
 │   │   ├── TileCard.tsx
 │   │   ├── TileDetailsModal.tsx
-│   │   ├── TileFilterBar.tsx
-│   │   ├── TileSectionHeader.tsx  # Section headers for tile categories
-│   │   └── TilesGrid.tsx
+│   │   └── TileFilterBar.tsx
 │   │
 │   └── ui/                     # Base UI components
 │       ├── bottom-sheet.tsx
@@ -376,7 +362,6 @@ frontend/
 │   ├── useScrollCollapse.ts
 │   ├── useScrollSpy.ts
 │   ├── useSheetManager.ts
-│   ├── useShortlist.ts         # Heart preferences - backed by documentStore.preferredTileIds
 │   ├── useSpecialistDeepLink.ts
 │   ├── useTripInputsWithFallback.ts
 │   └── useViewNavigation.ts
@@ -396,7 +381,6 @@ frontend/
 │   ├── loaderCopyConfig.ts     # Loader copy text
 │   ├── placeholders.ts         # Placeholder data
 │   ├── plan-transform.ts       # Plan data transforms
-│   ├── refinementSummaries.ts
 │   ├── route-utils.ts          # Routing utilities
 │   ├── specialist-utils.ts     # Specialist topic utilities
 │   ├── specialistLinkParser.ts
@@ -439,6 +423,8 @@ frontend/
 │   ├── plan-copy.test.tsx
 │   └── streaming.test.ts
 │
+├── .prettierignore             # Prettier ignore patterns
+├── .prettierrc.cjs             # Prettier configuration
 ├── Dockerfile                  # Frontend Docker image
 ├── eslint.config.mjs
 ├── next.config.mjs
@@ -498,4 +484,4 @@ docs/
 1. **TripPlan is SSoT** - All trip state flows through `TripPlan` schema
 2. **7-Node LangGraph** - Backend planner uses exactly 7 nodes (see `plan_graph_analysis.md`)
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
-4. **UnifiedStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
+4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)

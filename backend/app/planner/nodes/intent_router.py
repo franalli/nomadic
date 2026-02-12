@@ -23,8 +23,8 @@ from langchain_openai import ChatOpenAI
 
 from app.planner.nodes.router_category_sync import (
     DATE_INDICATORS,
-    ORIGIN_PATTERNS,
-    TIER2_ACTIVITY_KEYWORDS,
+    _collect_modifications_from_extraction,
+    _collect_settings_from_extraction,
     _detect_actionable_input,
     _prefetch_tier2_experiences,
     detect_planning_intent,
@@ -34,13 +34,19 @@ from app.planner.nodes.router_extraction import (
     IntentClassification,
     _classify_and_extract_with_llm,
     _get_router_llm,
-    _normalize_city_name,
     _populate_trip_plan_from_router_output,
+)
+from app.planner.nodes.router_utils import (
+    _check_exact_match_greeting,
+    _detect_origin_from_message,
+    _extract_destination_context,
+    get_new_specialists_from_text,
 )
 from app.planner.specialist_registry import (
     ALL_CATEGORY_TO_SPECIALIST,
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
+    TIER2_ACTIVITY_KEYWORDS,
 )
 from app.planner.state import GraphState, TripPlan
 from app.planner.state.typed_meta import get_trip_settings
@@ -159,36 +165,6 @@ STATIC_RESPONSES = {
 # Exact Match Short Circuit (saves LLM call for trivial inputs)
 # =============================================================================
 
-EXACT_MATCH_GREETINGS = frozenset(
-    {
-        "hi",
-        "hello",
-        "hey",
-        "yo",
-        "sup",
-        "hi!",
-        "hello!",
-        "hey!",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "morning",
-        "afternoon",
-        "evening",
-        "thanks",
-        "thank you",
-        "thanks!",
-        "thank you!",
-        "bye",
-        "goodbye",
-        "bye!",
-        "goodbye!",
-        "cheers",
-        "ciao",
-        "hola",
-    }
-)
-
 # Generate plan trigger from frontend "Build plan" button
 GENERATE_PLAN_TRIGGER = "GENERATE_PLAN_NOW"
 
@@ -233,6 +209,36 @@ def classify_question_type(text: str) -> Tuple[str, str]:
         if any(kw in text_lower for kw in pattern.split("|")):
             return qtype, section
     return "general", "destination_overview"
+
+
+# Question type → Local Expert knowledge section (structural, not parsing)
+QUESTION_TYPE_TO_SECTION = {
+    "weather": "seasonality",
+    "safety": "safety_health",
+    "costs": "money_costs",
+    "visa": "visa_entry",
+    "transport": "transportation",
+    "cultural": "cultural_norms",
+    "activities": "things_to_do",
+    "accommodation": "neighborhoods",
+    "scams": "scams_traps",
+    "packing": "packing",
+    "connectivity": "connectivity",
+    "money": "money_costs",
+    "couples": "destination_overview",
+    "family": "destination_overview",
+}
+
+
+def _classify_question(
+    user_text: str, state: "GraphState", plan_is_active: bool
+) -> Tuple[str, str]:
+    """LLM classification post-plan, keyword fallback pre-plan."""
+    ro = state.metadata.get("router_output")
+    if plan_is_active and ro and ro.get("question_type"):
+        qtype = ro["question_type"]
+        return qtype, QUESTION_TYPE_TO_SECTION.get(qtype, "destination_overview")
+    return classify_question_type(user_text)
 
 
 # =============================================================================
@@ -738,141 +744,13 @@ def _detect_settings_from_message(user_text: str, state: "GraphState") -> Option
 
     # _detect_actionable_input now imported from router_category_sync.py
 
+    # get_new_specialists_from_text now imported from router_utils.py
 
-def get_new_specialists_from_text(text: str, existing_specialists: List[str]) -> List[str]:
-    """
-    Get list of NEW specialists mentioned in text that aren't already in the plan.
+    # detect_planning_intent now imported from router_category_sync.py
 
-    Args:
-        text: User message
-        existing_specialists: List of specialist types already in the plan
-
-    Returns:
-        List of new specialist types to add
-    """
-    text_lower = text.lower()
-    new_specialists = []
-
-    for specialist_type, keywords in ALL_SPECIALIST_KEYWORDS.items():
-        if specialist_type in existing_specialists:
-            continue  # Already have this specialist
-
-        if any(kw in text_lower for kw in keywords):
-            new_specialists.append(specialist_type)
-
-    return new_specialists
-
-
-# detect_planning_intent now imported from router_category_sync.py
-
-
-def _extract_destination_context(text: str, state: "GraphState") -> Optional[str]:
-    """
-    Extract destination from question or use conversation context.
-
-    Priority:
-    1. Check if destination mentioned in current question (excluding origin cities)
-    2. Use last_destination_context from state
-    3. Use trip_plan.destination if set
-
-    NOTE: Cities following origin indicators (e.g., "from rome") are NOT destinations.
-    """
-    from app.planner.nodes.local_expert import LOCAL_EXPERT_KNOWLEDGE
-
-    text_lower = text.lower()
-
-    # Extract cities that follow origin patterns - these are NOT destinations
-    origin_cities = set()
-    for pattern in ORIGIN_PATTERNS:
-        match = re.match(pattern, text, re.IGNORECASE)
-        if match:
-            city = match.group(1).strip().rstrip(".!?,")
-            # Truncate at destination indicators: "rome to bali" → "rome"
-            city = re.split(r"\s+to\s+", city, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-            city = city.lower()
-            # Add both full match and first word (handles "rome italy")
-            origin_cities.add(city)
-            if city:
-                origin_cities.add(city.split()[0])
-
-    # Check LOCAL_EXPERT_KNOWLEDGE keys first (known destinations)
-    # But SKIP cities that appear in origin context
-    for dest_key in LOCAL_EXPERT_KNOWLEDGE.keys():
-        dest_lower = dest_key.lower()
-        if dest_lower in text_lower and dest_lower not in origin_cities:
-            return dest_key.capitalize()
-
-    # Fallback to conversation context
-    if state.metadata.get("last_destination_context"):
-        return state.metadata["last_destination_context"]
-
-    if state.trip_plan and state.trip_plan.destination:
-        return state.trip_plan.destination
-
-    return None
-
-
-def _check_exact_match_greeting(text: str) -> Optional[IntentClassification]:
-    """
-    Check if input matches known greeting patterns exactly.
-
-    Returns IntentClassification if matched, None otherwise.
-    Saves an LLM call for trivial inputs (~300ms, ~150 tokens).
-    """
-    normalized = text.strip().lower()
-
-    if normalized in EXACT_MATCH_GREETINGS:
-        logger.debug(f"Exact match greeting detected: '{text}'")
-        return IntentClassification(
-            intent="GREETING",
-            confidence=1.0,
-            reasoning="Exact match greeting - no LLM needed",
-            specialist_hints=[],
-        )
-
-    return None
-
-
-def _detect_origin_from_message(user_text: str) -> Optional[str]:
-    """
-    Detect if user message is specifying an origin/departure city.
-    Returns normalized city name if detected, None otherwise.
-
-    Must run BEFORE exploration mode check to prevent "from rome" being
-    interpreted as exploring Rome when user means "departing from Rome".
-
-    Examples:
-        "from rome" → "Rome"
-        "flying from london" → "London"
-        "leaving from NYC" → "New York"
-        "tell me about rome" → None (not an origin pattern)
-    """
-    text = user_text.strip()
-
-    # Quick reject: if message doesn't contain "from", skip
-    if "from" not in text.lower():
-        return None
-
-    for pattern in ORIGIN_PATTERNS:
-        match = re.match(pattern, text, re.IGNORECASE)
-        if match:
-            city = match.group(1).strip().rstrip(".!?,")
-            # Truncate at destination indicators: "rome to bali" → "rome"
-            city = re.split(r"\s+to\s+", city, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-            # Truncate at date-like tokens: "rome feb 11" → "rome"
-            city = re.split(
-                r"\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}[/-])\b",
-                city,
-                maxsplit=1,
-                flags=re.IGNORECASE,
-            )[0].strip()
-            # Normalize: "rome italy" → "Rome", remove country suffixes
-            city = _normalize_city_name(city)
-            if city:
-                # Title case the city name for display
-                return city.title()
-
-    return None
+    # _extract_destination_context now imported from router_utils.py
+    # _check_exact_match_greeting now imported from router_utils.py
+    # _detect_origin_from_message now imported from router_utils.py
 
 
 def _check_generate_plan_trigger(text: str) -> Optional[IntentClassification]:
@@ -1467,6 +1345,316 @@ def _get_date_suggestions(user_text: str) -> List[str]:
 
 
 # =============================================================================
+# State-Mutation Helpers (used by both pre-plan regex and post-plan LLM paths)
+# =============================================================================
+
+
+async def _apply_origin_to_state(state: GraphState, detected_origin: str, clog) -> bool:
+    """
+    Apply detected origin to state: sync trip_inputs, enable flights,
+    resolve IATA, set routing flags, build response message.
+
+    Returns True if caller should ``return state`` (destination exists),
+    False if fall-through needed (no destination yet).
+    """
+    from app.debug_utils import _debug_node_end, log
+
+    log(
+        "ROUTER",
+        f"[ORIGIN] Detected origin: {detected_origin} "
+        f"(destination: {state.trip_plan.destination or 'not set'})",
+    )
+
+    # Set origin on trip_plan
+    state.trip_plan.origin = detected_origin
+
+    # Sync to metadata.trip_inputs for LogisticsNode
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    trip_inputs["origin"] = detected_origin
+    state.metadata["trip_inputs"] = trip_inputs
+
+    # Mark for frontend
+    state.metadata["origin_just_set"] = True
+
+    # Enable flights in booking_types
+    if "extracted_settings" not in state.metadata:
+        state.metadata["extracted_settings"] = {}
+    state.metadata["extracted_settings"]["flights_toggle"] = "suggested"
+
+    # Also sync to trip_inputs.booking_types
+    if "booking_types" not in trip_inputs:
+        trip_inputs["booking_types"] = {}
+    trip_inputs["booking_types"]["flights"] = "suggested"
+    state.metadata["trip_inputs"] = trip_inputs
+    state.metadata.pop("trip_settings", None)
+    state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
+
+    # Resolve IATA codes before fast-path to logistics
+    if state.trip_plan.destination:
+        from app.planner.services.iata_resolver import resolve_iata_codes
+
+        await resolve_iata_codes(detected_origin, state.trip_plan.destination, state)
+        trip_inputs["origin_iata"] = state.trip_plan.origin_iata
+        trip_inputs["destination_iata"] = state.trip_plan.destination_iata
+        state.metadata["trip_inputs"] = trip_inputs
+
+    if state.trip_plan.destination:
+        state.metadata["origin_only_logistics"] = True
+        state.metadata["skip_architect"] = True
+        state.metadata["skip_specialists"] = True
+
+        dest = state.trip_plan.destination
+        state.last_summary = (
+            f"Got it - departing from **{detected_origin}**. "
+            f"Searching for flights from {detected_origin} to {dest}..."
+        )
+        state.suggested_replies = [
+            "Direct flights only",
+            "Flexible dates",
+            "Show me hotels too",
+        ]
+
+        _debug_node_end("router", "🧭", intent="ORIGIN_TO_LOGISTICS", origin=detected_origin)
+        return True  # Caller should return state
+    else:
+        state.last_summary = (
+            f"Got it - I've set your departure city to **{detected_origin}**. "
+            f"Where would you like to go?"
+        )
+        state.suggested_replies = ["Paris", "Tokyo", "New York"]
+
+        _debug_node_end("router", "🧭", intent="ORIGIN_ONLY_PLANNING", origin=detected_origin)
+        return False  # Fall through
+
+
+def _apply_settings_to_state(state: GraphState, detected_settings: dict, clog) -> None:
+    """
+    Apply detected settings to state: sync trip_inputs, set routing flags,
+    build response message.  Caller should ``return state`` after this.
+    """
+    from app.debug_utils import _debug_node_end, log
+
+    log(
+        "ROUTER",
+        f"[SETTINGS] Detected settings change: {list(detected_settings.keys())} "
+        f"(destination: {state.trip_plan.destination})",
+    )
+
+    # Sync settings to trip_inputs for LogisticsNode
+    trip_inputs = state.metadata.get("trip_inputs", {})
+
+    # Apply detected settings
+    if "budget" in detected_settings:
+        trip_inputs["budget"] = detected_settings["budget"]
+        state.trip_plan.budget = detected_settings["budget"]
+
+    if "adults" in detected_settings:
+        trip_inputs["adults"] = detected_settings["adults"]
+        state.trip_plan.adults = detected_settings["adults"]
+
+    if "children" in detected_settings:
+        trip_inputs["children"] = detected_settings["children"]
+        state.trip_plan.children = detected_settings["children"]
+
+    if "hotel_settings" in detected_settings:
+        existing_hotel = trip_inputs.get("hotel_settings", {})
+        trip_inputs["hotel_settings"] = {
+            **existing_hotel,
+            **detected_settings["hotel_settings"],
+        }
+
+    if "flight_settings" in detected_settings:
+        existing_flight = trip_inputs.get("flight_settings", {})
+        trip_inputs["flight_settings"] = {
+            **existing_flight,
+            **detected_settings["flight_settings"],
+        }
+
+    state.metadata["trip_inputs"] = trip_inputs
+    state.metadata.pop("trip_settings", None)
+    state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
+
+    # Populate extracted_settings for frontend persistence
+    ext = state.metadata.setdefault("extracted_settings", {})
+    if "hotel_settings" in detected_settings:
+        hs = detected_settings["hotel_settings"]
+        if "min_stars" in hs:
+            ext["hotel_min_stars"] = hs["min_stars"]
+    if "flight_settings" in detected_settings:
+        fs = detected_settings["flight_settings"]
+        if fs.get("direct_only") is not None:
+            ext["flights_toggle"] = True
+            ext["flight_direct_only"] = fs["direct_only"]
+        if "cabin_class" in fs:
+            ext["flight_cabin_class"] = fs["cabin_class"]
+
+    # Mark for frontend
+    state.metadata["settings_just_updated"] = True
+    state.metadata["updated_settings"] = list(detected_settings.keys())
+
+    # ROUTE TO LOGISTICS
+    state.metadata["origin_only_logistics"] = True
+    state.metadata["skip_architect"] = True
+    state.metadata["skip_specialists"] = True
+
+    # Build response message
+    changes = []
+    if "budget" in detected_settings:
+        changes.append(f"budget of **${detected_settings['budget']:,}**")
+    if "adults" in detected_settings or "children" in detected_settings:
+        adults = detected_settings.get("adults", state.trip_plan.adults or 1)
+        children = detected_settings.get("children", state.trip_plan.children or 0)
+        traveler_str = f"{adults} adult{'s' if adults > 1 else ''}"
+        if children:
+            traveler_str += f" and {children} child{'ren' if children > 1 else ''}"
+        changes.append(traveler_str)
+    if "hotel_settings" in detected_settings:
+        hotel = detected_settings["hotel_settings"]
+        if "min_stars" in hotel:
+            changes.append(f"{hotel['min_stars']}-star hotels")
+        elif "style" in hotel:
+            changes.append(f"{hotel['style']} hotels")
+    if "flight_settings" in detected_settings:
+        flight = detected_settings["flight_settings"]
+        if flight.get("direct_only"):
+            changes.append("direct flights")
+        if "cabin_class" in flight:
+            changes.append(f"{flight['cabin_class']} class")
+
+    change_str = ", ".join(changes)
+    state.last_summary = f"Got it - updating your trip for {change_str}. Refreshing options..."
+    state.suggested_replies = ["Show me more options", "Change budget", "Update travelers"]
+
+    _debug_node_end(
+        "router",
+        "🧭",
+        intent="SETTINGS_TO_LOGISTICS",
+        settings=list(detected_settings.keys()),
+    )
+
+
+def _apply_modifications_to_state(
+    state: GraphState, mods: dict, user_text: str, clog
+) -> Optional[GraphState]:
+    """
+    Apply trip modifications: add/remove categories, skill level, resets.
+
+    Returns state if caller should early-return (routing handled),
+    or None if fall-through needed (mixed Tier1+Tier2).
+    """
+    from app.debug_utils import _debug_node_end, log
+
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    activity_settings = trip_inputs.get("activity_settings", {})
+    existing_cats = set(activity_settings.get("categories", []))
+
+    # Apply additions
+    if "add_categories" in mods:
+        existing_cats |= mods["add_categories"]
+
+    # Apply removals
+    if "remove_categories" in mods:
+        existing_cats -= mods["remove_categories"]
+        # Clear strategy sections for removed Tier 1 specialists
+        for cat in mods["remove_categories"]:
+            if cat in TIER1_SPECIALIST_NAMES:
+                sections = state.metadata.get("strategy_sections", [])
+                state.metadata["strategy_sections"] = [
+                    s for s in sections if s.get("specialist_type") != cat
+                ]
+
+    # Apply skill level
+    if "skill_level" in mods:
+        activity_settings["skill_level"] = mods["skill_level"]
+
+    # Apply setting resets
+    if "reset_budget" in mods:
+        trip_inputs["budget"] = None
+        state.trip_plan.budget = None
+    if "reset_hotel" in mods:
+        trip_inputs["hotel_settings"] = {}
+
+    # Write back categories
+    activity_settings["categories"] = sorted(existing_cats)
+    trip_inputs["activity_settings"] = activity_settings
+    state.metadata["trip_inputs"] = trip_inputs
+    state.metadata.pop("trip_settings", None)
+    state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
+
+    # Check if message ALSO contains Tier 1 keywords
+    has_tier1 = any(
+        any(kw in user_text.lower() for kw in kws) for kws in ALL_SPECIALIST_KEYWORDS.values()
+    )
+    removing_tier1 = bool(mods.get("remove_categories", set()) & TIER1_SPECIALIST_NAMES)
+
+    if not has_tier1 or removing_tier1:
+        # Tier 2 prefetch
+        if mods.get("add_categories") and state.trip_plan.destination:
+            tier2_detected = mods["add_categories"] & TIER2_ACTIVITY_KEYWORDS
+            if tier2_detected:
+                _prefetch_tier2_experiences(state, tier2_detected)
+
+        # Check for real changes
+        has_real_changes = (
+            mods.get("add_categories")
+            or mods.get("remove_categories")
+            or mods.get("skill_level")
+            or mods.get("reset_budget")
+            or mods.get("reset_hotel")
+        )
+        if not has_real_changes:
+            log(
+                "ROUTER",
+                "[ACTIONABLE] Nothing resolved — falling through",
+            )
+            return None
+
+        # Route to logistics
+        state.metadata["origin_only_logistics"] = True
+        state.metadata["skip_architect"] = True
+        state.metadata["skip_specialists"] = True
+
+        # Build confirmation message
+        parts = []
+        added = mods.get("add_categories", set())
+        removed = mods.get("remove_categories", set())
+        if added:
+            parts.append(f"Added **{', '.join(sorted(added))}**")
+        if removed:
+            parts.append(f"Removed **{', '.join(sorted(removed))}**")
+        if "skill_level" in mods:
+            parts.append(f"Skill level: **{mods['skill_level']}**")
+        if "reset_budget" in mods:
+            parts.append("Budget limit removed")
+        if "reset_hotel" in mods:
+            parts.append("Hotel preferences reset")
+
+        state.last_summary = f"{'. '.join(parts)}. Refreshing options..."
+        state.metadata["actionable_acknowledgment"] = state.last_summary
+        state.suggested_replies = []
+
+        state.metadata["settings_just_updated"] = True
+        if added:
+            state.metadata["added_categories"] = list(added)
+
+        log("ROUTER", f"[ACTIONABLE] {mods}")
+        _debug_node_end(
+            "router",
+            "🧭",
+            intent="ACTIONABLE_TO_LOGISTICS",
+            changes=list(mods.keys()),
+        )
+        return state
+
+    # Mixed Tier 1 + Tier 2: fall through to SOFT_TRANSITION
+    log(
+        "ROUTER",
+        f"[ACTIONABLE] Tier 2 categories set, continuing for Tier 1: {mods}",
+    )
+    return None
+
+
+# =============================================================================
 # Node Function
 # =============================================================================
 
@@ -1564,89 +1752,124 @@ async def intent_router(state: GraphState) -> GraphState:
             log("ROUTER", f"🔮 Speculative Trigger Detected for {state.trip_plan.destination}")
 
     # ==========================================================================
-    # ORIGIN DETECTION: Check if user is specifying departure city
-    # CRITICAL: Must run BEFORE exploration/classification checks
+    # POST-PLAN FAST PATH: When plan is active (S2/S3), LLM extraction runs
+    # first. Settings/modifications/origin are read from extraction output
+    # instead of regex. Pre-plan messages skip this and use regex below.
     # ==========================================================================
-    from app.debug_utils import log
+    plan_is_active = state.metadata.get("plan_view_state", "") in (
+        "S2_STRATEGY_READY",
+        "S3_ITINERARY_READY",
+    )
 
-    detected_origin = _detect_origin_from_message(user_text)
-    if detected_origin:
-        log(
-            "ROUTER",
-            f"[ORIGIN] Detected origin: {detected_origin} "
-            f"(destination: {state.trip_plan.destination or 'not set'})",
-        )
+    if plan_is_active and classification is None:
+        from app.debug_utils import log
 
-        # Set origin on trip_plan
-        state.trip_plan.origin = detected_origin
+        log("ROUTER", "[POST-PLAN] LLM-first extraction for active plan...")
 
-        # Sync to metadata.trip_inputs for LogisticsNode
-        trip_inputs = state.metadata.get("trip_inputs", {})
-        trip_inputs["origin"] = detected_origin
-        state.metadata["trip_inputs"] = trip_inputs
+        old_start = state.trip_plan.start_date
+        old_end = state.trip_plan.end_date
+        old_origin = state.trip_plan.origin
 
-        # Mark for frontend
-        state.metadata["origin_just_set"] = True
+        try:
+            router_output, token_usage = await _classify_and_extract_with_llm(user_text, state)
 
-        # Enable flights in booking_types
-        if "extracted_settings" not in state.metadata:
-            state.metadata["extracted_settings"] = {}
-        state.metadata["extracted_settings"]["flights_toggle"] = "suggested"
+            if token_usage:
+                from app.debug_utils import log_tokens
 
-        # Also sync to trip_inputs.booking_types
-        if "booking_types" not in trip_inputs:
-            trip_inputs["booking_types"] = {}
-        trip_inputs["booking_types"]["flights"] = "suggested"
-        state.metadata["trip_inputs"] = trip_inputs
-        state.metadata.pop("trip_settings", None)  # Clear so fallback reads trip_inputs
-        state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
+                log_tokens(
+                    "ROUTER",
+                    token_usage.get("prompt_tokens", 0),
+                    token_usage.get("completion_tokens", 0),
+                    token_usage.get("total_tokens", 0),
+                )
+                clog.llm_call(
+                    model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
+                    prompt_tokens=token_usage.get("prompt_tokens", 0),
+                    completion_tokens=token_usage.get("completion_tokens", 0),
+                    purpose="post_plan_extraction",
+                )
 
-        # Resolve IATA codes before fast-path to logistics (avoids LLM call in data-fetch node)
-        if state.trip_plan.destination:
-            from app.planner.services.iata_resolver import resolve_iata_codes
+            destination = _extract_destination_context(user_text, state)
 
-            await resolve_iata_codes(detected_origin, state.trip_plan.destination, state)
-            # Sync IATA to metadata.trip_inputs so it survives session boundary
-            trip_inputs["origin_iata"] = state.trip_plan.origin_iata
-            trip_inputs["destination_iata"] = state.trip_plan.destination_iata
-            state.metadata["trip_inputs"] = trip_inputs
-
-        # ROUTE TO LOGISTICS: Only use fast-path if destination exists (allows flight search)
-        # Otherwise, fall through to Architect for destination extraction
-        # This is a "fast path" - skip LLM calls, go directly to LogisticsNode
-        # @see plan_graph.py - route_after_router checks for origin_only_logistics
-        if state.trip_plan.destination:
-            state.metadata["origin_only_logistics"] = True
-            state.metadata["skip_architect"] = True
-            state.metadata["skip_specialists"] = True
-
-            # Pre-set the response message (synthesizer will append flight count)
-            dest = state.trip_plan.destination
-            state.last_summary = (
-                f"Got it - departing from **{detected_origin}**. "
-                f"Searching for flights from {detected_origin} to {dest}..."
+            # Snapshot categories BEFORE _populate writes them — needed for
+            # _collect_modifications to detect the delta (Issue #3 fix).
+            pre_cats = set(
+                state.metadata.get("trip_inputs", {})
+                .get("activity_settings", {})
+                .get("categories", [])
             )
-            state.suggested_replies = [
-                "Direct flights only",
-                "Flexible dates",
-                "Show me hotels too",
-            ]
 
-            _debug_node_end("router", "🧭", intent="ORIGIN_TO_LOGISTICS", origin=detected_origin)
-            # Return immediately to prevent exploration mode from short-circuiting
-            # The fast-path flags will route to LogisticsNode for flight fetch
-            return state
-        else:
-            # Origin captured but no destination - let Architect handle extraction
-            # The origin is already synced to trip_inputs, Architect will preserve it
-            state.last_summary = (
-                f"Got it - I've set your departure city to **{detected_origin}**. "
-                f"Where would you like to go?"
+            _populate_trip_plan_from_router_output(state, router_output, destination, user_text)
+            state.metadata["router_output"] = router_output.model_dump()
+            state.metadata["router_extracted_fields"] = True
+            ro_dict = router_output.model_dump()
+
+            log(
+                "ROUTER",
+                f"[POST-PLAN] Extracted: dest={state.trip_plan.destination}, "
+                f"dates={state.trip_plan.start_date} -> {state.trip_plan.end_date}, "
+                f"origin={state.trip_plan.origin}",
             )
-            state.suggested_replies = ["Paris", "Tokyo", "New York"]
 
-            _debug_node_end("router", "🧭", intent="ORIGIN_ONLY_PLANNING", origin=detected_origin)
-            # Fall through to planning mode - Architect will extract destination
+            # -- Origin from LLM --
+            new_origin = state.trip_plan.origin
+            if new_origin and new_origin != old_origin:
+                should_return = await _apply_origin_to_state(state, new_origin, clog)
+                if should_return:
+                    return state
+
+            # -- Collect settings + modifications in one pass --
+            # Mods own routing when both present (Tier 1 additions need
+            # specialist queue; settings are parameter updates that logistics
+            # picks up regardless).
+            llm_settings = _collect_settings_from_extraction(ro_dict)
+            llm_mods = _collect_modifications_from_extraction(
+                ro_dict, state, pre_populate_categories=pre_cats
+            )
+
+            has_settings = bool(llm_settings) and bool(state.trip_plan.destination)
+            has_mods = llm_mods is not None
+
+            if has_settings and not has_mods:
+                _apply_settings_to_state(state, llm_settings, clog)
+                return state
+
+            if has_mods:
+                if has_settings:
+                    _apply_settings_to_state(state, llm_settings, clog)
+                    # Mods take routing priority -- clear settings' skip flags
+                    state.metadata.pop("origin_only_logistics", None)
+                    state.metadata.pop("skip_specialists", None)
+                    state.metadata.pop("skip_architect", None)
+                result = _apply_modifications_to_state(state, llm_mods, user_text, clog)
+                if result is not None:
+                    return result
+                if has_settings:
+                    return state
+
+            # -- Date change -> upgrade planning_intent later --
+            if state.trip_plan.start_date != old_start or state.trip_plan.end_date != old_end:
+                state.metadata["_post_plan_date_change"] = True
+
+            # Fall through to planning_intent / exploration
+        except Exception as e:
+            logger.warning(f"[POST-PLAN] LLM extraction failed: {e}")
+            state.metadata["router_extraction_failed"] = True
+            # Fall through -- exploration/soft_transition still works
+
+    # ==========================================================================
+    # END POST-PLAN FAST PATH
+    # ==========================================================================
+
+    # ==========================================================================
+    # ORIGIN DETECTION (pre-plan only -- post-plan uses LLM extraction above)
+    # ==========================================================================
+    if not plan_is_active:
+        detected_origin = _detect_origin_from_message(user_text)
+        if detected_origin:
+            should_return = await _apply_origin_to_state(state, detected_origin, clog)
+            if should_return:
+                return state
     # ==========================================================================
     # END ORIGIN DETECTION
     # ==========================================================================
@@ -1656,178 +1879,28 @@ async def intent_router(state: GraphState) -> GraphState:
     # ==========================================================================
     # Before falling through to LLM classification, check if this is an exploration
     # question that we can answer directly using Local Expert knowledge.
+    from app.debug_utils import log
+
     if classification is None:
         # ======================================================================
-        # SETTINGS DETECTION: Check if user is specifying trip settings
-        # Budget, travelers, hotel/flight preferences → route to logistics
+        # SETTINGS DETECTION (pre-plan only -- post-plan uses LLM extraction)
         # ======================================================================
-        detected_settings = _detect_settings_from_message(user_text, state)
-        if detected_settings and state.trip_plan.destination:
-            log(
-                "ROUTER",
-                f"[SETTINGS] Detected settings change: {list(detected_settings.keys())} "
-                f"(destination: {state.trip_plan.destination})",
-            )
-
-            # Sync settings to trip_inputs for LogisticsNode
-            trip_inputs = state.metadata.get("trip_inputs", {})
-
-            # Apply detected settings
-            if "budget" in detected_settings:
-                trip_inputs["budget"] = detected_settings["budget"]
-                state.trip_plan.budget = detected_settings["budget"]
-
-            if "adults" in detected_settings:
-                trip_inputs["adults"] = detected_settings["adults"]
-                state.trip_plan.adults = detected_settings["adults"]
-
-            if "children" in detected_settings:
-                trip_inputs["children"] = detected_settings["children"]
-                state.trip_plan.children = detected_settings["children"]
-
-            if "hotel_settings" in detected_settings:
-                existing_hotel = trip_inputs.get("hotel_settings", {})
-                trip_inputs["hotel_settings"] = {
-                    **existing_hotel,
-                    **detected_settings["hotel_settings"],
-                }
-
-            if "flight_settings" in detected_settings:
-                existing_flight = trip_inputs.get("flight_settings", {})
-                trip_inputs["flight_settings"] = {
-                    **existing_flight,
-                    **detected_settings["flight_settings"],
-                }
-
-            state.metadata["trip_inputs"] = trip_inputs
-            state.metadata.pop("trip_settings", None)  # Clear so fallback reads trip_inputs
-            state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
-
-            # Populate extracted_settings so _format_result includes them in
-            # the output trip_inputs and they persist across graph runs.
-            ext = state.metadata.setdefault("extracted_settings", {})
-            if "hotel_settings" in detected_settings:
-                hs = detected_settings["hotel_settings"]
-                if "min_stars" in hs:
-                    ext["hotel_min_stars"] = hs["min_stars"]
-            if "flight_settings" in detected_settings:
-                fs = detected_settings["flight_settings"]
-                if fs.get("direct_only") is not None:
-                    ext["flights_toggle"] = True
-                    ext["flight_direct_only"] = fs["direct_only"]
-                if "cabin_class" in fs:
-                    ext["flight_cabin_class"] = fs["cabin_class"]
-
-            # Mark for frontend
-            state.metadata["settings_just_updated"] = True
-            state.metadata["updated_settings"] = list(detected_settings.keys())
-
-            # ROUTE TO LOGISTICS: Refetch tiles with new settings
-            # Skip architect/specialists - only need to refresh tiles
-            state.metadata["origin_only_logistics"] = True  # Reuse the same fast path
-            state.metadata["skip_architect"] = True
-            state.metadata["skip_specialists"] = True
-
-            # Build response message based on what changed
-            changes = []
-            if "budget" in detected_settings:
-                changes.append(f"budget of **${detected_settings['budget']:,}**")
-            if "adults" in detected_settings or "children" in detected_settings:
-                adults = detected_settings.get("adults", state.trip_plan.adults or 1)
-                children = detected_settings.get("children", state.trip_plan.children or 0)
-                traveler_str = f"{adults} adult{'s' if adults > 1 else ''}"
-                if children:
-                    traveler_str += f" and {children} child{'ren' if children > 1 else ''}"
-                changes.append(traveler_str)
-            if "hotel_settings" in detected_settings:
-                hotel = detected_settings["hotel_settings"]
-                if "min_stars" in hotel:
-                    changes.append(f"{hotel['min_stars']}-star hotels")
-                elif "style" in hotel:
-                    changes.append(f"{hotel['style']} hotels")
-            if "flight_settings" in detected_settings:
-                flight = detected_settings["flight_settings"]
-                if flight.get("direct_only"):
-                    changes.append("direct flights")
-                if "cabin_class" in flight:
-                    changes.append(f"{flight['cabin_class']} class")
-
-            change_str = ", ".join(changes)
-            state.last_summary = (
-                f"Got it - updating your trip for {change_str}. Refreshing options..."
-            )
-            state.suggested_replies = ["Show me more options", "Change budget", "Update travelers"]
-
-            _debug_node_end(
-                "router",
-                "🧭",
-                intent="SETTINGS_TO_LOGISTICS",
-                settings=list(detected_settings.keys()),
-            )
-            # Return immediately to prevent exploration mode from short-circuiting
-            # The fast-path flags will route to LogisticsNode for tile refresh
-            return state
+        if not plan_is_active:
+            detected_settings = _detect_settings_from_message(user_text, state)
+            if detected_settings and state.trip_plan.destination:
+                _apply_settings_to_state(state, detected_settings, clog)
+                return state
         # ======================================================================
         # END SETTINGS DETECTION
         # ======================================================================
 
         # ==================================================================
-        # ACTIONABLE INPUT DETECTION: Tier 2 activities, removals, skill level
-        # Catches inputs that settings detection misses but that are NOT
-        # exploratory. Must run before detect_planning_intent() to prevent
-        # the exploration short-circuit from swallowing valid input.
+        # ACTIONABLE INPUT DETECTION (pre-plan only -- post-plan uses LLM)
         # ==================================================================
-        actionable = _detect_actionable_input(user_text, state)
-        if actionable:
-            trip_inputs = state.metadata.get("trip_inputs", {})
-            activity_settings = trip_inputs.get("activity_settings", {})
-            existing_cats = set(activity_settings.get("categories", []))
-
-            # Apply additions
-            if "add_categories" in actionable:
-                existing_cats |= actionable["add_categories"]
-
-            # Apply removals
-            if "remove_categories" in actionable:
-                existing_cats -= actionable["remove_categories"]
-                # Clear strategy sections for removed Tier 1 specialists
-                for cat in actionable["remove_categories"]:
-                    if cat in TIER1_SPECIALISTS:
-                        sections = state.metadata.get("strategy_sections", [])
-                        state.metadata["strategy_sections"] = [
-                            s for s in sections if s.get("specialist_type") != cat
-                        ]
-
-            # Apply skill level
-            if "skill_level" in actionable:
-                activity_settings["skill_level"] = actionable["skill_level"]
-
-            # Apply setting resets
-            if "reset_budget" in actionable:
-                trip_inputs["budget"] = None
-                state.trip_plan.budget = None
-            if "reset_hotel" in actionable:
-                trip_inputs["hotel_settings"] = {}
-
-            # Write back categories
-            activity_settings["categories"] = sorted(existing_cats)
-            trip_inputs["activity_settings"] = activity_settings
-            state.metadata["trip_inputs"] = trip_inputs
-            state.metadata.pop("trip_settings", None)
-            state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
-
-            # Check if message ALSO contains Tier 1 keywords.
-            # If so, don't return — let SOFT_TRANSITION handle specialist queuing.
-            has_tier1 = any(
-                any(kw in user_text.lower() for kw in kws)
-                for kws in ALL_SPECIALIST_KEYWORDS.values()
-            )
-            # But if we're REMOVING a Tier 1, don't let SOFT_TRANSITION re-add it
-            removing_tier1 = bool(actionable.get("remove_categories", set()) & TIER1_SPECIALISTS)
-
-            if not has_tier1 or removing_tier1:
-                # If unresolved tokens exist, resolve aliases via inline LLM call.
-                # If LLM resolves nothing, bail out to detect_planning_intent.
+        if not plan_is_active:
+            actionable = _detect_actionable_input(user_text, state)
+            if actionable:
+                # Pre-plan: resolve unresolved tokens via LLM before applying
                 if actionable.get("unresolved_tokens"):
                     log(
                         "ROUTER",
@@ -1842,95 +1915,47 @@ async def intent_router(state: GraphState) -> GraphState:
                                 for c in router_output.activity_categories
                                 if c.lower() in known
                             }
+                            existing_cats = set(
+                                state.metadata.get("trip_inputs", {})
+                                .get("activity_settings", {})
+                                .get("categories", [])
+                            )
                             if resolved - existing_cats:
-                                existing_cats |= resolved
-                                # Track resolved additions for confirmation message
                                 actionable.setdefault("add_categories", set()).update(resolved)
-                                activity_settings["categories"] = sorted(existing_cats)
-                                trip_inputs["activity_settings"] = activity_settings
-                                state.metadata["trip_inputs"] = trip_inputs
-                                state.metadata.pop("trip_settings", None)
-                                state.metadata["trip_settings"] = get_trip_settings(
-                                    state
-                                ).model_dump()
                                 log("ROUTER", f"[ACTIONABLE] LLM resolved: {resolved}")
                     except Exception as e:
                         log("ROUTER", f"[ACTIONABLE] LLM resolution failed: {e}")
                         state.metadata["router_extraction_failed"] = True
 
-                # TIER 2 PREFETCH: Fire after alias resolution with fully resolved categories
-                if actionable.get("add_categories") and state.trip_plan.destination:
-                    tier2_detected = actionable["add_categories"] & TIER2_ACTIVITY_KEYWORDS
-                    if tier2_detected:
-                        _prefetch_tier2_experiences(state, tier2_detected)
-
-                # Bail if nothing was actually resolved
-                has_real_changes = (
-                    actionable.get("add_categories")
-                    or actionable.get("remove_categories")
-                    or actionable.get("skill_level")
-                    or actionable.get("reset_budget")
-                    or actionable.get("reset_hotel")
-                )
-                if not has_real_changes:
-                    log(
-                        "ROUTER",
-                        f"[ACTIONABLE] Nothing resolved from "
-                        f"{actionable.get('unresolved_tokens')} — falling through",
-                    )
-                else:
-                    # Route to logistics (both exact-match and post-LLM-resolution)
-                    state.metadata["origin_only_logistics"] = True
-                    state.metadata["skip_architect"] = True
-                    state.metadata["skip_specialists"] = True
-
-                    # Build confirmation message
-                    parts = []
-                    added = actionable.get("add_categories", set())
-                    removed = actionable.get("remove_categories", set())
-                    if added:
-                        parts.append(f"Added **{', '.join(sorted(added))}**")
-                    if removed:
-                        parts.append(f"Removed **{', '.join(sorted(removed))}**")
-                    if "skill_level" in actionable:
-                        parts.append(f"Skill level: **{actionable['skill_level']}**")
-                    if "reset_budget" in actionable:
-                        parts.append("Budget limit removed")
-                    if "reset_hotel" in actionable:
-                        parts.append("Hotel preferences reset")
-
-                    state.last_summary = f"{'. '.join(parts)}. Refreshing options..."
-                    state.metadata["actionable_acknowledgment"] = state.last_summary
-
-                    # No chips — canvas auto-updates with new tiles
-                    state.suggested_replies = []
-
-                    state.metadata["settings_just_updated"] = True
-                    # Track added categories for synthesizer gate
-                    if added:
-                        state.metadata["added_categories"] = list(added)
-
-                    log("ROUTER", f"[ACTIONABLE] {actionable}")
-                    _debug_node_end(
-                        "router",
-                        "🧭",
-                        intent="ACTIONABLE_TO_LOGISTICS",
-                        changes=list(actionable.keys()),
-                    )
-                    return state
-
-            # Mixed Tier 1 + Tier 2: categories already updated, fall through
-            # to detect_planning_intent → SOFT_TRANSITION which handles Tier 1
-            log(
-                "ROUTER",
-                f"[ACTIONABLE] Tier 2 categories set, continuing for Tier 1: {actionable}",
-            )
+                result = _apply_modifications_to_state(state, actionable, user_text, clog)
+                if result is not None:
+                    return result
         # ==================================================================
         # END ACTIONABLE INPUT DETECTION
         # ==================================================================
 
-        # Check for planning readiness
-        planning_intent = detect_planning_intent(user_text, state)
+        # Post-plan: use LLM classification. Pre-plan: keyword fallback.
+        router_output_dict = state.metadata.get("router_output")
+        if plan_is_active and router_output_dict and router_output_dict.get("planning_intent"):
+            llm_intent = router_output_dict["planning_intent"]
+            intent_map = {
+                "ready": "ready",
+                "modifying": "soft_transition",
+                "exploring": "exploring",
+                "greeting": "exploring",
+            }
+            planning_intent = intent_map.get(llm_intent, "exploring")
+            log("ROUTER", f"[POST-PLAN] planning_intent from LLM: {llm_intent} → {planning_intent}")
+        else:
+            planning_intent = detect_planning_intent(user_text, state)
+
+        # Pick up post-plan date change from fast path above
+        if state.metadata.pop("_post_plan_date_change", False):
+            planning_intent = "soft_transition"
+            from app.debug_utils import log
+
+            log("ROUTER", "[POST-PLAN] Dates changed, upgrading to soft_transition")
+
         destination = _extract_destination_context(user_text, state)
 
         # =====================================================================
@@ -1945,8 +1970,8 @@ async def intent_router(state: GraphState) -> GraphState:
         text_lower = user_text.lower()
         has_date_in_message = any(re.search(p, text_lower) for p in DATE_INDICATORS)
 
-        if has_date_in_message:
-            log("ROUTER", "[OPPORTUNISTIC] Dates detected, extracting immediately...")
+        if has_date_in_message and not state.metadata.get("router_extracted_fields"):
+            log("ROUTER", "[OPPORTUNISTIC] Extracting (dates detected in pre-plan)...")
 
             try:
                 router_output, token_usage = await _classify_and_extract_with_llm(user_text, state)
@@ -1987,6 +2012,12 @@ async def intent_router(state: GraphState) -> GraphState:
         # =====================================================================
         # END OPPORTUNISTIC EXTRACTION
         # =====================================================================
+
+        # If extraction changed dates, upgrade intent so soft_transition path
+        # handles specialist re-queuing (not the exploring short-circuit)
+        if state.trip_plan.start_date != old_start_date or state.trip_plan.end_date != old_end_date:
+            planning_intent = "soft_transition"
+            log("ROUTER", "[OPPORTUNISTIC] Dates changed, upgrading to soft_transition")
 
         log(
             "ROUTER",
@@ -2111,7 +2142,7 @@ async def intent_router(state: GraphState) -> GraphState:
 
             if has_active_plan:
                 # ── Post-planning: section-specific answer ──
-                qtype, section = classify_question_type(user_text)
+                qtype, section = _classify_question(user_text, state, plan_is_active)
                 if qtype != "general":
                     answer, _ = await generate_comprehensive_answer(
                         user_text, destination, qtype, section, state
@@ -2370,7 +2401,7 @@ async def intent_router(state: GraphState) -> GraphState:
                 )
                 return state
 
-            qtype, section = classify_question_type(user_text)
+            qtype, section = _classify_question(user_text, state, plan_is_active)
             log("ROUTER", f"[SOFT_TRANSITION] Detected question type: {qtype}")
 
             # Generate comprehensive answer

@@ -158,15 +158,6 @@ def compute_strategy(changed_fields: Set[str]) -> RegenStrategy:
     return RegenStrategy.BUILDER
 
 
-def should_skip_graph(strategy: RegenStrategy) -> bool:
-    """
-    Determine if we can skip the graph entirely and call ItineraryBuilder directly.
-
-    Only BUILDER strategy can skip the graph - all others need node execution.
-    """
-    return strategy == RegenStrategy.BUILDER
-
-
 def get_strategy_description(strategy: RegenStrategy) -> str:
     """Get human-readable description for logging/debugging."""
     descriptions = {

@@ -201,7 +201,7 @@ export type UseBranchManagerReturn = BranchManagerState &
  */
 export function useBranchManager(options: BranchManagerOptions): UseBranchManagerReturn {
   const {
-    // tripInputs - no longer used, settings change detection uses documentStore directly
+    // tripInputs - no longer used, settings change detection uses document store directly
     chatPanelContainerRef,
     // hasEverHadPlan - no longer used, regeneration is now manual via RefreshButton
     onToast,
@@ -209,7 +209,13 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     resetDraft,
   } = options;
 
-  const documentStore = useDocumentStore();
+  const document = useDocumentStore((s) => s.document);
+  const fetchDocument = useDocumentStore((s) => s.fetchDocument);
+  const selectTile = useDocumentStore((s) => s.selectTile);
+  const deselectTile = useDocumentStore((s) => s.deselectTile);
+  const hasAllRequiredFields = useDocumentStore((s) => s.hasAllRequiredFields);
+  const resetDocumentStore = useDocumentStore((s) => s.reset);
+  const setFromPlanResponse = useDocumentStore((s) => s.setFromPlanResponse);
   const resetChat = useChatStore((state) => state.resetChat);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -227,7 +233,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * Restores previous session from storage/API.
    */
   const { isHydratingSnapshot } = useSessionHydration({
-    fetchDocument: documentStore.fetchDocument,
+    fetchDocument,
     setBranches: branchState.setBranches,
     setTilesMap: branchState.setTilesMap,
     setBranchSelections: branchState.setBranchSelections,
@@ -245,8 +251,8 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     setBranchSelections: branchState.setBranchSelections,
     selectedBranchId: branchState.selectedBranchId,
     tilesBranchId: branchState.tilesBranchId,
-    onSelectTile: documentStore.selectTile,
-    onDeselectTile: documentStore.deselectTile,
+    onSelectTile: selectTile,
+    onDeselectTile: deselectTile,
     onToast,
   });
 
@@ -311,7 +317,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * Whether we have enough info to generate a new plan.
    * Requires all required fields AND no existing branches.
    */
-  const readyToGenerate = documentStore.hasAllRequiredFields() && branchState.branches.length === 0;
+  const readyToGenerate = hasAllRequiredFields() && branchState.branches.length === 0;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Actions
@@ -343,11 +349,11 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     resetDraft();
 
     // Reset the document store
-    documentStore.reset();
+    resetDocumentStore();
 
     // Increment chat key to reset the chat panel
     onChatKeyIncrement();
-  }, [branchState, documentStore, resetDraft, onChatKeyIncrement]);
+  }, [branchState, resetDocumentStore, resetDraft, onChatKeyIncrement]);
 
   /**
    * Starts a completely new planning session.
@@ -430,7 +436,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
       // Update document store from response
       if (result.response) {
-        documentStore.setFromPlanResponse(result.response);
+        setFromPlanResponse(result.response);
       }
 
       // Update branch state
@@ -453,7 +459,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       setIsGenerating(false);
       generatingStartTimeRef.current = null;
     },
-    [branchState, documentStore]
+    [branchState, setFromPlanResponse]
   );
 
   /**
@@ -601,7 +607,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * This ensures tiles always reflect the current user preferences.
    */
   useEffect(() => {
-    const tripInputs = documentStore.document?.trip_inputs;
+    const tripInputs = document?.trip_inputs;
     const selectedBranchId = branchState.selectedBranchId;
 
     // Skip if no trip inputs, no branch selected, or currently generating
@@ -684,9 +690,9 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         isRefreshingRef.current = false;
       });
   }, [
-    documentStore.document?.trip_inputs?.hotel_settings,
-    documentStore.document?.trip_inputs?.flight_settings,
-    documentStore.document?.trip_inputs?.activity_settings,
+    document?.trip_inputs?.hotel_settings,
+    document?.trip_inputs?.flight_settings,
+    document?.trip_inputs?.activity_settings,
     branchState.selectedBranchId,
     branchState.setTilesMap,
     isGenerating,
@@ -740,7 +746,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     }
 
     // Check if we have origin (required for flight search)
-    const origin = selectedBranch.origin || documentStore.document?.trip_inputs?.origin;
+    const origin = selectedBranch.origin || document?.trip_inputs?.origin;
     if (!origin) {
       console.log('[useBranchManager] No origin available for flight fetch');
       return;
@@ -792,7 +798,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     branchState.selectedBranch,
     branchState.setTilesMap,
     branchState.setBranches,
-    documentStore.document?.trip_inputs?.origin,
+    document?.trip_inputs?.origin,
     isGenerating,
   ]);
 

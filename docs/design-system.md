@@ -51,7 +51,7 @@ import { DS } from '@/lib/design-system';
 | Token | Light Mode | Dark Mode | Use For |
 |-------|------------|-----------|---------|
 | `DS.pills.active` | Black bg, white text, shadow | White bg, black text | Selected chips |
-| `DS.pills.inactive` | White bg, zinc-200 border, zinc-600 text | Transparent, white/15 border, zinc-400 text | Unselected chips |
+| `DS.pills.inactive` | White bg, zinc-200 border-2, zinc-600 text | White/5 bg, white/15 border-2, zinc-400 text | Unselected chips |
 | `DS.pills.shape` | px-4 py-2 rounded-lg text-sm | Same | Base pill structure |
 | `DS.pills.shapeFull` | px-4 py-2 rounded-full text-sm | Same | Rounded pill structure |
 
@@ -65,8 +65,8 @@ import { DS } from '@/lib/design-system';
 
 | State | Light Mode | Dark Mode |
 |-------|------------|-----------|
-| **Inactive Default** | `bg-white border-2 border-zinc-200 text-zinc-600` | `bg-transparent border-2 border-white/15 text-zinc-400` |
-| **Inactive Hover** | `hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900` | `hover:border-white/40 hover:text-white` |
+| **Inactive Default** | `bg-white border-2 border-zinc-200 text-zinc-600` | `bg-white/5 border-2 border-white/15 text-zinc-400` |
+| **Inactive Hover** | `hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900` | `hover:bg-white/10 hover:border-white/40 hover:text-white` |
 | **Active/Selected** | `bg-zinc-900 text-white border-2 border-transparent shadow-md` | `bg-white text-black border-2 border-transparent` |
 
 **Key Principles:**
@@ -87,7 +87,7 @@ import { DS } from '@/lib/design-system';
     // Selected: Solid Black (maximum contrast)
     ? 'bg-zinc-900 text-white border-2 border-transparent shadow-md dark:bg-white dark:text-black dark:border-transparent'
     // Tactile: Crisp border, snap-to-black hover
-    : 'bg-white dark:bg-transparent border-2 border-zinc-200 dark:border-white/15 text-zinc-600 dark:text-zinc-400 hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 dark:hover:border-white/40 dark:hover:text-white'
+    : 'bg-white dark:bg-white/5 border-2 border-zinc-200 dark:border-white/15 text-zinc-600 dark:text-zinc-400 hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white'
 )}>
   {label}
 </button>
@@ -99,9 +99,9 @@ Stepper buttons (`+`/`-`) follow the Tactile Rule with additional emphasis:
 
 | State | Light Mode | Dark Mode |
 |-------|------------|-----------|
-| **Enabled Default** | `bg-white border-2 border-zinc-300 text-zinc-700` | `bg-transparent border-2 border-white/15 text-zinc-400` |
+| **Enabled Default** | `bg-white border-2 border-zinc-300 text-zinc-700` | `bg-white/5 border-2 border-white/15 text-zinc-400` |
 | **Enabled Hover** | `hover:border-zinc-900 hover:bg-zinc-900 hover:text-white` | `hover:border-white hover:bg-white hover:text-black` |
-| **Disabled** | `bg-zinc-50 border-2 border-zinc-200 text-zinc-300` | `bg-transparent border-2 border-white/5 text-zinc-700` |
+| **Disabled** | `bg-zinc-50 border-2 border-zinc-200 text-zinc-300` | `bg-white/[0.02] border-2 border-white/5 text-zinc-700` |
 
 **Code Example:**
 
@@ -109,7 +109,7 @@ Stepper buttons (`+`/`-`) follow the Tactile Rule with additional emphasis:
 // Tactile Stepper Button
 const buttonEnabled = cn(
   'w-10 h-10 rounded-full flex items-center justify-center',
-  'bg-white dark:bg-transparent',
+  'bg-white dark:bg-white/5',
   'border-2 border-zinc-300 dark:border-white/15',
   'text-zinc-700 dark:text-zinc-400',
   'transition-all duration-150',
@@ -193,33 +193,6 @@ Hearts indicate user preference for AI weighting, not cart additions.
 | Focus | White ring | `focus-visible:ring-2 focus-visible:ring-white/50` |
 
 **UX Principle:** Hearts are preference signals (weight in AI), not cart additions.
-
-### Preference Bar (Sticky)
-
-Displays user's hearted tile count and progress indicator. Sticks below main header during scroll.
-
-| Property | Value |
-|----------|-------|
-| Position | `sticky top-16` (64px below main header) |
-| Background | `bg-zinc-900/80 backdrop-blur-md` |
-| Border | `border-b border-white/5` |
-| Padding | `px-4 py-2` |
-| Z-index | `z-30` |
-
-**Content:**
-```tsx
-<div className="sticky top-16 z-30 bg-zinc-900/80 backdrop-blur-md border-b border-white/5 px-4 py-2">
-  <div className="flex items-center justify-between">
-    <span className="text-sm text-zinc-400">
-      <Heart className="w-4 h-4 inline mr-1 fill-emerald-500 stroke-emerald-500" />
-      {preferredCount} preferences saved
-    </span>
-    <ProgressIndicator progress={planProgress} />
-  </div>
-</div>
-```
-
-**Visibility:** Only shown when `preferredTileIds.size > 0 || hasItinerary`
 
 ### Sticky Panels
 
@@ -418,7 +391,7 @@ export function Stepper({ value, min, max, onChange }) {
 
 | Color | Hex | Rule |
 |-------|-----|------|
-| amber/orange | `#E86A1F` (accent) | Used ONLY as brand accent (`--accent`), specialist highlight pulse, and semantic warning/rejection states (Logic Guards, constraint badges, RefreshButton). Do not introduce new amber/orange usage outside these patterns. |
+| amber/orange | `#E86A1F` (accent) | Used ONLY as brand accent (`--accent`), specialist highlight pulse, and semantic warning/rejection states (Logic Guards, constraint badges, NextStepBar validation). Do not introduce new amber/orange usage outside these patterns. |
 | teal-500 | `#14B8A6` | BANNED — replaced by emerald |
 
 ### Specialist Color Palette
@@ -495,54 +468,52 @@ The Trip DNA bar shows engine constraints from niche specialists (all entries in
 **Constraint Priority Colors:**
 | Priority | Keywords | Icon | Border | Background | Text (Light) | Text (Dark) |
 |----------|----------|------|--------|------------|--------------|-------------|
-| **Blocking** | `no_fly`, `safety`, `dive`, `scuba`, `flight`, `decompression`, `altitude` | `AlertTriangle` | `border-red-500/40` | `bg-red-500/10` | `text-red-600` | `text-red-300` |
+| **Blocking** | `no_fly`, `no-fly`, `nofly`, `safety`, `altitude`, `buffer`, `24h`, `24 hour`, `diving`, `dive`, `scuba`, `decompression`, `fly`, `flight` | `AlertTriangle` | `border-red-500/40` | `bg-red-500/10` | `text-red-600` | `text-red-300` |
 | **Strong** | `morning`, `footwear`, `gear`, `timing`, `equipment`, `certification` | `Clock` | `border-amber-500/40` | `bg-amber-500/10` | `text-amber-600` | `text-amber-300` |
 | **Soft** | Default (all others) | `Shield` | `border-zinc-400/40` | `bg-zinc-500/10` | `text-zinc-600` | `text-zinc-400` |
 
 > **Light Mode Fix:** Text colors use `-600` suffix for light mode visibility (red-600, amber-600, zinc-600) instead of `-300` which is invisible on white backgrounds.
 
 **Priority-Based Icons:**
-Icons are selected based on constraint keyword matching, not validation state:
+Icons are selected based on constraint keyword matching against the combined `type + rule + reason` text:
 ```tsx
-const blocking = ['no_fly', 'no-fly', 'safety', 'altitude', 'diving', 'dive', 'scuba', 'decompression', 'flight'];
+const blocking = ['no_fly', 'no-fly', 'nofly', 'safety', 'altitude', 'buffer', '24h', '24 hour', 'diving', 'dive', 'scuba', 'decompression', 'fly', 'flight'];
 const strong = ['morning', 'footwear', 'gear', 'timing', 'equipment', 'certification'];
 
-if (blocking.some(k => constraintText.includes(k))) return <AlertTriangle />;
-if (strong.some(k => constraintText.includes(k))) return <Clock />;
+if (blocking.some(k => t.includes(k))) return <AlertTriangle />;
+if (strong.some(k => t.includes(k))) return <Clock />;
 return <Shield />;
 ```
 
-**Future: Three-State Validation Override:**
+**Three-State Validation Override:**
 When backend populates `constraints_validated` and `constraint_violations`:
-- If constraint is **violated** → Amber ring with AlertTriangle icon
-- If constraint is **validated** → Emerald with CheckCircle icon
-- Otherwise → Priority coloring above
+- If constraint is **violated** → Amber ring (`ring-2 ring-amber-400/60`) with AlertTriangle icon
+- If constraint is **validated** → Emerald (`border-emerald-300 bg-emerald-50`) with CheckCircle icon
+- Otherwise → Priority coloring above (blocking/strong/soft)
 
 **Styling:**
 ```tsx
-<div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700">
-  <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0">Trip DNA:</span>
-  <div className="relative flex-1 min-w-0">
-    <div className="flex gap-2 overflow-x-auto no-scrollbar pr-8">
+<div className="flex items-start gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700">
+  <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0 leading-[30px]">Trip DNA:</span>
+  <div className="flex-1 min-w-0">
+    <div className="flex flex-wrap gap-2">
       {/* Constraint pills with priority-based icons and coloring */}
       <span className={cn(
-        "inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border",
-        pillClass // Priority-based: red/amber/zinc with light/dark variants
+        "inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap",
+        pillClass // Priority-based or three-state: red/amber/zinc/emerald with light/dark variants
       )}>
         {/* Icon by priority: AlertTriangle (blocking), Clock (strong), Shield (soft) */}
         <AlertTriangle className="w-4 h-4 shrink-0" />
         {constraintLabel}
       </span>
     </div>
-    {/* Right fade gradient */}
-    <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-zinc-100 dark:from-zinc-950 to-transparent pointer-events-none" />
   </div>
 </div>
 ```
 
 **Visibility:** Only shows when `engineConstraints.length > 0` (niche specialist constraints exist).
 
-**Implementation:** `frontend/components/plan/StrategyStageRenderer.tsx` (lines ~876-1013)
+**Implementation:** `frontend/components/plan/StrategyStageRenderer.tsx` (lines ~838-963)
 
 ### Inline Constraint Badge Colors
 
@@ -576,57 +547,27 @@ Activity and logistics blocks display inline constraint badges to show constrain
 
 ---
 
-## 5. Migration Checklist
-
-When applying this system to existing components:
-
-### Audit Amber/Orange Usage
-- [ ] Verify amber/orange only appears in brand accent, specialist highlight, and semantic warning/rejection patterns
-- [ ] Remove any decorative or button amber/orange usage not in the approved patterns
-- [ ] Replace stray amber/orange with `DS.actions.primary` (black/emerald)
-
-### Fix Inputs
-- [ ] Remove decorative colored focus rings (`focus:ring-amber-500`)
-- [ ] Use `DS.materials.input` for background-depth styling
-- [ ] Ensure dark mode uses `bg-black/40` (void look)
-
-### Standardize Text
-- [ ] Section headers → `DS.text.label` (uppercase, tracking)
-- [ ] Modal titles → `DS.text.h1`
-- [ ] Body text → `DS.text.body`
-
-### Check Shadows
-- [ ] All modals use `DS.materials.glass`
-- [ ] Verify `backdrop-blur-xl` is present
-- [ ] Light: `shadow-zinc-200/50`, Dark: `shadow-black/80`
-
-### Verify Chips/Pills
-- [ ] Selected state uses `DS.pills.active`
-- [ ] Unselected uses `DS.pills.inactive`
-- [ ] No teal colored selections; amber only in approved semantic patterns
-
-### Remove Decorative Warning Boxes
-- [ ] Replace decorative `bg-amber-500/10 border border-amber-500/30` with `DS.infoBox.container` (semantic amber warnings are fine)
-- [ ] Use `DS.actions.smallAction` for action buttons inside
-
----
-
 ## 6. Component Mapping
 
-| Component | Key DS Tokens |
-|-----------|---------------|
-| BaseSheet | `DS.materials.glass`, `DS.text.h1`, `DS.actions.iconBtn` |
-| DestinationSheet | `DS.materials.input`, `DS.pills.*`, `DS.text.label` |
-| OriginSheet | Same as Destination |
-| TravelersSheet | `DS.pills.*`, `DS.stepper.*` |
-| BudgetSheet | `DS.materials.inputLarge`, `DS.pills.*` |
-| FlightsSheet | `DS.infoBox.*`, `DS.actions.toggle`, `DS.pills.*` |
-| StaysSheet | Same as Flights |
-| ActivitiesSheet | Same as Flights, `DS.stepper.*` (day preference steppers per category) |
-| ChatPanel | `DS.materials.input`, `DS.pills.*` (suggestions) |
-| UnifiedChipRow | `DS.pills.*` |
-| DatesSheet | `DS.materials.glass`, `DS.pills.*`, `DS.actions.primary` |
-| Calendar | Custom (see Calendar section) |
+All sheets live at `frontend/components/plan/sheets/`. Most sheets use raw Tailwind classes that match DS token values rather than importing `DS` directly. The table below reflects actual DS token imports and inline DS-pattern usage.
+
+| Component | Location | Key DS Tokens / Patterns |
+|-----------|----------|--------------------------|
+| BaseSheet | `plan/sheets/BaseSheet.tsx` | Raw glass pattern (matches `DS.materials.glass`), raw iconBtn pattern |
+| DestinationSheet | `plan/sheets/DestinationSheet.tsx` | `DS.text.label`, raw Void Input pattern, raw Tactile pills |
+| OriginSheet | `plan/sheets/OriginSheet.tsx` | Raw Void Input pattern, raw Tactile pills (no DS import) |
+| TravelersSheet | `plan/sheets/TravelersSheet.tsx` | Raw Tactile pills, inline stepper (w-12 h-12 mobile variant) |
+| BudgetSheet | `plan/sheets/BudgetSheet.tsx` | Raw inputLarge pattern (text-5xl), raw Tactile pills |
+| FlightsSheet | `plan/sheets/FlightsSheet.tsx` | Raw infoBox pattern, `Switch` component (toggle), raw Tactile pills |
+| StaysSheet | `plan/sheets/StaysSheet.tsx` | Same as Flights |
+| ActivitiesSheet | `plan/sheets/ActivitiesSheet.tsx` | Same as Flights, `Stepper` from `ui/stepper.tsx` (day preference steppers) |
+| TripSettingsSheet | `plan/sheets/TripSettingsSheet.tsx` | BaseSheet, field rows for mobile settings relay |
+| DatesSheet | `plan/sheets/DatesSheet.tsx` | Raw glass pattern, raw Tactile pills, raw primary button |
+| ChatPanel | `chat/ChatPanel.tsx` | Raw Tactile pills (suggestion chips), Living Void pattern |
+| UnifiedChipRow | `plan/UnifiedChipRow.tsx` | `CoreChip` (CSS custom properties, not DS pills) |
+| Calendar | `ui/calendar.tsx` | Custom (see Calendar section) |
+| StrategyHero | `plan/stages/StrategyHero.tsx` | `DS.text.label`, `DS.text.body`, `DS.infoBox.container` (3 variants: `hero`, `compact`, `accordion`) |
+| Stepper (shared) | `ui/stepper.tsx` | Raw DS.stepper pattern (sm/default size variants) |
 
 ---
 
@@ -727,13 +668,19 @@ The calendar component is at `frontend/components/ui/calendar.tsx`.
 
 ```tsx
 // Custom DayButton with priority-based styling
-function CustomDayButton({ modifiers, ...props }: DayButtonProps) {
+function CustomDayButton({ day, modifiers, className, ...props }: DayButtonProps) {
   const isRangeStart = modifiers?.range_start;
   const isRangeEnd = modifiers?.range_end;
   const isRangeMiddle = modifiers?.range_middle;
+  const isSelected = modifiers?.selected;
   const isToday = modifiers?.today;
+  const isOutside = modifiers?.outside;
+  const isDisabled = modifiers?.disabled;
 
   const getStyles = () => {
+    if (isDisabled) return 'text-zinc-400 opacity-50 cursor-not-allowed';
+    if (isOutside) return 'text-zinc-400 dark:text-zinc-600 opacity-50';
+
     // PRIORITY 1: Range endpoints (Caps)
     if (isRangeStart && isRangeEnd) {
       return 'bg-emerald-600 text-white dark:bg-emerald-500 dark:text-zinc-950 rounded-md font-extrabold';
@@ -750,9 +697,14 @@ function CustomDayButton({ modifiers, ...props }: DayButtonProps) {
       return 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 rounded-none';
     }
 
-    // PRIORITY 3: Today (Emerald text + underline, NO background)
+    // PRIORITY 3: Single selection
+    if (isSelected) {
+      return 'bg-emerald-600 text-white dark:bg-emerald-500 dark:text-zinc-950 rounded-md font-extrabold';
+    }
+
+    // PRIORITY 4: Today (Emerald text + underline, NO background)
     if (isToday) {
-      return 'text-emerald-600 dark:text-emerald-400 font-extrabold underline decoration-2 underline-offset-4 bg-transparent';
+      return 'text-emerald-600 dark:text-emerald-400 font-extrabold underline decoration-2 decoration-emerald-600 dark:decoration-emerald-400 underline-offset-4 bg-transparent';
     }
 
     // Default
@@ -767,7 +719,8 @@ function CustomDayButton({ modifiers, ...props }: DayButtonProps) {
         'rounded-none text-sm tracking-tight tabular-nums',
         'transition-all duration-150 ease-in-out',
         !isRangeStart && !isRangeEnd && !isSelected && !isRangeMiddle && 'hover:bg-zinc-200 dark:hover:bg-zinc-800',
-        getStyles()
+        getStyles(),
+        className
       )}
     />
   );
@@ -777,7 +730,7 @@ function CustomDayButton({ modifiers, ...props }: DayButtonProps) {
 ### Why This Works
 
 1. **No CSS Specificity Wars:** JavaScript priority logic determines styles — no `!important` needed.
-2. **High Contrast Bridge:** Zinc-100/Zinc-800 is clearly visible against white/dark backgrounds.
+2. **High Contrast Bridge:** Zinc-200/Zinc-800 is clearly visible against white/dark backgrounds.
 3. **Emerald Anchors:** Start/End caps use emerald to signal "selection boundaries."
 4. **Today Beacon:** Underline-only styling avoids background collision bugs.
 5. **Tabular Numbers:** Prevents layout jitter when selecting different dates.
@@ -824,13 +777,15 @@ function CustomDayButton({ modifiers, ...props }: DayButtonProps) {
 
 **Problem:** Inputs in Dark Mode with thin grey borders look like standard form fields, not premium "data entry zones."
 
-**Solution:** Make inputs a **Void** — darker than the card (`bg-black/50`), no border until focused. Focus adds an emerald glow.
+**Solution:** Make inputs a **Void** — darker than the card, no border until focused. Focus adds an emerald glow.
 
-| State | Styling |
-|-------|---------|
-| **Default** | `dark:bg-black/50 dark:border-transparent` |
-| **Focus** | `dark:focus:border-emerald-500/50 dark:focus:bg-black/60` |
-| **Focus Glow** | `dark:focus:shadow-[0_0_20px_-5px_rgba(16,185,129,0.15)]` |
+> **Note:** `DS.materials.input` uses `dark:bg-black/40 dark:border-white/5`. Sheet-level search inputs (e.g. DestinationSheet) use the deeper variant: `dark:bg-black/50 dark:border-transparent`. Both are valid -- sheets override for a more dramatic void effect.
+
+| State | DS Token (`DS.materials.input`) | Sheet Override (DestinationSheet) |
+|-------|------|---------|
+| **Default** | `dark:bg-black/40 dark:border-white/5` | `dark:bg-black/50 dark:border-transparent` |
+| **Focus** | `dark:focus:border-emerald-500/50` | `dark:focus:border-emerald-500/50 dark:focus:bg-black/60` |
+| **Focus Glow** | `dark:focus:shadow-[0_0_20px_-5px_rgba(16,185,129,0.1)]` | `dark:focus:shadow-[0_0_20px_-5px_rgba(16,185,129,0.15)]` |
 
 **Code Example:**
 
@@ -873,7 +828,9 @@ canSave
 
 ### Budget Input (Big Number)
 
-The budget input should feel like a **luxury price tag** — huge, bold, with an emerald caret in Dark Mode:
+The budget input should feel like a **luxury price tag** — huge, bold, with an emerald caret in Dark Mode.
+
+> **Note:** `DS.materials.inputLarge` uses `text-4xl`. The actual `BudgetSheet` uses `text-5xl` for extra impact. Use `text-5xl` for budget inputs.
 
 ```tsx
 <input
@@ -1038,7 +995,12 @@ Question chips are always visible (never suppressed). Post-planning, they route 
 
 ## 10. Stepper Buttons (Glass Treatment)
 
-Stepper buttons in Dark Mode also need the Glass Fill treatment:
+Stepper buttons in Dark Mode also need the Glass Fill treatment.
+
+Two implementations exist:
+- **DS token** (`DS.stepper.button`): `w-10 h-10` — used directly or in `ui/stepper.tsx` (default size)
+- **TravelersSheet inline**: `w-12 h-12` — larger touch target for mobile (see Section 12)
+- **`ui/stepper.tsx`**: Shared component with `size="sm"` (w-8 h-8) and `size="default"` (w-10 h-10) variants
 
 | State | Light Mode | Dark Mode |
 |-------|------------|-----------|
@@ -1046,7 +1008,7 @@ Stepper buttons in Dark Mode also need the Glass Fill treatment:
 | **Hover** | `hover:border-zinc-900 hover:bg-zinc-900 hover:text-white` | `hover:bg-white hover:border-white hover:text-black` |
 | **Disabled** | `bg-zinc-50 border-2 border-zinc-200 text-zinc-300` | `bg-white/[0.02] border-white/5 text-zinc-700` |
 
-**Code Example:**
+**Code Example (DS token, w-10 h-10):**
 
 ```tsx
 const buttonEnabled = cn(
@@ -1376,7 +1338,7 @@ Stepper buttons and interactive controls must look like physical buttons, not gh
 | **Hover** | `bg-zinc-900 border-zinc-900 text-white` | `bg-white border-white text-black` |
 | **Disabled** | `bg-zinc-100 border-2 border-zinc-300 text-zinc-400` | `bg-white/[0.02] border-white/5 text-zinc-700` |
 
-**Key Principle:** Borders should be visible without squinting. Use `border-zinc-400` (not `border-zinc-300`) for light mode inactive states.
+**Key Principle:** Borders should be visible without squinting. Mobile steppers use `border-zinc-400` for extra visibility; desktop steppers (DS token and `ui/stepper.tsx`) use `border-zinc-300`.
 
 **Code Example:**
 
@@ -1702,9 +1664,10 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
 |---------|-------------------------------|----------------------------|
 | **Text Color** | `text-zinc-950` | `text-emerald-500` |
 | **Glow** | None | `drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]` |
-| **Font** | `font-mono text-xs uppercase tracking-[0.2em] font-bold` | Same |
+| **Font** | `font-mono text-[9px] uppercase tracking-[0.12em] font-bold` | Same |
 | **Cursor Color** | `bg-zinc-950` | `bg-emerald-500` |
 | **Cursor Glow** | None | `shadow-[0_0_6px_rgba(16,185,129,0.6)]` |
+| **Cursor Animation** | `animate-terminal-blink` (defined in `globals.css`) | Same |
 
 ### Code Example
 
@@ -1714,7 +1677,7 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
   {/* The Text */}
   <span className={cn(
     // Base Typography: Technical Monospace
-    "font-mono text-xs uppercase tracking-[0.2em] font-bold",
+    "font-mono text-[9px] uppercase tracking-[0.12em] font-bold",
     // Light Mode: "Typewriter Ink" (Solid, Dark, Permanent)
     "text-zinc-950",
     // Dark Mode: "System Pulse" (Glowing, Emerald, Digital)
@@ -1725,7 +1688,7 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
 
   {/* The Blinking Cursor */}
   <div className={cn(
-    "w-1.5 h-2.5 animate-blink rounded-sm",
+    "w-1 h-1.5 animate-terminal-blink rounded-sm",
     // Light: Solid black ink
     "bg-zinc-950",
     // Dark: Emerald with glow
@@ -1742,8 +1705,7 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
 
 ### Implementation Reference
 
-- Desktop: `frontend/components/plan/PlanHeader.tsx` (line ~348)
-- Mobile: `frontend/components/chat/ChatPanel.tsx` (line ~1160)
+- `frontend/components/chat/ChatPanel.tsx` (S0 hero banner, ~line 1645)
 
 ---
 
@@ -1893,8 +1855,8 @@ The Reset button allows users to start over with a fresh planning session. It mu
 
 ### Implementation Reference
 
-- Web: `frontend/components/layout/NomadicLanding.tsx` (line ~1056)
-- Mobile: `frontend/components/layout/MobileModeHeader.tsx` (line ~136)
+- Web: `frontend/components/layout/NomadicLanding.tsx` (line ~1378)
+- Mobile: `frontend/components/layout/MobileModeHeader.tsx` (line ~135)
 
 ---
 
@@ -2015,7 +1977,7 @@ The NextStepBar ("Command Island") is a sticky footer CTA that adapts its visual
 ### Implementation Reference
 
 - Component: `frontend/components/plan/NextStepBar.tsx`
-- Validation Hook: `frontend/hooks/useTripValidation.ts`
+- Validation logic: Inline in `NextStepBar.tsx` (reads `tripInputs` from `documentStore`)
 
 ---
 
@@ -2082,48 +2044,20 @@ export function RefreshButton({ hasChanges, isRefreshing, onRefresh }: Props) {
 }
 ```
 
-### Hook Integration
+### Current Status
 
-The RefreshButton is powered by `useManualRegeneration` hook:
-
-```tsx
-// useManualRegeneration.ts - Trip input change detection
-const { hasChanges, isRefreshing, regenerate, resetState } = useManualRegeneration({
-  onFullRegenerate: () => chatPanelRef.current?.handleSendMessage('GENERATE_PLAN_TRIGGER'),
-  onAfterRegenerate: handleExpandToItinerary,
-});
-```
-
-**State tracking:**
-- `computeTripInputsHash()` - Stable JSON hash of destination, dates, settings
-- `lastValidatedHashRef` - Hash after last successful regeneration
-- `hasChanges` - `currentHash !== lastValidatedHashRef`
-- `isRefreshingRef` - Mutex preventing double-clicks
-
-### Why This Works
-
-1. **High Visibility:** Amber gradient stands out against map backgrounds where emerald would blend.
-2. **Portal Rendering:** Escapes scroll containers, ensures consistent screen position.
-3. **Clear Intent:** "REFRESH PLAN" text leaves no ambiguity about the action.
-4. **Pulse Animation:** Draws attention to pending changes.
-5. **Single Trigger:** Only one button can trigger regeneration (no duplicate CTAs).
-
-### Relationship to NextStepBar
-
-| Component | Action | When Visible |
-|-----------|--------|--------------|
-| **RefreshButton FAB** | `expand_itinerary` (regeneration) | When trip inputs change |
-| **NextStepBar** | `finalize_plan` (booking) | S3_ITINERARY_READY only |
-
-**Note:** The standalone RefreshButton FAB has been removed. Regeneration is now triggered via:
+**The standalone RefreshButton FAB has been removed.** The visual spec above is retained for reference only. Regeneration is now triggered via:
 - **Chat auto-regen:** Structural plan changes trigger automatic itinerary rebuild
 - **Preference auto-regen:** Heart changes trigger via `usePreferenceAutoRegen` hook
 - **Manual build:** "Build Itinerary" CTA in `StrategyStageRenderer.tsx`
+- **Branch manager:** Trip input changes tracked by `useBranchManager` / `useTripInputsEditor` hooks
 
 ### Implementation Reference
 
 - Preference auto-regen: `frontend/hooks/usePreferenceAutoRegen.ts`
 - Build CTA: `frontend/components/plan/StrategyStageRenderer.tsx`
+- Trip input editing: `frontend/components/layout/hooks/useTripInputsEditor.ts`
+- Branch management: `frontend/components/layout/hooks/useBranchManager.ts`
 - Generation logic: `frontend/components/layout/NomadicLanding.tsx` (`proceedWithItineraryGeneration`)
 - UX Flow: `docs/ux_unified_architecture.md` (Regeneration Flow section)
 
@@ -2179,10 +2113,12 @@ All animation timings are centralized in `frontend/lib/animation-config.ts`:
 |-----------|----------|---------|
 | `SPECIALIST_EXPAND` | 400ms | Height spring for card expansion |
 | `SPECIALIST_PULSE` | 1000ms | Pulse once to draw attention |
+| `SPECIALIST_STAGGER` | 500ms | Delay between card expansions |
 | `TILES_FADE` | 300ms | Opacity 0→1 fade in |
 | `SELECTIONS_SLIDE` | 250ms | Slide down from top |
 | `TIMELINE_FADE` | 500ms | Fade + scroll into view |
 | `MAP_SLIDE` | 400ms | Slide right→left (desktop) |
+| `MAP_STAGGER_DELAY` | 200ms | Delay after timeline starts |
 | `MIN_LOADING` | 600ms | Minimum loading duration |
 | `SKELETON_CROSSFADE` | 300ms | Skeleton → real content |
 
@@ -2211,45 +2147,17 @@ SPRING_CONFIG = {
 
 | Trigger | Element | Animation |
 |---------|---------|-----------|
-| First heart | SelectionsBar | Slide down, becomes sticky (desktop) |
 | Build click | Tiles section | Dim to 60% opacity |
 | Build complete | Timeline | Fade in, auto-scroll after 300ms |
 
-### Motion Variants
+### Motion & Transitions
 
-Reusable Framer Motion variants:
-
-```typescript
-// Fade in from below (tiles, timeline)
-fadeInUp: {
-  initial: { opacity: 0, y: 20 },
-  animate: { opacity: 1, y: 0 },
-}
-
-// Slide down from top (SelectionsBar)
-slideDown: {
-  initial: { y: -50, opacity: 0 },
-  animate: { y: 0, opacity: 1 },
-}
-
-// Slide up from bottom (NextStepBar)
-slideUp: {
-  initial: { y: 100, opacity: 0 },
-  animate: { y: 0, opacity: 1 },
-}
-
-// Slide in from right (Map)
-slideInRight: {
-  initial: { x: 100, opacity: 0 },
-  animate: { x: 0, opacity: 1 },
-}
-```
+> **Note:** The `MOTION_VARIANTS` and `TRANSITIONS` preset exports were removed from `animation-config.ts`. Components now define motion variants inline using `REVEAL_TIMING` and `SPRING_CONFIG` directly. Only `REVEAL_TIMING` (timing constants) and `SPRING_CONFIG` (spring physics) are exported from `animation-config.ts`.
 
 ### Mobile Optimization
 
 **Rule:** Skip complex animations on mobile for performance.
 
-- SelectionsBar: Non-sticky on mobile (scrolls with content)
 - Specialists: No auto-expand on mobile
 - Map: Inline on mobile plan page (250px, scrolls with content)
 - Consider `prefers-reduced-motion` for accessibility

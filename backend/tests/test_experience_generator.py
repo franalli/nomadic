@@ -195,7 +195,6 @@ class TestTileConversion:
 
         tile = ExperienceTile(
             title="Ubud Morning Vinyasa",
-            subtitle="Rice paddy views at sunrise",
             category="yoga",
             duration_hours=1.5,
             price_estimate=25,
@@ -210,7 +209,7 @@ class TestTileConversion:
         assert result["partner"] == "experience_generator"
         assert result["source_agent"] == "experience_generator"
         assert result["title"] == "Ubud Morning Vinyasa"
-        assert result["subtitle"] == "Rice paddy views at sunrise"
+        assert result["subtitle"] == "Morning Yoga"  # Derived from time_of_day + category
         assert result["price_estimate"] == 25.0
         assert result["currency"] == "USD"
         assert result["is_estimate_only"] is True
@@ -407,46 +406,42 @@ class TestGenerateExperiences:
         mock_session.__aexit__ = AsyncMock(return_value=False)
         mock_db_factory.return_value = MagicMock(return_value=mock_session)
 
-        # Mock LLM structured output
-        fake_parsed = ExperienceOutput(
+        # Mock LLM structured output — one response per category
+        fake_yoga = ExperienceOutput(
             activities=[
                 ExperienceTile(
                     title="Ubud Morning Vinyasa",
-                    subtitle="Rice paddy views",
                     category="yoga",
                     time_of_day="morning",
                     price_estimate=25,
                 ),
                 ExperienceTile(
                     title="Seminyak Sunset Yoga",
-                    subtitle="Beach sunset flow",
                     category="yoga",
                     time_of_day="evening",
                     price_estimate=30,
                 ),
+            ]
+        )
+        fake_cooking = ExperienceOutput(
+            activities=[
                 ExperienceTile(
                     title="Balinese Cooking Class",
-                    subtitle="Market to table",
                     category="cooking",
                     time_of_day="morning",
                     price_estimate=45,
                 ),
                 ExperienceTile(
                     title="Warung Night Tour",
-                    subtitle="Street food adventure",
                     category="cooking",
                     time_of_day="evening",
                     price_estimate=35,
                 ),
             ]
         )
-        fake_raw = MagicMock()
-        token_usage = {"prompt_tokens": 100, "completion_tokens": 200}
-        fake_raw.response_metadata = {"token_usage": token_usage}
 
         mock_structured_llm = AsyncMock()
-        llm_result = {"parsed": fake_parsed, "raw": fake_raw}
-        mock_structured_llm.ainvoke = AsyncMock(return_value=llm_result)
+        mock_structured_llm.ainvoke = AsyncMock(side_effect=[fake_yoga, fake_cooking])
 
         with patch("app.services.experience_generator.ChatOpenAI") as mock_chat:
             mock_instance = MagicMock()
@@ -545,8 +540,7 @@ class TestGenerateExperiences:
         fake_raw.response_metadata = {}
 
         mock_structured_llm = AsyncMock()
-        llm_result = {"parsed": fake_parsed, "raw": fake_raw}
-        mock_structured_llm.ainvoke = AsyncMock(return_value=llm_result)
+        mock_structured_llm.ainvoke = AsyncMock(return_value=fake_parsed)
 
         with patch("app.services.experience_generator.ChatOpenAI") as mock_chat:
             mock_instance = MagicMock()

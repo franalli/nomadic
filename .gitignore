@@ -34,6 +34,9 @@ backend/tests/e2e/nightly_results/
 backend/test_artifacts/
 e2e_results/
 
+# SQLite test artifacts
+backend/test_plan_document_pytest.db*
+
 # Claude Code temp files
 tmpclaude-*-cwd
 **/tmpclaude-*-cwd

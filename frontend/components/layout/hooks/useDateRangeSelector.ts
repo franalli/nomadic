@@ -65,7 +65,7 @@ export function useDateRangeSelector(
     onToast,
   } = options;
 
-  const documentStore = useDocumentStore();
+  const commitTripInputs = useDocumentStore((s) => s.commitTripInputs);
 
   // State
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -166,7 +166,7 @@ export function useDateRangeSelector(
         const prevStartIso = tripInputs.start_date;
         const prevEndIso = tripInputs.end_date;
         if (newStartIso !== prevStartIso || newEndIso !== prevEndIso) {
-          const success = await documentStore.commitTripInputs({
+          const success = await commitTripInputs({
             start_date: newStartIso,
             end_date: newEndIso,
           });
@@ -205,7 +205,7 @@ export function useDateRangeSelector(
         });
       }
     },
-    [tripInputs, documentStore, setTripInputsDraft, onToast, selection]
+    [tripInputs, commitTripInputs, setTripInputsDraft, onToast, selection]
   );
 
   // Handler for mouse enter on calendar days - shows preview of range
@@ -278,7 +278,7 @@ export function useDateRangeSelector(
           start_date: startIso,
           end_date: endIso,
         };
-        const success = await documentStore.commitTripInputs(updates);
+        const success = await commitTripInputs(updates);
 
         if (!success) {
           onToast('Failed to update dates. Please try again.', 'error');
@@ -290,7 +290,7 @@ export function useDateRangeSelector(
         onToast(`Travel dates set: ${startDisplay} – ${endDisplay}. 📅`, 'confirmation');
       }
     },
-    [tripInputs, documentStore, setTripInputsDraft, onToast]
+    [tripInputs, commitTripInputs, setTripInputsDraft, onToast]
   );
 
   // Handler to reset dates
@@ -306,12 +306,12 @@ export function useDateRangeSelector(
 
     // Also commit the reset to the store
     if (tripInputs.start_date || tripInputs.end_date) {
-      await documentStore.commitTripInputs({
+      await commitTripInputs({
         start_date: null,
         end_date: null,
       });
     }
-  }, [tripInputs, documentStore, setTripInputsDraft]);
+  }, [tripInputs, commitTripInputs, setTripInputsDraft]);
 
   return {
     // State

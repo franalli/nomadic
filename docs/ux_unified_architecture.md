@@ -152,27 +152,28 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| SelectionsBar | `components/plan/SelectionsBar.tsx` | Grouped carousel of hearted tiles (Stays + Activities sections) |
-| usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (instant, no debounce) |
+| usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (instant, no debounce, AbortController cancels stale regens) |
 
 ### Progressive Disclosure Rules
 
 | Data Available | Content Shown | Map State |
 |----------------|---------------|-----------|
-| Destination only | Strategy cards, destination hero | **Visible (destination pin)** |
-| + Dates | + Tile browser (prices available) | Visible (destination pin) |
-| + Generation complete | + Itinerary timeline | Visible (destination pin) |
+| Destination only (no specialist content) | PlanHeader with hero image (desktop only) | Hidden (no POIs) |
+| Destination + specialist content (no tiles) | Strategy cards, ghost timeline | **Visible (destination pin, desktop only)** |
+| + Tiles (dates set, logistics fetched) | + Tile browser (prices available) | Visible (destination pin) |
+| + Generation complete (day_cards exist) | + Itinerary timeline | Visible (destination pin + POIs from day_cards) |
 | + Hearts/preferences | Preference attribution in timeline | Visible |
 
 ### Map Display Rules
 
 | Phase | Desktop (>1024px) | Mobile (<1024px) |
 |-------|-------------------|------------------|
-| With Destination | Fixed 400px (max 35vw), sticky `top-20`, 400px height, z-10, destination pin centered | 300px height, inline before timeline |
+| With Destination (full mode) | Fixed 400px width (max 35vw), sticky `top-0`, full viewport height (`h-screen`), destination pin centered | 300px height, inline before timeline (only when POIs exist) |
+| With Destination (bridge mode) | Fixed 350px width, sticky `top-4`, 400px height, destination pin or POIs | Hidden |
 | No Destination | Hidden | Hidden |
 
 **Map Content:**
-- Static destination pin centered on map (zoom level 6)
+- Static destination pin centered on map (zoom level 8 in full mode, zoom level 10 in bridge mode, zoom level 4 fallback when no coords)
 - Uses `getDestinationCoords()` lookup for ~90 destinations
 - Falls back to `DestinationMapPlaceholder` if coords not found
 - **POI Pins:** Activity markers from `extractPOIsFromSections()` in `ghost-timeline-adapter.ts`
@@ -191,8 +192,9 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 - **Timeline:** Inline after tiles (or after map on mobile)
 
 ### Auto-Scroll Triggers
-- **First heart:** Scrolls to SelectionsBar
-- **Itinerary generated:** Scrolls to timeline section (smooth scroll, 300ms delay after fade starts)
+- **Itinerary generated:** Scrolls to timeline section (smooth scroll, 100ms delay after scroll position freeze/restore)
+
+> **Note:** SelectionsBar has been deleted. Heart preferences are tracked in `preferredTileIds` and reflected in itinerary regeneration, not a separate UI bar.
 
 ### Animation Specification
 
@@ -203,11 +205,10 @@ Progressive disclosure uses coordinated animations to reveal UI elements at the 
 #### Timing Constants
 | Element | Trigger | Duration | Animation |
 |---------|---------|----------|-----------|
-| Tiles fade-in | P2 (tiles fetched) | 300ms | Opacity 0→1 |
-| SelectionsBar | First heart | 250ms | Slide down (spring) |
-| Timeline fade-in | P3 (itinerary ready) | 500ms | Opacity + translateY 20→0 |
+| Tiles fade-in | Tiles fetched | 300ms | Opacity 0→1 |
+| Timeline fade-in | Itinerary ready (day_cards exist) | 500ms | Opacity + translateY 20→0 |
 | Map fade-in | Destination set | 300ms | Opacity 0→1 (simple fade) |
-| NextStepBar slide-up | P2+ | Spring | Slide up from bottom |
+| NextStepBar slide-up | S2+ | Spring | Slide up from bottom |
 
 #### Spring Physics
 All interactive animations use spring physics:
@@ -216,47 +217,47 @@ All interactive animations use spring physics:
 
 #### State-Based Reveals
 
+> **Note:** In practice, the backend emits S* states (not P* directly), and `computeDataDensity()` maps to `empty`/`ghost`/`bridge`/`full` density levels. The P* phases below are conceptual guides for what renders at each density.
+
 ```
-P0_MINIMAL (destination only)
+empty (no specialist content)
+├─ Hero + chips (PlanHeader topo background)
+└─ Map hidden
+
+ghost (specialist content, no tiles)
 ├─ Hero + chips
-├─ Specialists (collapsed)
+├─ Specialists (collapsed by default)
+├─ Ghost timeline (specialist preview)
 └─ Map (fade in, desktop only, destination pin) ← AnimatePresence
 
-P1_ENRICHED (specialists complete)
-├─ Above +
-└─ Specialists (can expand manually)
+bridge (specialist content, no tiles, S2_STRATEGY_READY)
+├─ Strategy cards
+└─ Map (bridge mode: 350px fixed, desktop only) ← AnimatePresence
 
-P2_LOGISTICS (tiles fetched)
-├─ Above +
+full (tiles exist or P3)
+├─ Strategy cards (collapsible in S3)
 ├─ Tiles (fade in, 300ms) ← AnimatePresence
-├─ SelectionsBar (slide down on first heart) ← AnimatePresence
-└─ NextStepBar (slide up) ← AnimatePresence
-
-P3_FINALIZED (itinerary generated)
-├─ Above +
-└─ Timeline (fade in, 500ms) ← AnimatePresence + auto-scroll
+├─ Timeline (fade in, 500ms) ← AnimatePresence + auto-scroll (when day_cards exist)
+└─ Map (full mode: 400px fixed, desktop, h-screen sticky) ← AnimatePresence
+```
 ```
 
 #### Interaction-Based Reveals
 
 ```
-First heart click
-└─ SelectionsBar slides down from top (spring, 250ms)
-    └─ Becomes sticky on desktop, inline on mobile
-
-Tile click from SelectionsBar
-└─ Smooth scroll to tile in TilesGrid (data-tile-id attribute)
-
 Itinerary generated
-└─ Auto-scroll to timeline section (300ms after fade starts)
+├─ Scroll position frozen when expansion starts (useEffect captures window.scrollY)
+├─ Scroll position restored synchronously before paint (useLayoutEffect)
+└─ Smooth scroll to timeline section (100ms delay after restore)
 ```
+
+> **Note:** SelectionsBar has been deleted. Heart-based interactions now feed directly into preference auto-regen.
 
 #### Mobile Optimization
 
 Mobile skips heavy animations for performance:
 - **Tiles:** Immediate render (no AnimatePresence wrapper)
 - **Timeline:** Immediate render
-- **SelectionsBar:** Non-sticky (inline), still has slide animation
 - **Map:** 300px inline block, no slide animation
 
 #### Loading States
@@ -297,7 +298,8 @@ All animations use Framer Motion with `AnimatePresence` for enter/exit:
   - **No Destination:** Single column `<div className="flex flex-col w-full">`
   - **With Destination (Desktop):** Content (flex-1, min 720px, max 900px) + Map (fixed 400px, max 35vw)
   - **With Destination (Mobile):** Single column with inline map (300px height, shown after itinerary)
-- Map visibility controlled by `showDesktopMap = isDesktop && !!destCoords` (shows immediately when destination is set)
+- Desktop map visibility controlled by `showDesktopMap = isDesktop && !!destCoords` (shows immediately when destination is set)
+- Mobile map only shows when `hasItineraryContent && fullModePOIs.length > 0` (not just destination pin)
 - Timeline section conditionally renders when `hasItineraryContent === true`
 - Mode prop threads through TimelineThread → ActivityMiniCard for Book button visibility
 - Preference attribution uses `preferredTileIds` to show "You preferred this" badge
@@ -349,16 +351,15 @@ Users can heart tiles to signal preference to the AI. Hearts are preference sign
 
 ### Data Flow
 1. User hearts tiles via `SuggestionCard`, `TileCard`, or `BookableCard`
-2. All heart clicks route through `useShortlist` hook → `toggleTilePreference()`
+2. All heart clicks route through `documentStore.toggleTilePreference()`
 3. For hotels: clears existing hotel preference (single-select enforcement)
-4. `preferredTileIds` stored in Zustand + persisted to DB via PATCH `/api/document`
+4. `preferredTileIds` stored in Zustand + persisted to DB via PATCH `/api/document` (with 409 conflict retry)
 5. On page refresh, `fetchDocument()` hydrates `preferredTileIds` from DB
-6. `useShortlist` syncs local metadata (category, isPrimary) from hydrated IDs
-7. On auto-regen trigger (instant after preference change via `usePreferenceAutoRegen`):
+6. On auto-regen trigger (instant after preference change via `usePreferenceAutoRegen`):
    - Preferences read via `useDocumentStore.getState().preferredTileIds` (live read)
    - Categorized by tile type and sent to backend
-8. Backend applies 1.5x score multiplier to preferred tiles in `ItineraryBuilder`
-9. Timeline shows attribution badge: "You preferred this" on check-in blocks
+7. Backend applies 1.5x score multiplier to preferred tiles in `ItineraryBuilder`
+8. Timeline shows attribution badge: "You preferred this" on check-in blocks
 
 **Important (Stale Closure Fix):** `proceedWithItineraryGeneration` reads ALL document state via `useDocumentStore.getState()` at call time, not from React state captured at render time. This ensures:
 - Latest hearted tiles are sent (`preferredTileIds`)
@@ -582,8 +583,8 @@ if (expandInProgress) {
 - `markPreferencesAsApplied()` - Snapshots current preferences after regeneration (compares `preferredTileIds` vs `lastGeneratedPreferences` inline to detect changes)
 
 **Visual feedback:**
-- SelectionsBar shows "Updating..." during regeneration
-- Timeline dims with overlay
+- Specialist section shows "Updating itinerary..." overlay during regeneration (`isRegenUpdating`)
+- Timeline dims with black overlay + "Updating with N preferences..." spinner
 - Attribution badges show preference vs AI selection
 
 **Selective regeneration (backend):**
@@ -609,73 +610,9 @@ elif is_generate_trigger:
 - "You preferred this" - user-preferred hotel was selected
 - "AI selected" + "Switch" button - AI overrode user preference
 
-### SelectionsBar Grouped Layout
-
-SelectionsBar displays hearted tiles grouped by type AND by specialist with semantic structure:
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 💚 YOUR SELECTIONS  5   [Updating...]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- STAY (1)
- ┌──────┐
- │ img  │  Four Seasons
- └──────┘
- ────────────────────────────────────
- FLIGHTS (2)
- ┌──────┐ ┌──────┐
- │ img  │ │ img  │  Qatar Airways, Emirates
- └──────┘ └──────┘
- ────────────────────────────────────
- DIVING (1)
- ┌──────┐
- │ img  │  Crystal Bay
- └──────┘
- ────────────────────────────────────
- HIKING (1)
- ┌──────┐
- │ img  │  Mount Batur
- └──────┘
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-**Groups:**
-| Group | Label | Behavior |
-|-------|-------|----------|
-| Stays | "STAY (n)" | Single-select (max 1) |
-| Flights | "FLIGHTS (n)" | Multi-select |
-| Activities | Grouped by specialist (e.g., "DIVING (n)", "HIKING (n)") | Multi-select |
-
-**Type Detection:**
-```typescript
-import { isFlightType, isHotelType } from '@/lib/utils';
-
-if (isHotelType(tile.type)) stays.push(tile);
-else if (isFlightType(tile.type)) flights.push(tile);  // NEW
-else /* activities by specialist */
-```
-
-**Visual rules:**
-- Empty groups don't render
-- Each group has its own horizontal scroll
-- Compact thumbnails (80×56px) for density
-- "Updating..." indicator shows during auto-regeneration
-- Activities are grouped by detected specialist type for visual clarity
-
-**Compact Mode (≤2 selections):**
-When there are only 1-2 selections, the bar renders as a slim one-line badge to reduce visual weight:
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 💚  2 selections  · Four Seasons  · Crystal Bay
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-- Titles truncated to 20 chars max
-- Native `title` tooltip shows full name on hover
-- Loader spinner appears at end when regenerating
-
 ### Specialist Filtering (Domain Mode)
 
-When Tier 1 domain specialists (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) are active, both SelectionsBar and BookingSection filter activities to show only specialist-relevant items. Hotels always pass through. Tier 2 categories (yoga, cooking, nightlife, temples, beach, shopping, photography, wellness, culture, music, wine, food) do not trigger specialists — they bias tile selection via tag-based filtering in LogisticsNode.
+When Tier 1 domain specialists (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) are active, BookingSection filters activities to show only specialist-relevant items. Hotels always pass through. Tier 2 categories (yoga, cooking, nightlife, temples, beach, shopping, photography, wellness, culture, music, wine, food) do not trigger specialists — they bias tile selection via tag-based filtering in LogisticsNode.
 
 **Keyword Mappings (from `frontend/lib/specialists.ts` registry):**
 ```typescript
@@ -712,7 +649,6 @@ function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boole
 
 **Where Applied:**
 - **Backend (Two-Tier Suppression):** `LogisticsNode` applies tier-aware filtering when niche specialists (all 8 Tier 1 specialists) are active. Pure Tier 1 → suppress all generic tiles. Mixed Tier 1+2 → keep only tiles matching Tier 2 selections. `local_expert` does NOT trigger suppression.
-- `SelectionsBar.tsx`: Filters hearted activities by specialist before grouping
 - `BookingSection.tsx`: Filters activity tiles in `tilesByCategory` when specialists are active
 
 **Backend Two-Tier Suppression Logic:**
@@ -837,7 +773,7 @@ Icons are selected based on constraint priority/severity, not validation state:
 | **Strong** | `morning`, `footwear`, `gear`, `timing`, `equipment`, `certification` | `Clock` | Amber | Morning departures only |
 | **Soft** | (default) | `Shield` | Zinc | Reef-safe sunscreen |
 
-> **Note:** Backend emits `constraints_validated` and `constraint_violations` for future validation state styling (violated=amber ring, validated=emerald). Currently icons use priority-based logic since validation data may not always be populated.
+> **Note:** Backend emits `constraints_validated` and `constraint_violations` which enable three-state styling: violated (amber ring via `violatedRules` Set), validated (emerald via `validatedRules` Set), and unchecked (priority-based color). The code currently implements all three states. When validation data is not populated, the pill falls through to the priority-based color (blocking=red, strong=amber, soft=zinc).
 
 **Implementation:**
 ```tsx
@@ -848,29 +784,40 @@ const engineConstraints = fullModeSections
   .filter((s) => NICHE_SPECIALIST_IDS.includes(s.specialist_type || ''))
   .flatMap((s) => s.constraints_applied || []);
 
-// Short label extraction: label > reason (truncated) > rule (title-cased)
+// Short label extraction: label > shortConstraintLabel(rule) > 'Constraint'
 const getShortLabel = (c) =>
   c.label ||
-  (c.reason && c.reason.length > 30 ? c.reason.slice(0, 27) + '…' : c.reason) ||
-  (c.rule?.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())) ||
+  (c.rule ? getShortConstraintLabel(c.rule) : null) ||
   'Constraint';
 
 {engineConstraints.length > 0 && (
-  <div className="flex flex-wrap items-center gap-2 px-4 py-2 border border-zinc-300 rounded-lg">
-    <span className="text-[10px] uppercase tracking-wide text-zinc-500">
-      🧬 Engine Constraints:
+  <div className="flex items-start gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700">
+    <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0">
+      Trip DNA:
     </span>
-    {engineConstraints.slice(0, 5).map((c, i) => (
-      <span
-        key={c.constraint_id || i}
-        title={c.reason || c.label || c.rule}
-        className="px-2 py-0.5 rounded-full text-xs bg-zinc-800 text-zinc-300"
-      >
-        {getConstraintIcon(c.type)} {getShortLabel(c)}
-      </span>
-    ))}
-    {engineConstraints.length > 5 && (
-      <span className="text-xs text-zinc-500">+{engineConstraints.length - 5} more</span>
+    <div className="flex flex-wrap gap-2">
+      {engineConstraints.map((c, i) => {
+        const style = getPillStyle(c); // Three-state: violated (amber ring) > validated (emerald) > unchecked (priority-based)
+        return (
+          <span
+            key={`${c.rule}-${i}`}
+            title={c.reason || c.rule?.replace(/_/g, ' ')}
+            className={cn(
+              'inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap',
+              style.pillClass
+            )}
+          >
+            <style.Icon className="w-4 h-4 shrink-0" />
+            <span>{getShortLabel(c)}</span>
+          </span>
+        );
+      })}
+    </div>
+    {/* Toggle for specialist cards when itinerary exists */}
+    {hasItineraryContent && (
+      <button onClick={() => setShowConstraints(!showConstraints)}>
+        {showConstraints ? 'Hide' : 'Details'}
+      </button>
     )}
   </div>
 )}
@@ -888,21 +835,14 @@ const getShortLabel = (c) =>
 │         │               │               │                        │
 │         ▼               ▼               ▼                        │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │  useShortlist (hooks/useShortlist.ts)                     │   │
-│  │  - Local state: category, isPrimary (UI-specific)         │   │
-│  │  - Backed by: documentStore.preferredTileIds              │   │
-│  │  - On toggle: calls toggleTilePreference()                │   │
-│  │  - On hydration: syncs from preferredTileIds              │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                           │                                      │
-│                           ▼                                      │
-│  ┌──────────────────────────────────────────────────────────┐   │
 │  │  documentStore (state/documentStore.ts)                   │   │
 │  │  - preferredTileIds: Set<string>                          │   │
 │  │  - lastGeneratedPreferences: Set<string> (for regen)      │   │
-│  │  - toggleTilePreference() → PATCH /api/document           │   │
+│  │  - toggleTilePreference() → optimistic update + PATCH     │   │
+│  │    (hotel single-select enforced: clears existing hotels)  │   │
 │  │  - markPreferencesAsApplied() → syncs sets                │   │
 │  │  - fetchDocument() → hydrates preferredTileIds from DB    │   │
+│  │  - 409 conflict handling: refetches version + retries once │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                           │                                      │
 └───────────────────────────┼──────────────────────────────────────┘
@@ -917,7 +857,6 @@ const getShortLabel = (c) =>
 ### Storage
 - **Zustand state:** `documentStore.preferredTileIds: Set<string>` - current preferences
 - **Zustand state:** `documentStore.lastGeneratedPreferences: Set<string>` - preferences at last generation
-- **Local metadata:** `useShortlist.itemsMetadata: Map<id, {category, isPrimary}>`
 - **Database:** `plan_documents.document.preferred_tile_ids[]` (survives refresh)
 
 ---
@@ -973,9 +912,10 @@ The backend emits **planning phases** (not UI modes) based on data density:
 |-------|-----------|----------|--------------------|
 | `P0_MINIMAL` | Destination only, no specialists | Hero image, empty timeline | "Your trip is taking shape" · REFINE PLAN |
 | `P1_ENRICHED` | Specialists run, strategy sections present | Strategy cards, ghost timeline | "Your trip is taking shape" · REFINE PLAN |
-| `P2_LOGISTICS` | Tiles fetched, suggestions available | Tile browser in Overview tab | "Your trip is taking shape" · REFINE PLAN |
-| `P2.5_PREFERENCE` | User has hearted tiles (optional) | Preferred tiles sorted first | "Your trip is taking shape" · REFINE PLAN |
+| `P2_LOGISTICS` | Tiles fetched, suggestions available | Tile browser + strategy cards | "Your trip is taking shape" · REFINE PLAN |
 | `P3_FINALIZED` | Itinerary validated, ready to book | Complete itinerary, "Proceed to Booking" | "Itinerary complete" · READY |
+
+> **Note:** `P2_LOGISTICS` is defined in the `PlanViewState` type but never emitted by the backend or used in rendering logic. The frontend's `computeDataDensity()` function determines rendering based on data availability (tiles, specialist content), not on P2 explicitly. `P2.5_PREFERENCE` was a conceptual phase and does not exist in code.
 
 ### Legacy Mapping (Coexistence)
 
@@ -985,47 +925,53 @@ The backend emits **planning phases** (not UI modes) based on data density:
 
 | Legacy State | Maps To | Reason |
 |--------------|---------|--------|
+| `S0_EMPTY` | *(falls through to default)* | Reset state (frontend-only, used for "start over" intent). Not handled by `normalizePlanViewState` -- stays as `S0_EMPTY`. |
 | `S0_BOOTSTRAP` | `P0_MINIMAL` | No data yet |
 | `S1_FRAMING` | `P0_MINIMAL` | Merged into P0 |
+| `S1_DESTINATION_SET` | *(falls through to default)* | Frontend-only state in `VIEW_STATE_ORDER` for downgrade protection. Not mapped by `normalizePlanViewState`. |
 | `S2_STRATEGY_READY` | `P1_ENRICHED` | Specialists have run |
 | `S2_BLOCKED` | `P1_ENRICHED` | Handled by data checks |
 | `S3_ITINERARY_READY` | `P3_FINALIZED` | Itinerary complete |
+| `S3_EDITING` | `P3_EDITING` | User editing itinerary |
+| `S3_BLOCKED` | `P3_BLOCKED` | Itinerary blocked |
+| `S3_PARTIAL_CONFLICT` | `P3_BLOCKED` | Partial timeline with unschedulable blocks. Emitted by backend `/api/expand-itinerary` endpoint when builder produces partial results. |
 
 ---
 
 ## II. The "Single Renderer" Pattern
 
-We do not swap `SetupView` for `PlanView`. We use a single **`UnifiedStageRenderer`** that adapts.
+We do not swap `SetupView` for `PlanView`. We use a single **`StrategyStageRenderer`** that adapts based on data density (`computeDataDensity()`).
 
 ```tsx
-<UnifiedStageRenderer>
-  {/* TOP: ALWAYS VISIBLE */}
-  <StrategyStack />
+<StrategyStageRenderer>
+  {/* SECTION 1: SPECIALISTS (via S2StrategyView) */}
+  <S2StrategyView ... />
 
-  {/* MIDDLE: ADAPTIVE TIMELINE */}
-  {mode === 'bridge' ? (
-    <TimelineThread variant="sample" duration={3} />
-  ) : (
-    <TimelineThread variant="real" startDate={date} />
-  )}
+  {/* SECTION 2: TILE BROWSER */}
+  {hasTiles && <BookingSection ... />}
 
-  {/* BOTTOM: DATA DENSITY */}
-  {hasTiles && <BookingTilesGrid />}
-</UnifiedStageRenderer>
+  {/* SECTION 3: TIMELINE (conditional on hasItineraryContent) */}
+  {hasItineraryContent && <TimelineThread variant={computeTimelineVariant(state)} />}
+</StrategyStageRenderer>
 ```
+
+> **Note:** The component file is `StrategyStageRenderer.tsx`, not `UnifiedStageRenderer`. There is no `UnifiedStageRenderer` component in the codebase.
 
 ---
 
-## III. Backend State Logic (`plan_graph.py`)
+## III. Backend State Logic (`response_envelope.py`)
 
-The Backend dictates the Planning Phase based on data density.
+The backend dictates the Planning Phase based on data density. The primary function is `_compute_plan_view_state()` in `response_envelope.py`.
 
-| Logic Check | Phase Output | Explanation |
+**Actual backend logic (two states only):**
+
+| Logic Check | State Output | Explanation |
 | --- | --- | --- |
-| `!tiles` AND `!specialist_content` | `P0_MINIMAL` | **Minimal.** Destination only. Show "Inspiration Hero" or default empty state. |
-| `specialist_content` AND `!tiles` | `P1_ENRICHED` | **Enriched.** User has intent but no dates. Show Strategy Cards + Sample Timeline. |
-| `tiles` EXIST AND `!itinerary` | `P2_LOGISTICS` | **Logistics.** Dates set, suggestions available. Show Full Dashboard. |
-| `itinerary` EXIST | `P3_FINALIZED` | **Finalized.** Itinerary complete. Show "Proceed to Booking" button. |
+| `tiles` exist (any category non-empty) | `S2_STRATEGY_READY` | **Full logistics mode.** Dates set, real prices available. |
+| `specialist_content` exists (non-general/null sections) | `S2_STRATEGY_READY` | **Bridge State.** Strategy cards + ghost timeline before dates. |
+| Neither tiles nor specialist content | `S0_BOOTSTRAP` | **Blank slate.** Setup checklist, no specialist content. |
+
+> **Note:** The backend `_compute_plan_view_state()` only emits `S0_BOOTSTRAP` and `S2_STRATEGY_READY`. S3 states (`S3_ITINERARY_READY`, `S3_PARTIAL_CONFLICT`) are set by the `/api/expand-itinerary` endpoint. `S1_FRAMING` exists in a deprecated `compute_plan_view_state()` function in `main.py` but is not used by the primary response envelope. The frontend `computeDataDensity()` function further refines rendering by checking tiles, specialist content, and dates to determine `empty`, `ghost`, `bridge`, or `full` density levels.
 
 ### Itinerary Generation State Transition
 
@@ -1364,22 +1310,7 @@ Exploration mode exits when user provides actionable parameters:
 
 ### UI Components for Exploration → Planning Transition
 
-Two frontend components support the exploration-to-planning UX flow:
-
-| Component | Location | Trigger | Purpose |
-|-----------|----------|---------|---------|
-| `ExplorationProgress` | `ChatPanel.tsx` | 3+ user questions | Shows question count badge + "Plan now" CTA above input bar |
-| `ReadyToPlanBanner` | `StrategyStageRenderer.tsx` | Ghost/Bridge mode + no dates | Full-width banner prompting user to set dates |
-
-**ExplorationProgress:**
-- Renders above chat input when `userMessageCount >= 3`
-- Shows "Ready to plan!" badge with question count
-- "Plan now" button sends "Let's plan my trip!"
-
-**ReadyToPlanBanner:**
-- Renders in ghost/bridge mode when destination is set but dates are not
-- Gradient banner with dismiss capability
-- "Start planning" button opens dates sheet
+> **Note:** `ExplorationProgress` and `ReadyToPlanBanner` have been deleted from the codebase. The exploration-to-planning transition is now handled entirely by suggestion chips generated by the synthesizer (see chip state table above). Suggestion chips shift from exploration questions to plan-refinement actions once dates are set.
 
 ---
 
@@ -1534,10 +1465,12 @@ The renderer uses data density to determine what to show:
 
 | Density | Condition | Renders |
 | --- | --- | --- |
-| `empty` | S0 + no specialist content | Topo background + "Build Your Itinerary" tagline (PlanHeader, desktop only) |
-| `ghost` | S0 + specialist content | Strategy cards + ghost timeline |
-| `bridge` | S2 + specialist + no tiles + no dates | Strategy cards + sample timeline + POI map |
-| `full` | S2 + tiles exist | Strategy cards + real timeline + tiles + full map |
+| `empty` | P0 + no specialist content | Topo background + "Build Your Itinerary" tagline (PlanHeader, desktop only) |
+| `ghost` | P0 + specialist content | Strategy cards + ghost timeline |
+| `bridge` | P1 + specialist + no tiles | Strategy cards + POI map (no ghost timeline in bridge mode) |
+| `full` | P1+ with tiles, or P3 | Strategy cards + real timeline + tiles + full map |
+
+> **Note:** Bridge mode does NOT require "no dates". The dates condition was deliberately removed (see `computeDataDensity()` CRITICAL FIX comment) so that strategy cards remain visible while waiting for tile fetch after dates are set but before origin triggers logistics. Bridge mode persists until tiles arrive.
 
 **Map POI extraction:** Only runs when `dayCardsFingerprint` changes (content-based proxy using block IDs with coordinates). The `effectiveDayCards` reference is stabilized via a ref that only updates on fingerprint change, preventing spurious re-renders from `mergeEnvelope` creating new DayCard objects. Map uses `fitBounds` with responsive padding (desktop: 40px, mobile: 20px) and `maxZoom: 12` / `minZoom: 7`.
 
@@ -1694,11 +1627,11 @@ useSessionHydration() runs
 
 | Layer | File | Function |
 |-------|------|----------|
-| Schema | `backend/app/schemas.py:650` | `PlanDocumentData` class |
-| Persistence | `backend/app/crud_document.py:565` | `apply_planner_update()` |
-| Endpoints | `backend/app/main.py:1668` | Graph plan SSE stream |
+| Schema | `backend/app/schemas.py` | `PlanDocumentData` class |
+| Persistence | `backend/app/crud_document.py` | `apply_planner_update()` |
+| Endpoints | `backend/app/main.py` | Graph plan SSE stream |
 | Hydration | `frontend/.../useSessionHydration.ts` | Session restore hook |
-| Store | `frontend/state/documentStore.ts:613` | `fetchDocument()` |
+| Store | `frontend/state/documentStore.ts` | `fetchDocument()` |
 
 ### Session Lifecycle
 
@@ -1725,13 +1658,31 @@ useSessionHydration() runs
 
 | Component | Responsibility |
 | --- | --- |
-| `StrategyStageRenderer` | Data density computation, conditional rendering |
-| `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack) |
+| `StrategyStageRenderer` | Data density computation, conditional rendering, single renderer for all modes |
+| `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
+| `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack/StrategyHero) |
 | `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`) |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available |
-| `NextStepBar` | CTA bar — accepts `nextAction` prop, renders for `finalize_plan` action |
+| `NextStepBar` | CTA bar — accepts `nextAction` prop, renders only for `finalize_plan` action |
+| `OriginPromptCard` | Inline prompt to set origin (shown in S2 when destination+dates set but no origin, 2+ specialists) |
+| `ItineraryProgressIndicator` | Progress indicator for multi-specialist auto-trigger itinerary generation |
+
+**Deleted Components (no longer in codebase):**
+- `ConflictResolutionBanner` -- conflict resolution now chat-driven via suggestion chips
+- `TripHealthDashboard` -- replaced by `TripHealthBar.tsx` (compact bar variant)
+- `ReadyToPlanBanner` -- removed
+- `ExplorationProgress` -- removed
+- `SelectionsBar` -- hearted tile preferences now feed auto-regen directly (no separate UI bar)
+- `SuggestionBlock` -- timeline block for suggested bookables removed
+- `useChatStateMachine` -- chat state machine hook removed
+- `PlanDocument`, `DocumentHeader`, `DaySection`, `Segment` -- legacy plan document components
+- `OnboardingChips`, `PlanningProgress`, `OptionalRefinementsSection` -- legacy plan widgets
+- `S1FramingView`, `S2BlockedView`, `S3BlockedView`, `S3EditingView` -- legacy stage views
+- `LocationBadge`, `TruncatedDestinationList` -- legacy pill components
+- `TileSectionHeader` -- tile section header
+- `features-section` -- marketing features section
 
 ### TimelineVariant Mapping
 
@@ -1749,15 +1700,20 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 
 | Function | Purpose | Status |
 | --- | --- | --- |
-| `getNextAction(state, generation)` | Returns action type based on state alone. Does NOT gate on dates. | Active |
-| `isGenerating(generation)` | Checks if any generation is in progress | Active |
-| `isReady(state, generation)` | Checks if plan is in ready state | Active |
-| `canShowTilesPreview(state, tileCount)` | Gates tile preview visibility | **Deprecated** |
-| `canShowBookingTiles(state)` | Gates booking tiles visibility | **Deprecated** |
+| `getNextAction(state, generation)` | Returns `'expand_itinerary'` for S2, `null` otherwise. Does NOT gate on dates. | Active |
+| `isGenerating(generation)` | Checks if any generation is in progress (`generation?.active === true`) | Active |
+| `isReady(state, generation)` | Checks if plan is in ready state (S2 or S3, not generating) | Active |
+| `canExpandToItinerary(state, generation, hasTripContext)` | Gates expand button: S2 + not generating + has trip context | Active |
+| `getStageFromState(state)` | Returns stage label: `'bootstrap'` / `'structure'` / `'strategy'` / `'itinerary'` | Active |
+| `shouldAutoTriggerItinerary(state, topics, hasDates, generation, hasItinerary)` | Path A: auto-trigger for multi-specialist trips (2+ topics, S2, has dates, no existing itinerary) | Active |
+| `isMultiSpecialistTrip(executedTopics)` | Returns true when 2+ topics executed | Active |
+| `shouldShowLeftPanelGenerateCTA(state)` | Returns true for S0/S1 (before plan exists) | Active |
+
+**Deleted functions (no longer in codebase):**
+- `canShowTilesPreview()` -- removed, mode is the SSoT for tile rendering
+- `canShowBookingTiles()` -- removed, mode is the SSoT for tile rendering
 
 **IMPORTANT:** `getNextAction()` returns action type based on state alone. `NextStepBar` accepts the result as its `nextAction` prop. It filters out `expand_itinerary` (auto-expand handles that) and only renders when `nextAction` is `finalize_plan`.
-
-**DEPRECATION NOTICE:** `canShowBookingTiles()` and `canShowTilesPreview()` are deprecated. Mode is the SSoT for tile rendering, not state. Use `effectiveMode === 'planning'` or `effectiveMode === 'booking'` instead. See Section XI.11.F.1 for details.
 
 ```typescript
 // planStateHelpers.ts
@@ -1777,11 +1733,11 @@ export function getNextAction(
 ## IX. Invariants
 
 1. **Right Panel Never Empty:** After first user message, always show *something* (hero, cards, or full plan).
-2. **No View Swapping:** Single renderer adapts; don't mount/unmount entire view components.
+2. **No View Swapping:** Single renderer (`StrategyStageRenderer`) adapts via `computeDataDensity()`; don't mount/unmount entire view components.
 3. **No UI Chrome Removal:** Elements that appear during setup (status header, chip rows) must **transform through states**, not disappear. Layout shift breaks spatial memory. See `getChatStatusConfig` in `ChatPanel.tsx`.
-4. **Backend is SSoT:** `plan_view_state` from backend determines rendering mode.
+4. **Backend is SSoT:** `plan_view_state` from backend determines rendering mode. Frontend does not fabricate it except for the frontend-only state `S0_EMPTY` (reset intent). `S3_PARTIAL_CONFLICT` is emitted by the backend `/api/expand-itinerary` endpoint when the builder produces partial results. `S1_DESTINATION_SET` exists only in the frontend `VIEW_STATE_ORDER` for downgrade protection ordering.
 5. **Coordinates Flow:** `[lng, lat]` format preserved from specialist → strategy_sections → DayBlock.
-6. **Dates Gate Plan Navigation:** The Plan tab MUST be locked until `start_date` is set. Strategy content alone does NOT unlock Plan.
+6. **Plan Tab Unlock:** Mobile plan tab unlocks when `planTabEnabled = hasBranchesReady || planViewState !== 'S0_BOOTSTRAP'` (specialist content, tiles, or branches exist). Desktop `canViewPlan` in `useViewNavigation` gates on dates (`hasDates || isGenerating`) but is marked `@deprecated`. Strategy content alone DOES unlock the plan tab on mobile.
 
 ---
 
@@ -2026,7 +1982,7 @@ User: "Plan diving and hiking Bali March 1-5"
        ↓
 [Success] Timeline appears with constraint buffers
    OR
-[Conflict] ConflictResolutionBanner shows options
+[Conflict] Partial day_cards render at S3_PARTIAL_CONFLICT + resolution chips via synthesizer
 ```
 
 **UI Components:**
@@ -2129,13 +2085,18 @@ Used in Full Mode when tiles exist, and **always in S3 (itinerary ready)**. The 
 **S3 Rendering Rule:**
 ```tsx
 // StrategyStageRenderer.tsx - Section 1: Specialists
-// ALWAYS show both specialist cards AND Trip DNA bar when strategy sections exist
-{strategySections.length > 0 && (
+{fullModeSections.length > 0 && (
   <>
-    {/* Specialist cards - always visible (ABOVE) */}
-    <S2StrategyView ... />
-    {/* Trip DNA bar - always visible (BELOW specialist cards) */}
-    <TripDNABar sections={strategySections} />
+    {/* Specialist cards: always visible pre-itinerary, togglable post-itinerary */}
+    {!hasItineraryContent ? (
+      <S2StrategyView ... />
+    ) : (
+      <>
+        {showConstraints && <S2StrategyView ... />}
+      </>
+    )}
+    {/* Trip DNA bar - constraint pills from niche specialists */}
+    {engineConstraints.length > 0 && <TripDNABar ... />}
   </>
 )}
 ```
@@ -2143,12 +2104,11 @@ Used in Full Mode when tiles exist, and **always in S3 (itinerary ready)**. The 
 **Visual Layout:**
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ SPECIALIST ANALYSIS (accordions)                        │
-│ ▼ Local Expert - Trip Overview (collapsed)             │
-│ ▼ Diving Expert - PADI Certification (collapsed)       │
+│ SPECIALIST ANALYSIS (hidden by default in S3)           │
+│ (User clicks "Details" in Trip DNA bar to reveal)       │
 ├─────────────────────────────────────────────────────────┤
-│ TRIP DNA BAR (flex-wrap pills, no horizontal scroll)    │
-│ Trip DNA:  [🌊 Diving (3)] [🏔️ Hiking (2)] [🧭 Local Expert (5)] │
+│ TRIP DNA BAR (flex-wrap pills, constraint-forward)      │
+│ Trip DNA:  [AlertTriangle 24H No-fly Buffer]  [Clock Morning only]  [Details] │
 ├─────────────────────────────────────────────────────────┤
 │ ITINERARY                                               │
 │ Day 1: Arrival                                          │
@@ -2156,7 +2116,7 @@ Used in Full Mode when tiles exist, and **always in S3 (itinerary ready)**. The 
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Key Change:** Both specialist cards and Trip DNA bar are ALWAYS visible when strategy sections exist - before AND after refresh. No conditional rendering.
+**Key Behavior:** In S3 (itinerary ready), specialist cards are **hidden by default** and toggled via the "Details" link in the Trip DNA bar. Pre-itinerary (S2), specialist cards are always visible. Trip DNA bar is always visible when niche specialist constraints exist.
 
 **Self-Contained Expansion:** The `StrategyHero` component internally manages its own expansion state via `useState`. When clicked, it opens a `BottomSheet` containing:
 1. Hero image with specialist badge
@@ -2679,6 +2639,8 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
 | Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker | Quick-fill with generated activities or browse |
 
+**Fill-Day Flow:** FreeDayCard → `fillDay()` API call → backend generates tiles via `generate_experience_tiles_for_day()` → response includes `day_card` + `tiles` map → frontend calls `replaceDayCard()` for surgical day card update + merges tiles into document store (enables hearting/referencing). Backend applies adjacent-day constraint filtering (e.g., no altitude activities next to diving days). Categories are optional — when omitted, the generator picks destination-appropriate activities.
+
 #### C.1 Inline Constraints
 
 Timeline blocks display contextual constraint badges directly within the card. This makes constraint-first optimization **visible** to users.
@@ -2822,7 +2784,6 @@ This section documents the mode-aware tile components used for suggestions and b
 |-----------|------|---------|----------|
 | `SuggestionCard` | PLANNING | AI-recommended tiles with reasoning | `components/plan/tiles/SuggestionCard.tsx` |
 | `BookableCard` | BOOKING | Price comparison + partner CTAs | `components/plan/tiles/BookableCard.tsx` |
-| `SuggestionBlock` | PLANNING | Timeline block for suggested bookables | `components/plan/timeline/blocks/SuggestionBlock.tsx` |
 
 #### B. SuggestionCard (PLANNING Mode)
 
@@ -3379,7 +3340,6 @@ This section provides a quick reference for how the key systems are wired across
 | Component | File | Fallback Logic |
 |-----------|------|----------------|
 | **TileThumbnail** | `frontend/components/plan/modals/AlternativesModal.tsx:35-58` | `onError` → `placeholderImageForTile()` |
-| **SuggestionBlock** | `frontend/components/plan/timeline/blocks/SuggestionBlock.tsx:81-92` | `onError` → `placeholderImageForTile()` |
 | **CategorySection** | `frontend/components/plan/booking/CategorySection.tsx:14-35` | `onError` → `placeholderImageForTile()` |
 
 ### Title Normalization
@@ -3401,7 +3361,6 @@ Backend data may contain snake_case identifiers (e.g., `usat_liberty_wreck`). Th
 |-----------|-------|----------|
 | `ActivityMiniCard` | `block.activity_type`, `block.summary` | `timeline/blocks/ActivityMiniCard.tsx:126` |
 | `LogisticsBlock` | `hotelName` | `timeline/blocks/LogisticsBlock.tsx:105` |
-| `SuggestionBlock` | `tile.title`, `tile.subtitle` | `timeline/blocks/SuggestionBlock.tsx:170-176` |
 
 **Invariant:** All user-facing titles in the itinerary timeline MUST pass through `normalizeTitle()`.
 

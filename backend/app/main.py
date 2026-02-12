@@ -3126,17 +3126,45 @@ async def fill_day_endpoint(
 
     day_card = doc_data.day_cards[day_card_idx]
 
-    # Check day is actually free (no non-buffer blocks)
-    real_blocks = [b for b in day_card.blocks if not b.is_buffer]
+    # Check day is actually free (no non-buffer, non-placeholder blocks)
+    real_blocks = [b for b in day_card.blocks if not b.is_buffer and b.activity_type != "free_day"]
     if real_blocks:
         raise HTTPException(status_code=409, detail=f"Day {body.day_number} already has activities")
 
-    # Determine categories
-    categories = body.categories or (
-        ti.activity_settings.categories if ti.activity_settings else []
+    # Determine categories (None = generator picks destination-appropriate activities)
+    categories = (
+        body.categories or (ti.activity_settings.categories if ti.activity_settings else []) or None
     )
-    if not categories:
-        raise HTTPException(status_code=400, detail="No activity categories specified")
+
+    # ── Adjacent-day constraint filter (pure Python, no LLM) ──────────
+    # Prevents generating activities that violate known safety constraints
+    # based on what specialists are scheduled on neighboring days.
+    # Altitude categories mirror CrossDomainBlock.target_specialists in specialist_registry.
+    excluded_categories: set[str] = set()
+    adjacent_days = [dc for dc in doc_data.day_cards if abs(dc.day_number - body.day_number) == 1]
+    for adj_day in adjacent_days:
+        for block in adj_day.blocks:
+            # specialist_type is the authoritative signal (always the registry key)
+            if (block.specialist_type or "").lower() == "diving":
+                # no_altitude_after_dive: exclude altitude activities
+                excluded_categories |= {"hiking", "climbing", "skiing"}
+                break
+
+    if excluded_categories:
+        # Apply exclusions — works whether categories is a list or None
+        if categories:
+            safe = [c for c in categories if c.lower() not in excluded_categories]
+            categories = safe if safe else ["activities"]
+        else:
+            # categories=None means generator picks freely; constrain it
+            categories = ["activities"]
+        logger.info(
+            "fill_day: day %d excluded %s, using %s",
+            body.day_number,
+            excluded_categories,
+            categories,
+        )
+    # ── End constraint filter ─────────────────────────────────────────
 
     # Determine month
     date_str = day_card.date or ti.start_date
@@ -3158,25 +3186,63 @@ async def fill_day_endpoint(
     if not tiles:
         return {"day_number": body.day_number, "tiles_added": 0, "version": doc.version}
 
-    # Convert tiles to DayBlocks
+    # Convert tiles to rich DayBlocks
+    _VALID_PERIODS = {"morning", "afternoon", "evening"}
     period_cycle = ["morning", "afternoon", "evening"]
     new_blocks = []
     for i, tile in enumerate(tiles[:3]):
         meta = tile.get("meta", {})
+        # Format duration: 2.0 -> "2 hours", 1.5 -> "1.5 hours"
+        raw_hrs = meta.get("duration_hours")
+        duration_str = None
+        if raw_hrs:
+            hrs = float(raw_hrs)
+            duration_str = (
+                f"{int(hrs)} hour{'s' if int(hrs) != 1 else ''}"
+                if hrs == int(hrs)
+                else f"{hrs} hours"
+            )
+        # Use tile's time_of_day when valid, fallback to round-robin
+        time_of_day = meta.get("time_of_day", "").lower()
+        period = time_of_day if time_of_day in _VALID_PERIODS else period_cycle[i % 3]
+
         new_blocks.append(
             DayBlock(
                 id=tile["id"],
-                period=period_cycle[i % 3],
+                period=period,
                 activity_type=meta.get("category", "activity"),
                 intensity="moderate",
                 summary=tile.get("title", "Activity")[:60],
+                specialist_type="experience",
+                image_url=tile.get("image_url"),
+                duration=duration_str,
+                booked_tile=tile,
+                booking_category="activity",
             )
         )
+
+    # Add generated tiles to document tile map (enables hearting/referencing)
+    for tile in tiles[:3]:
+        tile_id = tile["id"]
+        doc_data.tiles[tile_id] = Tile(**{k: v for k, v in tile.items() if k in Tile.model_fields})
 
     # Preserve buffer blocks, append new activity blocks
     buffer_blocks = [b for b in day_card.blocks if b.is_buffer]
     day_card.blocks = buffer_blocks + new_blocks
-    day_card.label = f"Day {body.day_number} — Filled"
+
+    # Category-aware label (same pattern as itinerary_builder._handle_empty_days)
+    unique_cats = list(
+        dict.fromkeys(
+            tile.get("meta", {}).get("category", "")
+            for tile in tiles[:3]
+            if tile.get("meta", {}).get("category") not in (None, "", "activities")
+        )
+    )
+    if unique_cats:
+        day_card.label = " & ".join(c.title() for c in unique_cats) + " Day"
+    else:
+        day_card.label = f"Day {body.day_number} — Exploration"
+
     doc_data.day_cards[day_card_idx] = day_card
 
     # Save
@@ -3189,6 +3255,7 @@ async def fill_day_endpoint(
         "day_number": body.day_number,
         "tiles_added": len(new_blocks),
         "day_card": day_card.model_dump(),
+        "tiles": {tile["id"]: tile for tile in tiles[:3]},
         "version": updated_doc.version,
     }
 

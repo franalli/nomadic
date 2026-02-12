@@ -12,7 +12,7 @@ Key Principle: "The math must work."
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.planner.specialist_registry import canonicalize_rule
 from app.planner.state import (
@@ -359,13 +359,18 @@ def check_specialist_constraints(
 
 def _check_cross_domain_from_sections(
     strategy_sections: List[Dict[str, Any]],
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ) -> List[ConstraintViolation]:
     """Stateless cross-domain check using persisted strategy sections.
 
     Unlike check_specialist_constraints() which reads itinerary_blocks
     (may be empty on fast paths), this reads strategy_sections which
-    persist across turns. If diving + hiking both exist as executed
-    specialists, the cross-domain conflict is flagged every turn.
+    persist across turns.
+
+    Capacity-aware: only emits a violation when the trip is too short
+    for even the minimum viable plan (1 dive + buffer + 1 altitude).
+    When the trip is long enough, the builder handles trimming.
     """
     from app.planner.specialist_registry import get as get_config
 
@@ -385,20 +390,36 @@ def _check_cross_domain_from_sections(
             continue
         for xd in config.cross_domain_blocks:
             conflicting = active_specialists & set(xd.target_specialists)
-            if conflicting:
-                violations.append(
-                    ConstraintViolation(
-                        code=xd.violation_code,
-                        message=xd.reason,
-                        severity=xd.severity,
-                        category="specialist",
-                        suggested_action=(
-                            f"Schedule {', '.join(sorted(conflicting))} activities at least "
-                            f"{xd.buffer_hours}h after last {topic} activity"
-                        ),
-                        conflicting_specialists=sorted(conflicting),
-                    )
+            if not conflicting:
+                continue
+
+            # Capacity check: only flag if trip too short for minimum viable
+            if start_date and end_date:
+                try:
+                    s = datetime.fromisoformat(start_date)
+                    e = datetime.fromisoformat(end_date)
+                    total_days = (e - s).days + 1
+                    usable = total_days - 2
+                    available_after_buffer = usable - (xd.buffer_hours // 24)
+                    if available_after_buffer >= 2:
+                        # Trip long enough — builder will trim, no violation
+                        continue
+                except (ValueError, TypeError):
+                    pass  # Fall through to emit violation
+
+            violations.append(
+                ConstraintViolation(
+                    code=xd.violation_code,
+                    message=xd.reason,
+                    severity=xd.severity,
+                    category="specialist",
+                    suggested_action=(
+                        f"Schedule {', '.join(sorted(conflicting))} activities at least "
+                        f"{xd.buffer_hours}h after last {topic} activity"
+                    ),
+                    conflicting_specialists=sorted(conflicting),
                 )
+            )
     return violations
 
 
@@ -580,7 +601,11 @@ async def constraint_guard(state: GraphState) -> GraphState:
     # strategy_sections to detect specialist co-existence every turn.
     # =========================================================================
     existing_codes = {v.code for v in violations}
-    section_violations = _check_cross_domain_from_sections(persistent.strategy_sections)
+    section_violations = _check_cross_domain_from_sections(
+        persistent.strategy_sections,
+        start_date=state.trip_plan.start_date,
+        end_date=state.trip_plan.end_date,
+    )
     # Map violation codes to the constraint rules the builder enforces
     # TODO: derive from specialist registry when more cross-domain constraints exist
     _violation_to_constraint_rule = {
@@ -717,21 +742,20 @@ async def constraint_guard(state: GraphState) -> GraphState:
 
     # =========================================================================
     # Cross-Domain Constraint Injection for Builder
-    # When a cross-domain violation is detected (e.g. ALTITUDE_AFTER_DIVE),
-    # inject a SpecialistConstraint so the ItineraryBuilder can enforce
-    # scheduling separation via _find_constraint("no_altitude_after_dive").
+    # ALWAYS inject when specialists co-exist, regardless of violation status.
+    # The builder needs the constraint for sequencing (diving → buffer →
+    # altitude) even when the trip is long enough that no violation is emitted.
     # =========================================================================
-    for v in violations:
-        if v.category != "specialist":
+    for topic in persistent.executed_strategy_topics:
+        src_config = get_config(topic)
+        if not src_config:
             continue
-        # Find source config that owns this violation code
-        for topic in persistent.executed_strategy_topics:
-            src_config = get_config(topic)
-            if not src_config:
+        for xd in src_config.cross_domain_blocks:
+            conflicting_topics = set(persistent.executed_strategy_topics) & set(
+                xd.target_specialists
+            )
+            if not conflicting_topics:
                 continue
-            for xd in src_config.cross_domain_blocks:
-                if xd.violation_code != v.code:
-                    continue
                 # Use canonical rule name that builder's _find_constraint() expects
                 canonical_rule = "no_altitude_after_dive"
                 constraint = SpecialistConstraint(

@@ -30,7 +30,7 @@
 | POST | `/api/tiles/refresh` | Refresh tiles for branch | `TileRefreshRequest` | `TileRefreshResponse` |
 | POST | `/api/document/tiles/{branch_id}` | Fetch tiles for branch | -- | `PlanDocumentResponse` |
 | POST | `/api/suggestions/click` | Track suggestion click | `SuggestionClickEvent` | `{status: "ok"}` |
-| POST | `/api/document/fill-day` | Generate activity tiles for a free day | `FillDayRequest{day_number, categories?}` | `{day_number, tiles_added, day_card, version}` |
+| POST | `/api/document/fill-day` | Generate activity tiles for a free day | `FillDayRequest{day_number, categories?}` | `{day_number, tiles_added, day_card, tiles?, version}` |
 
 ### Documents (Plan State)
 
@@ -52,7 +52,7 @@
 
 All admin routes require `X-Admin-Key` header matching `ADMIN_API_KEY` env var. Rate limited: 10/min.
 
-Cache management: `GET/POST /api/admin/{specialist,tile,router}-cache-stats`, `clear-*-cache`, `clear-all-caches`, `clear-all-checkpoints`, `clear-validation-cache`, `fresh-start`, `cache-stats`. Config: `GET /api/admin/planner`, `GET /api/admin/graph-stats`.
+Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified). Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache`, `clear-router-cache`, `clear-all-caches`, `clear-all-checkpoints`, `clear-validation-cache`, `fresh-start`. Config (GET): `planner`, `graph-stats`.
 
 ---
 
@@ -65,7 +65,7 @@ Media type: `text/event-stream`. Events:
 | Event | Data | Purpose |
 |-------|------|---------|
 | `token` | `{type: "token", data: "..."}` | Streaming text chunk |
-| `node_status` | `{node: "...", status: "...", label, icon_key, estimated_duration_ms (started events), stage?, tier?, topic?, max_tokens? (strategy events)}` | Node processing progress |
+| `node_status` | `{node: "...", status: "started"\|"completed", label, icon_key, estimated_duration_ms}` | Node processing progress. `label`, `icon_key`, `estimated_duration_ms` only present on `started` events. Special node `logic_reveal` emits routing decisions (e.g., `label: "ROUTING: DIVING"`, status: `"completed"`). Frontend type also defines `stage?, tier?, topic?, max_tokens?` but these are not currently emitted by the backend. |
 | `complete` | `{type: "complete", data: {document, session_state, version, ...}}` | Full response envelope |
 | `error` | `{type: "error", message: "..."}` | Error details |
 
@@ -77,7 +77,7 @@ Media type: `application/x-ndjson`. Events:
 |-------|------|---------|
 | `progress` | `{type: "progress", stage: "structure"\|"strategy"\|"itinerary", message: "...", pct: 30}` | Progress update |
 | `envelope` | `{type: "envelope", plan_envelope: {...}}` | Partial plan update |
-| `done` | `{type: "done", plan_view_state: "S3_ITINERARY_READY"}` | Completion signal |
+| `done` | `{type: "done", plan_view_state: "S3_ITINERARY_READY", version?, dropped_preferred_count?, warnings?[]}` | Completion signal |
 | `error` | `{type: "error", message: "..."}` | Error details |
 
 ### CSRF
@@ -93,13 +93,14 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests sha
 | Tier | Endpoints | Limit |
 |------|-----------|-------|
 | **Heavy** | `graph_plan/*`, `expand-itinerary`, `remove-specialist` | 3/min, 15/hr |
-| **Medium** | `validate-trip-input`, `destination-image`, `tiles/refresh`, `document/fill-day` | 10/min |
-| **Light** | `document`, `chat`, `session`, `tiles/click`, `suggestions/click` | 60/min |
+| **Medium** | `validate-trip-input`, `destination-image`, `tiles/refresh` | 15/min |
+| **Medium-Low** | `document/fill-day` | 10/min |
+| **Light** | `document` (GET+PATCH), `document/tiles/{branch_id}`, `chat`, `chat/last`, `session`, `tiles/click`, `suggestions/click` | 60/min |
 | **Admin** | `/api/admin/*` | 10/min (+ `X-Admin-Key` required) |
 
 ### Security Middleware
 
-- **Body size limit:** 200KB max (`Content-Length` check before Pydantic parsing)
+- **Body size limit:** 512KB max (`Content-Length` check before Pydantic parsing)
 - **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
 - **Session middleware:** Skips `/health` (no session cookie overhead on health checks). Max 10 new sessions per IP per hour
 - **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP
@@ -134,33 +135,44 @@ PlanDocumentData
   |     '-- vibe?, focus?, highlights[], flow[], notes[]
   |
   |-- tiles: {tile_id -> Tile}
-  |     |-- id, type (flight|hotel|activity), title, subtitle?
-  |     |-- price_estimate?, live_price?, currency, deeplink_url
+  |     |-- id, type (flight|hotel|activity), title, subtitle?, image_url?
+  |     |-- partner?, partner_product_id?, deeplink_url
+  |     |-- price_estimate?, live_price?, currency, price_basis?, is_estimate_only?
   |     |-- price_display? (pre-formatted: "$120" or null, added by response_envelope)
-  |     |-- geo: {lat, lon}?, tags[], source_agent? (specialist origin)
-  |     '-- provider (expedia|booking|unknown), cancel_policy_summary?
+  |     |-- rating?, review_count?, location_label?, geo: {lat, lon}?
+  |     |-- tags[], availability_status? (available|low|unknown|not_available), meta?, score?, source?, source_agent?
+  |     |-- provider (expedia|booking|unknown), cancel_policy_summary?
+  |     '-- total_inclusive?, tax_and_service_fee?, property_fee?, is_refundable?
   |
   |-- strategy_sections: StrategySection[]
-  |     |-- id, title, specialist_type?, feasibility_status/reason?
+  |     |-- id, title, subtitle?, specialist_type?
+  |     |-- feasibility_status?, feasibility_reason?, alternative_suggestion?
   |     |-- one_liner?, principles[] (<=4)
-  |     |-- must_dos[], optional_upgrades[], logistics_notes[]
-  |     |-- content_blocks[], booking_artifacts
+  |     |-- must_dos[], optional_upgrades[], logistics_notes[], tradeoffs_summary?
+  |     |-- content_blocks[], booking_artifacts, impact_areas[]
+  |     |-- constraints_applied[], content_added[], bullets[]
   |     '-- destination_gallery[], trip_summary?
   |
   |-- day_cards: DayCard[]
   |     |-- day_number, date?, label, subtitle?
   |     |   NOTE: subtitle exists in the frontend type but not the backend Pydantic model (frontend-only field)
   |     '-- blocks: DayBlock[]
-  |           |-- period (morning|afternoon|evening), activity_type, summary
-  |           |-- is_buffer, buffer_type?, coordinates: {lat, lng}?
-  |           |-- booked_tile?, preference_status?, scheduled_time?
-  |           '-- specialist_type?, requires_booking, booking_category?
+  |           |-- id?, period (morning|afternoon|evening), activity_type, summary
+  |           |-- intensity? (light|moderate|challenging)
+  |           |-- is_buffer, buffer_type?, buffer_reason?
+  |           |-- specialist_type?, constraints[]
+  |           |-- image_url?, duration?, coordinates: {lat, lng}?
+  |           |-- scheduled_time?, logistics_details?, hotel_name?
+  |           |-- booked_tile?, requires_booking, booking_category?
+  |           |-- preference_status?, preference_override_reason?, alternative_tile_id?
+  |           '-- unschedulable?, unschedulable_reason?, unschedulable_days_needed?
   |           NOTE: activity_type carries the display title for the card
   |           (e.g. "Potato Head Beach Club"). specialist_type carries the
   |           category for filtering/coloring (e.g. "nightlife", "diving").
   |
   |-- trip_context_id, assistant_message_id
   |-- plan_state: PlanState, ui_phase: UIPhase, plan_view_state: PlanViewState
+  |-- resolver?: ResolverState (present only when plan_state = RESOLVING)
   |-- readiness: ReadinessItem[], destination_card?, booking_status?
   |-- conflicts[], constraints_validated[], constraint_violations[]
   |-- preferred_tile_ids[] (hearted tiles, 1.5x weight)
@@ -196,15 +208,18 @@ PlanDocumentData
 ### PlanViewState (density-driven rendering)
 
 ```
-P0_MINIMAL -> P1_ENRICHED -> P2_LOGISTICS -> P3_FINALIZED
-                                              |-- P3_EDITING
-                                              '-- P3_BLOCKED
+Backend-emitted states (from _compute_plan_view_state):
+  S0_BOOTSTRAP → S1_FRAMING → S2_STRATEGY_READY → S3_ITINERARY_READY
+                                |-- S2_BLOCKED        |-- S3_EDITING
+                                                      '-- S3_BLOCKED
 
-Legacy aliases (still emitted): S0_BOOTSTRAP, S1_FRAMING, S2_STRATEGY_READY,
-                                 S2_BLOCKED, S3_ITINERARY_READY, S3_EDITING, S3_BLOCKED
+Defined in PlanViewState Literal but not yet emitted by backend:
+  P0_MINIMAL, P1_ENRICHED, P2_LOGISTICS, P3_FINALIZED, P3_EDITING, P3_BLOCKED
+  These are planned density-level replacements for the S-prefixed states.
 
 Frontend-only states (not emitted by backend):
   S0_EMPTY — initial state before any interaction
+  S1_DESTINATION_SET — destination chosen but no strategy yet
   S3_PARTIAL_CONFLICT — partial conflict during itinerary editing
 
 Hydration guards:
@@ -220,14 +235,14 @@ Hydration guards:
 |------|--------|---------|
 | `PlanState` | INCOMPLETE, RESOLVING, STABLE, LOCKED | Backend-authoritative plan state |
 | `UIPhase` | bootstrap, expanded | Chips-only vs full planner |
-| `ViewMode` | planning, booking | Two-mode system |
+| `ViewMode` | planning, booking | Two-mode system (frontend-only, not a backend enum) |
 | `BookingTypeState` | off, suggested, on | Tri-state per booking category |
 | `ResolverStep` | processing_constraints, matching_inventory, updating_itinerary | Progress within RESOLVING |
 | `ReadinessKey` | origin, destination, start_date, end_date, travelers, budget | Constraint completeness |
 | `BookingState` | idle, loading, ready, error | Per-tab booking status |
 | `TileType` | flight, hotel, activity | Tile category |
 | `TileProvider` | expedia, booking, unknown | Booking partner |
-| `AckStatus` | applied, partial, no_change, needs_clarification, failed, rejected (backend only) | Update acknowledgement status. Note: backend includes `rejected`, frontend does not |
+| `AckStatus` | pending, applied, partial, no_change, needs_clarification, failed, rejected | Update acknowledgement status. `rejected` used for route violations (e.g., same-city error). Both `chat.ts` and `plan-envelope.ts` now include `pending` and `rejected`. |
 
 ---
 
@@ -253,14 +268,31 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 
 | Action | Purpose |
 |--------|---------|
-| `setFromPlanResponse()` | Merge backend GraphPlanResponse into store |
-| `mergeEnvelope()` | Streaming update: tiles, sections, day_cards, plan_view_state |
-| `commitTripInputs()` | Async PATCH with optimistic update + rollback |
+| `setFromPlanResponse()` | Merge backend GraphPlanResponse into store (destination lock, view state guard, tile/section merge) |
+| `mergeEnvelope()` | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection) |
+| `updateTripInputs()` | Sync local trip input update (no API call) |
+| `commitTripInputs()` | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful) |
 | `ensureSettingsFlushed()` | Flush only **dirty** settings before graph run (prevents overwriting backend-derived values) |
-| `fetchDocument()` | GET /api/document |
-| `patchDocument()` | PATCH /api/document |
-| `toggleTilePreference()` | Heart/unheart a tile |
-| `startGeneration()` / `abortGeneration()` / `completeGeneration()` | Streaming lifecycle |
+| `fetchDocument()` | GET /api/document (with upward view state reconciliation) |
+| `patchDocument()` | PATCH /api/document (preserves frontend-only fields) |
+| `toggleTilePreference()` | Heart/unheart a tile (single-select for hotels, multi-select for activities) |
+| `clearPreferences()` | Clear all hearted tiles + sync to backend |
+| `startGeneration()` / `abortGeneration()` / `completeGeneration()` | Streaming lifecycle (mutex via runId) |
+| `isCurrentRun()` | Check if a runId is the current run (ignore stale events) |
+| `selectTile()` / `deselectTile()` | Tile selection within a branch (uses patchDocument) |
+| `restoreTripInputs()` | Restore trip inputs from undo snapshot |
+| `acknowledgeLLMUpdate()` | Clear sparkle animation for a field |
+| `mergeSpeculativeContent()` / `clearSpeculativeContent()` | Preload specialist sections during Setup phase |
+| `replaceDayCard()` | Surgical single day card replacement (fill-day) |
+| `setRegenerationState()` | Shared regeneration UI state (isRegenerating, isPending, remainingSeconds) |
+| `setExpandInProgress()` | Expand-itinerary mutex flag |
+| `markPreferencesAsApplied()` | Sync lastGeneratedPreferences after expand completes |
+| `awaitPreferencePatch()` | Wait for pending preference PATCH to complete before proceeding |
+| `setActiveView()` | Switch between 'planning' and 'booking' views |
+| `setFinalized()` | Set plan finalization flag (gates Book view access) |
+| `addToCart()` / `removeFromCart()` / `clearCart()` | Cart operations for booking mode |
+| `hasAllRequiredFields()` | Computed selector: returns true when destination is set (only requirement) |
+| `reset()` | Full store reset (aborts in-flight generation) |
 
 ### User-Dirty Settings Tracker
 
@@ -282,12 +314,18 @@ Source: `frontend/lib/api.ts`
 
 | Function | Endpoint | Purpose |
 |----------|----------|---------|
+| `apiFetch()` | (all) | Base fetch wrapper: credentials, CSRF header, abort guard |
 | `streamGraphPlan()` | POST `/api/graph_plan/stream` | SSE streaming (onToken, onComplete, onError, onNodeStatus callbacks). Returns abort fn. |
 | `validateTripInput()` | POST `/api/validate-trip-input` | LLM-based validation |
 | `fetchDestinationImage()` | POST `/api/destination-image` | Unsplash image |
-| `refreshTiles()` | POST `/api/tiles/refresh` | Refresh tiles for branch |
+| `refreshTiles()` | POST `/api/tiles/refresh` | Refresh tiles for branch (uses `fetchWithRetry`, 2 retries, 500ms base delay) |
+| `fillDay()` | POST `/api/document/fill-day` | Generate activity tiles for a free day. Returns `tiles` map for store merge. |
 | `trackSuggestionClick()` | POST `/api/suggestions/click` | Fire-and-forget analytics |
 | `resetSession()` | DELETE `/api/session` | Clear session |
+| `fetchWithRetry()` | (wraps apiFetch) | Exponential backoff retry on transient errors |
+| `clearSessionLocalStorage()` | -- | Clear session-related localStorage (preserves GDPR consent) |
+| `isTransientError()` | -- | Check if an error is retryable (timeout, network, 502/503/504) |
+| `isTransientStatus()` | -- | Check if HTTP status is retryable (502, 503, 504, 429) |
 
 ### Retry Logic
 
