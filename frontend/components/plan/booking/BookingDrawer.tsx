@@ -30,6 +30,8 @@ export interface BookingDrawerProps {
   onClose: () => void;
   /** Callback to open stays/hotel settings sheet */
   onOpenStaysSettings?: () => void;
+  /** When set, "Add" pins the tile to this specific day instead of global preference */
+  pinnedDayNumber?: number | null;
 }
 
 const CATEGORY_LABELS = {
@@ -64,6 +66,7 @@ export function BookingDrawer({
   onSave,
   onClose,
   onOpenStaysSettings,
+  pinnedDayNumber,
 }: BookingDrawerProps) {
   if (!category) return null;
 
@@ -109,6 +112,7 @@ export function BookingDrawer({
                 onClose();
               }}
               onOpenStaysSettings={category === 'hotel' ? onOpenStaysSettings : undefined}
+              saveLabel={pinnedDayNumber ? `Add to Day ${pinnedDayNumber}` : undefined}
             />
           ))}
 

@@ -170,6 +170,8 @@ class ItineraryResult(BaseModel):
     warnings: List[str] = Field(
         default_factory=list
     )  # User-facing warnings (e.g., "Reduced diving from 4 to 1")
+    total_activities_input: int = 0  # Activities fed into distribution
+    total_activities_placed: int = 0  # Activities actually placed on timeline
 
 
 @dataclass
@@ -212,6 +214,8 @@ class PreferenceOverrideInput:
     preferred_hotel_ids: List[str] = field(default_factory=list)
     preferred_activity_ids: List[str] = field(default_factory=list)
     preferred_flight_ids: List[str] = field(default_factory=list)
+    pinned_day_map: Dict[str, int] = field(default_factory=dict)  # tile_id → day_number (1-indexed)
+    pinned_priority_map: Dict[str, str] = field(default_factory=dict)  # tile_id → "high" | "low"
 
     def is_hotel_preferred(self, tile_id: str) -> bool:
         """Check if a hotel tile is user-preferred."""
@@ -458,9 +462,7 @@ class ItineraryBuilder:
             days = self._inject_safety_buffers(days, merged_constraints)
 
             # Phase 5: Distribute activities across days (interleaved)
-            days = self._distribute_activities(days, activities, merged_constraints)
-
-            # Phase 5.5: Handle empty days (add FreeDay placeholders)
+            total_activities_input = sum(len(acts) for acts in activities.values())
             # Compute Tier 2 categories: user selections minus scheduled specialists
             scheduled_types = set(activities.keys())
             tier2_cats = [
@@ -468,6 +470,12 @@ class ItineraryBuilder:
                 for c in (input_data.activity_categories or [])
                 if c not in scheduled_types and c not in ("general", "local_expert")
             ]
+            has_tier2 = bool(tier2_cats)
+            days = self._distribute_activities(
+                days, activities, merged_constraints, tier2_reserve=has_tier2
+            )
+
+            # Phase 5.5: Handle empty days (add FreeDay placeholders)
             days = self._handle_empty_days(days, input_data.tiles, tier2_cats)
 
             # Phase 5.6: Place LLM-generated experience tiles on free days
@@ -509,6 +517,25 @@ class ItineraryBuilder:
                 f"✅ Success: generated {len(days)} day cards with "
                 f"{sum(len(d.blocks) for d in days)} total blocks"
             )
+            # Count placed specialist activities (exclude buffers, logistics, free days)
+            _LOGISTICS_TYPES = {
+                "arrival",
+                "departure",
+                "check_in",
+                "check_out",
+                "check-in",
+                "check-out",
+                "free_day",
+                "rest_day",
+                "buffer",
+                "decompression_buffer",
+            }
+            total_activities_placed = sum(
+                1
+                for d in days
+                for b in d.blocks
+                if b.specialist_type and b.activity_type not in _LOGISTICS_TYPES
+            )
             return ItineraryResult(
                 success=True,
                 day_cards=days,
@@ -517,6 +544,8 @@ class ItineraryBuilder:
                 resolutions=[],
                 dropped_preferred_count=dropped_preferred_count,
                 warnings=self._warnings,
+                total_activities_input=total_activities_input,
+                total_activities_placed=total_activities_placed,
             )
 
         except Exception as e:
@@ -1085,9 +1114,26 @@ class ItineraryBuilder:
                 pass  # Constraint visibility handled by inline badges
 
             elif constraint.rule == "altitude_acclimatization":
-                # Acclimatization on day 3 for high-altitude trips
-                if len(days) >= 4:
-                    accl_day_idx = 2  # Day 3 (0-indexed)
+                # Acclimatization before the first altitude-activity day.
+                # Find the first day with hiking/climbing/skiing blocks,
+                # then place the buffer on the day before it (or fallback to day 3).
+                altitude_specialists = {"hiking", "trekking", "climbing", "skiing"}
+                accl_day_idx = None
+                for i in range(1, len(days) - 1):  # skip arrival/departure
+                    has_altitude = any(
+                        (getattr(b, "specialist_type", "") or "").lower() in altitude_specialists
+                        for b in days[i].blocks
+                        if not getattr(b, "is_buffer", False)
+                    )
+                    if has_altitude:
+                        # Place acclimatization on the day before, minimum day 1
+                        accl_day_idx = max(1, i - 1)
+                        break
+
+                if accl_day_idx is None and len(days) >= 4:
+                    accl_day_idx = 2  # Fallback to day 3 (0-indexed)
+
+                if accl_day_idx is not None:
                     days[accl_day_idx].label = "Acclimatization Day"
 
                     # Remove strenuous activities
@@ -1120,6 +1166,7 @@ class ItineraryBuilder:
         days: List[DayCardOutput],
         activities_by_specialist: Dict[str, List[ActivityBlock]],
         constraints: Optional[List["MergedConstraint"]] = None,
+        tier2_reserve: bool = False,
     ) -> List[DayCardOutput]:
         """
         Distribute activities from multiple specialists across days.
@@ -1310,41 +1357,116 @@ class ItineraryBuilder:
                     )
                 remaining.pop(spec, None)
 
-            # Phase D: Place remaining specialists (non-dive, non-altitude) normally
+            # Phase D: Co-schedule remaining specialists onto existing days
+            # using capacity-based placement, NOT slot_ptr allocation.
+            # Buffer days allow non-altitude specialists (buffer separates
+            # dive→altitude, not dive→surf).
+            # When Tier 2 categories exist, reserve 1 block + 2h per day
+            # so Phase 5.6 (_place_experience_tiles) has room for yoga/nightlife.
+            _BUFFER_ACTIVITY_TYPES = {"rest_day", "buffer", "decompression_buffer"}
+            _T2_RESERVE_HOURS = 2.0 if tier2_reserve else 0.0
+            _T2_RESERVE_BLOCKS = 1 if tier2_reserve else 0
+            if tier2_reserve:
+                _debug(
+                    "[ItineraryBuilder] Phase D: reserving "
+                    f"{_T2_RESERVE_HOURS}h + {_T2_RESERVE_BLOCKS} block/day for Tier 2"
+                )
+            phase_d_placed = 0
+            phase_d_unplaced: list[tuple[str, object]] = []
+
             for spec in list(remaining.keys()):
                 for activity in remaining.get(spec, []):
-                    if slot_ptr >= len(available_day_indices):
-                        break
-                    day_idx = available_day_indices[slot_ptr]
-                    day = days[day_idx]
+                    activity_hours = activity.duration_hours or 3.0
+                    best_day_idx: int | None = None
+                    best_score: float = -1.0
 
-                    is_user_preferred = getattr(activity, "is_user_preferred", False)
-                    preference_status = "user_preferred" if is_user_preferred else None
-                    block = DayBlockOutput(
-                        id=f"act_{spec}_{day_idx}_{len(day.blocks)}",
-                        period=periods[period_ptr % len(periods)],
-                        activity_type=activity.title.lower().replace(" ", "_"),
-                        intensity=activity.intensity,
-                        summary=activity.title,
-                        specialist_type=spec,
-                        image_url=activity.image_url,
-                        duration=f"{activity.duration_hours}h" if activity.duration_hours else None,
-                        constraints=activity.constraints,
-                        preference_status=preference_status,
-                    )
-                    if activity.coordinates:
-                        block.coordinates = {
-                            "lat": activity.coordinates[1],
-                            "lng": activity.coordinates[0],
-                        }
-                    day.blocks.append(block)
-                    period_ptr += 1
-                    slot_ptr += 1
+                    for candidate_idx in available_day_indices:
+                        candidate_day = days[candidate_idx]
+
+                        # Buffer days block altitude specialists only
+                        is_buffer_day = (
+                            any(
+                                b.activity_type in _BUFFER_ACTIVITY_TYPES
+                                for b in candidate_day.blocks
+                            )
+                            or "buffer" in (candidate_day.label or "").lower()
+                        )
+                        if is_buffer_day and spec in altitude_specialist_names:
+                            continue
+
+                        rem_hours, rem_blocks = self._day_remaining_capacity(candidate_day)
+                        # Reserve capacity for Tier 2 experience tiles
+                        eff_hours = rem_hours - _T2_RESERVE_HOURS
+                        eff_blocks = rem_blocks - _T2_RESERVE_BLOCKS
+                        if eff_hours < activity_hours or eff_blocks < 1:
+                            continue
+
+                        # Max 1 activity per specialist per day
+                        spec_count = sum(
+                            1
+                            for b in candidate_day.blocks
+                            if b.specialist_type == spec
+                            and b.activity_type not in _BUFFER_ACTIVITY_TYPES
+                        )
+                        if spec_count >= 1:
+                            continue
+
+                        # Score: prefer emptier days, break ties by time slot fit
+                        headroom = rem_hours / DAY_CAPACITY_HOURS
+                        complement = self._time_slot_score(
+                            candidate_day,
+                            periods[period_ptr % len(periods)],
+                        )
+                        score = headroom * 0.6 + complement * 0.4
+
+                        if score > best_score:
+                            best_score = score
+                            best_day_idx = candidate_idx
+
+                    if best_day_idx is not None:
+                        day = days[best_day_idx]
+                        is_user_preferred = getattr(activity, "is_user_preferred", False)
+                        block = DayBlockOutput(
+                            id=f"act_{spec}_{best_day_idx}_{len(day.blocks)}",
+                            period=periods[period_ptr % len(periods)],
+                            activity_type=activity.title.lower().replace(" ", "_"),
+                            intensity=activity.intensity,
+                            summary=activity.title,
+                            specialist_type=spec,
+                            image_url=activity.image_url,
+                            duration=(f"{activity_hours}h"),
+                            constraints=activity.constraints,
+                            preference_status=("user_preferred" if is_user_preferred else None),
+                        )
+                        if activity.coordinates:
+                            block.coordinates = {
+                                "lat": activity.coordinates[1],
+                                "lng": activity.coordinates[0],
+                            }
+                        day.blocks.append(block)
+                        period_ptr += 1
+                        phase_d_placed += 1
+                        _debug(
+                            f"[ItineraryBuilder] Phase D co-scheduled "
+                            f"'{activity.title}' ({spec}) on Day {best_day_idx + 1}"
+                        )
+                    else:
+                        phase_d_unplaced.append((spec, activity))
                 remaining.pop(spec, None)
 
-            _debug("[ItineraryBuilder] ✅ Cross-domain clustering complete")
-            # Skip to time-of-day sorting (bypass round-robin)
-            remaining = {}  # Clear so round-robin loop is skipped
+            # Re-populate remaining for round-robin fallback
+            if phase_d_unplaced:
+                _debug(
+                    f"[ItineraryBuilder] Phase D: {len(phase_d_unplaced)} "
+                    f"activities deferred to round-robin"
+                )
+                for spec, activity in phase_d_unplaced:
+                    remaining.setdefault(spec, []).append(activity)
+
+            _debug(
+                f"[ItineraryBuilder] Cross-domain clustering complete: "
+                f"placed={phase_d_placed}, deferred={len(phase_d_unplaced)}"
+            )
 
         # Even distribution: spread activities across all available days
         # Strategy: cycle through days, placing 1 activity per day per round
@@ -1681,11 +1803,14 @@ class ItineraryBuilder:
             _debug_itinerary("⏭️ Phase 5.6 skipped: no tiles")
             return days
 
-        # Filter for experience generator tiles
+        # Filter for experience generator tiles, excluding those claimed by Phase 5.25
+        preferred_ids = set(self.preferences.preferred_activity_ids) if self.preferences else set()
         experience_tiles = [
             t
             for _, t in tiles.items()
-            if isinstance(t, dict) and t.get("source_agent") == "experience_generator"
+            if isinstance(t, dict)
+            and t.get("source_agent") == "experience_generator"
+            and t.get("id") not in preferred_ids
         ]
 
         if not experience_tiles:
@@ -1713,6 +1838,48 @@ class ItineraryBuilder:
                 seen_titles.add(title_key)
             deduped.append(t)
         unplaced = deduped
+
+        # ─────────────────────────────────────────────────────────
+        # Pass 0: Place pinned tiles (from fill-day) on target day
+        # ─────────────────────────────────────────────────────────
+        pinned = [t for t in unplaced if (t.get("meta") or {}).get("pinned_day") is not None]
+        unpinned = [t for t in unplaced if (t.get("meta") or {}).get("pinned_day") is None]
+
+        placed_pinned = 0
+        for tile in pinned:
+            target_day = tile["meta"]["pinned_day"]
+            day_match = next((d for d in days if d.day_number == target_day), None)
+            if day_match:
+                rem_hours, rem_blocks = self._day_remaining_capacity(day_match)
+                tile_hours = (tile.get("meta") or {}).get(
+                    "duration_hours", DEFAULT_EXPERIENCE_HOURS
+                )
+                if rem_hours >= tile_hours and rem_blocks >= 1:
+                    exp_count = sum(
+                        1
+                        for b in day_match.blocks
+                        if getattr(b, "booking_category", None) == "activity"
+                    )
+                    block = self._experience_tile_to_block(tile, day_match.day_number, exp_count)
+                    day_match.blocks.append(block)
+                    # Remove free_day placeholder so Pass 1 doesn't double-fill
+                    day_match.blocks = [
+                        b for b in day_match.blocks if b.activity_type != "free_day"
+                    ]
+                    if day_match.label == "Free Day":
+                        day_match.label = f"Day {day_match.day_number}"
+                    placed_pinned += 1
+                    _debug_itinerary(
+                        f"📌 Phase 5.6 Pass 0: Pinned '{tile.get('title')}' on Day {target_day}"
+                    )
+                    continue
+            # Target day missing or full — fall through to unpinned pool
+            unpinned.append(tile)
+
+        if placed_pinned:
+            _debug_itinerary(f"📌 Phase 5.6 Pass 0: Placed {placed_pinned} pinned tiles")
+
+        unplaced = unpinned
 
         # ─────────────────────────────────────────────────────────
         # Pass 1: Free Day Placement (preserves existing behavior)
@@ -1883,9 +2050,18 @@ class ItineraryBuilder:
             _debug_itinerary("⏭️ Phase 5.25 skipped: no preferred activities")
             return days, 0
 
+        # Skip tiles already placed by Phase 5.6 Pass 0 (pinned_day placement)
+        already_placed: set[str] = set()
+        for day in days:
+            for block in day.blocks:
+                if block.id and block.booking_category == "activity":
+                    already_placed.add(block.id)
+
         # Collect preferred tile activities (ordered by position in preferred_activity_ids)
         preferred_activities = []
         for tile_id in preferences.preferred_activity_ids:
+            if tile_id in already_placed:
+                continue
             tile = tiles.get(tile_id)
             if tile and isinstance(tile, dict) and tile.get("type") == "activity":
                 preferred_activities.append({**tile, "id": tile_id})
@@ -1964,44 +2140,31 @@ class ItineraryBuilder:
 
         specialist_count_per_day: dict = defaultdict(lambda: defaultdict(int))
 
-        for tile in preferred_activities:
-            # Find day with LEAST occupied slots (most capacity), then by day index
-            available_days = [d for d in day_slots if len(day_slots[d]) < MAX_SLOTS_PER_DAY]
-            if not available_days:
-                _debug_itinerary(f"📅 Phase 5.25: Deferring '{tile.get('title')}' (all slots full)")
-                deferred.append(tile)
-                continue
+        pinned_day_map = preferences.pinned_day_map if preferences else {}
+        priority_map = preferences.pinned_priority_map if preferences else {}
 
-            best_day = min(available_days, key=lambda d: (len(day_slots[d]), d))
+        # Split by priority: high (Browse→Add) gets fallback, low (auto-fill) is day-or-drop
+        high_priority = [
+            t for t in preferred_activities if priority_map.get(t.get("id"), "high") == "high"
+        ]
+        low_priority = [t for t in preferred_activities if priority_map.get(t.get("id")) == "low"]
 
-            # Check specialist-per-day cap (max 1 activity per specialist per day)
-            source_specialist = tile.get("source_specialist") or tile.get("meta", {}).get(
-                "specialist_type"
-            )
-            if source_specialist and specialist_count_per_day[best_day][source_specialist] >= 1:
-                _debug_itinerary(
-                    f"📅 Phase 5.25: Deferring '{tile.get('title')}' "
-                    f"(already have {source_specialist} on day {best_day + 1})"
-                )
-                deferred.append(tile)
-                continue
-            if source_specialist:
-                specialist_count_per_day[best_day][source_specialist] += 1
+        def _place_on_day(tile: dict, day_idx: int) -> bool:
+            """Place tile on a specific day. Returns True if placed."""
+            if day_idx not in day_slots or len(day_slots[day_idx]) >= MAX_SLOTS_PER_DAY:
+                return False
+            day = days[day_idx]
+            period = next((p for p in PERIODS if p not in day_slots[day_idx]), None)
+            if not period:
+                return False
+            day_slots[day_idx].add(period)
 
-            day = days[best_day]
-
-            # Pick first free period
-            period = next(p for p in PERIODS if p not in day_slots[best_day])
-            day_slots[best_day].add(period)
-
-            # Remove FreeDay placeholder if this is the first real activity on this day
-            has_free_day_placeholder = any(b.activity_type == "free_day" for b in day.blocks)
-            if has_free_day_placeholder:
+            # Remove FreeDay placeholder
+            if any(b.activity_type == "free_day" for b in day.blocks):
                 day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
 
-            # Create activity block from preferred tile with correct period
             activity_block = DayBlockOutput(
-                id=f"pref_{tile['id']}_{best_day}_{period}",
+                id=f"pref_{tile['id']}_{day_idx}_{period}",
                 period=period,
                 activity_type=tile.get("title", "Activity").lower().replace(" ", "_"),
                 intensity=tile.get("intensity"),
@@ -2014,9 +2177,8 @@ class ItineraryBuilder:
                 booked_tile=tile,
             )
 
-            # Insert after any buffer blocks, respecting period order
+            # Insert respecting period order
             buffer_count = sum(1 for b in day.blocks if b.is_buffer)
-            # Find insertion index based on period order
             period_order = {"morning": 0, "afternoon": 1, "evening": 2}
             insert_idx = buffer_count
             for i, b in enumerate(day.blocks[buffer_count:], start=buffer_count):
@@ -2027,11 +2189,66 @@ class ItineraryBuilder:
                 insert_idx = i + 1
             day.blocks.insert(insert_idx, activity_block)
 
-            # Update day label back from "Free Day" to activity-based label
             if day.label == "Free Day":
                 day.label = f"Day {day.day_number}"
 
-            _debug_itinerary(f"📅 Placed '{tile.get('title')}' on day {best_day + 1} ({period})")
+            _debug_itinerary(f"📅 Placed '{tile.get('title')}' on day {day_idx + 1} ({period})")
+            return True
+
+        # ── High-priority (Browse→Add): honor preferred_day, fallback to best-fit ──
+        for tile in high_priority:
+            pinned_day_num = pinned_day_map.get(tile.get("id"))
+            pinned_idx = (pinned_day_num - 1) if pinned_day_num is not None else None
+
+            available_days = [d for d in day_slots if len(day_slots[d]) < MAX_SLOTS_PER_DAY]
+            if not available_days:
+                deferred.append(tile)
+                continue
+
+            # Try pinned day first, then best-fit
+            if pinned_idx is not None and pinned_idx in available_days:
+                best_day = pinned_idx
+            else:
+                best_day = min(available_days, key=lambda d: (len(day_slots[d]), d))
+
+            source_specialist = tile.get("source_specialist") or tile.get("meta", {}).get(
+                "specialist_type"
+            )
+            if source_specialist and specialist_count_per_day[best_day][source_specialist] >= 1:
+                deferred.append(tile)
+                continue
+            if source_specialist:
+                specialist_count_per_day[best_day][source_specialist] += 1
+
+            _place_on_day(tile, best_day)
+
+        # ── Low-priority (auto-fill): preferred day only if still free, else drop ──
+        for tile in low_priority:
+            pinned_day_num = pinned_day_map.get(tile.get("id"))
+            if pinned_day_num is None:
+                dropped_count += 1
+                continue
+            pinned_idx = pinned_day_num - 1
+            if pinned_idx < 0 or pinned_idx >= len(days):
+                dropped_count += 1
+                continue
+
+            # Only place on free days (no specialist blocks)
+            day = days[pinned_idx]
+            _NON_ACTIVITY = {"free_day", "check-in", "check-out", "arrival", "departure"}
+            has_specialist = any(
+                not b.is_buffer and b.activity_type not in _NON_ACTIVITY for b in day.blocks
+            )
+            if has_specialist:
+                _debug_itinerary(
+                    f"📅 Phase 5.25: Dropping low-priority '{tile.get('title')}' "
+                    f"(day {pinned_idx + 1} taken by specialist)"
+                )
+                dropped_count += 1
+                continue
+
+            if not _place_on_day(tile, pinned_idx):
+                dropped_count += 1
 
         # =====================================================================
         # PASS 2: Co-schedule deferred tiles using capacity-based fallback

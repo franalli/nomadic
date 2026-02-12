@@ -12,7 +12,7 @@
 
 'use client';
 
-import { ChevronDown, Code2, Heart, Settings } from 'lucide-react';
+import { ChevronDown, Clock, Code2, Heart, Moon, Settings, Sun, Sunset } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
 /**
@@ -69,6 +69,8 @@ export interface MiniCardProps {
   onSaveClick?: (tile: Tile) => void;
   /** Callback to open category-wide stays/hotel settings sheet */
   onOpenStaysSettings?: () => void;
+  /** Override the default "Add to Trip" label on the save button */
+  saveLabel?: string;
 }
 
 /**
@@ -226,6 +228,7 @@ export const MiniCard = memo(function MiniCard({
   onDetailsClick,
   onSaveClick,
   onOpenStaysSettings,
+  saveLabel,
 }: MiniCardProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
@@ -235,6 +238,17 @@ export const MiniCard = memo(function MiniCard({
   const perks = useMemo(() => getPerks(tile), [tile]);
   const priceDisplay = useMemo(() => formatPrice(tile), [tile]);
   const amenityIcons = useMemo(() => getAmenityIconsWithLabels(tile), [tile]);
+  const activityMeta = useMemo(() => {
+    if (tile.type !== 'activity') return null;
+    const m = tile.meta as Record<string, unknown> | undefined;
+    if (!m) return null;
+    return {
+      category: typeof m.category === 'string' ? m.category : undefined,
+      durationHours: typeof m.duration_hours === 'number' ? m.duration_hours : undefined,
+      timeOfDay: typeof m.time_of_day === 'string' ? m.time_of_day : undefined,
+      description: typeof m.description === 'string' && m.description ? m.description : undefined,
+    };
+  }, [tile]);
 
   // Safety Shield Logic - for flight cards with diving constraints
   const isFlight = isFlightType(tile.type || '');
@@ -377,7 +391,7 @@ export const MiniCard = memo(function MiniCard({
                 <Heart
                   className={cn('h-3 w-3', isSaved && 'fill-emerald-400')}
                 />
-                {isSaved ? 'In Trip' : 'Add to Trip'}
+                {isSaved ? 'In Trip' : (saveLabel ?? 'Add to Trip')}
               </button>
             </div>
           </div>
@@ -399,6 +413,38 @@ export const MiniCard = memo(function MiniCard({
                 </>
               )}
             </div>
+          )}
+
+          {/* Activity metadata badges (compact) */}
+          {activityMeta && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {activityMeta.category && (
+                <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+                  {activityMeta.category}
+                </span>
+              )}
+              {activityMeta.durationHours != null && (
+                <span className="text-[10px] text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-0.5">
+                  <Clock className="h-2.5 w-2.5" />
+                  {activityMeta.durationHours}h
+                </span>
+              )}
+              {activityMeta.timeOfDay && (
+                <span className="text-[10px] text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-0.5">
+                  {activityMeta.timeOfDay === 'morning' && <Sun className="h-2.5 w-2.5" />}
+                  {activityMeta.timeOfDay === 'afternoon' && <Sunset className="h-2.5 w-2.5" />}
+                  {activityMeta.timeOfDay === 'evening' && <Moon className="h-2.5 w-2.5" />}
+                  {activityMeta.timeOfDay.charAt(0).toUpperCase() + activityMeta.timeOfDay.slice(1)}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Activity description (compact) */}
+          {activityMeta?.description && (
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+              {activityMeta.description}
+            </p>
           )}
 
           {/* Row 3: Perk chips */}

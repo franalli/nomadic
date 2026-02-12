@@ -1,3 +1,5 @@
+import { useDocumentStore } from '@/state/documentStore';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 /**
@@ -428,7 +430,8 @@ export async function refreshTiles(
  */
 export async function fillDay(
   dayNumber: number,
-  categories?: string[]
+  categories?: string[],
+  pinnedTileIds?: string[],
 ): Promise<{
   day_number: number;
   tiles_added: number;
@@ -436,12 +439,25 @@ export async function fillDay(
   tiles?: Record<string, import('@/types/tile').Tile>;
   version: number;
 }> {
+  console.log(`[fillDay] sending day=${dayNumber} categories=${JSON.stringify(categories)} pinnedTiles=${pinnedTileIds?.length ?? 0}`);
   const res = await apiFetch('/api/document/fill-day', {
     method: 'POST',
-    body: JSON.stringify({ day_number: dayNumber, categories }),
+    body: JSON.stringify({
+      day_number: dayNumber,
+      categories,
+      pinned_tile_ids: pinnedTileIds,
+    }),
   });
-  if (!res.ok) throw new Error(`fill-day failed: ${res.status}`);
-  return res.json();
+  if (!res.ok) {
+    console.error(`[fillDay] failed: status=${res.status} day=${dayNumber}`);
+    throw new Error(`fill-day failed: ${res.status}`);
+  }
+  const result = await res.json();
+  // Sync version to prevent 409 cascade on subsequent calls
+  if (result.version) {
+    useDocumentStore.setState({ version: result.version });
+  }
+  return result;
 }
 
 /**

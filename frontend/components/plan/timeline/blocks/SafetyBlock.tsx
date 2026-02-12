@@ -22,8 +22,8 @@ interface SafetyBlockProps {
 const CONFIG = {
   no_fly: {
     icon: ShieldAlert,
-    label: 'Surface Interval',
-    description: 'No Flights until',
+    label: 'No-Fly Buffer',
+    description: 'No flights until',
   },
   rest_day: {
     icon: Timer,
@@ -37,8 +37,8 @@ const CONFIG = {
   },
 };
 
-export function SafetyBlock({ reason, until, type = 'no_fly' }: SafetyBlockProps) {
-  const config = CONFIG[type];
+export function SafetyBlock({ reason, until, type }: SafetyBlockProps) {
+  const config = (type && CONFIG[type]) ?? CONFIG.rest_day;
   const Icon = config.icon;
 
   return (

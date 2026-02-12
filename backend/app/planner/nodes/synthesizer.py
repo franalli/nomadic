@@ -338,6 +338,22 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
             parts.append(f"- Safety buffers: {len(buffer_blocks)}")
         parts.append("- NOTE: Do NOT describe activities in chat. Just mention counts.")
 
+    # Builder drop reporting — tell user when activities couldn't fit
+    drop_ratio = state.metadata.get("last_builder_drop_ratio", 0.0)
+    if drop_ratio > 0 and state.metadata.get("last_builder_success"):
+        input_count = state.metadata.get("builder_activities_input", 0)
+        placed_count = state.metadata.get("builder_activities_placed", 0)
+        if input_count > 0 and placed_count < input_count:
+            dropped = input_count - placed_count
+            parts.append(
+                f"- Activity placement: {placed_count} of {input_count} specialist "
+                f"activities placed ({dropped} couldn't fit in available days)"
+            )
+            parts.append(
+                "- NOTE: Mention this naturally (e.g., 'I've placed 4 of 6 activities "
+                "— extending your trip by a couple days would fit them all')."
+            )
+
     # Experience tiles count (Tier 2 activities from experience_generator)
     if state.tiles:
         experience_tiles = [

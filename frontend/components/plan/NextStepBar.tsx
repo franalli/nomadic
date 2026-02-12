@@ -52,11 +52,32 @@ export function NextStepBar({
   // Read tripInputs from same store as chips - no prop drilling
   const tripInputs = useDocumentStore((state) => state.document?.trip_inputs);
 
+  // Check if dates are in the past (defensive — DatesSheet blocks selection,
+  // but NL extraction could produce past dates before guard catches them)
+  const isPastDates = (() => {
+    if (!tripInputs?.start_date) return false;
+    const today = new Date().toISOString().split('T')[0];
+    return tripInputs.start_date < today;
+  })();
+
   // Format date range for display (handles incomplete and single-day trips)
   const dateDisplay = (() => {
     if (!tripInputs?.start_date) return null;
     const start = new Date(tripInputs.start_date);
     const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+    if (isPastDates) {
+      // Past dates: show warning state
+      const endStr = tripInputs.end_date
+        ? new Date(tripInputs.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        : null;
+      return {
+        range: endStr ? `${startStr} — ${endStr}` : startStr,
+        days: null,
+        incomplete: true,
+        pastDates: true,
+      };
+    }
 
     if (tripInputs.end_date) {
       const end = new Date(tripInputs.end_date);
@@ -65,19 +86,19 @@ export function NextStepBar({
 
       if (isSameDay) {
         // Single day trip: show warning state
-        return { range: startStr, days: 1, incomplete: true };
+        return { range: startStr, days: 1, incomplete: true, pastDates: false };
       }
 
       const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      return { range: `${startStr} — ${endStr}`, days, incomplete: false };
+      return { range: `${startStr} — ${endStr}`, days, incomplete: false, pastDates: false };
     }
 
     if (tripInputs.trip_duration) {
-      return { range: startStr, days: tripInputs.trip_duration, incomplete: false };
+      return { range: startStr, days: tripInputs.trip_duration, incomplete: false, pastDates: false };
     }
 
     // Start date only - show incomplete state with arrow
-    return { range: `${startStr} → ?`, days: null, incomplete: true };
+    return { range: `${startStr} → ?`, days: null, incomplete: true, pastDates: false };
   })();
 
   // Reset click lock when finalization completes
@@ -147,7 +168,11 @@ export function NextStepBar({
             <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
               Timeline
             </span>
-            {dateDisplay?.days != null && dateDisplay.days >= 2 ? (
+            {dateDisplay?.pastDates ? (
+              <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-400/10 px-1.5 py-0.5 rounded">
+                past dates
+              </span>
+            ) : dateDisplay?.days != null && dateDisplay.days >= 2 ? (
               <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-400/10 px-1.5 py-0.5 rounded">
                 {dateDisplay.days} {dateDisplay.days === 1 ? 'day' : 'days'}
               </span>

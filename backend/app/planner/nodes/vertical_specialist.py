@@ -1305,9 +1305,9 @@ async def _merge_specialist_into_state(
     existing_sections = state.metadata.get("strategy_sections", [])
     cached_section = next((s for s in existing_sections if s.get("specialist_type") == topic), None)
     if cached_section:
-        cached_destination = cached_section.get("subtitle")
+        cached_destination = (cached_section.get("subtitle") or "").lower().strip()
         cached_dates = cached_section.get("_cache_dates")
-        current_destination = state.trip_plan.destination
+        current_destination = (state.trip_plan.destination or "").lower().strip()
         current_dates = f"{state.trip_plan.start_date}:{state.trip_plan.end_date}"
 
         if (
@@ -1333,6 +1333,30 @@ async def _merge_specialist_into_state(
             duration_ms = int((time.time() - node_start_time) * 1000)
             clog.node_end("SPECIALIST", duration_ms, topic=topic, status="cache_hit")
             return  # skip this topic, loop continues to next
+
+        # Infeasibility is destination-dependent, not date-dependent.
+        # Skiing in Bali stays infeasible regardless of trip duration.
+        if (
+            cached_section.get("feasibility_status") == "infeasible"
+            and cached_destination
+            and cached_destination == current_destination
+        ):
+            _debug_log(
+                f"🤿 SPECIALIST [{topic}] Still infeasible at {current_destination} "
+                f"(destination-level cache, dates irrelevant)"
+            )
+            state.metadata["last_executed_specialist"] = topic
+            state.metadata["specialist_infeasible"] = True
+            state.metadata["specialist_infeasible_reason"] = cached_section.get(
+                "feasibility_reason"
+            )
+            state.metadata["specialist_alternative"] = cached_section.get("alternative_suggestion")
+            state.active_agent_id = topic
+            state.ui_events.append("SPECIALIST_INFEASIBLE")
+
+            duration_ms = int((time.time() - node_start_time) * 1000)
+            clog.node_end("SPECIALIST", duration_ms, topic=topic, status="infeasible_cached")
+            return
 
         _debug_log(
             f"🤿 SPECIALIST [{topic}] Cache MISS: context changed "
@@ -1505,7 +1529,13 @@ async def _merge_specialist_into_state(
         feasibility_reason=output.feasibility_reason,
         alternative_suggestion=output.alternative_suggestion,
         constraints=[
-            {"rule": c.rule, "reason": c.reason, "type": c.type} for c in output.constraints
+            {
+                "rule": c.rule,
+                "reason": c.reason,
+                "type": c.type,
+                "severity": c.severity.value if hasattr(c.severity, "value") else str(c.severity),
+            }
+            for c in output.constraints
         ],
         content_added=content_added,
         enhancements=output.enhancements,
@@ -1698,6 +1728,24 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     if "parallel_llm_results" not in state.metadata:
         # Collect all specialists that need processing
         all_specialists = [topic] + list(state.pending_specialists)
+
+        # Skip specialists already known to be infeasible at this destination.
+        # Infeasibility is destination-dependent (skiing in Bali), not
+        # date-dependent — no need to re-query LLM after date changes.
+        existing_sections = state.metadata.get("strategy_sections", [])
+        dest_norm = (state.trip_plan.destination or "").lower().strip()
+        dest_infeasible = {
+            s.get("specialist_type")
+            for s in existing_sections
+            if s.get("feasibility_status") == "infeasible"
+            and (s.get("subtitle") or "").lower().strip() == dest_norm
+        }
+        if dest_infeasible & set(all_specialists):
+            skipped = dest_infeasible & set(all_specialists)
+            all_specialists = [t for t in all_specialists if t not in dest_infeasible]
+            _debug_log(
+                f"[SPECIALIST] Filtered {skipped} from parallel batch (destination-infeasible)"
+            )
 
         if len(all_specialists) > 1:
             _debug_log(

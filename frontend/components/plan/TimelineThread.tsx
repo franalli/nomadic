@@ -5,18 +5,22 @@ import {
   AlertTriangle,
   Bed,
   Camera,
+  Leaf,
   MapPin,
   Mountain,
   PlaneLanding,
   PlaneTakeoff,
   ShieldAlert,
   Sparkles,
+  Sun,
   Utensils,
   Waves,
+  Zap,
 } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 
 import { fillDay } from '@/lib/api';
+import { getDayIntensity, INTENSITY_CONFIG } from '@/lib/dayIntensity';
 import { cn } from '@/lib/utils';
 import { useDocumentStore, useDocumentTripInputs } from '@/state/documentStore';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
@@ -41,6 +45,8 @@ const CATEGORY_ICONS: Record<string, string> = {
   temples: '\u26E9\uFE0F', nightlife: '\u{1F389}', beach: '\u{1F3D6}\uFE0F', shopping: '\u{1F6CD}\uFE0F',
   photography: '\u{1F4F8}',
 };
+
+const INTENSITY_ICON_MAP: Record<string, LucideIcon> = { Leaf, Sun, Zap };
 
 // =============================================================================
 // Timeline Variant System (Grand Unification)
@@ -104,8 +110,8 @@ interface TimelineThreadProps {
   // === NEW: S3 Itinerary View props ===
   /** Callback when hovering a day (for map sync) */
   onDayHover?: (dayNumber: number | null) => void;
-  /** Callback to open booking drawer for a category */
-  onOpenBookingDrawer?: (category: 'hotel' | 'flight' | 'activity') => void;
+  /** Callback to open booking drawer for a category (optional dayNumber for pinned placement) */
+  onOpenBookingDrawer?: (category: 'hotel' | 'flight' | 'activity', dayNumber?: number) => void;
   /** Callback to unassign a booked tile from a block */
   onUnassignTile?: (blockId: string) => void;
   /** Set of saved tile IDs for booking state */
@@ -241,32 +247,36 @@ export function TimelineThread({
   const tripInputs = useDocumentTripInputs();
   const destination = tripInputs?.destination ?? null;
   const categories = tripInputs?.activity_settings?.categories;
-  const replaceDayCard = useDocumentStore(s => s.replaceDayCard);
-
   // V1: categories from trip_inputs (Zustand). FreeDayCard's selectedCats arg intentionally ignored.
   // TODO: V2 — pass selected categories to fillDay endpoint instead of reading from trip_inputs
   const handleFillDay = useCallback(async (dayNumber: number) => {
+    const store = useDocumentStore.getState();
+    // Guard: skip if expand-itinerary is running (days may already be populated)
+    if (store.expandInProgress) return;
+    // Per-day mutex: prevents concurrent calls from any path
+    if (!store.claimFillDay(dayNumber)) return;
+    store.claimMutation();
     setFillingDay(dayNumber);
     try {
       const result = await fillDay(dayNumber, categories?.length ? categories : undefined);
-      if (result.day_card) {
-        replaceDayCard(result.day_number, result.day_card, result.version);
-      }
-      // Merge generated tiles into document store (enables hearting/referencing)
-      if (result.tiles && Object.keys(result.tiles).length > 0) {
-        const doc = useDocumentStore.getState().document;
-        if (doc) {
-          useDocumentStore.setState({
-            document: { ...doc, tiles: { ...doc.tiles, ...result.tiles } },
-          });
-        }
+      if (result?.day_card) {
+        useDocumentStore.getState().replaceDayCard(
+          dayNumber, result.day_card, result.version, result.tiles
+        );
       }
     } catch (err) {
+      const is409 = err instanceof Error && err.message.includes('409');
+      if (is409) {
+        console.log(`[fillDay] day=${dayNumber} already filled (409), refreshing card`);
+        return;
+      }
       console.warn('[TimelineThread] fill-day failed:', err);
     } finally {
+      useDocumentStore.getState().releaseMutation();
+      useDocumentStore.getState().releaseFillDay(dayNumber);
       setFillingDay(null);
     }
-  }, [categories, replaceDayCard]);
+  }, [categories]);
   const sortedDays = useMemo(() => {
     return [...dayCards].sort((a, b) => a.day_number - b.day_number);
   }, [dayCards]);
@@ -464,6 +474,18 @@ export function TimelineThread({
                       · {new Date(card.date + 'T00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </span>
                   )}
+                  {(() => {
+                    const intensity = getDayIntensity(card.blocks);
+                    if (!intensity) return null;
+                    const cfg = INTENSITY_CONFIG[intensity];
+                    const Icon = INTENSITY_ICON_MAP[cfg.icon];
+                    return (
+                      <span className={cn('ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium', cfg.pillClass)}>
+                        <Icon className="h-3 w-3" />
+                        {cfg.label}
+                      </span>
+                    );
+                  })()}
                 </h3>
                 {card.label && !/^Day \d+$/i.test(card.label) && (
                   <p className="text-sm text-muted-foreground truncate">{card.label}</p>
@@ -480,28 +502,48 @@ export function TimelineThread({
                 // Filter blocks for rich rendering
                 const blocksToRender = useRichBlocks ? filterBlocks(card.blocks) : card.blocks;
 
-                // Empty day or single free_day placeholder → interactive FreeDayCard
-                const hasOnlyFreeDay = blocksToRender.length === 1
-                  && blocksToRender[0].activity_type === 'free_day';
-                if (useRichBlocks && (blocksToRender.length === 0 || hasOnlyFreeDay)) {
+                // Separate buffer blocks (safety constraints) from content blocks
+                const bufferBlocks = blocksToRender.filter(b => b.is_buffer);
+                const contentBlocks = blocksToRender.filter(b => !b.is_buffer);
+
+                // Empty day or only free_day placeholder → interactive FreeDayCard
+                // Buffer blocks render as SafetyBlock above the FreeDayCard
+                // Never show FreeDayCard on departure day (no activity placement)
+                const isDeparture = card.blocks.some(b => b.buffer_type === 'departure');
+                const hasOnlyFreeDay = contentBlocks.length === 1
+                  && contentBlocks[0].activity_type === 'free_day';
+                if (useRichBlocks && !isDeparture && (contentBlocks.length === 0 || hasOnlyFreeDay)) {
                   return (
-                    <FreeDayCard
-                      dayNumber={card.day_number}
-                      dayDate={card.date ?? null}
-                      destination={destination}
-                      availableCategories={
-                        categories && categories.length > 1
-                          ? categories.map(c => ({
-                              value: c,
-                              label: c.charAt(0).toUpperCase() + c.slice(1),
-                              icon: CATEGORY_ICONS[c.toLowerCase()] ?? '\u{1F3AF}',
-                            }))
-                          : undefined
-                      }
-                      onBrowse={() => onOpenBookingDrawer?.('activity')}
-                      onFillDay={handleFillDay}
-                      isFilling={fillingDay === card.day_number}
-                    />
+                    <>
+                      {bufferBlocks.map((block, i) => {
+                        const bufId = `${card.day_number}-buf-${i}`;
+                        return (
+                          <SafetyBlock
+                            key={bufId}
+                            reason={block.buffer_reason || (block.buffer_type === 'no_fly' ? '24h no-fly buffer before flight' : 'Rest day recommended')}
+                            until={block.buffer_type === 'no_fly' ? block.scheduled_time : undefined}
+                            type={block.buffer_type as 'no_fly' | 'rest_day' | 'acclimatization' | undefined}
+                          />
+                        );
+                      })}
+                      <FreeDayCard
+                        dayNumber={card.day_number}
+                        dayDate={card.date ?? null}
+                        destination={destination}
+                        availableCategories={
+                          categories && categories.length > 1
+                            ? categories.map(c => ({
+                                value: c,
+                                label: c.charAt(0).toUpperCase() + c.slice(1),
+                                icon: CATEGORY_ICONS[c.toLowerCase()] ?? '\u{1F3AF}',
+                              }))
+                            : undefined
+                        }
+                        onBrowse={() => onOpenBookingDrawer?.('activity', card.day_number)}
+                        onFillDay={handleFillDay}
+                        isFilling={fillingDay === card.day_number}
+                      />
+                    </>
                   );
                 }
 

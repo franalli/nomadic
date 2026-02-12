@@ -1492,7 +1492,8 @@ Travelers: {plan.adults} adults{f", {plan.children} children" if plan.children e
             {
                 "rule": c.description,
                 "type": c.type,
-                "reason": c.severity,
+                "severity": c.severity,
+                "reason": c.description,
             }
         )
 

@@ -1,19 +1,19 @@
 #!/bin/bash
-# Copy key backend files flat into docs/key_backend_files/.
+# Copy key files flat into docs/key_files/.
 # This folder is git-ignored.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/backend/app"
-DEST="$ROOT/docs/key_backend_files"
+DEST="$ROOT/docs/key_files"
 
 # Clean and recreate
 rm -rf "$DEST"
 mkdir -p "$DEST"
 
 # --- Explicit file list ---
-for f in plan_graph.py validation.py planner/state/graph_state.py crud_document.py crud_trip.py; do
+for f in main.py plan_graph.py validation.py planner/state/graph_state.py crud_document.py crud_trip.py; do
   cp "$SRC/$f" "$DEST/$(basename "$f")"
 done
 
@@ -60,6 +60,22 @@ find "$SRC/tools" \
   ! -name '*.pyc' \
   ! -name '.DS_Store' \
   ! -path '*/__pycache__/*' \
+  | while read -r src; do
+    cp "$src" "$DEST/$(basename "$src")"
+  done
+
+# --- Frontend: state/ (flat) ---
+find "$ROOT/frontend/state" \
+  -type f \
+  ! -name '.DS_Store' \
+  | while read -r src; do
+    cp "$src" "$DEST/$(basename "$src")"
+  done
+
+# --- Frontend: components/chat/ (flat) ---
+find "$ROOT/frontend/components/chat" \
+  -type f \
+  ! -name '.DS_Store' \
   | while read -r src; do
     cp "$src" "$DEST/$(basename "$src")"
   done

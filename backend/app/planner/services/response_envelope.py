@@ -237,6 +237,9 @@ def _resolve_blocking_violations(
         plan_view_state = _compute_plan_view_state(state)
         is_route_error = False
 
+    # Persist for next turn so intent_router can detect active plan
+    state.metadata["plan_view_state"] = plan_view_state
+
     logger.info(
         f"format_result: plan_view_state={plan_view_state}, "
         f"flattened_tiles_count={len(flattened_tiles)}, "
@@ -304,6 +307,7 @@ def _extract_section_content(
             {
                 "rule": c.rule,
                 "type": c.type,
+                "severity": getattr(c, "severity", "strong"),
                 "reason": c.reason or "",
             }
         )
@@ -689,6 +693,16 @@ def _build_response_envelope(
     # CRITICAL: Capture session_state AFTER metadata is updated (not before!)
     updated_session_state = state_to_session_state(state)
 
+    # Diagnostic: trace suggested_replies through format_result
+    _raw_sr = state.suggested_replies
+    _meta_sr = state.metadata.get("synthesizer_output", {}).get("suggested_replies", [])
+    _parse_failed = state.metadata.get("_graph_state_parse_failed", False)
+    logger.debug(
+        f"[FORMAT_RESULT] suggested_replies: "
+        f"state.field={_raw_sr[:3]} metadata_backup={_meta_sr[:3]} "
+        f"parse_failed={_parse_failed}"
+    )
+
     # Build document object matching PlanDocumentData type expected by frontend
     document = {
         "trip_context_id": None,
@@ -697,7 +711,10 @@ def _build_response_envelope(
         "tiles": flattened_tiles,  # Flattened to ID-based map for frontend
         "assistant_message": state.last_summary or "",
         "ready_to_generate": trip_plan_is_ready(state.trip_plan),
-        "suggested_responses": state.suggested_replies,
+        "suggested_responses": (
+            state.suggested_replies
+            or state.metadata.get("synthesizer_output", {}).get("suggested_replies", [])
+        ),
         "suggested_response_meta": state.metadata.get("suggestion_chip_meta", []),
         # Plan view state for right panel stage rendering
         "plan_view_state": plan_view_state,
@@ -707,6 +724,8 @@ def _build_response_envelope(
         "executed_strategy_topics": executed_topics,
         # Origin update flag for frontend to trigger flight fetch
         "origin_just_set": state.metadata.get("origin_just_set", False),
+        # Tile replace signal — frontend should REPLACE tiles, not merge additively
+        "tiles_replaced": bool(state.metadata.get("_tiles_replaced", False)),
         # Constraint validation receipts for Trip DNA bar badges
         "constraints_validated": state.metadata.get("constraints_validated", []),
         "constraint_violations": state.metadata.get("constraint_violations", []),
@@ -734,7 +753,10 @@ def _build_response_envelope(
         "changes_made": True,
         # Legacy fields for backward compatibility
         "assistant_message": state.last_summary or "",
-        "suggested_responses": state.suggested_replies,
+        "suggested_responses": (
+            state.suggested_replies
+            or state.metadata.get("synthesizer_output", {}).get("suggested_replies", [])
+        ),
         "branches": [],
         "trip_inputs": trip_inputs,
         "ready_to_generate": trip_plan_is_ready(state.trip_plan),
@@ -808,12 +830,39 @@ def format_result(
         try:
             from app.planner.services.itinerary_adapter import build_itinerary_from_state
 
+            # Re-inject user-pinned tiles into tile pool so builder can place them.
+            # Must happen AFTER logistics suppression — pinned tiles are user intent.
+            pinned_tiles = state.metadata.get("user_pinned_tiles", {})
+            if pinned_tiles:
+                existing_ids: set = set()
+                for cat_tiles in state.tiles.values():
+                    if isinstance(cat_tiles, list):
+                        for t in cat_tiles:
+                            if isinstance(t, dict):
+                                existing_ids.add(t.get("id"))
+                for tid, pinned in pinned_tiles.items():
+                    if tid not in existing_ids:
+                        tile_data = pinned.get("tile", pinned)
+                        cat = pinned.get("category", "activities")
+                        state.tiles.setdefault(cat, []).append(tile_data)
+
             result = build_itinerary_from_state(state)
             if result and result.success:
                 itinerary_day_cards = [dc.model_dump() for dc in result.day_cards]
                 state.metadata["last_builder_success"] = True
+                # Track drop ratio for guard suppression accuracy
+                if result.total_activities_input > 0:
+                    state.metadata["last_builder_drop_ratio"] = 1.0 - (
+                        result.total_activities_placed / result.total_activities_input
+                    )
+                else:
+                    state.metadata["last_builder_drop_ratio"] = 0.0
+                # Persist counts for synthesizer drop reporting
+                state.metadata["builder_activities_input"] = result.total_activities_input
+                state.metadata["builder_activities_placed"] = result.total_activities_placed
             else:
                 state.metadata["last_builder_success"] = False
+                state.metadata["last_builder_drop_ratio"] = 1.0
                 if result and result.resolutions:
                     state.metadata["last_builder_resolutions"] = [
                         r.model_dump() for r in result.resolutions

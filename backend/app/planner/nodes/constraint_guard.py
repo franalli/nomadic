@@ -202,6 +202,19 @@ def check_temporal_constraints(
             start = datetime.fromisoformat(plan.start_date)
             end = datetime.fromisoformat(plan.end_date)
 
+            # Past date check (last-resort — extraction auto-bumps first)
+            today = datetime.now().date()
+            if start.date() < today:
+                violations.append(
+                    ConstraintViolation(
+                        code="DATE_IN_PAST",
+                        message=f"Trip starts on {plan.start_date} which is in the past",
+                        severity="blocking",
+                        category="temporal",
+                        suggested_action="Update your start date to a future date",
+                    )
+                )
+
             if end < start:
                 violations.append(
                     ConstraintViolation(
@@ -335,6 +348,21 @@ def check_specialist_constraints(
             last_source_day = max((b.day for b in blocks if b.day), default=0)
             if not last_source_day:
                 continue
+
+            # Capacity gate: skip violation if trip is long enough for builder
+            # to handle sequencing (mirrors _check_cross_domain_from_sections)
+            if plan.start_date and plan.end_date:
+                try:
+                    _s = datetime.fromisoformat(plan.start_date)
+                    _e = datetime.fromisoformat(plan.end_date)
+                    total_days = (_e - _s).days + 1
+                    usable = total_days - 2  # arrival + departure
+                    available_after_buffer = usable - (xd.buffer_hours // 24)
+                    if available_after_buffer >= 2:
+                        continue  # Trip long enough — builder handles sequencing
+                except (ValueError, TypeError):
+                    pass  # Fall through to emit violation
+
             for target_sid in xd.target_specialists:
                 target_blocks = blocks_by_specialist.get(target_sid, [])
                 for tb in target_blocks:
@@ -372,6 +400,7 @@ def _check_cross_domain_from_sections(
     for even the minimum viable plan (1 dive + buffer + 1 altitude).
     When the trip is long enough, the builder handles trimming.
     """
+    from app.debug_utils import log
     from app.planner.specialist_registry import get as get_config
 
     active_specialists = {
@@ -401,11 +430,22 @@ def _check_cross_domain_from_sections(
                     total_days = (e - s).days + 1
                     usable = total_days - 2
                     available_after_buffer = usable - (xd.buffer_hours // 24)
+                    log(
+                        "GUARD",
+                        f"Cross-domain capacity: {topic}→{sorted(conflicting)} "
+                        f"total_days={total_days} usable={usable} "
+                        f"buffer_h={xd.buffer_hours} available={available_after_buffer}",
+                    )
                     if available_after_buffer >= 2:
                         # Trip long enough — builder will trim, no violation
                         continue
-                except (ValueError, TypeError):
-                    pass  # Fall through to emit violation
+                except (ValueError, TypeError) as e:
+                    log("GUARD", f"⚠️ Cross-domain capacity parse error: {e}")
+            else:
+                log(
+                    "GUARD",
+                    f"⚠️ Cross-domain check: no dates, emitting {xd.violation_code}",
+                )
 
             violations.append(
                 ConstraintViolation(
@@ -620,13 +660,17 @@ async def constraint_guard(state: GraphState) -> GraphState:
             # violation so the synthesizer can generate resolution chips.
             constraint_rule = _violation_to_constraint_rule.get(sv.code)
             if constraint_rule and canonicalize_rule(constraint_rule) in existing_rules:
-                if state.metadata.get("last_builder_success", False):
+                builder_ok = state.metadata.get("last_builder_success", False)
+                drop_ratio = state.metadata.get("last_builder_drop_ratio", 0.0)
+                # Only suppress if builder succeeded AND didn't drop too many activities
+                if builder_ok and drop_ratio < 0.5:
                     log("GUARD", f"⏭️ {sv.code} suppressed: builder enforces {constraint_rule}")
                     continue
                 else:
+                    reason = "builder failed" if not builder_ok else f"drop ratio {drop_ratio:.0%}"
                     log(
                         "GUARD",
-                        f"🔄 {sv.code} re-surfaced: builder failed to enforce {constraint_rule}",
+                        f"🔄 {sv.code} re-surfaced: {reason} for {constraint_rule}",
                     )
             violations.append(sv)
             existing_codes.add(sv.code)
@@ -741,6 +785,77 @@ async def constraint_guard(state: GraphState) -> GraphState:
             log("GUARD", f"Day preference capacity check error (non-fatal): {e}")
 
     # =========================================================================
+    # Multi-Specialist Aggregate Capacity Check
+    # Sums activity counts across ALL specialists. Individual checks pass
+    # but combined they may exceed capacity. WARNING severity — builder
+    # co-schedules up to 2 specialist activities/day (3-5h each).
+    # =========================================================================
+    if state.trip_plan.start_date and state.trip_plan.end_date:
+        try:
+            start = datetime.fromisoformat(state.trip_plan.start_date)
+            end = datetime.fromisoformat(state.trip_plan.end_date)
+            total_days = (end - start).days + 1
+            usable_days = total_days - 2
+
+            total_activities = 0
+            active_specialist_names: list[str] = []
+            for section in persistent.strategy_sections:
+                topic = section.get("specialist_type")
+                if topic in ("general", "local_expert", None):
+                    continue
+                if section.get("feasibility_status") == "infeasible":
+                    continue
+                activity_blocks = [
+                    b
+                    for b in section.get("content_added", [])
+                    if b.get("type") == "activity" and not b.get("is_buffer", False)
+                ]
+                if activity_blocks:
+                    total_activities += len(activity_blocks)
+                    active_specialist_names.append(topic)
+
+            buffer_days_needed = 0
+            for topic in active_specialist_names:
+                src_config = get_config(topic)
+                if not src_config:
+                    continue
+                for xd in src_config.cross_domain_blocks:
+                    if set(active_specialist_names) & set(xd.target_specialists):
+                        buffer_days_needed = max(buffer_days_needed, xd.buffer_hours // 24)
+
+            effective_days = max(0, usable_days - buffer_days_needed)
+            # Specialist activities are 3-5h each, max ~2 per day realistically
+            max_capacity = effective_days * 2
+
+            if len(active_specialist_names) >= 2 and total_activities > max_capacity:
+                shortage = total_activities - max_capacity
+                extend_by = (shortage + 1) // 2
+                violations.append(
+                    ConstraintViolation(
+                        code="MULTI_SPECIALIST_CAPACITY_EXCEEDED",
+                        message=(
+                            f"{total_activities} activities across "
+                            f"{', '.join(sorted(active_specialist_names))} "
+                            f"exceed {effective_days}-day capacity"
+                        ),
+                        severity="warning",
+                        category="capacity",
+                        suggested_action=(
+                            f"Extend trip by {extend_by} day(s) or reduce activities"
+                        ),
+                        conflicting_specialists=sorted(active_specialist_names),
+                    )
+                )
+                log(
+                    "CONSTRAINT",
+                    f"WARN MULTI_SPECIALIST_CAPACITY_EXCEEDED - "
+                    f"{total_activities} > {max_capacity} "
+                    f"({effective_days} days x 2 specialist acts/day)",
+                )
+        except Exception as e:
+            log("GUARD", f"Multi-specialist capacity check error (non-fatal): {e}")
+
+    # =========================================================================
     # Cross-Domain Constraint Injection for Builder
     # ALWAYS inject when specialists co-exist, regardless of violation status.
     # The builder needs the constraint for sequencing (diving → buffer →
@@ -756,48 +871,46 @@ async def constraint_guard(state: GraphState) -> GraphState:
             )
             if not conflicting_topics:
                 continue
-                # Use canonical rule name that builder's _find_constraint() expects
-                canonical_rule = "no_altitude_after_dive"
-                constraint = SpecialistConstraint(
-                    constraint_id=canonical_rule,
-                    type="temporal",
-                    rule=canonical_rule,
-                    severity="blocking",
-                    applies_to_categories=["activities"],
-                    buffer_hours=xd.buffer_hours,
-                    reason=xd.reason,
-                )
-                rule_canon = canonicalize_rule(constraint.rule)
-                if rule_canon not in existing_rules:
-                    state.trip_plan.constraints.append(constraint)
-                    existing_rules.add(rule_canon)
-                    # Persist for future turns
-                    if topic not in persisted:
-                        persisted[topic] = []
-                    persisted[topic].append(constraint.model_dump())
-                    # Also inject into strategy section so expand-itinerary
-                    # builder can find it (builder reads constraints_applied,
-                    # not trip_plan.constraints).
-                    # StrategySection.constraints_applied is List[Dict[str, str]]
-                    # so we serialize to string-only dict format.
-                    section_constraint = {
-                        "constraint_id": canonical_rule,
-                        "type": "temporal",
-                        "rule": canonical_rule,
-                        "severity": "blocking",
-                        "reason": xd.reason or "",
-                    }
-                    for section in persistent.strategy_sections:
-                        if section.get("specialist_type") == topic:
-                            section_rules = {
-                                c.get("rule") for c in section.get("constraints_applied", [])
-                            }
-                            if canonical_rule not in section_rules:
-                                section.setdefault("constraints_applied", []).append(
-                                    section_constraint
-                                )
-                            break
-                    log("GUARD", f"Injected cross-domain constraint: {constraint.rule}")
+            # Use canonical rule name that builder's _find_constraint() expects
+            canonical_rule = "no_altitude_after_dive"
+            constraint = SpecialistConstraint(
+                constraint_id=canonical_rule,
+                type="temporal",
+                rule=canonical_rule,
+                severity="blocking",
+                applies_to_categories=["activities"],
+                buffer_hours=xd.buffer_hours,
+                reason=xd.reason,
+            )
+            rule_canon = canonicalize_rule(constraint.rule)
+            if rule_canon not in existing_rules:
+                state.trip_plan.constraints.append(constraint)
+                existing_rules.add(rule_canon)
+                # Persist for future turns
+                if topic not in persisted:
+                    persisted[topic] = []
+                persisted[topic].append(constraint.model_dump())
+                # Also inject into strategy section so expand-itinerary
+                # builder can find it (builder reads constraints_applied,
+                # not trip_plan.constraints).
+                # StrategySection.constraints_applied is List[Dict[str, str]]
+                # so we serialize to string-only dict format.
+                section_constraint = {
+                    "constraint_id": canonical_rule,
+                    "type": "temporal",
+                    "rule": canonical_rule,
+                    "severity": "blocking",
+                    "reason": xd.reason or "",
+                }
+                for section in persistent.strategy_sections:
+                    if section.get("specialist_type") == topic:
+                        section_rules = {
+                            c.get("rule") for c in section.get("constraints_applied", [])
+                        }
+                        if canonical_rule not in section_rules:
+                            section.setdefault("constraints_applied", []).append(section_constraint)
+                        break
+                log("GUARD", f"Injected cross-domain constraint: {constraint.rule}")
 
     log("GUARD", f"Violations found: {len(violations)}")
     for v in violations:

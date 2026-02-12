@@ -30,7 +30,7 @@
 | POST | `/api/tiles/refresh` | Refresh tiles for branch | `TileRefreshRequest` | `TileRefreshResponse` |
 | POST | `/api/document/tiles/{branch_id}` | Fetch tiles for branch | -- | `PlanDocumentResponse` |
 | POST | `/api/suggestions/click` | Track suggestion click | `SuggestionClickEvent` | `{status: "ok"}` |
-| POST | `/api/document/fill-day` | Generate activity tiles for a free day | `FillDayRequest{day_number, categories?}` | `{day_number, tiles_added, day_card, tiles?, version}` |
+| POST | `/api/document/fill-day` | Generate activity tiles for a free day | `FillDayRequest{day_number, categories?, pinned_tile_ids?}` | `{day_number, tiles_added, day_card, tiles?, version}` |
 
 ### Documents (Plan State)
 
@@ -66,7 +66,7 @@ Media type: `text/event-stream`. Events:
 |-------|------|---------|
 | `token` | `{type: "token", data: "..."}` | Streaming text chunk |
 | `node_status` | `{node: "...", status: "started"\|"completed", label, icon_key, estimated_duration_ms}` | Node processing progress. `label`, `icon_key`, `estimated_duration_ms` only present on `started` events. Special node `logic_reveal` emits routing decisions (e.g., `label: "ROUTING: DIVING"`, status: `"completed"`). Frontend type also defines `stage?, tier?, topic?, max_tokens?` but these are not currently emitted by the backend. |
-| `complete` | `{type: "complete", data: {document, session_state, version, ...}}` | Full response envelope |
+| `complete` | `{type: "complete", data: {document, session_state, version, ...}}` | Full response envelope. `document` includes `day_cards` (when builder ran), `suggested_responses`, `suggested_response_meta`, `constraints_validated`, `constraint_violations`, `tiles_replaced` — all passed through from graph output. When `day_cards` present, `plan_view_state` is promoted to `S3_ITINERARY_READY`. `suggested_responses` falls back to `metadata.synthesizer_output.suggested_replies` when `state.suggested_replies` is empty (GraphState parse failure recovery). |
 | `error` | `{type: "error", message: "..."}` | Error details |
 
 ### NDJSON (`/api/expand-itinerary`, `/api/remove-specialist`)
@@ -92,7 +92,9 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests sha
 
 | Tier | Endpoints | Limit |
 |------|-----------|-------|
-| **Heavy** | `graph_plan/*`, `expand-itinerary`, `remove-specialist` | 3/min, 15/hr |
+| **Heavy** | `graph_plan/*` (non-stream), `remove-specialist` | 3/min, 15/hr |
+| **Heavy (stream)** | `graph_plan/stream` | 10/min, 40/hr |
+| **Heavy (builder-only)** | `expand-itinerary` | 20/min (no LLM — frontend mutex prevents abuse) |
 | **Medium** | `validate-trip-input`, `destination-image`, `tiles/refresh` | 15/min |
 | **Medium-Low** | `document/fill-day` | 10/min |
 | **Light** | `document` (GET+PATCH), `document/tiles/{branch_id}`, `chat`, `chat/last`, `session`, `tiles/click`, `suggestions/click` | 60/min |
@@ -169,6 +171,8 @@ PlanDocumentData
   |           NOTE: activity_type carries the display title for the card
   |           (e.g. "Potato Head Beach Club"). specialist_type carries the
   |           category for filtering/coloring (e.g. "nightlife", "diving").
+  |           Fill-day endpoint uses tile.title for activity_type and
+  |           meta.category for specialist_type (matching ItineraryBuilder).
   |
   |-- trip_context_id, assistant_message_id
   |-- plan_state: PlanState, ui_phase: UIPhase, plan_view_state: PlanViewState
@@ -182,6 +186,8 @@ PlanDocumentData
   |-- applied_updates[], undo_snapshot, update_provenance
   |-- ack_status, ack_updates[]
   |-- origin_just_set
+  |-- tiles_replaced (bool: frontend should REPLACE tiles, not merge additively)
+  |-- user_pinned_tiles: {tile_id -> {tile, source, category, preferred_day}} (Browse→Add persistence)
   |-- needs_refresh, can_expand_to_itinerary, ready_to_generate
   |-- assistant_message?, suggested_responses[]
   |-- suggested_response_meta?: SuggestionChipMeta[] (parallel to suggested_responses)
@@ -195,7 +201,7 @@ PlanDocumentData
 |-------|---------|
 | `GraphPlanRequest` | Plan generation: message, trip_inputs, session_state, document_id, ui_phase, expected_version, thread_id, reset, suggestion_clicked |
 | `GraphPlanResponse` | Response: document (PlanDocumentData), session_state, version, observability, updated_by, updated_at, changes_made, request_id |
-| `ExpandItineraryRequest` | Stage 2->3: idempotency_key, strategy_sections, tiles, preferences, trip_inputs, force_full_rebuild |
+| `ExpandItineraryRequest` | Stage 2->3: idempotency_key, strategy_sections, tiles, preferences, trip_inputs, force_full_rebuild. **Tile source selection:** `force_full_rebuild=true` (auto-expand after chat) uses DB tiles (authoritative — written by `apply_planner_update`); `force_full_rebuild=false` (preference regen / manual) uses frontend tiles (includes hearted tiles, filters); empty frontend tiles falls back to DB tiles. |
 | `RemoveSpecialistRequest` | Conflict resolution: keep_specialist, remove_hearted_tiles, idempotency_key, trip_inputs, strategy_sections, tiles, preferences |
 | `PlanDocumentPatch` | CRDT update: version, branches?, tiles?, selections?, trip_inputs?, remove_branch_ids?, remove_tile_ids?, preferred_tile_ids? |
 | `PlanDocumentResponse` | Document fetch: version, updated_by, document, updated_at, changes_made: bool |
@@ -260,6 +266,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | View | `activeView` ('planning' \| 'booking'), `isPlanFinalized` |
 | Preferences | `preferredTileIds` (Set), `pendingPreferencePatch` |
 | Regeneration | `lastGeneratedPreferences`, `isRegenerating`, `isPending`, `expandInProgress`, `remainingSeconds` |
+| Fill-day mutex | `_fillingDays` (Set\<number\>) — per-day concurrency guard |
 | Streaming | `currentRunId`, `abortController` |
 | Cart | `cartTileIds` (Set) |
 | LLM Updates | `llmUpdatedFields` (Set of field names LLM recently modified) |
@@ -286,13 +293,19 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | `replaceDayCard()` | Surgical single day card replacement (fill-day) |
 | `setRegenerationState()` | Shared regeneration UI state (isRegenerating, isPending, remainingSeconds) |
 | `setExpandInProgress()` | Expand-itinerary mutex flag |
+| `claimFillDay(day)` | Per-day fill mutex: returns `false` if day already in flight (prevents concurrent fill-day on same day from different call sites) |
+| `releaseFillDay(day)` | Release per-day fill mutex after fill-day completes or fails |
+| `hasPendingMutations()` | Returns true when `_fillingDays.size > 0` — ChatPanel mutation gate polls this before sending graph requests to avoid version conflicts |
 | `markPreferencesAsApplied()` | Sync lastGeneratedPreferences after expand completes |
 | `awaitPreferencePatch()` | Wait for pending preference PATCH to complete before proceeding |
+
 | `setActiveView()` | Switch between 'planning' and 'booking' views |
 | `setFinalized()` | Set plan finalization flag (gates Book view access) |
 | `addToCart()` / `removeFromCart()` / `clearCart()` | Cart operations for booking mode |
 | `hasAllRequiredFields()` | Computed selector: returns true when destination is set (only requirement) |
 | `reset()` | Full store reset (aborts in-flight generation) |
+
+**`usePreferenceAutoRegen` hook** (`frontend/hooks/usePreferenceAutoRegen.ts`): Watches `preferredTileIds` changes and triggers `expand-itinerary` regen. When `expandInProgress` mutex blocks, the hook queues the pending regen via `pendingRegenRef` and flushes it when the mutex clears (500ms debounce, dedup check against `lastGeneratedPreferences`). Avoids silently dropping preference changes made during an active expand.
 
 ### User-Dirty Settings Tracker
 
@@ -303,6 +316,9 @@ Module-level `_userDirtySettings: Set<string>` (not Zustand state — avoids re-
 - **Destination lock:** Once set, destination can't change unless S0_EMPTY reset
 - **View state downgrade protection:** Never downgrade plan_view_state when itinerary exists
 - **Destination/date change detection:** Triggers chat reset + tile/section clearing
+- **Fill-day version sync:** `fillDay()` in api.ts syncs `version` from response to store after success, preventing 409 cascade on subsequent calls
+- **Graph-built itinerary skip:** `setFromPlanResponse` maps `itinerary_day_cards` → `day_cards` if present. ChatPanel's expand gate checks `graphBuiltItinerary` flag — skips expand-itinerary when graph already built day_cards
+- **Mutation gate:** ChatPanel waits for `hasPendingMutations()` to clear (max 10s poll) before sending graph requests, preventing version conflicts from concurrent fill-day/drag-drop mutations
 
 ---
 

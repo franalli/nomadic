@@ -802,6 +802,15 @@ class PlanDocumentData(BaseModel):
     # True when origin was just set via chat (e.g., "from rome")
     # Frontend should trigger flight fetch when this is True
     origin_just_set: bool = False
+    # True when tiles were fully replaced (not additive merge) — settings/date change
+    tiles_replaced: bool = False
+
+    # ==========================================================================
+    # User-Pinned Tiles (survive graph rebuilds)
+    # ==========================================================================
+    # Fill-day Browse→Add tiles persisted here so itinerary rebuilds re-place them.
+    # Keys are tile IDs, values are full tile dicts with meta.pinned_day set.
+    user_pinned_tiles: Dict[str, Any] = Field(default_factory=dict)
 
     # ==========================================================================
     # Constraint Validation State (for Trip DNA badges)

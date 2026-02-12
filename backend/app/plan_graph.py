@@ -886,10 +886,19 @@ async def run_turn_streaming(
         # Convert final output to GraphState
         if final_output is not None:
             if isinstance(final_output, dict):
+                _sr = final_output.get("suggested_replies", [])
+                _ls = (final_output.get("last_summary") or "")[:40]
+                logger.debug(
+                    f"[GRAPH_CAPTURE] final_output type=dict keys={sorted(final_output.keys())}"
+                )
+                logger.debug(f"[GRAPH_CAPTURE] suggested_replies={_sr[:3]} last_summary='{_ls}...'")
                 try:
                     result_state = GraphState(**final_output)
                 except Exception as e:
-                    logger.warning(f"Failed to parse final output as GraphState: {e}")
+                    logger.warning(f"[GRAPH_CAPTURE] GraphState parse FAILED: {e}")
+                    logger.warning(
+                        f"[GRAPH_CAPTURE] final_output keys: {list(final_output.keys())}"
+                    )
                     # PARTIAL RECOVERY: Extract key fields even if full parse fails
                     # This preserves tiles/sections instead of losing all node-computed state
                     try:
@@ -905,6 +914,8 @@ async def run_turn_streaming(
                             final_output["metadata"], dict
                         ):
                             partial_state.metadata.update(final_output["metadata"])
+                            # Tag it so format_result knows parse failed
+                            partial_state.metadata["_graph_state_parse_failed"] = True
                         if streamed_tokens:
                             partial_state.last_summary = "".join(streamed_tokens)
                         result_state = partial_state
@@ -912,6 +923,10 @@ async def run_turn_streaming(
                     except Exception as e2:
                         logger.warning(f"Partial state recovery also failed: {e2}")
             elif isinstance(final_output, GraphState):
+                logger.debug(
+                    "[GRAPH_CAPTURE] final_output type=GraphState "
+                    f"suggested_replies={final_output.suggested_replies[:3]}"
+                )
                 result_state = final_output
 
         # If still no state, construct from input state + streamed tokens
@@ -941,6 +956,16 @@ async def run_turn_streaming(
         # Compact logging: emit request summary with token tracking and cost
         clog = CompactLogger("graph", metrics=metrics)
         clog.request_summary()
+
+        # Diagnostic: what's in the SSE payload the frontend receives
+        _doc = final_result.get("document", {})
+        logger.debug(
+            f"[SSE_COMPLETE] suggestions={_doc.get('suggested_responses', [])[:3]} "
+            f"meta={_doc.get('suggested_response_meta', [])[:2]} "
+            f"tiles={len(_doc.get('tiles', {}))} "
+            f"day_cards={len(_doc.get('itinerary_day_cards') or [])} "
+            f"view_state={_doc.get('plan_view_state')}"
+        )
 
         yield {
             "type": "complete",

@@ -1405,6 +1405,11 @@ async def graph_plan_endpoint(
                     f"final.categories={_final_cats}, "
                     f"doc.origin={doc_inputs.get('origin')}"
                 )
+            # Inject user-pinned tiles into metadata so graph state preserves them
+            if document_data.user_pinned_tiles:
+                if "metadata" not in session_state:
+                    session_state["metadata"] = {}
+                session_state["metadata"]["user_pinned_tiles"] = document_data.user_pinned_tiles
     except HTTPException:
         raise  # Re-raise HTTP exceptions (like version conflict)
     except Exception as e:
@@ -1856,6 +1861,8 @@ async def graph_plan_endpoint(
 
     # Copy origin_just_set flag for frontend flight fetch trigger
     response_document.origin_just_set = graph_document.get("origin_just_set", False)
+    # Copy tiles_replaced flag — frontend should REPLACE tiles, not merge additively
+    response_document.tiles_replaced = graph_document.get("tiles_replaced", False)
 
     # --- Build and return response ---
     return GraphPlanResponse(
@@ -1876,7 +1883,7 @@ async def graph_plan_endpoint(
 
 
 @app.post("/api/graph_plan/stream")
-@limiter.limit("3/minute;15/hour")
+@limiter.limit("10/minute;40/hour")
 async def graph_plan_stream_endpoint(
     request: Request,
     req: GraphPlanRequest,
@@ -2086,6 +2093,13 @@ async def graph_plan_stream_endpoint(
                             f"final.categories={_final_cats}, "
                             f"doc.origin={doc_inputs.get('origin')}"
                         )
+                    # Inject user-pinned tiles into metadata so graph state preserves them
+                    if document_data.user_pinned_tiles:
+                        if "metadata" not in session_state:
+                            session_state["metadata"] = {}
+                        session_state["metadata"]["user_pinned_tiles"] = (
+                            document_data.user_pinned_tiles
+                        )
             except Exception as e:
                 logger.warning(f"[{request_id}] Failed to load document for session: {e}")
 
@@ -2280,6 +2294,18 @@ async def graph_plan_stream_endpoint(
                         "extracted_settings"
                     )
 
+                    # Convert graph-built day_cards for persistence
+                    graph_day_cards_raw = graph_doc.get("itinerary_day_cards")
+                    day_card_objs = None
+                    persist_view_state = graph_doc.get("plan_view_state")
+                    if graph_day_cards_raw:
+                        day_card_objs = [
+                            DayCard(**dc) if isinstance(dc, dict) else dc
+                            for dc in graph_day_cards_raw
+                        ]
+                        # Promote to S3 when builder succeeded (matches expand-itinerary)
+                        persist_view_state = "S3_ITINERARY_READY"
+
                     updated_doc = await apply_planner_update(
                         db,
                         doc=document,
@@ -2288,11 +2314,11 @@ async def graph_plan_stream_endpoint(
                         branches=branch_objs if branch_objs else None,
                         tiles=tiles_dict if tiles_dict else None,
                         # ViewModel fields for session restoration
-                        plan_view_state=graph_doc.get("plan_view_state"),
+                        plan_view_state=persist_view_state,
                         strategy_sections=strategy_section_objs,
                         executed_strategy_topics=graph_doc.get("executed_strategy_topics"),
                         pending_strategy_topics=graph_doc.get("pending_strategy_topics"),
-                        day_cards=graph_doc.get("day_cards"),
+                        day_cards=day_card_objs,
                         can_expand_to_itinerary=graph_doc.get("can_expand_to_itinerary"),
                         extracted_settings=nl_extracted,
                     )
@@ -2477,11 +2503,43 @@ async def graph_plan_stream_endpoint(
 
             # Copy origin_just_set flag for frontend flight fetch trigger
             response_document.origin_just_set = graph_document.get("origin_just_set", False)
+            # Copy tiles_replaced flag — frontend should REPLACE tiles, not merge additively
+            response_document.tiles_replaced = graph_document.get("tiles_replaced", False)
+
+            # Copy itinerary day cards if builder ran during graph execution
+            graph_day_cards = graph_document.get("itinerary_day_cards")
+            if graph_day_cards:
+                response_document.day_cards = [
+                    DayCard.model_validate(dc) if isinstance(dc, dict) else dc
+                    for dc in graph_day_cards
+                ]
+                # Promote to S3 when builder succeeded (matches expand-itinerary)
+                response_document.plan_view_state = "S3_ITINERARY_READY"
+
+            # Copy suggestions from graph document (unfiltered by validator)
+            # The validator strips question marks but synthesizer chips are curated
+            graph_suggestions = graph_document.get("suggested_responses")
+            if graph_suggestions and not response_document.suggested_responses:
+                response_document.suggested_responses = graph_suggestions
+
+            # Copy suggestion chip metadata (progression hints etc)
+            graph_chip_meta = graph_document.get("suggested_response_meta")
+            if graph_chip_meta:
+                response_document.suggested_response_meta = graph_chip_meta
+
+            # Copy constraint validation state
+            graph_constraints = graph_document.get("constraints_validated")
+            if graph_constraints:
+                response_document.constraints_validated = graph_constraints
+            graph_violations = graph_document.get("constraint_violations")
+            if graph_violations:
+                response_document.constraint_violations = graph_violations
 
             _debug(
                 f"[MAIN.PY] Graph output: plan_view_state={response_document.plan_view_state}, "
                 f"strategy_sections={len(response_document.strategy_sections or [])}, "
-                f"tiles={len(response_document.tiles or {})}"
+                f"tiles={len(response_document.tiles or {})}, "
+                f"day_cards={len(response_document.day_cards or [])}"
             )
 
             # Build full response matching GraphPlanResponse
@@ -3090,6 +3148,7 @@ class FillDayRequest(BaseModel):
 
     day_number: int
     categories: List[str] | None = None
+    pinned_tile_ids: List[str] | None = None  # Place existing tiles instead of generating
 
 
 @app.post("/api/document/fill-day")
@@ -3128,7 +3187,15 @@ async def fill_day_endpoint(
 
     # Check day is actually free (no non-buffer, non-placeholder blocks)
     real_blocks = [b for b in day_card.blocks if not b.is_buffer and b.activity_type != "free_day"]
+    logger.debug(
+        f"[FILL-DAY] day={body.day_number} doc_version={doc.version} "
+        f"real_blocks={len(real_blocks)} block_types={[b.activity_type for b in day_card.blocks]}"
+    )
     if real_blocks:
+        logger.warning(
+            f"[FILL-DAY] 409 rejected: day={body.day_number} "
+            f"real_blocks={[(b.activity_type, b.id) for b in real_blocks]}"
+        )
         raise HTTPException(status_code=409, detail=f"Day {body.day_number} already has activities")
 
     # Determine categories (None = generator picks destination-appropriate activities)
@@ -3166,25 +3233,41 @@ async def fill_day_endpoint(
         )
     # ── End constraint filter ─────────────────────────────────────────
 
-    # Determine month
-    date_str = day_card.date or ti.start_date
-    month = date_str[:7] if date_str and len(date_str) >= 7 else "unknown"
+    # ── Pinned tiles: place existing tiles instead of generating ──────
+    if body.pinned_tile_ids:
+        pinned_tiles = []
+        for tid in body.pinned_tile_ids:
+            tile_model = doc_data.tiles.get(tid)
+            if tile_model:
+                td = tile_model.model_dump()
+                td.setdefault("meta", {})["pinned_day"] = body.day_number
+                pinned_tiles.append(td)
+        if not pinned_tiles:
+            raise HTTPException(status_code=404, detail="No matching tiles found in document")
+        tiles = pinned_tiles
+    else:
+        # ── Generate tiles via LLM ───────────────────────────────────
+        date_str = day_card.date or ti.start_date
+        month = date_str[:7] if date_str and len(date_str) >= 7 else "unknown"
 
-    # Generate tiles
-    from app.services.experience_generator import generate_experience_tiles_for_day
+        from app.services.experience_generator import generate_experience_tiles_for_day
 
-    budget_int = int(ti.budget) if ti.budget else None
-    tiles = await generate_experience_tiles_for_day(
-        destination=destination,
-        categories=categories,
-        month=month,
-        day_number=body.day_number,
-        budget=budget_int,
-        tiles_per_day=3,
-    )
+        budget_int = int(ti.budget) if ti.budget else None
+        tiles = await generate_experience_tiles_for_day(
+            destination=destination,
+            categories=categories,
+            month=month,
+            day_number=body.day_number,
+            budget=budget_int,
+            tiles_per_day=1,
+        )
 
-    if not tiles:
-        return {"day_number": body.day_number, "tiles_added": 0, "version": doc.version}
+        # Tag fill-day tiles so the builder won't redistribute them
+        for tile in tiles:
+            tile.setdefault("meta", {})["pinned_day"] = body.day_number
+
+        if not tiles:
+            return {"day_number": body.day_number, "tiles_added": 0, "version": doc.version}
 
     # Convert tiles to rich DayBlocks
     _VALID_PERIODS = {"morning", "afternoon", "evening"}
@@ -3210,10 +3293,10 @@ async def fill_day_endpoint(
             DayBlock(
                 id=tile["id"],
                 period=period,
-                activity_type=meta.get("category", "activity"),
+                activity_type=tile.get("title", "Experience"),
                 intensity="moderate",
-                summary=tile.get("title", "Activity")[:60],
-                specialist_type="experience",
+                summary=tile.get("title", "Experience"),
+                specialist_type=meta.get("category", "experience"),
                 image_url=tile.get("image_url"),
                 duration=duration_str,
                 booked_tile=tile,
@@ -3225,6 +3308,20 @@ async def fill_day_endpoint(
     for tile in tiles[:3]:
         tile_id = tile["id"]
         doc_data.tiles[tile_id] = Tile(**{k: v for k, v in tile.items() if k in Tile.model_fields})
+
+    # Persist tiles for rebuild survival — tagged by source and priority
+    for tile in tiles[:3]:
+        td = {**tile}
+        td["source_agent"] = "experience_generator"
+        td.setdefault("meta", {})["pinned_day"] = body.day_number
+        is_browse_add = bool(body.pinned_tile_ids)
+        doc_data.user_pinned_tiles[td["id"]] = {
+            "tile": td,
+            "source": "browse_add" if is_browse_add else "auto_fill",
+            "priority": "high" if is_browse_add else "low",
+            "category": (td.get("meta") or {}).get("category", "activities"),
+            "preferred_day": body.day_number,
+        }
 
     # Preserve buffer blocks, append new activity blocks
     buffer_blocks = [b for b in day_card.blocks if b.is_buffer]
@@ -3289,7 +3386,7 @@ def _check_idempotency(key: str) -> bool:
 
 
 @app.post("/api/expand-itinerary")
-@limiter.limit("3/minute;15/hour")
+@limiter.limit("20/minute")  # Builder-only (no LLM) — frontend mutex prevents abuse
 async def expand_itinerary_endpoint(
     request: Request,
     req: ExpandItineraryRequest,
@@ -3436,7 +3533,45 @@ async def expand_itinerary_endpoint(
                         f"tiles/specialists use cached values from last graph run."
                     )
 
-                tiles_count = len(req.tiles) if req.tiles else 0
+                # Tile source selection — gated on force_full_rebuild.
+                # force_full_rebuild=True  → auto-expand after chat. Frontend tiles
+                #   may be stale (mergeEnvelope adds but never removes). Session
+                #   tiles are authoritative (written by apply_planner_update before SSE).
+                # force_full_rebuild=False → preference regen / manual rebuild.
+                #   Frontend tiles are authoritative (include hearted tiles, filters).
+                if req.force_full_rebuild:
+                    tiles_data = (
+                        {
+                            tid: t.model_dump() if hasattr(t, "model_dump") else t
+                            for tid, t in doc_data.tiles.items()
+                        }
+                        if doc_data.tiles
+                        else {}
+                    )
+                    _debug(
+                        f"📊 [expand-itinerary] Using DB tiles ({len(tiles_data)}) "
+                        f"[force_full_rebuild=True, frontend sent "
+                        f"{len(req.tiles) if req.tiles else 0}]"
+                    )
+                else:
+                    if req.tiles and len(req.tiles) > 0:
+                        tiles_data = req.tiles
+                        _debug(f"📊 [expand-itinerary] Using frontend tiles ({len(tiles_data)})")
+                    else:
+                        tiles_data = (
+                            {
+                                tid: t.model_dump() if hasattr(t, "model_dump") else t
+                                for tid, t in doc_data.tiles.items()
+                            }
+                            if doc_data.tiles
+                            else {}
+                        )
+                        _debug(
+                            f"📊 [expand-itinerary] Using DB tiles ({len(tiles_data)}) "
+                            f"— no frontend tiles provided"
+                        )
+
+                tiles_count = len(tiles_data)
                 _debug(
                     f"📊 [expand-itinerary] Input data: "
                     f"strategy_sections={len(strategy_sections_data)}, "
@@ -3566,7 +3701,7 @@ async def expand_itinerary_endpoint(
                     start_date=start_date,
                     end_date=end_date,
                     strategy_sections=strategy_sections_data,
-                    tiles=req.tiles or {},
+                    tiles=tiles_data,
                     destination=trip_inputs_data.get("destination"),
                     origin=trip_inputs_data.get("origin"),
                     preferences=preferences_input,

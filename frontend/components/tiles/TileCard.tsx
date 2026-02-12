@@ -1,4 +1,4 @@
-import { Check, Heart, MapPin, Settings } from 'lucide-react';
+import { Check, Clock, Heart, MapPin, Moon, Settings, Sun, Sunset } from 'lucide-react';
 import {
   type KeyboardEvent,
   memo,
@@ -187,6 +187,17 @@ export const TileCard = memo(function TileCard({
   const features = useMemo(() => getFeaturesForTile(tile), [tile]);
   const relevanceBadges = useMemo(() => getRelevanceBadges(tile), [tile]);
   const amenityIcons = useMemo(() => getAmenityIconsWithLabels(tile), [tile]);
+  const activityMeta = useMemo(() => {
+    if (tile.type !== 'activity') return null;
+    const m = tile.meta as Record<string, unknown> | undefined;
+    if (!m) return null;
+    return {
+      category: typeof m.category === 'string' ? m.category : undefined,
+      durationHours: typeof m.duration_hours === 'number' ? m.duration_hours : undefined,
+      timeOfDay: typeof m.time_of_day === 'string' ? m.time_of_day : undefined,
+      description: typeof m.description === 'string' && m.description ? m.description : undefined,
+    };
+  }, [tile]);
   const isFlight = isFlightType(tile.type || '');
   const isHotel = tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay');
 
@@ -429,6 +440,38 @@ export const TileCard = memo(function TileCard({
             </div>
           )}
         </div>
+
+        {/* Activity metadata badges */}
+        {activityMeta && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {activityMeta.category && (
+              <span className="bg-muted text-muted-foreground inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium uppercase tracking-wide">
+                {activityMeta.category}
+              </span>
+            )}
+            {activityMeta.durationHours != null && (
+              <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+                <Clock className="h-3 w-3" />
+                {activityMeta.durationHours}h
+              </span>
+            )}
+            {activityMeta.timeOfDay && (
+              <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+                {activityMeta.timeOfDay === 'morning' && <Sun className="h-3 w-3" />}
+                {activityMeta.timeOfDay === 'afternoon' && <Sunset className="h-3 w-3" />}
+                {activityMeta.timeOfDay === 'evening' && <Moon className="h-3 w-3" />}
+                {activityMeta.timeOfDay.charAt(0).toUpperCase() + activityMeta.timeOfDay.slice(1)}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Activity description */}
+        {activityMeta?.description && (
+          <p className="text-muted-foreground line-clamp-1 text-sm">
+            {activityMeta.description}
+          </p>
+        )}
 
         {(tile.location_label || amenityIcons.length > 0) && (
           <div className="text-muted-foreground -mt-1 flex items-center gap-1.5 text-sm">

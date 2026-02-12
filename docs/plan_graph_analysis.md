@@ -343,6 +343,8 @@ The Router uses two distinct execution paths depending on whether a plan is alre
 2. `_apply_settings_to_state(state, settings_dict)` — writes hotel/flight settings to `TripSettings`
 3. `_apply_modifications_to_state(state, mods_dict)` — processes removals, skill level changes, budget/hotel resets
 
+**Regex settings merge fallback:** After LLM extraction, `_detect_settings_from_message()` (regex-based) runs as a fallback to catch settings the LLM missed (e.g., "5-star hotels only" → `hotel_min_stars`). Regex settings are merged into LLM settings for keys not already extracted. Additionally, `reset_hotel` / `reset_budget` flags are suppressed when the same extraction also sets `hotel_settings` / `budget` (prevents the LLM from incorrectly flagging a reset alongside a concrete setting).
+
 **Pre-plan path:** Regex detection runs first (`DATE_INDICATORS`, `ORIGIN_PATTERNS`, `_detect_actionable_input()`). The opportunistic LLM extraction gate fires only when `has_date_in_message and not router_extracted_fields`, avoiding redundant extraction when the post-plan path already ran.
 
 **Reader functions** in `router_category_sync.py` bridge `RouterOutput` dict to structured dicts:
@@ -405,6 +407,8 @@ This fixes the bug where users said "I want to go diving March 1-8" but were ask
 **Plan-Active Extraction Gate:** When a plan is active (`plan_view_state` in `S2_STRATEGY_READY`/`S3_ITINERARY_READY`), the LLM extractor fires on EVERY message (post-plan LLM-first path). This ensures date modifications from suggestion chips (e.g., "Extend to Feb 17" -- abbreviated months that regex misses) are always extracted. Cost: ~$0.0004/call x 5-8 planning turns.
 
 **Post-Extraction Intent Upgrade:** After opportunistic extraction, if dates changed (`start_date != old_start_date or end_date != old_end_date`), `planning_intent` is upgraded to `"soft_transition"` regardless of the initial classification. This routes to the soft_transition path that re-queues specialists with new dates, preventing the stale "exploring" classification from short-circuiting.
+
+**Post-Plan Date Drift Guard:** After LLM extraction in the post-plan path, the router checks whether the user's text actually mentions date-change signals before accepting extracted date mutations. If `start_date` changed but the user text lacks start-related keywords ("start", "begin", "from", "depart", "leave on", "move"), the start date is reverted to `old_start`. Same for `end_date` with end-related keywords ("extend", "until", "end", "through", "shorten", "move"). Prevents the LLM from drifting dates on messages like "tell me more about diving" that happen to re-extract dates with slight shifts.
 
 **Specialist Detection:**
 
@@ -622,6 +626,8 @@ for current_topic in all_topics:
 - Selective regeneration check at top (skip cached topics via `return`, not `return state`)
 - Creates `VerticalSpecialist(topic)`, calls `generate_output(state)` (Unsplash cache already warm)
 - Handles infeasible (`return` — loop continues), caveat, feasible paths
+- **Destination-level infeasibility cache:** If a cached section has `feasibility_status == "infeasible"` and the destination hasn't changed, the specialist is skipped without re-querying the LLM (infeasibility is destination-dependent, not date-dependent — skiing in Bali stays infeasible regardless of trip duration). Returns early with `specialist_infeasible` metadata + `SPECIALIST_INFEASIBLE` UI event.
+- **Parallel batch filter:** Before parallel execution, specialists already marked infeasible at the current destination (via `strategy_sections`) are filtered from `all_specialists` to avoid redundant LLM calls.
 - Assembles strategy section, injects constraints/content blocks, builds UI state
 
 **Cache Strategy:**
@@ -818,7 +824,7 @@ else:
 
 **Experience Generator Service:** `backend/app/services/experience_generator.py`
 
-Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output (`tiles_per_category` param, default 2). `LogisticsNode._compute_tiles_per_category()` scales the count based on placeable days (free days + co-schedulable specialist days): `clamp(total_placeable // num_categories, 2, 4)` where `free_days = trip_days − specialist_activity_days − 2` and `total_placeable = free_days + specialist_days`. Each tile includes title, subtitle, category, duration, price estimate, time of day, and skill level. Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
+Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output (`tiles_per_category` param, default 2). `LogisticsNode._compute_tiles_per_category()` scales the count based on placeable days (free days + co-schedulable specialist days): `clamp(total_placeable // num_categories, 2, 4)` where `free_days = trip_days − specialist_activity_days − 2` and `total_placeable = free_days + specialist_days`. Each tile includes title, subtitle, category, duration, price estimate, time of day, skill level, and description (one-sentence hook, e.g. "Traditional flow with rice paddy views"). Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
 
 **Duration constraint:** System prompt enforces 1–4 hour single-session activities. Post-processing clamps `duration_hours > 4` to 4h to prevent multi-day retreats from being generated (e.g., "Bali Yoga Retreat" at 48h).
 
@@ -841,6 +847,7 @@ All checks are registry-driven. Geographic and seasonal checks were deleted — 
 | Route | `validate_place_exists(dest)` returns false | blocking |
 | Budget | Total cost < budget | blocking |
 | Budget | Category cost < allocation | warning |
+| Temporal | start_date in past (`DATE_IN_PAST`) | blocking |
 | Temporal | end_date > start_date | blocking |
 | Temporal | Duration < 30 days | info |
 | Specialist | Departure buffer (any `has_nofly_buffer` specialist) | blocking |
@@ -913,6 +920,7 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - Budget breakdown: Per-category cost vs allocation (flights 30%, hotels 40%, activities 30%)
 - Structured constraint violations: Budget violations get `## Budget Issue` header with conversational framing; non-budget/non-route violations get `## Constraint Alerts` with `suggested_action` passthrough. Falls back to plain `state.constraints_violated` string dump for older sessions without rich metadata.
 - Day preference context: User-requested day allocations per activity category
+- Builder drop reporting: When `last_builder_drop_ratio > 0` and builder succeeded, includes "Activity placement: X of Y specialist activities placed (Z couldn't fit)" with natural-language framing guidance (e.g., "extending your trip by a couple days would fit them all"). Reads `builder_activities_input` and `builder_activities_placed` from `state.metadata`.
 
 **LLM Failure Fallback:**
 When OpenAI returns `None`, all response types return a static `FALLBACK_MESSAGE` ("I've updated your trip plan — check the itinerary on the right. Let me know if you'd like to adjust anything."). `GREETING_TEMPLATE` is preserved for the fast greeting path (no LLM).
@@ -988,7 +996,10 @@ Transforms specialist content + tiles into day-by-day timeline.
 │  4.    Buffer Injection - Safety blocks (no-fly, acclimatization)│
 │  5.    Activity Distribution - Clustering OR round-robin         │
 │  5.5   Free Day Placeholders - Add placeholders for empty days   │
-│  5.6   Experience Tile Placement - Tier 2 tiles on free days     │
+│  5.6   Experience Tile Placement:                                │
+│         Pass 0: Pinned tiles on target day (fill-day Browse→Add) │
+│         Pass 1: Free day placement (existing behavior)           │
+│         Pass 2: Co-schedule on specialist days with capacity     │
 │  5.25  Preferred Activity Placement - Fill free days with hearts │
 │  6.    Tile Matching - Hotels span all days, preferences weighted│
 │  6.5   Constraint Tagging - Inline constraints for frontend      │
@@ -1051,7 +1062,7 @@ When the `no_altitude_after_dive` constraint is present and both diving and alti
 1. **Phase A:** All diving activities placed on earliest available days
 2. **Phase B:** One buffer/rest day inserted after last dive day
 3. **Phase C:** All altitude activities placed after the buffer
-4. **Phase D:** Remaining specialists (non-dive, non-altitude) placed on remaining slots
+4. **Phase D:** Co-schedule remaining specialists onto existing days using capacity-based scoring (replaces slot_ptr). Scores each candidate day: `headroom * 0.6 + complement * 0.4`. Buffer days only block altitude specialists (not e.g. surfing). Max 1 activity per specialist per day. When Tier 2 categories exist, reserves 1 block + 2h per day so Phase 5.6 has room for experience tiles. Unplaced activities defer to round-robin fallback.
 
 This ensures the 24h decompression gap is respected in the schedule layout. The constraint is detected via `_find_constraint(constraints, "no_altitude_after_dive")` and the `constraints` parameter is now passed from the call site at Phase 5.
 
@@ -1105,7 +1116,7 @@ Each specialist type has its own constraint generator:
 - `tide_timing` (info): Applied to all surfing activities
 
 **Climbing Constraints:**
-- `altitude_acclimatization` (warning): Applied above 3000m elevation
+- `altitude_acclimatization` (warning): Applied above 3000m elevation. Builder places the acclimatization buffer on the day before the first altitude-activity day (hiking/climbing/skiing blocks), not hardcoded to day 3. Fallback to day 3 if no altitude blocks are scheduled.
 - `gear_inspection` (info): Applied to all climbing activities
 
 **Sailing Constraints:**
@@ -1127,13 +1138,18 @@ Each specialist type has its own constraint generator:
 | `avalanche_awareness` | warning | skiing | Off-piste/backcountry safety |
 | `advanced_terrain` | info | skiing | Black diamond skill level |
 | `tide_timing` | info | surfing | Check swell/tide forecast |
-| `altitude_acclimatization` | warning | climbing | Above 3000m elevation |
+| `altitude_acclimatization` | warning | climbing | Above 3000m elevation. Placed day before first altitude-activity (hiking/climbing/skiing), fallback to day 3 |
 | `gear_inspection` | info | climbing | Equipment safety check |
 | `weather_window` | info | sailing | Check weather conditions |
 | `guide_required` | info | wildlife_safari | Professional guide for game drives |
 | `proximity_optimized` | success | hotel | Location optimized for activities |
 
 **Frontend Rendering:** See `docs/ux_unified_architecture.md` Section I.A.2 "Inline Constraints Display"
+
+**Result Metrics:**
+- `total_activities_input`: Activities fed into distribution
+- `total_activities_placed`: Activities actually placed on timeline (excludes buffers, logistics, free days)
+- Drop ratio (`1 - placed/input`) stored in `state.metadata["last_builder_drop_ratio"]` for guard suppression and synthesizer drop reporting
 
 **Preference Weighting:**
 - User heart preferences passed via `PreferenceOverrideInput`
@@ -1149,7 +1165,7 @@ Each specialist type has its own constraint generator:
 **Cross-Domain Constraints:** Declarative `CrossDomainBlock` entries on the specialist registry enforce temporal buffers between specialists. Diving's `ALTITUDE_AFTER_DIVE` block prevents scheduling hiking/skiing/climbing within 24h.
 
 Two enforcement layers in the guard:
-1. **Block-level** (`check_specialist_constraints()`): Reads `plan.itinerary_blocks` for day-level scheduling conflicts. Only effective when blocks are populated (specialist just ran).
+1. **Block-level** (`check_specialist_constraints()`): Reads `plan.itinerary_blocks` for day-level scheduling conflicts. Only effective when blocks are populated (specialist just ran). **Capacity gate:** if the trip has enough days (`available_after_buffer >= 2`), the violation is skipped (builder handles sequencing). Mirrors the capacity logic in `_check_cross_domain_from_sections`.
 2. **Section-level** (`_check_cross_domain_from_sections(start_date, end_date)`): Reads `persistent.strategy_sections` to detect specialist co-existence. **Capacity-aware:** only emits a violation when the trip is too short for minimum viable (available_after_buffer < 2). When the trip is long enough, the builder trims instead. Deduplicated against block-level violations by `code`. **Suppressed on subsequent turns** when the corresponding builder constraint is already persisted in `existing_rules`. Mapping: `_violation_to_constraint_rule = {"ALTITUDE_AFTER_DIVE": "no_altitude_after_dive"}`.
 
 **Violation lifecycle:** Turn N (first co-existence, trip long enough): no violation → builder trims → constraint injected. Turn N (trip too short): violation fires → constraint injected → user informed with suggestion chips. Turn N+1+: constraint already in `existing_rules` → section-level violation suppressed.
@@ -1631,14 +1647,24 @@ has_activity = any(
 |--------|-----------|----------|
 | `ready` | Explicit planning signal OR (date AND activity) | Continue to PLANNING flow |
 | `actionable` | Tier 2 activity, removal, skill level, or setting reset (pre-exploration check) | Update categories/settings → `ACTIONABLE_TO_LOGISTICS` fast path. If mixed Tier 1+2, updates categories then falls through to `soft_transition` |
-| `soft_transition` | Has date OR activity (Tier 1 keyword) | **Routes to PLANNING** (dates/activities = actionable input). Detects specialists from both message text AND `activity_settings.categories` (UI pill selections). Syncs detected specialists to `activity_settings.categories` |
-| `exploring` | Generic question, no planning signals | Comprehensive answer + "What else?" |
+| `soft_transition` | Has date OR activity (Tier 1 keyword) | **Routes to PLANNING** (dates/activities = actionable input). Detects specialists from both message text AND `activity_settings.categories` (UI pill selections). Syncs detected specialists to `activity_settings.categories`. On date changes, clears `constraint_hash`, `itinerary_blocks` (prevents false ALTITUDE_AFTER_DIVE from stale blocks), and `parallel_llm_results` (forces specialist re-run). |
+| `exploring` | Generic question, no planning signals | Comprehensive answer + "What else?". **Auto-upgrade:** If destination + start_date + end_date already collected from prior turns and no plan is active yet, upgrades to `soft_transition` (prevents "dates turn 1 + destination turn 2" from stalling in exploration) |
 | `exploring` (post-plan) | Question with active plan (S2/S3) | Section-specific answer via `question_answer` short-circuit |
 
 ### Post-Planning Question Routing
 
-When `planning_intent == "exploring"` and the plan is active (`plan_view_state` in S2/S3), the router
-classifies the question type and returns section-specific content instead of canned exploration responses:
+When `planning_intent == "exploring"` and the plan is active, the router classifies the question type
+and returns section-specific content instead of canned exploration responses.
+
+**Plan-active detection** uses `_is_plan_active(state)` (intent_router.py), which checks two signals:
+1. **Primary:** `plan_view_state` in metadata (persisted by `format_result` since response_envelope.py writes it back)
+2. **Fallback:** `strategy_sections` contains any section with `specialist_type` not in `("general", "local_expert")`
+
+The fallback ensures plan detection works even if `plan_view_state` is missing from restored state. `local_expert`
+sections are excluded because they exist pre-plan (exploration phase). This helper is used in three places:
+the POST-PLAN FAST PATH gate, the exploration post-plan branch, and `_build_plan_progression_suggestions`.
+
+**Question routing:**
 
 - **Recognized question** (e.g., accommodation, weather): `generate_comprehensive_answer` produces a
   section-specific answer from `LOCAL_EXPERT_KNOWLEDGE`. Sets `short_circuit_type = "question_answer"`.
@@ -2027,9 +2053,12 @@ No hardcoded constraints (LLM-generated only)
 | Specialist | Cross-domain via sections (stateless fallback) | blocking | Unfixable |
 | Capacity | Activity count > available days | blocking | Auto-fixable |
 | Capacity | Day preference count > effective days (`DAY_PREFERENCE_EXCEEDS_CAPACITY`) | blocking | Auto-fixable |
+| Capacity | Multi-specialist aggregate exceeds capacity (`MULTI_SPECIALIST_CAPACITY_EXCEEDED`) | warning | Auto-fixable |
+
+**Multi-Specialist Aggregate Capacity Check:** Sums activity counts across ALL active specialists. Individual specialist checks may pass, but combined they can exceed timeline capacity (`effective_days * 2` specialist activities max, since specialist activities are 3-5h each). Accounts for cross-domain buffer days. Fires when `len(active_specialists) >= 2` and `total_activities > max_capacity`.
 
 **Builder-Aware Suppression:**
-When the ItineraryBuilder persists a constraint rule (e.g., `no_fly_buffer`) and succeeds (`state.metadata["last_builder_success"] == True`), the guard suppresses duplicate violations on the next turn — the builder is already enforcing the constraint via clustering. If the builder **failed** (trip too short), the violation is re-surfaced so the synthesizer can generate resolution chips (e.g., "Extend to Mar 12").
+When the ItineraryBuilder persists a constraint rule (e.g., `no_fly_buffer`) and succeeds (`state.metadata["last_builder_success"] == True`) with acceptable drop ratio (`last_builder_drop_ratio < 0.5`), the guard suppresses duplicate violations on the next turn — the builder is already enforcing the constraint via clustering. If the builder **failed** OR dropped ≥50% of activities, the violation is re-surfaced so the synthesizer can generate resolution chips (e.g., "Extend to Mar 12").
 
 **Deleted checks (handled by specialist LLM feasibility):**
 - ~~Geographic: Diving in landlocked country~~ → specialist `check_feasibility()` returns `infeasible`
@@ -2051,7 +2080,7 @@ When the ItineraryBuilder persists a constraint rule (e.g., `no_fly_buffer`) and
 **Two-Tier LLM/API Caches (Cross-Session):**
 | Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
 |-------|-------------|---------|--------|--------|------------|---------|
-| Specialist | `specialist_cache.py` | 128 | 1h | 7 days | `specialist:{topic}:{dest}:{start}:{end}:{skill}:{phash}` | LLM outputs |
+| Specialist | `specialist_cache.py` | 128 | 1h | 7 days | `specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{phash}` | LLM outputs |
 | Experience | `experience_generator.py` | 128 | 1h | 7 days | `experience:{dest}:{sorted_cats}:{month}:n{tiles_per_category}` | Tier 2 tiles |
 | Tile | `tile_cache.py` | 256 | 24h | 24h | `tiles:{provider}:{type}:{dest}:{dates}` | Provider API data |
 | Router | `router_cache.py` | 500 | 1h | N/A | `SHA256({text}:{date})` | NL extraction |
@@ -2118,7 +2147,7 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 - Separate `_stats_lock` RLock for hit/miss counters (prevents counter race conditions)
 - Max size: 128 entries
 - TTL: 1 hour
-- Key format: `specialist:{topic}:{dest}:{start}:{end}:{skill}:{phash}`
+- Key format: `specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{phash}`
 
 **Tier 2: Database Cache**
 - Table: `response_cache` (filtered by `cache_type = 'specialist'`)
@@ -2131,8 +2160,8 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 |-----------|---------|---------|
 | topic | `diving` | Specialist type |
 | destination | `bali` | Normalized lowercase |
-| start_date | `2025-02-11` | Exact trip start |
-| end_date | `2025-02-14` | Exact trip end (duration affects activity count) |
+| month | `2025-02` | YYYY-MM from start_date (seasonal bucketing) |
+| bucket | `week` | Duration bucket: weekend(1-3d), short(4-5d), week(6-8d), extended(9-11d), twoweek(12-15d), long(16d+). Max 3-day spread per bucket prevents activity count regression (cached 9-day result underserving 14-day trip) |
 | skill | `advanced` / `any` | User skill level (prevents cross-skill cache poisoning) |
 | phash | `9c22ff5f` | 8-char blake2s hash of prompt file (auto-invalidates on edit) |
 
@@ -2188,8 +2217,10 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Inline wi
 **Single-Day Generation:** `generate_experience_tiles_for_day()` generates tiles for a specific day number. Round-robins across provided categories, calls `generate_single_category()` in parallel (reuses L1/L2 cache). `base_index = day_number * 100` for unique tile IDs. When `categories` is `None`/empty, falls back to `["activities"]` so the LLM picks destination-appropriate experiences. Used by the `/api/document/fill-day` endpoint (no graph execution).
 
 **Fill-Day Endpoint Enhancements** (`/api/document/fill-day`):
+- **Single tile per fill:** `tiles_per_day=1` — generates one activity per fill request for fine-grained control
+- **Pinned placement:** Generated tiles are tagged with `meta.pinned_day = day_number`, ensuring the builder places them on the target day (via Pass 0) instead of redistributing
 - **Adjacent-day constraint filter:** Before generating, scans neighboring day_cards for diving specialist blocks and excludes altitude activities (hiking, climbing, skiing) from generation categories
-- **Rich DayBlocks:** Generated blocks include `image_url`, `duration` (formatted string), `booked_tile`, `booking_category`, and use tile's `time_of_day` for period assignment (fallback to round-robin)
+- **Rich DayBlocks:** `activity_type` uses `tile.title` (display name), `specialist_type` uses `meta.category` (matching builder convention). Blocks include `image_url`, `duration` (formatted string), `booked_tile`, `booking_category`, and use tile's `time_of_day` for period assignment (fallback to round-robin)
 - **Tile store merge:** Generated tiles are added to `doc_data.tiles` map (enables hearting/referencing in frontend)
 - **Category-aware labels:** Day card label uses unique categories from generated tiles (e.g., "Yoga & Beach Day") instead of generic "Filled"
 - **Categories optional:** `categories` param no longer required (400 → graceful fallback to destination-appropriate activities)
@@ -2203,11 +2234,12 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Inline wi
 **Solution:** Three complementary optimizations reducing latency from 10.6s → <5s (50%+ improvement):
 
 **Tier A: Schema Compression (15-20% reduction)**
-- Removed unused `subtitle` field from `ExperienceTile` schema (7→6 fields)
-- Compressed system prompt (~80→45 tokens)
+- Removed unused `subtitle` field, added `description` field (one-sentence hook, e.g., "Traditional flow with rice paddy views")
+- Compressed system prompt (~80→~50 tokens) — requests vivid one-sentence description per activity
 - Derived subtitle: `f"{time_of_day.capitalize()} {category.capitalize()}"` (e.g., "Morning Yoga")
-- **Critical:** NO cache version suffix needed - tile dict shape is byte-identical (same fields, same types)
-- Impact: 5-8s → 4-6.4s LLM call time
+- `description` propagated to tile dict via `meta.description`, displayed in MiniCard/TileCard/TileDetailsModal
+- **Critical:** Cache key unchanged — tile dict shape evolved (new field), stale cache entries lack `description` (graceful: renders empty)
+- Impact: 5-8s → 4-6.4s LLM call time (description adds ~10 tokens per tile, negligible)
 
 **Tier B: Speculative Prefetch (2-4s hidden in mixed flows)**
 - Router fires `asyncio.create_task(generate_experiences(..., state=None))` when Tier 2 intent detected
@@ -2233,8 +2265,8 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Inline wi
 
 **Files Modified:**
 - `experience_generator.py`: Schema compression, parallel generation, `generate_single_category()`
-- `intent_router.py`: Prefetch trigger, `_prefetch_tier2_experiences()` helper
-- `logistics_node.py`: Prefetch consumption logic (both mixed and pure Tier 2 paths)
+- `intent_router.py`: Prefetch trigger, `_prefetch_tier2_experiences()` helper. **Changed:** Tier 2 prefetch now fires regardless of Tier 1 presence (uses full `activity_settings.categories` minus Tier 1, not just additions). This ensures mixed inputs like "diving and yoga" prefetch yoga tiles during specialist execution. L1/L2 cache makes redundant prefetches ~0ms.
+- `logistics_node.py`: Prefetch consumption logic (both mixed and pure Tier 2 paths). **Changed:** Hotel search now uses `await hotel_provider.search_async(ctx)` instead of sync `asyncio.run()` wrapper, avoiding event-loop blocking in async contexts.
 
 #### Session-Level Cache (`parallel_llm_results`)
 
@@ -2328,7 +2360,7 @@ Queries that reference conversation context are NOT cached to prevent bugs:
 | "I want that one" | ❌ No | "that" depends on context |
 | "Same dates as before" | ❌ No | "same" depends on context |
 
-**Context Words Detected:** `there`, `that`, `this`, `it`, `them`, `same`, `again`, `too`, `also`
+**Context Words Detected:** `there`, `that`, `this`, `it`, `them`, `same`, `again`, `too`, `also`, `extend`, `shorten`, `more days`, `fewer days`
 
 **Why Key Includes Date:** Relative dates like "next Friday" resolve differently depending on when asked.
 
@@ -2858,9 +2890,14 @@ Phase 5.5: Free Day Placeholders (_handle_empty_days)
 ├─ Compute Tier 2 categories (user selections minus scheduled specialists)
 └─ Pass Tier 2 categories for later experience tile placement
 
-Phase 5.6: Experience Tile Placement (_place_experience_tiles) — Two-Pass Co-Scheduling
+Phase 5.6: Experience Tile Placement (_place_experience_tiles) — Three-Pass Co-Scheduling
 ├─ Filter tiles by source_agent == "experience_generator"
 ├─ Sort by time_of_day: morning → afternoon → evening
+├─ Pass 0 (Pinned Tiles from fill-day):
+│   ├─ Tiles with meta.pinned_day are placed on their target day first
+│   ├─ Respects day capacity (_day_remaining_capacity check)
+│   ├─ Removes free_day placeholder on target day, resets "Free Day" label
+│   └─ Tiles that can't fit fall through to unpinned pool
 ├─ Pass 1 (Free Days):
 │   ├─ Find free day indices (days with free_day placeholder blocks)
 │   ├─ Place 1-2 tiles per free day (if hours fit)
@@ -2991,6 +3028,10 @@ When activities exceed 11 hours, the builder:
 - `ConflictResolution` (if irreconcilable conflicts)
 
 **Trigger:** `/api/expand-itinerary` endpoint
+
+**Tile Source Selection:** The endpoint uses `force_full_rebuild` to decide tile source:
+- `force_full_rebuild=True` (auto-expand after chat): Uses DB tiles (session-authoritative, written by `apply_planner_update` before SSE). Frontend tiles may be stale from `mergeEnvelope` which adds but never removes.
+- `force_full_rebuild=False` (preference regen / manual rebuild): Uses frontend tiles if non-empty (include hearted tiles, user filters), falls back to DB tiles only when frontend sends none.
 
 ### Debugging the Itinerary Flow
 
@@ -3190,7 +3231,7 @@ return tile_idx <= user_idx
 
 **Implementation Files:**
 - `backend/app/tile_service/curated_provider.py::search()` - Budget, stars, skill filtering at provider level
-- `backend/app/tile_service/amadeus_provider.py::_search_async()` - Budget filtering post-API
+- `backend/app/tile_service/amadeus_provider.py::_search_async()` / `search_async()` - Budget filtering post-API. `search_async()` is a new public async entry point (both Flight and Hotel providers) for use from async contexts without `asyncio.run()` wrapping.
 - `backend/app/planner/nodes/logistics_node.py` - Post-fetch hotel star filter (applies to all providers including mock/cached tiles)
 
 ---
@@ -3298,7 +3339,7 @@ Built by `format_result()` orchestrator in `response_envelope.py`, which delegat
 | `_build_new_section()` | Build new strategy section for General Agent (delegates to 7 sub-functions) |
 | `_upsert_section_and_persist()` | SINGLETON/APPENDABLE upsert + anchor sort + metadata write (delegates to `SectionBuilder` service) |
 | `build_itinerary_from_state()` | Shadow: build itinerary at S2_STRATEGY_READY via `itinerary_adapter.py` |
-| `_build_response_envelope()` | Document + session_state + legacy fields + `itinerary_day_cards` |
+| `_build_response_envelope()` | Document + session_state + legacy fields + `itinerary_day_cards`. `suggested_responses` uses fallback: `state.suggested_replies` OR `state.metadata["synthesizer_output"]["suggested_replies"]` (recovers chips when GraphState parse loses the field). |
 
 #### SectionBuilder Service (`backend/app/planner/services/section_builder.py`)
 
@@ -3332,7 +3373,7 @@ Thin bridge from `GraphState` to `ItineraryBuilder`. Avoids circular import by d
 |----------|---------------|
 | `build_itinerary_from_state(state)` | Build `ItineraryResult` from graph state. Returns `None` if preconditions not met (no dates/sections). |
 
-Called by `format_result()` step 6.5 (shadow mode — exception → warning, doesn't block response). On success, sets `state.metadata["last_builder_success"] = True`; on failure, sets it to `False` and stores `state.metadata["last_builder_resolutions"]` (serialized `Resolution[]`) so the constraint guard on the next turn can decide whether to suppress or re-surface cross-domain violations.
+Called by `format_result()` step 6.5 (shadow mode — exception → warning, doesn't block response). On success, sets `state.metadata["last_builder_success"] = True`, computes `last_builder_drop_ratio` (`1.0 - placed/input`), and persists `builder_activities_input` / `builder_activities_placed` counts for synthesizer drop reporting; on failure, sets success to `False`, drop ratio to `1.0`, and stores `state.metadata["last_builder_resolutions"]` (serialized `Resolution[]`) so the constraint guard on the next turn can decide whether to suppress or re-surface cross-domain violations.
 
 ```python
 {
@@ -3345,22 +3386,29 @@ Called by `format_result()` step 6.5 (shadow mode — exception → warning, doe
     "ready_to_generate": bool,
     "errors": [...],
     "document": {
-        "plan_view_state": "S0_BOOTSTRAP" | "S2_STRATEGY_READY",  # Computed by _compute_plan_view_state() in response_envelope.py
+        "plan_view_state": "S0_BOOTSTRAP" | "S2_STRATEGY_READY",  # Computed by _compute_plan_view_state(), persisted to state.metadata for next turn
         "tiles": {...},           # Flattened ID-based map (each tile gets `price_display` field: "$120" or null)
         "strategy_sections": [...], # Agent cards data (content_blocks dual-written)
         "itinerary_day_cards": [...] | null,  # ItineraryBuilder output (null until S2_STRATEGY_READY)
+        "constraints_validated": [...] | null,  # Guard validation state
+        "constraint_violations": [...] | null,  # Active violations
     },
 }
+# Note: graph_plan/stream endpoint copies itinerary_day_cards, suggested_responses,
+# suggested_response_meta, constraints_validated, and constraint_violations from
+# graph execution output into the SSE response document. This enables frontend to
+# skip expand-itinerary when the graph already built the itinerary (GRAPH_BUILT path).
 ```
 
 ### View States (from `_compute_plan_view_state()`)
 
-The response envelope computes `plan_view_state` based on data richness:
+The response envelope computes `plan_view_state` based on data richness, then persists it to `state.metadata["plan_view_state"]` so the intent router can read it on the next turn via `_is_plan_active()`:
 
 | View State | Condition | Data Richness |
 |------------|-----------|---------------|
 | `S0_BOOTSTRAP` | No tiles and no specialist content | Setup checklist, blank slate |
 | `S2_STRATEGY_READY` | Has tiles OR has specialist strategy sections | Strategy preview or full logistics dashboard |
+| `S3_ITINERARY_READY` | Builder succeeded — day_cards exist (set by graph_plan/stream or expand-itinerary) | Full timeline with scheduled activities |
 | `S3_PARTIAL_CONFLICT` | Conflict detected during expand-itinerary (set by frontend) | Partial timeline with unschedulable blocks |
 
 ### Two-Mode Frontend System

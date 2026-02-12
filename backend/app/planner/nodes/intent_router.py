@@ -230,6 +230,18 @@ QUESTION_TYPE_TO_SECTION = {
 }
 
 
+def _is_plan_active(state: "GraphState") -> bool:
+    """Check if an active plan exists (niche specialists have run)."""
+    # TODO: evaluate prefix match (pvs.startswith("S2_")) when substates stabilize.
+    # Blocked substates (S2_BLOCKED, S3_EDITING, S3_PARTIAL_CONFLICT) should NOT
+    # trigger post-plan LLM extraction — explicit set is safer for now.
+    pvs = state.metadata.get("plan_view_state", "")
+    if pvs in ("S2_STRATEGY_READY", "S3_ITINERARY_READY"):
+        return True
+    sections = state.metadata.get("strategy_sections", [])
+    return any(s.get("specialist_type") not in ("general", "local_expert") for s in sections)
+
+
 def _classify_question(
     user_text: str, state: "GraphState", plan_is_active: bool
 ) -> Tuple[str, str]:
@@ -551,8 +563,7 @@ def _build_plan_progression_suggestions(state: "GraphState") -> list[dict]:
     These nudge the user toward refining preferences instead of exploring.
     Priority 4: above exploration questions (6), below specialists (3).
     """
-    plan_view = state.metadata.get("plan_view_state", "")
-    if not plan_view.startswith("S2") and not plan_view.startswith("S3"):
+    if not _is_plan_active(state):
         return []
 
     dest = state.trip_plan.destination
@@ -575,8 +586,12 @@ def _build_plan_progression_suggestions(state: "GraphState") -> list[dict]:
             }
         )
 
-    # Flight preference (if direct_only not set)
-    if not _settings.flight_settings.direct_only:
+    # Flight preference (if direct_only not set AND origin exists AND flights enabled)
+    if (
+        not _settings.flight_settings.direct_only
+        and state.trip_plan.origin
+        and _settings.booking_types.flights != "off"
+    ):
         suggestions.append(
             {
                 "template": "Direct flights only",
@@ -1587,13 +1602,18 @@ def _apply_modifications_to_state(
     )
     removing_tier1 = bool(mods.get("remove_categories", set()) & TIER1_SPECIALIST_NAMES)
 
-    if not has_tier1 or removing_tier1:
-        # Tier 2 prefetch
-        if mods.get("add_categories") and state.trip_plan.destination:
-            tier2_detected = mods["add_categories"] & TIER2_ACTIVITY_KEYWORDS
-            if tier2_detected:
-                _prefetch_tier2_experiences(state, tier2_detected)
+    # Tier 2 prefetch: fire regardless of Tier1 presence so mixed inputs
+    # like "diving and yoga" prefetch yoga tiles during specialist execution.
+    # Uses full category set (not just additions) to match what Logistics computes.
+    # Note: prefetch uses current settings, which may lag category removals
+    # by one turn. L1/L2 cache makes this a ~0ms overhead, not a bug.
+    if state.trip_plan.destination:
+        all_cats = set(get_trip_settings(state).activity_settings.categories)
+        tier2_to_prefetch = all_cats - TIER1_SPECIALISTS
+        if tier2_to_prefetch:
+            _prefetch_tier2_experiences(state, tier2_to_prefetch)
 
+    if not has_tier1 or removing_tier1:
         # Check for real changes
         has_real_changes = (
             mods.get("add_categories")
@@ -1698,6 +1718,7 @@ async def intent_router(state: GraphState) -> GraphState:
     # Clear stale per-turn flags from previous turn
     state.metadata.pop("settings_just_updated", None)
     state.metadata.pop("actionable_acknowledgment", None)
+    state.metadata.pop("_tiles_replaced", None)
 
     _debug_node_start(
         "router",
@@ -1756,10 +1777,7 @@ async def intent_router(state: GraphState) -> GraphState:
     # first. Settings/modifications/origin are read from extraction output
     # instead of regex. Pre-plan messages skip this and use regex below.
     # ==========================================================================
-    plan_is_active = state.metadata.get("plan_view_state", "") in (
-        "S2_STRATEGY_READY",
-        "S3_ITINERARY_READY",
-    )
+    plan_is_active = _is_plan_active(state)
 
     if plan_is_active and classification is None:
         from app.debug_utils import log
@@ -1800,6 +1818,21 @@ async def intent_router(state: GraphState) -> GraphState:
             )
 
             _populate_trip_plan_from_router_output(state, router_output, destination, user_text)
+
+            # Guard against LLM drifting a date the user didn't change.
+            # "Extend to Feb 22" should only change end_date, not start_date.
+            text_lower = user_text.lower()
+            if old_start and state.trip_plan.start_date != old_start:
+                start_signals = ("start", "begin", "from ", "depart", "leave on", "move")
+                if not any(sig in text_lower for sig in start_signals):
+                    state.trip_plan.start_date = old_start
+                    log("ROUTER", f"[POST-PLAN] Reverted start date drift → {old_start}")
+            if old_end and state.trip_plan.end_date != old_end:
+                end_signals = ("extend", "until", "end ", "through", "shorten", "move")
+                if not any(sig in text_lower for sig in end_signals):
+                    state.trip_plan.end_date = old_end
+                    log("ROUTER", f"[POST-PLAN] Reverted end date drift → {old_end}")
+
             state.metadata["router_output"] = router_output.model_dump()
             state.metadata["router_extracted_fields"] = True
             ro_dict = router_output.model_dump()
@@ -1823,6 +1856,16 @@ async def intent_router(state: GraphState) -> GraphState:
             # specialist queue; settings are parameter updates that logistics
             # picks up regardless).
             llm_settings = _collect_settings_from_extraction(ro_dict)
+            # Fallback: merge regex-based settings for fields LLM missed
+            # (e.g., "5-star hotels only" → LLM may not extract hotel_min_stars)
+            regex_settings = _detect_settings_from_message(user_text, state)
+            if regex_settings:
+                if llm_settings is None:
+                    llm_settings = regex_settings
+                else:
+                    for key, val in regex_settings.items():
+                        if key not in llm_settings:
+                            llm_settings[key] = val
             llm_mods = _collect_modifications_from_extraction(
                 ro_dict, state, pre_populate_categories=pre_cats
             )
@@ -1841,10 +1884,21 @@ async def intent_router(state: GraphState) -> GraphState:
                     state.metadata.pop("origin_only_logistics", None)
                     state.metadata.pop("skip_specialists", None)
                     state.metadata.pop("skip_architect", None)
+                    # Prevent reset_hotel from clobbering hotel_settings we just applied
+                    # (LLM may incorrectly flag reset_hotel for "5-star hotels only")
+                    if "hotel_settings" in llm_settings and "reset_hotel" in llm_mods:
+                        del llm_mods["reset_hotel"]
+                    if "budget" in llm_settings and "reset_budget" in llm_mods:
+                        del llm_mods["reset_budget"]
                 result = _apply_modifications_to_state(state, llm_mods, user_text, clog)
                 if result is not None:
                     return result
                 if has_settings:
+                    # Restore logistics routing flags cleared at line 1879-1881
+                    # (mods returned None, so settings should still route to logistics)
+                    state.metadata["origin_only_logistics"] = True
+                    state.metadata["skip_architect"] = True
+                    state.metadata["skip_specialists"] = True
                     return state
 
             # -- Date change -> upgrade planning_intent later --
@@ -2024,6 +2078,19 @@ async def intent_router(state: GraphState) -> GraphState:
             f"[EXPLORATION] planning_intent={planning_intent}, destination={destination}",
         )
 
+        # Upgrade exploring → soft_transition when dates already collected
+        # from prior turns. Without this, "dates turn 1 + destination turn 2"
+        # enters the exploration short-circuit and never routes to planning.
+        if (
+            planning_intent == "exploring"
+            and (destination or state.trip_plan.destination)
+            and state.trip_plan.start_date
+            and state.trip_plan.end_date
+            and not _is_plan_active(state)
+        ):
+            planning_intent = "soft_transition"
+            log("ROUTER", "[EXPLORATION] Upgraded to soft_transition (dates already collected)")
+
         # If user is ready to plan, check for required info first
         if planning_intent == "ready":
             # Check if we have required dates for planning
@@ -2136,9 +2203,7 @@ async def intent_router(state: GraphState) -> GraphState:
 
         # If exploring and we have destination context, generate comprehensive answer
         elif planning_intent == "exploring" and destination:
-            has_active_plan = state.trip_plan.destination and state.metadata.get(
-                "plan_view_state"
-            ) in ("S2_STRATEGY_READY", "S3_ITINERARY_READY")
+            has_active_plan = state.trip_plan.destination and _is_plan_active(state)
 
             if has_active_plan:
                 # ── Post-planning: section-specific answer ──
@@ -2300,9 +2365,14 @@ async def intent_router(state: GraphState) -> GraphState:
                     s.get("specialist_type") for s in state.metadata.get("strategy_sections", [])
                 ]
 
-                # DATE CHANGE: Re-queue existing specialists to regenerate content
-                # for the new date range. This ensures specialists recalculate max_activities.
-                if dates_changed and existing_specialists:
+                # DATE CHANGE: Re-queue existing specialists only when the month
+                # changed (seasonal shift). Same-month date tweaks (extend/shorten)
+                # don't affect specialist content — the builder adapts to variable
+                # trip lengths. This avoids a 15s specialist LLM re-run on date edits.
+                old_month = (old_start_date or "")[:7]
+                new_month = (state.trip_plan.start_date or "")[:7]
+                month_changed = old_month != new_month
+                if dates_changed and existing_specialists and month_changed:
                     log(
                         "ROUTER",
                         f"[SOFT_TRANSITION] Dates changed, re-queuing: {existing_specialists}",
@@ -2322,6 +2392,11 @@ async def intent_router(state: GraphState) -> GraphState:
 
                     # Clear constraint hash so guard re-validates
                     state.metadata["constraint_hash"] = None
+
+                    # Clear stale itinerary_blocks from previous build so guard
+                    # doesn't read old activity placements (prevents false
+                    # ALTITUDE_AFTER_DIVE on date changes)
+                    state.trip_plan.itinerary_blocks = []
 
                     # CRITICAL: Clear in-memory specialist cache so LLM re-runs with new dates
                     # Without this, specialists return stale 8-day content for 4-day trips
@@ -2349,6 +2424,29 @@ async def intent_router(state: GraphState) -> GraphState:
                     )
                     state.active_specialist = all_specialists[0]
                     state.active_agent_id = all_specialists[0]
+
+                elif dates_changed and existing_specialists and not month_changed:
+                    # Same-month date change: skip specialist LLM, just rebuild itinerary.
+                    # Builder adapts activity count to new trip length automatically.
+                    log(
+                        "ROUTER",
+                        f"[SOFT_TRANSITION] Same-month date change, skipping specialist re-run "
+                        f"(old={old_start_date}→{old_end_date}, "
+                        f"new={state.trip_plan.start_date}→{state.trip_plan.end_date})",
+                    )
+                    state.trip_plan.itinerary_blocks = []
+                    # Queue new specialists only (if any), don't re-queue existing
+                    if new_specialists:
+                        state.pending_specialists = (
+                            new_specialists[1:] if len(new_specialists) > 1 else []
+                        )
+                        state.active_specialist = new_specialists[0]
+                        state.active_agent_id = new_specialists[0]
+                    else:
+                        # No specialists to run — route to architect for itinerary rebuild
+                        state.pending_specialists = []
+                        state.active_specialist = None
+                        state.active_agent_id = None
 
                 elif has_local_expert and new_specialists:
                     # Local expert already ran, just queue the new niche specialists

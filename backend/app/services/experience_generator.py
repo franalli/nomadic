@@ -206,7 +206,10 @@ class ExperienceTile(BaseModel):
         default="morning", description="When activity happens: morning, afternoon, or evening"
     )
     skill_level: str = Field(default="beginner", description="beginner, intermediate, or advanced")
-    # ☝️ skill_level kept for forward compatibility (~12 tokens, negligible cost)
+    description: str = Field(
+        default="",
+        description="One-sentence hook, e.g. 'Traditional flow with rice paddy views'",
+    )
 
 
 class ExperienceOutput(BaseModel):
@@ -221,8 +224,9 @@ class ExperienceOutput(BaseModel):
 
 SYSTEM_PROMPT = """Generate real, bookable activities for a destination. Each must be a REAL \
 venue or experience (not generic). Single sessions only (1-4h), not multi-day retreats. \
-Vary time_of_day (morning/afternoon/evening). Include realistic local pricing in USD.
-Example: "Sunrise Yoga at Ubud Studio" (2h), NOT "Bali Yoga Retreat" (48h)."""
+Vary time_of_day (morning/afternoon/evening). Include realistic local pricing in USD. \
+For each activity, write a vivid one-sentence description that hooks the traveler.
+Example: "Sunrise Yoga at Ubud Studio", description "Traditional flow with rice paddy views"."""
 # ~45 tokens (vs ~80 current) - structured output schema already constrains fields
 
 
@@ -327,6 +331,7 @@ def _experience_to_tile_dict(
             "time_of_day": tile.time_of_day,
             "skill_level": tile.skill_level,
             "duration_hours": tile.duration_hours,
+            "description": tile.description,
         },
         "source": "live",
         "source_agent": "experience_generator",

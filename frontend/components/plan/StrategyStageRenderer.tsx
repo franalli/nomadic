@@ -36,6 +36,7 @@ import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
+import { fillDay } from '@/lib/api';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { getDestinationCoords } from '@/lib/destination-coords';
 import {
@@ -348,12 +349,65 @@ export function StrategyStageRenderer({
 
   // Booking drawer state - allows FreeDayCard "Browse Activities" to open the drawer
   const [bookingDrawerCategory, setBookingDrawerCategory] = useState<'hotel' | 'flight' | 'activity' | null>(null);
-  const handleOpenBookingDrawer = useCallback((category: 'hotel' | 'flight' | 'activity') => {
+  const [bookingDrawerPinnedDay, setBookingDrawerPinnedDay] = useState<number | null>(null);
+  const handleOpenBookingDrawer = useCallback((category: 'hotel' | 'flight' | 'activity', dayNumber?: number) => {
     setBookingDrawerCategory(category);
+    setBookingDrawerPinnedDay(dayNumber ?? null);
   }, []);
   const handleCloseBookingDrawer = useCallback(() => {
     setBookingDrawerCategory(null);
+    setBookingDrawerPinnedDay(null);
   }, []);
+
+  // Wire BookingDrawer "Add" button: pinned day → fill-day API, otherwise preference toggle (idempotent)
+  const handleSaveTile = useCallback(async (tile: Tile) => {
+    if (bookingDrawerPinnedDay != null) {
+      const store = useDocumentStore.getState();
+      // Guard: skip if expand-itinerary is running
+      if (store.expandInProgress) {
+        handleCloseBookingDrawer();
+        return;
+      }
+      // Per-day mutex: prevents concurrent calls from any path
+      if (!store.claimFillDay(bookingDrawerPinnedDay)) {
+        handleCloseBookingDrawer();
+        return;
+      }
+      store.claimMutation();
+      // Close drawer immediately to prevent repeat clicks
+      handleCloseBookingDrawer();
+      // Pin browsed tile to specific day via fill-day API
+      try {
+        const result = await fillDay(bookingDrawerPinnedDay, undefined, [tile.id]);
+        if (result?.day_card) {
+          useDocumentStore.getState().replaceDayCard(
+            bookingDrawerPinnedDay, result.day_card, result.version, result.tiles
+          );
+        }
+      } catch (err) {
+        const is409 = err instanceof Error && err.message.includes('409');
+        if (is409) {
+          console.log(`[fillDay] day=${bookingDrawerPinnedDay} already filled (409), refreshing card`);
+          return;
+        }
+        console.warn('[StrategyStageRenderer] fill-day failed:', err);
+      } finally {
+        useDocumentStore.getState().releaseMutation();
+        useDocumentStore.getState().releaseFillDay(bookingDrawerPinnedDay);
+      }
+      return;
+    }
+    // Existing global preference path (unchanged)
+    if (onSaveTile) {
+      onSaveTile(tile);
+      return;
+    }
+    // Idempotent guard: toggleTilePreference is a toggle, so only call if not already preferred
+    const { preferredTileIds: currentPrefs, toggleTilePreference: toggle } = useDocumentStore.getState();
+    if (!currentPrefs.has(tile.id)) {
+      toggle(tile.id);
+    }
+  }, [bookingDrawerPinnedDay, handleCloseBookingDrawer, onSaveTile]);
 
   // Debounced density state to prevent layout flash during transitions
   // Updated via requestAnimationFrame to let browser paint current frame first
@@ -839,9 +893,15 @@ export function StrategyStageRenderer({
                 {/* Trip DNA bar - U6: Shows ENGINE CONSTRAINTS with validation state */}
                 {(() => {
                   // Filter: only niche specialists, not local_expert/general
+                  // Exclude soft/info severity — only show blocking + strong constraints
                   const engineConstraints = fullModeSections
                     .filter((s) => NICHE_SPECIALIST_IDS.includes(s.specialist_type || ''))
-                    .flatMap((s) => s.constraints_applied || []);
+                    .flatMap((s) => s.constraints_applied || [])
+                    .filter((c) => {
+                      const sev = (c as Record<string, string>).severity;
+                      // Show if no severity set (legacy) or blocking/strong
+                      return !sev || sev === 'blocking' || sev === 'strong';
+                    });
 
                   if (engineConstraints.length === 0) return null;
 
@@ -1014,7 +1074,7 @@ export function StrategyStageRenderer({
                 generation={generation}
                 hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
                 savedTileIds={savedTileIds}
-                onSaveTile={onSaveTile}
+                onSaveTile={handleSaveTile}
                 hasDates={!!effectiveTripInputs?.start_date}
                 mode={effectiveMode}
                 strategySections={viewModel.strategy_sections}
@@ -1147,7 +1207,7 @@ export function StrategyStageRenderer({
     onFinalizePlan,
     onSelectNights,
     onOpenSheet,
-    onSaveTile,
+    handleSaveTile,
     toggleTilePreference,
     scrollToTile,
     // Remaining state dependencies
@@ -1179,13 +1239,13 @@ export function StrategyStageRenderer({
       generation={generation}
       hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
       savedTileIds={savedTileIds}
-      onSaveTile={onSaveTile}
+      onSaveTile={handleSaveTile}
       hasDates={!!effectiveTripInputs?.start_date}
       mode="booking" // Book view is always in booking mode
       strategySections={viewModel.strategy_sections}
       onOpenStaysSettings={onOpenStaysSettings}
     />
-  ), [state, effectiveTiles, generation, viewModel.strategy_sections, savedTileIds, onSaveTile, effectiveTripInputs?.start_date, onOpenStaysSettings]);
+  ), [state, effectiveTiles, generation, viewModel.strategy_sections, savedTileIds, handleSaveTile, effectiveTripInputs?.start_date, onOpenStaysSettings]);
 
   // MOBILE: Simplified layout - no absolute positioning layer system
   // Desktop uses layers to preserve scroll position across view switches
@@ -1216,9 +1276,10 @@ export function StrategyStageRenderer({
           category={bookingDrawerCategory}
           tiles={effectiveTiles}
           savedTileIds={savedTileIds}
-          onSave={onSaveTile}
+          onSave={handleSaveTile}
           onClose={handleCloseBookingDrawer}
           onOpenStaysSettings={onOpenStaysSettings}
+          pinnedDayNumber={bookingDrawerPinnedDay}
         />
       </>
     );
@@ -1336,9 +1397,10 @@ export function StrategyStageRenderer({
         category={bookingDrawerCategory}
         tiles={effectiveTiles}
         savedTileIds={savedTileIds}
-        onSave={onSaveTile}
+        onSave={handleSaveTile}
         onClose={handleCloseBookingDrawer}
         onOpenStaysSettings={onOpenStaysSettings}
+        pinnedDayNumber={bookingDrawerPinnedDay}
       />
     </div>
   );

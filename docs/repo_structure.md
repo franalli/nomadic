@@ -372,6 +372,7 @@ frontend/
 │   ├── chipStyles.ts           # Chip styling utilities
 │   ├── contentPolicyGuard.ts   # Content policy validation
 │   ├── date-utils.ts           # Date formatting/parsing utilities
+│   ├── dayIntensity.ts         # Day intensity scoring (relaxed/balanced/packed) from DayBlock hours
 │   ├── debug.ts                # Debug/logging utilities
 │   ├── design-system.ts        # Design system tokens
 │   ├── destination-coords.ts   # Destination coordinate lookup (~90 destinations)

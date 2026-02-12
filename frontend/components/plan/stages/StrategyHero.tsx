@@ -90,7 +90,11 @@ const DEFAULT_STYLE = { light: 'bg-zinc-50', icon: 'text-zinc-600 dark:text-zinc
  */
 function getSummaryBadge(section: StrategySection): string {
   const tipCount = (section.principles?.length || 0) + (section.content_added?.length || 0);
-  const constraintCount = section.constraints_applied?.length || 0;
+  // Only count blocking/strong constraints (not soft/info)
+  const constraintCount = (section.constraints_applied || []).filter(c => {
+    const sev = (c as Record<string, string>).severity;
+    return !sev || sev === 'blocking' || sev === 'strong';
+  }).length;
   const parts: string[] = [];
   if (tipCount > 0) parts.push(`${tipCount} tip${tipCount > 1 ? 's' : ''}`);
   if (constraintCount > 0) parts.push(`${constraintCount} constraint${constraintCount > 1 ? 's' : ''}`);
@@ -696,10 +700,15 @@ export function StrategyHero({
   const topicLabel = getTopicLabel(topic);
   const heroImage = getHeroImage(section);
   // Deduplicate constraints — backend may emit the same rule twice
+  // Exclude soft/info severity — only count blocking + strong constraints
   const constraints = React.useMemo(() => {
     const raw = section.constraints_applied;
     if (!raw || raw.length === 0) return [];
-    return [...new Map(raw.map(c => [c.rule || c.reason, c])).values()];
+    const deduped = [...new Map(raw.map(c => [c.rule || c.reason, c])).values()];
+    return deduped.filter(c => {
+      const sev = (c as Record<string, string>).severity;
+      return !sev || sev === 'blocking' || sev === 'strong';
+    });
   }, [section.constraints_applied]);
   const constraintCount = constraints.length;
 

@@ -488,10 +488,13 @@ if (hasItinerary && structureChanged && !isSilentPlanGeneration) {
 
 > **Note:** `isSilentPlanGeneration` is a local variable inside `ChatPanel.tsx` (derived from `isGenerateTrigger`), not a store field.
 
+**Graph-Built Itinerary Skip:** When the graph response includes `day_cards` (builder ran inside `format_result` during graph execution), the SSE `onComplete` handler skips `expand-itinerary` entirely (`expandPath = 'GRAPH_BUILT'`). The itinerary is already up-to-date — a redundant expand would waste a round-trip. `structuralRebuildTriggered` is still set to `true` so downstream logic (e.g., scroll-to-itinerary) fires correctly.
+
 **Example flows:**
 - "from rome" with existing plan → Flights added (tiles only) → **No auto-expand** → Itinerary preserved
 - "add hiking" with itinerary → Hiking specialist runs (structure change) → Itinerary auto-updates
 - "thanks" acknowledgment → No plan changes → No auto-expand
+- "tell me about diving" with dates → Graph builds itinerary → `GRAPH_BUILT` skip → No expand needed
 
 **Origin-only handling:**
 - "from rome" without destination → Sets origin, prompts for destination (IntentRouter)
@@ -1661,7 +1664,7 @@ useSessionHydration() runs
 | `StrategyStageRenderer` | Data density computation, conditional rendering, single renderer for all modes |
 | `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
 | `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack/StrategyHero) |
-| `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`) |
+| `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts` |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available |
@@ -2257,7 +2260,7 @@ For `specialist_type === 'general'` (Trip Overview):
 | `trip_summary` | object | Backend | `{destination, dates, travelers}` for stats grid |
 | `destination_gallery` | array | Backend | Vibe Trio images: `[{label, image_url}]` |
 | `principles` | array | Backend | Checklist items (strings) |
-| `constraints_applied` | array | Backend | `[{rule, type, reason}]` for warnings |
+| `constraints_applied` | array | Backend | `[{rule, type, reason, severity}]` for warnings. Frontend filters to blocking+strong only (excludes soft/info) in StrategyHero badge count, constraint list, and Trip DNA bar. |
 | `content_added` | array | Backend | Recommendations: `[{title, description, type, logic_hook, image_url?}]` |
 | `must_dos` | array | Backend | Quick list of recommendation titles |
 | `logistics_notes` | array | Backend | Additional notes (strings) |
@@ -2333,7 +2336,7 @@ For `specialist_type === 'general'` (Trip Overview):
 | `title` | string | Backend | Card title (e.g., "Diving Strategy") |
 | `one_liner` | string | Backend | Strategy logic summary (auto-generated from top constraint if missing, see below) |
 | `hero_image` | string | Backend | Primary image URL (or use fallback) |
-| `constraints_applied` | array | Backend | `[{rule, type, reason}]` - CRITICAL for safety |
+| `constraints_applied` | array | Backend | `[{rule, type, reason, severity}]` - CRITICAL for safety. `severity` field added by local_expert. |
 | `principles` | array | Backend | Checklist items (strings) |
 | `content_added` | array | Backend | Recommendations: `[{title, description, type, logic_hook, image_url?, coordinates?}]` |
 | `must_dos` | array | Backend | Quick list of key activities |
@@ -2635,11 +2638,13 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Arrival/Departure | `LogisticsBlock` | Border-l-4, icon, time | Hard times (flights) |
 | Check-in/out | `LogisticsBlock` | Key icon, hotel name, inline constraints | Accommodation logistics |
 | Safety Buffer | `SafetyBlock` | Red zone, "No Flights until" | Constraint visualization |
-| Activity | `ActivityMiniCard` | Thumbnail, duration, inline constraints, book button | Rich activity display |
+| Activity | `ActivityMiniCard` | Thumbnail, category badge, duration, time of day, description, constraints, book button | Rich activity display with metadata |
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
-| Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker | Quick-fill with generated activities or browse |
+| Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker. Buffer blocks (SafetyBlock) render above FreeDayCard when present | Quick-fill with generated activities or browse |
 
-**Fill-Day Flow:** FreeDayCard → `fillDay()` API call → backend generates tiles via `generate_experience_tiles_for_day()` → response includes `day_card` + `tiles` map → frontend calls `replaceDayCard()` for surgical day card update + merges tiles into document store (enables hearting/referencing). Backend applies adjacent-day constraint filtering (e.g., no altitude activities next to diving days). Categories are optional — when omitted, the generator picks destination-appropriate activities.
+**Fill-Day Flow:** FreeDayCard → `fillDay()` API call → backend generates 1 tile via `generate_experience_tiles_for_day(tiles_per_day=1)` → response includes `day_card` + `tiles` map → frontend calls `replaceDayCard()` for surgical day card update + merges tiles into document store (enables hearting/referencing). Generated tiles are tagged with `meta.pinned_day` so the builder won't redistribute them on rebuild. Backend applies adjacent-day constraint filtering (e.g., no altitude activities next to diving days). Categories are optional — when omitted, the generator picks destination-appropriate activities. **Concurrency:** Per-day mutex (`claimFillDay`/`releaseFillDay` in documentStore) prevents concurrent fill-day calls on the same day. `fillDay()` in api.ts syncs the document version from the response (`useDocumentStore.setState({ version })`) to prevent 409 cascades.
+
+**Browse → Pin Flow:** FreeDayCard "Browse" opens `BookingDrawer` with `pinnedDayNumber` set to the day number. When the user clicks "Add to Day N" on a tile, `handleSaveTile` in StrategyStageRenderer calls `fillDay(dayNumber, undefined, [tileId])` — the backend places the existing tile on the target day via `pinned_tile_ids` (no LLM generation). Pinned tiles are persisted to `document_data.user_pinned_tiles` for rebuild survival — the builder's Phase 5.6 Pass 0 places them on their target day, and `itinerary_adapter.py` re-injects them into the tile pool during graph-built itinerary. If `pinnedDayNumber` is null (drawer opened from elsewhere), the default path fires: `toggleTilePreference` (idempotent — only if not already preferred) which triggers `usePreferenceAutoRegen`.
 
 #### C.1 Inline Constraints
 
@@ -2701,7 +2706,7 @@ frontend/components/plan/timeline/blocks/
 ├── index.ts              # Barrel export
 ├── types.ts              # DisplayTime, TimeSlot, getDisplayTime()
 ├── LogisticsBlock.tsx    # Arrival/departure/check-in + gear icons
-├── SafetyBlock.tsx       # No-fly/rest-day constraints
+├── SafetyBlock.tsx       # No-fly/rest-day/acclimatization constraints (default: rest_day)
 ├── ActivityMiniCard.tsx  # Rich activity with context menu
 ├── GhostSlot.tsx         # Unbooked placeholder
 └── FreeDayCard.tsx       # Empty day state with fill-day CTA + inline category picker
@@ -2762,11 +2767,11 @@ function getDisplayTime(block: DayBlock, blockIndex: number): DisplayTime {
 | Desktop | Side sheet (right, 480px, glass blur `bg-white/80 backdrop-blur-xl`) |
 | Mobile | Same side sheet (full width on small screens) |
 
-**Trigger:** Clicking GhostSlot or "Book" button on ActivityMiniCard.
+**Trigger:** Clicking GhostSlot, "Book" button on ActivityMiniCard, or "Browse" on FreeDayCard (passes `dayNumber` for pinned placement).
 
 **Content:** Filtered tiles by category (hotel/flight/activity).
 
-**Close behavior:** Selecting tile embeds it in timeline and closes drawer.
+**Close behavior:** Selecting tile adds it to `preferredTileIds` (idempotent — only if not already preferred) via `handleSaveTile` in StrategyStageRenderer, then closes drawer. This triggers `usePreferenceAutoRegen` to regenerate the itinerary with the new preference.
 
 #### F. Edit/Remove Interactions
 
@@ -3010,6 +3015,8 @@ The `BookingSection` component adapts rendering based on `mode` prop:
 |------|----------------|----------|---------|
 | PLANNING | SuggestionCard | Hidden | Save, Change, Details |
 | BOOKING | BookableCard | Visible | Book, Cart, Details |
+
+**Activity Tile Metadata Display:** `TileCard`, `MiniCard`, and `TileDetailsModal` render activity-specific metadata from `tile.meta` when `tile.type === 'activity'`: category badge (uppercase pill), duration hours (clock icon), time of day (sun/sunset/moon icon), and one-sentence description (from `meta.description`). The description field is generated by `experience_generator.py` and propagated via `meta.description`. `TileDetailsModal` additionally shows `skill_level` (if not beginner).
 
 **Smart Tab Auto-Switch:** When new tiles arrive from a backend response, the active category tab automatically switches to the tab with the biggest growth (e.g., user says "yoga and nightlife" → Activities tab auto-selects). Respects manual selection: once a user clicks a tab, auto-switch is disabled for that session. First load always defaults to Stays. Implementation: `useEffect` comparing `prevCountsRef` with current tile counts per category.
 
@@ -3269,7 +3276,7 @@ image_url = hotel.get("image") or get_placeholder_image(
 **Guarantees:**
 1. **Never null** - Every tile has a valid Unsplash image URL
 2. **Deterministic** - Same tile ID = same placeholder image
-3. **Category-aware** - Hotels get hotel photos, activities get activity photos
+3. **Category-aware** - Hotels get hotel photos, activities get activity photos. Supported categories: `diving`, `hiking`, `skiing`, `cycling`, `surfing`, `sailing`, `climbing`, `hotel`, `yoga`, `nightlife`, `cooking`, `wellness`, `activity` (generic fallback)
 
 ### Hero Destinations (DEMO_MANIFEST)
 

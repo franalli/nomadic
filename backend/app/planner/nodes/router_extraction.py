@@ -346,6 +346,7 @@ ROUTER_EXTRACTION_PROMPT = (
     """You are an intent classifier AND field extractor \
 for a travel planning assistant.
 Today's date is {today_date}.
+{current_trip_context}
 
 ## Task 1: Intent Classification
 
@@ -376,6 +377,12 @@ Extract ANY trip-related fields mentioned:
   - "February 15-22" → start_date = "{current_year}-02-15"
 - **end_date**: Convert to YYYY-MM-DD format
   - "March 1-8" → end_date = "{current_year}-03-08"
+  - IMPORTANT: When current trip context is provided and user says \
+"extend by X days" or "add X more days": \
+New end_date = current end_date + X days. \
+Example: current trip Feb 15–25, "extend by 5 days" → end_date: {current_year}-03-02
+  - "shorten to 5 days" → end_date = start_date + 4 days
+  - "make it 2 weeks" → end_date = start_date + 13 days
 - **duration_days**: If they say "for a week" = 7, "5 days" = 5
 - **adults/children**: Number of travelers
 - **budget**: Amount in USD (e.g., "$5000" = 5000, "5k" = 5000)
@@ -627,6 +634,27 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
                 extracted["start_date"],
             )
 
+    # Auto-correct past dates — LLM sometimes picks wrong year for NL input
+    # "Feb 15" in the past almost certainly means next Feb 15
+    today = datetime.strptime(today_date, "%Y-%m-%d").date()
+    for date_field in ["start_date", "end_date"]:
+        if extracted.get(date_field):
+            try:
+                d = datetime.strptime(extracted[date_field], "%Y-%m-%d").date()
+                if d < today:
+                    bumped = d.replace(year=d.year + 1)
+                    # Handle Feb 29 → Feb 28 on non-leap years
+                    if d.month == 2 and d.day == 29:
+                        max_day = monthrange(bumped.year, bumped.month)[1]
+                        bumped = bumped.replace(day=min(bumped.day, max_day))
+                    logger.warning(
+                        f"Past {date_field}: {extracted[date_field]} → {bumped.isoformat()} "
+                        f"(auto-bumped +1yr, today={today_date})"
+                    )
+                    extracted[date_field] = bumped.isoformat()
+            except ValueError:
+                pass  # Already handled by format check above
+
     # Normalize activity categories to lowercase
     if extracted.get("activity_categories"):
         extracted["activity_categories"] = [
@@ -728,12 +756,28 @@ async def _classify_and_extract_with_llm(
             # Use structured output for reliable JSON parsing
             structured_llm = llm.with_structured_output(RouterOutput, include_raw=True)
 
+            # Build current trip context for relative date expressions
+            current_trip_context = ""
+            tp = state.trip_plan
+            if tp and tp.destination and tp.start_date and tp.end_date:
+                try:
+                    s = datetime.strptime(tp.start_date, "%Y-%m-%d")
+                    e = datetime.strptime(tp.end_date, "%Y-%m-%d")
+                    dur = (e - s).days + 1
+                    current_trip_context = (
+                        f"Current trip: {tp.destination}, "
+                        f"{tp.start_date} to {tp.end_date} ({dur} days)"
+                    )
+                except ValueError:
+                    pass
+
             # Format prompt with current date context
             current_year = today.year
             prompt = ROUTER_EXTRACTION_PROMPT.format(
                 user_message=user_text,
                 today_date=today_date,
                 current_year=current_year,
+                current_trip_context=current_trip_context,
             )
 
             result = await structured_llm.ainvoke([HumanMessage(content=prompt)])

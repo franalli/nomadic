@@ -55,6 +55,9 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
   // Track last known preferences to detect which tile changed
   const lastPrefsRef = useRef<Set<string>>(new Set());
 
+  // Queue regen when preference changes are detected during expandInProgress mutex
+  const pendingRegenRef = useRef(false);
+
   // Check if itinerary exists
   const hasItinerary = (dayCards?.length ?? 0) > 0;
 
@@ -197,8 +200,10 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
     }
 
     // Skip if expand-itinerary is already running (prevents cascade)
+    // Queue for later instead of silently dropping
     if (expandInProgress) {
-      console.log('[usePreferenceAutoRegen] Skipping - expand in progress');
+      console.log('[usePreferenceAutoRegen] Queuing - expand in progress');
+      pendingRegenRef.current = true;
       lastPrefsRef.current = new Set(preferredTileIds);
       return;
     }
@@ -234,6 +239,23 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
     // Trigger instant regeneration (no debounce)
     triggerRegeneration();
   }, [preferredTileIds, lastGeneratedPreferences, hasItinerary, triggerRegeneration, expandInProgress]);
+
+  // Flush queued regen when expandInProgress mutex releases (debounced to avoid cascade)
+  useEffect(() => {
+    if (!expandInProgress && pendingRegenRef.current) {
+      pendingRegenRef.current = false;
+      // Debounce: let dust settle before firing queued regen
+      const timer = setTimeout(() => {
+        // Dedup: skip if the expand that just finished already used current preferences
+        const currentPrefs = useDocumentStore.getState().preferredTileIds;
+        const lastGenerated = useDocumentStore.getState().lastGeneratedPreferences;
+        if (!setsEqual(currentPrefs, lastGenerated)) {
+          triggerRegeneration();
+        }
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [expandInProgress, triggerRegeneration]);
 
   return {
     isRegenerating,

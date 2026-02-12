@@ -126,6 +126,14 @@ class AmadeusFlightProvider(Provider):
         """Run the async search in a new event loop (for thread execution)."""
         return asyncio.run(self._search_async(ctx))
 
+    async def search_async(self, ctx: SearchContext) -> List[Tile]:
+        """Async search — use from async contexts to avoid event-loop blocking."""
+        try:
+            return await self._search_async(ctx)
+        except Exception as e:
+            logger.warning(f"Amadeus flight search failed: {e}")
+            return []
+
     async def _search_async(self, ctx: SearchContext) -> List[Tile]:
         """Async implementation of flight search."""
         client = self._get_client()
@@ -297,6 +305,14 @@ class AmadeusHotelProvider(Provider):
     def _run_async_in_new_loop(self, ctx: SearchContext) -> List[Tile]:
         """Run the async search in a new event loop (for thread execution)."""
         return asyncio.run(self._search_async(ctx))
+
+    async def search_async(self, ctx: SearchContext) -> List[Tile]:
+        """Async search — use from async contexts to avoid event-loop blocking."""
+        try:
+            return await self._search_async(ctx)
+        except Exception as e:
+            logger.warning(f"Amadeus hotel search failed: {e}")
+            return []
 
     async def _search_async(self, ctx: SearchContext) -> List[Tile]:
         """Async implementation of hotel search."""

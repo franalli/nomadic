@@ -3,7 +3,7 @@ import defaultTheme from 'tailwindcss/defaultTheme';
 
 const config: Config = {
   darkMode: 'media',
-  content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}'],
+  content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}', './lib/**/*.{ts,tsx}'],
   theme: {
     extend: {
       // Safe area utilities for iOS notch/home indicator

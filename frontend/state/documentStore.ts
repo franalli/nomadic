@@ -239,6 +239,17 @@ type DocumentState = {
   expandInProgress: boolean;
   setExpandInProgress: (inProgress: boolean) => void;
 
+  // Fill-day per-day mutex (prevents concurrent fill-day calls on the same day)
+  _fillingDays: Set<number>;
+  claimFillDay: (day: number) => boolean;
+  releaseFillDay: (day: number) => void;
+
+  // General mutation mutex (blocks graph calls while fill-day/drag-drop in-flight)
+  _pendingMutations: number;
+  claimMutation: () => void;
+  releaseMutation: () => void;
+  hasPendingMutations: () => boolean;
+
   // Cart state (for BOOKING mode)
   cartTileIds: Set<string>;
   addToCart: (tileId: string) => void;
@@ -307,8 +318,8 @@ type DocumentState = {
   /** Check if a runId is the current run (ignore late events from stale runs) */
   isCurrentRun: (runId: string) => boolean;
 
-  // Fill-day: surgical single day card replacement
-  replaceDayCard: (dayNumber: number, newCard: DayCard, newVersion?: number) => void;
+  // Fill-day: surgical single day card replacement + atomic tile merge
+  replaceDayCard: (dayNumber: number, newCard: DayCard, newVersion?: number, newTiles?: Record<string, Tile>) => void;
 
   // Reset
   reset: () => void;
@@ -345,6 +356,10 @@ const initialState = {
   remainingSeconds: 0,
   // Expand-itinerary mutex
   expandInProgress: false,
+  // Fill-day per-day mutex
+  _fillingDays: new Set<number>(),
+  // General mutation mutex
+  _pendingMutations: 0,
   // Cart state
   cartTileIds: new Set<string>(),
 };
@@ -1020,6 +1035,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   setFromPlanResponse: (response: PlanDocumentResponse) => {
+    console.log(
+      `[documentStore.setFromPlanResponse] 🏷️ Writing suggestions:`,
+      `received=${response.document.suggested_responses?.length ?? 0}`,
+      `values=${JSON.stringify(response.document.suggested_responses?.slice(0, 2))}`
+    );
+
+    // Safety net: map legacy itinerary_day_cards → day_cards if present
+    const rawDoc = response.document as PlanDocumentData & { itinerary_day_cards?: DayCard[] };
+    if (rawDoc.itinerary_day_cards && !rawDoc.day_cards) {
+      rawDoc.day_cards = rawDoc.itinerary_day_cards;
+      console.log(`[documentStore.setFromPlanResponse] 📅 Mapped itinerary_day_cards → day_cards (${rawDoc.day_cards.length} cards)`);
+    }
+    if (rawDoc.day_cards?.length) {
+      console.log(`[documentStore.setFromPlanResponse] 📅 SSE day_cards: ${rawDoc.day_cards.length} cards`);
+    }
+
     const { document: currentDoc, llmUpdatedFields } = get();
     const primaryBranch = response.document.branches.find((b) => b.is_primary);
 
@@ -1161,29 +1192,35 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // ============================================================
-    // TILE MERGE (conditional on destination)
+    // TILE MERGE (conditional on destination, dates, or tiles_replaced flag)
     // ============================================================
     // Merge tiles only for same destination (additive like flights)
-    // Full replace on destination change (avoid stale tiles from wrong country)
-    const mergedTiles = destinationChanged
+    // Full replace on destination change, date change, or backend tiles_replaced flag
+    const tilesReplaced = response.document.tiles_replaced === true;
+    const mergedTiles = (destinationChanged || datesChanged || tilesReplaced)
       ? response.document.tiles
       : { ...currentDoc?.tiles, ...response.document.tiles };
 
-    // ============================================================
-    // DAY CARDS PRESERVE (clear on destination OR date change)
-    // ============================================================
-    // Clear day_cards on destination change OR date change (trip duration changed)
-    // When dates shorten (8 days → 4 days), existing day_cards are stale
-    const shouldClearDayCards = destinationChanged || datesChanged;
-    const finalDayCards = shouldClearDayCards
-      ? []
-      : (hasDayCards ? currentDayCards : response.document.day_cards);
+    if (tilesReplaced) {
+      console.log('[documentStore.setFromPlanResponse] 🔄 Tiles: REPLACED (tiles_replaced flag)');
+    }
 
-    if (shouldClearDayCards) {
-      const reason = destinationChanged ? 'destination changed' : 'dates changed';
-      console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (${reason})`);
+    // ============================================================
+    // DAY CARDS — graph-sent cards always win
+    // ============================================================
+    // The graph builds day_cards on every turn via ItineraryBuilder.
+    // Graph is the authority — always use its cards when present.
+    // Only preserve existing cards when graph sent nothing (lightweight routes).
+    const graphSentCards = response.document.day_cards;
+    const hasGraphSentCards = graphSentCards && graphSentCards.length > 0;
+    const finalDayCards = hasGraphSentCards
+      ? graphSentCards
+      : (currentDayCards ?? []);
+
+    if (hasGraphSentCards) {
+      console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: FROM GRAPH (${graphSentCards.length} cards)`);
     } else if (hasDayCards) {
-      console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (itinerary exists: ${currentDayCards.length} cards)`);
+      console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (no graph cards, keeping ${currentDayCards.length} existing)`);
     }
 
     // ============================================================
@@ -1364,12 +1401,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     // Compute tile merge strategy BEFORE building updatedDoc
     let tilesToMerge: Record<string, Tile> | undefined;
+    const tilesReplaced = envelope.tiles_replaced === true;
 
     if (envelope.tiles !== undefined) {
-      if (destinationChanged) {
-        // Destination changed: REPLACE tiles (even if empty)
+      if (destinationChanged || datesChanged || tilesReplaced) {
+        // Full replace: destination changed, dates changed, or backend tiles_replaced flag
         tilesToMerge = envelope.tiles;
-        console.log('[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (destination changed)');
+        console.log(`[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (${destinationChanged ? 'destination changed' : datesChanged ? 'dates changed' : 'tiles_replaced flag'})`);
       } else if (Object.keys(envelope.tiles).length > 0) {
         // Same destination + non-empty: MERGE with existing tiles (additive)
         tilesToMerge = { ...currentDoc.tiles, ...envelope.tiles };
@@ -1738,6 +1776,29 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({ expandInProgress: inProgress });
   },
 
+  // Per-day fill mutex (prevents concurrent fill-day on same day)
+  claimFillDay: (day: number): boolean => {
+    const { _fillingDays } = get();
+    if (_fillingDays.has(day)) return false;
+    set({ _fillingDays: new Set([..._fillingDays, day]) });
+    return true;
+  },
+  releaseFillDay: (day: number) => {
+    const { _fillingDays } = get();
+    const next = new Set(_fillingDays);
+    next.delete(day);
+    set({ _fillingDays: next });
+  },
+
+  // General mutation mutex (blocks graph calls while fill-day/drag-drop in-flight)
+  claimMutation: () => {
+    set(s => ({ _pendingMutations: s._pendingMutations + 1 }));
+  },
+  releaseMutation: () => {
+    set(s => ({ _pendingMutations: Math.max(0, s._pendingMutations - 1) }));
+  },
+  hasPendingMutations: () => get()._pendingMutations > 0,
+
   // Cart actions (for BOOKING mode)
   addToCart: (tileId: string) => {
     const { cartTileIds } = get();
@@ -1759,15 +1820,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({ cartTileIds: new Set() });
   },
 
-  replaceDayCard: (dayNumber, newCard, newVersion) => {
-    const { document: doc } = get();
-    if (!doc?.day_cards) return;
-    const cards = [...doc.day_cards];
-    const idx = cards.findIndex(c => c.day_number === dayNumber);
-    if (idx === -1) return;
-    cards[idx] = newCard;
+  replaceDayCard: (dayNumber, newCard, newVersion, newTiles) => {
+    const doc = get().document;
+    if (!doc) return;
+
     set({
-      document: { ...doc, day_cards: cards },
+      document: {
+        ...doc,
+        day_cards: (doc.day_cards ?? []).map(dc =>
+          dc.day_number === dayNumber ? newCard : dc
+        ),
+        tiles: newTiles
+          ? { ...doc.tiles, ...newTiles }
+          : doc.tiles,
+      },
       ...(newVersion !== undefined && { version: newVersion }),
     });
   },

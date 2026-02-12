@@ -102,7 +102,21 @@ def _is_self_contained_query(user_text: str, extraction: dict) -> bool:
         - "Same dates as before" (what dates?)
     """
     # Words that reference previous messages
-    context_words = ["there", "that", "this", "it", "them", "same", "again", "too", "also"]
+    context_words = [
+        "there",
+        "that",
+        "this",
+        "it",
+        "them",
+        "same",
+        "again",
+        "too",
+        "also",
+        "extend",
+        "shorten",
+        "more days",
+        "fewer days",
+    ]
     text_lower = user_text.lower()
 
     # Check if any context word appears as a standalone word

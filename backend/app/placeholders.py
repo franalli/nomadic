@@ -74,6 +74,50 @@ PLACEHOLDER_IMAGES = {
         "photo-1564501049412-61c2a3083791",  # Luxury hotel
         "photo-1520250497591-112f2f40a3f4",  # Beach resort
     ],
+    # ==========================================================================
+    # YOGA - Retreats, meditation, wellness, mindfulness
+    # ==========================================================================
+    "yoga": [
+        "photo-1545205597-3d9d02c29597",  # Yoga pose on beach at sunset
+        "photo-1506126613408-eca07ce68773",  # Meditation in nature
+        "photo-1588286840104-8957b019727f",  # Yoga class studio
+        "photo-1599901860904-17e6ed7083a0",  # Yoga retreat tropical setting
+        "photo-1544367567-0f2fcb009e0b",  # Woman doing yoga outdoors
+        "photo-1552196563-55cd4e45efb3",  # Yoga mat and candles
+    ],
+    # ==========================================================================
+    # NIGHTLIFE - Bars, rooftops, cocktails, clubs, evening dining
+    # ==========================================================================
+    "nightlife": [
+        "photo-1566417713940-fe7c737a9ef2",  # Rooftop bar city view
+        "photo-1514933651103-005eec06c04b",  # Bar cocktails neon
+        "photo-1470337458703-46ad1756a187",  # Night city lights
+        "photo-1516450360452-9312f5e86fc7",  # Party crowd dancing
+        "photo-1572116469696-31de0f17cc34",  # Neon street nightlife
+        "photo-1578474846511-04ba529f0b88",  # Cocktail bar ambience
+    ],
+    # ==========================================================================
+    # COOKING - Classes, local food, markets, culinary experiences
+    # ==========================================================================
+    "cooking": [
+        "photo-1556910103-1c02745aae4d",  # Cooking class ingredients
+        "photo-1507048331197-7d4ac70811cf",  # Chef preparing food
+        "photo-1466637574441-749b8f19452f",  # Fresh market produce
+        "photo-1528712306091-ed0763094c98",  # Street food vendor
+        "photo-1414235077428-338989a2e8c0",  # Plated gourmet food
+        "photo-1551218808-94e220e084d2",  # Cooking with wok
+    ],
+    # ==========================================================================
+    # WELLNESS - Spa, massage, hot springs, relaxation
+    # ==========================================================================
+    "wellness": [
+        "photo-1540555700478-4be289fbec6d",  # Spa treatment room
+        "photo-1544161515-4ab6ce6db874",  # Massage therapy
+        "photo-1600334089648-b0d9d3028eb2",  # Hot spring natural pool
+        "photo-1507652313519-d4e9174996dd",  # Zen stones water
+        "photo-1515377905703-c4788e51af15",  # Tropical spa setting
+        "photo-1519823551278-64ac92734fb1",  # Relaxation poolside
+    ],
     "activity": [
         "photo-1527631746610-bca00a040d60",  # Adventure
         "photo-1501555088652-021faa106b9b",  # Outdoor

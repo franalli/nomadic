@@ -231,6 +231,9 @@ export type PlanDocumentData = {
   /** Origin update flag - frontend should trigger flight fetch when true */
   origin_just_set?: boolean;
 
+  /** When true, tiles should REPLACE existing (not merge additively) */
+  tiles_replaced?: boolean;
+
   // ==========================================================================
   // Constraint Validation (Trip DNA bar badges)
   // ==========================================================================

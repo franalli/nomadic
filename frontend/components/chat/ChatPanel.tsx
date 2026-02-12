@@ -574,6 +574,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Compute effective suggestions: use backend suggestions if available
     const effectiveSuggestions = useMemo(() => {
       if (suggestedResponses.length === 0) {
+        console.log('[ChatPanel] 🏷️ effectiveSuggestions: empty (suggestedResponses=[])');
         return [];
       }
 
@@ -592,8 +593,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       // On desktop, filter out "Build Plan" chip since the right panel has that CTA
       // Keep one primary CTA at a time to avoid competing buttons
       if (isDesktop) {
-        return filtered.filter((s) => s.toLowerCase() !== 'build plan');
+        const result = filtered.filter((s) => s.toLowerCase() !== 'build plan');
+        console.log('[ChatPanel] 🏷️ effectiveSuggestions (desktop):', result, 'isLoading:', 'checked at render');
+        return result;
       }
+      console.log('[ChatPanel] 🏷️ effectiveSuggestions (mobile):', filtered);
       return filtered;
     }, [suggestedResponses, isDesktop]);
 
@@ -811,6 +815,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         if (isSendingRef.current) {
           console.log('[ChatPanel] ⏭️ Skipping - already sending (ref guard)');
           return;
+        }
+
+        // MUTATION GATE: Wait for in-flight mutations (fill-day, drag-drop) to settle
+        // so the graph reads the latest document version. Chat input stays enabled.
+        if (useDocumentStore.getState().hasPendingMutations()) {
+          const maxWait = 10_000;
+          const poll = 100;
+          const start = Date.now();
+          while (useDocumentStore.getState().hasPendingMutations() && Date.now() - start < maxWait) {
+            await new Promise(r => setTimeout(r, poll));
+          }
         }
 
         // Check for generate trigger FIRST (before isLoading guard)
@@ -1081,6 +1096,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               const isReadyToGenerate = doc.ready_to_generate === true;
 
               // Update suggested responses from LLM (if provided)
+              console.log(
+                `[ChatPanel] 🏷️ SSE complete:`,
+                `suggestions=${JSON.stringify(doc.suggested_responses?.slice(0, 3))}`,
+                `meta=${JSON.stringify(doc.suggested_response_meta?.slice(0, 2))}`,
+                `viewState=${doc.plan_view_state}`,
+                `dayCards=${doc.day_cards?.length ?? 'null'}`
+              );
               setSuggestedResponses(doc.suggested_responses || []);
               setSuggestedResponseMeta(doc.suggested_response_meta || []);
 
@@ -1096,6 +1118,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // IMPORTANT: Read from store.document (preserved by setFromPlanResponse), not from response
               const freshState = useDocumentStore.getState();
               const hasItinerary = (freshState.document?.day_cards?.length ?? 0) > 0;
+
+              // SKIP EXPAND: If graph response included day_cards (via builder in format_result),
+              // no need for a separate expand-itinerary call.
+              const graphBuiltItinerary = (doc.day_cards?.length ?? 0) > 0;
+              if (graphBuiltItinerary) {
+                console.log(`[EXPAND] SKIPPED — graph response included ${doc.day_cards!.length} day_cards`);
+              }
 
               // Read dates from FRESH store state — the hasDates prop is a stale closure
               // captured when handleSend was called. If dates arrive in the same response,
@@ -1138,13 +1167,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               const _hasStrategy = (doc.strategy_sections?.length ?? 0) > 0;
               const shouldExpandDates = _datesChanged && _hasStrategy && !isSilentPlanGeneration;
               const shouldExpandCatchAll = _hasStrategy && !hasItinerary && freshHasDates && !isSilentPlanGeneration;
-              const expandPath = shouldExpandStructural ? 'STRUCTURAL'
+              const expandPath = graphBuiltItinerary ? 'GRAPH_BUILT'
+                : shouldExpandStructural ? 'STRUCTURAL'
                 : shouldExpandDates ? 'DATE_CHANGE'
                 : shouldExpandCatchAll ? 'CATCH_ALL'
                 : 'SKIP';
               console.log(
                 `[EXPAND] gate check: strategy=${newSpecialistTypes.length} tiles=${tileCount} ` +
-                `viewState=${viewState} hasItinerary=${hasItinerary} freshHasDates=${freshHasDates} silent=${isSilentPlanGeneration} ` +
+                `viewState=${viewState} hasItinerary=${hasItinerary} freshHasDates=${freshHasDates} silent=${isSilentPlanGeneration} graphBuilt=${graphBuiltItinerary} ` +
                 `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!_datesChanged} ` +
                 `prevCategories=[${[...prevTileTypes]}] newCategories=[${[...newTileCategories]}] → ${expandPath}`
               );
@@ -1161,8 +1191,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
               // Auto-expand if structural change detected (existing itinerary OR dates available)
               // Priority gate: structural wins over trip inputs (structural rebuild incorporates inputs anyway)
-              let structuralRebuildTriggered = blockingViolations.length > 0;
-              if (shouldExpandStructural) {
+              let structuralRebuildTriggered = blockingViolations.length > 0 || graphBuiltItinerary;
+              if (shouldExpandStructural && !graphBuiltItinerary) {
                 console.log('[ChatPanel] Structural change detected - auto-expanding...', {
                   hasNewSpecialist,
                   hasNewTileType,
@@ -1768,6 +1798,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             <SmartLoader status={activeStatus} />
           )}
           {/* Dynamic suggestions - from backend suggested responses */}
+          {/* DEBUG */ effectiveSuggestions.length > 0 && (console.log('[ChatPanel] 🏷️ Chips render gate: count=', effectiveSuggestions.length, 'isLoading=', isLoading), null)}
           {effectiveSuggestions.length > 0 && !isLoading && (
             <div
               key={`suggestions-container-${effectiveSuggestions.length}`}

@@ -407,6 +407,45 @@ export const TileDetailsModal = memo(function TileDetailsModal({
               </ul>
             </div>
 
+            {/* Activity metadata */}
+            {tile.type === 'activity' && tile.meta && (() => {
+              const m = tile.meta as Record<string, unknown>;
+              const desc = typeof m.description === 'string' && m.description ? m.description : null;
+              const category = typeof m.category === 'string' ? m.category : null;
+              const duration = typeof m.duration_hours === 'number' ? m.duration_hours : null;
+              const timeOfDay = typeof m.time_of_day === 'string' ? m.time_of_day : null;
+              const skillLevel = typeof m.skill_level === 'string' && m.skill_level !== 'beginner' ? m.skill_level : null;
+              return (
+                <div className="space-y-2">
+                  {desc && (
+                    <p className="text-sm italic text-zinc-400">{desc}</p>
+                  )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {category && (
+                      <span className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-400 uppercase tracking-wide">
+                        {category}
+                      </span>
+                    )}
+                    {duration != null && (
+                      <span className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-400">
+                        {duration}h
+                      </span>
+                    )}
+                    {timeOfDay && (
+                      <span className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-400">
+                        {timeOfDay.charAt(0).toUpperCase() + timeOfDay.slice(1)}
+                      </span>
+                    )}
+                    {skillLevel && (
+                      <span className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-400">
+                        {skillLevel.charAt(0).toUpperCase() + skillLevel.slice(1)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Amenities */}
             {amenities.length > 0 && (
               <div className="space-y-2">

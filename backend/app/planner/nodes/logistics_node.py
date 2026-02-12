@@ -162,6 +162,7 @@ async def logistics_node(state: GraphState) -> GraphState:
             # Clear stale tiles
             state.tiles = {"hotels": [], "activities": [], "flights": []}
             state.metadata["tiles_destination"] = None
+            state.metadata["_tiles_replaced"] = True
             clog.event("cache_invalidate", f"inputs changed for {plan.destination}")
 
     # Store current destination and input hash for future cache checks
@@ -489,6 +490,7 @@ async def _fetch_hotels(
             )
 
             hotel_tiles = []
+            _provider_t0 = time.time()
 
             if curated_manifest:
                 log(
@@ -511,7 +513,7 @@ async def _fetch_hotels(
                     from app.tile_service.amadeus_provider import AmadeusHotelProvider
 
                     hotel_provider = AmadeusHotelProvider()
-                    hotel_tiles = hotel_provider.search(ctx)
+                    hotel_tiles = await hotel_provider.search_async(ctx)
                 else:
                     log(
                         "LOGISTICS",
@@ -520,6 +522,12 @@ async def _fetch_hotels(
                     )
                     hotel_provider = MockHotelProvider()
                     hotel_tiles = hotel_provider.search(ctx)
+
+            _provider_ms = int((time.time() - _provider_t0) * 1000)
+            _provider_name = "curated" if curated_manifest else provider
+            _debug_log(
+                f"Hotel provider ({_provider_name}): {_provider_ms}ms, {len(hotel_tiles)} tiles"
+            )
 
             # Convert to dicts and cache
             hotel_dicts = [_tile_to_dict(tile) for tile in hotel_tiles]
@@ -651,6 +659,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     async_session_factory = _get_async_session_factory()
 
     # Fetch hotels and activities in PARALLEL
+    _gather_t0 = time.time()
     hotel_dicts, activity_dicts = await asyncio.gather(
         _fetch_hotels(
             async_session_factory,
@@ -676,6 +685,11 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             hotel_settings,
             flight_settings,
         ),
+    )
+    _gather_ms = int((time.time() - _gather_t0) * 1000)
+    _debug_log(
+        f"Hotel+Activity gather: {_gather_ms}ms "
+        f"(hotels={len(hotel_dicts)}, activities={len(activity_dicts)})"
     )
 
     # Post-fetch hotel star filter (curated provider filters at search time,

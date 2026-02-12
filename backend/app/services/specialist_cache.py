@@ -4,7 +4,7 @@ Thread-safe two-tier caching for Vertical Specialist LLM outputs.
 L1: In-memory TTLCache with RLock (1h TTL, 128 entries) - hot path
 L2: PostgreSQL response_cache (7d TTL) - warm persistence across restarts
 
-Cache key format: specialist:{topic}:{dest}:{start}:{end}:{skill}:{phash}
+Cache key format: specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{phash}
 
 Usage:
     from app.services.specialist_cache import (
@@ -79,6 +79,42 @@ def _cache_set(key: str, value: dict) -> None:
         _specialist_cache[key] = value
 
 
+def _month_from_date(date_str: Optional[str]) -> str:
+    """Extract YYYY-MM from a date string for seasonal cache bucketing."""
+    if not date_str or len(date_str) < 7:
+        return "unknown"
+    return date_str[:7]  # "2026-03-15" -> "2026-03"
+
+
+def _duration_bucket(start_date: Optional[str], end_date: Optional[str]) -> str:
+    """
+    Bucket trip duration for cache key (max 3-day spread per bucket).
+
+    Specialist recommendations vary by trip length (more spots for longer trips)
+    but not by exact day count. Narrow buckets prevent activity count regression
+    where a cached 9-day result underserves a 14-day trip.
+    """
+    if not start_date or not end_date:
+        return "unknown"
+    try:
+        start = datetime.strptime(start_date[:10], "%Y-%m-%d")
+        end = datetime.strptime(end_date[:10], "%Y-%m-%d")
+        days = (end - start).days + 1  # Inclusive
+        if days <= 3:
+            return "weekend"  # 1-3d
+        if days <= 5:
+            return "short"  # 4-5d
+        if days <= 8:
+            return "week"  # 6-8d
+        if days <= 11:
+            return "extended"  # 9-11d
+        if days <= 15:
+            return "twoweek"  # 12-15d
+        return "long"  # 16d+
+    except (ValueError, TypeError):
+        return "unknown"
+
+
 def _specialist_cache_key(
     topic: str,
     destination: str,
@@ -87,22 +123,23 @@ def _specialist_cache_key(
     skill_level: Optional[str] = None,
 ) -> str:
     """
-    Generate stable cache key including skill level and prompt hash.
+    Generate stable cache key with month + duration bucket (not exact dates).
 
-    Format: specialist:{topic}:{dest}:{start}:{end}:{skill}:{phash}
+    Format: specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{phash}
 
-    - skill: user skill level or "any" if unset
-    - phash: 8-char hash of prompt file content (auto-invalidates on edit)
+    Month granularity: diving in Bali in March = same recommendations regardless
+    of exact start day. Duration bucket: 5-day vs 11-day trip gets different
+    density of recommendations.
     """
     from app.planner.specialist_registry import prompt_hash
 
     dest_normalized = destination.lower().strip() if destination else "unknown"
-    start = start_date if start_date else "unknown"
-    end = end_date if end_date else "unknown"
+    month = _month_from_date(start_date)
+    bucket = _duration_bucket(start_date, end_date)
     skill = skill_level or "any"
     phash = prompt_hash(topic)
 
-    key = f"specialist:{topic}:{dest_normalized}:{start}:{end}:{skill}:{phash}"
+    key = f"specialist:{topic}:{dest_normalized}:{month}:{bucket}:{skill}:{phash}"
     logger.info(f"[CACHE_KEY] Generated: {key}")
     return key
 

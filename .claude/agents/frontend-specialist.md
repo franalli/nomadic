@@ -137,17 +137,21 @@ DS.text.body; // Body text
 
 Key actions:
 
-- `setFromPlanResponse()` — Merge backend response, apply downgrade protection
+- `setFromPlanResponse()` — Merge backend response, apply downgrade protection. Maps `itinerary_day_cards` → `day_cards` if present (graph-built itinerary)
 - `mergeEnvelope()` — Streaming update: tiles, sections, day_cards, plan_view_state
 - `commitTripInputs()` — Async PATCH with optimistic update + rollback
 - `toggleTilePreference()` — Heart/unheart, triggers preference auto-regen
 - `startGeneration()` / `completeGeneration()` — Streaming lifecycle mutex
+- `replaceDayCard(dayNumber, newCard, newVersion?, newTiles?)` — Surgical day card replacement + atomic tile merge (fill-day)
+- `claimFillDay(day)` / `releaseFillDay(day)` — Per-day fill mutex (prevents concurrent fill-day calls on same day from different call sites)
 
 Guards:
 
 - S3→S2 downgrade blocked when day_cards exist
 - Destination change clears: chat, tiles, strategy, day_cards
 - `expandInProgress` mutex prevents preference-regen loops during expand
+- `_fillingDays` per-day mutex prevents concurrent fill-day on same day
+- Graph-built itinerary skip: ChatPanel expand gate checks `graphBuiltItinerary` → `expandPath = 'GRAPH_BUILT'` (skips expand-itinerary when graph already built day_cards)
 
 ### Timeline Variants
 

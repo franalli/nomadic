@@ -62,6 +62,9 @@ You NEVER modify files — only read and report.
 - [ ] Auto-fix loop limited to `retry_count < 1` (single retry)
 - [ ] Severity hierarchy: blocking > warning > info
 - [ ] `ConstraintViolation` carries: code, message, severity, category, suggested_action, conflicting_specialists, suggested_specialist
+- [ ] Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5` — dropping ≥50% re-surfaces the violation
+- [ ] Past date auto-correction in `router_extraction.py`: dates before today auto-bump +1yr (handles "Feb 15" when it's already past)
+- [ ] `constraints_applied.severity` filtering: frontend shows only blocking+strong (excludes soft/info) in StrategyHero badge, constraint list, and Trip DNA bar
 
 ### 5. Frontend Design System Compliance
 
@@ -88,7 +91,7 @@ You NEVER modify files — only read and report.
 
 ### 7. API Contract Compliance
 
-- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 3/min;15/hour for LLM streaming, Medium: 10-15/min for mutations/validation, Light: 60/min for reads)
+- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 3/min;15/hr for non-stream graph_plan, 10/min;40/hr for graph_plan/stream, 20/min for expand-itinerary (builder-only, no LLM), Medium: 10-15/min for mutations/validation, Light: 60/min for reads)
 - [ ] Streaming: SSE for graph_plan, NDJSON for expand-itinerary/remove-specialist
 - [ ] CSRF token required on unsafe methods (POST/PUT/PATCH/DELETE)
 - [ ] Body size limit: 512KB max
@@ -117,6 +120,7 @@ You NEVER modify files — only read and report.
 - `import *` from any module
 - `# type: ignore` without explanation
 - `await` missing on async calls (especially `clear_session_checkpoint`)
+- Fill-day calls without `claimFillDay`/`releaseFillDay` mutex (prevents concurrent fill on same day)
 - `any` type in TypeScript without justification
 - Inline styles (`style={}`) instead of DS tokens
 - `!important` in Tailwind classes

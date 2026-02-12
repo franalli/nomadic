@@ -81,11 +81,11 @@ The builder in `itinerary_builder.py` runs 7 main phases:
 1. Day Skeleton (DayCard[] scaffolding)
 2. Extract Specialist Content (2a: merge constraints with priority, 2b: early conflict detection)
 3. Anchor Placement (arrival/departure from flights)
-4. Safety Buffer Injection (no-fly, acclimatization by severity)
-5. Activity Distribution (cross-domain clustering OR round-robin, preference-weighted)
+4. Safety Buffer Injection (no-fly, acclimatization placed before first altitude-activity day)
+5. Activity Distribution (cross-domain clustering with capacity-based Phase D co-scheduling OR round-robin, preference-weighted). Phase D scores candidates: `headroom * 0.6 + complement * 0.4`, max 1 activity per specialist per day. Tier 2 reserve: 1 block + 2h/day when Tier 2 categories exist.
    5.25. Preferred Activity Placement (user hearts)
    5.5. Free Day Placeholders
-   5.6. Experience Tile Placement (Tier 2 LLM tiles on free days)
+   5.6. Experience Tile Placement: Pass 0 (pinned tiles from fill-day on target day), Pass 1 (free days), Pass 2 (any day with capacity)
 6. Tile Matching (6.5: inline constraint tagging, 6.75: final chronological sort)
 7. Temporal Conflict Detection (overflow)
 
@@ -97,6 +97,8 @@ When modifying a phase, verify interactions with adjacent phases. Phase order ma
 - Cross-domain checks use `ALL_CONSTRAINT_ALIASES` for fuzzy matching
 - `route_after_guard()` → unfixable (route/specialist) short-circuits to synthesizer; auto-fixable (budget/capacity) loops to architect once
 - Violations carry: code, message, severity (blocking/warning/info), category, suggested_action, conflicting_specialists, suggested_specialist
+- `MULTI_SPECIALIST_CAPACITY_EXCEEDED` (warning/capacity): aggregate check across all specialists, fires when combined activities > `effective_days * 2`
+- Builder-aware suppression: checks both `last_builder_success` AND `last_builder_drop_ratio < 0.5` before suppressing duplicate violations
 
 ### Suggestion Engine
 
@@ -113,6 +115,7 @@ When modifying a phase, verify interactions with adjacent phases. Phase order ma
 - L2: PostgreSQL `response_cache` table — cross-session, 7-day TTL for specialists
 - Cache keys include skill level, date month, destination — never full date ranges
 - Router cache: `SHA256({normalized_text}:{today_date})[:32]`, 1h TTL, 500 entries
+- Specialist infeasibility: destination-level cache (not date-dependent). Skiing in Bali stays infeasible regardless of date changes — skip LLM re-query when destination unchanged
 
 ### State Serialization
 
