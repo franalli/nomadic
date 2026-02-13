@@ -30,7 +30,7 @@ If the task involves API contracts or schemas shared with frontend, also read `d
 1. **7-node graph is law.** Nodes: `router`, `architect`, `specialist`, `local_expert`, `logistics`, `guard`, `synthesizer`. Never add, remove, or rename nodes. `ItineraryBuilder` is a pure Python SERVICE, not a node.
 2. **TripPlan is the SSoT** for all trip state. Never create parallel state objects.
 3. **ItineraryBuilder is pure Python.** Zero LLM calls, deterministic logic only. ConstraintGuard is mostly deterministic but has one LLM-backed validation: `check_route_constraint()` calls `validate_place_exists()` (gpt-4o-mini via `validation.py`).
-4. **Specialist registry is the SSoT for specialist config.** All keywords, constraints, cross-domain blocks, aliases, and feasibility flags come from `specialist_registry.py`. Consumer files import derived constants (`TIER1_SPECIALIST_NAMES`, `ALL_SPECIALIST_KEYWORDS`, `ALL_CATEGORY_TO_SPECIALIST`, `ALL_CONSTRAINT_ALIASES`). Never duplicate specialist data.
+4. **Specialist registry is the SSoT for specialist config.** All keywords, constraints, cross-domain blocks, aliases, and feasibility flags come from `specialist_registry.py`. Consumer files import derived constants (`TIER1_SPECIALIST_NAMES`, `ALL_SPECIALIST_KEYWORDS`, `ALL_CATEGORY_TO_SPECIALIST`, `ALL_CONSTRAINT_ALIASES`, `TIER2_ACTIVITY_KEYWORDS`, `ALL_DOMAIN_DEFAULT_PRINCIPLES`). Never duplicate specialist data.
 5. **No hard-coded world data.** Never hard-code locations, airports, IATA codes, geolocation coordinates, or any potentially infinite dataset. Use LLM logic or registry-driven lookups.
 6. **Routing functions CANNOT mutate state.** State mutations happen in NODES only. `route_after_router()`, `route_after_specialist()`, `route_after_guard()`, `route_after_architect()`, `route_after_logistics()` are pure routing decisions.
 7. **Synthesizer model routing is frozen.** Do not modify `_MODEL_BY_COMPLEXITY` without explicit approval and quality measurement.
@@ -40,7 +40,9 @@ If the task involves API contracts or schemas shared with frontend, also read `d
 ```
 backend/app/planner/
   nodes/          → intent_router.py, trip_architect.py, vertical_specialist.py,
-                    synthesizer.py, local_expert.py, logistics_node.py, constraint_guard.py
+                    synthesizer.py, local_expert.py, logistics_node.py, constraint_guard.py,
+                    router_extraction.py, router_utils.py, router_category_sync.py,
+                    specialist_schemas.py
   services/       → response_envelope.py, section_builder.py, state_serde.py,
                     itinerary_adapter.py, iata_resolver.py, admin_utils.py
   state/          → graph_state.py, typed_meta.py
@@ -132,7 +134,7 @@ When modifying a phase, verify interactions with adjacent phases. Phase order ma
 ## Code Style
 
 - Type hints on ALL functions, Pydantic v2 for schemas
-- `ruff check .` + `black .` formatting
+- `ruff check . --fix` for linting and formatting
 - Logging via `logger = logging.getLogger(__name__)` + `_debug_log()` from `app.debug_utils`
 - Max 8 files per task unless explicitly approved (per CLAUDE.md Hard Rule #7)
 - Commit message format: `feat(planner): description` or `fix(guard): description`

@@ -1227,6 +1227,8 @@ export function StrategyStageRenderer({
     showConstraints,
     preferredTileIds,
     handleOpenBookingDrawer, // Stable (useCallback with empty deps) - wires FreeDayCard "Browse Activities"
+    validatedRules,
+    violatedRules,
     // NOTE: onOpenActivitySettings, onOpenFlightsSettings, onOpenStaysSettings intentionally
     // excluded - they're inline arrows in parent, adding them defeats memoization
   ]);

@@ -208,6 +208,14 @@ class RouterOutput(BaseModel):
             "NOT true when user sets a new budget amount (that goes in budget field)."
         ),
     )
+    multi_destination_detected: bool = Field(
+        default=False,
+        description=(
+            "True if user mentioned MULTIPLE separate destinations "
+            "(e.g., 'Rome and Switzerland', 'Paris then Tokyo'). "
+            "NOT true for compound place names like 'Trinidad and Tobago'."
+        ),
+    )
     reset_hotel: bool = Field(
         default=False,
         description=(
@@ -366,6 +374,10 @@ Extract ANY trip-related fields mentioned:
   - Expand abbreviations: "NYC" → "New York", "LA" → "Los Angeles"
   - For country-only queries, use primary city: "Indonesia" → "Bali", "UAE" → "Dubai"
   - Edge cases to keep as-is: "Mexico City", "Kansas City", "Washington DC"
+  - MULTI-DESTINATION: If user mentions MULTIPLE separate destinations
+    (e.g., "Rome and Switzerland", "Paris, Tokyo, Bali"),
+    extract ONLY the first as destination. Set multi_destination_detected: true.
+    Do NOT flag compound place names like "Trinidad and Tobago" or "St. Kitts and Nevis".
 - **origin**: Same normalization rules as destination
 - **origin_iata**: IATA airport code for origin (e.g. "San Francisco" → "SFO", "London" → "LHR")
   - Use the PRIMARY/closest international airport
@@ -877,6 +889,28 @@ def _populate_trip_plan_from_router_output(
         state.trip_plan.destination = router_output.destination
     elif fallback_destination and not state.trip_plan.destination:
         state.trip_plan.destination = fallback_destination
+
+    # Multi-destination: stash deferred destinations on trip_plan for DestinationGate
+    if router_output.multi_destination_detected:
+        state.trip_plan._multi_dest_from_llm = True
+        # Parse deferred destinations from original user text
+        raw = user_text
+        deferred = []
+        dest_lower = (router_output.destination or "").lower()
+        for sep in [" and ", " then ", ", "]:
+            # Don't split if separator is part of the destination itself
+            # (handles "Trinidad and Tobago" erroneously flagged as multi-dest)
+            if sep.lower() in dest_lower:
+                continue
+            if sep in raw.lower():
+                parts = re.split(re.escape(sep), raw, flags=re.IGNORECASE)
+                if len(parts) > 1:
+                    deferred = [p.strip() for p in parts[1:] if p.strip()]
+                    break
+        state.trip_plan._deferred_destinations = deferred
+    else:
+        state.trip_plan._multi_dest_from_llm = False
+        state.trip_plan._deferred_destinations = []
 
     # Set dates - TripPlan expects strings in YYYY-MM-DD format
     if router_output.start_date:

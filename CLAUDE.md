@@ -4,9 +4,9 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** [describe focus]
-- **Secondary:** [secondary priority or "none"]
-- **Active work:** Dead code cleanup (~1,600 lines removed across frontend+backend). New LLM provider deps (langchain-google-genai, langchain-anthropic). Router: same-month date change skips specialist re-run, exploration→soft_transition auto-upgrade when dates collected, Tier 2 prefetch fires regardless of Tier 1, settings merge regex fallback, reset suppression fix, _is_plan_active() helper. Builder: Phase D capacity-based co-scheduling with Tier 2 reserve, pinned tile Pass 0, altitude acclimatization dynamic placement, activity input/placed tracking + drop ratio. Guard: DATE_IN_PAST, MULTI_SPECIALIST_CAPACITY_EXCEEDED, cross-domain capacity gate, drop-ratio-aware suppression. Specialist cache month+bucket keys. Expand-itinerary tile source selection (force_full_rebuild gating). Response envelope tiles_replaced + suggested_replies fallback. ChatPanel mutation gate. User-pinned tiles persistence + adapter re-injection. Fill-day: single tile, browse→pin flow, pinned_day tagging. Experience generator description field. Placeholders: yoga/nightlife/cooking/wellness. Activity metadata display (MiniCard/TileCard/TileDetailsModal). Day intensity badges. Synthesizer drop reporting. Router cache extended context words. Rate limit rebalancing. Graph-built itinerary skip. DB persistence for graph-built day_cards.
+- **Focus:** Stages 10-13
+- **Secondary:** fix all P0/P1/P2 bugs
+- **Active work:** Dead code cleanup (~1,600 lines removed across frontend+backend, including `useDateRangeSelector.ts`, `confirm-dialog.tsx`). New LLM provider deps (langchain-google-genai, langchain-anthropic). Input gate system: 5 pre-routing validators (DateGate, DurationGate, TravelerGate, BudgetGate, DestinationGate) with blocking/warning severity, short-circuit to synthesizer on violations. Router: same-month date change skips specialist re-run, exploration→soft_transition auto-upgrade when dates collected, Tier 2 prefetch fires regardless of Tier 1, settings merge regex fallback, reset suppression fix, \_is_plan_active() helper, input gate integration in two phases. Builder: Phase D capacity-based co-scheduling with Tier 2 reserve, pinned tile Pass 0, altitude acclimatization dynamic placement, activity input/placed tracking + drop ratio. Guard: DATE_IN_PAST, MULTI_SPECIALIST_CAPACITY_EXCEEDED, cross-domain capacity gate, drop-ratio-aware suppression. Specialist cache month+bucket keys. Expand-itinerary tile source selection (force_full_rebuild gating). Response envelope tiles_replaced + suggested_replies fallback. ChatPanel mutation gate. User-pinned tiles persistence + adapter re-injection. Fill-day: single tile, browse→pin flow, pinned_day tagging. Experience generator description field. Placeholders: yoga/nightlife/cooking/wellness. Activity metadata display (MiniCard/TileCard/TileDetailsModal). Day intensity badges. Synthesizer drop reporting. Router cache extended context words. Rate limit rebalancing. Graph-built itinerary skip. DB persistence for graph-built day_cards. Metadata: input_gate_violations/warnings tracking.
 - **Known broken:** none
 - **DO NOT touch this sprint:** [frozen files/features]
 
@@ -146,8 +146,10 @@ cd frontend && npm run lint:fix # Lint + fix
 
 cd backend && python start.py # Start server
 cd backend && pytest # Tests
+
 # After running pytest, delete leftover SQLite artifacts:
-rm -f backend/test_plan_document_pytest.db*
+
+rm -f backend/test_plan_document_pytest.db\*
 cd backend && ruff check . --fix # Lint + fix
 
 # Environment

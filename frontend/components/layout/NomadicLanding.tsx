@@ -239,9 +239,7 @@ export function NomadicLanding() {
 
     const controller = new AbortController();
 
-    // Note: fetchDestinationImage uses apiFetch which doesn't accept signal yet,
-    // so we check abort status after the fetch completes
-    fetchDestinationImage(destination)
+    fetchDestinationImage(destination, { signal: controller.signal })
       .then((res) => {
         // Only update if not aborted and this is still the current destination
         if (
@@ -526,7 +524,8 @@ export function NomadicLanding() {
   // Update hasEverHadPlan when plan content becomes available
   // Tiles indicate plan is ready
   // Using state ensures useMemo re-computes when this changes
-  const hasTilesReady = Object.keys(docTiles ?? {}).length > 0;
+  const docTileCount = useMemo(() => Object.keys(docTiles ?? {}).length, [docTiles]);
+  const hasTilesReady = docTileCount > 0;
   const hasDayCardsReady = (docDayCards?.length ?? 0) > 0;
   useEffect(() => {
     // Legacy path: branches + strategy
@@ -659,7 +658,7 @@ export function NomadicLanding() {
 
   // Mobile badge: plan content updated while user is on chat page
   const mobileActivePage = useMobileNavStore((s) => s.activePage);
-  const tileCount = Object.keys(docTiles ?? {}).length;
+  const tileCount = docTileCount;
   const prevTileCountRef = useRef(0);
   useEffect(() => {
     if (!isDesktop && mobileActivePage === 0 && tileCount > prevTileCountRef.current) {
@@ -737,14 +736,14 @@ export function NomadicLanding() {
 
   // Book tab enabled when we have tiles or in a state that can show booking content
   const bookTabEnabled = useMemo(() => {
-    const hasTiles = Object.keys(tiles).length > 0;
+    const hasTiles = docTileCount > 0;
     const inBookableState = [
       'S2_STRATEGY_READY',
       'S3_ITINERARY_READY',
       'S3_EDITING',
     ].includes(planViewState);
     return hasTiles || inBookableState;
-  }, [tiles, planViewState]);
+  }, [docTileCount, planViewState]);
 
   // Fallback title from tripInputs (used when destinationCard not yet available)
   const fallbackTitle = tripInputs.destination ?? undefined;
@@ -1051,7 +1050,7 @@ export function NomadicLanding() {
       }
       // PERF: No storeDocument in deps - function uses getState() for live reads
     },
-    [documentStore]
+    [documentStore, addToast]
   );
 
   // ─────────────────────────────────────────────────────────────────────────────

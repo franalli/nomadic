@@ -677,7 +677,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     refreshTiles(selectedBranchId, changedVerticals)
       .then((response) => {
         // Update tiles map with refreshed tiles
-        const newTilesMap: Record<string, typeof branchState.tilesMap[string]> = {};
+        const newTilesMap: Record<string, Tile> = {};
         for (const tile of response.tiles) {
           newTilesMap[tile.id] = tile;
         }
@@ -763,7 +763,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       .then((response) => {
         if (response.tiles.length > 0) {
           // Update tiles map with fetched flights
-          const newTilesMap: Record<string, typeof branchState.tilesMap[string]> = {};
+          const newTilesMap: Record<string, Tile> = {};
           for (const tile of response.tiles) {
             newTilesMap[tile.id] = tile;
           }

@@ -95,6 +95,10 @@ def _get_response_type(state) -> str:
     """
     meta = state.metadata or {}
 
+    # Gate-blocked: use gpt-4o for natural explanation
+    if meta.get("short_circuit_type") == "gate_blocked":
+        return "planning"
+
     # Check for greeting/reset short circuits
     if meta.get("short_circuit_type") in ("greeting", "reset"):
         return "greeting"
@@ -408,6 +412,33 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
         parts.append("\n## Constraint Violations (address these naturally!)")
         for v in state.constraints_violated:
             parts.append(f"- {v}")
+
+    # --- Input gate violations (blocking) ---
+    gate_violations = state.metadata.get("input_gate_violations", [])
+    if gate_violations:
+        parts.append("\n## Input Validation Issue")
+        parts.append("The user's request has problems that prevent planning:")
+        for v in gate_violations:
+            line = f"- {v['message']}"
+            if v.get("suggested_action"):
+                line += f" {v['suggested_action']}"
+            parts.append(line)
+        parts.append(
+            "Explain the issue naturally and ask them to adjust. "
+            "Do NOT proceed with planning. Do NOT use words like "
+            "'validation', 'gate', or 'constraint'."
+        )
+
+    # --- Input gate warnings ---
+    gate_warnings = state.metadata.get("input_gate_warnings", [])
+    if gate_warnings:
+        parts.append("\n## Input Notes")
+        for w in gate_warnings:
+            line = f"- {w['message']}"
+            if w.get("suggested_action"):
+                line += f" {w['suggested_action']}"
+            parts.append(line)
+        parts.append("Mention these notes naturally in your response.")
 
     # Specialist feasibility alerts (trip too short, wrong season, etc.)
     strategy_sections = state.metadata.get("strategy_sections", [])
@@ -1081,6 +1112,12 @@ async def synthesizer(state: GraphState) -> GraphState:
                 # Fallback to template
                 output = synth.generate_response(state)
                 message = output.message
+                # If gate-blocked and template produced nothing useful, use pre-computed fallback
+                if state.metadata.get("short_circuit_type") == "gate_blocked" and len(message) < 20:
+                    message = state.metadata.get(
+                        "_gate_blocked_fallback",
+                        "Something doesn't look right with those inputs -- could you double-check?",
+                    )
                 log("SYNTH", "Using template (LLM failed)")
         else:
             # Check if we have a pre-computed response from router (exploration mode)
@@ -1171,6 +1208,9 @@ def _should_use_llm_synthesis(state: GraphState) -> bool:
     # Short-circuit responses (GREETING/RESET) use static responses for speed
     # These are simple acknowledgments, not planning responses
     if state.metadata.get("short_circuit_response"):
+        # Gate-blocked needs LLM to explain the issue naturally
+        if state.metadata.get("short_circuit_type") == "gate_blocked":
+            return True
         return False
 
     # Everything else uses LLM - even missing_fields, pre_core, etc.

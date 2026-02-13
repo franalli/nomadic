@@ -11,6 +11,7 @@
 'use client';
 
 import { Hotel, MapPin, Plane } from 'lucide-react';
+import { useMemo } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
@@ -40,7 +41,7 @@ interface TripHealthBarProps {
 
 export function TripHealthBar({ tripSummary, tiles, className }: TripHealthBarProps) {
   // Count tiles by type
-  const tileArray = Object.values(tiles);
+  const tileArray = useMemo(() => Object.values(tiles), [tiles]);
   const hotels = tileArray.filter(
     (t) => t.type === 'hotel' || t.type === 'stay' || t.type === 'accommodation'
   ).length;

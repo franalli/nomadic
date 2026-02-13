@@ -337,39 +337,3 @@ async def clear_db_cache(db: AsyncSession) -> int:
         logger.warning(f"[SPECIALIST_CACHE] Clear L2 failed: {e}")
         await db.rollback()
         return 0
-
-
-async def cleanup_expired(db: AsyncSession) -> int:
-    """
-    Remove expired L2 entries.
-
-    Run via lifespan shutdown or scheduled job.
-    """
-    from app.db_models import ResponseCache
-
-    try:
-        result = await db.execute(
-            delete(ResponseCache).where(ResponseCache.expires_at < datetime.now(UTC))
-        )
-        await db.commit()
-        deleted = result.rowcount
-        if deleted:
-            logger.info(f"[SPECIALIST_CACHE] Cleaned up {deleted} expired entries")
-        return deleted
-    except Exception as e:
-        logger.warning(f"[SPECIALIST_CACHE] Cleanup failed: {e}")
-        await db.rollback()
-        return 0
-
-
-def reset_stats() -> None:
-    """Reset hit/miss counters (useful for testing)."""
-    global _cache_stats
-    with _stats_lock:
-        _cache_stats = {
-            "l1_hits": 0,
-            "l1_misses": 0,
-            "l2_hits": 0,
-            "l2_misses": 0,
-            "writes": 0,
-        }

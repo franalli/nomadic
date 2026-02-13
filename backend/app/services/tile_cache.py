@@ -297,39 +297,3 @@ def clear_memory_cache() -> int:
         _tile_cache.clear()
     logger.info(f"[TILE_CACHE] Cleared L1 ({count} entries)")
     return count
-
-
-def reset_stats() -> None:
-    """Reset cache statistics."""
-    global _cache_stats
-    with _stats_lock:
-        _cache_stats = {
-            "l1_hits": 0,
-            "l1_misses": 0,
-            "l2_hits": 0,
-            "l2_misses": 0,
-            "writes": 0,
-        }
-
-
-async def cleanup_expired(db: AsyncSession) -> int:
-    """Remove expired L2 entries. Run on shutdown or daily."""
-    from sqlalchemy import delete
-
-    from app.db_models import ResponseCache
-
-    try:
-        result = await db.execute(
-            delete(ResponseCache)
-            .where(ResponseCache.cache_type == "tiles")
-            .where(ResponseCache.expires_at < datetime.now(UTC))
-        )
-        await db.commit()
-        deleted = result.rowcount
-        if deleted:
-            logger.info(f"[TILE_CACHE] Cleaned up {deleted} expired entries")
-        return deleted
-    except Exception as e:
-        logger.warning(f"[TILE_CACHE] Cleanup failed: {e}")
-        await db.rollback()
-        return 0

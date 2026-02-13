@@ -33,7 +33,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 | LLM-Powered Nodes     | 4     | IntentRouter, TripArchitect, VerticalSpecialist, Synthesizer |
 | Domain Specialists    | 1     | LocalExpert (Static Dict + Optional LLM, gated by LOCAL_EXPERT_USE_LLM env var, default off, uses gpt-4o-mini when enabled) |
 | Data Fetchers         | 1     | LogisticsNode (flight fetching + safety logic) |
-| Deterministic Nodes   | 1     | ConstraintGuard (pure Python validation) |
+| Deterministic Nodes   | 1     | ConstraintGuard (mostly deterministic + one LLM-backed validation: `validate_place_exists()` via gpt-4o-mini) |
 | **Total Nodes**       | **7** | Core graph nodes                        |
 
 > **Note:** `ItineraryBuilder` is a pure Python **service** (not a LangGraph node). It's called from both `format_result()` in `response_envelope.py` (via `itinerary_adapter.py`, shadow mode at S2_STRATEGY_READY) and the `/api/expand-itinerary` endpoint. The 7-node architecture is preserved.
@@ -70,7 +70,7 @@ backend/app/planner/
 #   Frontend mirror: frontend/lib/specialists.ts (colors, icons, keywords, display names)
 ├── nodes/                   # Node implementations
 │   ├── __init__.py          # Node exports
-│   ├── constraint_guard.py  # Pure Python validation
+│   ├── constraint_guard.py  # Mostly deterministic validation (one LLM-backed check: validate_place_exists)
 │   ├── intent_router.py     # LLM-based intent classification
 │   ├── local_expert.py      # City logistics concierge
 │   ├── logistics_node.py    # Flight fetching + safety logic
@@ -118,7 +118,7 @@ backend/app/planner/
 │  • GREETING/RESET → Static response, skip to Synthesizer                    │
 │  • SETTINGS_TO_LOGISTICS → Hotel/flight/budget/traveler changes → Logistics │
 │  • ACTIONABLE_TO_LOGISTICS → Tier 2 activities, removals, skill, resets     │
-│  • EXPLORATION → Generic Q&A using Local Expert knowledge (no LLM)          │
+│  • EXPLORATION → Generic Q&A using Local Expert knowledge (LLM fallback for unknown destinations) │
 │  • SOFT_TRANSITION → Routes to PLANNING when dates OR activities provided   │
 │  • PLANNING + no specialist → LocalExpert (city logistics)                  │
 │  • PLANNING + specialist → VerticalSpecialist                               │
@@ -153,7 +153,7 @@ backend/app/planner/
 │  LogisticsNode (Data Fetcher - No LLM)                                      │
 │  ─────────────────────────────────────                                      │
 │  Fetches and sanitizes tile data (flights, hotels, activities)              │
-│  1. Check for curated destination (Dubai, Rome, Chamonix)                   │
+│  1. Check for curated destination (Dubai, Rome, Chamonix, Bali, Patagonia)  │
 │     → CuratedProvider for hotels/activities                                 │
 │  2. Fallback to MockProviders for non-curated destinations                  │
 │  3. Curated/Demo flights with carrier sanitization (XX → Emirates)          │
@@ -183,7 +183,9 @@ backend/app/planner/
 ┌────────────────────────────────────┐            │
 │  ConstraintGuard (Python)          │            │
 │  ────────────────────────────────  │            │
-│  Pure Python validation (NO LLM)   │            │
+│  Mostly deterministic validation   │            │
+│  One LLM-backed check:            │            │
+│  validate_place_exists (gpt-4o-mini)│           │
 │  • Budget: total < allocation      │            │
 │  • Temporal: dates valid           │            │
 │  • Specialist: departure buffer    │            │
@@ -264,7 +266,7 @@ on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 | `specialist` (VerticalSpecialist) | LLM (Expert) | Domain constraints + content | gpt-4o | Variable | Simulated |
 | `local_expert` (LocalExpert) | Static Dict + Optional LLM | City logistics concierge | gpt-4o-mini (when LOCAL_EXPERT_USE_LLM=true, default off) | N/A | None |
 | `logistics` (LogisticsNode) | Data Fetcher | Flight fetching + safety | N/A | N/A | None |
-| `guard` (ConstraintGuard) | Python | Validation (NO LLM) | N/A | N/A | None |
+| `guard` (ConstraintGuard) | Python | Validation (mostly deterministic) | gpt-4o-mini (place validation only, via `validate_place_exists()`) | N/A | None |
 | `synthesizer` (Synthesizer) | LLM (Writer) | Response generation | gpt-4o-mini (exploration/specialist_update) or gpt-4o (planning) | Variable | True (astream_events) |
 
 *LocalExpert uses static knowledge from `LOCAL_EXPERT_KNOWLEDGE` dictionary. Optional LLM generation gated by `LOCAL_EXPERT_USE_LLM` env var (default off, uses gpt-4o-mini when enabled).
@@ -359,7 +361,7 @@ The Router uses two distinct execution paths depending on whether a plan is alre
 2. Extracts dates, destination, origin, travelers, budget, activity_day_preferences, modifications, and settings in ONE call
 3. Populates `state.trip_plan` immediately via `_populate_trip_plan_from_router_output(state, router_output, destination, user_text)`
 4. Sets `router_extracted_fields = True` flag for TripArchitect to skip duplicate extraction
-5. `ROUTER_EXTRACTION_PROMPT` has 7 tasks: (1) Intent Classification, (2) Specialist Detection, (3) Date Extraction, (4) Field Extraction, (5) Activity Preferences, (6) Modification Detection, (7) Settings Extraction
+5. `ROUTER_EXTRACTION_PROMPT` has 9 tasks: (1) Intent Classification, (2) Field Extraction, (3) Flags, (4) Activity Categories (Tier 2), (5) Activity Day Preferences, (6) Modification Detection, (7) Settings Extraction, (8) Planning Intent Classification, (9) Question Classification. Specialist Detection is embedded in the prompt between Tasks 3 and 4.
 
 **Error Handling (no silent fallbacks):**
 
@@ -526,7 +528,7 @@ if skill_level:
 
 async def generate_specialist_output_llm(topic, destination, trip_plan, db=None, skill_level=None):
     """Single LLM call generates feasibility + activities + constraints."""
-    llm = ChatOpenAI(model=os.getenv("SPECIALIST_MODEL", "gpt-4o"), temperature=0.1)
+    llm = ChatOpenAI(model=os.getenv("SPECIALIST_MODEL", "gpt-4o"), temperature=0.2)
     return await llm.with_structured_output(LLMSpecialistOutput).ainvoke(...)
 ```
 
@@ -744,7 +746,7 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 
 | Destination Type | Hotels | Activities | Flights |
 |------------------|--------|------------|---------|
-| Curated (Dubai, Rome, Chamonix) | CuratedProvider | CuratedProvider | Curated + Demo Backup |
+| Curated (Dubai, Rome, Chamonix, Bali, Patagonia) | CuratedProvider | CuratedProvider | Curated + Demo Backup |
 | Non-Curated | MockProvider | MockProvider | Demo Backup |
 
 > **Note:** Amadeus providers are disabled for now to ensure consistent behavior between first request and regeneration flows.
@@ -773,7 +775,7 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 
 **Two-Tier Activity System:**
 
-Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** categories (yoga, cooking, nightlife, food, wine, photography, wellness, culture, music) generate real, destination-specific experience tiles via `gpt-4o-mini` structured output.
+Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** categories (yoga, cooking, nightlife, temples, beach, shopping, photography, sailing, wellness, culture, music, wine, food) generate real, destination-specific experience tiles via `gpt-4o-mini` structured output.
 
 When niche specialists are active, suppression is tier-aware:
 
@@ -837,9 +839,9 @@ Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured outp
 
 ### ConstraintGuard
 
-Pure Python deterministic validation. **NO LLM calls.**
+Mostly deterministic validation. One LLM-backed check: `validate_place_exists()` calls `validate_input_async()` from `app.validation` (gpt-4o-mini with TTL caching). Fails open if validation service is unavailable.
 
-All checks are registry-driven. Geographic and seasonal checks were deleted — the VerticalSpecialist LLM handles these via `check_feasibility()`.
+All other checks are registry-driven pure Python. Geographic and seasonal checks were deleted — the VerticalSpecialist LLM handles these via `check_feasibility()`.
 
 | Constraint Type | Check | Severity |
 |-----------------|-------|----------|
@@ -1291,7 +1293,7 @@ Pydantic structured output is used for LLM nodes that need **guaranteed schema e
 | **LocalExpert** | ❌ No | ❌ Static | N/A | Uses `LOCAL_EXPERT_KNOWLEDGE` dict |
 | **VerticalSpecialist** | ✅ Yes | GPT-4o | `LLMSpecialistOutput`, `LLMActivity`, `LLMConstraint` | LLM-first with fallback |
 | **LogisticsNode** | ❌ No | ❌ N/A | N/A | API calls only (Amadeus, curated data) |
-| **ConstraintGuard** | ❌ No | ❌ N/A | N/A | Pure Python rule-based validation |
+| **ConstraintGuard** | ❌ No | gpt-4o-mini (place validation only) | N/A | Mostly deterministic; `validate_place_exists()` is LLM-backed |
 | **Synthesizer** | ❌ No | GPT-4o-mini or GPT-4o (by response type) | N/A | Free-form natural language (correct) |
 
 > **Note:** VerticalSpecialist uses **LLM-first architecture** by default. Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
@@ -1351,6 +1353,10 @@ class RouterOutput(BaseModel):
     flight_direct_only: Optional[bool] = None   # True = direct flights only
     flight_cabin_class: Optional[str] = None    # "economy", "premium_economy", "business", "first"
 
+    # ── Intent classification (Phase 3) ──
+    planning_intent: Optional[str] = None       # "ready", "modifying", "exploring", "greeting"
+    question_type: Optional[str] = None         # "weather", "safety", "costs", "visa", etc.
+
 # Usage
 llm = ChatOpenAI(model="gpt-4o-mini")
 structured_llm = llm.with_structured_output(RouterOutput)
@@ -1359,12 +1365,16 @@ result: RouterOutput = await structured_llm.ainvoke(messages)
 
 **ROUTER_EXTRACTION_PROMPT Tasks:**
 1. Intent Classification (GREETING/RESET/PLANNING)
-2. Specialist Detection (Tier 1 hints)
-3. Date Extraction (relative dates resolved to YYYY-MM-DD)
-4. Field Extraction (destination, origin, travelers, budget)
-5. Activity Preferences (day count JSON)
+2. Field Extraction (destination, origin, IATA codes, dates, travelers, budget)
+3. Flags (has_dates_in_message, has_activity_in_message, planning_ready)
+4. Activity Categories (Tier 2: yoga, cooking, nightlife, etc.)
+5. Activity Day Preferences (day count JSON string)
 6. Modification Detection (removal_targets, skill_level, reset flags)
 7. Settings Extraction (hotel stars/style/amenities/location, flight direct/cabin)
+8. Planning Intent Classification (ready/modifying/exploring/greeting)
+9. Question Classification (weather/safety/costs/visa/transport/cultural/activities/accommodation/scams/packing/connectivity/money/couples/family)
+
+Specialist Detection is embedded between Tasks 3 and 4 (using `_SPECIALIST_KEYWORD_PROMPT` from the registry).
 
 **Benefits:**
 - Type-safe extraction with Pydantic validation
@@ -1509,6 +1519,10 @@ class Activity(BaseModel):
     # Scheduling hints (LLM can suggest)
     day: Optional[int] = None
     period: Optional[Literal["morning", "afternoon", "evening"]] = None
+
+    # Display
+    image_url: Optional[str] = None
+    logic_hook: Optional[str] = None  # Pro tip for UI
 
     # Topic-specific optional fields
     depth_meters: Optional[int] = None           # diving
@@ -3491,6 +3505,8 @@ DEMO_MANIFEST = {
     },
     "rome": {...},
     "chamonix": {...},
+    "bali": {...},
+    "patagonia": {...},
 }
 ```
 

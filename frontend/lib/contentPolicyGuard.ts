@@ -283,9 +283,3 @@ export function guardedEnforcePolicy(
     }
   }
 }
-
-// =============================================================================
-// Exports for Testing
-// =============================================================================
-
-export const FORBIDDEN_STRINGS = FORBIDDEN_STAGE_1_2;

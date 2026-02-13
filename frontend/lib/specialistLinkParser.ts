@@ -6,7 +6,7 @@
  * them to deep links that navigate to the Plan tab and scroll to the card.
  */
 
-import { getSpecialistConfig,SPECIALIST_DISPLAY_NAMES } from './specialists';
+import { SPECIALIST_DISPLAY_NAMES } from './specialists';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -36,17 +36,6 @@ const SPECIALIST_PATTERNS = [
  */
 export function normalizeSpecialistType(name: string): SpecialistType {
   return name.toLowerCase().replace(/\s+/g, '_') as SpecialistType;
-}
-
-/**
- * Check if a string contains specialist mentions.
- */
-export function hasSpecialistMentions(content: string): boolean {
-  return SPECIALIST_PATTERNS.some((pattern) => {
-    // Reset lastIndex for global regex
-    pattern.lastIndex = 0;
-    return pattern.test(content);
-  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,28 +68,4 @@ export function preprocessSpecialistLinks(content: string): string {
   }
 
   return result;
-}
-
-/**
- * Extract specialist type from a specialist: protocol URL.
- * e.g., "specialist:diving" -> "diving"
- */
-export function parseSpecialistLink(href: string): SpecialistType | null {
-  if (!href.startsWith('specialist:')) {
-    return null;
-  }
-  const type = href.replace('specialist:', '') as SpecialistType;
-  return type;
-}
-
-/**
- * Get display name for a specialist type.
- * e.g., "diving" -> "Diving Specialist", "local_expert" -> "Local Expert Specialist"
- */
-export function getSpecialistDisplayName(type: SpecialistType): string {
-  const config = getSpecialistConfig(type);
-  if (config) return `${config.displayName} Specialist`;
-  const displayName = SPECIALIST_DISPLAY_NAMES[type];
-  if (displayName) return `${displayName} Specialist`;
-  return `${type} Specialist`;
 }

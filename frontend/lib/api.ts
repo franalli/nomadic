@@ -319,11 +319,13 @@ export interface DestinationImageResponse {
 }
 
 export async function fetchDestinationImage(
-  destination: string
+  destination: string,
+  options?: { signal?: AbortSignal }
 ): Promise<DestinationImageResponse> {
   const res = await apiFetch('/api/destination-image', {
     method: 'POST',
     body: JSON.stringify({ destination }),
+    signal: options?.signal,
   });
 
   if (!res.ok) {

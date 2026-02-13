@@ -39,8 +39,33 @@ export interface paths {
          *     places (e.g., "Paris and Rome" -> ["Paris", "Rome"]).
          *
          *     Raises HTTP 503 if validation fails after retries.
+         *
+         *     Tier 11.1: Uses async validation with non-blocking retries for better concurrency.
          */
-        post: operations["validate_trip_input_v1_validate_trip_input_post"];
+        post: operations["validate_trip_input_api_validate_trip_input_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/destination-image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get Destination Image
+         * @description Get the Unsplash image URL for a destination.
+         *
+         *     Called when user selects a destination to show the correct banner image
+         *     immediately, without waiting for plan generation.
+         */
+        post: operations["get_destination_image_api_destination_image_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -60,7 +85,323 @@ export interface paths {
          * Admin Clear Validation Cache
          * @description Clear the validation cache. For development/debugging only.
          */
-        post: operations["admin_clear_validation_cache_v1_admin_clear_validation_cache_post"];
+        post: operations["admin_clear_validation_cache_api_admin_clear_validation_cache_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/fresh-start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admin Fresh Start
+         * @description Perform a complete system cache and checkpoint cleanup.
+         *
+         *     This clears:
+         *     - All validation caches (preserving rate limiting)
+         *     - All LLM response caches
+         *     - All stale LangGraph checkpoints (>24h idle)
+         *
+         *     For development/debugging and maintenance only.
+         *     Does NOT clear rate limiting cache to prevent abuse.
+         */
+        post: operations["admin_fresh_start_api_admin_fresh_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/graph-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Graph Stats
+         * @description Get comprehensive graph statistics for observability.
+         *
+         *     Returns routing decisions, template usage, and cache performance metrics.
+         *     Useful for monitoring token savings and optimization effectiveness.
+         *
+         *     Response:
+         *     {
+         *         "routing": {
+         *             "keyword_bypasses": int,  # Router skipped via keyword heuristic
+         *             "router_calls": int,      # Router LLM was invoked
+         *             "negation_defers": int,   # Keyword was negated, deferred to router
+         *             "keyword_bypass_rate": float
+         *         },
+         *         "templates": {
+         *             "template_hits": int,    # Template found and used
+         *             "template_misses": int,  # No template, fell back to LLM
+         *             "template_hit_rate": float
+         *         },
+         *         "extractor_cache": {...},
+         *         "strategy_cache": {...}
+         *     }
+         */
+        get: operations["admin_graph_stats_api_admin_graph_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/planner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Planner Debug
+         * @description Get planner configuration and build identifiers for ops debugging.
+         *
+         *     Returns stable JSON schema with behavioral config and build info.
+         *     Useful for verifying deployment state and debugging cache issues.
+         *
+         *     Response includes:
+         *     - admin_endpoint_version: Schema version for evolution tracking
+         *     - prompt_bundle_hash: Hash of prompt templates
+         *     - planner_build_id: Git SHA or build ID
+         *     - cache_schema_version: Cache payload schema version
+         *     - enabled_strategy_topics: List of enabled strategy topics
+         *     - enabled_strategy_topics_source: "defaults" or "env_override"
+         *     - enable_all_strategy_topics: Whether env override is active
+         *     - llm_budget_max_calls_non_ready: Max LLM calls per non-ready turn
+         *     - cache_ttl_map_seconds: TTL per cache type
+         *     - gate_precedence_version: Gate logic version
+         *     - node_logic_version: Per-node logic versions
+         *     - strategy_output_caps: Max output characters for strategy responses
+         */
+        get: operations["admin_planner_debug_api_admin_planner_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/clear-all-checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admin Clear All Checkpoints
+         * @description Clear ALL LangGraph checkpoints regardless of age.
+         *
+         *     Use with caution - this will clear all in-progress session states.
+         *     For emergency maintenance only.
+         */
+        post: operations["admin_clear_all_checkpoints_api_admin_clear_all_checkpoints_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/clear-all-caches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admin Clear All Caches
+         * @description Clear ALL caches in the system - comprehensive cache reset.
+         *
+         *     Clears:
+         *     - All LangGraph/planner caches (Response, Extractor, Strategy, Tile, GateEvaluation)
+         *     - All validation caches (including rate limiting)
+         *     - Unsplash memory cache
+         *     - Unsplash database cache
+         *     - All LangGraph checkpoints
+         *     - Prompt/template caches
+         *
+         *     WARNING: Destructive operation for development/maintenance only.
+         */
+        post: operations["admin_clear_all_caches_api_admin_clear_all_caches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/specialist-cache-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Specialist Cache Stats
+         * @description Get specialist LLM cache statistics for observability.
+         *
+         *     Returns L1 (memory) and L2 (database) hit/miss counts, sizes, and TTLs.
+         */
+        get: operations["admin_specialist_cache_stats_api_admin_specialist_cache_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/clear-specialist-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admin Clear Specialist Cache
+         * @description Clear both L1 (memory) and L2 (database) specialist caches.
+         *
+         *     Use for development/debugging when you want fresh LLM calls.
+         */
+        post: operations["admin_clear_specialist_cache_api_admin_clear_specialist_cache_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/tile-cache-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Tile Cache Stats
+         * @description Get tile data cache statistics for observability.
+         *
+         *     Returns L1 (memory) and L2 (database) hit/miss counts, sizes, and TTLs.
+         */
+        get: operations["admin_tile_cache_stats_api_admin_tile_cache_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/clear-tile-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admin Clear Tile Cache
+         * @description Clear both L1 (memory) and L2 (database) tile caches.
+         *
+         *     Use for development/debugging when you want fresh provider data.
+         */
+        post: operations["admin_clear_tile_cache_api_admin_clear_tile_cache_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/router-cache-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Router Cache Stats
+         * @description Get router extraction cache statistics for observability.
+         *
+         *     Note: Router cache is L1-only (no database persistence).
+         *     Shows hits, misses, and skipped context-dependent queries.
+         */
+        get: operations["admin_router_cache_stats_api_admin_router_cache_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/clear-router-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admin Clear Router Cache
+         * @description Clear router extraction cache (L1 memory only).
+         *
+         *     Use for development/debugging when you want fresh extractions.
+         */
+        post: operations["admin_clear_router_cache_api_admin_clear_router_cache_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/cache-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin All Cache Stats
+         * @description Get all cache statistics in one call.
+         *
+         *     Returns stats for:
+         *     - Specialist cache (L1 + L2)
+         *     - Tile cache (L1 + L2)
+         *     - Router cache (L1 only)
+         */
+        get: operations["admin_all_cache_stats_api_admin_cache_stats_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -80,7 +421,7 @@ export interface paths {
          * Track Tile Click
          * @description Persist a tile click for analytics.
          */
-        post: operations["track_tile_click_v1_tiles_click_post"];
+        post: operations["track_tile_click_api_tiles_click_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -101,7 +442,7 @@ export interface paths {
          * @description Persist a suggestion pill click for analytics.
          *     Tracks which LLM-generated suggestions users find valuable.
          */
-        post: operations["track_suggestion_click_v1_suggestions_click_post"];
+        post: operations["track_suggestion_click_api_suggestions_click_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -128,17 +469,16 @@ export interface paths {
          *     - Feature flag gating (ENABLE_GRAPH_PLAN_ROUTE)
          *     - Payload size validation
          *     - Optimistic concurrency via document versioning
-         *     - Fallback to legacy planner on failure (GRAPH_FALLBACK_TO_LEGACY)
          *     - Cache-Control: no-store to prevent caching of personalized responses
          */
-        post: operations["graph_plan_endpoint_v1_graph_plan_post"];
+        post: operations["graph_plan_endpoint_api_graph_plan_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/plan": {
+    "/api/graph_plan/stream": {
         parameters: {
             query?: never;
             header?: never;
@@ -148,16 +488,23 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Plan
-         * @description Chat-like planning endpoint:
-         *     message + preferences -> branches via LLM -> tiles for primary branch.
-         *     Returns the full plan document with branches, tiles, and chat response.
+         * Graph Plan Stream Endpoint
+         * @description Streaming version of the graph plan endpoint using Server-Sent Events (SSE).
          *
-         *     Session rotation:
-         *     After the first trip context is created, the session token is rotated
-         *     to prevent session fixation attacks. New cookies are set on the response.
+         *     Streams tokens as they are generated, then sends a final 'complete' event
+         *     with the full response data including session state and extracted trip inputs.
+         *
+         *     SSE Event Format:
+         *         event: token
+         *         data: {"type": "token", "data": "..."}
+         *
+         *         event: complete
+         *         data: {"type": "complete", "data": {...}}
+         *
+         *         event: error
+         *         data: {"type": "error", "message": "..."}
          */
-        post: operations["plan_v1_plan_post"];
+        post: operations["graph_plan_stream_endpoint_api_graph_plan_stream_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -181,7 +528,7 @@ export interface paths {
          *     Uses row-level locking to prevent deadlocks with concurrent plan operations.
          *     Also clears session cookies from the browser and LangGraph checkpoint state.
          */
-        delete: operations["reset_session_v1_session_delete"];
+        delete: operations["reset_session_api_session_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -201,10 +548,39 @@ export interface paths {
          *     Returns the last 50 messages in chronological order (oldest first).
          *     Used by the frontend to restore chat state on page load.
          */
-        get: operations["get_chat_history_v1_chat_get"];
+        get: operations["get_chat_history_api_chat_get"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/last": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Last Message
+         * @description Delete the last user message and its associated assistant response.
+         *
+         *     This operation:
+         *     1. Finds the most recent user message
+         *     2. Retrieves the trip_inputs snapshot from that message (if available)
+         *     3. Deletes the user message and all subsequent messages
+         *     4. Restores trip_inputs from the snapshot (if available)
+         *     5. Returns the deleted count, restored trip_inputs, and remaining messages
+         *
+         *     Used for "undo" functionality to revert the last chat turn.
+         */
+        delete: operations["delete_last_message_api_chat_last_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -222,7 +598,7 @@ export interface paths {
          * @description Get the current plan document for a session.
          *     Returns the centralized source of truth for branches and tiles.
          */
-        get: operations["get_plan_document_v1_document_get"];
+        get: operations["get_plan_document_api_document_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -233,7 +609,7 @@ export interface paths {
          * @description Apply a partial update to the plan document.
          *     Uses CRDT-style merge: additions win, deletions require explicit flags.
          */
-        patch: operations["patch_plan_document_v1_document_patch"];
+        patch: operations["patch_plan_document_api_document_patch"];
         trace?: never;
     };
     "/api/document/tiles/{branch_id}": {
@@ -250,7 +626,117 @@ export interface paths {
          * @description Fetch tiles for a specific branch and add them to the document.
          *     Used when switching branches to load tiles on demand.
          */
-        post: operations["fetch_tiles_for_branch_v1_document_tiles__branch_id__post"];
+        post: operations["fetch_tiles_for_branch_api_document_tiles__branch_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tiles/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Tiles
+         * @description Force refresh tiles for a branch with current settings.
+         *
+         *     Use this endpoint when user preferences (hotel_settings, flight_settings,
+         *     activity_settings) change to get updated tiles reflecting the new filters.
+         *
+         *     The cache key includes settings hashes, so changing settings will trigger
+         *     a cache miss and fresh fetch.
+         */
+        post: operations["refresh_tiles_api_tiles_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/document/fill-day": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fill Day Endpoint
+         * @description Fill a free day with activity tiles. No LangGraph execution.
+         */
+        post: operations["fill_day_endpoint_api_document_fill_day_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/expand-itinerary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Expand Itinerary Endpoint
+         * @description Expand strategy into full itinerary (Stage 2 -> Stage 3).
+         *
+         *     Streams NDJSON events:
+         *         {"type": "progress", "stage": "itinerary", "message": "...", "pct": 30}
+         *         {"type": "envelope", "plan_envelope": {...}}
+         *         {"type": "done", "plan_view_state": "S3_ITINERARY_READY"}
+         *         {"type": "error", "message": "..."}
+         *
+         *     NOTE: This endpoint does NOT use FastAPI's db dependency injection because
+         *     StreamingResponse generators run AFTER the endpoint returns, at which point
+         *     the injected session is closed. Instead, we create a fresh session inside
+         *     the generator using the session factory.
+         */
+        post: operations["expand_itinerary_endpoint_api_expand_itinerary_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/remove-specialist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove Specialist Endpoint
+         * @description Remove specialists and regenerate itinerary (conflict resolution).
+         *
+         *     When ItineraryBuilder detects a constraint conflict (e.g., diving + hiking
+         *     in 4 days), user can choose "Focus on diving". This endpoint:
+         *     1. Removes other specialists from executed_strategy_topics
+         *     2. Filters strategy_sections to keep only the kept specialist
+         *     3. Clears day_cards (they'll be regenerated)
+         *     4. Re-runs ItineraryBuilder with the simplified plan
+         *
+         *     Streams NDJSON events (same format as expand-itinerary):
+         *         {"type": "progress", "stage": "itinerary", "message": "...", "pct": 30}
+         *         {"type": "envelope", "plan_envelope": {...}}
+         *         {"type": "done", "plan_view_state": "S3_ITINERARY_READY"}
+         *         {"type": "error", "message": "..."}
+         */
+        post: operations["remove_specialist_endpoint_api_remove_specialist_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -262,38 +748,87 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AckUpdate
+         * @description Detailed update info for collapsible message UI.
+         */
+        AckUpdate: {
+            /** Field */
+            field: string;
+            /** To */
+            to: string;
+            /** From Value */
+            from_value?: string | null;
+        };
+        /**
          * ActivitySettings
          * @description Activity-specific search settings.
          */
         ActivitySettings: {
             /** Categories */
             categories?: string[];
+            /** Skill Level */
+            skill_level?: string | null;
+            /** Day Preferences */
+            day_preferences?: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * BookingStatus
+         * @description Per-tab booking status.
+         */
+        BookingStatus: {
+            flights?: components["schemas"]["BookingStatusItem"] | null;
+            stays?: components["schemas"]["BookingStatusItem"] | null;
+            activities?: components["schemas"]["BookingStatusItem"] | null;
+        };
+        /**
+         * BookingStatusItem
+         * @description Status for a single booking category.
+         */
+        BookingStatusItem: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "idle" | "loading" | "ready" | "error";
+            /** Summary */
+            summary: string;
         };
         /**
          * BookingTypes
          * @description Which booking categories to search for.
+         *
+         *     Uses tri-state model:
+         *     - 'off': User explicitly disabled, never show or search
+         *     - 'suggested': Default state, show provisional items
+         *     - 'on': User explicitly enabled, may require confirmation gates
          */
         BookingTypes: {
             /**
              * Hotels
-             * @default false
+             * @default suggested
+             * @enum {string}
              */
-            hotels: boolean;
+            hotels: "off" | "suggested" | "on";
             /**
              * Flights
-             * @default false
+             * @default off
+             * @enum {string}
              */
-            flights: boolean;
+            flights: "off" | "suggested" | "on";
             /**
              * Ground Transport
-             * @default false
+             * @default off
+             * @enum {string}
              */
-            ground_transport: boolean;
+            ground_transport: "off" | "suggested" | "on";
             /**
              * Activities
-             * @default false
+             * @default suggested
+             * @enum {string}
              */
-            activities: boolean;
+            activities: "off" | "suggested" | "on";
         };
         /**
          * BranchSelections
@@ -345,6 +880,145 @@ export interface components {
             created_at: string;
         };
         /**
+         * Conflict
+         * @description Structured conflict for UI rendering (no freeform text).
+         */
+        Conflict: {
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "origin" | "destination" | "dates" | "travelers" | "budget";
+            /** Related Constraints */
+            related_constraints: ("origin" | "destination" | "dates" | "travelers" | "budget")[];
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "date_range_invalid" | "date_past" | "budget_exceeded" | "traveler_mismatch" | "destination_unreachable" | "duration_mismatch";
+        };
+        /**
+         * DayBlock
+         * @description A single activity block within a day (Stage 3).
+         */
+        DayBlock: {
+            /** Id */
+            id?: string | null;
+            /**
+             * Period
+             * @enum {string}
+             */
+            period: "morning" | "afternoon" | "evening";
+            /** Activity Type */
+            activity_type: string;
+            /** Intensity */
+            intensity?: ("light" | "moderate" | "challenging") | null;
+            /** Summary */
+            summary: string;
+            /**
+             * Is Buffer
+             * @default false
+             */
+            is_buffer: boolean;
+            /** Buffer Type */
+            buffer_type?: ("no_fly" | "rest_day" | "acclimatization" | "arrival" | "departure") | null;
+            /** Buffer Reason */
+            buffer_reason?: string | null;
+            /** Specialist Type */
+            specialist_type?: string | null;
+            /** Constraints */
+            constraints?: string[];
+            /** Image Url */
+            image_url?: string | null;
+            /** Duration */
+            duration?: string | null;
+            /** Coordinates */
+            coordinates?: {
+                [key: string]: number;
+            } | null;
+            /** Scheduled Time */
+            scheduled_time?: string | null;
+            /** Logistics Details */
+            logistics_details?: string | null;
+            /** Hotel Name */
+            hotel_name?: string | null;
+            /** Booked Tile */
+            booked_tile?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Requires Booking
+             * @default false
+             */
+            requires_booking: boolean;
+            /** Booking Category */
+            booking_category?: ("hotel" | "flight" | "activity") | null;
+            /** Preference Status */
+            preference_status?: ("user_preferred" | "ai_selected" | "ai_override") | null;
+            /** Preference Override Reason */
+            preference_override_reason?: string | null;
+            /** Alternative Tile Id */
+            alternative_tile_id?: string | null;
+        };
+        /**
+         * DayCard
+         * @description A single day in the itinerary (Stage 3).
+         */
+        DayCard: {
+            /** Day Number */
+            day_number: number;
+            /** Date */
+            date?: string | null;
+            /** Label */
+            label: string;
+            /** Blocks */
+            blocks?: components["schemas"]["DayBlock"][];
+        };
+        /**
+         * DeleteLastMessageResponse
+         * @description Response from deleting the last user message and its assistant response.
+         */
+        DeleteLastMessageResponse: {
+            /** Deleted Count */
+            deleted_count: number;
+            /** Restored Trip Inputs */
+            restored_trip_inputs?: {
+                [key: string]: unknown;
+            } | null;
+            /** Messages */
+            messages: components["schemas"]["ChatMessageResponse"][];
+        };
+        /**
+         * DestinationCard
+         * @description Destination content anchor for the plan.
+         */
+        DestinationCard: {
+            /** Title */
+            title: string;
+            /** Subtitle */
+            subtitle?: string | null;
+            /** Image Url */
+            image_url?: string | null;
+        };
+        /**
+         * DestinationImageRequest
+         * @description Request for destination image.
+         */
+        DestinationImageRequest: {
+            /** Destination */
+            destination: string;
+        };
+        /**
+         * DestinationImageResponse
+         * @description Response with destination image URL.
+         */
+        DestinationImageResponse: {
+            /** Image Url */
+            image_url: string;
+            /** Destination */
+            destination: string;
+        };
+        /**
          * DocumentBranch
          * @description A branch within the plan document.
          */
@@ -355,8 +1029,8 @@ export interface components {
             label: string;
             /** Description */
             description: string;
-            /** Destinations */
-            destinations?: string[];
+            /** Destination */
+            destination?: string | null;
             /** Origin */
             origin?: string | null;
             /** Start Date */
@@ -383,14 +1057,28 @@ export interface components {
             is_primary: boolean;
             tiles?: components["schemas"]["BranchTileIds"];
             selections?: components["schemas"]["BranchSelections"];
+            /** Image Url */
+            image_url?: string | null;
+            /** Hero Images */
+            hero_images?: string[];
+            /** Vibe */
+            vibe?: string | null;
+            /** Focus */
+            focus?: string | null;
+            /** Highlights */
+            highlights?: string[];
+            /** Flow */
+            flow?: string[];
+            /** Notes */
+            notes?: string[];
         };
         /**
          * DocumentTripInputs
          * @description Trip parameters extracted/inferred from conversation.
          */
         DocumentTripInputs: {
-            /** Destinations */
-            destinations?: string[];
+            /** Destination */
+            destination?: string | null;
             /** Origin */
             origin?: string | null;
             /** Start Date */
@@ -412,21 +1100,30 @@ export interface components {
             currency: string;
             /** Missing Fields */
             missing_fields?: string[];
-            /** Multi City Intent */
-            multi_city_intent?: ("multi_city" | "separate") | null;
             booking_types?: components["schemas"]["BookingTypes"];
             flight_settings?: components["schemas"]["FlightSettings"];
             hotel_settings?: components["schemas"]["HotelSettings"];
             activity_settings?: components["schemas"]["ActivitySettings"];
             transport_settings?: components["schemas"]["TransportSettings"];
+            /**
+             * Date Flex
+             * @default false
+             */
+            date_flex: boolean;
+            /** Trip Duration */
+            trip_duration?: number | null;
+            /** Date Window Start */
+            date_window_start?: string | null;
+            /** Date Window End */
+            date_window_end?: string | null;
         };
         /**
          * DocumentTripInputsPatch
          * @description Partial trip-input updates coming from the UI or planner merges.
          */
         DocumentTripInputsPatch: {
-            /** Destinations */
-            destinations?: string[] | null;
+            /** Destination */
+            destination?: string | null;
             /** Origin */
             origin?: string | null;
             /** Start Date */
@@ -445,8 +1142,6 @@ export interface components {
             currency?: string | null;
             /** Missing Fields */
             missing_fields?: string[] | null;
-            /** Multi City Intent */
-            multi_city_intent?: ("multi_city" | "separate") | null;
             booking_types?: components["schemas"]["BookingTypes"] | null;
             flight_settings?: components["schemas"]["FlightSettings"] | null;
             hotel_settings?: components["schemas"]["HotelSettings"] | null;
@@ -470,6 +1165,46 @@ export interface components {
             fuzzy_suggestion?: string | null;
             /** Ambiguity Type */
             ambiguity_type?: string | null;
+        };
+        /**
+         * ExpandItineraryRequest
+         * @description Request to expand strategy into full itinerary (Stage 2 -> Stage 3).
+         */
+        ExpandItineraryRequest: {
+            /**
+             * Idempotency Key
+             * @description Client-generated UUID to prevent duplicate generation
+             */
+            idempotency_key: string;
+            /**
+             * Trip Inputs
+             * @description Trip inputs from frontend document
+             */
+            trip_inputs?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Strategy Sections
+             * @description Strategy sections from frontend document
+             */
+            strategy_sections?: {
+                [key: string]: unknown;
+            }[] | null;
+            /**
+             * Tiles
+             * @description Tiles from frontend document
+             */
+            tiles?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description User's hearted tile preferences for AI weighting */
+            preferences?: components["schemas"]["PreferenceOverride"] | null;
+            /**
+             * Force Full Rebuild
+             * @description Force full itinerary rebuild, bypassing selective regeneration
+             * @default false
+             */
+            force_full_rebuild: boolean;
         };
         /**
          * ExtractionConfidenceInfo
@@ -498,6 +1233,18 @@ export interface components {
             is_english: boolean;
             /** Typo Suggestions */
             typo_suggestions?: string[];
+        };
+        /**
+         * FillDayRequest
+         * @description Request to fill a free day with activity tiles.
+         */
+        FillDayRequest: {
+            /** Day Number */
+            day_number: number;
+            /** Categories */
+            categories?: string[] | null;
+            /** Pinned Tile Ids */
+            pinned_tile_ids?: string[] | null;
         };
         /**
          * FlightSettings
@@ -530,7 +1277,7 @@ export interface components {
         };
         /**
          * GraphPlanObservability
-         * @description Minimal observability data for /api/graph_plan responses.
+         * @description Minimal observability data for /v1/graph_plan responses.
          */
         GraphPlanObservability: {
             tokens?: components["schemas"]["GraphPlanTokens"];
@@ -540,16 +1287,6 @@ export interface components {
             router_intent?: string | null;
             /** Strategy Topic */
             strategy_topic?: string | null;
-            /**
-             * Monolith Used
-             * @default false
-             */
-            monolith_used: boolean;
-            /**
-             * Fallback To Legacy
-             * @default false
-             */
-            fallback_to_legacy: boolean;
             /** Today Iso */
             today_iso?: string | null;
             /**
@@ -563,6 +1300,20 @@ export interface components {
              */
             ready_to_generate_now: boolean;
             extraction_confidence?: components["schemas"]["ExtractionConfidenceInfo"] | null;
+            /** Short Circuit Type */
+            short_circuit_type?: string | null;
+            /**
+             * Llm Calls Made
+             * @default 0
+             */
+            llm_calls_made: number;
+            /**
+             * Cache Hits
+             * @default 0
+             */
+            cache_hits: number;
+            /** Confidence Routing */
+            confidence_routing?: string | null;
         };
         /**
          * GraphPlanRequest
@@ -600,10 +1351,14 @@ export interface components {
              * @default false
              */
             reset: boolean;
+            /** Ui Phase */
+            ui_phase?: ("bootstrap" | "expanded") | null;
+            /** Suggestion Clicked */
+            suggestion_clicked?: string | null;
         };
         /**
          * GraphPlanResponse
-         * @description Response from /api/graph_plan endpoint.
+         * @description Response from /v1/graph_plan endpoint.
          */
         GraphPlanResponse: {
             document: components["schemas"]["PlanDocumentData"];
@@ -669,6 +1424,45 @@ export interface components {
             amenities?: string[];
         };
         /**
+         * ItineraryAssumptions
+         * @description Assumptions and flexible elements for Stage 3.
+         */
+        ItineraryAssumptions: {
+            /** Assumptions */
+            assumptions?: string[];
+            /** Flexible Elements */
+            flexible_elements?: string[];
+        };
+        /**
+         * ItineraryOverview
+         * @description Overview stats for Stage 3 itinerary.
+         */
+        ItineraryOverview: {
+            /** Duration Label */
+            duration_label: string;
+            /** Base Structure */
+            base_structure: string;
+            /** Activity Density */
+            activity_density: string;
+        };
+        /**
+         * OpenDecision
+         * @description An open decision that needs user input (shown in Stage 2).
+         */
+        OpenDecision: {
+            /** Id */
+            id: string;
+            /** Statement */
+            statement: string;
+            /** Related Field */
+            related_field?: string | null;
+            /**
+             * Is Blocking
+             * @default false
+             */
+            is_blocking: boolean;
+        };
+        /**
          * PlanDocumentData
          * @description The JSON structure stored in plan_documents.document column.
          *     This is the source of truth for the planning session.
@@ -694,6 +1488,97 @@ export interface components {
             ready_to_generate: boolean;
             /** Suggested Responses */
             suggested_responses?: string[];
+            /** Suggested Response Meta */
+            suggested_response_meta?: {
+                [key: string]: unknown;
+            }[];
+            /** Applied Updates */
+            applied_updates?: ("origin" | "destination" | "dates" | "travelers" | "budget")[];
+            /** Conflicts */
+            conflicts?: components["schemas"]["Conflict"][];
+            /** Undo Snapshot */
+            undo_snapshot?: {
+                [key: string]: unknown;
+            } | null;
+            /** Update Provenance */
+            update_provenance?: ("lqa" | "extractor" | "user_edit") | null;
+            /**
+             * Ack Status
+             * @default applied
+             * @enum {string}
+             */
+            ack_status: "applied" | "partial" | "no_change" | "needs_clarification" | "failed" | "rejected";
+            /** Ack Updates */
+            ack_updates?: components["schemas"]["AckUpdate"][];
+            /**
+             * Plan State
+             * @default INCOMPLETE
+             * @enum {string}
+             */
+            plan_state: "INCOMPLETE" | "RESOLVING" | "STABLE" | "LOCKED";
+            /**
+             * Ui Phase
+             * @default bootstrap
+             * @enum {string}
+             */
+            ui_phase: "bootstrap" | "expanded";
+            resolver?: components["schemas"]["ResolverState"] | null;
+            /** Readiness */
+            readiness?: components["schemas"]["ReadinessItem"][];
+            destination_card?: components["schemas"]["DestinationCard"] | null;
+            booking_status?: components["schemas"]["BookingStatus"] | null;
+            /**
+             * Plan View State
+             * @default P0_MINIMAL
+             * @enum {string}
+             */
+            plan_view_state: "P0_MINIMAL" | "P1_ENRICHED" | "P2_LOGISTICS" | "P3_FINALIZED" | "P3_EDITING" | "P3_BLOCKED" | "S0_BOOTSTRAP" | "S1_FRAMING" | "S2_STRATEGY_READY" | "S2_BLOCKED" | "S3_ITINERARY_READY" | "S3_EDITING" | "S3_BLOCKED";
+            /** Strategy Sections */
+            strategy_sections?: components["schemas"]["StrategySection"][];
+            /** Executed Strategy Topics */
+            executed_strategy_topics?: string[];
+            /** Pending Strategy Topics */
+            pending_strategy_topics?: string[];
+            /** Open Decisions */
+            open_decisions?: components["schemas"]["OpenDecision"][];
+            itinerary_overview?: components["schemas"]["ItineraryOverview"] | null;
+            /** Day Cards */
+            day_cards?: components["schemas"]["DayCard"][];
+            itinerary_assumptions?: components["schemas"]["ItineraryAssumptions"] | null;
+            /**
+             * Needs Refresh
+             * @default false
+             */
+            needs_refresh: boolean;
+            /**
+             * Can Expand To Itinerary
+             * @default false
+             */
+            can_expand_to_itinerary: boolean;
+            /** Preferred Tile Ids */
+            preferred_tile_ids?: string[];
+            /**
+             * Origin Just Set
+             * @default false
+             */
+            origin_just_set: boolean;
+            /**
+             * Tiles Replaced
+             * @default false
+             */
+            tiles_replaced: boolean;
+            /** User Pinned Tiles */
+            user_pinned_tiles?: {
+                [key: string]: unknown;
+            };
+            /** Constraints Validated */
+            constraints_validated?: {
+                [key: string]: unknown;
+            }[];
+            /** Constraint Violations */
+            constraint_violations?: {
+                [key: string]: unknown;
+            }[];
         };
         /**
          * PlanDocumentPatch
@@ -719,6 +1604,8 @@ export interface components {
             } | null;
             /** Trip Inputs */
             trip_inputs?: components["schemas"]["DocumentTripInputsPatch"] | components["schemas"]["DocumentTripInputs"] | null;
+            /** Preferred Tile Ids */
+            preferred_tile_ids?: string[] | null;
         };
         /**
          * PlanDocumentResponse
@@ -742,21 +1629,166 @@ export interface components {
             changes_made: boolean;
         };
         /**
-         * PlanRequest
-         * @description Request to send a chat message to the planner.
-         *
-         *     Note: Trip inputs are read from the PlanDocument (single source of truth).
-         *     The frontend should NOT send trip_inputs directly - all state flows through
-         *     the document.
-         *
-         *     Note: session_id is no longer in the request body - it comes from the
-         *     HttpOnly session cookie, injected by SessionMiddleware.
+         * PreferenceOverride
+         * @description User's heart preferences for AI weighting in itinerary generation.
          */
-        PlanRequest: {
-            /** Message */
-            message: string;
-            /** Timezone */
-            timezone?: string | null;
+        PreferenceOverride: {
+            /**
+             * Preferred Hotel Ids
+             * @description Tile IDs of hotels the user has hearted/preferred
+             */
+            preferred_hotel_ids?: string[];
+            /**
+             * Preferred Activity Ids
+             * @description Tile IDs of activities the user has hearted/preferred
+             */
+            preferred_activity_ids?: string[];
+            /**
+             * Preferred Flight Ids
+             * @description Tile IDs of flights the user has hearted/preferred
+             */
+            preferred_flight_ids?: string[];
+        };
+        /**
+         * ReadinessItem
+         * @description Single readiness constraint status.
+         */
+        ReadinessItem: {
+            /**
+             * Key
+             * @enum {string}
+             */
+            key: "origin" | "destination" | "start_date" | "end_date" | "travelers" | "budget";
+            /** Ok */
+            ok: boolean;
+        };
+        /**
+         * RemoveSpecialistRequest
+         * @description Request to remove specialists and regenerate itinerary (conflict resolution).
+         *
+         *     Used when ItineraryBuilder detects a constraint conflict and user chooses
+         *     to focus on one specialist (e.g., "Focus on diving" when diving + hiking conflicts).
+         */
+        RemoveSpecialistRequest: {
+            /**
+             * Idempotency Key
+             * @description Client-generated UUID to prevent duplicate generation
+             */
+            idempotency_key: string;
+            /**
+             * Keep Specialist
+             * @description The specialist to keep (e.g., 'diving', 'hiking')
+             */
+            keep_specialist: string;
+            /**
+             * Remove Hearted Tiles
+             * @description If true, removes hearted tiles from removed specialists
+             * @default false
+             */
+            remove_hearted_tiles: boolean;
+            /**
+             * Trip Inputs
+             * @description Trip inputs from frontend document
+             */
+            trip_inputs?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Strategy Sections
+             * @description Strategy sections from frontend document
+             */
+            strategy_sections?: {
+                [key: string]: unknown;
+            }[] | null;
+            /**
+             * Tiles
+             * @description Tiles from frontend document
+             */
+            tiles?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description User's hearted tile preferences for AI weighting */
+            preferences?: components["schemas"]["PreferenceOverride"] | null;
+        };
+        /**
+         * ResolverState
+         * @description Resolver progress for RESOLVING state.
+         */
+        ResolverState: {
+            /**
+             * Active Step
+             * @enum {string}
+             */
+            active_step: "processing_constraints" | "matching_inventory" | "updating_itinerary";
+            /** Completed Steps */
+            completed_steps?: ("processing_constraints" | "matching_inventory" | "updating_itinerary")[];
+        };
+        /**
+         * StrategySection
+         * @description A strategy section for Stage 2 view - one card per executed strategy topic.
+         */
+        StrategySection: {
+            /** Id */
+            id: string;
+            /**
+             * Title
+             * @default Strategy
+             */
+            title: string;
+            /** Subtitle */
+            subtitle?: string | null;
+            /** Specialist Type */
+            specialist_type?: string | null;
+            /** Feasibility Status */
+            feasibility_status?: string | null;
+            /** Feasibility Reason */
+            feasibility_reason?: string | null;
+            /** Alternative Suggestion */
+            alternative_suggestion?: string | null;
+            /** One Liner */
+            one_liner?: string | null;
+            /** Principles */
+            principles?: string[];
+            /** Must Dos */
+            must_dos?: string[];
+            /** Optional Upgrades */
+            optional_upgrades?: string[];
+            /** Logistics Notes */
+            logistics_notes?: string[];
+            /** Tradeoffs Summary */
+            tradeoffs_summary?: string | null;
+            /** Strategy Node Id */
+            strategy_node_id?: string | null;
+            /** Strategy Version */
+            strategy_version?: string | null;
+            /** Booking Artifacts */
+            booking_artifacts?: {
+                [key: string]: number;
+            } | null;
+            /** Impact Areas */
+            impact_areas?: string[];
+            /** Constraints Applied */
+            constraints_applied?: {
+                [key: string]: string;
+            }[];
+            /** Content Added */
+            content_added?: {
+                [key: string]: unknown;
+            }[];
+            /** Content Blocks */
+            content_blocks?: {
+                [key: string]: unknown;
+            }[];
+            /** Destination Gallery */
+            destination_gallery?: {
+                [key: string]: string;
+            }[];
+            /** Trip Summary */
+            trip_summary?: {
+                [key: string]: unknown;
+            } | null;
+            /** Bullets */
+            bullets?: string[];
         };
         /**
          * SuggestionClickEvent
@@ -833,6 +1865,23 @@ export interface components {
             score?: number | null;
             /** Source */
             source?: string | null;
+            /** Source Agent */
+            source_agent?: string | null;
+            /** Total Inclusive */
+            total_inclusive?: number | null;
+            /** Tax And Service Fee */
+            tax_and_service_fee?: number | null;
+            /** Property Fee */
+            property_fee?: number | null;
+            /** Is Refundable */
+            is_refundable?: boolean | null;
+            /** Cancel Policy Summary */
+            cancel_policy_summary?: string | null;
+            /**
+             * Provider
+             * @default expedia
+             */
+            provider: ("expedia" | "booking" | "unknown") | null;
         };
         /** TileClickEvent */
         TileClickEvent: {
@@ -842,6 +1891,28 @@ export interface components {
             tile_id: string;
             /** Branch Id */
             branch_id?: string | null;
+        };
+        /**
+         * TileRefreshRequest
+         * @description Request to refresh tiles with current settings.
+         */
+        TileRefreshRequest: {
+            /** Branch Id */
+            branch_id: string;
+            /** Verticals */
+            verticals?: ("flight" | "hotel" | "activity")[] | null;
+        };
+        /**
+         * TileRefreshResponse
+         * @description Response from tile refresh.
+         */
+        TileRefreshResponse: {
+            /** Tiles */
+            tiles: components["schemas"]["Tile"][];
+            /** Refreshed At */
+            refreshed_at: string;
+            /** Verticals Refreshed */
+            verticals_refreshed: string[];
         };
         /**
          * TransportSettings
@@ -897,6 +1968,10 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
         };
     };
     responses: never;
@@ -927,7 +2002,7 @@ export interface operations {
             };
         };
     };
-    validate_trip_input_v1_validate_trip_input_post: {
+    validate_trip_input_api_validate_trip_input_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -960,7 +2035,40 @@ export interface operations {
             };
         };
     };
-    admin_clear_validation_cache_v1_admin_clear_validation_cache_post: {
+    get_destination_image_api_destination_image_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DestinationImageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationImageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_clear_validation_cache_api_admin_clear_validation_cache_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -980,7 +2088,247 @@ export interface operations {
             };
         };
     };
-    track_tile_click_v1_tiles_click_post: {
+    admin_fresh_start_api_admin_fresh_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_graph_stats_api_admin_graph_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_planner_debug_api_admin_planner_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_clear_all_checkpoints_api_admin_clear_all_checkpoints_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_clear_all_caches_api_admin_clear_all_caches_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_specialist_cache_stats_api_admin_specialist_cache_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_clear_specialist_cache_api_admin_clear_specialist_cache_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_tile_cache_stats_api_admin_tile_cache_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_clear_tile_cache_api_admin_clear_tile_cache_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_router_cache_stats_api_admin_router_cache_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_clear_router_cache_api_admin_clear_router_cache_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_all_cache_stats_api_admin_cache_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    track_tile_click_api_tiles_click_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1013,7 +2361,7 @@ export interface operations {
             };
         };
     };
-    track_suggestion_click_v1_suggestions_click_post: {
+    track_suggestion_click_api_suggestions_click_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1046,7 +2394,7 @@ export interface operations {
             };
         };
     };
-    graph_plan_endpoint_v1_graph_plan_post: {
+    graph_plan_endpoint_api_graph_plan_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1079,7 +2427,7 @@ export interface operations {
             };
         };
     };
-    plan_v1_plan_post: {
+    graph_plan_stream_endpoint_api_graph_plan_stream_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1088,7 +2436,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PlanRequest"];
+                "application/json": components["schemas"]["GraphPlanRequest"];
             };
         };
         responses: {
@@ -1098,7 +2446,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PlanDocumentResponse"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -1112,7 +2460,7 @@ export interface operations {
             };
         };
     };
-    reset_session_v1_session_delete: {
+    reset_session_api_session_delete: {
         parameters: {
             query?: never;
             header?: never;
@@ -1130,7 +2478,7 @@ export interface operations {
             };
         };
     };
-    get_chat_history_v1_chat_get: {
+    get_chat_history_api_chat_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1150,7 +2498,27 @@ export interface operations {
             };
         };
     };
-    get_plan_document_v1_document_get: {
+    delete_last_message_api_chat_last_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteLastMessageResponse"];
+                };
+            };
+        };
+    };
+    get_plan_document_api_document_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1170,7 +2538,7 @@ export interface operations {
             };
         };
     };
-    patch_plan_document_v1_document_patch: {
+    patch_plan_document_api_document_patch: {
         parameters: {
             query?: never;
             header?: never;
@@ -1203,7 +2571,7 @@ export interface operations {
             };
         };
     };
-    fetch_tiles_for_branch_v1_document_tiles__branch_id__post: {
+    fetch_tiles_for_branch_api_document_tiles__branch_id__post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1221,6 +2589,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlanDocumentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_tiles_api_tiles_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TileRefreshRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TileRefreshResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fill_day_endpoint_api_document_fill_day_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FillDayRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    expand_itinerary_endpoint_api_expand_itinerary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExpandItineraryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_specialist_endpoint_api_remove_specialist_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoveSpecialistRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

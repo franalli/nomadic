@@ -138,9 +138,9 @@ PlanDocumentData
   |
   |-- tiles: {tile_id -> Tile}
   |     |-- id, type (flight|hotel|activity), title, subtitle?, image_url?
-  |     |-- partner?, partner_product_id?, deeplink_url
+  |     |-- partner, partner_product_id, deeplink_url
   |     |-- price_estimate?, live_price?, currency, price_basis?, is_estimate_only?
-  |     |-- price_display? (pre-formatted: "$120" or null, added by response_envelope)
+  |     |-- price_display? (NOT on Pydantic model — injected at response time by response_envelope)
   |     |-- rating?, review_count?, location_label?, geo: {lat, lon}?
   |     |-- tags[], availability_status? (available|low|unknown|not_available), meta?, score?, source?, source_agent?
   |     |-- provider (expedia|booking|unknown), cancel_policy_summary?
@@ -166,8 +166,7 @@ PlanDocumentData
   |           |-- image_url?, duration?, coordinates: {lat, lng}?
   |           |-- scheduled_time?, logistics_details?, hotel_name?
   |           |-- booked_tile?, requires_booking, booking_category?
-  |           |-- preference_status?, preference_override_reason?, alternative_tile_id?
-  |           '-- unschedulable?, unschedulable_reason?, unschedulable_days_needed?
+  |           '-- preference_status?, preference_override_reason?, alternative_tile_id?
   |           NOTE: activity_type carries the display title for the card
   |           (e.g. "Potato Head Beach Club"). specialist_type carries the
   |           category for filtering/coloring (e.g. "nightlife", "diving").
@@ -248,7 +247,7 @@ Hydration guards:
 | `BookingState` | idle, loading, ready, error | Per-tab booking status |
 | `TileType` | flight, hotel, activity | Tile category |
 | `TileProvider` | expedia, booking, unknown | Booking partner |
-| `AckStatus` | pending, applied, partial, no_change, needs_clarification, failed, rejected | Update acknowledgement status. `rejected` used for route violations (e.g., same-city error). Both `chat.ts` and `plan-envelope.ts` now include `pending` and `rejected`. |
+| `AckStatus` | applied, partial, no_change, needs_clarification, failed, rejected | Update acknowledgement status. `rejected` used for route violations (e.g., same-city error). Backend Literal does NOT include `pending`; frontend types (`chat.ts`, `plan-envelope.ts`) add `pending` as a frontend-only value. |
 
 ---
 
@@ -267,6 +266,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | Preferences | `preferredTileIds` (Set), `pendingPreferencePatch` |
 | Regeneration | `lastGeneratedPreferences`, `isRegenerating`, `isPending`, `expandInProgress`, `remainingSeconds` |
 | Fill-day mutex | `_fillingDays` (Set\<number\>) — per-day concurrency guard |
+| Mutation mutex | `_pendingMutations` (number) — general mutation counter (fill-day, drag-drop) |
 | Streaming | `currentRunId`, `abortController` |
 | Cart | `cartTileIds` (Set) |
 | LLM Updates | `llmUpdatedFields` (Set of field names LLM recently modified) |
@@ -295,7 +295,8 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | `setExpandInProgress()` | Expand-itinerary mutex flag |
 | `claimFillDay(day)` | Per-day fill mutex: returns `false` if day already in flight (prevents concurrent fill-day on same day from different call sites) |
 | `releaseFillDay(day)` | Release per-day fill mutex after fill-day completes or fails |
-| `hasPendingMutations()` | Returns true when `_fillingDays.size > 0` — ChatPanel mutation gate polls this before sending graph requests to avoid version conflicts |
+| `claimMutation()` / `releaseMutation()` | Increment/decrement `_pendingMutations` counter for general mutation tracking |
+| `hasPendingMutations()` | Returns true when `_pendingMutations > 0` — ChatPanel mutation gate polls this before sending graph requests to avoid version conflicts |
 | `markPreferencesAsApplied()` | Sync lastGeneratedPreferences after expand completes |
 | `awaitPreferencePatch()` | Wait for pending preference PATCH to complete before proceeding |
 

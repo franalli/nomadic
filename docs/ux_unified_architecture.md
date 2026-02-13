@@ -148,7 +148,7 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 └─────────────────────────────────────────────────┘
 ```
 
-### New Components (v3.1)
+### Supporting Hooks
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -764,7 +764,7 @@ In S3 (itinerary ready), full specialist strategy cards are replaced with a comp
 - **S3 (itinerary ready):** Compact DNA bar showing **constraint pills** (not specialist pills)
 - Pills show: icon + constraint short label (full text, horizontally scrollable)
 - Hover: Native `title` tooltip shows full constraint text
-- **Filtering:** Only shows constraints from **niche specialists** (all 8 Tier 1 specialists via `NICHE_SPECIALIST_IDS`) — filters out Local Expert tips to focus on hard constraints
+- **Filtering:** Only shows constraints from **niche specialists** (all 8 Tier 1 specialists via `NICHE_SPECIALIST_IDS`) — filters out Local Expert tips to focus on hard constraints. Additionally filters by severity: only shows constraints with no severity set (legacy), `blocking`, or `strong` — excludes `soft`/`info` severity constraints.
 
 **Icon Selection (Priority-Based):**
 
@@ -1265,10 +1265,12 @@ Metadata is stored on `state.metadata["suggestion_chip_meta"]` during generation
 | State | Example Chips |
 |-------|---------------|
 | No destination | "I want a beach vacation", "mountain adventure", "city break" |
-| Has destination, no dates | "Next week", "Next month", "I'm flexible" |
-| Has destination, month detected | "{Month} 1-8", "{Month} 10-17", "I'm flexible" |
+| Has destination, no dates | Concrete date ranges: "{Mon DD}-{DD}", "{Mon DD}-{DD}", "{Mon DD}-{DD}" (next weekend, next month week, mid-month week) |
+| Has destination, month detected | "{Month} 1-8", "{Month} 10-17", "I'm flexible on dates" |
 | S2+ (active plan, dates set) | "5-star hotels only", "Direct flights only", "What are must-do activities?" |
 | After specialist ran | Cross-sell other specialists, plan progression, question chips |
+| Budget blocking violation | "Increase budget to $X", "Find cheaper {category}", "Fewer activity days" |
+| Route violation | "Back to {destination}", "Different city", "Help me choose" |
 | Blocking violation | "Extend to {date}", "Add buffer day between activities", "Remove {specialist}" |
 | Day preference overflow | "Reduce {activity} to N days" (from `DAY_PREFERENCE_EXCEEDS_CAPACITY`) |
 
@@ -1445,14 +1447,20 @@ When the system auto-transitions to Plan tab (after dates are set), it MUST show
 **Implementation:**
 ```tsx
 // In StrategyStageRenderer - show skeleton when generating with dates
-if (isGenerating && hasDates && !hasTiles) {
+// (computed in displayLogic memo: isShowingMirrorLoader = generating && hasDates && !hasTiles)
+if (isShowingMirrorLoader) {
   return (
-    <div className="p-4 space-y-4 animate-pulse">
-      <div className="h-6 w-48 bg-muted rounded" />
-      <div className="text-sm text-muted-foreground">
-        Searching live availability...
+    <div className="p-4 space-y-6">
+      <div className="flex items-center gap-2">
+        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+        <span className="text-sm text-muted-foreground">
+          Searching live availability...
+        </span>
       </div>
-      <TimelineSkeleton days={tripDuration || 3} />
+      <TimelineSkeleton />
+      <p className="text-xs text-muted-foreground text-center">
+        Finding flights and hotels for your {tripDuration}-day trip
+      </p>
     </div>
   );
 }
@@ -1617,6 +1625,8 @@ useSessionHydration() runs
         └── Renders: Specialists → Tiles → Timeline
 ```
 
+**`itinerary_day_cards` mapping:** The backend `format_result()` returns `itinerary_day_cards` when the graph-built itinerary runs during `format_result`. `setFromPlanResponse()` maps this to `day_cards` for frontend consumption (`rawDoc.itinerary_day_cards` -> `rawDoc.day_cards`).
+
 ### Backend Persistence Points
 
 | Endpoint | Function | When Called | Fields Persisted |
@@ -1668,13 +1678,15 @@ useSessionHydration() runs
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available |
-| `NextStepBar` | CTA bar — accepts `nextAction` prop, renders only for `finalize_plan` action |
+| `NextStepBar` | CTA bar — accepts `nextAction` prop, early-returns null for `expand_itinerary` (handled by auto-expand), renders only for `finalize_plan` action. Currently `getNextAction()` never returns `finalize_plan`, so NextStepBar does not render in practice. |
 | `OriginPromptCard` | Inline prompt to set origin (shown in S2 when destination+dates set but no origin, 2+ specialists) |
 | `ItineraryProgressIndicator` | Progress indicator for multi-specialist auto-trigger itinerary generation |
+| `BookingDrawer` | Side sheet for tile browsing, triggered by FreeDayCard "Browse" or GhostSlot clicks. Supports `pinnedDayNumber` for per-day tile placement via fill-day API |
+| `TripHealthBar` | Compact inventory bar showing tile counts (hotels, flights, activities) for General/Local Expert sections in `S2StrategyView` |
 
 **Deleted Components (no longer in codebase):**
 - `ConflictResolutionBanner` -- conflict resolution now chat-driven via suggestion chips
-- `TripHealthDashboard` -- replaced by `TripHealthBar.tsx` (compact bar variant)
+- `TripHealthDashboard` -- replaced by `TripHealthBar.tsx` (compact bar variant, still active in `S2StrategyView`)
 - `ReadyToPlanBanner` -- removed
 - `ExplorationProgress` -- removed
 - `SelectionsBar` -- hearted tile preferences now feed auto-regen directly (no separate UI bar)
@@ -1682,7 +1694,8 @@ useSessionHydration() runs
 - `useChatStateMachine` -- chat state machine hook removed
 - `PlanDocument`, `DocumentHeader`, `DaySection`, `Segment` -- legacy plan document components
 - `OnboardingChips`, `PlanningProgress`, `OptionalRefinementsSection` -- legacy plan widgets
-- `S1FramingView`, `S2BlockedView`, `S3BlockedView`, `S3EditingView` -- legacy stage views
+- `S1FramingView`, `S2BlockedView`, `S3BlockedView`, `S3EditingView` -- legacy stage views (deleted)
+- `S3ItineraryView` -- still exists in codebase and exported from `stages/index.ts`, but NOT used in the unified `StrategyStageRenderer` flow
 - `LocationBadge`, `TruncatedDestinationList` -- legacy pill components
 - `TileSectionHeader` -- tile section header
 - `features-section` -- marketing features section
@@ -1703,7 +1716,7 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 
 | Function | Purpose | Status |
 | --- | --- | --- |
-| `getNextAction(state, generation)` | Returns `'expand_itinerary'` for S2, `null` otherwise. Does NOT gate on dates. | Active |
+| `getNextAction(state, generation, _hasTripContext?)` | Returns `'expand_itinerary'` for S2, `null` otherwise. Does NOT gate on dates. Third param `_hasTripContext` is deprecated (NextStepBar reads tripInputs from store). | Active |
 | `isGenerating(generation)` | Checks if any generation is in progress (`generation?.active === true`) | Active |
 | `isReady(state, generation)` | Checks if plan is in ready state (S2 or S3, not generating) | Active |
 | `canExpandToItinerary(state, generation, hasTripContext)` | Gates expand button: S2 + not generating + has trip context | Active |
@@ -1740,7 +1753,7 @@ export function getNextAction(
 3. **No UI Chrome Removal:** Elements that appear during setup (status header, chip rows) must **transform through states**, not disappear. Layout shift breaks spatial memory. See `getChatStatusConfig` in `ChatPanel.tsx`.
 4. **Backend is SSoT:** `plan_view_state` from backend determines rendering mode. Frontend does not fabricate it except for the frontend-only state `S0_EMPTY` (reset intent). `S3_PARTIAL_CONFLICT` is emitted by the backend `/api/expand-itinerary` endpoint when the builder produces partial results. `S1_DESTINATION_SET` exists only in the frontend `VIEW_STATE_ORDER` for downgrade protection ordering.
 5. **Coordinates Flow:** `[lng, lat]` format preserved from specialist → strategy_sections → DayBlock.
-6. **Plan Tab Unlock:** Mobile plan tab unlocks when `planTabEnabled = hasBranchesReady || planViewState !== 'S0_BOOTSTRAP'` (specialist content, tiles, or branches exist). Desktop `canViewPlan` in `useViewNavigation` gates on dates (`hasDates || isGenerating`) but is marked `@deprecated`. Strategy content alone DOES unlock the plan tab on mobile.
+6. **Plan Tab Unlock:** Mobile plan tab unlocks when `planTabEnabled = hasBranchesReady || planViewState !== 'S0_BOOTSTRAP'` (specialist content, tiles, or branches exist — no dates required). Desktop `canViewPlan` in `useViewNavigation` gates on dates (`hasDates || isGenerating`) but is marked `@deprecated` and only used by legacy API. Strategy content alone DOES unlock the plan tab on mobile.
 
 ---
 
@@ -2505,7 +2518,9 @@ interface StrategySection {
 interface Constraint {
   rule: string;                         // e.g., "24h No-Fly Buffer after final dive"
   type: string;                         // "safety" | "temporal" | "certification" | "equipment" | "weather" | "budget"
+  severity?: string;                    // "blocking" | "strong" | "soft" (defaults to "strong")
   reason: string;                       // e.g., "Prevents decompression sickness"
+  label?: string;                       // Short human-readable label for Trip DNA bar pills
 }
 
 interface ContentItem {
@@ -2611,7 +2626,7 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Element | Behavior |
 |---------|----------|
 | Default | Plan page scrolls vertically: strategy cards → tiles → timeline |
-| Map | Inline between tiles and timeline (250px height), scrolls with content |
+| Map | Inline between tiles and timeline (300px height), scrolls with content. Only shown when `hasItineraryContent && fullModePOIs.length > 0` |
 | Chat Input | `MobileChatInput` docked below swipe container (always visible) |
 | Navigation | Tab bar `[Chat] [Plan ●]` + horizontal swipe between pages |
 
@@ -2621,9 +2636,8 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 │ ┌─────────────────────┐ │
 │ │ Strategy Cards      │ │
 │ │ Booking Tiles       │ │
-│ │ [Map 250px inline]  │ │
+│ │ [Map 300px inline]  │ │
 │ │ Timeline Thread     │ │
-│ │ NextStepBar         │ │
 │ └─────────────────────┘ │
 │ ┌─────────────────────┐ │
 │ │ Chat Input (shared) │ │
@@ -2903,9 +2917,11 @@ useCartTileIds(): Set<string>
 useCartActions(): { addToCart, removeFromCart, clearCart }
 ```
 
-#### E.1 Destination Change Handling (v3.3)
+#### E.1 Destination Change Handling
 
-When the user changes destination, stale content must be cleared to avoid confusion. This is handled in TWO code paths in `documentStore.ts`:
+**Destination Lock:** Once a destination is set, `setFromPlanResponse()` and `mergeEnvelope()` both block LLM-initiated destination changes (case-insensitive comparison). The incoming destination is silently replaced with the current value. Only `updateTripInputs()` (user-explicit action via chips/sheets) can change the destination, and doing so clears `preferredTileIds`.
+
+When a destination change does occur (via `updateTripInputs` + subsequent graph run), stale content must be cleared. This is handled in TWO code paths in `documentStore.ts`:
 
 **1. `mergeEnvelope()` - Streaming updates from SSE:**
 ```typescript
@@ -2930,7 +2946,13 @@ if (destinationChanged) {
 **2. `setFromPlanResponse()` - Full API response:**
 ```typescript
 // View state ordering for downgrade protection
-const VIEW_STATE_ORDER = { S0_EMPTY: 0, S1_DESTINATION_SET: 1, S2_STRATEGY_READY: 2, S3_ITINERARY_READY: 3 };
+const VIEW_STATE_ORDER = {
+  S0_EMPTY: 0, S0_BOOTSTRAP: 0,
+  S1_DESTINATION_SET: 1, S1_FRAMING: 1,
+  S2_BLOCKED: 1.5, S2_STRATEGY_READY: 2,
+  S3_BLOCKED: 2.5, S3_EDITING: 2.5, S3_PARTIAL_CONFLICT: 2.5,
+  S3_ITINERARY_READY: 3,
+};
 
 // GUARD: Never downgrade view state when itinerary exists
 // EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept
@@ -2940,15 +2962,19 @@ const wouldDowngrade = hasDayCards &&
 
 const finalViewState = wouldDowngrade ? prevViewState : newViewState;
 
-// Tile merge: additive for same destination, replace for new destination
-const mergedTiles = destinationChanged
+// Tile merge: replace when `tiles_replaced` flag set or destination changed,
+// otherwise additive merge (preserves old tiles)
+const shouldReplace = response.document.tiles_replaced || destinationChanged;
+const mergedTiles = shouldReplace
   ? response.document.tiles
   : { ...currentDoc?.tiles, ...response.document.tiles };
 
-// Day cards: only clear on destination change, NOT on view state changes
-const finalDayCards = destinationChanged
-  ? []
-  : (hasDayCards ? currentDayCards : response.document.day_cards);
+// Day cards: graph-sent cards always win; preserve existing when graph sent nothing
+const graphSentCards = response.document.day_cards;
+const hasGraphSentCards = graphSentCards && graphSentCards.length > 0;
+const finalDayCards = hasGraphSentCards
+  ? graphSentCards
+  : (currentDayCards ?? []);
 ```
 
 **View State Downgrade Protection:**

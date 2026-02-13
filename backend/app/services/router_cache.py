@@ -223,14 +223,3 @@ def clear_cache() -> int:
         _router_cache.clear()
     logger.info(f"[ROUTER_CACHE] Cleared ({count} entries)")
     return count
-
-
-def reset_stats() -> None:
-    """Reset cache statistics."""
-    global _cache_stats
-    with _stats_lock:
-        _cache_stats = {
-            "hits": 0,
-            "misses": 0,
-            "skipped_context_dependent": 0,
-        }

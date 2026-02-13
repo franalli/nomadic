@@ -53,6 +53,10 @@ class TurnMeta(BaseModel):
     has_blocking_violations: bool = False
     violations_for_retry: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # --- Input gate outputs ---
+    input_gate_violations: List[Dict[str, Any]] = Field(default_factory=list)
+    input_gate_warnings: List[Dict[str, Any]] = Field(default_factory=list)
+
     # --- Observability (from meta_keys.py PER_TURN_KEYS) ---
     llm_calls_this_turn: int = 0
     llm_nodes_called_this_turn: List[str] = Field(default_factory=list)

@@ -74,6 +74,8 @@ backend/
 │   │   ├── nodes/              # LangGraph nodes (7-node structure)
 │   │   │   ├── __init__.py
 │   │   │   ├── constraint_guard.py         # Constraint validation
+│   │   │   ├── input_gate_config.py        # Input gate configuration
+│   │   │   ├── input_gates.py              # Pre-extraction input validation gates
 │   │   │   ├── intent_router.py            # Intent classification (main orchestration)
 │   │   │   │   ├── router_extraction.py        # LLM extraction & field validation (Stage 9A)
 │   │   │   ├── router_category_sync.py     # Tier 2 detection & actionable input (Stage 9B)
@@ -121,6 +123,7 @@ backend/
 │   │   ├── router_cache.py         # Thread-safe L1 cache for router extraction (context-aware)
 │   │   ├── specialist_cache.py     # Thread-safe L1+L2 cache for specialist LLM outputs
 │   │   ├── tile_cache.py           # Thread-safe L1+L2 cache for tile provider data (24h TTL)
+│   │   ├── unsplash.py             # Unsplash image service
 │   │   └── unsplash_queries.py     # Unsplash query helpers (includes Tier 2 activity queries)
 │   │
 │   ├── tile_service/           # Tile data providers
@@ -245,7 +248,6 @@ frontend/
 │   │   └── hooks/              # Layout-specific hooks
 │   │       ├── useBranchManager.ts
 │   │       ├── useBranchState.ts
-│   │       ├── useDateRangeSelector.ts
 │   │       ├── useLocalBookingSettings.ts
 │   │       ├── useSessionHydration.ts
 │   │       ├── useTileSelection.ts
@@ -343,7 +345,6 @@ frontend/
 │       ├── button.tsx
 │       ├── calendar.tsx
 │       ├── card.tsx
-│       ├── confirm-dialog.tsx
 │       ├── loader.tsx
 │       ├── popover.tsx
 │       ├── sheet.tsx
@@ -447,7 +448,7 @@ frontend/
 docs/
 ├── data-contracts.md           # API routes, schemas, state store contracts
 ├── design-system.md            # Frontend styling SSoT
-├── key_backend_files/          # Backend reference snapshots (prompts, nodes, services)
+├── key_files/                  # Backend reference snapshots (prompts, nodes, services)
 ├── plan_graph_analysis.md      # Backend architecture SSoT
 ├── repo_structure.md           # This file
 └── ux_unified_architecture.md  # UX/view states SSoT

@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
+from app.planner.nodes.input_gates import GateRegistry
 from app.planner.nodes.router_category_sync import (
     DATE_INDICATORS,
     _collect_modifications_from_extraction,
@@ -52,6 +53,8 @@ from app.planner.state import GraphState, TripPlan
 from app.planner.state.typed_meta import get_trip_settings
 
 logger = logging.getLogger(__name__)
+
+_gate_registry = GateRegistry()
 
 # Tier 2 activities — not in ALL_SPECIALIST_KEYWORDS (Tier 1 only).
 # "sailing" included: Tier 1 in registry but KNOWN_CATEGORIES lists it,
@@ -1675,6 +1678,60 @@ def _apply_modifications_to_state(
 
 
 # =============================================================================
+# Input Gate Validation
+# =============================================================================
+
+
+def _run_input_gates(state: GraphState) -> bool:
+    """
+    Run input gate validation after extraction populates trip_plan.
+    Returns True if blocked (short-circuit to synthesizer).
+    Returns False if ok to continue (warnings stashed in metadata).
+    """
+    blockers, warnings = _gate_registry.run_all(state.trip_plan)
+
+    if warnings:
+        state.metadata["input_gate_warnings"] = [
+            {
+                "code": w.code,
+                "message": w.message,
+                "field": w.field,
+                "suggested_action": w.suggested_action,
+            }
+            for w in warnings
+        ]
+        for w in warnings:
+            logger.debug(f"[INPUT_GATE] warning {w.code}: {w.message}")
+
+    if blockers:
+        state.metadata["input_gate_violations"] = [
+            {
+                "code": b.code,
+                "message": b.message,
+                "field": b.field,
+                "suggested_action": b.suggested_action,
+            }
+            for b in blockers
+        ]
+        state.metadata["short_circuit_response"] = True
+        state.metadata["short_circuit_type"] = "gate_blocked"
+
+        msgs = [b.message for b in blockers]
+        actions = [b.suggested_action for b in blockers if b.suggested_action]
+        fallback = " ".join(msgs)
+        if actions:
+            fallback += " " + " ".join(actions)
+        state.metadata["_gate_blocked_fallback"] = fallback
+
+        for b in blockers:
+            logger.debug(f"[INPUT_GATE] BLOCKED {b.code}: {b.message}")
+
+        return True
+
+    return False
+
+
+# =============================================================================
 # Node Function
 # =============================================================================
 
@@ -1832,6 +1889,10 @@ async def intent_router(state: GraphState) -> GraphState:
                 if not any(sig in text_lower for sig in end_signals):
                     state.trip_plan.end_date = old_end
                     log("ROUTER", f"[POST-PLAN] Reverted end date drift → {old_end}")
+
+            # === INPUT GATE VALIDATION ===
+            if _run_input_gates(state):
+                return state
 
             state.metadata["router_output"] = router_output.model_dump()
             state.metadata["router_extracted_fields"] = True
@@ -2049,6 +2110,10 @@ async def intent_router(state: GraphState) -> GraphState:
 
                 # Immediately persist to state.trip_plan
                 _populate_trip_plan_from_router_output(state, router_output, destination, user_text)
+
+                # === INPUT GATE VALIDATION ===
+                if _run_input_gates(state):
+                    return state
 
                 # Store for downstream reference
                 state.metadata["router_output"] = router_output.model_dump()

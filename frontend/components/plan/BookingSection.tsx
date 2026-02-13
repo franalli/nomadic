@@ -148,7 +148,7 @@ export function BookingSection({
   const effectiveMode: ViewMode = isBookView ? 'booking' : mode;
 
   // Convert tiles to array if needed
-  const tileArray = Array.isArray(tiles) ? tiles : Object.values(tiles);
+  const tileArray = useMemo(() => Array.isArray(tiles) ? tiles : Object.values(tiles), [tiles]);
   const tilesByType = selectTilesByType(tiles);
   const totalTiles = getTotalTileCount(tilesByType);
 

@@ -190,7 +190,7 @@ function BudgetSheetInner({
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-600',
                           'hover:border-zinc-900 hover:text-zinc-900',
-                          'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
+                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
                           'dark:hover:bg-white/10 dark:hover:text-white'
                         )
                   )}

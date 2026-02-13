@@ -413,7 +413,7 @@ All specialist data (colors, icons, keywords, display names) lives in a single r
 | `wildlife_safari` | Amber | `#D97706` | Safari activities |
 | `default` | Zinc | `#71717A` | Fallback for unknown types |
 
-> Legacy: `boating` is a backward-compat alias for `sailing`. Backend no longer sends it.
+> `boating` is a backward-compat alias for `sailing`. Both frontend (`getSpecialistConfig`) and backend (`specialist_registry`) map `boating` to the `sailing` config.
 
 #### Timeline Block Styling
 
@@ -513,7 +513,7 @@ When backend populates `constraints_validated` and `constraint_violations`:
 
 **Visibility:** Only shows when `engineConstraints.length > 0` (niche specialist constraints exist).
 
-**Implementation:** `frontend/components/plan/StrategyStageRenderer.tsx` (lines ~838-963)
+**Implementation:** `frontend/components/plan/StrategyStageRenderer.tsx` (search for "Trip DNA")
 
 ### Inline Constraint Badge Colors
 
@@ -973,22 +973,27 @@ Question chips are always visible (never suppressed). Post-planning, they route 
 `question_answer` short-circuit to produce section-specific content (accommodation, weather, etc.).
 
 **Visual distinction:**
-- Follow-up chips: `DS.pills.inactive` (zinc border)
-- Plan CTA chip: `DS.pills.active` (solid black/white) - Always rightmost
+- Follow-up chips: Raw Tactile Rule pattern (`bg-white border-2 border-zinc-200` / `dark:bg-white/5 dark:border-white/15`)
+- Planning trigger chips: Emerald highlight (`bg-emerald-50 border-2 border-emerald-500/40 text-emerald-700`) with `Sparkles` icon prefix
 
 ```tsx
-// Exploration suggestion chips
-<div className="flex gap-2 mt-4 flex-wrap">
-  <button className={cn(DS.pills.shape, DS.pills.inactive)}>
-    Best romantic spots?
-  </button>
-  <button className={cn(DS.pills.shape, DS.pills.inactive)}>
-    When to visit?
-  </button>
-  <button className={cn(DS.pills.shape, DS.pills.active)}>
-    Plan Bali trip
-  </button>
-</div>
+// Suggestion chips in ChatPanel
+<button className={cn(
+  'px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide',
+  isPlanningTrigger ? [
+    'bg-emerald-50 dark:bg-emerald-950/30',
+    'border-2 border-emerald-500/40 dark:border-emerald-500/30',
+    'text-emerald-700 dark:text-emerald-400',
+    'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
+  ] : [
+    'bg-white dark:bg-white/5',
+    'border-2 border-zinc-200 dark:border-white/15',
+    'text-zinc-600 dark:text-zinc-400',
+  ]
+)}>
+  {isPlanningTrigger && <Sparkles className="w-3 h-3 mr-1.5 inline-block" />}
+  {suggestion}
+</button>
 ```
 
 ---
@@ -1705,7 +1710,7 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
 
 ### Implementation Reference
 
-- `frontend/components/chat/ChatPanel.tsx` (S0 hero banner, ~line 1645)
+- `frontend/components/chat/ChatPanel.tsx` (S0 hero banner)
 
 ---
 
@@ -1770,17 +1775,119 @@ The hero header uses a **vertical stack** layout: compact image above, summary p
 
 ---
 
-## 17.6. Right Panel Spacing Standard
+## 17.6. Spacing Standard
 
-Three spacing tiers for consistent vertical rhythm:
+### Spacing Tiers
 
-| Tier | Value | Use For |
-|------|-------|---------|
-| **Within** | `gap-2` / `space-y-2` | Related elements inside a section (icon+text, chip rows, skeleton bones) |
-| **Between** | `gap-4` / `space-y-4` | Between sections (cards, tile groups, content blocks) |
-| **Major** | `gap-6` / `space-y-6` | Major boundaries (hero→content, grid columns, manifest sections) |
+All spacing (gap, padding, margin) MUST snap to one of three tiers for consistent vertical and horizontal rhythm. This applies globally — not just the right panel.
 
-**Rule:** No `gap-3`, `space-y-3`, `gap-5`, `space-y-5`, or `pb-8` in the right panel. Round to the nearest tier.
+| Tier | Values | Use For |
+|------|--------|---------|
+| **Within** | `gap-2`, `space-y-2`, `p-2`, `px-2`, `py-2` | Related elements inside a section (icon+text, chip rows, inline groups) |
+| **Between** | `gap-4`, `space-y-4`, `p-4`, `px-4`, `py-4`, `mt-4`, `mb-4` | Between sections (cards, tile groups, content blocks) |
+| **Major** | `gap-6`, `space-y-6`, `p-6`, `px-6`, `py-6`, `mt-6`, `mb-6` | Major boundaries (hero→content, grid columns, panel sections) |
+
+**Banned in-between values:** `gap-3`, `space-y-3`, `gap-5`, `space-y-5`, `pb-8`, `gap-7`, `gap-9`, `mt-3`, `mb-3`, `mt-5`, `mb-5`. Round to the nearest tier.
+
+### Allowed Exceptions
+
+| Value | Context |
+|-------|---------|
+| `py-2.5`, `py-3` | Pill/button internal padding (touch target sizing, per Tactile Rule) |
+| `px-3`, `px-3.5` | Pill/chip horizontal padding (per `DS.pills.shape`) |
+| `gap-1`, `gap-1.5` | Icon-to-label micro-spacing inside compact elements (badges, chips) |
+| `p-3` | Compact cards (constraint badges, inline alerts) |
+| `py-1`, `py-1.5` | Tight vertical rhythm inside dense lists |
+| `mt-2`, `mb-2` | Within-tier margin variants |
+| `-mx-4 px-4` | Bleed-to-edge pattern for horizontal scroll (documented in Pill Reel section) |
+
+### Container Padding Minimums
+
+| Container Type | Minimum | Preferred |
+|----------------|---------|-----------|
+| Modal / Sheet | `p-4` | `p-6` |
+| Card | `p-4` | `p-4` |
+| Inline alert / badge | `p-3` | `p-3` |
+| Top-level page section | `px-4` | `px-6` (desktop), `px-4` (mobile) |
+
+**Rule:** Container padding must be ≥ one tier above its child gap. A `p-2` container with `space-y-4` children is a violation.
+
+### Desktop vs Mobile Spacing Scale
+
+| Element | Desktop | Mobile | Notes |
+|---------|---------|--------|-------|
+| Page/panel horizontal | `px-6` to `px-8` | `px-4` | Tighter on small screens |
+| Card internal | `p-4` to `p-6` | `p-4` | Never reduce below `p-4` |
+| Section vertical gap | `gap-6` | `gap-4` | Tighter stacking on mobile |
+| Grid gap | `gap-6` | `gap-4` or `gap-3` | Narrower gutters |
+
+Desktop-scale spacing (`px-8`, `gap-8`, `p-8`) requires a responsive mobile override or `useIsDesktop` gate.
+
+### Margin Direction Consistency
+
+Within a single parent container, use ONE spacing strategy:
+
+- **Best:** Parent uses `space-y-*` or `gap-*` (children have no margins)
+- **Acceptable:** All children use `mt-*` (top margin only) OR all use `mb-*` (bottom margin only)
+- **Violation:** Mix of `mt-*` and `mb-*` on siblings — creates unpredictable double-spacing
+
+### Sibling Symmetry
+
+Elements at the same hierarchy level must use the same spacing tier. Mismatched margins between same-level siblings (e.g., `mt-4` then `mt-6` then `mt-4`) break visual rhythm.
+
+---
+
+## 17.7. Text-on-Background Contrast
+
+All text must be legible against its resolved background in both light and dark modes. When `design-system.md` specifies a text/bg pair for an element, use it exactly. For unlisted combinations, use WCAG AA as the floor: **4.5:1 for body text, 3:1 for large text (≥18px or ≥14px bold).**
+
+### Known-Good Pairs (Light Mode)
+
+| Background | Approved Text Colors |
+|------------|----------------------|
+| `bg-white`, `bg-white/90` | `text-zinc-900`, `text-zinc-800`, `text-zinc-700`, `text-zinc-600` |
+| `bg-zinc-50` | `text-zinc-900`, `text-zinc-800`, `text-zinc-700`, `text-zinc-600`, `text-zinc-500` |
+| `bg-zinc-900`, `bg-black` | `text-white`, `text-zinc-100`, `text-zinc-200` |
+| `bg-emerald-600` | `text-white` |
+| `bg-amber-50` | `text-amber-700`, `text-amber-800` |
+| `bg-blue-50` | `text-blue-700`, `text-blue-800` |
+| `bg-emerald-50` | `text-emerald-700`, `text-emerald-800` |
+| `bg-red-500/10` | `text-red-600`, `text-red-700` |
+
+### Known-Good Pairs (Dark Mode)
+
+| Background | Approved Text Colors |
+|------------|----------------------|
+| `bg-zinc-950`, `bg-zinc-950/95` | `text-white`, `text-zinc-100`, `text-zinc-200`, `text-zinc-300`, `text-zinc-400` |
+| `bg-white/5`, `bg-white/[0.02]` | `text-white`, `text-zinc-100`, `text-zinc-200`, `text-zinc-300`, `text-zinc-400` |
+| `bg-white`, `bg-zinc-100` | `text-black`, `text-zinc-900`, `text-zinc-800` |
+| `bg-emerald-500`, `bg-emerald-600` | `text-white`, `text-zinc-950` |
+| `bg-amber-900/10` | `text-amber-400`, `text-amber-300` |
+| `bg-blue-900/10` | `text-blue-400`, `text-blue-300` |
+| `bg-emerald-900/10` | `text-emerald-400`, `text-emerald-300` |
+
+### Failing Pairs (Never Use)
+
+| Pair | Why It Fails | Correct Alternative |
+|------|--------------|---------------------|
+| `text-zinc-300` on `bg-white` | Light-on-light, ~2:1 | `text-zinc-500` minimum |
+| `text-zinc-400` on `bg-white` (body text) | Too faint for body | `text-zinc-500` (muted), `text-zinc-600` (body) |
+| `text-zinc-600` on `bg-zinc-900` | Dark-on-dark, ~3:1 | `dark:text-zinc-400` or lighter |
+| `text-zinc-700` on `bg-zinc-800` | Adjacent shades, ~1.5:1 | `dark:text-zinc-300` or lighter |
+| `text-white` on `bg-zinc-100` | Near-invisible in light | `text-zinc-900` |
+| `text-emerald-400` on `bg-white` | Low contrast pastel | `text-emerald-600` in light |
+| `text-red-300` on `bg-white` | Invisible light-mode red | `text-red-600` in light |
+| `text-amber-300` on `bg-white` | Invisible light-mode amber | `text-amber-600` in light |
+| `text-zinc-500` on `bg-zinc-600` | Mid-range clash | `text-zinc-200` or `text-white` |
+
+### Evaluation Rules
+
+1. **Spec wins.** If this doc defines the text/bg pair for that element, use it exactly.
+2. **Check BOTH modes.** A pair that works in light may fail in dark (e.g., `text-zinc-600` on zinc-950).
+3. **Trace inheritance.** If a text element has no `bg-*`, walk up to the nearest ancestor. For glass surfaces (`DS.materials.glass`), resolve as `bg-white/90` (light), `bg-zinc-950/95` (dark).
+4. **Semi-transparent backgrounds** (e.g., `bg-black/40`, `bg-white/5`) — evaluate against the likely parent. For overlays on images/maps, assume a mid-tone backdrop and require `text-white` or `text-black`.
+5. **Placeholder text** (`placeholder:text-*`) must meet 3:1 minimum against input background.
+6. **Disabled text** may use lower contrast intentionally (`zinc-400` on white is acceptable for disabled states only).
 
 ---
 
@@ -1855,8 +1962,8 @@ The Reset button allows users to start over with a fresh planning session. It mu
 
 ### Implementation Reference
 
-- Web: `frontend/components/layout/NomadicLanding.tsx` (line ~1378)
-- Mobile: `frontend/components/layout/MobileModeHeader.tsx` (line ~135)
+- Web: `frontend/components/layout/NomadicLanding.tsx`
+- Mobile: `frontend/components/layout/MobileModeHeader.tsx`
 
 ---
 
@@ -1934,35 +2041,31 @@ The Reset button allows users to start over with a fresh planning session. It mu
 
 ## 20. NextStepBar CTA States (Command Island)
 
-The NextStepBar ("Command Island") is a sticky footer CTA that adapts its visual state based on validation.
+The NextStepBar ("Command Island") is a sticky footer CTA that appears when the plan is ready to finalize. It only renders for the `finalize_plan` action; `expand_itinerary` is handled by auto-expand in ChatPanel.
 
 ### Visual States
 
 | State | Background | Text | Shadow | Usage |
 |-------|------------|------|--------|-------|
-| **Ready** | `bg-emerald-500` | `text-white` | Emerald glow | Dates complete, ready to build |
-| **Validation Blocked** | `bg-amber-500/80` | `text-white/90` | None | Missing dates - shows action needed |
-| **Processing** | `bg-zinc-200 dark:bg-zinc-800` | `text-zinc-500` | None | Building itinerary |
+| **Ready** | `bg-emerald-500` | `text-white` | Emerald glow | Plan ready, "Finalize & Book" |
+| **Processing** | `bg-zinc-200 dark:bg-zinc-800` | `text-zinc-500 dark:text-zinc-400` | None | Finalization in progress, "Scanning..." |
 
 ### Code Example
 
 ```tsx
-// NextStepBar.tsx - Validation-aware button styling
+// NextStepBar.tsx - Button styling
 <button
   className={cn(
     'h-10 px-5 rounded-full font-bold text-xs tracking-wide uppercase',
     // Ready: Green with glow
     isActionReady &&
-      'bg-emerald-500 hover:bg-emerald-400 text-white shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)]',
-    // Validation blocked: Amber indicator
-    validationBlocked &&
-      'bg-amber-500/80 text-white/90 cursor-default',
+      'bg-emerald-500 hover:bg-emerald-400 text-white shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)] active:scale-95',
     // Processing: Gray with spinner
-    isGenerating &&
-      'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed'
+    isFinalizing &&
+      'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 cursor-not-allowed'
   )}
 >
-  {validationBlocked ? validation.action : 'Build Itinerary'}
+  {isFinalizing ? 'Scanning...' : 'Finalize & Book'}
 </button>
 ```
 
@@ -1970,7 +2073,7 @@ The NextStepBar ("Command Island") is a sticky footer CTA that adapts its visual
 
 | Element | Valid | Incomplete |
 |---------|-------|------------|
-| **Badge** | `"X days"` (emerald) | `"needs dates"` (amber) |
+| **Badge** | `"X days"` (emerald) | `"needs dates"` or `"past dates"` (amber) |
 | **Date Range** | `"Feb 5 — Feb 12"` | `"Feb 5 → ?"` |
 | **Text Color** | `text-zinc-800 dark:text-white` | `text-amber-600 dark:text-amber-400` |
 
@@ -1981,72 +2084,10 @@ The NextStepBar ("Command Island") is a sticky footer CTA that adapts its visual
 
 ---
 
-## 20.5 RefreshButton FAB (Amber Regeneration Trigger)
+## 20.5 Plan Regeneration Triggers
 
-The RefreshButton is a Floating Action Button (FAB) that appears when trip inputs change, signaling that a plan refresh is needed.
+There is no standalone "Refresh" button. Plan regeneration is triggered automatically or via existing CTAs:
 
-### Design Philosophy
-
-**Problem:** Users change trip inputs (destination, dates, settings) but the current plan reflects old data. The user needs a clear, high-visibility trigger to regenerate the plan with new inputs.
-
-**Solution:** An Amber gradient FAB that appears only when inputs have changed, using portal rendering to escape scroll containers and position at a fixed screen location.
-
-> **Note:** Amber is intentionally used here for semantic "attention needed" states. This is an approved pattern per the Restricted Colors rule in Section 4.
-
-### Visual Specifications
-
-| Property | Value |
-|----------|-------|
-| **Position** | `fixed bottom-24 right-6` |
-| **Z-Index** | `z-50` (above map controls) |
-| **Size** | `min-w-[160px] h-14 px-6` (pill badge) |
-| **Shape** | `rounded-full` |
-| **Background** | `bg-gradient-to-r from-amber-500 to-orange-500` |
-| **Text** | `text-white font-bold text-sm` |
-| **Shadow** | `shadow-2xl shadow-amber-500/50` |
-| **Animation** | `animate-pulse` (attention-grabbing) |
-
-### Visual States
-
-| State | Styling | Behavior |
-|-------|---------|----------|
-| **Active (hasChanges)** | Amber gradient + pulse | Clickable, triggers regeneration |
-| **Refreshing** | `bg-zinc-600 cursor-not-allowed` | Shows spinner, disabled |
-| **Hidden** | Not rendered | No changes pending |
-
-### Code Example
-
-```tsx
-// RefreshButton.tsx - Portal-based FAB
-export function RefreshButton({ hasChanges, isRefreshing, onRefresh }: Props) {
-  if (!hasChanges || isRefreshing) return null;
-
-  return createPortal(
-    <button
-      onClick={onRefresh}
-      className={cn(
-        'fixed bottom-24 right-6 z-50',
-        'min-w-[160px] h-14 px-6 rounded-full',
-        'bg-gradient-to-r from-amber-500 to-orange-500',
-        'text-white font-bold text-sm',
-        'shadow-2xl shadow-amber-500/50',
-        'animate-pulse',
-        'flex items-center justify-center gap-2',
-        'transition-all duration-200',
-        'hover:scale-105 active:scale-95'
-      )}
-    >
-      <RefreshCw className="w-5 h-5" />
-      <span>REFRESH PLAN</span>
-    </button>,
-    document.body
-  );
-}
-```
-
-### Current Status
-
-**The standalone RefreshButton FAB has been removed.** The visual spec above is retained for reference only. Regeneration is now triggered via:
 - **Chat auto-regen:** Structural plan changes trigger automatic itinerary rebuild
 - **Preference auto-regen:** Heart changes trigger via `usePreferenceAutoRegen` hook
 - **Manual build:** "Build Itinerary" CTA in `StrategyStageRenderer.tsx`
@@ -2152,7 +2193,7 @@ SPRING_CONFIG = {
 
 ### Motion & Transitions
 
-> **Note:** The `MOTION_VARIANTS` and `TRANSITIONS` preset exports were removed from `animation-config.ts`. Components now define motion variants inline using `REVEAL_TIMING` and `SPRING_CONFIG` directly. Only `REVEAL_TIMING` (timing constants) and `SPRING_CONFIG` (spring physics) are exported from `animation-config.ts`.
+`animation-config.ts` exports only `REVEAL_TIMING` (timing constants) and `SPRING_CONFIG` (spring physics). Components define motion variants inline using these values directly.
 
 ### Mobile Optimization
 
@@ -2162,7 +2203,7 @@ SPRING_CONFIG = {
 - Map: Inline on mobile plan page (250px, scrolls with content)
 - Consider `prefers-reduced-motion` for accessibility
 - **Layout:** Horizontal swipe (`MobileSwipeLayout` with CSS `scroll-snap`). See `ux_unified_architecture.md` Section X.
-- **Viewport detection:** Use `useIsDesktop()` hook from `hooks/useIsDesktop.ts` (replaces former `MobileModeContext`)
+- **Viewport detection:** Use `useIsDesktop()` hook from `hooks/useIsDesktop.ts`
 
 ### Loading States
 

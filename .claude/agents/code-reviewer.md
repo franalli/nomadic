@@ -64,7 +64,7 @@ You NEVER modify files — only read and report.
 - [ ] `ConstraintViolation` carries: code, message, severity, category, suggested_action, conflicting_specialists, suggested_specialist
 - [ ] Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5` — dropping ≥50% re-surfaces the violation
 - [ ] Past date auto-correction in `router_extraction.py`: dates before today auto-bump +1yr (handles "Feb 15" when it's already past)
-- [ ] `constraints_applied.severity` filtering: frontend shows only blocking+strong (excludes soft/info) in StrategyHero badge, constraint list, and Trip DNA bar
+- [ ] `constraints_applied.severity` filtering: frontend shows only blocking+strong from specialist constraint severity (blocking/strong/soft system), excludes soft. Separate from ConstraintViolation severity (blocking/warning/info system) used in guard logic
 
 ### 5. Frontend Design System Compliance
 
@@ -75,7 +75,7 @@ You NEVER modify files — only read and report.
 - [ ] No teal colored selections or decorative amber
 - [ ] `cn()` used for all className merging, never string concatenation
 - [ ] `rounded-lg` = 12px (overridden in tailwind.config.mts)
-- [ ] Dark mode: glass surfaces use `bg-white/5 border-white/10`; pills use `border-white/15`
+- [ ] Dark mode: glass surfaces use `bg-zinc-950/95 border-white/10`; pills use `bg-white/5 border-white/15`; steppers use `bg-white/5 border-white/15`
 
 ### 6. UX Invariants
 
@@ -91,7 +91,7 @@ You NEVER modify files — only read and report.
 
 ### 7. API Contract Compliance
 
-- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 3/min;15/hr for non-stream graph_plan, 10/min;40/hr for graph_plan/stream, 20/min for expand-itinerary (builder-only, no LLM), Medium: 10-15/min for mutations/validation, Light: 60/min for reads)
+- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 3/min;15/hr for non-stream graph_plan and remove-specialist, 10/min;40/hr for graph_plan/stream, 20/min for expand-itinerary (builder-only, no LLM), Medium: 10-15/min for mutations/validation, Light: 60/min for reads)
 - [ ] Streaming: SSE for graph_plan, NDJSON for expand-itinerary/remove-specialist
 - [ ] CSRF token required on unsafe methods (POST/PUT/PATCH/DELETE)
 - [ ] Body size limit: 512KB max

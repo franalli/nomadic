@@ -32,7 +32,7 @@ import {
   Waves,
 } from 'lucide-react';
 import Image from 'next/image';
-import React, { useId, useState } from 'react';
+import React, { useId, useMemo, useState } from 'react';
 
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { DS } from '@/lib/design-system';
@@ -168,7 +168,7 @@ function TravelIntelligencePanel({ intelligence }: TravelIntelligencePanelProps)
   };
 
   // Section configuration with icons
-  const sections = [
+  const sections = useMemo(() => [
     { key: 'visa_entry', label: 'Visa & Entry', icon: '🛂', data: intelligence.visa_entry },
     { key: 'safety_health', label: 'Safety & Health', icon: '🏥', data: intelligence.safety_health },
     { key: 'money_costs', label: 'Money & Costs', icon: '💰', data: intelligence.money_costs },
@@ -185,7 +185,7 @@ function TravelIntelligencePanel({ intelligence }: TravelIntelligencePanelProps)
     const val = (s.data as Record<string, unknown>)[k];
     return val !== undefined && val !== null && val !== '' &&
            !(Array.isArray(val) && val.length === 0);
-  }));
+  })), [intelligence]);
 
   if (sections.length === 0) return null;
 

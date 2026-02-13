@@ -183,6 +183,13 @@ export const TileCard = memo(function TileCard({
   // Tier 11.7: Track image loading state for skeleton feedback
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
+  // AbortController ref for fire-and-forget click tracking
+  const trackAbortRef = useRef<AbortController | null>(null);
+
+  // Abort any in-flight click tracking on unmount
+  useEffect(() => {
+    return () => { trackAbortRef.current?.abort(); };
+  }, []);
 
   const features = useMemo(() => getFeaturesForTile(tile), [tile]);
   const relevanceBadges = useMemo(() => getRelevanceBadges(tile), [tile]);
@@ -216,6 +223,11 @@ export const TileCard = memo(function TileCard({
 
   // Memoize click tracking payload to avoid recreating on each render
   const trackClick = useCallback(() => {
+    // Abort any prior in-flight tracking request
+    trackAbortRef.current?.abort();
+    const controller = new AbortController();
+    trackAbortRef.current = controller;
+
     apiFetch('/api/tiles/click', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -224,7 +236,9 @@ export const TileCard = memo(function TileCard({
         branch_id: branchId ?? null,
         user_id: null,
       }),
+      signal: controller.signal,
     }).catch((error) => {
+      if (error instanceof Error && error.name === 'AbortError') return;
       if (process.env.NODE_ENV !== 'production') {
         console.warn('Click tracking failed:', error);
       }

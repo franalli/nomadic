@@ -21,6 +21,7 @@ Key responsibilities:
 
 import asyncio
 import logging
+import math
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
@@ -35,6 +36,7 @@ from app.debug_utils import (
 )
 from app.planner.hashing import stable_hash
 from app.planner.services.iata_resolver import resolve_iata_codes
+from app.planner.specialist_registry import get as get_specialist_config
 from app.planner.state.graph_state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
 from app.tile_service.curated_provider import CuratedProvider
@@ -737,15 +739,69 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
         tier2_cats = selected_cats - TIER1_CATEGORIES
 
         if not tier2_cats:
-            # Pure Tier 1 — specialist provides activities, suppress all generic tiles
+            # Pure Tier 1 — specialist provides curated activities.
+            # BUT: if specialist fills fewer days than the trip has,
+            # keep some logistics activities to backfill free days.
             active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
-            log(
-                "LOGISTICS",
-                "Suppressing logistics activities - pure Tier 1",
-                data=f"specialists={active_niche}",
-            )
-            state.tiles["activities"] = []
-            activity_dicts = []
+
+            # Count specialist activities, then estimate days needed
+            # Builder co-schedules up to 2 activities/day (MAX_BLOCKS_PER_DAY=3 minus hotel)
+            specialist_activities = 0
+            for section in state.metadata.get("strategy_sections", []):
+                if section.get("specialist_type", "") in ("local_expert", "general"):
+                    continue
+                specialist_activities += len(section.get("content_added", []))
+            specialist_days_needed = math.ceil(specialist_activities / 2)
+
+            try:
+                start = datetime.strptime(plan.start_date, "%Y-%m-%d")
+                end = datetime.strptime(plan.end_date, "%Y-%m-%d")
+                trip_days = (end - start).days + 1
+            except (ValueError, TypeError, AttributeError):
+                trip_days = 5
+
+            # Buffer: cross-domain + arrival/departure
+            buffer_days = 2  # arrival + departure
+            for section in state.metadata.get("strategy_sections", []):
+                st = section.get("specialist_type", "")
+                cfg = get_specialist_config(st)
+                if cfg and cfg.has_nofly_buffer:
+                    buffer_days += 1
+                    break  # Only one buffer day regardless of specialist count
+
+            free_days = max(0, trip_days - specialist_days_needed - buffer_days)
+
+            if free_days <= 1:
+                # Specialist fills (nearly) the whole trip — full suppression
+                log(
+                    "LOGISTICS",
+                    "Suppressing logistics activities - pure Tier 1 (no free days)",
+                    data=f"specialists={active_niche}, trip={trip_days}d, "
+                    f"activities={specialist_activities}, "
+                    f"days_needed={specialist_days_needed}d, free={free_days}d",
+                )
+                state.tiles["activities"] = []
+                activity_dicts = []
+            else:
+                # Keep some logistics activities for free days
+                # Phase 5.6 will place them on the actual free days
+                existing = state.tiles.get("activities", [])
+                if isinstance(existing, list):
+                    # Keep up to free_days activities (one per free day)
+                    kept = existing[:free_days]
+                    state.tiles["activities"] = kept
+                    activity_dicts = kept
+                    log(
+                        "LOGISTICS",
+                        f"Selective backfill: kept {len(kept)} of {len(existing)} "
+                        f"activities for {free_days} free days",
+                        data=f"specialists={active_niche}, trip={trip_days}d, "
+                        f"activities={specialist_activities}, "
+                        f"days_needed={specialist_days_needed}d",
+                    )
+                else:
+                    state.tiles["activities"] = []
+                    activity_dicts = []
         else:
             # Mixed — generate Tier 2 experience tiles via LLM
             from app.services.experience_generator import generate_experiences

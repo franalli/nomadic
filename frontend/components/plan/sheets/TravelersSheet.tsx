@@ -48,10 +48,10 @@ function Stepper({ label, value, min, max, onChange }: StepperProps) {
   const buttonEnabled = cn(
     'w-12 h-12 rounded-full flex items-center justify-center',
     // Light: White with STRONG visible border
-    'bg-white border-2 border-zinc-400',
+    'bg-white border-2 border-zinc-300',
     'text-zinc-700',
     // Dark: Glass Fill - visible substance
-    'dark:bg-white/5 dark:border-white/15',
+    'dark:bg-white/5 dark:border-2 dark:border-white/15',
     'dark:text-zinc-400',
     'transition-all duration-150',
     // Hover: Snap to black (Light) / white (Dark)
@@ -63,9 +63,9 @@ function Stepper({ label, value, min, max, onChange }: StepperProps) {
   const buttonDisabled = cn(
     'w-12 h-12 rounded-full flex items-center justify-center',
     // Light: Clearly disabled state
-    'bg-zinc-100 border-2 border-zinc-300 text-zinc-400',
+    'bg-zinc-50 border-2 border-zinc-200 text-zinc-300',
     // Dark: Dim glass
-    'dark:bg-white/[0.02] dark:border-white/5 dark:text-zinc-700',
+    'dark:bg-white/[0.02] dark:border-2 dark:border-white/5 dark:text-zinc-700',
     'cursor-not-allowed'
   );
 
@@ -213,7 +213,7 @@ function TravelersSheetInner({
                           'bg-white border-2 border-zinc-200 text-zinc-600',
                           'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
                           // Dark: Glass substance
-                          'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
+                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
                           'dark:hover:bg-white/10 dark:hover:text-white'
                         )
                   )}

@@ -45,20 +45,6 @@ _initialized = False
 _cache_counters_lock = threading.Lock()
 
 
-def get_cache_handle(name: CacheName) -> Optional[CacheHandle]:
-    """
-    Get a cache handle by name.
-
-    Raises:
-        RuntimeError: If called before init_cache_handles()
-    """
-    if not _initialized:
-        raise RuntimeError(
-            f"Cache '{name}' accessed before initialization. Call init_cache_handles() first."
-        )
-    return _cache_handles.get(name)
-
-
 def cache_get(
     name: CacheName,
     key: str,

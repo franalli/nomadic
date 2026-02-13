@@ -306,16 +306,32 @@ async def generate_specialist_output_llm(
     # NOTE: JSON schema is NOT included here - it's handled by .with_structured_output()
     # OpenAI's function calling API receives the Pydantic schema directly.
     # Including redundant JSON instructions wastes ~200-500 tokens per call.
+
+    # Calculate available activity days (excluding arrival/departure/buffers)
+    available_days = max(1, duration_days - 2)
+
+    # Scale activity count to trip length
+    # Short trips (<=5 days): 2-3 activities
+    # Medium trips (6-10 days): 3-5 activities
+    # Long trips (11+ days): scale up to ~60% of available days, cap at 7
+    if available_days <= 3:
+        min_acts, max_acts = 2, 3
+    elif available_days <= 8:
+        min_acts, max_acts = 3, min(available_days, 5)
+    else:
+        min_acts = min(available_days // 3, 5)
+        max_acts = min(available_days * 2 // 3, 7)
+
     user_prompt = f"""Plan {topic} activities for {destination}.
 
 TRIP DETAILS:
 - Dates: {trip_plan.start_date} to {trip_plan.end_date} ({duration_days} days)
 - Travelers: {trip_plan.adults} adults, {trip_plan.children} children
-- Activity days available: {max(1, duration_days - 2)} (excluding arrival/departure)
+- Activity days available: {available_days} (excluding arrival/departure)
 
 REQUIREMENTS:
 - Use REAL sites/trails/runs - no made-up names
-- Generate 2-4 activities based on available days
+- Generate {min_acts}-{max_acts} activities to fill available days
 - Include topic-specific fields (depth_meters for diving, elevation_meters for hiking, etc.)
 - Include cross-domain constraints explicitly (e.g., diving affects hiking)
 - For infeasible destinations (e.g., diving in landlocked areas), \

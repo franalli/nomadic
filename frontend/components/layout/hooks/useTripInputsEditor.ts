@@ -508,7 +508,7 @@ export function useTripInputsEditor(
       onToast(`Cleared destination "${currentDestination}". 📍`, 'confirmation');
       setSelectedLocationBadge(null);
     },
-    [tripInputs.destination, commitTripInputs, updateTripInputs, onToast]
+    [tripInputs.destination, commitTripInputs, onToast]
   );
 
   const resetDraft = useCallback(() => {

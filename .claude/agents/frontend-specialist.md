@@ -41,22 +41,20 @@ Before ANY code change, read the relevant SSoT doc:
 frontend/
   components/
     chat/          → ChatPanel, ChatSkeleton, CollapsedSetupSummary, SmartLoader,
-                     SystemAckLine, SystemReceipt, TripStatusBar, useChatStateMachine,
+                     SystemAckLine, SystemReceipt, TripStatusBar,
                      HoldToDeleteButton, MobileChatInput, MobileSetupCollapsedHeader
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
-                     PlanDocument, PlanHeader, DaySection, DocumentHeader,
-                     NextStepBar, PlanningProgress, Segment, SelectionsBar,
+                     PlanHeader, NextStepBar,
                      CoreChip, UnifiedChipRow, TripHealthBar, TripSummaryPills,
-                     ItineraryProgressIndicator, OnboardingChips, OriginPromptCard,
-                     OptionalRefinementsSection, DestinationMapPlaceholder
-      stages/      → S1FramingView, S2BlockedView, S2StrategyView, S3BlockedView,
-                     S3EditingView, S3ItineraryView, StrategyHero
+                     ItineraryProgressIndicator, OriginPromptCard,
+                     DestinationMapPlaceholder
+      stages/      → S2StrategyView, S3ItineraryView, StrategyHero
       sheets/      → BaseSheet, DestinationSheet, OriginSheet, DatesSheet,
                      TravelersSheet, BudgetSheet, FlightsSheet, StaysSheet,
                      ActivitiesSheet, TripSettingsSheet
       timeline/    → InlineDatePrompt, TimelineSkeleton
         blocks/    → ActivityMiniCard, LogisticsBlock, SafetyBlock, GhostSlot,
-                     FreeDayCard, SuggestionBlock, PreferenceAttributionBadge
+                     FreeDayCard, PreferenceAttributionBadge
     ui/            → Shared UI primitives
     layout/        → SplitLayoutView, NomadicLanding, TripDetailsForm,
                      FloatingBuildButton, MobileSwipeLayout, MobileModeHeader,
@@ -73,7 +71,7 @@ frontend/
                      specialists.ts, utils.ts, contentPolicyGuard.ts,
                      ghost-timeline-adapter.ts, destination-coords.ts, plan-transform.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts, route-utils.ts,
-                     specialistLinkParser.ts, refinementSummaries.ts, statusCopyMap.ts,
+                     specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts
   __tests__/       → Vitest tests
 ```

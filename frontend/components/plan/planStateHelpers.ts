@@ -110,12 +110,3 @@ export function getNextAction(
   // S3 uses inline "The Bridge" CTA, not NextStepBar
   return null;
 }
-
-/**
- * Should left panel show generate CTA?
- * False after plan exists (S2+) - NextStepBar takes over.
- */
-export function shouldShowLeftPanelGenerateCTA(state?: PlanViewState): boolean {
-  if (!state) return true;
-  return state === 'S0_BOOTSTRAP' || state === 'S1_FRAMING';
-}
