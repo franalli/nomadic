@@ -43,7 +43,7 @@ function getSessionTimestamp(): number | null {
  * Set the session start timestamp in localStorage.
  * Should be called when a new session is created.
  */
-export function setSessionTimestamp(): void {
+function setSessionTimestamp(): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
 }

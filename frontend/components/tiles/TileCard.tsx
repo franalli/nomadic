@@ -540,18 +540,18 @@ export const TileCard = memo(function TileCard({
               {tile.total_inclusive != null ? 'Total from' : 'From'}
             </span>
             <div className="flex items-baseline gap-1">
-              <span className="text-zinc-100 text-[18px] font-semibold">
+              <span className="text-zinc-900 dark:text-zinc-100 text-[18px] font-semibold">
                 {(tile.total_inclusive ?? tile.price_estimate) != null
                   ? Math.round(tile.total_inclusive ?? tile.price_estimate!).toLocaleString()
                   : ''}
               </span>
-              <span className="text-zinc-300 text-sm font-medium">{tile.currency}</span>
+              <span className="text-zinc-500 dark:text-zinc-400 text-sm font-medium">{tile.currency}</span>
               {tile.type?.toLowerCase().includes('stay') && !tile.total_inclusive && (
                 <span className="text-muted-foreground text-xs">/night</span>
               )}
             </div>
             {(tile.total_inclusive ?? tile.price_estimate) == null && (
-              <span className="text-zinc-100 text-sm font-semibold">Check price</span>
+              <span className="text-zinc-900 dark:text-zinc-100 text-sm font-semibold">Check price</span>
             )}
             {/* Expedia taxes & fees disclosure with legal tooltip */}
             <TaxesFeesTooltip
@@ -576,9 +576,9 @@ export const TileCard = memo(function TileCard({
                   </TooltipTrigger>
                   <TooltipContent
                     side="top"
-                    className="max-w-xs bg-slate-900 text-slate-100 text-xs font-mono p-3 rounded-lg shadow-lg"
+                    className="max-w-xs bg-zinc-900 text-zinc-100 text-xs font-mono p-3 rounded-lg shadow-lg"
                   >
-                    <div className="text-slate-400 text-[10px] uppercase tracking-wider mb-1.5">
+                    <div className="text-zinc-400 text-[10px] uppercase tracking-wider mb-1.5">
                       API Params
                     </div>
                     <pre className="whitespace-pre-wrap break-all">

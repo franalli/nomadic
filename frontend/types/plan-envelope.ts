@@ -666,6 +666,11 @@ export interface OpenDecision {
 
 /**
  * A single activity block within a day (Stage 3).
+ *
+ * Client-side only fields (not sent by backend):
+ * - `is_skeleton` -- ghost timeline placeholder for unplanned days
+ * - `specialist_type` -- specialist type for ghost blocks (e.g., "diving", "hiking")
+ * - `unschedulable` / `unschedulable_reason` / `unschedulable_days_needed` -- partial timeline markers
  */
 export interface DayBlock {
   id?: string; // Unique block identifier for scroll spy
@@ -729,7 +734,8 @@ export interface DayCard {
   day_number: number;
   date?: string; // ISO date string, e.g. "2025-02-12"
   label: string; // e.g., "Arrival + light activity", "Main hike day"
-  subtitle?: string; // Explanatory context for special days (e.g., buffer_reason)
+  /** Client-side only -- computed from blocks, not sent by backend */
+  subtitle?: string;
   blocks: DayBlock[]; // Max 3 blocks
 }
 

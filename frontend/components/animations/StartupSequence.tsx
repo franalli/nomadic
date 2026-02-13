@@ -68,20 +68,24 @@ export const StartupSequence = memo(function StartupSequence({
   useEffect(() => {
     if (shouldSkip) return;
 
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
     if (phase === 'grid') {
-      setTimeout(() => setPhase('verify'), 700);
+      timers.push(setTimeout(() => setPhase('verify'), 700));
     } else if (phase === 'verify') {
-      setTimeout(() => setPhase('beacon'), 1000);
+      timers.push(setTimeout(() => setPhase('beacon'), 1000));
     } else if (phase === 'beacon') {
-      setTimeout(() => {
+      timers.push(setTimeout(() => {
         setPhase('done');
         sessionStorage.setItem(SESSION_KEY, 'true');
-        setTimeout(() => {
+        timers.push(setTimeout(() => {
           setIsVisible(false);
           onComplete();
-        }, 500);
-      }, 700);
+        }, 500));
+      }, 700));
     }
+
+    return () => timers.forEach(clearTimeout);
   }, [phase, onComplete, shouldSkip]);
 
   if (!isVisible || shouldSkip) return null;

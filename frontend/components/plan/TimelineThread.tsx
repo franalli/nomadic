@@ -244,21 +244,46 @@ export function TimelineThread({
 
   // Fill-day: Zustand selectors + local loading state
   const [fillingDay, setFillingDay] = useState<number | null>(null);
+  const [fillDayRejection, setFillDayRejection] = useState<{
+    dayNumber: number;
+    reason: string;
+  } | null>(null);
   const tripInputs = useDocumentTripInputs();
   const destination = tripInputs?.destination ?? null;
   const categories = tripInputs?.activity_settings?.categories;
-  // V1: categories from trip_inputs (Zustand). FreeDayCard's selectedCats arg intentionally ignored.
-  // TODO: V2 — pass selected categories to fillDay endpoint instead of reading from trip_inputs
-  const handleFillDay = useCallback(async (dayNumber: number) => {
+  const handleFillDay = useCallback(async (dayNumber: number, _dayDate?: string | null, chipCategories?: string[]) => {
     const store = useDocumentStore.getState();
     // Guard: skip if expand-itinerary is running (days may already be populated)
     if (store.expandInProgress) return;
     // Per-day mutex: prevents concurrent calls from any path
     if (!store.claimFillDay(dayNumber)) return;
+    // Guard: skip if day already has real activity blocks (race condition with graph SSE)
+    const currentDayCards = store.document?.day_cards ?? [];
+    const targetCard = currentDayCards.find(dc => dc.day_number === dayNumber);
+    if (targetCard) {
+      const realBlocks = targetCard.blocks.filter(
+        b => !b.is_buffer && b.activity_type !== 'free_day' && b.activity_type !== 'placeholder'
+      );
+      if (realBlocks.length > 0) {
+        console.log(`[fillDay] SKIPPED day=${dayNumber} — already has ${realBlocks.length} real blocks`);
+        store.releaseFillDay(dayNumber);
+        return;
+      }
+    }
     store.claimMutation();
     setFillingDay(dayNumber);
+    setFillDayRejection(null);
     try {
-      const result = await fillDay(dayNumber, categories?.length ? categories : undefined);
+      // Use chip categories from FreeDayCard; fall back to trip_inputs categories
+      const effectiveCategories = chipCategories?.length ? chipCategories : (categories?.length ? categories : undefined);
+      const result = await fillDay(dayNumber, effectiveCategories);
+      if (result.rejected) {
+        setFillDayRejection({
+          dayNumber,
+          reason: result.rejection_reason || 'Activity cannot be placed on this day',
+        });
+        return;
+      }
       if (result?.day_card) {
         useDocumentStore.getState().replaceDayCard(
           dayNumber, result.day_card, result.version, result.tiles
@@ -542,6 +567,11 @@ export function TimelineThread({
                         onBrowse={() => onOpenBookingDrawer?.('activity', card.day_number)}
                         onFillDay={handleFillDay}
                         isFilling={fillingDay === card.day_number}
+                        rejectionMessage={
+                          fillDayRejection?.dayNumber === card.day_number
+                            ? fillDayRejection.reason
+                            : undefined
+                        }
                       />
                     </>
                   );

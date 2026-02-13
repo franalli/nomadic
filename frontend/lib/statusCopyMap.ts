@@ -5,7 +5,7 @@
  * Single source of truth for step labels, status messages, and sub-status text.
  */
 
-export const STATUS_COPY = {
+const STATUS_COPY = {
   // Header stepper labels
   steps: ['Setup', 'Plan', 'Book'] as const,
 

@@ -238,9 +238,10 @@ function DatesSheetInner({
                           ? 'bg-zinc-900 text-white dark:bg-white dark:text-black shadow-md'
                           // Unselected: White with border
                           : cn(
-                              'border border-zinc-200 dark:border-white/10',
+                              'border-2 border-zinc-200 dark:border-2 dark:border-white/15',
+                              'dark:bg-white/5',
                               'text-zinc-600 dark:text-zinc-400',
-                              'hover:border-zinc-900 hover:bg-zinc-50 dark:hover:border-white/30 dark:hover:bg-white/5'
+                              'hover:border-zinc-900 hover:bg-zinc-50 dark:hover:border-white/40 dark:hover:bg-white/5'
                             )
                       )}
                     >

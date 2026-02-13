@@ -562,6 +562,16 @@ class TripArchitect:
             logger.debug("should_fetch_tiles: returning False (plan not ready)")
             return False
 
+        # Skip if logistics already provided tiles (avoid 13s redundant fetch)
+        has_hotels = bool(state.tiles.get("hotels"))
+        has_activities = bool(state.tiles.get("activities"))
+        if has_hotels or has_activities:
+            logger.debug(
+                f"should_fetch_tiles: returning False (logistics tiles exist: "
+                f"hotels={has_hotels}, activities={has_activities})"
+            )
+            return False
+
         # ONLY fetch tiles for booking intent (triggered by "Build plan" button)
         # Do NOT auto-fetch - user must explicitly request plan generation
         if intent == "booking":
@@ -608,6 +618,16 @@ class TripArchitect:
                     f"PRESERVING {len(state.tiles['flights'])} flights from logistics_node",
                 )
                 tiles_result["flights"] = state.tiles["flights"]
+                continue
+
+            # PRESERVE activities from logistics_node if already set
+            # (selective backfill tiles for pure Tier 1 trips — Phase 5.6 needs these)
+            if category == "activities" and state.tiles.get("activities"):
+                _debug_info(
+                    "FETCH_TILES",
+                    f"PRESERVING {len(state.tiles['activities'])} activities from logistics_node",
+                )
+                tiles_result["activities"] = state.tiles["activities"]
                 continue
 
             # Check if we need origin for flights
@@ -659,11 +679,25 @@ class TripArchitect:
         # Simple response based on what we have
         response_parts = []
 
-        if state.tiles:
-            # We have tiles to show
-            for category, tiles in state.tiles.items():
-                if tiles:
-                    response_parts.append(f"I found {len(tiles)} {category} options for you.")
+        # Build tile summary (one sentence for all categories)
+        tile_parts = []
+        for category in ("hotels", "flights", "activities"):
+            tiles = state.tiles.get(category, [])
+            if isinstance(tiles, list) and tiles:
+                count = len(tiles)
+                if count == 1:
+                    if category.endswith("ies"):
+                        label = category[:-3] + "y"
+                    elif category.endswith("s"):
+                        label = category[:-1]
+                    else:
+                        label = category
+                else:
+                    label = category
+                tile_parts.append(f"**{count} {label}**")
+
+        if tile_parts:
+            response_parts.append(f"Found {', '.join(tile_parts)}.")
 
         if plan.itinerary_blocks:
             # We have itinerary content from Specialist
@@ -782,11 +816,30 @@ async def trip_architect(state: GraphState) -> GraphState:
     # Extract trip fields and settings from user text
     # ==========================================================================
 
-    # Check if Router already extracted fields (structured output refactor)
-    # If so, skip duplicate LLM extraction - Router already populated state.trip_plan
-    if state.metadata.get("router_extracted_fields"):
-        _debug_log("Skipping LLM extraction - Router already extracted fields")
-        # Clear the flag so future turns still extract
+    # Check if Router already extracted fields or user_text is a system trigger.
+    # Both cases have nothing useful to extract — skip the ~1s LLM call.
+    _SYSTEM_TRIGGERS = {"GENERATE_PLAN_NOW", "BUILD_PLAN", "REFRESH"}
+    router_already_extracted = bool(state.metadata.get("router_extracted_fields"))
+    is_system_trigger = user_text.strip() in _SYSTEM_TRIGGERS
+
+    # Secondary guard: skip if Router already populated all core fields this turn
+    # (catches edge cases where router_extracted_fields wasn't set)
+    fields_already_present = bool(
+        state.trip_plan.destination
+        and state.trip_plan.start_date
+        and state.trip_plan.end_date
+        and state.metadata.get("router_output")
+    )
+
+    if router_already_extracted or is_system_trigger or fields_already_present:
+        reason = (
+            "Router already extracted"
+            if router_already_extracted
+            else "system trigger"
+            if is_system_trigger
+            else "fields already present from router"
+        )
+        _debug_log(f"Skipping LLM extraction - {reason}")
         state.metadata["router_extracted_fields"] = False
     else:
         # Update trip plan from user text using LLM extraction
@@ -804,7 +857,15 @@ async def trip_architect(state: GraphState) -> GraphState:
     _detect_and_handle_pivot(state, prev_trip_values.get("destination"))
 
     # Extract settings if keywords detected (booking toggles, preferences)
-    if _has_settings_keywords(user_text):
+    # Skip when: router already extracted fields, system trigger, or router
+    # already detected a settings change (SETTINGS_TO_LOGISTICS fast path)
+    router_handled_settings = bool(state.metadata.get("router_detected_settings_change"))
+    if (
+        _has_settings_keywords(user_text)
+        and not router_already_extracted
+        and not is_system_trigger
+        and not router_handled_settings
+    ):
         settings_extracted, settings_tokens = await _extract_settings_with_llm(user_text)
         extracted_dict = settings_extracted.model_dump(exclude_none=True)
         if extracted_dict:

@@ -3,6 +3,7 @@
 import { ArrowRight, CreditCard, ShieldCheck, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { formatPrice } from '@/lib/format-utils';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
@@ -47,12 +48,6 @@ export function CheckoutSidebar({
   checkoutDisabled = false,
   checkoutDisabledReason,
 }: CheckoutSidebarProps) {
-  // Format currency
-  const formatPrice = (amount: number) => {
-    const symbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : currency;
-    return `${symbol}${amount.toLocaleString()}`;
-  };
-
   // Compute line items from selected tiles if not provided
   const computedLineItems = lineItems || (() => {
     const items: LineItem[] = [];
@@ -115,7 +110,7 @@ export function CheckoutSidebar({
             computedLineItems.map((item, idx) => (
               <div key={idx} className="flex justify-between text-sm">
                 <span className="text-muted-foreground">{item.label}</span>
-                <span>{formatPrice(item.amount)}</span>
+                <span>{formatPrice(item.amount, currency)}</span>
               </div>
             ))
           ) : (
@@ -129,7 +124,7 @@ export function CheckoutSidebar({
         <div className="flex justify-between items-end mb-6">
           <span className="font-bold text-lg">Total Est.</span>
           <span className="font-bold text-3xl tracking-tight">
-            {formatPrice(total)}
+            {formatPrice(total, currency)}
           </span>
         </div>
 

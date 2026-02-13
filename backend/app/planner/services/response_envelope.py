@@ -37,6 +37,7 @@ from app.planner.specialist_registry import (
 from app.planner.state import GraphState, TripPlan, trip_plan_is_ready
 from app.planner.state.typed_meta import get_trip_settings
 from app.schemas import StrategySection as StrategySectionModel
+from app.utils.tile_utils import flatten_tiles_to_id_map
 
 logger = logging.getLogger(__name__)
 
@@ -90,38 +91,22 @@ def _compute_plan_view_state(state: GraphState) -> str:
 
 
 def _flatten_tiles_to_id_map(tiles_by_category: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Convert category-based tiles to ID-based map for frontend.
+    """Convert category-based tiles to ID-based map for frontend.
 
     Backend stores: {"flights": [tile1, tile2], "hotels": [tile3]}
     Frontend expects: {"tile1_id": tile1, "tile2_id": tile2, "tile3_id": tile3}
-    """
-    if not tiles_by_category:
-        return {}
 
-    result: Dict[str, Any] = {}
-    tiles_without_id = 0
-    for category, tile_list in tiles_by_category.items():
-        if not isinstance(tile_list, list):
-            logger.warning(f"_flatten_tiles_to_id_map: {category} is not a list: {type(tile_list)}")
-            continue
-        for tile in tile_list:
-            if isinstance(tile, dict):
-                tile_id = tile.get("id")
-                if tile_id:
-                    # Add pre-formatted price_display field for frontend
-                    tile["price_display"] = (
-                        f"${tile.get('price_estimate', 0):.0f}"
-                        if tile.get("price_estimate")
-                        else None
-                    )
-                    result[tile_id] = tile
-                else:
-                    tiles_without_id += 1
-                    logger.warning(
-                        f"_flatten_tiles_to_id_map: Tile without ID in {category}: "
-                        f"keys={list(tile.keys())[:5]}"
-                    )
+    Delegates core flattening to ``flatten_tiles_to_id_map`` (shared utility)
+    and enriches each tile with a pre-formatted ``price_display`` field that
+    the frontend renders directly.
+    """
+    result = flatten_tiles_to_id_map(tiles_by_category)
+
+    # Enrich with price_display for frontend rendering
+    for tile in result.values():
+        tile["price_display"] = (
+            f"${tile.get('price_estimate', 0):.0f}" if tile.get("price_estimate") else None
+        )
 
     return result
 
@@ -716,6 +701,7 @@ def _build_response_envelope(
             or state.metadata.get("synthesizer_output", {}).get("suggested_replies", [])
         ),
         "suggested_response_meta": state.metadata.get("suggestion_chip_meta", []),
+        "suggestion_chips": state.metadata.get("suggestion_chips", []),
         # Plan view state for right panel stage rendering
         "plan_view_state": plan_view_state,
         # Strategy content for AgentCards
@@ -731,7 +717,7 @@ def _build_response_envelope(
         "constraint_violations": state.metadata.get("constraint_violations", []),
         # Itinerary day cards (computed by ItineraryBuilder, None until S2_STRATEGY_READY)
         "itinerary_day_cards": itinerary_day_cards,
-        # Debug observability (visible in SSE payloads + browser dev tools)
+        # Backend-only observability fields -- not consumed by frontend
         "_debug": {
             "router_extraction_failed": state.metadata.get("router_extraction_failed", False),
         },
@@ -860,6 +846,21 @@ def format_result(
                 # Persist counts for synthesizer drop reporting
                 state.metadata["builder_activities_input"] = result.total_activities_input
                 state.metadata["builder_activities_placed"] = result.total_activities_placed
+                # Surface post-placement conflicts for synthesizer
+                if result.conflicts:
+                    state.metadata["builder_conflicts"] = [
+                        {
+                            "day": c.day if hasattr(c, "day") else None,
+                            "type": c.type,
+                            "severity": (
+                                c.severity.value
+                                if hasattr(c.severity, "value")
+                                else str(c.severity)
+                            ),
+                            "message": c.message,
+                        }
+                        for c in result.conflicts
+                    ]
             else:
                 state.metadata["last_builder_success"] = False
                 state.metadata["last_builder_drop_ratio"] = 1.0

@@ -13,7 +13,7 @@ import { Package, X } from 'lucide-react';
 
 import { MiniCard } from '@/components/tiles/MiniCard';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { normalizeTileType } from '@/lib/tileSelectors';
+import { isBookableActivityTile, normalizeTileType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
@@ -46,7 +46,9 @@ const CATEGORY_LABELS = {
  */
 function filterTilesByCategory(tiles: Record<string, Tile>, category: 'hotel' | 'flight' | 'activity'): Tile[] {
   const all = Object.values(tiles);
-  const filtered = all.filter((tile) => normalizeTileType(tile.type) === category);
+  const filtered = all
+    .filter((tile) => normalizeTileType(tile.type) === category)
+    .filter(isBookableActivityTile);
 
   // DEBUG: Log tile type distribution to help diagnose "0 options" issue
   if (process.env.NODE_ENV === 'development') {
@@ -101,7 +103,7 @@ export function BookingDrawer({
         </SheetHeader>
 
         {/* Tile List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {categoryTiles.map((tile) => (
             <MiniCard
               key={tile.id}

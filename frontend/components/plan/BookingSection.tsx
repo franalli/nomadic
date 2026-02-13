@@ -32,7 +32,7 @@ import { type TileFilters } from '@/components/tiles/TileFilterBar';
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
 import { getActiveSpecialists } from '@/lib/specialist-utils';
 import { activityMatchesSpecialist as registryMatch } from '@/lib/specialists';
-import { getTotalTileCount, normalizeTileType, selectTilesByType } from '@/lib/tileSelectors';
+import { getTotalTileCount, isBookableActivityTile, normalizeTileType, selectTilesByType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { GenerationState, PlanViewState, StrategySection, ViewMode } from '@/types/plan-envelope';
@@ -155,7 +155,7 @@ export function BookingSection({
   // Compute category counts using normalized type matching
   const stayTiles = tileArray.filter(t => normalizeTileType(t.type) === 'hotel');
   const flightTiles = tileArray.filter(t => normalizeTileType(t.type) === 'flight');
-  const activityTiles = tileArray.filter(t => normalizeTileType(t.type) === 'activity');
+  const activityTiles = tileArray.filter(t => normalizeTileType(t.type) === 'activity').filter(isBookableActivityTile);
 
   // Auto-switch to tab with biggest growth when new tiles arrive
   useEffect(() => {
@@ -344,6 +344,11 @@ export function BookingSection({
     for (const cat of CATEGORY_CONFIG) {
       const targetType = cat.key === 'stays' ? 'hotel' : cat.key === 'flights' ? 'flight' : 'activity';
       let categoryTiles = tileArray.filter(t => normalizeTileType(t.type) === targetType);
+
+      // Exclude fill-day generated activities from booking manifest
+      if (cat.key === 'activities') {
+        categoryTiles = categoryTiles.filter(isBookableActivityTile);
+      }
 
       // Filter activities by specialist relevance when domain specialists are active
       if (cat.key === 'activities' && activeSpecialists.length > 0) {

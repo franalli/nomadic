@@ -10,7 +10,6 @@ Run with: pytest tests/test_architecture.py -v
 import pytest
 
 from app.planner.nodes.intent_router import IntentClassification
-from app.planner.nodes.router_extraction import _detect_specialist_keywords
 from app.planner.nodes.synthesizer import Synthesizer, generate_suggestions
 from app.planner.nodes.trip_architect import TripArchitect
 from app.planner.nodes.vertical_specialist import VerticalSpecialist
@@ -27,30 +26,6 @@ from app.planner.state import (
 
 class TestIntentRouter:
     """Test the IntentRouter node (LLM-based classification)."""
-
-    def test_detect_diving_specialist(self):
-        """Should detect diving keywords via fallback detection."""
-        assert "diving" in _detect_specialist_keywords("I want to go diving")
-        assert "diving" in _detect_specialist_keywords("scuba trip to Bali")
-        assert "diving" in _detect_specialist_keywords("wreck diving in Egypt")
-        assert "diving" in _detect_specialist_keywords("padi certification")
-
-    def test_detect_hiking_specialist(self):
-        """Should detect hiking keywords."""
-        assert "hiking" in _detect_specialist_keywords("hiking in Patagonia")
-        assert "hiking" in _detect_specialist_keywords("trekking to Everest")
-        assert "hiking" in _detect_specialist_keywords("mountain trails")
-
-    def test_detect_skiing_specialist(self):
-        """Should detect skiing keywords."""
-        assert "skiing" in _detect_specialist_keywords("skiing in Chamonix")
-        assert "skiing" in _detect_specialist_keywords("snowboarding trip")
-        assert "skiing" in _detect_specialist_keywords("powder snow Japan")
-
-    def test_no_specialist_for_general(self):
-        """Should return empty list for general queries."""
-        assert _detect_specialist_keywords("I want to visit Paris") == []
-        assert _detect_specialist_keywords("beach vacation") == []
 
     def test_intent_classification_schema(self):
         """Test IntentClassification schema structure."""

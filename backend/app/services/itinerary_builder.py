@@ -1805,6 +1805,8 @@ class ItineraryBuilder:
 
         # Filter for experience generator tiles, excluding those claimed by Phase 5.25
         preferred_ids = set(self.preferences.preferred_activity_ids) if self.preferences else set()
+
+        # Primary: experience generator tiles (Tier 2: yoga, cooking, nightlife)
         experience_tiles = [
             t
             for _, t in tiles.items()
@@ -1813,9 +1815,27 @@ class ItineraryBuilder:
             and t.get("id") not in preferred_ids
         ]
 
+        # Fallback: any non-experience activity tiles (logistics backfill)
+        # We're already past the experience_generator check, so any activity tile here
+        # is from logistics_node (may lack source_agent if loaded from stale tile cache)
         if not experience_tiles:
-            _debug_itinerary("⏭️ Phase 5.6 skipped: no experience tiles")
-            return days
+            logistics_tiles = [
+                t
+                for _, t in tiles.items()
+                if isinstance(t, dict)
+                and t.get("type") == "activity"
+                and t.get("id") not in preferred_ids
+            ]
+
+            if logistics_tiles:
+                _debug_itinerary(
+                    f"📅 Phase 5.6: No experience tiles, using {len(logistics_tiles)} "
+                    f"logistics backfill tiles"
+                )
+                experience_tiles = logistics_tiles
+            else:
+                _debug_itinerary("⏭️ Phase 5.6 skipped: no placeable tiles")
+                return days
 
         _debug_itinerary(f"📅 Phase 5.6: Found {len(experience_tiles)} experience tiles")
 

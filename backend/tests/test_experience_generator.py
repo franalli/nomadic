@@ -440,8 +440,10 @@ class TestGenerateExperiences:
             ]
         )
 
+        # Batch mode: single LLM call returns all tiles across categories
+        fake_batch = ExperienceOutput(activities=fake_yoga.activities + fake_cooking.activities)
         mock_structured_llm = AsyncMock()
-        mock_structured_llm.ainvoke = AsyncMock(side_effect=[fake_yoga, fake_cooking])
+        mock_structured_llm.ainvoke = AsyncMock(return_value=fake_batch)
 
         with patch("app.services.experience_generator.ChatOpenAI") as mock_chat:
             mock_instance = MagicMock()

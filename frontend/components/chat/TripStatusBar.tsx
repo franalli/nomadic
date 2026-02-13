@@ -115,7 +115,7 @@ function TripStatusBarInner({
     <div
       className={cn(
         'w-full',
-        'bg-gray-900 backdrop-blur-md',
+        'bg-zinc-900 backdrop-blur-md',
         'border-b border-white/10',
         className
       )}
@@ -188,7 +188,7 @@ function TripStatusBarInner({
                 <Row
                   emoji=""
                   label={specialistNames.map((s) => `${s.emoji} ${s.name}`).join('  ')}
-                  onEdit={() => onOpenSheet('trip-settings')}
+                  onEdit={() => onOpenSheet('activities')}
                 />
               )}
             </div>

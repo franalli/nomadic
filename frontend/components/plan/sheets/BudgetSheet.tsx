@@ -166,7 +166,7 @@ function BudgetSheetInner({
         </div>
       }
     >
-      <div className="space-y-5">
+      <div className="space-y-6">
         {/* Currency selector */}
         <div>
           <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
@@ -251,8 +251,8 @@ function BudgetSheetInner({
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-500',
                           'hover:border-zinc-900 hover:text-zinc-900',
-                          'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white'
+                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
+                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
                         )
                   )}
                 >
@@ -286,8 +286,8 @@ function BudgetSheetInner({
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-600',
                           'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white'
+                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
+                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
                         )
                   )}
                 >

@@ -27,6 +27,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { formatPrice } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
@@ -85,9 +86,9 @@ type SortOption = 'price' | 'rating' | 'name';
 // Helpers
 // =============================================================================
 
-function formatPrice(price: number | undefined): string {
-  if (!price) return '—';
-  return `$${price.toLocaleString()}`;
+function formatPriceOrDash(price: number | undefined): string {
+  if (!price) return '\u2014';
+  return formatPrice(price);
 }
 
 function getPriceDiff(
@@ -160,9 +161,9 @@ export function AlternativesModal({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
-        <SheetHeader className="border-b border-zinc-700/50 pb-4">
-          <SheetTitle className="text-zinc-100">
+      <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto bg-white dark:bg-zinc-900">
+        <SheetHeader className="border-b border-zinc-200 dark:border-zinc-700/50 pb-4">
+          <SheetTitle className="text-zinc-900 dark:text-zinc-100">
             Change {category}
           </SheetTitle>
           <SheetClose />
@@ -186,21 +187,21 @@ export function AlternativesModal({
 
                 {/* Info */}
                 <div className="flex-1 min-w-0">
-                  <h4 className="font-semibold text-sm text-zinc-200 line-clamp-1">
+                  <h4 className="font-semibold text-sm text-zinc-800 dark:text-zinc-200 line-clamp-1">
                     {currentTile.title}
                   </h4>
                   <div className="flex items-center gap-2 mt-1">
                     {currentTile.rating && (
                       <div className="flex items-center gap-0.5">
                         <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-                        <span className="text-xs text-zinc-300">
+                        <span className="text-xs text-zinc-700 dark:text-zinc-300">
                           {currentTile.rating.toFixed(1)}
                         </span>
                       </div>
                     )}
                     {currentTile.price_estimate && (
                       <span className="text-xs font-medium text-emerald-400">
-                        {formatPrice(currentTile.price_estimate)}
+                        {formatPriceOrDash(currentTile.price_estimate)}
                       </span>
                     )}
                   </div>
@@ -221,8 +222,8 @@ export function AlternativesModal({
                   className={cn(
                     'px-2 py-1 rounded text-xs font-medium transition-colors',
                     sortBy === option
-                      ? 'bg-zinc-700 text-zinc-200'
-                      : 'text-zinc-500 hover:text-zinc-300'
+                      ? 'bg-zinc-100 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-200'
+                      : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
                   )}
                 >
                   {option.charAt(0).toUpperCase() + option.slice(1)}
@@ -256,8 +257,8 @@ export function AlternativesModal({
                       className={cn(
                         'w-full flex gap-3 p-3 rounded-xl text-left transition-colors',
                         isCurrentlySelected
-                          ? 'bg-zinc-800/30 opacity-50 cursor-not-allowed'
-                          : 'bg-zinc-800/50 hover:bg-zinc-700/50 border border-zinc-700/30 hover:border-zinc-600/50'
+                          ? 'bg-zinc-50 dark:bg-zinc-800/30 opacity-50 cursor-not-allowed'
+                          : 'bg-zinc-100 dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-700/50 border border-zinc-200 dark:border-zinc-700/30 hover:border-zinc-300 dark:hover:border-zinc-600/50'
                       )}
                     >
                       {/* Thumbnail */}
@@ -267,7 +268,7 @@ export function AlternativesModal({
 
                       {/* Info */}
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-medium text-sm text-zinc-200 line-clamp-1">
+                        <h4 className="font-medium text-sm text-zinc-800 dark:text-zinc-200 line-clamp-1">
                           {alt.title}
                         </h4>
 
@@ -276,7 +277,7 @@ export function AlternativesModal({
                           {alt.rating && (
                             <div className="flex items-center gap-0.5">
                               <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-                              <span className="text-xs text-zinc-300">
+                              <span className="text-xs text-zinc-700 dark:text-zinc-300">
                                 {alt.rating.toFixed(1)}
                               </span>
                             </div>
@@ -304,8 +305,8 @@ export function AlternativesModal({
 
                         {/* Price row */}
                         <div className="flex items-center gap-2 mt-1">
-                          <span className="text-sm font-medium text-zinc-300">
-                            {formatPrice(alt.price_estimate)}
+                          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                            {formatPriceOrDash(alt.price_estimate)}
                           </span>
 
                           {/* Price diff badge */}

@@ -143,7 +143,7 @@ function assertNoForbiddenStrings(
  * @param state - Current plan view state
  * @param viewModel - View model to validate
  */
-export function enforceRightViewPolicy(
+function enforceRightViewPolicy(
   state: PlanViewState,
   viewModel: PlanViewModel
 ): void {

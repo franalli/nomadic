@@ -86,27 +86,6 @@ def parse_traceparent(header: Optional[str]) -> Tuple[Optional[str], Optional[st
     return trace_id, span_id
 
 
-def generate_traceparent(trace_id: str, span_id: Optional[str] = None) -> str:
-    """
-    Generate a W3C traceparent header value.
-
-    Args:
-        trace_id: 32-character hex trace ID
-        span_id: 16-character hex span ID (generated if not provided)
-
-    Returns:
-        Formatted traceparent header value
-    """
-    if span_id is None:
-        span_id = uuid.uuid4().hex[:16]
-
-    # Ensure correct lengths
-    trace_id = trace_id[:32].ljust(32, "0")
-    span_id = span_id[:16].ljust(16, "0")
-
-    return f"00-{trace_id}-{span_id}-01"
-
-
 # =============================================================================
 # TRACE ENVELOPE
 # =============================================================================

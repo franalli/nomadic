@@ -23,7 +23,7 @@ import logging
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 from jinja2 import Template
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -54,9 +54,9 @@ _MODEL_BY_COMPLEXITY = {
 
 # Per-type max_tokens — exploration is terse, planning needs room for constraint reasoning
 _MAX_TOKENS_BY_TYPE = {
-    "exploration": 300,  # Short conversational (2-3 sentences)
-    "specialist_update": 400,  # Acknowledge specialist + counts
-    "planning": 600,  # Complex synthesis with constraints + budget reasoning
+    "exploration": 200,  # 2-3 sentences, conversational (was 300)
+    "specialist_update": 250,  # Ack + counts + room for varied voice (was 200)
+    "planning": 350,  # Constraint reasoning + counts (was 600)
 }
 
 
@@ -79,8 +79,30 @@ def _get_synthesizer_llm(response_type: str = "planning") -> ChatOpenAI:
 # Conversation history depth by response type
 _HISTORY_DEPTH_BY_TYPE = {
     "exploration": 4,  # 2 turns (4 messages)
-    "specialist_update": 4,  # 2 turns
+    "specialist_update": 8,  # 4 turns — needs to see prior responses to avoid repetition
     "planning": 8,  # 4 turns (full context)
+}
+
+
+# =============================================================================
+# Suggestion Chip Action Routing
+# =============================================================================
+
+# Maps suggestion categories to (action_type, action_target) for frontend routing.
+# Categories not in this map default to ("send_message", None).
+PILL_ACTION_MAP: Dict[str, tuple[str, Optional[str]]] = {
+    # Date chips -> open date picker
+    "date_prompt": ("open_pill", "dates"),
+    "date_contextual": ("open_pill", "dates"),
+    # Booking settings -> open respective sheets
+    "plan_hotel_stars": ("open_pill", "stays"),
+    "plan_hotel_pref": ("open_pill", "stays"),
+    "plan_flight_direct": ("open_pill", "flights"),
+    # Activities -> open activities sheet
+    "plan_activity_explore": ("open_pill", "activities"),
+    # Budget/Travelers -> open respective sheets
+    "plan_budget": ("open_pill", "budget"),
+    "plan_travelers": ("open_pill", "travelers"),
 }
 
 
@@ -103,11 +125,6 @@ def _get_response_type(state) -> str:
     if meta.get("short_circuit_type") in ("greeting", "reset"):
         return "greeting"
 
-    # Planning mode when blocking violations exist
-    if meta.get("constraint_violations"):
-        return "planning"
-
-    # Planning mode: first time all core fields are set (one-time flag)
     has_full_trip = (
         state.trip_plan
         and state.trip_plan.destination
@@ -115,6 +132,15 @@ def _get_response_type(state) -> str:
         and state.trip_plan.end_date
     )
 
+    # Planning mode when constraint violations exist on FIRST plan only.
+    # After first plan, constraint reasoning appears in Logic Log — terse ack suffices.
+    if meta.get("constraint_violations"):
+        if not meta.get("_planning_response_given"):
+            if has_full_trip:
+                state.metadata["_planning_response_given"] = True
+            return "planning"
+
+    # Planning mode: first time all core fields are set (one-time flag)
     if has_full_trip and not meta.get("_planning_response_given"):
         state.metadata["_planning_response_given"] = True
         return "planning"
@@ -133,7 +159,7 @@ def _get_response_type(state) -> str:
 
     # Check for active planning (has destination)
     if state.trip_plan and state.trip_plan.destination:
-        return "specialist_update"  # Changed from "planning" to avoid always using gpt-4o
+        return "specialist_update"
 
     # Safe default: warm conversational tone
     return "exploration"
@@ -233,6 +259,58 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
     if turn_applied:
         parts.append(f"- Fields changed this turn: {', '.join(turn_applied)}")
 
+    added_cats = state.metadata.get("added_categories", [])
+    if added_cats:
+        parts.append(f"- NEW categories this turn: {', '.join(added_cats)}")
+
+    # Inject change_type signal for specialist_update prompt routing
+    if response_type == "specialist_update":
+        last_human = None
+        for msg in reversed(state.messages[-4:]):
+            if isinstance(msg, HumanMessage):
+                last_human = msg.content
+                break
+
+        if last_human and last_human.strip() == "GENERATE_PLAN_NOW":
+            parts.append("- change_type: STEPPER_RERUN")
+        elif state.metadata.get("settings_just_updated"):
+            parts.append("- change_type: SETTINGS_CHANGE")
+        elif added_cats:
+            parts.append("- change_type: NEW_CATEGORY")
+        elif turn_applied and any(f in turn_applied for f in ("start_date", "end_date")):
+            parts.append("- change_type: DATE_CHANGE")
+        else:
+            parts.append("- change_type: PLAN_UPDATE")
+
+    # Include previous values when dates changed (for "extended by X days" copy)
+    if turn_applied:
+        prev_snapshot = state.metadata.get("prev_trip_values_snapshot", {})
+        date_fields = [f for f in turn_applied if f in ("start_date", "end_date")]
+        if prev_snapshot and date_fields:
+            old_end = prev_snapshot.get("end_date")
+            new_end = plan.end_date
+            if old_end and new_end:
+                try:
+                    from datetime import datetime
+
+                    old_dt = datetime.strptime(str(old_end)[:10], "%Y-%m-%d")
+                    new_dt = datetime.strptime(str(new_end)[:10], "%Y-%m-%d")
+                    delta = (new_dt - old_dt).days
+                    if delta > 0:
+                        parts.append(
+                            f"- Trip extended by {delta} days"
+                            f" (was {prev_snapshot.get('start_date')} to {old_end},"
+                            f" now {plan.start_date} to {new_end})"
+                        )
+                    elif delta < 0:
+                        parts.append(
+                            f"- Trip shortened by {abs(delta)} days"
+                            f" (was {prev_snapshot.get('start_date')} to {old_end},"
+                            f" now {plan.start_date} to {new_end})"
+                        )
+                except (ValueError, TypeError):
+                    pass
+
     if architect_mode == "missing_fields":
         missing = state.metadata.get("missing_fields", [])
         if missing:
@@ -252,6 +330,9 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
     history_depth = _HISTORY_DEPTH_BY_TYPE.get(response_type, 8)
     recent = state.messages[-history_depth:] if history_depth > 0 else []
 
+    # Count ALL prior assistant turns (not just visible history window)
+    turn_count = sum(1 for m in state.messages if isinstance(m, AIMessage))
+
     if recent:
         parts.append("\n## Conversation History (last few turns)")
         for msg in recent:
@@ -259,11 +340,13 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
                 parts.append(f"USER: {msg.content}")
             elif isinstance(msg, AIMessage):
                 parts.append(f"ASSISTANT: {msg.content}")
+        parts.append(f"\n- Turn number: {turn_count + 1}")
         parts.append(
-            "\n- CRITICAL: Do NOT repeat information already said in previous "
-            "ASSISTANT messages. If you already mentioned tile counts, "
-            "constraints, or warnings, do NOT say them again. Acknowledge "
-            "only what is NEW this turn."
+            "- CRITICAL: Do NOT repeat information OR sentence structure from "
+            "previous ASSISTANT messages. Vary your opening, sentence shape, "
+            "and flow. If your last response started with 'Your [dest] adventure', "
+            "do NOT open that way again. If you already mentioned tile counts, "
+            "constraints, or warnings, skip them. Acknowledge only what is NEW."
         )
 
     # Core trip info
@@ -357,6 +440,18 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
                 "- NOTE: Mention this naturally (e.g., 'I've placed 4 of 6 activities "
                 "— extending your trip by a couple days would fit them all')."
             )
+
+    # Builder scheduling conflicts — surface for conversational mention
+    builder_conflicts = state.metadata.get("builder_conflicts", [])
+    if builder_conflicts:
+        parts.append("\n## Scheduling Conflicts")
+        for c in builder_conflicts:
+            day_str = f"Day {c['day']}: " if c.get("day") else ""
+            parts.append(f"- {day_str}{c['message']}")
+        parts.append(
+            "- Mention these naturally if severe (e.g., "
+            "'Day 9 is packed — consider spreading activities')"
+        )
 
     # Experience tiles count (Tier 2 activities from experience_generator)
     if state.tiles:
@@ -703,6 +798,17 @@ def generate_suggestions(state: GraphState) -> List[str]:
         state.metadata["suggestion_chip_meta"] = [
             {"chip_type": "cta", "category": "budget_fix", "icon": "dollar-sign"}
         ] * len(result)
+        state.metadata["suggestion_chips"] = [
+            {
+                "message": text,
+                "action_type": "send_message",
+                "action_target": None,
+                "chip_type": "cta",
+                "category": "budget_fix",
+                "icon": "dollar-sign",
+            }
+            for text in result
+        ]
         return result
 
     # ── Step 1: Blocking violations (highest priority) ──
@@ -760,6 +866,17 @@ def generate_suggestions(state: GraphState) -> List[str]:
         state.metadata["suggestion_chip_meta"] = [
             {"chip_type": "cta", "category": "blocking_fix", "icon": "alert-triangle"}
         ] * len(result)
+        state.metadata["suggestion_chips"] = [
+            {
+                "message": text,
+                "action_type": "send_message",
+                "action_target": None,
+                "chip_type": "cta",
+                "category": "blocking_fix",
+                "icon": "alert-triangle",
+            }
+            for text in result
+        ]
         return result
 
     # ── Step 2: Route violations ──
@@ -769,10 +886,21 @@ def generate_suggestions(state: GraphState) -> List[str]:
         if prev_dest:
             result = [f"Back to {prev_dest}", "Different city", "Help me choose"]
         else:
-            result = ["Paris", "Tokyo", "Barcelona"]
+            result = ["Explore somewhere new", "Help me choose", "Show me options"]
         state.metadata["suggestion_chip_meta"] = [
-            {"chip_type": "follow_up", "category": "route_fix", "icon": "map-pin"}
+            {"chip_type": "cta", "category": "route_fix", "icon": "map-pin"}
         ] * len(result)
+        state.metadata["suggestion_chips"] = [
+            {
+                "message": text,
+                "action_type": "send_message",
+                "action_target": None,
+                "chip_type": "cta",
+                "category": "route_fix",
+                "icon": "map-pin",
+            }
+            for text in result
+        ]
         return result
 
     # ── Step 3: Assemble candidate pool ──
@@ -799,10 +927,6 @@ def generate_suggestions(state: GraphState) -> List[str]:
     )
     discovers = sorted(
         [c for c in eligible if c["category"].startswith(DISCOVER_PREFIXES)],
-        key=lambda c: c["priority"],
-    )
-    fallbacks = sorted(
-        [c for c in eligible if c["category"] == "change_dest"],
         key=lambda c: c["priority"],
     )
     # Priority-0 groups (destination_choice, date chips) fill all 3 slots
@@ -841,12 +965,6 @@ def generate_suggestions(state: GraphState) -> List[str]:
                 specialist_used = True
             final.append(d)
 
-        # Backfill with fallbacks
-        for f in fallbacks:
-            if len(final) >= 3:
-                break
-            final.append(f)
-
     # ── Step 6: Render templates + collect chip metadata ──
     CTA_CATEGORIES = {"destination_choice", "date_prompt", "date_contextual"}
     SETTING_CATEGORIES = {"plan_hotel_pref", "plan_flight_pref", "plan_budget"}
@@ -880,7 +998,25 @@ def generate_suggestions(state: GraphState) -> List[str]:
 
         meta_list.append({"chip_type": chip_type, "category": cat, "icon": icon})
 
+    # Build structured chips for frontend action routing
+    structured_chips = []
+    for i, c in enumerate(final):
+        cat = c.get("category", "")
+        text = result[i]
+        action_type, action_target = PILL_ACTION_MAP.get(cat, ("send_message", None))
+        structured_chips.append(
+            {
+                "message": text,
+                "action_type": action_type,
+                "action_target": action_target,
+                "chip_type": meta_list[i]["chip_type"],
+                "category": cat,
+                "icon": meta_list[i]["icon"],
+            }
+        )
+
     state.metadata["suggestion_chip_meta"] = meta_list
+    state.metadata["suggestion_chips"] = structured_chips
 
     # ── Step 7: Track shown question types for rotation ──
     shown_qtypes = [

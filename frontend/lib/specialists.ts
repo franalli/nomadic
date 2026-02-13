@@ -22,7 +22,7 @@ export interface SpecialistConfig {
 // Registry
 // ---------------------------------------------------------------------------
 
-export const SPECIALIST_REGISTRY: Record<string, SpecialistConfig> = {
+const SPECIALIST_REGISTRY: Record<string, SpecialistConfig> = {
   diving: {
     id: 'diving',
     displayName: 'Diving',
@@ -100,7 +100,7 @@ export const SPECIALIST_IDS = Object.keys(SPECIALIST_REGISTRY);
 export const NICHE_SPECIALIST_IDS = SPECIALIST_IDS;
 
 /** Color lookup with backward-compat aliases */
-export const SPECIALIST_COLORS: Record<string, string> = {
+const SPECIALIST_COLORS: Record<string, string> = {
   local_expert: '#6B7280',
   general: '#6B7280',
   ...Object.fromEntries(SPECIALIST_IDS.map((id) => [id, SPECIALIST_REGISTRY[id].color])),

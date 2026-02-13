@@ -160,9 +160,9 @@ export function ActivityMiniCard({
             return (
               <span className={cn(
                 'text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide border',
-                block.intensity === 'light' && 'bg-green-500/20 text-green-400 border-green-500/30',
-                block.intensity === 'moderate' && 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-                block.intensity === 'challenging' && 'bg-red-500/20 text-red-400 border-red-500/30'
+                block.intensity === 'light' && 'bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/30',
+                block.intensity === 'moderate' && 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/30',
+                block.intensity === 'challenging' && 'bg-red-500/20 text-red-600 dark:text-red-400 border-red-500/30'
               )}>
                 {block.intensity === 'light' ? 'easy' : block.intensity}
               </span>
@@ -214,7 +214,7 @@ export function ActivityMiniCard({
 
         {/* Inline Constraint Badges */}
         {block.active_constraints && block.active_constraints.length > 0 && (
-          <div className="mt-3 space-y-2">
+          <div className="mt-4 space-y-2">
             {block.active_constraints.map((constraint: {
               id: string;
               severity: 'warning' | 'info' | 'success';
@@ -265,7 +265,7 @@ export function ActivityMiniCard({
       {mode === 'booking' && !isBooked && onBook && (
         <button
           onClick={onBook}
-          className="self-center px-3 py-1.5 text-xs font-semibold bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors shrink-0"
+          className="self-center px-3 py-1.5 text-xs font-semibold bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 transition-colors shrink-0"
         >
           Book
         </button>

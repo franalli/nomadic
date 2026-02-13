@@ -255,6 +255,23 @@ Map panels use sticky positioning during timeline scroll (P3+ only).
 - `minZoom: 7` prevents zooming out to show the whole globe
 - `duration: 1000` for smooth 1s animation
 
+**Map Base Style (Theme-Aware):**
+
+The map switches Mapbox built-in styles based on `prefers-color-scheme`. Do NOT use Mapbox Studio custom styles.
+
+| Mode | Mapbox Style URL |
+|------|------------------|
+| Light | `mapbox://styles/mapbox/light-v11` |
+| Dark | `mapbox://styles/mapbox/dark-v11` |
+
+Detection uses `window.matchMedia('(prefers-color-scheme: dark)')` with a `change` event listener for live theme switching. The `isDark` state drives the `mapStyle` prop on `<Map>`.
+
+| Element | Light | Dark |
+|---------|-------|------|
+| Container border | `border-zinc-200` | `dark:border-white/10` |
+| Route line | `#10b981` (emerald-500) | `#10b981` (emerald-500) |
+| Route opacity | `0.7` | `0.7` |
+
 ---
 
 ## 3. Usage Examples

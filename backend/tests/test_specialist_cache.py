@@ -13,16 +13,16 @@ class TestCacheKeyGeneration:
     """Test cache key generation logic."""
 
     def test_basic_key(self):
-        """Test cache key format with month + duration bucket.
+        """Test cache key format with month + duration bucket + day_pref.
 
-        Format: specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{phash}.
+        Format: specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{dpref}:{phash}.
         """
         from app.services.specialist_cache import _specialist_cache_key
 
         key = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-20")
         # 6 days = "week" bucket
-        assert key.startswith("specialist:diving:bali:2025-03:week:any:")
-        assert len(key.split(":")) == 7  # 7 segments
+        assert key.startswith("specialist:diving:bali:2025-03:week:any:dpany:")
+        assert len(key.split(":")) == 8  # 8 segments
 
     def test_normalized_destination(self):
         """Test destination is normalized (lowercase, trimmed)."""
@@ -225,9 +225,8 @@ class TestCacheStats:
 
     def test_get_cache_stats(self):
         """Test cache stats return expected fields."""
-        from app.services.specialist_cache import get_cache_stats, reset_stats
+        from app.services.specialist_cache import get_cache_stats
 
-        reset_stats()
         stats = get_cache_stats()
 
         assert "l1_hits" in stats
@@ -238,19 +237,6 @@ class TestCacheStats:
         assert "l1_size" in stats
         assert "l1_maxsize" in stats
         assert stats["l1_maxsize"] == 128
-
-    def test_reset_stats(self):
-        """Test stats reset."""
-        from app.services.specialist_cache import get_cache_stats, reset_stats
-
-        reset_stats()
-        stats = get_cache_stats()
-
-        assert stats["l1_hits"] == 0
-        assert stats["l1_misses"] == 0
-        assert stats["l2_hits"] == 0
-        assert stats["l2_misses"] == 0
-        assert stats["writes"] == 0
 
 
 # =============================================================================

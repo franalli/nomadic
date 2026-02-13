@@ -114,7 +114,7 @@ export interface UseTileSelectionReturn {
  * @param tile - The tile to categorize
  * @returns The selection category ('stay', 'flight', or 'activity')
  */
-export const resolveSelectionCategory = (tile: Tile): SelectionCategory => {
+const resolveSelectionCategory = (tile: Tile): SelectionCategory => {
   const type = tile.type || '';
   if (isFlightType(type)) return 'flight';
   if (isActivityType(type)) return 'activity';

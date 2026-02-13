@@ -59,7 +59,7 @@ export function SmartLoader({ status }: SmartLoaderProps) {
         key={displayText}
         className={cn(
           'font-mono text-[10px] uppercase tracking-widest font-bold',
-          'text-zinc-400 dark:text-emerald-500/80',
+          'text-zinc-600 dark:text-emerald-500/80',
           'animate-in fade-in slide-in-from-left-1 duration-300'
         )}
       >

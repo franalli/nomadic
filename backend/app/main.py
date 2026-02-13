@@ -143,6 +143,7 @@ from app.services.unsplash import (  # noqa: E402
 )
 from app.services.unsplash import (  # noqa: E402
     get_image_for_destination,
+    get_image_url_sync,
 )
 from app.services.unsplash import (  # noqa: E402
     get_memory_cache_stats as get_unsplash_memory_stats,
@@ -1215,6 +1216,7 @@ def track_suggestion_click(
     return {"status": "ok"}
 
 
+# NOTE: Non-streaming endpoint kept for testing/debugging. No frontend caller.
 @app.post("/api/graph_plan", response_model=GraphPlanResponse)
 @limiter.limit("3/minute;15/hour")
 async def graph_plan_endpoint(
@@ -1787,11 +1789,9 @@ async def graph_plan_endpoint(
     # Build destination_card if destination exists
     dest_name = trip_inputs.get("destination")
     if dest_name:
-        # Use async version to actually fetch from Unsplash API (sync version only checks cache)
-        # Banner image is based on location only, not activities
-        dest_image_url = await get_image_for_destination(
-            dest_name, variant=0, db=db, width=1600, height=900
-        )
+        # Non-blocking: check memory cache (populated by fire-and-forget prefetch),
+        # fall back to Picsum. Images are decorative — never gate response.
+        dest_image_url = get_image_url_sync(dest_name, variant=0, width=1600, height=900)
         response_document.destination_card = DestinationCard(
             title=dest_name,
             subtitle=f"Your adventure in {dest_name}" if dest_name else None,
@@ -2414,11 +2414,9 @@ async def graph_plan_stream_endpoint(
             # Build destination_card if destination exists
             dest_name = trip_inputs.get("destination")
             if dest_name:
-                # Use async version to actually fetch from Unsplash API
-                # Banner image is based on location only, not activities
-                dest_image_url = await get_image_for_destination(
-                    dest_name, variant=0, db=db, width=1600, height=900
-                )
+                # Non-blocking: check memory cache (populated by fire-and-forget prefetch),
+                # fall back to Picsum. Images are decorative — never gate response.
+                dest_image_url = get_image_url_sync(dest_name, variant=0, width=1600, height=900)
                 response_document.destination_card = DestinationCard(
                     title=dest_name,
                     subtitle=f"Your adventure in {dest_name}" if dest_name else None,
@@ -2833,12 +2831,45 @@ async def patch_plan_document(
         doc = await get_or_create_document(db, session=session, updated_by="user")
         # Skip version check — frontend couldn't know version of a new doc
     else:
-        # Optimistic locking: reject if client's version is stale
+        # Last-writer-wins: single user per session, no real conflict.
+        # Version drift happens when graph stream saves doc (incrementing version)
+        # before the SSE event updates the frontend's stored version.
         if patch.version != doc.version:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Version mismatch: client={patch.version}, server={doc.version}",
+            logger.info(
+                f"[PATCH] Version drift (client={patch.version}, server={doc.version}), "
+                f"reloading and applying"
             )
+            doc = await get_document(db, session=session)
+            if not doc:
+                raise HTTPException(status_code=404, detail="Document not found")
+
+            # Diff guard: skip write if patch data already matches reloaded doc
+            if patch.trip_inputs is not None:
+                doc_data = get_document_data(doc)
+                existing_ti = doc_data.trip_inputs
+                patch_ti = patch.trip_inputs
+                patch_fields = getattr(patch_ti, "model_fields_set", set())
+                has_real_diff = False
+                for field_name in patch_fields:
+                    patch_val = getattr(patch_ti, field_name, None)
+                    existing_val = getattr(existing_ti, field_name, None)
+                    if hasattr(patch_val, "model_dump") and hasattr(existing_val, "model_dump"):
+                        if patch_val.model_dump() != existing_val.model_dump():
+                            has_real_diff = True
+                            break
+                    elif patch_val != existing_val:
+                        has_real_diff = True
+                        break
+
+                if not has_real_diff and patch.branches is None and patch.tiles is None:
+                    logger.info("[PATCH] No-op: patch matches current doc, skipping write")
+                    return PlanDocumentResponse(
+                        version=doc.version,
+                        updated_by=doc.updated_by,
+                        document=doc_data,
+                        updated_at=doc.updated_at.isoformat(),
+                        changes_made=False,
+                    )
 
     # Apply the patch using CRDT merge
     updated_doc = await apply_user_patch(db, doc=doc, patch=patch)
@@ -3198,32 +3229,120 @@ async def fill_day_endpoint(
         )
         raise HTTPException(status_code=409, detail=f"Day {body.day_number} already has activities")
 
-    # Determine categories (None = generator picks destination-appropriate activities)
-    categories = (
-        body.categories or (ti.activity_settings.categories if ti.activity_settings else []) or None
+    # Determine categories — separate Tier 1 (specialist) from Tier 2 (experience gen).
+    # Tier 1 categories (diving, hiking, etc.) are handled by specialists with constraints
+    # and proper metadata. The experience generator produces mediocre content for these.
+    from app.planner.specialist_registry import (
+        SPECIALIST_REGISTRY,
+        TIER1_SPECIALIST_NAMES,
+        validate_fill_day_placement,
     )
 
-    # ── Adjacent-day constraint filter (pure Python, no LLM) ──────────
-    # Prevents generating activities that violate known safety constraints
-    # based on what specialists are scheduled on neighboring days.
-    # Altitude categories mirror CrossDomainBlock.target_specialists in specialist_registry.
+    raw_categories = (
+        body.categories or (ti.activity_settings.categories if ti.activity_settings else []) or None
+    )
+    tier1_requested = []
+    tier2_categories = None
+    if raw_categories:
+        tier1_requested = [c for c in raw_categories if c.lower() in TIER1_SPECIALIST_NAMES]
+        tier2_only = [c for c in raw_categories if c.lower() not in TIER1_SPECIALIST_NAMES]
+        tier2_categories = tier2_only or None
+    categories = tier2_categories  # experience generator only gets Tier 2
+
+    # ── Registry-driven constraint validation (replaces hardcoded adjacent filter) ──
+    from datetime import datetime as _dt
+
+    if ti.start_date and ti.end_date:
+        try:
+            d0 = _dt.fromisoformat(ti.start_date)
+            d1 = _dt.fromisoformat(ti.end_date)
+            total_days = (d1 - d0).days + 1
+        except ValueError:
+            total_days = len(doc_data.day_cards)
+    else:
+        total_days = len(doc_data.day_cards)
+
+    has_departure = any(
+        b.buffer_type == "departure" for dc in doc_data.day_cards for b in dc.blocks
+    )
+
+    # Gate Tier 1 placement: validate constraints before placing specialist tiles
+    for t1_cat in tier1_requested:
+        rejection = validate_fill_day_placement(
+            target_day=body.day_number,
+            specialist_type=t1_cat.lower(),
+            day_cards=doc_data.day_cards,
+            total_days=total_days,
+            has_departure_flight=has_departure,
+        )
+        if rejection:
+            logger.info(
+                "[FILL-DAY] Constraint rejected: day=%d specialist=%s code=%s",
+                body.day_number,
+                t1_cat,
+                rejection.code,
+            )
+            return {
+                "day_number": body.day_number,
+                "tiles_added": 0,
+                "rejected": True,
+                "rejection_reason": rejection.reason,
+                "rejection_code": rejection.code,
+                "rejection_suggestion": rejection.suggestion,
+                "version": doc.version,
+            }
+
+    # Also validate pinned tiles that carry a Tier 1 specialist_type
+    if body.pinned_tile_ids:
+        for tid in body.pinned_tile_ids:
+            tile_model = doc_data.tiles.get(tid)
+            if not tile_model:
+                continue
+            st = ((tile_model.meta or {}).get("specialist_type") or "").lower()
+            if st and st in TIER1_SPECIALIST_NAMES:
+                rejection = validate_fill_day_placement(
+                    target_day=body.day_number,
+                    specialist_type=st,
+                    day_cards=doc_data.day_cards,
+                    total_days=total_days,
+                    has_departure_flight=has_departure,
+                )
+                if rejection:
+                    logger.info(
+                        "[FILL-DAY] Pinned tile constraint rejected: day=%d tile=%s code=%s",
+                        body.day_number,
+                        tid,
+                        rejection.code,
+                    )
+                    return {
+                        "day_number": body.day_number,
+                        "tiles_added": 0,
+                        "rejected": True,
+                        "rejection_reason": rejection.reason,
+                        "rejection_code": rejection.code,
+                        "rejection_suggestion": rejection.suggestion,
+                        "version": doc.version,
+                    }
+
+    # Tier 2 exclusions from cross-domain blocks (registry-driven)
     excluded_categories: set[str] = set()
     adjacent_days = [dc for dc in doc_data.day_cards if abs(dc.day_number - body.day_number) == 1]
     for adj_day in adjacent_days:
         for block in adj_day.blocks:
-            # specialist_type is the authoritative signal (always the registry key)
-            if (block.specialist_type or "").lower() == "diving":
-                # no_altitude_after_dive: exclude altitude activities
-                excluded_categories |= {"hiking", "climbing", "skiing"}
-                break
+            st = (block.specialist_type or "").lower()
+            if not st:
+                continue
+            adj_config = SPECIALIST_REGISTRY.get(st)
+            if not adj_config:
+                continue
+            for xd in adj_config.cross_domain_blocks:
+                excluded_categories.update(xd.target_specialists)
 
     if excluded_categories:
-        # Apply exclusions — works whether categories is a list or None
         if categories:
             safe = [c for c in categories if c.lower() not in excluded_categories]
             categories = safe if safe else ["activities"]
         else:
-            # categories=None means generator picks freely; constrain it
             categories = ["activities"]
         logger.info(
             "fill_day: day %d excluded %s, using %s",
@@ -3231,10 +3350,92 @@ async def fill_day_endpoint(
             excluded_categories,
             categories,
         )
-    # ── End constraint filter ─────────────────────────────────────────
+    # ── End constraint validation ─────────────────────────────────────
 
-    # ── Pinned tiles: place existing tiles instead of generating ──────
-    if body.pinned_tile_ids:
+    # ── Tier 1 specialist tile reuse: pick unplaced specialist activities ──
+    # When user selected diving/hiking/etc., reuse activities already generated
+    # by the specialist (have constraints, images, proper metadata) rather than
+    # calling the generic experience generator which produces inferior content.
+    # Round-robin: pick from the least-placed category to distribute evenly.
+    specialist_tiles_for_day: list[dict] = []
+    if tier1_requested:
+        tier1_lower = {c.lower() for c in tier1_requested}
+        # Collect placed activity_type values and per-category placement counts.
+        # activity_type is the display title and the stable join key
+        # against content_added[].title per the data contract.
+        placed_titles: set[str] = set()
+        placed_per_category: dict[str, int] = {}
+        for dc in doc_data.day_cards:
+            for block in dc.blocks:
+                if block.activity_type:
+                    placed_titles.add(block.activity_type)
+                st = (block.specialist_type or "").lower()
+                if st in tier1_lower:
+                    placed_per_category[st] = placed_per_category.get(st, 0) + 1
+
+        # Collect ALL unplaced candidates across matching sections
+        candidates: list[tuple[str, dict]] = []  # (category, tile_dict)
+        logger.debug(
+            "[FILL-DAY] Reuse scan: tier1=%s sections=%d placed=%s",
+            tier1_lower,
+            len(doc_data.strategy_sections),
+            placed_titles,
+        )
+        for section in doc_data.strategy_sections:
+            s_type = (section.specialist_type or "").lower()
+            if s_type not in tier1_lower:
+                continue
+            logger.debug(
+                "[FILL-DAY] Section %s: %d content_added items",
+                s_type,
+                len(section.content_added),
+            )
+            for item in section.content_added:
+                title = (item.get("title") or "").strip()
+                if not title or title in placed_titles:
+                    continue
+                candidates.append(
+                    (
+                        s_type,
+                        {
+                            "id": f"fill_{s_type}_{body.day_number}",
+                            "type": "activity",
+                            "partner": "specialist",
+                            "partner_product_id": f"specialist_{s_type}_{body.day_number}",
+                            "deeplink_url": "",
+                            "title": title,
+                            "subtitle": item.get("subtitle", ""),
+                            "image_url": item.get("image_url", ""),
+                            "tags": [s_type],
+                            "specialist_type": s_type,
+                            "meta": {
+                                "pinned_day": body.day_number,
+                                "specialist_type": s_type,
+                                "source": "fill_day_specialist_reuse",
+                                "intensity": item.get("intensity"),
+                                "duration_hours": item.get("duration_hours"),
+                                "coordinates": item.get("coordinates"),
+                            },
+                            "source_agent": "vertical_specialist",
+                        },
+                    )
+                )
+
+        if candidates:
+            # Pick from least-placed category (round-robin across specialists)
+            candidates.sort(key=lambda x: placed_per_category.get(x[0], 0))
+            specialist_tiles_for_day = [candidates[0][1]]
+
+    # ── Priority chain: specialist reuse → pinned → experience generator ──
+    if specialist_tiles_for_day:
+        # Priority 1: Reuse unplaced specialist activities (best quality)
+        tiles = specialist_tiles_for_day
+        logger.info(
+            f"[FILL-DAY] Reusing specialist tile: {tiles[0]['title']} "
+            f"(specialist={tiles[0].get('specialist_type')})"
+        )
+    elif body.pinned_tile_ids:
+        # Priority 2: Place pinned tiles from browse drawer
         pinned_tiles = []
         for tid in body.pinned_tile_ids:
             tile_model = doc_data.tiles.get(tid)
@@ -3245,8 +3446,8 @@ async def fill_day_endpoint(
         if not pinned_tiles:
             raise HTTPException(status_code=404, detail="No matching tiles found in document")
         tiles = pinned_tiles
-    else:
-        # ── Generate tiles via LLM ───────────────────────────────────
+    elif categories or not tier1_requested:
+        # Priority 3: Experience generator for Tier 2 categories (or no categories)
         date_str = day_card.date or ti.start_date
         month = date_str[:7] if date_str and len(date_str) >= 7 else "unknown"
 
@@ -3268,6 +3469,10 @@ async def fill_day_endpoint(
 
         if not tiles:
             return {"day_number": body.day_number, "tiles_added": 0, "version": doc.version}
+    else:
+        # Pure Tier 1 with all specialist tiles already placed — nothing to fill
+        logger.info(f"[FILL-DAY] All specialist tiles for {tier1_requested} already placed")
+        return {"day_number": body.day_number, "tiles_added": 0, "version": doc.version}
 
     # Convert tiles to rich DayBlocks
     _VALID_PERIODS = {"morning", "afternoon", "evening"}
@@ -3289,6 +3494,17 @@ async def fill_day_endpoint(
         time_of_day = meta.get("time_of_day", "").lower()
         period = time_of_day if time_of_day in _VALID_PERIODS else period_cycle[i % 3]
 
+        # Resolve specialist_type: tile-level (specialist reuse) → requested
+        # Tier 1 category → meta.category → fallback "experience"
+        tile_specialist = (tile.get("specialist_type") or meta.get("specialist_type") or "").lower()
+        if not tile_specialist or tile_specialist == "experience":
+            for cat in tier1_requested:
+                if cat.lower() in TIER1_SPECIALIST_NAMES:
+                    tile_specialist = cat.lower()
+                    break
+        if not tile_specialist:
+            tile_specialist = meta.get("category", "experience")
+
         new_blocks.append(
             DayBlock(
                 id=tile["id"],
@@ -3296,7 +3512,7 @@ async def fill_day_endpoint(
                 activity_type=tile.get("title", "Experience"),
                 intensity="moderate",
                 summary=tile.get("title", "Experience"),
-                specialist_type=meta.get("category", "experience"),
+                specialist_type=tile_specialist,
                 image_url=tile.get("image_url"),
                 duration=duration_str,
                 booked_tile=tile,
@@ -3364,25 +3580,35 @@ async def fill_day_endpoint(
 # Simple in-memory idempotency cache (TTL: 5 minutes)
 # In production, use Redis with TTL
 _idempotency_cache: dict[str, float] = {}
+_idempotency_lock = asyncio.Lock()
 _IDEMPOTENCY_TTL_SECONDS = 300
+_IDEMPOTENCY_MAX_ENTRIES = 1000
 
 
-def _check_idempotency(key: str) -> bool:
+async def _check_idempotency(key: str) -> bool:
     """Check if idempotency key was recently used. Returns True if duplicate."""
     import time
 
     now = time.time()
 
-    # Clean up old entries
-    expired = [k for k, v in _idempotency_cache.items() if now - v > _IDEMPOTENCY_TTL_SECONDS]
-    for k in expired:
-        del _idempotency_cache[k]
+    async with _idempotency_lock:
+        # Evict oldest 50% if cache exceeds max entries
+        if len(_idempotency_cache) > _IDEMPOTENCY_MAX_ENTRIES:
+            sorted_keys = sorted(_idempotency_cache, key=_idempotency_cache.get)  # type: ignore[arg-type]
+            evict_count = len(sorted_keys) // 2
+            for k in sorted_keys[:evict_count]:
+                del _idempotency_cache[k]
 
-    if key in _idempotency_cache:
-        return True  # Duplicate
+        # Clean up expired entries
+        expired = [k for k, v in _idempotency_cache.items() if now - v > _IDEMPOTENCY_TTL_SECONDS]
+        for k in expired:
+            del _idempotency_cache[k]
 
-    _idempotency_cache[key] = now
-    return False
+        if key in _idempotency_cache:
+            return True  # Duplicate
+
+        _idempotency_cache[key] = now
+        return False
 
 
 @app.post("/api/expand-itinerary")
@@ -3410,7 +3636,7 @@ async def expand_itinerary_endpoint(
     logger.info(f"[API expand-itinerary] Received destination: {received_dest}")
 
     # Check idempotency - return early if duplicate request
-    if _check_idempotency(req.idempotency_key):
+    if await _check_idempotency(req.idempotency_key):
 
         async def duplicate_response():
             event = ExpandItineraryStreamEvent(
@@ -3717,6 +3943,12 @@ async def expand_itinerary_endpoint(
                         f"day_cards={len(itinerary_result.day_cards)}, "
                         f"conflicts={len(itinerary_result.conflicts)}"
                     )
+                    for _c in itinerary_result.conflicts:
+                        _debug(
+                            f"  ⚠️ Conflict: type={_c.type}, "
+                            f"severity={_c.severity}, day={_c.day}, "
+                            f"msg={_c.message}"
+                        )
                 except Exception as e:
                     logger.exception(f"Itinerary builder failed: {e}")
                     event = ExpandItineraryStreamEvent(
@@ -3896,6 +4128,7 @@ async def expand_itinerary_endpoint(
 # =============================================================================
 
 
+# NOTE: Specced for Stage 13 conflict resolution. No current frontend caller.
 @app.post("/api/remove-specialist")
 @limiter.limit("3/minute;15/hour")
 async def remove_specialist_endpoint(
@@ -3919,7 +4152,7 @@ async def remove_specialist_endpoint(
         {"type": "error", "message": "..."}
     """
     # Check idempotency
-    if _check_idempotency(req.idempotency_key):
+    if await _check_idempotency(req.idempotency_key):
 
         async def duplicate_response():
             event = ExpandItineraryStreamEvent(

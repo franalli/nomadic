@@ -1,9 +1,11 @@
 /**
- * Formatting utilities for TripSummaryPills
+ * Formatting utilities
  *
- * These functions are specifically designed for the pill display in the header.
- * They may have different semantics than similar functions elsewhere (e.g., plan-transform.ts).
+ * Shared price/currency formatters used across tile cards, modals, and checkout.
+ * Pill-specific formatters for header display (dates, travelers, budget).
  */
+
+import type { Tile } from '@/types/tile';
 
 import { parseISODateLocal } from './date-utils';
 
@@ -106,4 +108,86 @@ export function formatBudgetForPills(
     // Fallback for invalid currency codes
     return `${budget.toLocaleString('en-US')} ${curr}`;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Price Formatting — shared across tile cards, modals, and checkout
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Format a numeric amount as currency using Intl.NumberFormat.
+ * Single source of truth for currency formatting across the app.
+ *
+ * @example formatPrice(1500) → "$1,500"
+ * @example formatPrice(299, "EUR") → "€299"
+ * @example formatPrice(0) → "$0"
+ */
+export function formatPrice(amount: number, currency: string = 'USD'): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+/**
+ * Format a Tile's price as a single display string with basis suffix.
+ * Used by compact card components (MiniCard, etc.)
+ *
+ * @example formatTilePrice(hotelTile) → "$250 /night"
+ * @example formatTilePrice(flightTile) → "$899 total"
+ * @example formatTilePrice(tileWithNoPrice) → ""
+ */
+export function formatTilePrice(tile: Tile): string {
+  const price = tile.total_inclusive ?? tile.price_estimate;
+  if (price == null) return '';
+
+  const formatted = formatPrice(price, tile.currency || 'USD');
+  const basis = tile.price_basis;
+
+  if (basis === 'per_night') return `${formatted} /night`;
+  if (basis === 'per_person') return `${formatted} /person`;
+  if (basis === 'total' || tile.total_inclusive != null) return `${formatted} total`;
+
+  return formatted;
+}
+
+/**
+ * Format a Tile's price with both per-unit and optional total breakdown.
+ * Used by detail modals that show itemized pricing (TileDetailsModal, etc.)
+ *
+ * @example formatTilePriceDetailed(hotelTile3Nights) → { perUnit: "$250 /night", total: "$750 total (3 nights)" }
+ * @example formatTilePriceDetailed(flightTile) → { perUnit: "$899 total" }
+ */
+export function formatTilePriceDetailed(tile: Tile): { perUnit: string; total?: string } {
+  const price = tile.total_inclusive ?? tile.price_estimate;
+  if (price == null) return { perUnit: '' };
+
+  const currency = tile.currency || 'USD';
+  const formatted = formatPrice(price, currency);
+  const basis = tile.price_basis;
+
+  if (basis === 'per_night') {
+    const meta = tile.meta as Record<string, unknown> | undefined;
+    const nights = typeof meta?.nights === 'number' ? meta.nights : null;
+    if (nights && nights > 1) {
+      const total = formatPrice(price * nights, currency);
+      return {
+        perUnit: `${formatted} /night`,
+        total: `${total} total (${nights} nights)`,
+      };
+    }
+    return { perUnit: `${formatted} /night` };
+  }
+
+  if (basis === 'per_person') {
+    return { perUnit: `${formatted} /person` };
+  }
+
+  if (basis === 'total' || tile.total_inclusive != null) {
+    return { perUnit: `${formatted} total` };
+  }
+
+  return { perUnit: formatted };
 }

@@ -34,17 +34,6 @@ export function parseISODateLocal(dateStr: string | null | undefined): Date | nu
 }
 
 /**
- * Get day of week name from a Date object.
- *
- * @example getDayOfWeek(new Date(2026, 0, 31)) → "Saturday"
- */
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-export function getDayOfWeek(date: Date): string {
-  return DAY_NAMES[date.getDay()];
-}
-
-/**
  * Add days to a Date object, returning a new Date.
  *
  * @example addDays(new Date(2026, 0, 31), 1) → Date for Feb 1, 2026

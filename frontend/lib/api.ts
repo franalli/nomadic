@@ -106,7 +106,7 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
  * @param error - The error to check
  * @returns true if the error is transient and should be retried
  */
-export function isTransientError(error: unknown): boolean {
+function isTransientError(error: unknown): boolean {
   if (error instanceof Error) {
     const message = error.message.toLowerCase();
     return (
@@ -127,7 +127,7 @@ export function isTransientError(error: unknown): boolean {
  * @param status - HTTP status code
  * @returns true if status indicates a retryable error
  */
-export function isTransientStatus(status: number): boolean {
+function isTransientStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504 || status === 429;
 }
 
@@ -437,9 +437,13 @@ export async function fillDay(
 ): Promise<{
   day_number: number;
   tiles_added: number;
-  day_card: import('@/types/plan-envelope').DayCard;
+  day_card?: import('@/types/plan-envelope').DayCard;
   tiles?: Record<string, import('@/types/tile').Tile>;
   version: number;
+  rejected?: boolean;
+  rejection_reason?: string;
+  rejection_code?: string;
+  rejection_suggestion?: string;
 }> {
   console.log(`[fillDay] sending day=${dayNumber} categories=${JSON.stringify(categories)} pinnedTiles=${pinnedTileIds?.length ?? 0}`);
   const res = await apiFetch('/api/document/fill-day', {

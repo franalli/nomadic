@@ -109,7 +109,7 @@ When modifying a phase, verify interactions with adjacent phases. Phase order ma
 0. Budget blocking → "Increase budget to $X", "Find cheaper {cat}", "Fewer activity days"
 1. Other blocking violations → "Extend to {date}", "Remove {specialist}", "Reduce {cat} to N days"
 2. Route violations → destination change chips
-3. Pool-based slot allocation: P0 (destination/date) fills all 3 slots; else Slot 1 = ACTION (date prompts), Slots 2-3 = DISCOVER (specialist cross-sell, plan progression, questions), fallback = change_dest
+3. Pool-based slot allocation: P0 (destination/date) fills all 3 slots; else Slot 1 = ACTION (date prompts), Slots 2-3 = DISCOVER (specialist cross-sell, plan progression, questions)
 
 ### Caching
 

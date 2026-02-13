@@ -185,13 +185,13 @@ function OriginSheetInner({
                   className={cn(
                     'inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg',
                     // Light: White card with border
-                    'bg-white border border-zinc-200',
+                    'bg-white border-2 border-zinc-200',
                     'text-xs font-semibold text-zinc-600',
                     'hover:border-zinc-900 hover:text-zinc-900 hover:shadow-sm',
                     // Dark: Glass Fill - substance, not just outline
-                    'dark:bg-white/5 dark:border-white/5',
+                    'dark:bg-white/5 dark:border-2 dark:border-white/15',
                     'dark:text-zinc-400',
-                    'dark:hover:bg-white/10 dark:hover:text-white',
+                    'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40',
                     'transition-all duration-150'
                   )}
                 >
@@ -217,13 +217,13 @@ function OriginSheetInner({
                 className={cn(
                   'inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg',
                   // Light: White card with border
-                  'bg-white border border-zinc-200',
+                  'bg-white border-2 border-zinc-200',
                   'text-xs font-semibold text-zinc-600',
                   'hover:border-zinc-900 hover:text-zinc-900 hover:shadow-sm',
                   // Dark: Glass Fill - substance, not just outline
-                  'dark:bg-white/5 dark:border-white/5',
+                  'dark:bg-white/5 dark:border-2 dark:border-white/15',
                   'dark:text-zinc-400',
-                  'dark:hover:bg-white/10 dark:hover:text-white',
+                  'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40',
                   'transition-all duration-150'
                 )}
               >

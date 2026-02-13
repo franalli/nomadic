@@ -4,6 +4,7 @@
  */
 
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 
 import { apiFetch } from '@/lib/api';
 import type {
@@ -195,6 +196,9 @@ function releaseCommitLock(): void {
     release();
   }
 }
+
+// Debounce timer for preference PATCHes — batches rapid heart toggles into a single PATCH
+let preferencePatchTimer: ReturnType<typeof setTimeout> | null = null;
 
 type DocumentState = {
   // Document data
@@ -1155,6 +1159,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       currency: responseTripInputs.currency ?? localTripInputs?.currency ?? 'USD',
       trip_duration: responseTripInputs.trip_duration ?? localTripInputs?.trip_duration ?? null,
       date_flex: responseTripInputs.date_flex ?? localTripInputs?.date_flex ?? false,
+      // Merge activity_settings: preserve user-set day_preferences when backend omits them
+      activity_settings: {
+        ...localTripInputs?.activity_settings,
+        ...responseTripInputs.activity_settings,
+        categories: responseTripInputs.activity_settings?.categories
+          ?? localTripInputs?.activity_settings?.categories ?? [],
+        skill_level: responseTripInputs.activity_settings?.skill_level
+          ?? localTripInputs?.activity_settings?.skill_level ?? null,
+        day_preferences: responseTripInputs.activity_settings?.day_preferences
+          ?? localTripInputs?.activity_settings?.day_preferences,
+      },
     };
 
     // If update is from planner, detect which fields changed
@@ -1628,7 +1643,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   // Heart preference actions (PLANNING mode - preference signals for AI weighting)
   // Persisted to DB via PATCH /api/document, hydrated from API response
   toggleTilePreference: (tileId: string) => {
-    const { preferredTileIds, version, document } = get();
+    const { preferredTileIds, document } = get();
     const tiles = document?.tiles ?? {};
     const newSet = new Set(preferredTileIds);
 
@@ -1659,48 +1674,56 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Optimistic update
     set({ preferredTileIds: newSet });
 
-    // Sync to backend - track pending PATCH to ensure persistence before regen
-    // Handles 409 conflicts by refetching version and retrying
-    const patchPreferences = async (): Promise<void> => {
-      const attemptPatch = async (patchVersion: number): Promise<Response> => {
-        const patchData = {
-          version: patchVersion,
-          preferred_tile_ids: Array.from(newSet),
+    // Sync to backend — debounce to batch rapid heart toggles into a single PATCH
+    if (preferencePatchTimer) clearTimeout(preferencePatchTimer);
+
+    const patchPromise = new Promise<void>((resolve) => {
+      preferencePatchTimer = setTimeout(async () => {
+        preferencePatchTimer = null;
+        const currentSet = get().preferredTileIds;
+        const currentVersion = get().version;
+
+        const attemptPatch = async (patchVersion: number): Promise<Response> => {
+          const patchData = {
+            version: patchVersion,
+            preferred_tile_ids: Array.from(currentSet),
+          };
+          console.log('[documentStore] 💜 PATCH preferences:', patchData);
+          return apiFetch('/api/document', {
+            method: 'PATCH',
+            body: JSON.stringify(patchData),
+          });
         };
-        console.log('[documentStore] 💜 PATCH preferences:', patchData);
-        return apiFetch('/api/document', {
-          method: 'PATCH',
-          body: JSON.stringify(patchData),
-        });
-      };
 
-      try {
-        let res = await attemptPatch(version);
+        try {
+          let res = await attemptPatch(currentVersion);
 
-        // Handle 409 Conflict (version mismatch) - refetch and retry once
-        if (res.status === 409) {
-          console.warn('[documentStore] 💜 Version conflict (409), refetching and retrying...');
-          const freshRes = await apiFetch('/api/document');
-          if (freshRes.ok) {
-            const freshDoc = await freshRes.json();
-            set({ version: freshDoc.version });
-            res = await attemptPatch(freshDoc.version);
+          // Handle 409 Conflict (version mismatch) - refetch and retry once
+          if (res.status === 409) {
+            console.warn('[documentStore] 💜 Version conflict (409), refetching and retrying...');
+            const freshRes = await apiFetch('/api/document');
+            if (freshRes.ok) {
+              const freshDoc = await freshRes.json();
+              set({ version: freshDoc.version });
+              res = await attemptPatch(freshDoc.version);
+            }
           }
-        }
 
-        if (res.ok) {
-          const responseData = await res.json();
-          set({ version: responseData.version });
-          console.log('[documentStore] 💜 PATCH success, new version:', responseData.version);
-        } else {
-          console.error('[documentStore] 💜 PATCH failed:', res.status);
+          if (res.ok) {
+            const responseData = await res.json();
+            set({ version: responseData.version });
+            console.log('[documentStore] 💜 PATCH success, new version:', responseData.version);
+          } else {
+            console.error('[documentStore] 💜 PATCH failed:', res.status);
+          }
+        } catch (err) {
+          console.error('[documentStore] 💜 PATCH error:', err);
         }
-      } catch (err) {
-        console.error('[documentStore] 💜 PATCH error:', err);
-      }
-    };
+        resolve();
+      }, 500);
+    });
 
-    const patchPromise = patchPreferences().finally(() => {
+    patchPromise.finally(() => {
       if (get().pendingPreferencePatch === patchPromise) {
         set({ pendingPreferencePatch: null });
       }
@@ -1913,16 +1936,6 @@ export const useSetActiveView = () =>
 export const useCartTileIds = () =>
   useDocumentStore((state) => state.cartTileIds);
 
-/**
- * Get cart actions. Used for adding/removing items from cart.
- */
-export const useCartActions = () =>
-  useDocumentStore((state) => ({
-    addToCart: state.addToCart,
-    removeFromCart: state.removeFromCart,
-    clearCart: state.clearCart,
-  }));
-
 // =============================================================================
 // Heart Preference System (PLANNING mode - preference signals for AI weighting)
 // =============================================================================
@@ -1941,12 +1954,13 @@ export const useTilePreference = (tileId: string) =>
 
 /**
  * Get preference actions. Used for toggling/clearing preferences.
+ * Uses useShallow to prevent re-renders when unrelated store state changes.
  */
 export const usePreferenceActions = () =>
-  useDocumentStore((state) => ({
+  useDocumentStore(useShallow((state) => ({
     toggleTilePreference: state.toggleTilePreference,
     clearPreferences: state.clearPreferences,
-  }));
+  })));
 
 /**
  * Hydrate preferences from API response (not sessionStorage).

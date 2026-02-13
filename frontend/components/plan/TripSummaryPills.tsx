@@ -10,7 +10,7 @@
 
 'use client';
 
-import { Calendar, DollarSign, MapPin, Plane, Users } from 'lucide-react';
+import { Activity, Calendar, DollarSign, MapPin, Plane, Users } from 'lucide-react';
 
 import { CoreChip } from '@/components/plan/CoreChip';
 import {
@@ -55,6 +55,21 @@ export function TripSummaryPills({
     tripInputs.children
   );
   const budget = formatBudgetForPills(tripInputs.budget, tripInputs.currency);
+
+  // Activity pill label — derive from categories + day_preferences
+  const activityCategories = tripInputs.activity_settings?.categories ?? [];
+  const dayPrefs = tripInputs.activity_settings?.day_preferences;
+  const activityLabel = activityCategories.length > 0
+    ? (dayPrefs && Object.keys(dayPrefs).length > 0 && activityCategories.length <= 3
+        ? activityCategories
+            .map(c => {
+              const days = dayPrefs[c];
+              const name = c.charAt(0).toUpperCase() + c.slice(1);
+              return days ? `${name} ${days}d` : name;
+            })
+            .join(', ')
+        : `${activityCategories.length} activit${activityCategories.length === 1 ? 'y' : 'ies'}`)
+    : null;
 
   // Origin visibility: show when flights enabled OR origin already set
   const showOrigin = isBookingEnabled(bookingTypes.flights) || !!origin;
@@ -112,6 +127,19 @@ export function TripSummaryPills({
         disabled={disabled || readOnlyExceptDestination}
         variant={variant}
       />
+
+      {activityCategories.length > 0 && (
+        <CoreChip
+          icon={Activity}
+          label="Activities"
+          value={activityLabel}
+          placeholder="Activities"
+          tone="default"
+          onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('activities')}
+          disabled={disabled || readOnlyExceptDestination}
+          variant={variant}
+        />
+      )}
 
       <CoreChip
         icon={DollarSign}

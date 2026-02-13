@@ -16,7 +16,6 @@ from app.services.router_cache import (
     clear_cache,
     get_cache_stats,
     get_cached_extraction,
-    reset_stats,
     set_cached_extraction,
 )
 
@@ -185,7 +184,6 @@ class TestL1MemoryCache:
     def setup_method(self):
         """Clear cache before each test."""
         clear_cache()
-        reset_stats()
 
     def test_self_contained_query_cached(self):
         """Test that self-contained queries are cached."""
@@ -253,7 +251,6 @@ class TestCacheDateSensitivity:
     def setup_method(self):
         """Clear cache before each test."""
         clear_cache()
-        reset_stats()
 
     def test_same_query_different_dates_cached_separately(self):
         """Test that same query on different days caches separately."""

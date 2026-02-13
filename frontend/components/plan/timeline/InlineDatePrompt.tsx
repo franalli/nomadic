@@ -50,8 +50,8 @@ export function InlineDatePrompt({
           onClick={onOpenDatePicker}
           className={cn(
             'w-full flex items-center justify-center gap-2 p-3 rounded-lg',
-            'bg-emerald-500 text-white font-medium',
-            'hover:bg-emerald-600 transition-colors'
+            'bg-zinc-900 text-white font-medium',
+            'hover:bg-zinc-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 transition-colors'
           )}
         >
           <CalendarDays className="h-4 w-4" />
@@ -73,7 +73,7 @@ export function InlineDatePrompt({
       </p>
 
       {/* Quick picks grid */}
-      <div className="grid grid-cols-4 gap-2 mb-3">
+      <div className="grid grid-cols-4 gap-2 mb-4">
         {QUICK_PICKS.map(({ nights, label }) => (
           <button
             key={nights}

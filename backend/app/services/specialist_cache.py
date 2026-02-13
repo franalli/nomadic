@@ -121,15 +121,17 @@ def _specialist_cache_key(
     start_date: Optional[str],
     end_date: Optional[str],
     skill_level: Optional[str] = None,
+    day_pref: Optional[int] = None,
 ) -> str:
     """
     Generate stable cache key with month + duration bucket (not exact dates).
 
-    Format: specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{phash}
+    Format: specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{dpref}:{phash}
 
     Month granularity: diving in Bali in March = same recommendations regardless
     of exact start day. Duration bucket: 5-day vs 11-day trip gets different
-    density of recommendations.
+    density of recommendations. day_pref: user's requested activity count for
+    this topic (from day_preferences stepper).
     """
     from app.planner.specialist_registry import prompt_hash
 
@@ -137,9 +139,10 @@ def _specialist_cache_key(
     month = _month_from_date(start_date)
     bucket = _duration_bucket(start_date, end_date)
     skill = skill_level or "any"
+    dpref = f"dp{day_pref}" if day_pref is not None else "dpany"
     phash = prompt_hash(topic)
 
-    key = f"specialist:{topic}:{dest_normalized}:{month}:{bucket}:{skill}:{phash}"
+    key = f"specialist:{topic}:{dest_normalized}:{month}:{bucket}:{skill}:{dpref}:{phash}"
     logger.info(f"[CACHE_KEY] Generated: {key}")
     return key
 
@@ -156,6 +159,7 @@ async def get_cached_specialist_output(
     start_date: Optional[str],
     end_date: Optional[str],
     skill_level: Optional[str] = None,
+    day_pref: Optional[int] = None,
 ) -> Optional[dict]:
     """
     Get cached specialist output: L1 → L2 fallback.
@@ -167,6 +171,7 @@ async def get_cached_specialist_output(
         start_date: Trip start date (YYYY-MM-DD)
         end_date: Trip end date (YYYY-MM-DD)
         skill_level: User skill level (differentiates beginner vs expert cache)
+        day_pref: User's requested activity count for this topic
 
     Returns:
         Cached dict (LLMSpecialistOutput.model_dump()) or None if not found
@@ -176,7 +181,9 @@ async def get_cached_specialist_output(
     # Import here to avoid circular imports
     from app.db_models import ResponseCache
 
-    cache_key = _specialist_cache_key(topic, destination, start_date, end_date, skill_level)
+    cache_key = _specialist_cache_key(
+        topic, destination, start_date, end_date, skill_level, day_pref=day_pref
+    )
 
     from app.debug_utils import _debug_log
 
@@ -240,6 +247,7 @@ async def set_cached_specialist_output(
     end_date: Optional[str],
     output: dict,
     skill_level: Optional[str] = None,
+    day_pref: Optional[int] = None,
 ) -> None:
     """
     Cache specialist output to both L1 and L2.
@@ -252,13 +260,16 @@ async def set_cached_specialist_output(
         end_date: Trip end date
         output: LLMSpecialistOutput.model_dump() dict
         skill_level: User skill level (differentiates beginner vs expert cache)
+        day_pref: User's requested activity count for this topic
     """
     global _cache_stats
 
     # Import here to avoid circular imports
     from app.db_models import ResponseCache
 
-    cache_key = _specialist_cache_key(topic, destination, start_date, end_date, skill_level)
+    cache_key = _specialist_cache_key(
+        topic, destination, start_date, end_date, skill_level, day_pref=day_pref
+    )
     expires_at = datetime.now(UTC) + timedelta(days=L2_TTL_DAYS)
 
     # L1: Thread-safe write

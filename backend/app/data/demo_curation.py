@@ -70,16 +70,16 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
         # Destination Gallery - "Vibe Trio" for Local Expert card
         "destination_gallery": [
             {
-                "url": "https://images.unsplash.com/photo-1518684079-3c830dcef090?w=400&q=80",
-                "alt": "Dubai Marina at Night",
+                "label": "Dubai Marina at Night",
+                "image_url": "https://images.unsplash.com/photo-1518684079-3c830dcef090?w=400&q=80",
             },
             {
-                "url": "https://images.unsplash.com/photo-1580674684081-7617fbf3d745?w=400&q=80",
-                "alt": "Old Dubai Souk",
+                "label": "Old Dubai Souk",
+                "image_url": "https://images.unsplash.com/photo-1580674684081-7617fbf3d745?w=400&q=80",
             },
             {
-                "url": "https://images.unsplash.com/photo-1547234935-80c7145ec969?w=400&q=80",
-                "alt": "Desert Safari Sunset",
+                "label": "Desert Safari Sunset",
+                "image_url": "https://images.unsplash.com/photo-1547234935-80c7145ec969?w=400&q=80",
             },
         ],
         # Specialist Activities - Domain-specific content
@@ -339,16 +339,16 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
         # Destination Gallery - "Vibe Trio" for Local Expert card
         "destination_gallery": [
             {
-                "url": "https://images.unsplash.com/photo-1525874684015-58379d421a52?w=400&q=80",
-                "alt": "St. Peter's Basilica Dome",
+                "label": "St. Peter's Basilica Dome",
+                "image_url": "https://images.unsplash.com/photo-1525874684015-58379d421a52?w=400&q=80",
             },
             {
-                "url": "https://images.unsplash.com/photo-1515542622106-78bda8ba0e5b?w=400&q=80",
-                "alt": "Roman Street with Ivy",
+                "label": "Roman Street with Ivy",
+                "image_url": "https://images.unsplash.com/photo-1515542622106-78bda8ba0e5b?w=400&q=80",
             },
             {
-                "url": "https://images.unsplash.com/photo-1529260830199-42c24126f198?w=400&q=80",
-                "alt": "Sunset over the Tiber",
+                "label": "Sunset over the Tiber",
+                "image_url": "https://images.unsplash.com/photo-1529260830199-42c24126f198?w=400&q=80",
             },
         ],
         "specialist_content": {
@@ -500,16 +500,16 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
         # Destination Gallery - "Vibe Trio" for Local Expert card
         "destination_gallery": [
             {
-                "url": "https://images.unsplash.com/photo-1520681279154-51b3fb4ea0f7?w=400&q=80",
-                "alt": "Chamonix Mountain Chalet",
+                "label": "Chamonix Mountain Chalet",
+                "image_url": "https://images.unsplash.com/photo-1520681279154-51b3fb4ea0f7?w=400&q=80",
             },
             {
-                "url": "https://images.unsplash.com/photo-1548777123-e216912df7d8?w=400&q=80",
-                "alt": "Cozy Alpine Fireplace",
+                "label": "Cozy Alpine Fireplace",
+                "image_url": "https://images.unsplash.com/photo-1548777123-e216912df7d8?w=400&q=80",
             },
             {
-                "url": "https://images.unsplash.com/photo-1477346611705-65d1883cee1e?w=400&q=80",
-                "alt": "Misty Alpine Forest",
+                "label": "Misty Alpine Forest",
+                "image_url": "https://images.unsplash.com/photo-1477346611705-65d1883cee1e?w=400&q=80",
             },
         ],
         "specialist_content": {
@@ -662,16 +662,16 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
         # Destination Gallery - "Vibe Trio" for Local Expert card
         "destination_gallery": [
             {
-                "url": "https://images.unsplash.com/photo-1555400038-63f5ba517a47?w=400&q=80",
-                "alt": "Bali rice terraces with palm trees",
+                "label": "Bali rice terraces with palm trees",
+                "image_url": "https://images.unsplash.com/photo-1555400038-63f5ba517a47?w=400&q=80",
             },
             {
-                "url": "https://images.unsplash.com/photo-1573790387438-4da905039392?w=400&q=80",
-                "alt": "Traditional Balinese temple gate",
+                "label": "Traditional Balinese temple gate",
+                "image_url": "https://images.unsplash.com/photo-1573790387438-4da905039392?w=400&q=80",
             },
             {
-                "url": "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=400&q=80",
-                "alt": "Bali beach sunset",
+                "label": "Bali beach sunset",
+                "image_url": "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=400&q=80",
             },
         ],
         # Specialist Activities - Domain-specific content
@@ -1091,16 +1091,16 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
         # Destination Gallery - "Vibe Trio" for Local Expert card
         "destination_gallery": [
             {
-                "url": "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=400&q=80",
-                "alt": "Fitz Roy mountain at dawn",
+                "label": "Fitz Roy mountain at dawn",
+                "image_url": "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=400&q=80",
             },
             {
-                "url": "https://images.unsplash.com/photo-1503614472-8c93d56e92ce?w=400&q=80",
-                "alt": "Perito Moreno Glacier",
+                "label": "Perito Moreno Glacier",
+                "image_url": "https://images.unsplash.com/photo-1503614472-8c93d56e92ce?w=400&q=80",
             },
             {
-                "url": "https://images.unsplash.com/photo-1551632811-561732d1e306?w=400&q=80",
-                "alt": "Guanacos in Patagonian steppe",
+                "label": "Guanacos in Patagonian steppe",
+                "image_url": "https://images.unsplash.com/photo-1551632811-561732d1e306?w=400&q=80",
             },
         ],
         # Specialist Activities - Hiking focus

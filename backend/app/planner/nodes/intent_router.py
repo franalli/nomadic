@@ -432,14 +432,6 @@ class SuggestionPool:
                 "category": "date_contextual",
             },
             # ── Generic date prompts: generated dynamically by _build_date_suggestions() ──
-            # ── Change destination (always available) ──
-            {
-                "template": "I want to change my destination",
-                "source": "planning_signal",
-                "condition": lambda s: bool(s.trip_plan.destination),
-                "priority": 9,
-                "category": "change_dest",
-            },
         ]
 
 
@@ -1002,12 +994,17 @@ def _format_section_answer(qtype: str, section: str, knowledge, destination: str
                 if ve.visa_free_for
                 else "Check requirements"
             )
+            reqs = ""
+            if ve.key_requirements:
+                reqs = "\n".join(f"  - {r}" for r in ve.key_requirements)
+                reqs = f"\n- Key requirements:\n{reqs}\n"
             return (
                 f"**Visa info for {destination}:**\n\n"
                 f"- Visa on arrival: {visa_on_arrival}\n"
                 f"- Max stay: {ve.max_stay_days or 'Varies'} days\n"
                 f"- Passport validity: {ve.passport_validity_months or 6} months required\n"
-                f"- Visa-free for: {visa_free}\n\n"
+                f"- Visa-free for: {visa_free}"
+                f"{reqs}\n"
                 f"**Tip:** {ve.immigration_tip or 'Have your documents ready'}"
             )
 
@@ -1506,9 +1503,10 @@ def _apply_settings_to_state(state: GraphState, detected_settings: dict, clog) -
         if "cabin_class" in fs:
             ext["flight_cabin_class"] = fs["cabin_class"]
 
-    # Mark for frontend
+    # Mark for frontend + downstream (architect skips duplicate settings extraction)
     state.metadata["settings_just_updated"] = True
     state.metadata["updated_settings"] = list(detected_settings.keys())
+    state.metadata["router_detected_settings_change"] = True
 
     # ROUTE TO LOGISTICS
     state.metadata["origin_only_logistics"] = True
@@ -1890,13 +1888,16 @@ async def intent_router(state: GraphState) -> GraphState:
                     state.trip_plan.end_date = old_end
                     log("ROUTER", f"[POST-PLAN] Reverted end date drift → {old_end}")
 
+            # Flag extraction BEFORE input gates — even if gates block,
+            # the Architect should NOT re-extract the same message.
+            state.metadata["router_output"] = router_output.model_dump()
+            state.metadata["router_extracted_fields"] = True
+
             # === INPUT GATE VALIDATION ===
             if _run_input_gates(state):
                 return state
 
-            state.metadata["router_output"] = router_output.model_dump()
-            state.metadata["router_extracted_fields"] = True
-            ro_dict = router_output.model_dump()
+            ro_dict = state.metadata["router_output"]  # reuse from line 1905
 
             log(
                 "ROUTER",
@@ -2111,13 +2112,14 @@ async def intent_router(state: GraphState) -> GraphState:
                 # Immediately persist to state.trip_plan
                 _populate_trip_plan_from_router_output(state, router_output, destination, user_text)
 
+                # Flag extraction BEFORE input gates — even if gates block,
+                # the Architect should NOT re-extract the same message.
+                state.metadata["router_output"] = router_output.model_dump()
+                state.metadata["router_extracted_fields"] = True
+
                 # === INPUT GATE VALIDATION ===
                 if _run_input_gates(state):
                     return state
-
-                # Store for downstream reference
-                state.metadata["router_output"] = router_output.model_dump()
-                state.metadata["router_extracted_fields"] = True
 
                 log(
                     "ROUTER",

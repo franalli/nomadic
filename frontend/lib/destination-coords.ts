@@ -7,7 +7,7 @@
  * Post-MVP: Replace with backend geocoding service.
  */
 
-export const DESTINATION_COORDS: Record<string, [number, number]> = {
+const DESTINATION_COORDS: Record<string, [number, number]> = {
   // Southeast Asia
   bali: [115.1889, -8.4095],
   'bali, indonesia': [115.1889, -8.4095],

@@ -2,7 +2,7 @@
  * usePreferenceAutoRegen
  *
  * Automatically regenerates itinerary when user preferences (hearts) change.
- * Triggers INSTANTLY (no debounce) for responsive UX.
+ * Debounced (1.5s) to batch rapid heart toggles into a single expand call.
  *
  * @see docs/ux_unified_architecture.md - Heart Preference System
  */
@@ -42,12 +42,17 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
   const setRegenerationState = useDocumentStore((s) => s.setRegenerationState);
   const awaitPreferencePatch = useDocumentStore((s) => s.awaitPreferencePatch);
   const markPreferencesAsApplied = useDocumentStore((s) => s.markPreferencesAsApplied);
+  // Gate: defer fill-day during active plan generation (prevents noise during Q&A)
+  const isStreamingResponse = useDocumentStore((s) => s.currentRunId !== null);
 
   // Track the tile that was just hearted (for UI feedback)
   const justHeartedIdRef = useRef<string | null>(null);
 
   // Abort in-flight regen when a new one triggers or component unmounts
   const abortRef = useRef<AbortController | null>(null);
+
+  // Debounce timer for batching rapid heart toggles
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Track if this is the initial mount
   const isInitialMount = useRef(true);
@@ -179,9 +184,12 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
     }
   }, [awaitPreferencePatch, markPreferencesAsApplied, setRegenerationState]);
 
-  // Abort in-flight regen on unmount
+  // Abort in-flight regen and clear debounce on unmount
   useEffect(() => {
-    return () => { abortRef.current?.abort(); };
+    return () => {
+      abortRef.current?.abort();
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, []);
 
   // Watch for preference changes
@@ -201,8 +209,8 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
 
     // Skip if expand-itinerary is already running (prevents cascade)
     // Queue for later instead of silently dropping
-    if (expandInProgress) {
-      console.log('[usePreferenceAutoRegen] Queuing - expand in progress');
+    if (expandInProgress || isStreamingResponse) {
+      console.log('[usePreferenceAutoRegen] Queuing - expand or streaming in progress');
       pendingRegenRef.current = true;
       lastPrefsRef.current = new Set(preferredTileIds);
       return;
@@ -236,13 +244,17 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
       return;
     }
 
-    // Trigger instant regeneration (no debounce)
-    triggerRegeneration();
-  }, [preferredTileIds, lastGeneratedPreferences, hasItinerary, triggerRegeneration, expandInProgress]);
+    // Debounce: batch rapid heart toggles into a single regen (1.5s window)
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      triggerRegeneration();
+    }, 1500);
+  }, [preferredTileIds, lastGeneratedPreferences, hasItinerary, triggerRegeneration, expandInProgress, isStreamingResponse]);
 
   // Flush queued regen when expandInProgress mutex releases (debounced to avoid cascade)
   useEffect(() => {
-    if (!expandInProgress && pendingRegenRef.current) {
+    if (!expandInProgress && !isStreamingResponse && pendingRegenRef.current) {
       pendingRegenRef.current = false;
       // Debounce: let dust settle before firing queued regen
       const timer = setTimeout(() => {
@@ -255,7 +267,7 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [expandInProgress, triggerRegeneration]);
+  }, [expandInProgress, isStreamingResponse, triggerRegeneration]);
 
   return {
     isRegenerating,

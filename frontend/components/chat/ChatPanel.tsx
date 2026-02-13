@@ -2,7 +2,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, Check, Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowUp, Check, Loader2, RotateCcw, SlidersHorizontal, Sparkles } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -32,7 +32,7 @@ import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import type { LLMUpdatableField } from '@/state/documentStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
-import type { ChatMessage } from '@/types/chat';
+import type { AckUpdate, ChatMessage } from '@/types/chat';
 import {
   type ActivitySettings,
   type BookingTypes,
@@ -42,6 +42,7 @@ import {
   type GraphPlanResponse,
   type HotelSettings,
   isBookingEnabled,
+  type SuggestionChip,
   type SuggestionChipMeta,
   type TransportSettings,
 } from '@/types/document';
@@ -51,7 +52,6 @@ import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
-import { CollapsedSetupSummary } from './CollapsedSetupSummary';
 // HoldToDeleteButton removed for demo - re-enable post-launch
 // import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { MobileSetupCollapsedHeader } from './MobileSetupCollapsedHeader';
@@ -451,7 +451,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       planViewState,
       onOpenBudgetInput: _onOpenBudgetInput,
       onOpenSheet,
-      hasEverHadPlan,
+      hasEverHadPlan: _hasEverHadPlan,
       onUserMessageSubmit,
     } = props;
 
@@ -469,6 +469,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     void _llmUpdatedFields;
     void _onAcknowledgeLLMUpdate;
     void _onOpenBudgetInput;
+    void _hasEverHadPlan;
     void _onUpdateAdults;
     void _onUpdateChildren;
 
@@ -482,7 +483,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const appendToMessage = useChatStore((state) => state.appendToMessage);
     const updateMessageId = useChatStore((state) => state.updateMessageId);
     const filterMessages = useChatStore((state) => state.filterMessages);
-    const collapseSetupMessages = useChatStore((state) => state.collapseSetupMessages);
     const isLoadingHistory = useChatStore((state) => state.isLoadingHistory);
     const loadHistory = useChatStore((state) => state.loadHistory);
     const sessionState = useChatStore((state) => state.sessionState);
@@ -503,6 +503,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
     const [suggestedResponseMeta, setSuggestedResponseMeta] = useState<SuggestionChipMeta[]>([]);
+    const [suggestionChips, setSuggestionChips] = useState<SuggestionChip[]>([]);
     // Mobile Setup header collapse state - triggers when scroll > 50px
     const [isSetupHeaderCollapsed, setIsSetupHeaderCollapsed] = useState(false);
     // Track last user message ID for ack updates
@@ -574,7 +575,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Compute effective suggestions: use backend suggestions if available
     const effectiveSuggestions = useMemo(() => {
       if (suggestedResponses.length === 0) {
-        console.log('[ChatPanel] 🏷️ effectiveSuggestions: empty (suggestedResponses=[])');
         return [];
       }
 
@@ -593,11 +593,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       // On desktop, filter out "Build Plan" chip since the right panel has that CTA
       // Keep one primary CTA at a time to avoid competing buttons
       if (isDesktop) {
-        const result = filtered.filter((s) => s.toLowerCase() !== 'build plan');
-        console.log('[ChatPanel] 🏷️ effectiveSuggestions (desktop):', result, 'isLoading:', 'checked at render');
-        return result;
+        return filtered.filter((s) => s.toLowerCase() !== 'build plan');
       }
-      console.log('[ChatPanel] 🏷️ effectiveSuggestions (mobile):', filtered);
       return filtered;
     }, [suggestedResponses, isDesktop]);
 
@@ -907,6 +904,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         }
         setSuggestedResponses([]); // Clear suggestions when user sends a message
         setSuggestedResponseMeta([]);
+        setSuggestionChips([]);
         setLastUserMessage(trimmed); // Tier 11.12: Track for retry capability
         setIsLoading(true);
         isSendingRef.current = true; // Set ref to prevent duplicate sends
@@ -1105,6 +1103,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               );
               setSuggestedResponses(doc.suggested_responses || []);
               setSuggestedResponseMeta(doc.suggested_response_meta || []);
+              setSuggestionChips(doc.suggestion_chips || []);
 
               // Origin update from chat (e.g., "from rome") is handled by backend
               // Backend routes through LogisticsNode to fetch flights automatically
@@ -1300,26 +1299,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 // Build Plan clicked - remove streaming message, plan goes to right panel
                 filterMessages((msg) => msg.id !== streamingMsgId);
 
-                // Collapse any existing Setup messages
-                const summaryParts: string[] = [];
-                const newTripInputs = doc.trip_inputs;
-                if (newTripInputs?.destination) {
-                  summaryParts.push(newTripInputs.destination);
-                }
-                if (newTripInputs?.start_date) {
-                  summaryParts.push(newTripInputs.start_date);
-                }
-                if (newTripInputs?.adults) {
-                  summaryParts.push(`${newTripInputs.adults} adult${newTripInputs.adults > 1 ? 's' : ''}`);
-                }
-                const summaryText = summaryParts.length > 0
-                  ? `Setup complete: ${summaryParts.join(' · ')}`
-                  : 'Setup conversation';
-                collapseSetupMessages(
-                  summaryText,
-                  doc.trip_inputs,
-                  doc.executed_strategy_topics
-                );
               } else {
                 // No plan content yet - handle as regular chat message
                 if (isReadyToGenerate) {
@@ -1373,7 +1352,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           });
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, collapseSetupMessages, onUserMessageSubmit, onAutoExpandItinerary]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, onUserMessageSubmit, onAutoExpandItinerary]
     );
 
     const addAssistantMessage = useCallback((message: string) => {
@@ -1437,7 +1416,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const visibleMessages = messages
       .filter((m) => {
         // Always show system messages and messages with special displayMode
-        if (m.role === 'system' || m.displayMode === 'ack_line' || m.displayMode === 'collapsed_summary') {
+        if (m.role === 'system' || m.displayMode === 'ack_line') {
           return true;
         }
         if (!m.content || m.content.trim().length === 0) return false;
@@ -1661,9 +1640,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 // DISABLED: Delete functionality removed for demo
                 // const showDeleteButton = isUserMessage && originalId === lastUserMessageId && !isLoading;
 
-                // Setup phase messages should appear faded (past tense visual treatment)
-                const isSetupPhase = m.phase === 'setup';
-
                 // Check if this user message has ack updates (for SystemReceipt display)
                 const hasAckUpdates = isUserMessage && m.ackUpdates && m.ackUpdates.length > 0;
 
@@ -1684,29 +1660,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   );
                 }
 
-                // Render collapsed Setup summary
-                // On mobile post-plan, use compact variant (thin divider style)
-                if (m.displayMode === 'collapsed_summary') {
-                  return (
-                    <div
-                      key={m.id}
-                      className="message-enter"
-                      style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
-                    >
-                      <CollapsedSetupSummary
-                        summaryText={m.summaryText || 'Setup conversation'}
-                        tripInputsSnapshot={m.tripInputsSnapshot}
-                        executedTopicsSnapshot={m.executedTopicsSnapshot}
-                        variant={!isDesktop && hasEverHadPlan ? 'compact' : 'card'}
-                      />
-                    </div>
-                  );
-                }
-
                 return (
                   <div
                     key={m.id}
-                    className={`${isUserMessage ? 'text-right' : 'text-left'} message-enter ${spacingClass} ${isSetupPhase ? 'opacity-60' : ''}`}
+                    className={`${isUserMessage ? 'text-right' : 'text-left'} message-enter ${spacingClass}`}
                     style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
                   >
                     {/* Message container */}
@@ -1736,7 +1693,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                             <SystemReceipt
                               ackStatus={m.ackStatus || 'applied'}
                               ackUpdates={m.ackUpdates || []}
-                              mode={m.phase}
                             />
                           )}
                         </div>
@@ -1797,58 +1753,99 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           {isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
             <SmartLoader status={activeStatus} />
           )}
-          {/* Dynamic suggestions - from backend suggested responses */}
-          {/* DEBUG */ effectiveSuggestions.length > 0 && (console.log('[ChatPanel] 🏷️ Chips render gate: count=', effectiveSuggestions.length, 'isLoading=', isLoading), null)}
+          {/* Dynamic suggestions - structured chips with action routing (Stage 11B) */}
           {effectiveSuggestions.length > 0 && !isLoading && (
             <div
               key={`suggestions-container-${effectiveSuggestions.length}`}
               className="flex flex-wrap justify-center gap-2 pt-3 pb-1 px-2"
             >
-              {effectiveSuggestions.map((suggestion, idx) => {
-                // Metadata-driven CTA detection, with regex fallback for old responses
-                const meta = suggestedResponseMeta[idx];
-                const isCta = meta?.chip_type === 'cta';
-                const isPlanningTrigger = isCta || /\bplan\b/i.test(suggestion) || suggestion.toLowerCase().includes("let's plan");
+              {(() => {
+                // Prefer structured chips if available, fallback to legacy string array
+                const chips: SuggestionChip[] = suggestionChips.length > 0
+                  ? suggestionChips
+                  : effectiveSuggestions.map((text, i) => ({
+                      message: text,
+                      action_type: 'send_message' as const,
+                      action_target: null,
+                      chip_type: suggestedResponseMeta[i]?.chip_type || 'follow_up',
+                      category: suggestedResponseMeta[i]?.category || '',
+                      icon: suggestedResponseMeta[i]?.icon || null,
+                    }));
 
-                return (
-                  <button
-                    key={`sugg-${suggestion.slice(0, 20)}-${idx}`}
-                    type="button"
-                    onClick={() => {
-                      // Track suggestion click for analytics (fire-and-forget)
-                      trackSuggestionClick(suggestion, idx);
-                      // Pass suggestion_clicked to enable LQA echo in backend
-                      sendMessageCore(suggestion, { suggestionClicked: suggestion });
-                    }}
-                    className={cn(
-                      'px-4 py-2.5 rounded-lg',
-                      'text-xs font-bold uppercase tracking-wide',
-                      'transition-all duration-150 active:scale-95',
-                      'max-w-full truncate',
-                      // Planning trigger chips: emerald highlight to draw attention
-                      isPlanningTrigger ? [
-                        'bg-emerald-50 dark:bg-emerald-950/30',
-                        'border-2 border-emerald-500/40 dark:border-emerald-500/30',
-                        'text-emerald-700 dark:text-emerald-400',
-                        'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
-                        'hover:bg-emerald-100 hover:border-emerald-500 hover:shadow-md',
-                        'dark:hover:bg-emerald-900/40 dark:hover:border-emerald-400/50',
-                      ] : [
-                        // DS Tactile Rule: border-2 for visible buttons, snap-to-black hover
-                        'bg-white dark:bg-white/5',
-                        'border-2 border-zinc-200 dark:border-white/15',
-                        'text-zinc-600 dark:text-zinc-400',
-                        'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                        'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
-                      ]
-                    )}
-                  >
-                    {/* Sparkle icon for planning triggers */}
-                    {isPlanningTrigger && <Sparkles className="w-3 h-3 mr-1.5 inline-block" />}
-                    {suggestion}
-                  </button>
-                );
-              })}
+                return chips.map((chip, idx) => {
+                  const isCta = chip.chip_type === 'cta';
+                  const isPlanningTrigger = isCta || /\bplan\b/i.test(chip.message);
+                  const isSheetAction = chip.action_type === 'open_pill';
+
+                  // Action routing: open_pill -> sheet, send_message -> chat
+                  const handleChipClick = () => {
+                    trackSuggestionClick(chip.message, idx);
+
+                    if (chip.action_type === 'open_pill' && chip.action_target) {
+                      const sheetMap: Record<string, () => void> = {
+                        'dates': () => onOpenSheet?.('dates'),
+                        'origin': () => onOpenSheet?.('origin'),
+                        'destination': () => onOpenSheet?.('destination'),
+                        'travelers': () => onOpenSheet?.('travelers'),
+                        'budget': () => onOpenSheet?.('budget'),
+                        'flights': () => setFlightsSheetOpen(true),
+                        'stays': () => setStaysSheetOpen(true),
+                        'activities': () => setActivitiesSheetOpen(true),
+                      };
+
+                      const opener = sheetMap[chip.action_target];
+                      if (opener) {
+                        opener();
+                      } else {
+                        console.warn(`[ChatPanel] Unknown sheet target: ${chip.action_target}`);
+                        sendMessageCore(chip.message, { suggestionClicked: chip.message });
+                      }
+                    } else if (chip.action_type === 'trigger_action') {
+                      // Reserved for future actions (e.g., "Build itinerary")
+                      console.warn(`[ChatPanel] trigger_action not yet implemented`);
+                      sendMessageCore(chip.message, { suggestionClicked: chip.message });
+                    } else {
+                      sendMessageCore(chip.message, { suggestionClicked: chip.message });
+                    }
+                  };
+
+                  return (
+                    <button
+                      key={`sugg-${chip.message.slice(0, 20)}-${idx}`}
+                      type="button"
+                      onClick={handleChipClick}
+                      className={cn(
+                        'px-4 py-2.5 rounded-lg',
+                        'text-xs font-bold uppercase tracking-wide',
+                        'transition-all duration-150 active:scale-95',
+                        'max-w-full truncate',
+                        isPlanningTrigger ? [
+                          'bg-emerald-50 dark:bg-emerald-950/30',
+                          'border-2 border-emerald-500/40 dark:border-emerald-500/30',
+                          'text-emerald-700 dark:text-emerald-400',
+                          'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
+                          'hover:bg-emerald-100 hover:border-emerald-500 hover:shadow-md',
+                          'dark:hover:bg-emerald-900/40 dark:hover:border-emerald-400/50',
+                        ] : [
+                          'bg-white dark:bg-white/5',
+                          'border-2 border-zinc-200 dark:border-white/15',
+                          'text-zinc-600 dark:text-zinc-400',
+                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
+                          'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
+                        ]
+                      )}
+                    >
+                      {isSheetAction && (
+                        <SlidersHorizontal className="w-3 h-3 mr-1.5 inline-block" />
+                      )}
+                      {isPlanningTrigger && !isSheetAction && (
+                        <Sparkles className="w-3 h-3 mr-1.5 inline-block" />
+                      )}
+                      {chip.message}
+                    </button>
+                  );
+                });
+              })()}
             </div>
           )}
 
@@ -1860,7 +1857,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               {/* During AI processing: the input BECOMES the status indicator (emerald glow + pulse) */}
               <div
                 className={cn(
-                  'relative flex items-center w-full h-14 rounded-[28px] transition-all duration-300',
+                  'relative flex items-center w-full min-h-14 rounded-[28px] transition-all duration-300',
                   'bg-zinc-50 dark:bg-black/40',
                   // Priority 1: "Living Void" - AI Processing state
                   isLoading && nodeStatus?.node
@@ -1885,7 +1882,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   <textarea
                     ref={inputRef}
                     disabled={isInputDisabledByPlanState}
-                    className="w-full h-full bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-4 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                    className="w-full bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-4 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
                     placeholder={
                       isInputDisabledByPlanState
                         ? 'Updating...'
@@ -1898,6 +1895,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     value={input}
                     onChange={(e) => {
                       setInput(e.target.value);
+                      // Auto-grow textarea to fit content (max 5 rows)
+                      const el = e.target;
+                      el.style.height = 'auto';
+                      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
                     }}
                     onKeyDown={(e) => {
                       // Submit on Enter without Shift
@@ -2009,6 +2010,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             // Trigger plan regeneration if plan is active
             const isActive = planViewState === 'S2_STRATEGY_READY' || planViewState === 'S3_ITINERARY_READY';
             if (isActive) {
+              const updates: AckUpdate[] = [];
+              if (settings.min_stars) updates.push({ field: 'hotels', to: `${settings.min_stars}+ stars` });
+              if (updates.length > 0) {
+                addMessage({ id: `sys_ack_${Date.now()}`, role: 'system', content: '', displayMode: 'ack_line', ackStatus: 'applied', ackUpdates: updates });
+              }
               sendMessageCore(GENERATE_PLAN_TRIGGER);
             }
           }}
@@ -2035,11 +2041,40 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             toast(enabled ? 'Activities included' : 'Activities removed');
           }}
           onSaveSettings={(settings) => {
+            // Capture prev state before update for ack diff
+            const prevDayPrefs = activitySettings?.day_preferences || {};
+            const prevCats = new Set(activitySettings?.categories || []);
             onUpdateActivitySettings?.(settings);
             toast('Activity preferences saved');
             // Trigger plan regeneration if plan is active
             const isActive = planViewState === 'S2_STRATEGY_READY' || planViewState === 'S3_ITINERARY_READY';
             if (isActive) {
+              const newDayPrefs = settings.day_preferences || {};
+              const newCats = new Set(settings.categories || []);
+              const updates: AckUpdate[] = [];
+              // Diff categories: show added/removed activities
+              for (const cat of newCats) {
+                if (!prevCats.has(cat)) {
+                  updates.push({ field: cat, to: 'added' });
+                }
+              }
+              for (const cat of prevCats) {
+                if (!newCats.has(cat)) {
+                  updates.push({ field: cat, to: 'removed' });
+                }
+              }
+              // Diff day_preferences: show "Diving 3 → 5 days"
+              for (const [topic, newVal] of Object.entries(newDayPrefs)) {
+                const prevVal = prevDayPrefs[topic];
+                if (prevVal !== undefined && prevVal !== newVal) {
+                  updates.push({ field: topic, to: `${newVal} days`, from_value: `${prevVal} days` });
+                } else if (prevVal === undefined) {
+                  updates.push({ field: topic, to: `${newVal} days` });
+                }
+              }
+              if (updates.length > 0) {
+                addMessage({ id: `sys_ack_${Date.now()}`, role: 'system', content: '', displayMode: 'ack_line', ackStatus: 'applied', ackUpdates: updates });
+              }
               sendMessageCore(GENERATE_PLAN_TRIGGER);
             }
           }}

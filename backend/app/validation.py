@@ -64,41 +64,6 @@ _rate_counter_cache: TTLCache = TTLCache(
 _validation_cache_lock = RLock()
 
 
-def clear_validation_caches() -> int:
-    """
-    Clear all validation caches.
-
-    This function should be called at the start of each test to ensure
-    complete isolation. It clears:
-    - _validation_cache: Validated location results
-    - _negative_cache: Invalid location results
-    - _split_cache: Destination split results
-    - _prompt_cache: Formatted prompts
-    - _fallback_cache: Fallback responses
-    - _rate_counter_cache: Rate limit counters
-
-    Returns the total number of cache entries cleared.
-    """
-    with _validation_cache_lock:
-        total_cleared = (
-            len(_validation_cache)
-            + len(_negative_cache)
-            + len(_split_cache)
-            + len(_prompt_cache)
-            + len(_fallback_cache)
-            + len(_rate_counter_cache)
-        )
-
-        _validation_cache.clear()
-        _negative_cache.clear()
-        _split_cache.clear()
-        _prompt_cache.clear()
-        _fallback_cache.clear()
-        _rate_counter_cache.clear()
-
-    return total_cleared
-
-
 def _get_model_name() -> str:
     """Get the OpenAI model name for validation (uses settings with fallback)."""
     # Use settings.openai_plan_model which has a default of gpt-4o-mini

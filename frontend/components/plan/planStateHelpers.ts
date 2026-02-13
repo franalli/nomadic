@@ -15,12 +15,6 @@ export function isGenerating(generation?: GenerationState | null): boolean {
   return generation?.active === true;
 }
 
-/** Is the plan in a ready state (not generating, not blocked)? */
-export function isReady(state: PlanViewState, generation?: GenerationState | null): boolean {
-  if (isGenerating(generation)) return false;
-  return state === 'S2_STRATEGY_READY' || state === 'S3_ITINERARY_READY';
-}
-
 /**
  * Can user expand to itinerary?
  * Requires S2 ready + trip context exists + not generating.

@@ -367,7 +367,7 @@ export function SuggestionCard({
 
         {/* Why this suggestion? - Expandable */}
         {reasoning && (
-          <div className="rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-700/30">
+          <div className="rounded-lg bg-zinc-50 dark:bg-white/[0.03] border border-zinc-200 dark:border-white/5">
             <button
               onClick={() => setIsReasoningExpanded(!isReasoningExpanded)}
               className="w-full flex items-center justify-between p-3 text-left"

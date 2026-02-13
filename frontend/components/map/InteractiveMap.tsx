@@ -254,6 +254,17 @@ export function InteractiveMap({
   const [isMapReady, setIsMapReady] = useState(false);
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
 
+  // Dark mode detection for map style
+  const [isDark, setIsDark] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e: MediaQueryListEvent) => setIsDark(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   // Track mounted state for safe async operations
   useEffect(() => {
     isMountedRef.current = true;
@@ -347,7 +358,7 @@ export function InteractiveMap({
     : items;
 
   return (
-    <div className={cn('w-full h-full rounded-xl overflow-hidden border border-white/10', className)}>
+    <div className={cn('w-full h-full rounded-xl overflow-hidden border border-zinc-200 dark:border-white/10', className)}>
       <Map
         ref={mapRef}
         initialViewState={{
@@ -356,7 +367,7 @@ export function InteractiveMap({
           zoom: defaultCenter.zoom,
         }}
         style={{ width: '100%', height: '100%' }}
-        mapStyle="mapbox://styles/mapbox/dark-v11"
+        mapStyle={isDark ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'}
         mapboxAccessToken={mapboxToken}
         interactive={interactive}
         attributionControl={showAttribution}

@@ -209,7 +209,12 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     resetDraft,
   } = options;
 
-  const document = useDocumentStore((s) => s.document);
+  // PERF: Select only the sub-fields actually read (trip_inputs.origin for flight fetch,
+  // trip_inputs settings for change detection). Avoids re-render on every document mutation.
+  const tripInputsOrigin = useDocumentStore((s) => s.document?.trip_inputs?.origin);
+  const tripInputsHotelSettings = useDocumentStore((s) => s.document?.trip_inputs?.hotel_settings);
+  const tripInputsFlightSettings = useDocumentStore((s) => s.document?.trip_inputs?.flight_settings);
+  const tripInputsActivitySettings = useDocumentStore((s) => s.document?.trip_inputs?.activity_settings);
   const fetchDocument = useDocumentStore((s) => s.fetchDocument);
   const selectTile = useDocumentStore((s) => s.selectTile);
   const deselectTile = useDocumentStore((s) => s.deselectTile);
@@ -607,18 +612,17 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * This ensures tiles always reflect the current user preferences.
    */
   useEffect(() => {
-    const tripInputs = document?.trip_inputs;
     const selectedBranchId = branchState.selectedBranchId;
 
-    // Skip if no trip inputs, no branch selected, or currently generating
-    if (!tripInputs || !selectedBranchId || isGenerating) {
+    // Skip if no settings, no branch selected, or currently generating
+    if ((!tripInputsHotelSettings && !tripInputsFlightSettings && !tripInputsActivitySettings) || !selectedBranchId || isGenerating) {
       return;
     }
 
     const currentSettings = {
-      hotel_settings: tripInputs.hotel_settings,
-      flight_settings: tripInputs.flight_settings,
-      activity_settings: tripInputs.activity_settings,
+      hotel_settings: tripInputsHotelSettings,
+      flight_settings: tripInputsFlightSettings,
+      activity_settings: tripInputsActivitySettings,
     };
 
     const prevSettings = prevSettingsRef.current;
@@ -689,10 +693,11 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       .finally(() => {
         isRefreshingRef.current = false;
       });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- branchState object recreated each render; individual properties listed instead
   }, [
-    document?.trip_inputs?.hotel_settings,
-    document?.trip_inputs?.flight_settings,
-    document?.trip_inputs?.activity_settings,
+    tripInputsHotelSettings,
+    tripInputsFlightSettings,
+    tripInputsActivitySettings,
     branchState.selectedBranchId,
     branchState.setTilesMap,
     isGenerating,
@@ -746,7 +751,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     }
 
     // Check if we have origin (required for flight search)
-    const origin = selectedBranch.origin || document?.trip_inputs?.origin;
+    const origin = selectedBranch.origin || tripInputsOrigin;
     if (!origin) {
       console.log('[useBranchManager] No origin available for flight fetch');
       return;
@@ -792,13 +797,14 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       .finally(() => {
         isRefreshingRef.current = false;
       });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- branchState object recreated each render; individual properties listed instead
   }, [
     branchState.selectedBranchId,
     branchState.tilesBranchId,
     branchState.selectedBranch,
     branchState.setTilesMap,
     branchState.setBranches,
-    document?.trip_inputs?.origin,
+    tripInputsOrigin,
     isGenerating,
   ]);
 

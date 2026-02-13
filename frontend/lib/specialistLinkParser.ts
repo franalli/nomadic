@@ -34,7 +34,7 @@ const SPECIALIST_PATTERNS = [
  * Normalize specialist name to type string.
  * e.g., "Local Expert" -> "local_expert", "Diving" -> "diving"
  */
-export function normalizeSpecialistType(name: string): SpecialistType {
+function normalizeSpecialistType(name: string): SpecialistType {
   return name.toLowerCase().replace(/\s+/g, '_') as SpecialistType;
 }
 

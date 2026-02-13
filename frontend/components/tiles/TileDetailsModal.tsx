@@ -25,6 +25,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { formatTilePriceDetailed } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
 import type { ViewMode } from '@/types/plan-envelope';
@@ -123,48 +124,6 @@ function getCancellationText(tile: Tile): string | null {
     return 'Non-refundable';
   }
   return null;
-}
-
-/**
- * Format price with currency and basis
- */
-function formatPrice(tile: Tile): { perUnit: string; total?: string } {
-  const price = tile.total_inclusive ?? tile.price_estimate;
-  if (price == null) return { perUnit: '' };
-
-  const currency = tile.currency || 'USD';
-  const formatter = new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 0,
-  });
-
-  const formatted = formatter.format(price);
-  const basis = tile.price_basis;
-
-  // For per-night pricing, show both per-night and total if we have nights
-  if (basis === 'per_night') {
-    const meta = tile.meta as Record<string, unknown> | undefined;
-    const nights = typeof meta?.nights === 'number' ? meta.nights : null;
-    if (nights && nights > 1) {
-      const total = formatter.format(price * nights);
-      return {
-        perUnit: `${formatted} /night`,
-        total: `${total} total (${nights} nights)`,
-      };
-    }
-    return { perUnit: `${formatted} /night` };
-  }
-
-  if (basis === 'per_person') {
-    return { perUnit: `${formatted} /person` };
-  }
-
-  if (basis === 'total' || tile.total_inclusive != null) {
-    return { perUnit: `${formatted} total` };
-  }
-
-  return { perUnit: formatted };
 }
 
 /**
@@ -306,7 +265,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
     [tile]
   );
   const priceDisplay = useMemo(
-    () => (tile ? formatPrice(tile) : { perUnit: '' }),
+    () => (tile ? formatTilePriceDetailed(tile) : { perUnit: '' }),
     [tile]
   );
   const reviewCount = useMemo(() => (tile ? getReviewCount(tile) : null), [tile]);

@@ -56,6 +56,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { formatTilePrice } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { getDeepLinkParams } from '@/lib/tileUtils';
 import { cn, isFlightType, isHotelType } from '@/lib/utils';
@@ -124,29 +125,6 @@ function getPerks(tile: Tile): string[] {
   }
 
   return perks.slice(0, 3);
-}
-
-/**
- * Format price with currency and basis
- */
-function formatPrice(tile: Tile): string {
-  const price = tile.total_inclusive ?? tile.price_estimate;
-  if (price == null) return '';
-
-  const currency = tile.currency || 'USD';
-  const formatted = new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 0,
-  }).format(price);
-
-  // Add basis suffix
-  const basis = tile.price_basis;
-  if (basis === 'per_night') return `${formatted} /night`;
-  if (basis === 'per_person') return `${formatted} /person`;
-  if (basis === 'total' || tile.total_inclusive != null) return `${formatted} total`;
-
-  return formatted;
 }
 
 /**
@@ -236,7 +214,7 @@ export const MiniCard = memo(function MiniCard({
   const [isExpanded, setIsExpanded] = useState(false);
 
   const perks = useMemo(() => getPerks(tile), [tile]);
-  const priceDisplay = useMemo(() => formatPrice(tile), [tile]);
+  const priceDisplay = useMemo(() => formatTilePrice(tile), [tile]);
   const amenityIcons = useMemo(() => getAmenityIconsWithLabels(tile), [tile]);
   const activityMeta = useMemo(() => {
     if (tile.type !== 'activity') return null;

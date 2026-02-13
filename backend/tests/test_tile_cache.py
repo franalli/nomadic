@@ -15,7 +15,6 @@ from app.services.tile_cache import (
     _tile_cache_key,
     clear_memory_cache,
     get_cache_stats,
-    reset_stats,
     serialize_tile,
 )
 
@@ -98,14 +97,15 @@ class TestL1MemoryCache:
     def setup_method(self):
         """Clear cache before each test."""
         clear_memory_cache()
-        reset_stats()
 
-    def test_stats_start_at_zero(self):
-        """Test that stats start at zero after reset."""
+    def test_stats_have_expected_fields(self):
+        """Test that stats contain expected counter fields."""
         stats = get_cache_stats()
-        assert stats["l1_hits"] == 0
-        assert stats["l1_misses"] == 0
-        assert stats["writes"] == 0
+        assert "l1_hits" in stats
+        assert "l1_misses" in stats
+        assert "writes" in stats
+        assert "l1_size" in stats
+        assert "l1_maxsize" in stats
 
     def test_clear_returns_count(self):
         """Test that clear returns the count of cleared entries."""
@@ -201,7 +201,6 @@ class TestL2DatabaseCache:
     def setup(self):
         """Clear memory cache before each test."""
         clear_memory_cache()
-        reset_stats()
 
     async def test_miss_write_hit_flow(self, async_db_session):
         """Test full cache miss → write → hit flow."""

@@ -13,7 +13,7 @@ import type {
  * Copy configuration for each action type.
  * Subtexts progress automatically during the operation.
  */
-export const LOADER_COPY: Record<LoaderActionType, LoaderCopyConfig> = {
+const LOADER_COPY: Record<LoaderActionType, LoaderCopyConfig> = {
   generate_plan: {
     title: 'Building your plan',
     subtexts: [
@@ -56,7 +56,7 @@ export const LOADER_COPY: Record<LoaderActionType, LoaderCopyConfig> = {
 /**
  * Copy configuration for vertical fetch sub-types.
  */
-export const VERTICAL_FETCH_COPY: Record<VerticalFetchType, LoaderCopyConfig> = {
+const VERTICAL_FETCH_COPY: Record<VerticalFetchType, LoaderCopyConfig> = {
   flights: {
     title: 'Finding flights',
     subtexts: ['Searching routes and fares…'],
@@ -74,7 +74,7 @@ export const VERTICAL_FETCH_COPY: Record<VerticalFetchType, LoaderCopyConfig> = 
 /**
  * Get copy config for refresh_deals based on whether tiles already exist.
  */
-export function getRefreshDealsCopy(hasTiles: boolean): LoaderCopyConfig {
+function getRefreshDealsCopy(hasTiles: boolean): LoaderCopyConfig {
   return {
     title: 'Refreshing deals',
     subtexts: [hasTiles ? 'Checking latest prices…' : 'Searching deals…'],

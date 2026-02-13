@@ -160,7 +160,7 @@ export function combineMapItems(
 /**
  * Normalize activity type for consistent icon/color mapping.
  */
-export function normalizeActivityType(type: string | undefined): string {
+function normalizeActivityType(type: string | undefined): string {
   if (!type) return 'activity';
 
   const normalized = type.toLowerCase().trim();
@@ -255,7 +255,7 @@ export function extractActivityTypes(items: MapItem[]): string[] {
 /**
  * Calculate distance between two coordinates in meters (Haversine formula).
  */
-export function getDistanceMeters(
+function getDistanceMeters(
   coord1: { lat: number; lng: number },
   coord2: { lat: number; lng: number }
 ): number {

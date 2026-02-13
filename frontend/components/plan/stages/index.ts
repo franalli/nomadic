@@ -5,4 +5,3 @@
  */
 
 export { S2StrategyView } from './S2StrategyView';
-export { S3ItineraryView } from './S3ItineraryView';

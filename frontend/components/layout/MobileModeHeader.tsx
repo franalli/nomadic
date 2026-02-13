@@ -41,7 +41,7 @@ const STATUS_CONFIG: Record<
   STABLE: {
     text: '',
     icon: <Check className="h-3 w-3" />,
-    className: 'text-green-600/80',
+    className: 'text-emerald-600/80 dark:text-emerald-400/80',
   },
   LOCKED: {
     text: 'Locked',

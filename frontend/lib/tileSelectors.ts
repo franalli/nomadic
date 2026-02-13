@@ -134,3 +134,25 @@ export function normalizeTileType(type: string | undefined | null): NormalizedTi
   console.warn(`[normalizeTileType] Unknown type: "${type}" → "${lower}"`);
   return 'unknown';
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Booking Surface Filtering
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Source agents that produce non-bookable fill-day activities. */
+const FILL_DAY_SOURCE_AGENTS = new Set(['experience_generator', 'vertical_specialist']);
+
+/**
+ * True if an activity tile is bookable (not a fill-day generated tile).
+ * Non-activity tiles always pass through.
+ */
+export function isBookableActivityTile(tile: Tile): boolean {
+  if (normalizeTileType(tile.type) !== 'activity') return true;
+  if (!tile.source_agent) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn(`[isBookableActivityTile] Untagged activity tile: ${tile.id} "${tile.title}"`);
+    }
+    return true;
+  }
+  return !FILL_DAY_SOURCE_AGENTS.has(tile.source_agent);
+}

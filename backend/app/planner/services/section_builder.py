@@ -93,6 +93,7 @@ def build_specialist_section(
     content_added: List[Dict[str, Any]],
     enhancements: List[Any],
     hero_image: Optional[str],
+    day_pref: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Build a specialist strategy section dict.
 
@@ -103,8 +104,9 @@ def build_specialist_section(
         "title": f"{topic.title()} Specialist",
         "specialist_type": topic,
         "subtitle": destination,  # For cache comparison
-        # Cache invalidation key: must match destination AND dates
+        # Cache invalidation keys: must match destination AND dates AND day_pref
         "_cache_dates": f"{start_date}:{end_date}",
+        "_cache_day_pref": day_pref,
         "feasibility_status": feasibility_status,
         "feasibility_reason": feasibility_reason,
         "alternative_suggestion": alternative_suggestion,

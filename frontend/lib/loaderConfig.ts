@@ -18,7 +18,7 @@ import { SPECIALIST_IDS } from './specialists';
  * - 0 means "always show" (no threshold)
  * - Higher values mean "only show for slower expected operations"
  */
-export const LOADER_ETA_THRESHOLDS: Record<string, number> = {
+const LOADER_ETA_THRESHOLDS: Record<string, number> = {
   // Default threshold for unknown nodes
   default: 600,
 

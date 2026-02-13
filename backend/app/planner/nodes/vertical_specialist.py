@@ -14,6 +14,7 @@ Flow: Router → Specialist → Architect
 The Specialist runs BEFORE the Architect calls tools.
 """
 
+import asyncio
 import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,10 +28,11 @@ from app.planner.services.section_builder import (
     upsert_section,
 )
 from app.planner.specialist_registry import (
-    get as get_specialist_config,
+    TIER1_SPECIALIST_NAMES,
+    load_prompt,
 )
 from app.planner.specialist_registry import (
-    load_prompt,
+    get as get_specialist_config,
 )
 from app.planner.state import (
     ConstraintSeverity,
@@ -98,6 +100,7 @@ async def generate_all_specialists_parallel(
     trip_plan: Any,
     db: Optional[Any] = None,  # AsyncSession for persistent caching
     skill_level: Optional[str] = None,  # User skill from activity_settings
+    day_preferences: Optional[Dict[str, int]] = None,  # Per-topic target counts
 ) -> Dict[str, Optional[LLMSpecialistOutput]]:
     """
     Run all specialist LLM calls in parallel.
@@ -108,6 +111,8 @@ async def generate_all_specialists_parallel(
     Args:
         db: Optional AsyncSession for L1+L2 persistent caching.
             If provided, results are cached to PostgreSQL (7-day TTL).
+        day_preferences: Per-topic day allocation from user stepper (e.g. {"diving": 5}).
+            Busts cache and sets LLM generation target when present.
 
     Note: Cache operations are done BEFORE and AFTER parallel execution to avoid
     SQLAlchemy concurrent session errors. The db session is NOT passed to parallel
@@ -132,11 +137,14 @@ async def generate_all_specialists_parallel(
         f"[LLM_SPECIALIST] Parallel lookup: topics={topics} "
         f"dest={destination} dates={trip_plan.start_date}→{trip_plan.end_date}"
     )
+    day_prefs = day_preferences or {}
+
     if db is not None:
         from app.services.specialist_cache import get_cached_specialist_output
 
         for topic in topics:
             try:
+                topic_day_pref = day_prefs.get(topic)
                 cached = await get_cached_specialist_output(
                     db=db,
                     topic=topic,
@@ -144,6 +152,7 @@ async def generate_all_specialists_parallel(
                     start_date=trip_plan.start_date,
                     end_date=trip_plan.end_date,
                     skill_level=skill_level,
+                    day_pref=topic_day_pref,
                 )
                 if cached is not None:
                     try:
@@ -169,7 +178,12 @@ async def generate_all_specialists_parallel(
         # Create tasks WITHOUT db (cache write happens after)
         tasks = [
             generate_specialist_output_llm(
-                topic, destination, trip_plan, db=None, skill_level=skill_level
+                topic,
+                destination,
+                trip_plan,
+                db=None,
+                skill_level=skill_level,
+                target_activities=day_prefs.get(topic),
             )
             for topic in topics_needing_llm
         ]
@@ -177,7 +191,7 @@ async def generate_all_specialists_parallel(
         try:
             results = await asyncio.wait_for(
                 asyncio.gather(*tasks, return_exceptions=True),
-                timeout=45.0,
+                timeout=90.0,
             )
         except asyncio.TimeoutError:
             _debug_log("[LLM_SPECIALIST] PARALLEL timeout - cancelling remaining tasks")
@@ -219,6 +233,7 @@ async def generate_all_specialists_parallel(
                         end_date=trip_plan.end_date,
                         output=llm_output.model_dump(),
                         skill_level=skill_level,
+                        day_pref=day_prefs.get(topic),
                     )
                 except Exception as e:
                     _debug_log(f"[LLM_SPECIALIST] Cache write failed for {topic}: {e}")
@@ -235,6 +250,7 @@ async def generate_specialist_output_llm(
     trip_plan: Any,
     db: Optional[Any] = None,  # AsyncSession for persistent caching
     skill_level: Optional[str] = None,  # User skill from activity_settings
+    target_activities: Optional[int] = None,  # User's day_preference for this topic
 ) -> Optional[LLMSpecialistOutput]:
     """
     Single LLM call generates feasibility + activities + constraints.
@@ -245,6 +261,10 @@ async def generate_specialist_output_llm(
     Args:
         db: Optional AsyncSession for L1+L2 persistent caching.
             If provided, checks cache before LLM call and writes after success.
+        target_activities: User's requested activity count from day_preferences stepper.
+            When set, overrides the default min/max calculation and the LLM is
+            asked to generate exactly this many activities. If the LLM returns
+            fewer, repeat-session padding fills the gap.
     """
     from app.debug_utils import _debug_log
 
@@ -262,6 +282,7 @@ async def generate_specialist_output_llm(
                 start_date=trip_plan.start_date,
                 end_date=trip_plan.end_date,
                 skill_level=skill_level,
+                day_pref=target_activities,
             )
 
             if cached is not None:
@@ -322,6 +343,27 @@ async def generate_specialist_output_llm(
         min_acts = min(available_days // 3, 5)
         max_acts = min(available_days * 2 // 3, 7)
 
+    # Override with user's day_preference if set (capped by physical available days)
+    if target_activities is not None:
+        capped_target = min(target_activities, available_days)
+        min_acts = capped_target
+        max_acts = capped_target
+        _debug_log(
+            f"[LLM_SPECIALIST] day_preference override: target={target_activities}, "
+            f"capped={capped_target}, available_days={available_days}"
+        )
+    else:
+        # Default cap: no explicit preference → max 3 activities
+        # Prevents unbounded specialists from overstuffing the itinerary
+        max_acts = min(max_acts, 3)
+        min_acts = min(min_acts, max_acts)
+
+    activity_count_instruction = (
+        f"- Generate exactly {min_acts} activities"
+        if min_acts == max_acts
+        else f"- Generate {min_acts}-{max_acts} activities to fill available days"
+    )
+
     user_prompt = f"""Plan {topic} activities for {destination}.
 
 TRIP DETAILS:
@@ -331,7 +373,7 @@ TRIP DETAILS:
 
 REQUIREMENTS:
 - Use REAL sites/trails/runs - no made-up names
-- Generate {min_acts}-{max_acts} activities to fill available days
+{activity_count_instruction}
 - Include topic-specific fields (depth_meters for diving, elevation_meters for hiking, etc.)
 - Include cross-domain constraints explicitly (e.g., diving affects hiking)
 - For infeasible destinations (e.g., diving in landlocked areas), \
@@ -365,6 +407,28 @@ set feasibility_status to "infeasible" with reason"""
         )
 
         # =====================================================================
+        # FIX C: Pad with repeat sessions if LLM returned fewer than target
+        # =====================================================================
+        if (
+            target_activities is not None
+            and output.feasibility_status == "feasible"
+            and len(output.activities) < min(target_activities, available_days)
+        ):
+            deficit = min(target_activities, available_days) - len(output.activities)
+            original_count = len(output.activities)
+            if output.activities:
+                for i in range(deficit):
+                    source = output.activities[i % original_count]
+                    repeat = source.model_copy(
+                        update={"title": f"{source.title} (Session {2 + i // original_count})"}
+                    )
+                    output.activities.append(repeat)
+                _debug_log(
+                    f"[LLM_SPECIALIST] Padded {topic}: {original_count} → "
+                    f"{len(output.activities)} activities (target={target_activities})"
+                )
+
+        # =====================================================================
         # CACHE WRITE: Store successful LLM output to L1 + L2
         # =====================================================================
         if db is not None:
@@ -379,6 +443,7 @@ set feasibility_status to "infeasible" with reason"""
                     end_date=trip_plan.end_date,
                     output=output.model_dump(),
                     skill_level=skill_level,
+                    day_pref=target_activities,
                 )
             except Exception as cache_err:
                 _debug_log(f"[LLM_SPECIALIST] Cache write failed (non-fatal): {cache_err}")
@@ -576,6 +641,7 @@ Respond JSON only: {{"possible": true/false, "reason": "brief"}}"""
 
 # Simple async cache for feasibility checks
 _feasibility_cache: Dict[str, Tuple[bool, str]] = {}
+_feasibility_cache_lock = asyncio.Lock()
 
 
 async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
@@ -586,12 +652,18 @@ async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
     Returns: (possible, reason)
     """
     cache_key = f"{topic}:{destination}"
-    if cache_key in _feasibility_cache:
-        return _feasibility_cache[cache_key]
 
+    async with _feasibility_cache_lock:
+        if cache_key in _feasibility_cache:
+            return _feasibility_cache[cache_key]
+
+    # Expensive LLM call happens outside the lock
     result = await _check_feasibility_llm(topic, destination)
     cached_result = (result.possible, result.reason)
-    _feasibility_cache[cache_key] = cached_result
+
+    async with _feasibility_cache_lock:
+        _feasibility_cache[cache_key] = cached_result
+
     return cached_result
 
 
@@ -1121,17 +1193,16 @@ class VerticalSpecialist:
                     enhancements=[],
                 )
 
-            # Prefetch activity-specific images from Unsplash BEFORE conversion
-            # This populates the memory cache so get_image_url_sync returns Unsplash images
-            # MUST await - otherwise cache is empty and fallback shows generic placeholders
+            # Fire-and-forget Unsplash prefetch — don't block specialist pipeline.
+            # Images are cosmetic; placeholder gradients render fine without them.
             try:
                 from app.services.unsplash import prefetch_destination_images
 
-                prefetch_count = await prefetch_destination_images(
-                    destination, activities=[self.topic]
+                asyncio.create_task(
+                    prefetch_destination_images(destination, activities=[self.topic])
                 )
                 _debug_log(
-                    f"[SPECIALIST] Unsplash prefetch completed: {prefetch_count} images "
+                    f"[SPECIALIST] Unsplash prefetch fired (non-blocking) "
                     f"for {destination}/{self.topic}"
                 )
             except Exception as e:
@@ -1320,9 +1391,19 @@ async def _merge_specialist_into_state(
     # ─── Selective regeneration: skip if cached section still valid ───────
     existing_sections = state.metadata.get("strategy_sections", [])
     cached_section = next((s for s in existing_sections if s.get("specialist_type") == topic), None)
+
+    # Extract current day_preference for this topic
+    _current_day_pref = (
+        state.metadata.get("trip_inputs", {})
+        .get("activity_settings", {})
+        .get("day_preferences", {})
+        .get(topic)
+    )
+
     if cached_section:
         cached_destination = (cached_section.get("subtitle") or "").lower().strip()
         cached_dates = cached_section.get("_cache_dates")
+        cached_day_pref = cached_section.get("_cache_day_pref")
         current_destination = (state.trip_plan.destination or "").lower().strip()
         current_dates = f"{state.trip_plan.start_date}:{state.trip_plan.end_date}"
 
@@ -1331,6 +1412,7 @@ async def _merge_specialist_into_state(
             and cached_destination == current_destination
             and cached_dates
             and cached_dates == current_dates
+            and cached_day_pref == _current_day_pref
         ):
             _debug_log(
                 f"🤿 SPECIALIST [{topic}] Cache HIT: Reusing cached output "
@@ -1437,6 +1519,7 @@ async def _merge_specialist_into_state(
             content_added=[],
             enhancements=[],
             hero_image=None,
+            day_pref=_current_day_pref,
         )
         upsert_section(state.metadata, infeasible_section, mode="appendable")
         mark_topic_executed(state.metadata, topic)
@@ -1556,6 +1639,7 @@ async def _merge_specialist_into_state(
         content_added=content_added,
         enhancements=output.enhancements,
         hero_image=hero_image,
+        day_pref=_current_day_pref,
     )
 
     upsert_section(state.metadata, section, mode="appendable")
@@ -1650,11 +1734,49 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     # =========================================================================
     cached_key = state.metadata.get("_last_specialist_key", "")
     current_dest = (state.trip_plan.destination or "").lower().strip()
-    # CRITICAL: Use full date range, not just month - dates within same month matter!
-    # "Feb 11-18" vs "Feb 11-14" must invalidate cache (different trip durations)
-    start_date = state.trip_plan.start_date or "no-start"
-    end_date = state.trip_plan.end_date or "no-end"
-    current_key = f"{current_dest}:{start_date}:{end_date}"
+    # Use month + duration bucket instead of exact dates — date extensions within
+    # the same bucket don't change specialist LLM output (activity recommendations
+    # depend on destination/month/duration-class, not exact start/end dates).
+    # Matches the persistent specialist_cache strategy.
+    start_date = state.trip_plan.start_date or ""
+    end_date = state.trip_plan.end_date or ""
+    _month = start_date[:7] if len(start_date) >= 7 else "no-month"
+    try:
+        from datetime import datetime as _dt
+
+        _s = _dt.strptime(start_date[:10], "%Y-%m-%d")
+        _e = _dt.strptime(end_date[:10], "%Y-%m-%d")
+        _days = (_e - _s).days + 1
+        _bucket = (
+            "weekend"
+            if _days <= 3
+            else "short"
+            if _days <= 5
+            else "week"
+            if _days <= 8
+            else "extended"
+            if _days <= 11
+            else "twoweek"
+            if _days <= 15
+            else "long"
+        )
+    except (ValueError, TypeError):
+        _bucket = "unknown"
+    # Include day_preferences so stepper changes bust the parallel_llm_results cache
+    # Only include Tier 1 specialist prefs — Tier 2 category changes (nightlife, yoga)
+    # don't affect specialist outputs and shouldn't invalidate the cache.
+    _all_day_prefs = (
+        state.metadata.get("trip_inputs", {})
+        .get("activity_settings", {})
+        .get("day_preferences", {})
+    )
+    _tier1_prefs = (
+        {k: v for k, v in _all_day_prefs.items() if k in TIER1_SPECIALIST_NAMES}
+        if _all_day_prefs
+        else {}
+    )
+    _dp_suffix = json.dumps(_tier1_prefs, sort_keys=True) if _tier1_prefs else ""
+    current_key = f"{current_dest}:{_month}:{_bucket}:{_dp_suffix}"
 
     if cached_key and cached_key != current_key:
         _debug_log(
@@ -1741,123 +1863,116 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     #
     # NEW: Pass database session for L1+L2 persistent caching (7-day TTL).
     #
-    if "parallel_llm_results" not in state.metadata:
-        # Collect all specialists that need processing
-        all_specialists = [topic] + list(state.pending_specialists)
+    # Collect all specialists that need processing
+    all_specialists = [topic] + list(state.pending_specialists)
 
-        # Skip specialists already known to be infeasible at this destination.
-        # Infeasibility is destination-dependent (skiing in Bali), not
-        # date-dependent — no need to re-query LLM after date changes.
-        existing_sections = state.metadata.get("strategy_sections", [])
-        dest_norm = (state.trip_plan.destination or "").lower().strip()
-        dest_infeasible = {
-            s.get("specialist_type")
-            for s in existing_sections
-            if s.get("feasibility_status") == "infeasible"
-            and (s.get("subtitle") or "").lower().strip() == dest_norm
-        }
-        if dest_infeasible & set(all_specialists):
-            skipped = dest_infeasible & set(all_specialists)
-            all_specialists = [t for t in all_specialists if t not in dest_infeasible]
+    # Skip specialists already known to be infeasible at this destination.
+    existing_sections = state.metadata.get("strategy_sections", [])
+    dest_norm = (state.trip_plan.destination or "").lower().strip()
+    dest_infeasible = {
+        s.get("specialist_type")
+        for s in existing_sections
+        if s.get("feasibility_status") == "infeasible"
+        and (s.get("subtitle") or "").lower().strip() == dest_norm
+    }
+    if dest_infeasible & set(all_specialists):
+        skipped = dest_infeasible & set(all_specialists)
+        all_specialists = [t for t in all_specialists if t not in dest_infeasible]
+        _debug_log(f"[SPECIALIST] Filtered {skipped} from parallel batch (destination-infeasible)")
+
+    # Determine which topics still need LLM generation
+    existing_parallel = state.metadata.get("parallel_llm_results", {})
+    topics_needing_gen = [t for t in all_specialists if t not in existing_parallel]
+
+    if topics_needing_gen:
+        from app.db import _get_async_session_factory
+
+        async_session_factory = _get_async_session_factory()
+        _skill = get_trip_settings(state).activity_settings.skill_level
+
+        if len(topics_needing_gen) > 1:
             _debug_log(
-                f"[SPECIALIST] Filtered {skipped} from parallel batch (destination-infeasible)"
+                f"[SPECIALIST] PARALLEL TRIGGER: {len(topics_needing_gen)} specialists "
+                f"({topics_needing_gen}), running in parallel"
             )
-
-        if len(all_specialists) > 1:
-            _debug_log(
-                f"[SPECIALIST] PARALLEL TRIGGER: {len(all_specialists)} specialists "
-                f"detected ({all_specialists}), running in parallel"
-            )
-
-            # Get database session for persistent caching
-            from app.db import _get_async_session_factory
-
-            async_session_factory = _get_async_session_factory()
 
             async with async_session_factory() as db:
-                # Run all LLM calls in parallel with persistent caching
-                _skill = get_trip_settings(state).activity_settings.skill_level
                 parallel_results = await generate_all_specialists_parallel(
-                    topics=all_specialists,
+                    topics=topics_needing_gen,
                     destination=state.trip_plan.destination,
                     trip_plan=state.trip_plan,
-                    db=db,  # Pass session for L1+L2 caching
+                    db=db,
                     skill_level=_skill,
+                    day_preferences=_all_day_prefs or None,
                 )
 
-            # Cache results for this and subsequent specialist calls
-            state.metadata["parallel_llm_results"] = {
-                k: v.model_dump() if v else None for k, v in parallel_results.items()
-            }
+            new_results = {k: v.model_dump() if v else None for k, v in parallel_results.items()}
+            # Merge into existing results (preserves cached topics)
+            existing_parallel.update(new_results)
+            state.metadata["parallel_llm_results"] = existing_parallel
 
-            _debug_log(f"[SPECIALIST] PARALLEL COMPLETE: Cached {len(parallel_results)} results")
+            _debug_log(
+                f"[SPECIALIST] PARALLEL COMPLETE: {len(new_results)} new, "
+                f"{len(existing_parallel)} total cached"
+            )
         else:
-            # Single specialist - use same cache path as parallel for consistency
-            _debug_log(f"[SPECIALIST] Single specialist '{topic}' - using cached LLM path")
+            # Single specialist — cache lookup + LLM fallback
+            single_topic = topics_needing_gen[0]
+            _debug_log(f"[SPECIALIST] Single specialist '{single_topic}' - using cached LLM path")
 
-            from app.db import _get_async_session_factory
             from app.services.specialist_cache import (
                 get_cached_specialist_output,
             )
 
-            async_session_factory = _get_async_session_factory()
-            cached_result = None
-            llm_result = None
-
             try:
                 async with async_session_factory() as db:
-                    # STEP 1: Check cache - log dates for debugging stale cache issues
                     _debug_log(
-                        f"[SPECIALIST_CACHE] Looking up cache for {topic} "
+                        f"[SPECIALIST_CACHE] Looking up cache for {single_topic} "
                         f"in {state.trip_plan.destination} "
-                        f"dates={state.trip_plan.start_date}→{state.trip_plan.end_date}"
+                        f"dates={state.trip_plan.start_date}->{state.trip_plan.end_date}"
                     )
-                    _skill = (
-                        state.metadata.get("trip_inputs", {})
-                        .get("activity_settings", {})
-                        .get("skill_level")
-                    )
+                    _topic_day_pref = _all_day_prefs.get(single_topic) if _all_day_prefs else None
                     cached_result = await get_cached_specialist_output(
                         db=db,
-                        topic=topic,
+                        topic=single_topic,
                         destination=state.trip_plan.destination,
                         start_date=state.trip_plan.start_date,
                         end_date=state.trip_plan.end_date,
                         skill_level=_skill,
+                        day_pref=_topic_day_pref,
                     )
 
                     if cached_result:
-                        _debug_log(f"[SPECIALIST_CACHE] ✅ HIT for {topic} - skipping LLM")
-                        state.metadata["parallel_llm_results"] = {topic: cached_result}
+                        _debug_log(f"[SPECIALIST_CACHE] HIT for {single_topic} - skipping LLM")
+                        existing_parallel[single_topic] = cached_result
                     else:
-                        _debug_log(f"[SPECIALIST_CACHE] ❌ MISS for {topic} - calling LLM")
+                        _debug_log(f"[SPECIALIST_CACHE] MISS for {single_topic} - calling LLM")
                         llm_result = await generate_specialist_output_llm(
-                            topic=topic,
+                            topic=single_topic,
                             destination=state.trip_plan.destination,
                             trip_plan=state.trip_plan,
-                            db=db,  # Pass db for cache write
+                            db=db,
                             skill_level=_skill,
+                            target_activities=_topic_day_pref,
                         )
 
                         if llm_result:
                             _debug_log(
-                                f"[SPECIALIST_CACHE] LLM success for {topic}: "
+                                f"[SPECIALIST_CACHE] LLM success for {single_topic}: "
                                 f"status={llm_result.feasibility_status}, "
                                 f"activities={len(llm_result.activities)}"
                             )
-                            state.metadata["parallel_llm_results"] = {
-                                topic: llm_result.model_dump()
-                            }
+                            existing_parallel[single_topic] = llm_result.model_dump()
                         else:
-                            _debug_log(
-                                f"[SPECIALIST_CACHE] LLM returned None for {topic} "
-                                "- will use fallback"
-                            )
-                            state.metadata["parallel_llm_results"] = {}
+                            _debug_log(f"[SPECIALIST_CACHE] LLM returned None for {single_topic}")
+
+                    state.metadata["parallel_llm_results"] = existing_parallel
 
             except Exception as e:
                 _debug_log(f"[SPECIALIST_CACHE] Error: {e}")
-                state.metadata["parallel_llm_results"] = {}
+                state.metadata["parallel_llm_results"] = existing_parallel
+    else:
+        _debug_log(f"[SPECIALIST] All {len(all_specialists)} topics already in parallel cache")
 
     # =========================================================================
     # MULTI-SPECIALIST BATCH: Process all specialists in a single graph entry
@@ -1880,27 +1995,25 @@ async def vertical_specialist(state: GraphState) -> GraphState:
                 continue  # cached — skip prefetch
         topics_to_prefetch.append(t)
 
-    # ─── Parallel Unsplash prefetch for non-cached topics ─────────────────
+    # ─── Fire-and-forget Unsplash prefetch for non-cached topics ─────────
+    # Don't block the specialist pipeline waiting for images.
+    # Images arrive in background; placeholder gradients fill gaps.
     if len(topics_to_prefetch) > 1:
         import asyncio
 
         from app.services.unsplash import prefetch_destination_images
 
-        unsplash_tasks = [
-            prefetch_destination_images(state.trip_plan.destination, activities=[t])
-            for t in topics_to_prefetch
-        ]
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*unsplash_tasks, return_exceptions=True),
-                timeout=10.0,
-            )
-            _debug_log(
-                f"[SPECIALIST] Parallel Unsplash prefetch: "
-                f"{len(topics_to_prefetch)} topics ({topics_to_prefetch})"
-            )
-        except asyncio.TimeoutError:
-            _debug_log("[SPECIALIST] Unsplash prefetch timeout (non-fatal)")
+        for t in topics_to_prefetch:
+            try:
+                asyncio.create_task(
+                    prefetch_destination_images(state.trip_plan.destination, activities=[t])
+                )
+            except Exception:
+                pass  # non-fatal
+        _debug_log(
+            f"[SPECIALIST] Unsplash prefetch fired (non-blocking): "
+            f"{len(topics_to_prefetch)} topics ({topics_to_prefetch})"
+        )
 
     # ─── Sequential processing loop ──────────────────────────────────────
     for current_topic in all_topics:

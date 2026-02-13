@@ -32,7 +32,7 @@ from typing import Optional
 from cachetools import TTLCache
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -304,10 +304,11 @@ def _experience_to_tile_dict(
     category_label = tile.category.capitalize()
     subtitle = f"{time_label} {category_label}"  # e.g., "Morning Yoga"
 
-    # Get image URL via existing Unsplash pipeline
-    from app.services.unsplash import get_image_url_sync
+    # Use cached Unsplash URL if prefetch populated it; None otherwise.
+    # Frontend renders a placeholder shimmer for null image_url.
+    from app.services.unsplash import get_cached_image_url
 
-    image_url = get_image_url_sync(destination, variant=index % 6, activities=[tile.category])
+    image_url = get_cached_image_url(destination, variant=index % 6, activities=[tile.category])
 
     return {
         "id": tile_id,
@@ -481,6 +482,46 @@ async def generate_experience_tiles_for_day(
 # =============================================================================
 
 
+async def _parallel_category_generate(
+    categories: list[str],
+    destination: str,
+    month: str,
+    budget: int | None,
+    tier1_specialists: list[str] | None,
+    tiles_per_category: int,
+) -> list[dict]:
+    """Per-category parallel LLM generation. Returns flat list of tile dicts."""
+    start_t = time.time()
+    tasks = []
+    base_index = 0
+    for cat in categories:
+        tasks.append(
+            generate_single_category(
+                destination=destination,
+                category=cat,
+                month=month,
+                budget=budget,
+                tier1_specialists=tier1_specialists,
+                tiles_per_category=tiles_per_category,
+                base_index=base_index,
+            )
+        )
+        base_index += tiles_per_category
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    tile_dicts: list[dict] = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logger.warning(f"[EXPERIENCE] Category '{categories[i]}' failed: {result}")
+            continue
+        tile_dicts.extend(result)
+
+    duration_ms = int((time.time() - start_t) * 1000)
+    logger.info(f"[EXPERIENCE] Parallel generation: {len(tile_dicts)} tiles in {duration_ms}ms")
+    return tile_dicts
+
+
 async def generate_experiences(
     destination: str,
     categories: list[str],
@@ -574,50 +615,64 @@ async def generate_experiences(
             _cache_set(cache_key, all_tiles)
             return _clamp_tile_durations(all_tiles)
 
-        # Cache miss — generate NEW categories via LLM (PARALLEL)
-        logger.info(f"[EXPERIENCE] Parallel generation for {new_cats}")
+        # Cache miss — generate NEW categories via LLM
+        # Structured output degrades >4 tiles; use per-category parallel above that.
+        MAX_BATCH_TILES = 4
+        total_tiles = tiles_per_category * len(new_cats)
+        logger.info(
+            f"[EXPERIENCE] Generation: {len(new_cats)} categories, "
+            f"{total_tiles} tiles for {destination} "
+            f"(path={'batch' if total_tiles <= MAX_BATCH_TILES else 'parallel'})"
+        )
 
         start_t = time.time()
 
-        try:
-            # Build tasks with incremental base_index offsets for image diversity
-            tasks = []
-            base_index = 0
-            for cat in new_cats:
-                tasks.append(
-                    generate_single_category(
-                        destination=destination,
-                        category=cat,
-                        month=month,
-                        budget=budget,
-                        tier1_specialists=tier1_specialists,
-                        tiles_per_category=tiles_per_category,
-                        base_index=base_index,
-                    )
+        if total_tiles <= MAX_BATCH_TILES:
+            # Small batch: single LLM call (fast for ≤4 tiles)
+            try:
+                max_tokens = min(200 * total_tiles, 2400)
+                llm = ChatOpenAI(model=EXPERIENCE_MODEL, temperature=0.3, max_tokens=max_tokens)
+                structured_llm = llm.with_structured_output(ExperienceOutput)
+
+                user_prompt = _build_user_prompt(
+                    destination, new_cats, month, budget, tier1_specialists, tiles_per_category
                 )
-                base_index += tiles_per_category  # Offset next category's indices
 
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+                parsed: ExperienceOutput = await structured_llm.ainvoke(
+                    [
+                        SystemMessage(content=SYSTEM_PROMPT),
+                        HumanMessage(content=user_prompt),
+                    ]
+                )
 
-            # Flatten results, filter out exceptions
-            new_tile_dicts = []
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logger.warning(f"[EXPERIENCE] Category '{new_cats[i]}' failed: {result}")
-                    continue
-                new_tile_dicts.extend(result)
+                for tile in parsed.activities:
+                    if tile.duration_hours > 4:
+                        tile.duration_hours = 4
 
-            duration_ms = int((time.time() - start_t) * 1000)
-            logger.info(
-                f"[EXPERIENCE] Parallel generation: {len(new_tile_dicts)} tiles in {duration_ms}ms"
+                new_tile_dicts = []
+                for i, tile in enumerate(parsed.activities):
+                    new_tile_dicts.append(_experience_to_tile_dict(tile, destination, i))
+
+                duration_ms = int((time.time() - start_t) * 1000)
+                logger.info(
+                    f"[EXPERIENCE] Batch generation: {len(new_tile_dicts)} tiles in {duration_ms}ms"
+                )
+
+            except (ValidationError, Exception) as e:
+                logger.warning(f"[EXPERIENCE] Batch failed, falling back to parallel: {e}")
+                new_tile_dicts = await _parallel_category_generate(
+                    new_cats, destination, month, budget, tier1_specialists, tiles_per_category
+                )
+        else:
+            # Large request: per-category parallel calls (avoids structured output degradation)
+            new_tile_dicts = await _parallel_category_generate(
+                new_cats, destination, month, budget, tier1_specialists, tiles_per_category
             )
 
-        except Exception as e:
-            logger.error(
-                f"[EXPERIENCE] FATAL: Parallel generation failed: {e}",
-                exc_info=True,
-            )
-            return []
+        duration_ms = int((time.time() - start_t) * 1000)
+        logger.info(
+            f"[EXPERIENCE] Total generation: {len(new_tile_dicts)} tiles in {duration_ms}ms"
+        )
 
         if not new_tile_dicts:
             logger.warning("[EXPERIENCE] Parallel generation returned 0 tiles")

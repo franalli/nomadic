@@ -152,7 +152,7 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (instant, no debounce, AbortController cancels stale regens) |
+| usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (1.5s debounce to batch rapid toggles, AbortController cancels stale regens, deferred during active streaming) |
 
 ### Progressive Disclosure Rules
 
@@ -441,7 +441,7 @@ User: "from rome" → Auto-regenerate + auto-expand itinerary (no FAB needed)
 User: "add hiking" → Auto-regenerate + auto-expand itinerary (no FAB needed)
 
 PREFERENCE CHANGES (hearts):
-User hearts a tile → Instant auto-regen (no debounce) → Itinerary updates
+User hearts a tile → 1.5s debounced auto-regen → Itinerary updates
 
 CHIP/SETTINGS CHANGES:
 User edits date chip → GENERATE_PLAN_TRIGGER sent → Full regeneration
@@ -449,7 +449,7 @@ User edits date chip → GENERATE_PLAN_TRIGGER sent → Full regeneration
 
 **Why this policy:**
 - **Chat = Auto**: User typed natural language → intent is fully expressed → immediate action
-- **Hearts = Auto (instant)**: Single atomic action, low-stakes exploration, instant feedback via `usePreferenceAutoRegen`
+- **Hearts = Auto (debounced 1.5s)**: Batches rapid heart toggles into a single expand call. Deferred during active streaming to prevent noise during plan generation.
 - **Chips/Settings = Auto via chat trigger**: Changes sent as GENERATE_PLAN_TRIGGER message for full regeneration
 
 #### Chat Auto-Regeneration
@@ -1262,6 +1262,8 @@ The frontend uses metadata for CTA styling (emerald accent) with regex fallback 
 Metadata is stored on `state.metadata["suggestion_chip_meta"]` during generation and passed through
 `response_envelope.py` as `suggested_response_meta`.
 
+**Structured Chips (`suggestion_chips`):** A parallel `SuggestionChip[]` array with action routing. Each chip includes `action_type` (`"send_message"` | `"open_pill"` | `"trigger_action"`) and `action_target` (e.g., `"dates"`, `"budget"`, `"travelers"`). The `PILL_ACTION_MAP` in `synthesizer.py` maps chip categories to actions: date chips open the date picker, booking chips open their respective sheets. Frontend `ChatPanel` reads `suggestion_chips` for action routing when available, falling back to `suggested_responses` + `suggested_response_meta` for backward compatibility.
+
 | State | Example Chips |
 |-------|---------------|
 | No destination | "I want a beach vacation", "mountain adventure", "city break" |
@@ -1695,7 +1697,8 @@ useSessionHydration() runs
 - `PlanDocument`, `DocumentHeader`, `DaySection`, `Segment` -- legacy plan document components
 - `OnboardingChips`, `PlanningProgress`, `OptionalRefinementsSection` -- legacy plan widgets
 - `S1FramingView`, `S2BlockedView`, `S3BlockedView`, `S3EditingView` -- legacy stage views (deleted)
-- `S3ItineraryView` -- still exists in codebase and exported from `stages/index.ts`, but NOT used in the unified `StrategyStageRenderer` flow
+- `S3ItineraryView` -- deleted (was unused in unified `StrategyStageRenderer` flow)
+- `CollapsedSetupSummary` -- deleted (setup collapse feature removed; `collapseSetupMessages` removed from chatStore)
 - `LocationBadge`, `TruncatedDestinationList` -- legacy pill components
 - `TileSectionHeader` -- tile section header
 - `features-section` -- marketing features section
@@ -2914,7 +2917,7 @@ clearCart: () => void;
 
 // Selector hooks
 useCartTileIds(): Set<string>
-useCartActions(): { addToCart, removeFromCart, clearCart }
+// Cart actions accessed directly from store (no separate useCartActions hook)
 ```
 
 #### E.1 Destination Change Handling

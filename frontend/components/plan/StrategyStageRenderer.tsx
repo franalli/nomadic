@@ -1149,9 +1149,9 @@ export function StrategyStageRenderer({
             <section ref={timelineSectionRef} className="px-4 py-6 space-y-4 animate-pulse">
               {[1, 2].map(i => (
                 <div key={i} className="space-y-2">
-                  <div className="h-6 w-24 bg-zinc-800 rounded" />
-                  <div className="h-20 bg-zinc-800/40 rounded-lg" />
-                  <div className="h-20 bg-zinc-800/40 rounded-lg" />
+                  <div className="h-6 w-24 bg-zinc-200 dark:bg-zinc-800 rounded" />
+                  <div className="h-20 bg-zinc-200/40 dark:bg-zinc-800/40 rounded-lg" />
+                  <div className="h-20 bg-zinc-200/40 dark:bg-zinc-800/40 rounded-lg" />
                 </div>
               ))}
               <div className="flex items-center justify-center gap-2 pt-4">
@@ -1190,6 +1190,7 @@ export function StrategyStageRenderer({
         </AnimatePresence>
       </div>
     );
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- onOpenActivitySettings, onOpenFlightsSettings, onOpenStaysSettings intentionally excluded: they're inline arrows in parent, adding them defeats memoization
   }, [
     // PERF: Sub-memos reduce recomputation - density/specialist data pre-computed
     displayLogic,
@@ -1229,8 +1230,8 @@ export function StrategyStageRenderer({
     handleOpenBookingDrawer, // Stable (useCallback with empty deps) - wires FreeDayCard "Browse Activities"
     validatedRules,
     violatedRules,
-    // NOTE: onOpenActivitySettings, onOpenFlightsSettings, onOpenStaysSettings intentionally
-    // excluded - they're inline arrows in parent, adding them defeats memoization
+    isAnyRegenerating,
+    preferenceCount,
   ]);
 
   // Book content - full booking section view

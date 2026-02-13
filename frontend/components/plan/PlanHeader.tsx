@@ -22,6 +22,7 @@ import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
 import { getStatusPillText } from '@/lib/statusCopyMap';
+import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
 import type { DestinationCard } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
@@ -215,7 +216,12 @@ export function PlanHeader({
   return (
     <div className="relative flex-shrink-0">
       {/* Clean hero image — no overlay, no gradient */}
-      <div className="mx-4 mt-4 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-black/10 dark:ring-white/10">
+      <div className={cn(
+        'mx-4 mt-4 rounded-2xl overflow-hidden shadow-2xl transition-all duration-300',
+        isGenerating || isExpandingItinerary
+          ? 'animate-pulse opacity-80 ring-1 ring-emerald-500/20 dark:ring-emerald-500/30'
+          : 'ring-1 ring-black/10 dark:ring-white/10'
+      )}>
         {imageUrl && (
           <img
             src={imageUrl}

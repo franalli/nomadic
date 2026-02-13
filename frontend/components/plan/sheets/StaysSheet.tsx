@@ -246,7 +246,7 @@ function StaysSheetInner({
         </div>
       }
     >
-      <div className="space-y-5">
+      <div className="space-y-6">
         {/* Gating blocker */}
         {!prerequisitesMet && (
           <GatingBlocker
@@ -276,7 +276,7 @@ function StaysSheetInner({
         {/* Preferences (disabled when toggle off) */}
         <div
           className={cn(
-            'space-y-5 transition-opacity',
+            'space-y-6 transition-opacity',
             !localEnabled && 'opacity-40 pointer-events-none'
           )}
         >
@@ -305,8 +305,8 @@ function StaysSheetInner({
                           'bg-white border-2 border-zinc-200 text-zinc-600',
                           'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
                           // Dark: Glass substance
-                          'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white'
+                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
+                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
                         )
                     )}
                   >
@@ -342,8 +342,8 @@ function StaysSheetInner({
                           'bg-white border-2 border-zinc-200 text-zinc-600',
                           'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
                           // Dark: Glass substance
-                          'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white'
+                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
+                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
                         )
                     )}
                   >

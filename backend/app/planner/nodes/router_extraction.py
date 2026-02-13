@@ -21,7 +21,6 @@ from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from app.config import settings
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
@@ -36,41 +35,6 @@ logger = logging.getLogger(__name__)
 _SPECIALIST_NAMES_CSV = ", ".join(sorted(TIER1_SPECIALIST_NAMES))
 _SPECIALIST_HINTS_JSON = json.dumps(sorted(TIER1_SPECIALIST_NAMES))
 _TIER2_NAMES_CSV = ", ".join(sorted(TIER2_ACTIVITY_KEYWORDS))
-
-
-def _detect_specialist_keywords(user_text: str) -> List[str]:
-    """
-    Fallback keyword detection for specialist hints.
-
-    Used when LLM fails or for quick detection.
-    Returns all matching specialist types (can be multiple).
-    """
-    text_lower = user_text.lower()
-    detected: List[str] = []
-
-    for topic, keywords in ALL_SPECIALIST_KEYWORDS.items():
-        for keyword in keywords:
-            if re.search(rf"\b{re.escape(keyword)}\b", text_lower):
-                if topic not in detected:
-                    detected.append(topic)
-                break  # Found a match for this topic, move to next
-
-    # Fuzzy fallback for unmatched words
-    if not detected:
-        try:
-            from rapidfuzz import fuzz, process
-
-            words = re.findall(r"\b[a-z]{3,}\b", text_lower)
-            all_topics = sorted(ALL_SPECIALIST_KEYWORDS.keys())
-            for word in words:
-                cutoff = settings.fuzzy_match_score_cutoff
-                match = process.extractOne(word, all_topics, scorer=fuzz.ratio, score_cutoff=cutoff)
-                if match and match[0] not in detected:
-                    detected.append(match[0])
-        except ImportError:
-            pass
-
-    return detected
 
 
 def _build_specialist_keyword_prompt() -> str:
@@ -990,6 +954,12 @@ def _populate_trip_plan_from_router_output(
     # Persist activity day preferences (count-based, parsed from JSON string)
     day_prefs = _parse_day_preferences(router_output.activity_day_preferences, user_text)
     if day_prefs:
+        # Scope to categories mentioned this turn — prevents LLM hallucinating
+        # day counts for categories the user didn't reference (e.g., surfing: 3
+        # when user only said "add 2 days nightlife").
+        mentioned = set(router_output.activity_categories) | set(router_output.specialist_hints)
+        if mentioned:
+            day_prefs = {k: v for k, v in day_prefs.items() if k in mentioned}
         trip_inputs = state.metadata.get("trip_inputs", {})
         activity_settings = trip_inputs.get("activity_settings", {})
         existing_prefs = activity_settings.get("day_preferences", {})

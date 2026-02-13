@@ -15,8 +15,6 @@ import { create } from 'zustand';
 
 import { apiFetch } from '@/lib/api';
 import type { ChatMessage } from '@/types/chat';
-import type { DocumentTripInputs } from '@/types/document';
-
 // Special message that triggers plan generation (must match backend)
 export const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
 
@@ -47,13 +45,6 @@ type ChatState = {
   removeMessagesFromId: (id: string) => void;
   setSessionState: (state: Record<string, unknown> | null) => void;
   resetChat: () => void;
-
-  // Collapse Setup assistant messages into a single summary
-  collapseSetupMessages: (
-    summaryText: string,
-    tripInputsSnapshot?: DocumentTripInputs,
-    executedTopicsSnapshot?: string[]
-  ) => void;
 
   // Delete last message (calls backend and updates state)
   deleteLastMessage: () => Promise<{
@@ -157,46 +148,6 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       isLoadingHistory: false,
       historyLoaded: true, // Mark as loaded to prevent re-fetching stale history after reset
       sessionState: null,
-    }),
-
-  collapseSetupMessages: (
-    summaryText: string,
-    tripInputsSnapshot?: DocumentTripInputs,
-    executedTopicsSnapshot?: string[]
-  ) =>
-    set((state) => {
-      // Find assistant messages that are not ack_lines
-      const setupAssistant = state.messages.filter(
-        (m) => m.role === 'assistant' && m.displayMode !== 'ack_line'
-      );
-
-      // If no Setup assistant messages, nothing to collapse
-      if (setupAssistant.length === 0) return state;
-
-      // Create a collapsed summary message with configuration snapshot
-      // Tag with phase: 'setup' for visual distinction (chapter break)
-      const summaryMessage: ChatMessage = {
-        id: `setup_summary_${Date.now()}`,
-        role: 'assistant',
-        content: '',
-        displayMode: 'collapsed_summary',
-        phase: 'setup',  // Mark as setup phase for visual styling
-        summaryText,
-        collapsed: true,
-        // Store snapshot for audit trail display
-        tripInputsSnapshot,
-        executedTopicsSnapshot,
-      };
-
-      // Keep user messages, system messages, and ack_line messages; replace assistant messages with summary
-      // Tag all remaining messages as 'setup' phase so they appear faded (past tense)
-      const filteredMessages = state.messages
-        .filter((m) => m.role !== 'assistant' || m.displayMode === 'ack_line')
-        .map((m) => ({ ...m, phase: 'setup' as const }));
-
-      return {
-        messages: [...filteredMessages, summaryMessage],
-      };
     }),
 
   deleteLastMessage: async () => {

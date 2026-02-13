@@ -123,15 +123,24 @@ export function NomadicLanding() {
   const mobileSetHasNewContent = useMobileNavStore((s) => s.setHasNewPlanContent);
 
   // Document store - single source of truth for trip inputs
-  const documentStore = useDocumentStore();
-  // Use direct selector for trip_inputs to ensure reactivity on updates
-  const storeTripInputs = useDocumentStore((state) => state.document?.trip_inputs);
-  // Stable selector for setActiveView (avoids infinite loops in useEffect)
-  const setActiveView = useDocumentStore((state) => state.setActiveView);
-  const llmUpdatedFields = documentStore.llmUpdatedFields;
-  const acknowledgeLLMUpdate = documentStore.acknowledgeLLMUpdate;
-  const restoreTripInputs = documentStore.restoreTripInputs;
-  const isCommitting = documentStore.isCommitting;
+  // PERF: Individual selectors prevent full-store subscription (1,500+ line component)
+  const storeTripInputs = useDocumentStore((s) => s.document?.trip_inputs);
+  const setActiveView = useDocumentStore((s) => s.setActiveView);
+  const llmUpdatedFields = useDocumentStore((s) => s.llmUpdatedFields);
+  const acknowledgeLLMUpdate = useDocumentStore((s) => s.acknowledgeLLMUpdate);
+  const restoreTripInputs = useDocumentStore((s) => s.restoreTripInputs);
+  const isCommitting = useDocumentStore((s) => s.isCommitting);
+  // Methods used inside callbacks (stable refs in Zustand, won't cause re-renders)
+  const storeReset = useDocumentStore((s) => s.reset);
+  const storeStartGeneration = useDocumentStore((s) => s.startGeneration);
+  const storeIsCurrentRun = useDocumentStore((s) => s.isCurrentRun);
+  const storeMergeEnvelope = useDocumentStore((s) => s.mergeEnvelope);
+  const storeMarkPreferencesAsApplied = useDocumentStore((s) => s.markPreferencesAsApplied);
+  const storeCompleteGeneration = useDocumentStore((s) => s.completeGeneration);
+  const storeCommitTripInputs = useDocumentStore((s) => s.commitTripInputs);
+  const storeUpdateTripInputs = useDocumentStore((s) => s.updateTripInputs);
+  const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
+  const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
 
   // Sheet manager - shared between header pills and chat panel
   // In S1+, header pills are the only interactive surface for trip inputs
@@ -290,7 +299,7 @@ export function NomadicLanding() {
     try {
       // CRITICAL: Reset document store FIRST (synchronously) to prevent stale state
       // from causing incorrect planViewState computation during async operations
-      documentStore.reset();
+      storeReset();
       // Reset chat store synchronously so empty state ("Where to next?") shows
       // immediately — don't wait for async branchManagerStartNewSession network calls
       useChatStore.getState().resetChat();
@@ -334,7 +343,7 @@ export function NomadicLanding() {
   }, [
     branchManagerStartNewSession,
     closeSheet,
-    documentStore,
+    storeReset,
     isDesktop,
     mobileNavReset,
   ]);
@@ -389,9 +398,9 @@ export function NomadicLanding() {
       if (!hasEverHadPlan) return; // Only do optimistic UI after first plan
 
       const detectedTopics = detectTopicsFromMessage(message);
-      // Use documentStore.document directly to avoid variable scope issues
+      // Use getState() to avoid stale closure + full-store subscription
       const existingTopics = new Set(
-        documentStore.document?.executed_strategy_topics ?? []
+        useDocumentStore.getState().document?.executed_strategy_topics ?? []
       );
       const newTopics = detectedTopics.filter((t) => !existingTopics.has(t));
 
@@ -404,7 +413,7 @@ export function NomadicLanding() {
         });
       }
     },
-    [hasEverHadPlan, documentStore.document?.executed_strategy_topics]
+    [hasEverHadPlan]
   );
 
   // Receipt undo/dismiss handlers removed - re-add when receipt UI is implemented
@@ -820,7 +829,7 @@ export function NomadicLanding() {
 
       // Start generation in documentStore - gets AbortController and registers runId
       // ATOMIC: startGeneration returns null if another generation is already running
-      const abortController = documentStore.startGeneration(runId);
+      const abortController = storeStartGeneration(runId);
 
       if (!abortController) {
         console.log(
@@ -841,7 +850,7 @@ export function NomadicLanding() {
       const resetTimeout = () => {
         if (timeoutId) clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
-          if (documentStore.isCurrentRun(runId)) {
+          if (storeIsCurrentRun(runId)) {
             setUiGeneration({
               active: true,
               stage: 'itinerary',
@@ -898,7 +907,7 @@ export function NomadicLanding() {
         if (abortController.signal.aborted) return;
 
         // SAFETY: Verify we're still the current run right before fetch
-        if (!documentStore.isCurrentRun(runId)) return;
+        if (!storeIsCurrentRun(runId)) return;
 
         // Debug: Log what we're sending (using fresh state)
         console.log('[proceedWithItineraryGeneration] 📦 Sending (fresh state):', {
@@ -946,7 +955,7 @@ export function NomadicLanding() {
         const decoder = new TextDecoder();
 
         const parser = createStreamParser((event: StreamEvent) => {
-          if (!documentStore.isCurrentRun(runId)) {
+          if (!storeIsCurrentRun(runId)) {
             console.debug('Ignoring late event from stale run');
             return;
           }
@@ -959,7 +968,7 @@ export function NomadicLanding() {
               day_cards: event.plan_envelope?.day_cards?.length ?? 0,
               plan_view_state: event.plan_envelope?.plan_view_state,
             });
-            documentStore.mergeEnvelope(event.plan_envelope);
+            storeMergeEnvelope(event.plan_envelope);
           } else if (event.type === 'progress') {
             setUiGeneration({
               active: true,
@@ -977,7 +986,7 @@ export function NomadicLanding() {
               useDocumentStore.setState({ version: event.version });
             }
             // Sync preferences to track which were used in this generation
-            documentStore.markPreferencesAsApplied();
+            storeMarkPreferencesAsApplied();
             // Log warning if some preferred activities couldn't fit
             if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
               console.warn(
@@ -1012,7 +1021,7 @@ export function NomadicLanding() {
                 console.debug(
                   `[expand-itinerary] Storing ${dayCards.length} partial day cards from conflict`
                 );
-                documentStore.mergeEnvelope({
+                storeMergeEnvelope({
                   day_cards: dayCards as unknown as PlanDocumentData['day_cards'],
                   plan_view_state:
                     'S3_PARTIAL_CONFLICT' as PlanDocumentData['plan_view_state'],
@@ -1042,15 +1051,15 @@ export function NomadicLanding() {
         if (timeoutId) clearTimeout(timeoutId);
         // Clear expand-in-progress flag
         useDocumentStore.getState().setExpandInProgress(false);
-        if (documentStore.isCurrentRun(runId)) {
+        if (storeIsCurrentRun(runId)) {
           // Clear generation state to allow re-entry (e.g., structural change auto-expand)
-          documentStore.completeGeneration();
+          storeCompleteGeneration();
           setUiGeneration(null);
         }
       }
       // PERF: No storeDocument in deps - function uses getState() for live reads
     },
-    [documentStore, addToast]
+    [storeStartGeneration, storeIsCurrentRun, storeMergeEnvelope, storeMarkPreferencesAsApplied, storeCompleteGeneration, addToast]
   );
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1107,7 +1116,7 @@ export function NomadicLanding() {
     if (shouldAutoTrigger) {
       hasAutoTriggeredRef.current = true;
       // Use setTimeout to avoid triggering during render
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         // RE-CHECK: If itinerary was generated by another path (e.g., ChatPanel CATCH_ALL), skip
         const freshDayCards = useDocumentStore.getState().document?.day_cards;
         if (freshDayCards && freshDayCards.length > 0) {
@@ -1118,6 +1127,7 @@ export function NomadicLanding() {
         }
         proceedWithItineraryGeneration();
       }, 500); // Small delay for UX (let tiles settle)
+      return () => clearTimeout(timer);
     }
   }, [
     planViewState,
@@ -1168,7 +1178,7 @@ export function NomadicLanding() {
       const endDateStr = addDaysUTC(startDate, nights);
 
       // Update trip inputs and await confirmation
-      const success = await documentStore.commitTripInputs({ end_date: endDateStr });
+      const success = await storeCommitTripInputs({ end_date: endDateStr });
 
       // Just confirm the date was set - DON'T auto-trigger expand-itinerary
       // User clicks "Build Itinerary" button to continue
@@ -1177,7 +1187,7 @@ export function NomadicLanding() {
         addToast('Trip length set', 'confirmation');
       }
     },
-    [tripInputs.start_date, addDaysUTC, documentStore, addToast]
+    [tripInputs.start_date, addDaysUTC, storeCommitTripInputs, addToast]
   );
 
   // Handler for "Build plan" CTA in right panel (S0BootstrapView)
@@ -1304,6 +1314,8 @@ export function NomadicLanding() {
       onReset={handleStartNewSession}
       lastError={lastGenerationError}
       onRetry={handleExpandToItinerary}
+      savedTileIds={preferredTileIds}
+      onSaveTile={(tile) => toggleTilePreference(tile.id)}
       tripInputs={tripInputs}
       isCommitting={isCommitting}
       onOpenSheet={openSheet}
@@ -1403,9 +1415,9 @@ export function NomadicLanding() {
         value={tripInputs.destination || ''}
         onSave={async (value) => {
           // SYNC: Update store immediately so RefreshButton sees new value
-          documentStore.updateTripInputs({ destination: value });
+          storeUpdateTripInputs({ destination: value });
           // ASYNC: Persist to backend
-          await documentStore.commitTripInputs({ destination: value });
+          await storeCommitTripInputs({ destination: value });
           closeSheet();
           addToast(`Destination: ${value}`, 'confirmation');
         }}
@@ -1417,9 +1429,9 @@ export function NomadicLanding() {
         value={tripInputs.origin || ''}
         onSave={async (value) => {
           // SYNC: Update store immediately so RefreshButton sees new value
-          documentStore.updateTripInputs({ origin: value });
+          storeUpdateTripInputs({ origin: value });
           // ASYNC: Persist to backend
-          await documentStore.commitTripInputs({ origin: value });
+          await storeCommitTripInputs({ origin: value });
           closeSheet();
           addToast(`Origin: ${value}`, 'confirmation');
         }}
@@ -1436,12 +1448,12 @@ export function NomadicLanding() {
           const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
           const endStr = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
           // SYNC: Update store immediately so RefreshButton sees new value
-          documentStore.updateTripInputs({
+          storeUpdateTripInputs({
             start_date: startStr,
             end_date: endStr,
           });
           // ASYNC: Persist to backend
-          await documentStore.commitTripInputs({
+          await storeCommitTripInputs({
             start_date: startStr,
             end_date: endStr,
           });
@@ -1463,9 +1475,9 @@ export function NomadicLanding() {
         children={tripInputs.children ?? 0}
         onSave={async (adults, children) => {
           // SYNC: Update store immediately
-          documentStore.updateTripInputs({ adults, children });
+          storeUpdateTripInputs({ adults, children });
           // ASYNC: Persist to backend
-          await documentStore.commitTripInputs({ adults, children });
+          await storeCommitTripInputs({ adults, children });
           closeSheet();
           const label = `${adults} adult${adults > 1 ? 's' : ''}${children > 0 ? `, ${children} child${children > 1 ? 'ren' : ''}` : ''}`;
           addToast(`Travelers: ${label}`, 'confirmation');
@@ -1480,9 +1492,9 @@ export function NomadicLanding() {
         budgetType="total"
         onSave={async (amount, currency) => {
           // SYNC: Update store immediately
-          documentStore.updateTripInputs({ budget: amount, currency });
+          storeUpdateTripInputs({ budget: amount, currency });
           // ASYNC: Persist to backend
-          await documentStore.commitTripInputs({ budget: amount, currency });
+          await storeCommitTripInputs({ budget: amount, currency });
           closeSheet();
           const formatted = new Intl.NumberFormat('en-US', {
             style: 'currency',
@@ -1493,18 +1505,28 @@ export function NomadicLanding() {
         }}
       />
 
-      {/* Activity settings sheet - opened from gear icons on specialist cards */}
+      {/* Activity settings sheet - opened from gear icons + Activities pill */}
       <ActivitiesSheet
-        open={gearActivitiesSheetOpen}
-        onOpenChange={setGearActivitiesSheetOpen}
+        open={gearActivitiesSheetOpen || activeSheet === 'activities'}
+        onOpenChange={(open) => {
+          setGearActivitiesSheetOpen(open);
+          if (!open) closeSheet();
+        }}
         enabled={true}
         settings={tripInputs.activity_settings || { categories: [], skill_level: null }}
         hasDestination={hasDestination}
         onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
-        onSaveSettings={async (settings) => {
-          await documentStore.commitTripInputs({ activity_settings: settings });
+        onSaveSettings={(settings) => {
+          handleUpdateActivitySettings(settings);
           setGearActivitiesSheetOpen(false);
+          closeSheet();
           addToast('Activity preferences saved', 'confirmation');
+          // Trigger plan regeneration if plan is active
+          const isActive = planViewState === 'S2_STRATEGY_READY'
+            || planViewState === 'S3_ITINERARY_READY';
+          if (isActive) {
+            chatPanelRef.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
+          }
         }}
       />
 
@@ -1518,7 +1540,7 @@ export function NomadicLanding() {
         hasDates={hasDates}
         onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
         onSaveSettings={async (settings) => {
-          await documentStore.commitTripInputs({ hotel_settings: settings });
+          await storeCommitTripInputs({ hotel_settings: settings });
           setGearStaysSheetOpen(false);
           addToast('Hotel preferences saved', 'confirmation');
         }}
@@ -1543,7 +1565,7 @@ export function NomadicLanding() {
         hasDates={hasDates}
         onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
         onSaveSettings={async (settings) => {
-          await documentStore.commitTripInputs({ flight_settings: settings });
+          await storeCommitTripInputs({ flight_settings: settings });
           setGearFlightsSheetOpen(false);
           addToast('Flight preferences saved', 'confirmation');
         }}

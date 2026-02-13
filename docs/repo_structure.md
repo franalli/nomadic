@@ -74,8 +74,8 @@ backend/
 │   │   ├── nodes/              # LangGraph nodes (7-node structure)
 │   │   │   ├── __init__.py
 │   │   │   ├── constraint_guard.py         # Constraint validation
-│   │   │   ├── input_gate_config.py        # Input gate configuration
-│   │   │   ├── input_gates.py              # Pre-extraction input validation gates
+│   │   │   ├── input_gate_config.py        # Input gate threshold constants (dates, travelers, budget)
+│   │   │   ├── input_gates.py              # Pre-routing input validation (5 gates: Date, Duration, Traveler, Budget, Destination)
 │   │   │   ├── intent_router.py            # Intent classification (main orchestration)
 │   │   │   │   ├── router_extraction.py        # LLM extraction & field validation (Stage 9A)
 │   │   │   ├── router_category_sync.py     # Tier 2 detection & actionable input (Stage 9B)
@@ -116,7 +116,6 @@ backend/
 │   │
 │   ├── services/
 │   │   ├── __init__.py
-│   │   ├── base_cache.py           # Base cache class
 │   │   ├── experience_generator.py # Tier 2 experience tile generation via gpt-4o-mini (L1+L2 cache)
 │   │   ├── itinerary_builder.py    # Itinerary construction service
 │   │   ├── regen_strategy.py       # Selective regeneration strategy computation
@@ -125,6 +124,10 @@ backend/
 │   │   ├── tile_cache.py           # Thread-safe L1+L2 cache for tile provider data (24h TTL)
 │   │   ├── unsplash.py             # Unsplash image service
 │   │   └── unsplash_queries.py     # Unsplash query helpers (includes Tier 2 activity queries)
+│   │
+│   ├── utils/                 # Shared utility modules
+│   │   ├── __init__.py
+│   │   └── tile_utils.py      # Tile flattening (category-grouped → ID-based map)
 │   │
 │   ├── tile_service/           # Tile data providers
 │   │   ├── __init__.py
@@ -177,6 +180,7 @@ backend/
 │   ├── test_experience_generator.py      # Experience generator tests
 │   ├── test_hash_ban.py                  # Hash ban tests
 │   ├── test_import_contract.py           # Import contract tests
+│   ├── test_input_gates.py              # Input gate validation tests (5 gates + registry)
 │   ├── test_itinerary_builder.py         # Itinerary builder tests
 │   ├── test_llm_feasibility.py           # LLM geographic feasibility tests
 │   ├── test_multi_specialist_integration.py  # Multi-specialist tests
@@ -184,6 +188,7 @@ backend/
 │   ├── test_router_cache.py              # Router cache tests (context-dependency detection)
 │   ├── test_routing.py                   # Routing tests
 │   ├── test_specialist_cache.py          # Specialist LLM cache tests (thread safety, L1/L2)
+│   ├── test_fill_day_constraints.py      # Fill-day constraint validation (Tier 1 placement gates)
 │   ├── test_specialist_structured.py     # Specialist structured output tests
 │   ├── test_stage2_integration.py        # Stage 2 integration tests
 │   ├── test_stage11_day_preferences.py   # Stage 11 day preference tests
@@ -229,7 +234,6 @@ frontend/
 │   ├── chat/                   # Chat interface components
 │   │   ├── ChatPanel.tsx
 │   │   ├── ChatSkeleton.tsx
-│   │   ├── CollapsedSetupSummary.tsx
 │   │   ├── HoldToDeleteButton.tsx
 │   │   ├── MobileChatInput.tsx
 │   │   ├── MobileSetupCollapsedHeader.tsx
@@ -309,7 +313,6 @@ frontend/
 │   │   ├── stages/             # Stage-specific views
 │   │   │   ├── index.ts
 │   │   │   ├── S2StrategyView.tsx
-│   │   │   ├── S3ItineraryView.tsx
 │   │   │   └── StrategyHero.tsx
 │   │   │
 │   │   ├── tiles/

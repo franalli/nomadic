@@ -75,8 +75,8 @@ function StatusBadge({ status, mode }: { status: 'available' | 'hold' | 'booked'
   // Booking mode: Show cart status
   const config = {
     available: {
-      dot: 'bg-gray-400',
-      text: 'text-gray-500',
+      dot: 'bg-zinc-400',
+      text: 'text-zinc-500',
       label: 'Available',
     },
     hold: {

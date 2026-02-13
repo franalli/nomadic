@@ -10,6 +10,7 @@ Features:
 - Full production attribution support (photographer, Unsplash link, download tracking)
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import List, Optional
@@ -24,13 +25,10 @@ from app.services.unsplash_queries import get_query_for_destination
 
 logger = logging.getLogger(__name__)
 
-# UTM parameters for attribution links (required by Unsplash)
-UTM_SOURCE = "nomadic"
-UTM_MEDIUM = "referral"
-
 # In-memory cache for hot destinations (avoids DB hits in same session)
 # Key format: "destination:variant" (e.g., "patagonia:0", "patagonia:1")
 _memory_cache: dict[str, "UnsplashImage"] = {}
+_memory_cache_lock = asyncio.Lock()
 
 # Number of image variants to fetch per destination
 NUM_VARIANTS = 6
@@ -56,14 +54,6 @@ class UnsplashImage(BaseModel):
     # Required for production attribution
     unsplash_url: Optional[str] = None  # Image page on Unsplash
     download_location: Optional[str] = None  # API endpoint for download tracking
-
-
-def _add_utm_params(url: Optional[str]) -> Optional[str]:
-    """Add required UTM parameters to Unsplash URLs."""
-    if not url:
-        return None
-    separator = "&" if "?" in url else "?"
-    return f"{url}{separator}utm_source={UTM_SOURCE}&utm_medium={UTM_MEDIUM}"
 
 
 def build_image_url(image_id: str, width: int = 800, height: int = 600) -> str:
@@ -140,7 +130,7 @@ async def _fetch_variants_from_unsplash(
     logger.info(f"[UNSPLASH-API] Query for '{destination}' (activities={activities}): {query}")
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=2.0) as client:
             response = await client.get(
                 "https://api.unsplash.com/search/photos",
                 params={
@@ -193,19 +183,35 @@ async def _fetch_variants_from_unsplash(
         return []
 
 
+def _db_destination_key(destination: str, activities: list[str] | None = None) -> str:
+    """Build DB destination key, encoding activity for cache partitioning.
+
+    Returns e.g. "bali" or "bali:diving" — fits in String(256) PK.
+    """
+    normalized = destination.lower().strip()
+    if activities and len(activities) > 0:
+        activity = activities[0].lower().strip()
+        if activity:
+            return f"{normalized}:{activity}"
+    return normalized
+
+
 async def _get_from_db_cache(
-    db: AsyncSession, destination: str, variant: int = 0
+    db: AsyncSession,
+    destination: str,
+    variant: int = 0,
+    activities: list[str] | None = None,
 ) -> Optional[UnsplashImage]:
     """Check database cache for existing image variant."""
     from app.db_models import UnsplashImageCache
 
-    normalized = destination.lower().strip()
-    logger.info(f"[UNSPLASH-DB] Checking DB cache for: {normalized}:{variant}")
+    db_key = _db_destination_key(destination, activities)
+    logger.info(f"[UNSPLASH-DB] Checking DB cache for: {db_key}:{variant}")
 
     try:
         result = await db.execute(
             select(UnsplashImageCache).where(
-                UnsplashImageCache.destination == normalized,
+                UnsplashImageCache.destination == db_key,
                 UnsplashImageCache.variant == variant,
             )
         )
@@ -225,17 +231,21 @@ async def _get_from_db_cache(
     return None
 
 
-async def _get_all_variants_from_db(db: AsyncSession, destination: str) -> List[UnsplashImage]:
+async def _get_all_variants_from_db(
+    db: AsyncSession,
+    destination: str,
+    activities: list[str] | None = None,
+) -> List[UnsplashImage]:
     """Get all cached variants for a destination from DB."""
     from app.db_models import UnsplashImageCache
 
-    normalized = destination.lower().strip()
-    logger.info(f"[UNSPLASH-DB] Checking DB for all variants of: {normalized}")
+    db_key = _db_destination_key(destination, activities)
+    logger.info(f"[UNSPLASH-DB] Checking DB for all variants of: {db_key}")
 
     try:
         result = await db.execute(
             select(UnsplashImageCache)
-            .where(UnsplashImageCache.destination == normalized)
+            .where(UnsplashImageCache.destination == db_key)
             .order_by(UnsplashImageCache.variant)
         )
         cached_list = list(result.scalars().all())
@@ -257,64 +267,23 @@ async def _get_all_variants_from_db(db: AsyncSession, destination: str) -> List[
     return images
 
 
-async def _save_to_db_cache(
-    db: AsyncSession, destination: str, variant: int, image: UnsplashImage
-) -> None:
-    """Save image variant to database cache."""
-    from app.db_models import UnsplashImageCache
-
-    normalized = destination.lower().strip()
-    logger.info(f"[UNSPLASH-DB] Saving to DB cache: {normalized}:{variant}")
-
-    try:
-        # Upsert: check if exists first
-        result = await db.execute(
-            select(UnsplashImageCache).where(
-                UnsplashImageCache.destination == normalized,
-                UnsplashImageCache.variant == variant,
-            )
-        )
-        existing = result.scalar_one_or_none()
-    except Exception as e:
-        logger.warning(f"[UNSPLASH-DB] Query failed (table may not exist): {e}")
-        return
-
-    if existing:
-        existing.image_id = image.image_id
-        existing.photographer = image.photographer
-        existing.photographer_url = image.photographer_url
-        existing.unsplash_url = image.unsplash_url
-        existing.download_location = image.download_location
-        existing.cached_at = datetime.now(UTC)
-    else:
-        cache_entry = UnsplashImageCache(
-            destination=normalized,
-            variant=variant,
-            image_id=image.image_id,
-            photographer=image.photographer,
-            photographer_url=image.photographer_url,
-            unsplash_url=image.unsplash_url,
-            download_location=image.download_location,
-        )
-        db.add(cache_entry)
-
-    await db.commit()
-
-
 async def _save_all_variants_to_db(
-    db: AsyncSession, destination: str, images: List[UnsplashImage]
+    db: AsyncSession,
+    destination: str,
+    images: List[UnsplashImage],
+    activities: list[str] | None = None,
 ) -> None:
     """Save all image variants to database cache in one commit."""
     from app.db_models import UnsplashImageCache
 
-    normalized = destination.lower().strip()
-    logger.info(f"[UNSPLASH-DB] Saving {len(images)} variants to DB for: {normalized}")
+    db_key = _db_destination_key(destination, activities)
+    logger.info(f"[UNSPLASH-DB] Saving {len(images)} variants to DB for: {db_key}")
 
     try:
         for variant, image in enumerate(images):
             result = await db.execute(
                 select(UnsplashImageCache).where(
-                    UnsplashImageCache.destination == normalized,
+                    UnsplashImageCache.destination == db_key,
                     UnsplashImageCache.variant == variant,
                 )
             )
@@ -329,7 +298,7 @@ async def _save_all_variants_to_db(
                 existing.cached_at = datetime.now(UTC)
             else:
                 cache_entry = UnsplashImageCache(
-                    destination=normalized,
+                    destination=db_key,
                     variant=variant,
                     image_id=image.image_id,
                     photographer=image.photographer,
@@ -340,7 +309,7 @@ async def _save_all_variants_to_db(
                 db.add(cache_entry)
 
         await db.commit()
-        logger.info(f"[UNSPLASH-DB] Saved {len(images)} variants for {normalized}")
+        logger.info(f"[UNSPLASH-DB] Saved {len(images)} variants for {db_key}")
     except Exception as e:
         logger.warning(f"[UNSPLASH-DB] Save failed: {e}")
         await db.rollback()
@@ -371,26 +340,29 @@ async def prefetch_destination_images(
 
     # Check if we already have variants cached
     cache_key_0 = _cache_key(destination, 0, activities)
-    if cache_key_0 in _memory_cache:
-        # Count how many variants we have
-        count = sum(
-            1
-            for i in range(NUM_VARIANTS)
-            if _cache_key(destination, i, activities) in _memory_cache
-        )
-        logger.info(
-            f"[UNSPLASH] Already have {count} variants cached for {normalized}{activity_str}"
-        )
-        return count
+    async with _memory_cache_lock:
+        if cache_key_0 in _memory_cache:
+            # Count how many variants we have
+            count = sum(
+                1
+                for i in range(NUM_VARIANTS)
+                if _cache_key(destination, i, activities) in _memory_cache
+            )
+            logger.info(
+                f"[UNSPLASH] Already have {count} variants cached for {normalized}{activity_str}"
+            )
+            return count
 
-    # Check DB cache (only if no activity filter - DB cache is destination-only)
-    if db and not activities:
+    # Check DB cache (activity-aware key partitions base vs activity-specific images)
+    # DB/API fetches happen outside the lock
+    if db:
         try:
-            db_images = await _get_all_variants_from_db(db, destination)
+            db_images = await _get_all_variants_from_db(db, destination, activities)
             if db_images:
                 # Populate memory cache from DB
-                for i, img in enumerate(db_images):
-                    _memory_cache[_cache_key(destination, i, activities)] = img
+                async with _memory_cache_lock:
+                    for i, img in enumerate(db_images):
+                        _memory_cache[_cache_key(destination, i, activities)] = img
                 logger.info(f"[UNSPLASH] Loaded {len(db_images)} variants from DB for {normalized}")
                 return len(db_images)
         except Exception as e:
@@ -401,13 +373,14 @@ async def prefetch_destination_images(
 
     if images:
         # Store all variants in memory cache
-        for i, img in enumerate(images):
-            _memory_cache[_cache_key(destination, i, activities)] = img
+        async with _memory_cache_lock:
+            for i, img in enumerate(images):
+                _memory_cache[_cache_key(destination, i, activities)] = img
 
-        # Store in DB (only for non-activity queries to avoid DB bloat)
-        if db and not activities:
+        # Store in DB (activity-aware key prevents collisions)
+        if db:
             try:
-                await _save_all_variants_to_db(db, destination, images)
+                await _save_all_variants_to_db(db, destination, images, activities)
             except Exception as e:
                 logger.warning(f"[UNSPLASH] DB save failed: {e}")
 
@@ -423,8 +396,9 @@ async def prefetch_destination_images(
             if db_images:
                 # Populate memory cache with base destination images
                 # (using activity key for consistency)
-                for i, img in enumerate(db_images):
-                    _memory_cache[_cache_key(destination, i, activities)] = img
+                async with _memory_cache_lock:
+                    for i, img in enumerate(db_images):
+                        _memory_cache[_cache_key(destination, i, activities)] = img
                 logger.info(
                     f"[UNSPLASH] Fallback: loaded {len(db_images)} base "
                     f"variants from DB for {normalized}"
@@ -473,19 +447,22 @@ async def get_image_for_destination(
     )
 
     # 1. Check in-memory cache for this variant
-    if cache_key in _memory_cache:
-        image = _memory_cache[cache_key]
-        url = build_image_url(image.image_id, width, height)
-        logger.info(f"[UNSPLASH] Memory cache HIT for {cache_key}: {url[:80]}...")
-        return url
+    async with _memory_cache_lock:
+        if cache_key in _memory_cache:
+            image = _memory_cache[cache_key]
+            url = build_image_url(image.image_id, width, height)
+            logger.info(f"[UNSPLASH] Memory cache HIT for {cache_key}: {url[:80]}...")
+            return url
 
-    # 2. Check database cache for this variant (only for non-activity queries)
+    # 2. Check database cache for this variant (activity-aware)
+    # DB/API fetches happen outside the lock
     logger.info(f"[UNSPLASH] Memory cache MISS for {cache_key}, checking DB")
-    if db and not activities:
+    if db:
         try:
-            cached = await _get_from_db_cache(db, destination, variant)
+            cached = await _get_from_db_cache(db, destination, variant, activities)
             if cached:
-                _memory_cache[cache_key] = cached
+                async with _memory_cache_lock:
+                    _memory_cache[cache_key] = cached
                 url = build_image_url(cached.image_id, width, height)
                 logger.info(f"[UNSPLASH] DB cache HIT for {cache_key}: {url[:80]}...")
                 return url
@@ -499,16 +476,17 @@ async def get_image_for_destination(
 
     if images:
         # Store all fetched variants in memory cache
-        for i, img in enumerate(images):
-            _memory_cache[_cache_key(destination, i, activities)] = img
+        async with _memory_cache_lock:
+            for i, img in enumerate(images):
+                _memory_cache[_cache_key(destination, i, activities)] = img
         logger.info(
             f"[UNSPLASH] API SUCCESS: cached {len(images)} variants for {normalized}{activity_str}"
         )
 
-        # Store all in DB (only for non-activity queries to avoid DB bloat)
-        if db and not activities:
+        # Store all in DB (activity-aware key prevents collisions)
+        if db:
             try:
-                await _save_all_variants_to_db(db, destination, images)
+                await _save_all_variants_to_db(db, destination, images, activities)
                 logger.info(f"[UNSPLASH] Saved {len(images)} variants to DB for {normalized}")
             except Exception as e:
                 logger.warning(f"[UNSPLASH] DB cache save failed: {e}")
@@ -573,6 +551,20 @@ def get_memory_cache_stats() -> dict:
         "entries": len(_memory_cache),
         "destinations": len(set(k.split(":")[0] for k in _memory_cache.keys())),
     }
+
+
+def get_cached_image_url(
+    destination: str,
+    variant: int = 0,
+    width: int = 800,
+    height: int = 600,
+    activities: list[str] | None = None,
+) -> str | None:
+    """Return cached Unsplash URL or None. No fallback, no blocking I/O."""
+    cache_key = _cache_key(destination, variant, activities)
+    if cache_key in _memory_cache:
+        return build_image_url(_memory_cache[cache_key].image_id, width, height)
+    return None
 
 
 def get_image_url_sync(

@@ -14,11 +14,11 @@ Strategy Tiers (lowest to highest cost):
 @see docs/plan_graph_analysis.md - Selective Regeneration
 """
 
-import hashlib
 from enum import Enum
 from typing import Any, Dict, Optional, Set
 
 from app.debug_utils import _debug
+from app.planner.services.state_serde import _field_hash
 
 
 class RegenStrategy(str, Enum):
@@ -58,11 +58,6 @@ STRATEGY_PRIORITY = [
     RegenStrategy.LOGISTICS,
     RegenStrategy.BUILDER,  # Lowest priority (cheapest)
 ]
-
-
-def _field_hash(value: str) -> str:
-    """Compute stable hash for a field value."""
-    return hashlib.sha256((value or "").encode()).hexdigest()[:12]
 
 
 def _stable_dict_hash(d: Optional[Dict[str, Any]]) -> str:

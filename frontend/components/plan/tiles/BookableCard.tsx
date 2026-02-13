@@ -13,6 +13,7 @@ import { Check, ExternalLink, Star } from 'lucide-react';
 import Image from 'next/image';
 import { useCallback, useState } from 'react';
 
+import { formatPrice } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
@@ -66,15 +67,6 @@ const PARTNER_LOGOS: Record<string, { name: string; bgColor: string }> = {
 // =============================================================================
 // Helpers
 // =============================================================================
-
-function formatCurrency(price: number, currency: string = 'USD'): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(price);
-}
 
 function getPartnerInfo(partner: string) {
   const normalized = partner.toLowerCase().replace(/\s+/g, '');
@@ -201,7 +193,7 @@ export function BookableCard({
           <div className="flex items-baseline justify-between">
             <div>
               <span className="text-2xl font-bold text-white">
-                {formatCurrency(bestPrice.price, bestPrice.currency)}
+                {formatPrice(bestPrice.price, bestPrice.currency)}
               </span>
               {isHotel && <span className="text-sm text-zinc-400">/night</span>}
             </div>
@@ -256,7 +248,7 @@ export function BookableCard({
                         isBest ? 'text-emerald-400' : 'text-zinc-300'
                       )}
                     >
-                      {formatCurrency(pp.price, pp.currency)}
+                      {formatPrice(pp.price, pp.currency)}
                     </span>
                     <button
                       onClick={() => onBook?.(tile, pp.partner)}
@@ -284,7 +276,7 @@ export function BookableCard({
         {sortedPrices.length === 0 && tile.price_estimate && (
           <div className="p-3 rounded-lg bg-zinc-800/50 text-center">
             <span className="text-lg font-bold text-white">
-              {formatCurrency(tile.price_estimate)}
+              {formatPrice(tile.price_estimate)}
             </span>
             {isHotel && <span className="text-sm text-zinc-400">/night</span>}
             <p className="text-xs text-zinc-500 mt-1">Price comparison loading...</p>

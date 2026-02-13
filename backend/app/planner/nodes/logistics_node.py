@@ -47,20 +47,44 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Cache Key Helper
+# Cache Key Helpers — separate hotel/activity hashes to prevent cross-busting
 # =============================================================================
-def _logistics_input_hash(state: GraphState) -> str:
-    """
-    Hash all inputs that affect tile search results.
-    This ensures cache is busted when any logistics-relevant parameter changes:
-    - Origin/destination
-    - Dates
-    - Travelers
-    - Budget
-    - Hotel settings (stars, amenities)
-    - Flight settings (cabin, direct)
-    - Activity skill level
-    """
+def _hotel_logistics_hash(state: GraphState) -> str:
+    """Hash inputs that affect hotel tile search. Changing activity settings won't bust this."""
+    tp = state.trip_plan
+    settings = get_trip_settings(state)
+    return stable_hash(
+        {
+            "destination": (tp.destination or "").lower(),
+            "start_date": tp.start_date,
+            "end_date": tp.end_date,
+            "adults": tp.adults,
+            "children": tp.children,
+            "budget": tp.budget,
+            "hotel_settings": settings.hotel_settings.model_dump(),
+        }
+    )
+
+
+def _activity_logistics_hash(state: GraphState) -> str:
+    """Hash inputs that affect activity tile search. Changing hotel settings won't bust this."""
+    tp = state.trip_plan
+    settings = get_trip_settings(state)
+    return stable_hash(
+        {
+            "destination": (tp.destination or "").lower(),
+            "start_date": tp.start_date,
+            "end_date": tp.end_date,
+            "adults": tp.adults,
+            "children": tp.children,
+            "activity_skill_level": settings.activity_settings.skill_level,
+            "activity_categories": sorted(settings.activity_settings.categories),
+        }
+    )
+
+
+def _flight_logistics_hash(state: GraphState) -> str:
+    """Hash inputs that affect flight search."""
     tp = state.trip_plan
     settings = get_trip_settings(state)
     return stable_hash(
@@ -71,11 +95,7 @@ def _logistics_input_hash(state: GraphState) -> str:
             "end_date": tp.end_date,
             "adults": tp.adults,
             "children": tp.children,
-            "budget": tp.budget,
-            "hotel_settings": settings.hotel_settings.model_dump(),
             "flight_settings": settings.flight_settings.model_dump(),
-            "activity_skill_level": settings.activity_settings.skill_level,
-            "activity_categories": sorted(settings.activity_settings.categories),
         }
     )
 
@@ -110,9 +130,9 @@ async def logistics_node(state: GraphState) -> GraphState:
     clog.node_start("LOGISTICS", dest=plan.destination, origin=plan.origin or "None")
 
     # ==========================================================================
-    # SELECTIVE REGENERATION: Hash-based cache check for all logistics inputs
-    # Busts cache when ANY logistics-relevant parameter changes:
-    # origin, destination, dates, travelers, budget, hotel/flight/activity settings
+    # SELECTIVE REGENERATION: Per-category hash-based cache check
+    # Separate hotel/activity/flight hashes prevent cross-busting:
+    # changing hotel_settings won't refetch activities, and vice versa.
     # @see docs/plan_graph_analysis.md - Selective Regeneration Strategy
     # ==========================================================================
     has_cached_tiles = bool(
@@ -120,11 +140,18 @@ async def logistics_node(state: GraphState) -> GraphState:
     )
 
     if has_cached_tiles:
-        # Compute hash of all logistics-relevant inputs
-        current_hash = _logistics_input_hash(state)
-        cached_hash = state.metadata.get("_logistics_hash")
+        cur_hotel_hash = _hotel_logistics_hash(state)
+        cur_activity_hash = _activity_logistics_hash(state)
+        cur_flight_hash = _flight_logistics_hash(state)
+        cached_hotel_hash = state.metadata.get("_logistics_hotel_hash")
+        cached_activity_hash = state.metadata.get("_logistics_activity_hash")
+        cached_flight_hash = state.metadata.get("_logistics_flight_hash")
 
-        if cached_hash and current_hash == cached_hash:
+        hotel_ok = cached_hotel_hash and cur_hotel_hash == cached_hotel_hash
+        activity_ok = cached_activity_hash and cur_activity_hash == cached_activity_hash
+        flight_ok = cached_flight_hash and cur_flight_hash == cached_flight_hash
+
+        if hotel_ok and activity_ok and flight_ok:
             log("LOGISTICS", f"Cache HIT: inputs unchanged for {plan.destination}")
             _debug_log(
                 f"Tiles cache hit - hotels={len(state.tiles.get('hotels', []))}, "
@@ -139,10 +166,7 @@ async def logistics_node(state: GraphState) -> GraphState:
                 activities=len(state.tiles.get("activities", [])),
                 flights=len(state.tiles.get("flights", [])),
             )
-            # Mark as attempted for downstream routing
             state.metadata["logistics_attempted"] = True
-
-            # Compact logging: cache hit
             clog.event("cache_hit", "Tiles (all categories)", dest=plan.destination)
             duration_ms = int((time.time() - node_start_time) * 1000)
             clog.node_end(
@@ -154,22 +178,29 @@ async def logistics_node(state: GraphState) -> GraphState:
             )
             return state
 
-        # Hash changed - INVALIDATE cached tiles
-        if cached_hash:
-            log("LOGISTICS", f"Cache BUST: inputs changed for {plan.destination}")
-            _debug_log(
-                f"Logistics inputs changed - refetching tiles "
-                f"(old_hash={cached_hash[:8]}..., new_hash={current_hash[:8]}...)"
-            )
-            # Clear stale tiles
-            state.tiles = {"hotels": [], "activities": [], "flights": []}
-            state.metadata["tiles_destination"] = None
-            state.metadata["_tiles_replaced"] = True
-            clog.event("cache_invalidate", f"inputs changed for {plan.destination}")
+        # Selective invalidation — only clear changed categories
+        changed = []
+        if not hotel_ok:
+            state.tiles["hotels"] = []
+            changed.append("hotels")
+        if not activity_ok:
+            state.tiles["activities"] = []
+            changed.append("activities")
+        if not flight_ok:
+            state.tiles["flights"] = []
+            changed.append("flights")
 
-    # Store current destination and input hash for future cache checks
+        if cached_hotel_hash or cached_activity_hash or cached_flight_hash:
+            log("LOGISTICS", f"Cache BUST: {', '.join(changed)} changed for {plan.destination}")
+            _debug_log(f"Selective invalidation: {', '.join(changed)}")
+            state.metadata["_tiles_replaced"] = True
+            clog.event("cache_invalidate", f"{', '.join(changed)} changed for {plan.destination}")
+
+    # Store current hashes for future cache checks
     state.metadata["tiles_destination"] = plan.destination
-    state.metadata["_logistics_hash"] = _logistics_input_hash(state)
+    state.metadata["_logistics_hotel_hash"] = _hotel_logistics_hash(state)
+    state.metadata["_logistics_activity_hash"] = _activity_logistics_hash(state)
+    state.metadata["_logistics_flight_hash"] = _flight_logistics_hash(state)
 
     # Mark that logistics has been attempted (prevents infinite loop in route_after_architect)
     state.metadata["logistics_attempted"] = True
@@ -553,6 +584,7 @@ async def _fetch_activities(
     end_date,
     hotel_settings,
     flight_settings,
+    max_results: int = 5,
 ):
     """
     Fetch activity tiles with L1+L2 caching.
@@ -582,7 +614,7 @@ async def _fetch_activities(
         else:
             _debug_log(f"[TILE_CACHE] Activities MISS - fetching from {provider}")
 
-            # Build search context
+            # Build search context — scale activity count by trip length
             ctx = SearchContext(
                 destination=plan.destination,
                 origin=plan.origin,
@@ -592,7 +624,7 @@ async def _fetch_activities(
                 children=plan.children or 0,
                 currency="USD",
                 verticals=["hotel", "activity"],
-                max_results_per_vertical=5,
+                max_results_per_vertical=max_results,
                 hotel_settings=hotel_settings or None,
                 activity_settings=activity_settings or None,
                 flight_settings=flight_settings or None,
@@ -660,6 +692,17 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     # Get database session factory for caching
     async_session_factory = _get_async_session_factory()
 
+    # Scale activity fetch count by trip length (longer trips need more backfill tiles)
+    activity_max_results = 5  # default
+    if start_date and end_date:
+        try:
+            _sd = datetime.strptime(start_date, "%Y-%m-%d")
+            _ed = datetime.strptime(end_date, "%Y-%m-%d")
+            _trip_days = (_ed - _sd).days + 1
+            activity_max_results = min(max(5, _trip_days - 2), 10)
+        except ValueError:
+            pass
+
     # Fetch hotels and activities in PARALLEL
     _gather_t0 = time.time()
     hotel_dicts, activity_dicts = await asyncio.gather(
@@ -686,6 +729,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             end_date,
             hotel_settings,
             flight_settings,
+            max_results=activity_max_results,
         ),
     )
     _gather_ms = int((time.time() - _gather_t0) * 1000)
@@ -805,6 +849,11 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
         else:
             # Mixed — generate Tier 2 experience tiles via LLM
             from app.services.experience_generator import generate_experiences
+            from app.services.unsplash import prefetch_destination_images
+
+            # Prefetch Unsplash for Tier 2 categories (non-blocking, ~2-3s head start)
+            for cat in tier2_cats:
+                asyncio.create_task(prefetch_destination_images(plan.destination, activities=[cat]))
 
             month = str(plan.start_date)[:7] if plan.start_date else ""
             active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
@@ -888,6 +937,11 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
         tier2_only = selected_cats - TIER1_CATEGORIES
         if tier2_only:
             from app.services.experience_generator import generate_experiences
+            from app.services.unsplash import prefetch_destination_images
+
+            # Prefetch Unsplash for Tier 2 categories (non-blocking, ~2-3s head start)
+            for cat in tier2_only:
+                asyncio.create_task(prefetch_destination_images(plan.destination, activities=[cat]))
 
             month = str(plan.start_date)[:7] if plan.start_date else ""
             tiles_per_cat = _compute_tiles_per_category(state, tier2_only)

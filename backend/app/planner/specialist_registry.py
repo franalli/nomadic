@@ -710,6 +710,100 @@ def canonicalize_rule(rule: str) -> str:
 
 
 # =============================================================================
+# Fill-day constraint validation (lightweight, no LLM)
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class FillDayRejection:
+    """Structured rejection when fill-day placement violates a safety constraint."""
+
+    code: str  # e.g. "NOFLY_BUFFER_VIOLATED", "ALTITUDE_AFTER_DIVE"
+    reason: str  # Human-readable, shown to user
+    suggestion: str | None = None  # Optional alternative
+
+
+def validate_fill_day_placement(
+    target_day: int,
+    specialist_type: str,
+    day_cards: list,
+    total_days: int,
+    has_departure_flight: bool = True,
+) -> FillDayRejection | None:
+    """Lightweight Tier 1 constraint check for fill-day placement.
+
+    Checks:
+      1. No-fly buffer — specialist with has_nofly_buffer too close to departure
+      2. Cross-domain forward — placing specialist adjacent to its blocked targets
+      3. Cross-domain reverse — adjacent specialist lists placement as target
+
+    Surface interval (back-to-back dives) is NOT a rejection — handled by
+    itinerary_builder Phase 6.5 tagging.
+
+    Returns None when placement is safe, FillDayRejection when blocked.
+    """
+    config = SPECIALIST_REGISTRY.get(specialist_type)
+    if not config:
+        return None
+
+    # ── Check 1: No-fly buffer (departure proximity) ──────────────────
+    if config.has_nofly_buffer and has_departure_flight:
+        buffer_hrs = get_nofly_buffer_hours(specialist_type) or 24
+        buffer_days = buffer_hrs // 24
+        departure_day = total_days  # last day is departure
+        latest_safe_day = departure_day - 1 - buffer_days
+        if target_day > latest_safe_day:
+            return FillDayRejection(
+                code="NOFLY_BUFFER_VIOLATED",
+                reason=(
+                    f"{specialist_type.title()} requires a {buffer_hrs}h buffer "
+                    f"before your departure day"
+                ),
+                suggestion=(
+                    f"Place {specialist_type} on Day {latest_safe_day} or earlier"
+                    if latest_safe_day >= 1
+                    else None
+                ),
+            )
+
+    # ── Collect specialist types on adjacent days ─────────────────────
+    adjacent_specialists: set[str] = set()
+    for dc in day_cards:
+        if abs(dc.day_number - target_day) == 1:
+            for block in dc.blocks:
+                st = (getattr(block, "specialist_type", None) or "").lower()
+                if st:
+                    adjacent_specialists.add(st)
+
+    # ── Check 2: Cross-domain forward ─────────────────────────────────
+    # Placing specialist_type whose cross_domain_blocks target an adjacent specialist
+    for xd in config.cross_domain_blocks:
+        conflicts = adjacent_specialists & set(xd.target_specialists)
+        if conflicts:
+            return FillDayRejection(
+                code=xd.violation_code,
+                reason=xd.reason,
+                suggestion=f"Avoid placing {specialist_type} adjacent to {', '.join(conflicts)}",
+            )
+
+    # ── Check 3: Cross-domain reverse ─────────────────────────────────
+    # Adjacent specialist lists specialist_type as one of its blocked targets
+    for adj_spec in adjacent_specialists:
+        adj_config = SPECIALIST_REGISTRY.get(adj_spec)
+        if not adj_config:
+            continue
+        for xd in adj_config.cross_domain_blocks:
+            if specialist_type in xd.target_specialists:
+                return FillDayRejection(
+                    code=xd.violation_code,
+                    reason=xd.reason,
+                    suggestion=f"Avoid placing {specialist_type} adjacent to {adj_spec}",
+                )
+
+    return None
+
+
+# =============================================================================
 # Import-time validation
 # =============================================================================
 

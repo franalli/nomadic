@@ -12,7 +12,7 @@
  *
  * Design Rules:
  * - Row 1-2: h-8 compact pills, monochrome glass (grey → white when filled)
- * - Row 3: h-9 primary touch targets, teal glow when active
+ * - Row 3: h-9 primary touch targets, emerald glow when active
  * - Semantic grouping: "what you're planning" vs "what we'll search for"
  * - "Cockpit" aesthetic - all instruments readable at ≥380px panel width
  */

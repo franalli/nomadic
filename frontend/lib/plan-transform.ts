@@ -41,24 +41,6 @@ export interface Conflict {
   secondary: string;
 }
 
-export const CONFLICT_COPY: Record<ConflictType, Conflict> = {
-  budget: {
-    type: 'budget',
-    primary: 'Budget is lower than estimated plan cost.',
-    secondary: 'The plan will adjust if constraints change.',
-  },
-  dates: {
-    type: 'dates',
-    primary: 'Dates are too short for current travel constraints.',
-    secondary: 'Adjust dates or origin to resolve.',
-  },
-  route: {
-    type: 'route',
-    primary: 'No viable route matches current constraints.',
-    secondary: 'The plan will update if constraints change.',
-  },
-};
-
 export interface DerivedPlanData {
   days: DayData[];
   totalEstimate: number | null;
