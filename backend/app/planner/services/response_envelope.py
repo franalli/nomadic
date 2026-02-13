@@ -716,6 +716,7 @@ def _build_response_envelope(
             or state.metadata.get("synthesizer_output", {}).get("suggested_replies", [])
         ),
         "suggested_response_meta": state.metadata.get("suggestion_chip_meta", []),
+        "suggestion_chips": state.metadata.get("suggestion_chips", []),
         # Plan view state for right panel stage rendering
         "plan_view_state": plan_view_state,
         # Strategy content for AgentCards

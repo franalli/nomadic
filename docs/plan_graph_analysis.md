@@ -71,6 +71,8 @@ backend/app/planner/
 ├── nodes/                   # Node implementations
 │   ├── __init__.py          # Node exports
 │   ├── constraint_guard.py  # Mostly deterministic validation (one LLM-backed check: validate_place_exists)
+│   ├── input_gate_config.py # Input gate threshold constants (dates, travelers, budget)
+│   ├── input_gates.py       # Pre-routing input validation (5 gates: Date, Duration, Traveler, Budget, Destination)
 │   ├── intent_router.py     # LLM-based intent classification
 │   ├── local_expert.py      # City logistics concierge
 │   ├── logistics_node.py    # Flight fetching + safety logic
@@ -412,6 +414,22 @@ This fixes the bug where users said "I want to go diving March 1-8" but were ask
 
 **Post-Plan Date Drift Guard:** After LLM extraction in the post-plan path, the router checks whether the user's text actually mentions date-change signals before accepting extracted date mutations. If `start_date` changed but the user text lacks start-related keywords ("start", "begin", "from", "depart", "leave on", "move"), the start date is reverted to `old_start`. Same for `end_date` with end-related keywords ("extend", "until", "end", "through", "shorten", "move"). Prevents the LLM from drifting dates on messages like "tell me more about diving" that happen to re-extract dates with slight shifts.
 
+**Input Gate Validation (Post-Extraction):**
+
+After LLM extraction populates `state.trip_plan`, the router runs `_run_input_gates(state)` via `GateRegistry`. Five gates validate trip fields:
+
+| Gate | Checks | Severity |
+|------|--------|----------|
+| `DateGate` | Past dates, end before start, >18 months out | blocking |
+| `DurationGate` | <1 day, >90 days (blocking); >30 days (warning) | blocking/warning |
+| `TravelerGate` | Children without adults, >25 total | blocking |
+| `BudgetGate` | <$50 (blocking), >$500K (blocking), >$100K (warning) | blocking/warning |
+| `DestinationGate` | Multi-destination detection (LLM flag primary, 3+ comma fallback) | warning |
+
+Blocking gates short-circuit to synthesizer (`short_circuit_type: "gate_blocked"`). Warnings continue with notes in `state.metadata["input_gate_warnings"]`. Gate exceptions are caught and logged (fail-open). Thresholds are centralized in `input_gate_config.py`.
+
+**Multi-Destination Handling:** `RouterOutput` includes `multi_destination_detected` field. When true, `_populate_trip_plan_from_router_output()` stashes `_multi_dest_from_llm` and `_deferred_destinations` on `trip_plan` for `DestinationGate` to produce a warning like "Starting with Rome — we can plan Switzerland after this itinerary is set."
+
 **Specialist Detection:**
 
 Specialist keywords are defined in `backend/app/planner/specialist_registry.py` via `ALL_SPECIALIST_KEYWORDS`.
@@ -535,6 +553,12 @@ async def generate_specialist_output_llm(topic, destination, trip_plan, db=None,
 **Token Optimization:** The user prompt does NOT include a JSON schema example - OpenAI's
 function calling API receives the Pydantic schema from `.with_structured_output()` directly.
 This saves ~200-500 tokens per specialist call while maintaining schema enforcement at the API level.
+
+**Activity Count Scaling:** The LLM prompt dynamically scales the requested activity count based on trip duration:
+- Short trips (≤5 available days): 2-3 activities
+- Medium trips (6-10 available days): 3-5 activities
+- Long trips (11+ available days): scales up to ~60% of available days, capped at 7
+Available days = `duration_days - 2` (excluding arrival/departure).
 
 **Fallback Mechanism:** If LLM fails (parse error, timeout), falls back to minimal safety constraints from the registry:
 ```python
@@ -793,8 +817,13 @@ if has_niche_specialist:
     tier2_cats = selected_cats - TIER1_CATEGORIES
 
     if not tier2_cats:
-        # Pure Tier 1 — specialists own the activity layer
-        state.tiles["activities"] = []
+        # Pure Tier 1 — selective backfill for free days
+        # Counts specialist-claimed days vs trip length, subtracts buffers
+        # (arrival/departure + no-fly buffer from registry).
+        # If free_days <= 1: full suppression (specialist fills trip).
+        # If free_days > 1: keeps up to free_days logistics activities
+        # for Phase 5.6 to place on actual free days.
+        state.tiles["activities"] = kept_or_empty
     else:
         # Mixed — generate Tier 2 experience tiles via LLM
         experience_tiles = await generate_experiences(
@@ -832,7 +861,8 @@ Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured outp
 
 | Trip Type | Categories | `executed_strategy_topics` | Activities |
 |-----------|-----------|---------------------------|------------|
-| "diving in Bali" | `["diving"]` | `["local_expert", "diving"]` | **Suppressed** (pure Tier 1) |
+| "diving in Bali" (short trip) | `["diving"]` | `["local_expert", "diving"]` | **Suppressed** (specialist fills trip) |
+| "diving in Bali" (long trip) | `["diving"]` | `["local_expert", "diving"]` | **Selective backfill** (kept for free days) |
 | "diving + yoga + cooking in Bali" | `["diving", "yoga", "cooking"]` | `["local_expert", "diving"]` | **LLM-generated** yoga + cooking tiles (mixed Tier 1+2) |
 | "yoga + cooking in Bali" | `["yoga", "cooking"]` | `["local_expert"]` | **LLM-generated** yoga + cooking tiles (pure Tier 2) |
 | "trip to Rome" | `[]` | `["local_expert"]` | **All shown** (no categories selected) |
@@ -898,12 +928,14 @@ Unified response generator - "One voice, regardless of which agents contributed.
 2. Exploration - Pre-core destination exploration
 3. Specialist Update - Acknowledgment after specialist runs
 4. Planning - Full planning mode with tiles/constraints
+5. Gate-blocked - Input validation failure (routes to `planning` type for natural LLM explanation)
 
 **Performance Optimizations:**
 - **Model Routing**: Intelligent model selection by response complexity
   - `exploration` / `specialist_update` → gpt-4o-mini (~150ms, 94% cheaper)
   - `planning` → gpt-4o (~600ms, full reasoning)
   - Greeting responses bypass LLM entirely (gated by `_should_use_llm_synthesis()`)
+  - Gate-blocked responses use LLM (override short-circuit bypass) with pre-computed fallback
 - **Prompt Caching**: Template loading and Jinja2 rendering cached via `@lru_cache`
   - Eliminates ~7-13ms disk I/O + compilation per call
   - 4 cached variants (one per response_type)
@@ -923,6 +955,8 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - Structured constraint violations: Budget violations get `## Budget Issue` header with conversational framing; non-budget/non-route violations get `## Constraint Alerts` with `suggested_action` passthrough. Falls back to plain `state.constraints_violated` string dump for older sessions without rich metadata.
 - Day preference context: User-requested day allocations per activity category
 - Builder drop reporting: When `last_builder_drop_ratio > 0` and builder succeeded, includes "Activity placement: X of Y specialist activities placed (Z couldn't fit)" with natural-language framing guidance (e.g., "extending your trip by a couple days would fit them all"). Reads `builder_activities_input` and `builder_activities_placed` from `state.metadata`.
+- Input gate violations: `## Input Validation Issue` section with each violation message + suggested action. Instructs LLM to explain naturally without using technical terms ("validation", "gate", "constraint").
+- Input gate warnings: `## Input Notes` section with each warning message, mentioned naturally in response.
 
 **LLM Failure Fallback:**
 When OpenAI returns `None`, all response types return a static `FALLBACK_MESSAGE` ("I've updated your trip plan — check the itinerary on the right. Let me know if you'd like to adjust anything."). `GREETING_TEMPLATE` is preserved for the fast greeting path (no LLM).
@@ -937,6 +971,8 @@ When OpenAI returns `None`, all response types return a static `FALLBACK_MESSAGE
 `generate_suggestions()` derives all chips from router capability registries × current state.
 Zero hardcoded specialist names — adding a specialist to `specialist_registry.py` or question type
 to `QUESTION_TYPE_MAPPING` automatically makes it available as a suggestion.
+
+**Structured Chips (`suggestion_chips`):** In addition to `suggestion_chip_meta`, the synthesizer now emits `state.metadata["suggestion_chips"]` — a list of `SuggestionChip` dicts with `{message, action_type, action_target, chip_type, category, icon}`. `PILL_ACTION_MAP` maps chip categories to frontend actions: date chips → `("open_pill", "dates")`, booking chips → respective sheets, budget/travelers → their sheets. Categories not in the map default to `("send_message", None)`. Passed through `response_envelope.py` as `suggestion_chips`.
 
 Priority cascade (each path also stores `suggestion_chip_meta` on `state.metadata` for frontend styling):
 1. **Budget blocking** → `["Increase budget to ${suggested}", "Find cheaper {largest_cat}", "Fewer activity days"]` (icon: `dollar-sign`; fires before generic blocking handler)
@@ -2625,7 +2661,7 @@ which preserves non-empty categories in the document. The input merge guard
 
 **Typed Routing Accessors:**
 - All 5 routing functions use `get_turn_meta(state)` / `get_persistent_meta(state)` instead of raw `state.metadata.get()` reads
-- `TurnMeta` fields include: `is_generate_trigger` (frontend Build Plan flag), `logistics_attempted` (prevents architect->logistics loop), `origin_only_logistics`, `short_circuit_response`, `architect_ran_this_turn`, `has_blocking_violations`, `constraint_violations`
+- `TurnMeta` fields include: `is_generate_trigger` (frontend Build Plan flag), `logistics_attempted` (prevents architect->logistics loop), `origin_only_logistics`, `short_circuit_response`, `architect_ran_this_turn`, `has_blocking_violations`, `constraint_violations`, `input_gate_violations` (list of gate blocker dicts), `input_gate_warnings` (list of gate warning dicts)
 - `route_after_architect` uses both accessors: `turn` for `logistics_attempted`, `persistent` for `local_expert_ran`
 - Regression tests: `tests/test_routing.py` (30 parameterized cases covering all routing branches)
 
@@ -2906,6 +2942,8 @@ Phase 5.5: Free Day Placeholders (_handle_empty_days)
 
 Phase 5.6: Experience Tile Placement (_place_experience_tiles) — Three-Pass Co-Scheduling
 ├─ Filter tiles by source_agent == "experience_generator"
+│  └─ Fallback: if no experience tiles, use logistics backfill tiles
+│     (source_agent == "logistics_node", type == "activity") for pure Tier 1 trips
 ├─ Sort by time_of_day: morning → afternoon → evening
 ├─ Pass 0 (Pinned Tiles from fill-day):
 │   ├─ Tiles with meta.pinned_day are placed on their target day first

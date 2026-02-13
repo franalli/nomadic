@@ -1262,6 +1262,8 @@ The frontend uses metadata for CTA styling (emerald accent) with regex fallback 
 Metadata is stored on `state.metadata["suggestion_chip_meta"]` during generation and passed through
 `response_envelope.py` as `suggested_response_meta`.
 
+**Structured Chips (`suggestion_chips`):** A parallel `SuggestionChip[]` array with action routing. Each chip includes `action_type` (`"send_message"` | `"open_pill"` | `"trigger_action"`) and `action_target` (e.g., `"dates"`, `"budget"`, `"travelers"`). The `PILL_ACTION_MAP` in `synthesizer.py` maps chip categories to actions: date chips open the date picker, booking chips open their respective sheets. Frontend `ChatPanel` reads `suggestion_chips` for action routing when available, falling back to `suggested_responses` + `suggested_response_meta` for backward compatibility.
+
 | State | Example Chips |
 |-------|---------------|
 | No destination | "I want a beach vacation", "mountain adventure", "city break" |

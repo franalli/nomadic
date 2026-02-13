@@ -287,6 +287,17 @@ class SuggestionChipMeta(BaseModel):
     icon: Optional[str] = None  # Lucide icon name (e.g., "calendar", "compass")
 
 
+class SuggestionChip(BaseModel):
+    """Structured suggestion chip with action routing."""
+
+    message: str  # Display text
+    action_type: Literal["send_message", "open_pill", "trigger_action"] = "send_message"
+    action_target: Optional[str] = None  # e.g., "dates", "activities", "budget"
+    chip_type: Literal["cta", "follow_up", "setting"] = "follow_up"
+    category: str = ""  # Backend category (e.g., "date_prompt")
+    icon: Optional[str] = None  # Lucide icon name
+
+
 class GraphPlanRequest(BaseModel):
     """Request schema for graph-based planning entrypoint."""
 
@@ -737,6 +748,7 @@ class PlanDocumentData(BaseModel):
     # Suggested user responses for quick replies (1-3 contextual suggestions)
     suggested_responses: List[str] = Field(default_factory=list)
     suggested_response_meta: List[Dict[str, Any]] = Field(default_factory=list)
+    suggestion_chips: List[SuggestionChip] = Field(default_factory=list)  # Structured chips
     # Change tracking for UI receipts
     applied_updates: List[CanonicalUIKey] = Field(default_factory=list)  # Typed keys only
     conflicts: List[Conflict] = Field(default_factory=list)

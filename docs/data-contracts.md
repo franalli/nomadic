@@ -66,7 +66,7 @@ Media type: `text/event-stream`. Events:
 |-------|------|---------|
 | `token` | `{type: "token", data: "..."}` | Streaming text chunk |
 | `node_status` | `{node: "...", status: "started"\|"completed", label, icon_key, estimated_duration_ms}` | Node processing progress. `label`, `icon_key`, `estimated_duration_ms` only present on `started` events. Special node `logic_reveal` emits routing decisions (e.g., `label: "ROUTING: DIVING"`, status: `"completed"`). Frontend type also defines `stage?, tier?, topic?, max_tokens?` but these are not currently emitted by the backend. |
-| `complete` | `{type: "complete", data: {document, session_state, version, ...}}` | Full response envelope. `document` includes `day_cards` (when builder ran), `suggested_responses`, `suggested_response_meta`, `constraints_validated`, `constraint_violations`, `tiles_replaced` — all passed through from graph output. When `day_cards` present, `plan_view_state` is promoted to `S3_ITINERARY_READY`. `suggested_responses` falls back to `metadata.synthesizer_output.suggested_replies` when `state.suggested_replies` is empty (GraphState parse failure recovery). |
+| `complete` | `{type: "complete", data: {document, session_state, version, ...}}` | Full response envelope. `document` includes `day_cards` (when builder ran), `suggested_responses`, `suggested_response_meta`, `suggestion_chips` (structured chips with action routing), `constraints_validated`, `constraint_violations`, `tiles_replaced` — all passed through from graph output. When `day_cards` present, `plan_view_state` is promoted to `S3_ITINERARY_READY`. `suggested_responses` falls back to `metadata.synthesizer_output.suggested_replies` when `state.suggested_replies` is empty (GraphState parse failure recovery). |
 | `error` | `{type: "error", message: "..."}` | Error details |
 
 ### NDJSON (`/api/expand-itinerary`, `/api/remove-specialist`)
@@ -191,6 +191,8 @@ PlanDocumentData
   |-- assistant_message?, suggested_responses[]
   |-- suggested_response_meta?: SuggestionChipMeta[] (parallel to suggested_responses)
   |     {chip_type: "cta"|"follow_up"|"setting", category: string, icon?: string}
+  |-- suggestion_chips?: SuggestionChip[] (structured chips with action routing - Stage 11B)
+  |     {message, action_type: "send_message"|"open_pill"|"trigger_action", action_target?, chip_type, category, icon?}
   '-- _debug?: {router_extraction_failed: boolean}  (observability, always present in SSE)
 ```
 
@@ -205,6 +207,8 @@ PlanDocumentData
 | `PlanDocumentPatch` | CRDT update: version, branches?, tiles?, selections?, trip_inputs?, remove_branch_ids?, remove_tile_ids?, preferred_tile_ids? |
 | `PlanDocumentResponse` | Document fetch: version, updated_by, document, updated_at, changes_made: bool |
 | `TileRefreshRequest/Response` | Refresh tiles for branch with new settings |
+| `SuggestionChip` | Structured chip: message, action_type (`send_message`\|`open_pill`\|`trigger_action`), action_target?, chip_type (`cta`\|`follow_up`\|`setting`), category, icon? |
+| `SuggestionChipMeta` | Chip styling: chip_type, category, icon? (parallel to `suggested_responses`) |
 
 ---
 

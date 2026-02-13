@@ -162,6 +162,16 @@ export type SuggestionChipMeta = {
   icon?: string | null;
 };
 
+/** Structured suggestion chip from backend (Stage 11B) */
+export interface SuggestionChip {
+  message: string;
+  action_type: 'send_message' | 'open_pill' | 'trigger_action';
+  action_target?: string | null;
+  chip_type: 'cta' | 'follow_up' | 'setting';
+  category: string;
+  icon?: string | null;
+}
+
 export type PlanDocumentData = {
   trip_context_id?: number | null;
   trip_inputs: DocumentTripInputs;
@@ -172,6 +182,7 @@ export type PlanDocumentData = {
   ready_to_generate?: boolean;
   suggested_responses?: string[];
   suggested_response_meta?: SuggestionChipMeta[];
+  suggestion_chips?: SuggestionChip[];
 
   // Change tracking for UI receipts (existing)
   applied_updates?: AppliedUpdateKey[];

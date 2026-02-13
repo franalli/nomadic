@@ -2,7 +2,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, Check, Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowUp, Check, Loader2, RotateCcw, SlidersHorizontal, Sparkles } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -42,6 +42,7 @@ import {
   type GraphPlanResponse,
   type HotelSettings,
   isBookingEnabled,
+  type SuggestionChip,
   type SuggestionChipMeta,
   type TransportSettings,
 } from '@/types/document';
@@ -503,6 +504,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
     const [suggestedResponseMeta, setSuggestedResponseMeta] = useState<SuggestionChipMeta[]>([]);
+    const [suggestionChips, setSuggestionChips] = useState<SuggestionChip[]>([]);
     // Mobile Setup header collapse state - triggers when scroll > 50px
     const [isSetupHeaderCollapsed, setIsSetupHeaderCollapsed] = useState(false);
     // Track last user message ID for ack updates
@@ -574,7 +576,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Compute effective suggestions: use backend suggestions if available
     const effectiveSuggestions = useMemo(() => {
       if (suggestedResponses.length === 0) {
-        console.log('[ChatPanel] 🏷️ effectiveSuggestions: empty (suggestedResponses=[])');
         return [];
       }
 
@@ -593,11 +594,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       // On desktop, filter out "Build Plan" chip since the right panel has that CTA
       // Keep one primary CTA at a time to avoid competing buttons
       if (isDesktop) {
-        const result = filtered.filter((s) => s.toLowerCase() !== 'build plan');
-        console.log('[ChatPanel] 🏷️ effectiveSuggestions (desktop):', result, 'isLoading:', 'checked at render');
-        return result;
+        return filtered.filter((s) => s.toLowerCase() !== 'build plan');
       }
-      console.log('[ChatPanel] 🏷️ effectiveSuggestions (mobile):', filtered);
       return filtered;
     }, [suggestedResponses, isDesktop]);
 
@@ -907,6 +905,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         }
         setSuggestedResponses([]); // Clear suggestions when user sends a message
         setSuggestedResponseMeta([]);
+        setSuggestionChips([]);
         setLastUserMessage(trimmed); // Tier 11.12: Track for retry capability
         setIsLoading(true);
         isSendingRef.current = true; // Set ref to prevent duplicate sends
@@ -1105,6 +1104,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               );
               setSuggestedResponses(doc.suggested_responses || []);
               setSuggestedResponseMeta(doc.suggested_response_meta || []);
+              setSuggestionChips(doc.suggestion_chips || []);
 
               // Origin update from chat (e.g., "from rome") is handled by backend
               // Backend routes through LogisticsNode to fetch flights automatically
@@ -1797,58 +1797,99 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           {isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
             <SmartLoader status={activeStatus} />
           )}
-          {/* Dynamic suggestions - from backend suggested responses */}
-          {/* DEBUG */ effectiveSuggestions.length > 0 && (console.log('[ChatPanel] 🏷️ Chips render gate: count=', effectiveSuggestions.length, 'isLoading=', isLoading), null)}
+          {/* Dynamic suggestions - structured chips with action routing (Stage 11B) */}
           {effectiveSuggestions.length > 0 && !isLoading && (
             <div
               key={`suggestions-container-${effectiveSuggestions.length}`}
               className="flex flex-wrap justify-center gap-2 pt-3 pb-1 px-2"
             >
-              {effectiveSuggestions.map((suggestion, idx) => {
-                // Metadata-driven CTA detection, with regex fallback for old responses
-                const meta = suggestedResponseMeta[idx];
-                const isCta = meta?.chip_type === 'cta';
-                const isPlanningTrigger = isCta || /\bplan\b/i.test(suggestion) || suggestion.toLowerCase().includes("let's plan");
+              {(() => {
+                // Prefer structured chips if available, fallback to legacy string array
+                const chips: SuggestionChip[] = suggestionChips.length > 0
+                  ? suggestionChips
+                  : effectiveSuggestions.map((text, i) => ({
+                      message: text,
+                      action_type: 'send_message' as const,
+                      action_target: null,
+                      chip_type: suggestedResponseMeta[i]?.chip_type || 'follow_up',
+                      category: suggestedResponseMeta[i]?.category || '',
+                      icon: suggestedResponseMeta[i]?.icon || null,
+                    }));
 
-                return (
-                  <button
-                    key={`sugg-${suggestion.slice(0, 20)}-${idx}`}
-                    type="button"
-                    onClick={() => {
-                      // Track suggestion click for analytics (fire-and-forget)
-                      trackSuggestionClick(suggestion, idx);
-                      // Pass suggestion_clicked to enable LQA echo in backend
-                      sendMessageCore(suggestion, { suggestionClicked: suggestion });
-                    }}
-                    className={cn(
-                      'px-4 py-2.5 rounded-lg',
-                      'text-xs font-bold uppercase tracking-wide',
-                      'transition-all duration-150 active:scale-95',
-                      'max-w-full truncate',
-                      // Planning trigger chips: emerald highlight to draw attention
-                      isPlanningTrigger ? [
-                        'bg-emerald-50 dark:bg-emerald-950/30',
-                        'border-2 border-emerald-500/40 dark:border-emerald-500/30',
-                        'text-emerald-700 dark:text-emerald-400',
-                        'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
-                        'hover:bg-emerald-100 hover:border-emerald-500 hover:shadow-md',
-                        'dark:hover:bg-emerald-900/40 dark:hover:border-emerald-400/50',
-                      ] : [
-                        // DS Tactile Rule: border-2 for visible buttons, snap-to-black hover
-                        'bg-white dark:bg-white/5',
-                        'border-2 border-zinc-200 dark:border-white/15',
-                        'text-zinc-600 dark:text-zinc-400',
-                        'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                        'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
-                      ]
-                    )}
-                  >
-                    {/* Sparkle icon for planning triggers */}
-                    {isPlanningTrigger && <Sparkles className="w-3 h-3 mr-1.5 inline-block" />}
-                    {suggestion}
-                  </button>
-                );
-              })}
+                return chips.map((chip, idx) => {
+                  const isCta = chip.chip_type === 'cta';
+                  const isPlanningTrigger = isCta || /\bplan\b/i.test(chip.message);
+                  const isSheetAction = chip.action_type === 'open_pill';
+
+                  // Action routing: open_pill -> sheet, send_message -> chat
+                  const handleChipClick = () => {
+                    trackSuggestionClick(chip.message, idx);
+
+                    if (chip.action_type === 'open_pill' && chip.action_target) {
+                      const sheetMap: Record<string, () => void> = {
+                        'dates': () => onOpenSheet?.('dates'),
+                        'origin': () => onOpenSheet?.('origin'),
+                        'destination': () => onOpenSheet?.('destination'),
+                        'travelers': () => onOpenSheet?.('travelers'),
+                        'budget': () => onOpenSheet?.('budget'),
+                        'flights': () => setFlightsSheetOpen(true),
+                        'stays': () => setStaysSheetOpen(true),
+                        'activities': () => setActivitiesSheetOpen(true),
+                      };
+
+                      const opener = sheetMap[chip.action_target];
+                      if (opener) {
+                        opener();
+                      } else {
+                        console.warn(`[ChatPanel] Unknown sheet target: ${chip.action_target}`);
+                        sendMessageCore(chip.message, { suggestionClicked: chip.message });
+                      }
+                    } else if (chip.action_type === 'trigger_action') {
+                      // Reserved for future actions (e.g., "Build itinerary")
+                      console.warn(`[ChatPanel] trigger_action not yet implemented`);
+                      sendMessageCore(chip.message, { suggestionClicked: chip.message });
+                    } else {
+                      sendMessageCore(chip.message, { suggestionClicked: chip.message });
+                    }
+                  };
+
+                  return (
+                    <button
+                      key={`sugg-${chip.message.slice(0, 20)}-${idx}`}
+                      type="button"
+                      onClick={handleChipClick}
+                      className={cn(
+                        'px-4 py-2.5 rounded-lg',
+                        'text-xs font-bold uppercase tracking-wide',
+                        'transition-all duration-150 active:scale-95',
+                        'max-w-full truncate',
+                        isPlanningTrigger ? [
+                          'bg-emerald-50 dark:bg-emerald-950/30',
+                          'border-2 border-emerald-500/40 dark:border-emerald-500/30',
+                          'text-emerald-700 dark:text-emerald-400',
+                          'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
+                          'hover:bg-emerald-100 hover:border-emerald-500 hover:shadow-md',
+                          'dark:hover:bg-emerald-900/40 dark:hover:border-emerald-400/50',
+                        ] : [
+                          'bg-white dark:bg-white/5',
+                          'border-2 border-zinc-200 dark:border-white/15',
+                          'text-zinc-600 dark:text-zinc-400',
+                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
+                          'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
+                        ]
+                      )}
+                    >
+                      {isSheetAction && (
+                        <SlidersHorizontal className="w-3 h-3 mr-1.5 inline-block" />
+                      )}
+                      {isPlanningTrigger && !isSheetAction && (
+                        <Sparkles className="w-3 h-3 mr-1.5 inline-block" />
+                      )}
+                      {chip.message}
+                    </button>
+                  );
+                });
+              })()}
             </div>
           )}
 

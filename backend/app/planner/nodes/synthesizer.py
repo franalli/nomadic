@@ -23,7 +23,7 @@ import logging
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 from jinja2 import Template
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -81,6 +81,28 @@ _HISTORY_DEPTH_BY_TYPE = {
     "exploration": 4,  # 2 turns (4 messages)
     "specialist_update": 4,  # 2 turns
     "planning": 8,  # 4 turns (full context)
+}
+
+
+# =============================================================================
+# Suggestion Chip Action Routing
+# =============================================================================
+
+# Maps suggestion categories to (action_type, action_target) for frontend routing.
+# Categories not in this map default to ("send_message", None).
+PILL_ACTION_MAP: Dict[str, tuple[str, Optional[str]]] = {
+    # Date chips -> open date picker
+    "date_prompt": ("open_pill", "dates"),
+    "date_contextual": ("open_pill", "dates"),
+    # Booking settings -> open respective sheets
+    "plan_hotel_stars": ("open_pill", "stays"),
+    "plan_hotel_pref": ("open_pill", "stays"),
+    "plan_flight_direct": ("open_pill", "flights"),
+    # Activities -> open activities sheet
+    "plan_activity_explore": ("open_pill", "activities"),
+    # Budget/Travelers -> open respective sheets
+    "plan_budget": ("open_pill", "budget"),
+    "plan_travelers": ("open_pill", "travelers"),
 }
 
 
@@ -703,6 +725,17 @@ def generate_suggestions(state: GraphState) -> List[str]:
         state.metadata["suggestion_chip_meta"] = [
             {"chip_type": "cta", "category": "budget_fix", "icon": "dollar-sign"}
         ] * len(result)
+        state.metadata["suggestion_chips"] = [
+            {
+                "message": text,
+                "action_type": "send_message",
+                "action_target": None,
+                "chip_type": "cta",
+                "category": "budget_fix",
+                "icon": "dollar-sign",
+            }
+            for text in result
+        ]
         return result
 
     # ── Step 1: Blocking violations (highest priority) ──
@@ -760,6 +793,17 @@ def generate_suggestions(state: GraphState) -> List[str]:
         state.metadata["suggestion_chip_meta"] = [
             {"chip_type": "cta", "category": "blocking_fix", "icon": "alert-triangle"}
         ] * len(result)
+        state.metadata["suggestion_chips"] = [
+            {
+                "message": text,
+                "action_type": "send_message",
+                "action_target": None,
+                "chip_type": "cta",
+                "category": "blocking_fix",
+                "icon": "alert-triangle",
+            }
+            for text in result
+        ]
         return result
 
     # ── Step 2: Route violations ──
@@ -769,10 +813,21 @@ def generate_suggestions(state: GraphState) -> List[str]:
         if prev_dest:
             result = [f"Back to {prev_dest}", "Different city", "Help me choose"]
         else:
-            result = ["Paris", "Tokyo", "Barcelona"]
+            result = ["Explore somewhere new", "Help me choose", "Show me options"]
         state.metadata["suggestion_chip_meta"] = [
-            {"chip_type": "follow_up", "category": "route_fix", "icon": "map-pin"}
+            {"chip_type": "cta", "category": "route_fix", "icon": "map-pin"}
         ] * len(result)
+        state.metadata["suggestion_chips"] = [
+            {
+                "message": text,
+                "action_type": "send_message",
+                "action_target": None,
+                "chip_type": "cta",
+                "category": "route_fix",
+                "icon": "map-pin",
+            }
+            for text in result
+        ]
         return result
 
     # ── Step 3: Assemble candidate pool ──
@@ -880,7 +935,25 @@ def generate_suggestions(state: GraphState) -> List[str]:
 
         meta_list.append({"chip_type": chip_type, "category": cat, "icon": icon})
 
+    # Build structured chips for frontend action routing
+    structured_chips = []
+    for i, c in enumerate(final):
+        cat = c.get("category", "")
+        text = result[i]
+        action_type, action_target = PILL_ACTION_MAP.get(cat, ("send_message", None))
+        structured_chips.append(
+            {
+                "message": text,
+                "action_type": action_type,
+                "action_target": action_target,
+                "chip_type": meta_list[i]["chip_type"],
+                "category": cat,
+                "icon": meta_list[i]["icon"],
+            }
+        )
+
     state.metadata["suggestion_chip_meta"] = meta_list
+    state.metadata["suggestion_chips"] = structured_chips
 
     # ── Step 7: Track shown question types for rotation ──
     shown_qtypes = [

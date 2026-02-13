@@ -74,8 +74,8 @@ backend/
 │   │   ├── nodes/              # LangGraph nodes (7-node structure)
 │   │   │   ├── __init__.py
 │   │   │   ├── constraint_guard.py         # Constraint validation
-│   │   │   ├── input_gate_config.py        # Input gate configuration
-│   │   │   ├── input_gates.py              # Pre-extraction input validation gates
+│   │   │   ├── input_gate_config.py        # Input gate threshold constants (dates, travelers, budget)
+│   │   │   ├── input_gates.py              # Pre-routing input validation (5 gates: Date, Duration, Traveler, Budget, Destination)
 │   │   │   ├── intent_router.py            # Intent classification (main orchestration)
 │   │   │   │   ├── router_extraction.py        # LLM extraction & field validation (Stage 9A)
 │   │   │   ├── router_category_sync.py     # Tier 2 detection & actionable input (Stage 9B)
@@ -177,6 +177,7 @@ backend/
 │   ├── test_experience_generator.py      # Experience generator tests
 │   ├── test_hash_ban.py                  # Hash ban tests
 │   ├── test_import_contract.py           # Import contract tests
+│   ├── test_input_gates.py              # Input gate validation tests (5 gates + registry)
 │   ├── test_itinerary_builder.py         # Itinerary builder tests
 │   ├── test_llm_feasibility.py           # LLM geographic feasibility tests
 │   ├── test_multi_specialist_integration.py  # Multi-specialist tests
