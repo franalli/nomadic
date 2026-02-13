@@ -81,7 +81,9 @@ export type BookingTypeState = 'off' | 'suggested' | 'on';
  * Check if a booking type state is enabled (suggested or on).
  * Handles legacy boolean values during migration.
  */
-export function isBookingEnabled(state: BookingTypeState | boolean | undefined | null): boolean {
+export function isBookingEnabled(
+  state: BookingTypeState | boolean | undefined | null
+): boolean {
   if (state === null || state === undefined) {
     return false;
   }
