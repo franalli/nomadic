@@ -663,7 +663,18 @@ class TripArchitect:
             # We have tiles to show
             for category, tiles in state.tiles.items():
                 if tiles:
-                    response_parts.append(f"I found {len(tiles)} {category} options for you.")
+                    count = len(tiles)
+                    # Singularize: "hotels"→"hotel", "activities"→"activity"
+                    if count == 1:
+                        if category.endswith("ies"):
+                            label = category[:-3] + "y"
+                        elif category.endswith("s"):
+                            label = category[:-1]
+                        else:
+                            label = category
+                    else:
+                        label = category
+                    response_parts.append(f"I found {count} {label} options for you.")
 
         if plan.itinerary_blocks:
             # We have itinerary content from Specialist
