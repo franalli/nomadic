@@ -1498,7 +1498,7 @@ def _apply_settings_to_state(state: GraphState, detected_settings: dict, clog) -
     if "flight_settings" in detected_settings:
         fs = detected_settings["flight_settings"]
         if fs.get("direct_only") is not None:
-            ext["flights_toggle"] = True
+            ext["flights_toggle"] = "on"
             ext["flight_direct_only"] = fs["direct_only"]
         if "cabin_class" in fs:
             ext["flight_cabin_class"] = fs["cabin_class"]

@@ -405,6 +405,8 @@ def apply_user_patch_sync(
     is updated to reflect the new values so UI displays updated destinations.
     """
     data = get_document_data(doc)
+    prev_start_date = data.trip_inputs.start_date
+    prev_end_date = data.trip_inputs.end_date
 
     # Detect fields explicitly set to null (user clicked X on field badge)
     explicit_nulls: set[str] = set()
@@ -420,6 +422,9 @@ def apply_user_patch_sync(
         patch.trip_inputs,
         replace_destinations=True,
         explicit_nulls=explicit_nulls if explicit_nulls else None,
+    )
+    dates_changed = (
+        prev_start_date != data.trip_inputs.start_date or prev_end_date != data.trip_inputs.end_date
     )
 
     # Merge branches
@@ -473,6 +478,14 @@ def apply_user_patch_sync(
             if _field_was_provided("currency"):
                 primary.currency = data.trip_inputs.currency
             data.branches[primary_idx] = primary
+
+    # Invariant: day_cards are derived from current dates; clear stale cards on date edits.
+    if dates_changed and data.day_cards:
+        _debug(
+            "apply_user_patch_sync: dates changed, clearing stale day_cards "
+            f"({len(data.day_cards)})"
+        )
+        data.day_cards = []
 
     return save_document_data_sync(db, doc=doc, data=data, updated_by="user")
 
@@ -490,6 +503,8 @@ async def apply_user_patch(
     is updated to reflect the new values so UI displays updated destinations.
     """
     data = get_document_data(doc)
+    prev_start_date = data.trip_inputs.start_date
+    prev_end_date = data.trip_inputs.end_date
 
     # Detect fields explicitly set to null (user clicked X on field badge)
     explicit_nulls: set[str] = set()
@@ -505,6 +520,9 @@ async def apply_user_patch(
         patch.trip_inputs,
         replace_destinations=True,
         explicit_nulls=explicit_nulls if explicit_nulls else None,
+    )
+    dates_changed = (
+        prev_start_date != data.trip_inputs.start_date or prev_end_date != data.trip_inputs.end_date
     )
 
     # Merge branches
@@ -558,6 +576,11 @@ async def apply_user_patch(
             if _field_was_provided("currency"):
                 primary.currency = data.trip_inputs.currency
             data.branches[primary_idx] = primary
+
+    # Invariant: day_cards are derived from current dates; clear stale cards on date edits.
+    if dates_changed and data.day_cards:
+        _debug(f"apply_user_patch: dates changed, clearing stale day_cards ({len(data.day_cards)})")
+        data.day_cards = []
 
     # Update preferences (heart-selected tiles) if provided
     if patch.preferred_tile_ids is not None:
@@ -599,6 +622,8 @@ async def apply_planner_update(
     # categories set via PATCH would be clobbered by the stale base doc.
     await db.refresh(doc)
     data = get_document_data(doc)
+    prev_start_date = data.trip_inputs.start_date
+    prev_end_date = data.trip_inputs.end_date
 
     # Update trip context
     data.trip_context_id = trip_context_id
@@ -635,6 +660,9 @@ async def apply_planner_update(
         data.trip_inputs,
         cleaned_inputs,
         replace_destinations=True,
+    )
+    dates_changed = (
+        prev_start_date != data.trip_inputs.start_date or prev_end_date != data.trip_inputs.end_date
     )
 
     # Deep-merge NL-extracted settings into the document's user-owned fields.
@@ -704,6 +732,15 @@ async def apply_planner_update(
     if tiles is not None:
         data.tiles = merge_tiles(data.tiles, tiles)
 
+    # If dates changed but planner did not provide rebuilt day_cards this turn,
+    # drop stale itinerary cards to keep date/day-card state consistent.
+    if dates_changed and day_cards is None and data.day_cards:
+        _debug(
+            "apply_planner_update: dates changed without new day_cards, "
+            f"clearing stale day_cards ({len(data.day_cards)})"
+        )
+        data.day_cards = []
+
     # Persist viewModel fields for session restoration on refresh
     if plan_view_state is not None:
         data.plan_view_state = plan_view_state
@@ -744,6 +781,8 @@ def apply_planner_update_sync(
     """
     db.refresh(doc)
     data = get_document_data(doc)
+    prev_start_date = data.trip_inputs.start_date
+    prev_end_date = data.trip_inputs.end_date
 
     # Update trip context
     data.trip_context_id = trip_context_id
@@ -775,6 +814,9 @@ def apply_planner_update_sync(
         data.trip_inputs,
         cleaned_inputs,
         replace_destinations=True,
+    )
+    dates_changed = (
+        prev_start_date != data.trip_inputs.start_date or prev_end_date != data.trip_inputs.end_date
     )
 
     # Title-case destination for consistent display
@@ -813,6 +855,15 @@ def apply_planner_update_sync(
     # Merge tiles - only if provided
     if tiles is not None:
         data.tiles = merge_tiles(data.tiles, tiles)
+
+    # If dates changed but planner did not provide rebuilt day_cards this turn,
+    # drop stale itinerary cards to keep date/day-card state consistent.
+    if dates_changed and day_cards is None and data.day_cards:
+        _debug(
+            "apply_planner_update_sync: dates changed without new day_cards, "
+            f"clearing stale day_cards ({len(data.day_cards)})"
+        )
+        data.day_cards = []
 
     # Persist viewModel fields for session restoration on refresh
     if plan_view_state is not None:

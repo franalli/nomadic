@@ -1230,10 +1230,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const hasGraphSentCards = graphSentCards && graphSentCards.length > 0;
     const finalDayCards = hasGraphSentCards
       ? graphSentCards
-      : (currentDayCards ?? []);
+      : (datesChanged ? [] : (currentDayCards ?? []));
 
     if (hasGraphSentCards) {
       console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: FROM GRAPH (${graphSentCards.length} cards)`);
+    } else if (datesChanged) {
+      console.log('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (dates changed, no graph cards)');
     } else if (hasDayCards) {
       console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (no graph cards, keeping ${currentDayCards.length} existing)`);
     }
@@ -1450,7 +1452,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // ============================================================
-    // DAY CARDS PRESERVE (only clear on destination change)
+    // DAY CARDS PRESERVE (clear on destination/date change)
     // ============================================================
     let dayCardsToMerge: DayCard[] | undefined;
 
@@ -1458,10 +1460,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // If day_cards explicitly provided, use them
       dayCardsToMerge = envelope.day_cards;
       console.log(`[documentStore.mergeEnvelope] 📅 Day Cards: ${envelope.day_cards.length} cards provided`);
-    } else if (destinationChanged) {
-      // Destination changed: CLEAR day_cards
+    } else if (destinationChanged || datesChanged) {
+      // Destination/date changed: CLEAR day_cards
       dayCardsToMerge = [];
-      console.log('[documentStore.mergeEnvelope] 📅 Day Cards: CLEARED (destination changed)');
+      console.log(
+        `[documentStore.mergeEnvelope] 📅 Day Cards: CLEARED (${destinationChanged ? 'destination changed' : 'dates changed'})`
+      );
     } else if (hasDayCards) {
       // Preserve existing day_cards when itinerary exists
       dayCardsToMerge = currentDayCards;

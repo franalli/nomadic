@@ -182,6 +182,7 @@ backend/
 │   ├── test_hash_ban.py                  # Hash ban tests
 │   ├── test_import_contract.py           # Import contract tests
 │   ├── test_input_gates.py              # Input gate validation tests (5 gates + registry)
+│   ├── test_intent_router_settings.py    # IntentRouter extracted settings contract tests
 │   ├── test_itinerary_builder.py         # Itinerary builder tests
 │   ├── test_llm_feasibility.py           # LLM geographic feasibility tests
 │   ├── test_multi_specialist_integration.py  # Multi-specialist tests
@@ -382,6 +383,7 @@ frontend/
 │   ├── debug.ts                # Debug/logging utilities
 │   ├── design-system.ts        # Design system tokens
 │   ├── destination-coords.ts   # Destination coordinate lookup (~90 destinations)
+│   ├── fillDayGuards.ts        # Fill-day client cooldown guard helpers
 │   ├── format-utils.ts         # Formatting utilities
 │   ├── ghost-timeline-adapter.ts
 │   ├── loaderConfig.ts         # Loader configuration
@@ -425,8 +427,10 @@ frontend/
 │
 ├── __tests__/                  # Frontend tests
 │   ├── anti-fragmentation.test.tsx
+│   ├── chat-suggestion-actions.test.ts
 │   ├── constraint-states.test.tsx
 │   ├── documentStore.test.ts
+│   ├── fill-day-guards.test.ts
 │   ├── plan-copy.test.tsx
 │   └── streaming.test.ts
 │

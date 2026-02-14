@@ -174,6 +174,71 @@ function getErrorMessage(error: Error): string {
   return "An issue occurred. Try again or adjust the message.";
 }
 
+const MESSAGE_BURST_COOLDOWN_MS = 1000;
+const GENERATE_BURST_COOLDOWN_MS = 3000;
+
+type SendBurstGuardParams = {
+  isGenerateTrigger: boolean;
+  isLoading: boolean;
+  now: number;
+  lastMessageSentAt: number;
+  lastGenerateClickedAt: number;
+};
+
+export function getSendBurstGuardReason(params: SendBurstGuardParams): string | null {
+  const {
+    isGenerateTrigger,
+    isLoading,
+    now,
+    lastMessageSentAt,
+    lastGenerateClickedAt,
+  } = params;
+  if (isGenerateTrigger) {
+    if (isLoading) return 'Plan generation already in progress';
+    if (now - lastGenerateClickedAt < GENERATE_BURST_COOLDOWN_MS) {
+      return 'Please wait a moment before generating again';
+    }
+    return null;
+  }
+  if (isLoading) return 'loading';
+  if (now - lastMessageSentAt < MESSAGE_BURST_COOLDOWN_MS) {
+    return "You're sending too quickly";
+  }
+  return null;
+}
+
+type SuggestionTriggerActionParams = {
+  actionTarget?: string | null;
+  bookingTypes?: BookingTypes;
+  onUpdateFlightSettings?: (settings: Partial<FlightSettings>) => void;
+  onUpdateBookingTypes?: (settings: Partial<BookingTypes>) => void;
+  ensureSettingsFlushed?: () => Promise<void>;
+  toast?: (message: string) => void;
+};
+
+export function handleSuggestionTriggerAction(params: SuggestionTriggerActionParams): boolean {
+  const {
+    actionTarget,
+    bookingTypes,
+    onUpdateFlightSettings,
+    onUpdateBookingTypes,
+    ensureSettingsFlushed,
+    toast,
+  } = params;
+
+  if (actionTarget !== 'set_direct_flights_only') {
+    return false;
+  }
+
+  onUpdateFlightSettings?.({ direct_only: true });
+  if (bookingTypes?.flights === 'off') {
+    onUpdateBookingTypes?.({ flights: 'on' });
+  }
+  void ensureSettingsFlushed?.();
+  toast?.('Direct flights only enabled');
+  return true;
+}
+
 // Tier 11.12: Check if an error message is retryable (transient network/server issues)
 function isRetryableError(content: string): boolean {
   const retryablePatterns = [
@@ -558,6 +623,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const abortStreamRef = useRef<(() => void) | null>(null);
     // SYNC GUARD: Prevent duplicate message sends (React StrictMode safe)
     const isSendingRef = useRef(false);
+    const lastMessageSentAtRef = useRef(0);
+    const lastGenerateClickedAtRef = useRef(0);
     // Track previous specialist types and tile types for structural change detection
     // IMPORTANT: Use specialist_type (not title) for consistent comparison
     const prevSpecialistTypesRef = useRef<Set<string>>(new Set());
@@ -807,6 +874,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const sendMessageCore = useCallback(
       async (messageText: string, options?: { suggestionClicked?: string }) => {
         const trimmed = messageText.trim();
+        if (!trimmed) {
+          console.log('[ChatPanel] ⏭️ Skipping - empty message');
+          return;
+        }
 
         // SYNC GUARD: Prevent duplicate sends (React StrictMode safe)
         if (isSendingRef.current) {
@@ -827,6 +898,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         // Check for generate trigger FIRST (before isLoading guard)
         const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER || trimmed.toLowerCase() === 'build plan';
+        const now = Date.now();
 
         // DEBUG: Log all sendMessage calls
         console.log('[ChatPanel] sendMessageCore called', {
@@ -836,19 +908,29 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           destination: useDocumentStore.getState().document?.trip_inputs?.destination,
         });
 
-        // For regeneration triggers, we MUST process even if currently loading
-        // This allows REFRESH to interrupt ongoing operations
-        if (isGenerateTrigger && isLoading) {
-          console.log('[ChatPanel] ⚠️ Forcing regeneration trigger despite isLoading=true');
-          // Abort any ongoing stream before starting new one
-          if (abortStreamRef.current) {
-            console.log('[ChatPanel] 🛑 Aborting previous stream');
-            abortStreamRef.current();
-            abortStreamRef.current = null;
+        const guardReason = getSendBurstGuardReason({
+          isGenerateTrigger,
+          isLoading,
+          now,
+          lastMessageSentAt: lastMessageSentAtRef.current,
+          lastGenerateClickedAt: lastGenerateClickedAtRef.current,
+        });
+        if (guardReason) {
+          if (guardReason !== 'loading') {
+            toast(guardReason);
+          } else {
+            console.log('[ChatPanel] ⏭️ Skipping - loading');
           }
-          // Don't return - let it through
-        } else if (!trimmed || isLoading) {
-          console.log('[ChatPanel] ⏭️ Skipping - empty or loading');
+          return;
+        }
+        if (isGenerateTrigger) {
+          lastGenerateClickedAtRef.current = now;
+        } else {
+          lastMessageSentAtRef.current = now;
+        }
+
+        if (isLoading) {
+          console.log('[ChatPanel] ⏭️ Skipping - loading');
           return;
         }
 
@@ -1352,7 +1434,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           });
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, onUserMessageSubmit, onAutoExpandItinerary]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, onUserMessageSubmit, onAutoExpandItinerary, toast]
     );
 
     const addAssistantMessage = useCallback((message: string) => {
@@ -1801,9 +1883,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                         sendMessageCore(chip.message, { suggestionClicked: chip.message });
                       }
                     } else if (chip.action_type === 'trigger_action') {
-                      // Reserved for future actions (e.g., "Build itinerary")
-                      console.warn(`[ChatPanel] trigger_action not yet implemented`);
-                      sendMessageCore(chip.message, { suggestionClicked: chip.message });
+                      const handled = handleSuggestionTriggerAction({
+                        actionTarget: chip.action_target,
+                        bookingTypes,
+                        onUpdateFlightSettings,
+                        onUpdateBookingTypes,
+                        ensureSettingsFlushed: () => useDocumentStore.getState().ensureSettingsFlushed(),
+                        toast,
+                      });
+                      if (!handled) {
+                        console.warn(`[ChatPanel] Unknown trigger_action target: ${chip.action_target}`);
+                        sendMessageCore(chip.message, { suggestionClicked: chip.message });
+                      }
                     } else {
                       sendMessageCore(chip.message, { suggestionClicked: chip.message });
                     }

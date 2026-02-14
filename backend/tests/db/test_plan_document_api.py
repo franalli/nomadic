@@ -5,6 +5,8 @@ Tests document creation, retrieval, patching, and session deletion.
 
 import os
 import sys
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -20,6 +22,7 @@ if str(BACKEND_DIR) not in sys.path:
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 import app.db_models as models  # noqa: E402  pylint: disable=C0413
+import app.main as main_module  # noqa: E402  pylint: disable=C0413
 from app.db import Base, get_async_db, get_db  # noqa: E402  pylint: disable=C0413
 from app.main import app  # noqa: E402  pylint: disable=C0413
 
@@ -190,6 +193,30 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
         }
 
 
+def set_document_fields(
+    session_token: str,
+    *,
+    trip_inputs: dict | None = None,
+    day_cards: list[dict] | None = None,
+) -> None:
+    """Update selected plan document fields for a seeded session."""
+    with TestingSessionLocal() as db:
+        session = (
+            db.query(models.Session).filter(models.Session.session_token == session_token).one()
+        )
+        doc = (
+            db.query(models.PlanDocument).filter(models.PlanDocument.session_id == session.id).one()
+        )
+        payload = dict(doc.document or {})
+        if trip_inputs is not None:
+            payload["trip_inputs"] = trip_inputs
+        if day_cards is not None:
+            payload["day_cards"] = day_cards
+        doc.document = payload
+        db.add(doc)
+        db.commit()
+
+
 app.dependency_overrides[get_async_db] = override_get_async_db
 app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
@@ -304,6 +331,154 @@ def test_patch_document_updates_selections():
     # Check that selections were updated
     branch_1 = next(b for b in payload["document"]["branches"] if b["id"] == "branch_1")
     assert branch_1["selections"]["stay"] == "tile_1"
+
+
+def test_patch_date_change_clears_stale_day_cards():
+    """Date edits should invalidate derived day_cards."""
+    seed = seed_session_with_document(session_token="session-date-clears-daycards")
+    day_cards = [{"day_number": 1, "label": "Day 1", "blocks": []}]
+    set_document_fields(seed["session_token"], day_cards=day_cards)
+
+    patch = {
+        "version": 1,
+        "trip_inputs": {
+            "start_date": "2025-12-03",
+        },
+    }
+    response = client.patch(
+        "/api/document",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json=patch,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["document"]["day_cards"] == []
+
+
+def test_patch_non_date_change_preserves_day_cards():
+    """Non-date edits should keep existing day_cards."""
+    seed = seed_session_with_document(session_token="session-nondates-keep-daycards")
+    day_cards = [{"day_number": 1, "label": "Day 1", "blocks": []}]
+    set_document_fields(seed["session_token"], day_cards=day_cards)
+
+    patch = {
+        "version": 1,
+        "trip_inputs": {
+            "budget": 3500,
+        },
+    }
+    response = client.patch(
+        "/api/document",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json=patch,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["document"]["day_cards"]) == 1
+    assert payload["document"]["day_cards"][0]["day_number"] == 1
+
+
+def test_fill_day_uses_effective_total_days_from_cards_and_trip_inputs():
+    """
+    Fill-day no-fly checks should use the later/effective departure day when
+    trip_inputs and day_cards disagree.
+    """
+    seed = seed_session_with_document(session_token="session-fill-day-effective-span")
+    trip_inputs = {
+        "destination": "Nice",
+        "origin": "London",
+        "start_date": "2025-12-01",
+        "end_date": "2025-12-07",  # 7-day span
+        "adults": 2,
+        "children": 0,
+        "requires_assistance": False,
+        "budget": 2000,
+        "currency": "USD",
+        "missing_fields": [],
+        "booking_types": {"hotels": "suggested", "flights": "suggested", "activities": "suggested"},
+        "flight_settings": {"round_trip": True, "cabin_class": "economy", "direct_only": False},
+        "hotel_settings": {"min_stars": 0, "amenities": []},
+        "activity_settings": {"categories": ["diving"], "skill_level": None},
+        "transport_settings": {"car": False, "train": False, "bus": False},
+        "date_flex": False,
+        "trip_duration": None,
+        "date_window_start": None,
+        "date_window_end": None,
+    }
+    day_cards = [{"day_number": i, "label": f"Day {i}", "blocks": []} for i in range(1, 10)]
+    day_cards[-1]["blocks"] = [
+        {
+            "period": "evening",
+            "activity_type": "Departure",
+            "summary": "Fly home",
+            "is_buffer": True,
+            "buffer_type": "departure",
+        }
+    ]
+    set_document_fields(seed["session_token"], trip_inputs=trip_inputs, day_cards=day_cards)
+
+    # With 7-day trip span this would be rejected; with 9-day card span it should pass.
+    response = client.post(
+        "/api/document/fill-day",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json={"day_number": 7, "categories": ["diving"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload.get("rejected") is not True
+
+
+def test_fill_day_queues_behind_active_stream():
+    """fill-day should wait for active graph stream work instead of rejecting."""
+    seed = seed_session_with_document(session_token="session-fill-day-queue")
+    day_cards = [{"day_number": 1, "label": "Day 1", "blocks": []}]
+    set_document_fields(seed["session_token"], day_cards=day_cards)
+
+    session_key = f"session:{seed['session_token']}"
+    ip_key = "ip:test-fill-day-queue"
+    acquired = main_module._try_acquire_sse_slot(session_key, ip_key)
+    assert acquired is None
+
+    result: dict[str, object] = {}
+    started = threading.Event()
+    started_at = time.perf_counter()
+
+    def _call_fill_day() -> None:
+        started.set()
+        with TestClient(app) as local_client:
+            response = local_client.post(
+                "/api/document/fill-day",
+                cookies=get_session_cookies(seed["session_token"]),
+                headers=get_csrf_headers(),
+                json={"day_number": 1, "pinned_tile_ids": ["tile_1"]},
+            )
+        result["response"] = response
+        result["elapsed"] = time.perf_counter() - started_at
+
+    worker = threading.Thread(target=_call_fill_day, daemon=True)
+    worker.start()
+    assert started.wait(timeout=1), "fill-day worker did not start"
+
+    # Confirm request remains queued while the stream slot is occupied.
+    time.sleep(0.15)
+    assert worker.is_alive()
+
+    main_module._release_sse_slot(session_key, ip_key)
+
+    worker.join(timeout=3)
+    assert not worker.is_alive(), "fill-day did not resume after stream release"
+
+    response = result.get("response")
+    assert response is not None
+    assert response.status_code == 200
+    assert isinstance(result.get("elapsed"), float)
+    assert result["elapsed"] >= 0.15
 
 
 def test_session_delete_wipes_document():

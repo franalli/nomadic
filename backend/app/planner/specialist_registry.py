@@ -766,6 +766,36 @@ def validate_fill_day_placement(
                 ),
             )
 
+    def _text_or_empty(value: object) -> str:
+        return value.strip().lower() if isinstance(value, str) else ""
+
+    def _is_reliably_diving_block(block: object) -> bool:
+        """Best-effort guard against mis-labeled generic blocks as `diving`."""
+        activity_type = _text_or_empty(getattr(block, "activity_type", None))
+        summary = _text_or_empty(getattr(block, "summary", None))
+        if not activity_type and not summary:
+            # Legacy/mock blocks often only carry specialist_type.
+            return True
+
+        text_blob = f"{activity_type} {summary}"
+        diving_markers = ("dive", "diving", "scuba", "snorkel", "freedive", "wreck")
+        if any(marker in text_blob for marker in diving_markers):
+            return True
+
+        constraints = getattr(block, "constraints", None) or []
+        for item in constraints:
+            if isinstance(item, str):
+                if canonicalize_rule(item) in ("surface_interval", "min_24h_buffer_after_dive"):
+                    return True
+            elif isinstance(item, dict):
+                rule = item.get("id") or item.get("rule")
+                if isinstance(rule, str) and canonicalize_rule(rule) in (
+                    "surface_interval",
+                    "min_24h_buffer_after_dive",
+                ):
+                    return True
+        return False
+
     # ── Collect specialist types on adjacent days ─────────────────────
     adjacent_specialists: set[str] = set()
     for dc in day_cards:
@@ -773,6 +803,8 @@ def validate_fill_day_placement(
             for block in dc.blocks:
                 st = (getattr(block, "specialist_type", None) or "").lower()
                 if st:
+                    if st == "diving" and not _is_reliably_diving_block(block):
+                        continue
                     adjacent_specialists.add(st)
 
     # ── Check 2: Cross-domain forward ─────────────────────────────────

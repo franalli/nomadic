@@ -1262,7 +1262,7 @@ The frontend uses metadata for CTA styling (emerald accent) with regex fallback 
 Metadata is stored on `state.metadata["suggestion_chip_meta"]` during generation and passed through
 `response_envelope.py` as `suggested_response_meta`.
 
-**Structured Chips (`suggestion_chips`):** A parallel `SuggestionChip[]` array with action routing. Each chip includes `action_type` (`"send_message"` | `"open_pill"` | `"trigger_action"`) and `action_target` (e.g., `"dates"`, `"budget"`, `"travelers"`). The `PILL_ACTION_MAP` in `synthesizer.py` maps chip categories to actions: date chips open the date picker, booking chips open their respective sheets. Frontend `ChatPanel` reads `suggestion_chips` for action routing when available, falling back to `suggested_responses` + `suggested_response_meta` for backward compatibility.
+**Structured Chips (`suggestion_chips`):** A parallel `SuggestionChip[]` array with action routing. Each chip includes `action_type` (`"send_message"` | `"open_pill"` | `"trigger_action"`) and `action_target` (e.g., `"dates"`, `"budget"`, `"travelers"`). The `PILL_ACTION_MAP` in `synthesizer.py` maps chip categories to actions: date chips open the date picker, booking chips open their respective sheets, and direct-flight preference chips can trigger `set_direct_flights_only` without sending chat text. Frontend `ChatPanel` reads `suggestion_chips` for action routing when available, falling back to `suggested_responses` + `suggested_response_meta` for backward compatibility.
 
 | State | Example Chips |
 |-------|---------------|
@@ -1677,6 +1677,7 @@ useSessionHydration() runs
 | `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
 | `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack/StrategyHero) |
 | `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts` |
+| `ChatPanel` | Chat orchestration for SSE runs and suggestion chips. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown) and handles `trigger_action` chips (e.g., direct flights only) |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available |
@@ -2659,7 +2660,7 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
 | Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker. Buffer blocks (SafetyBlock) render above FreeDayCard when present | Quick-fill with generated activities or browse |
 
-**Fill-Day Flow:** FreeDayCard → `fillDay()` API call → backend generates 1 tile via `generate_experience_tiles_for_day(tiles_per_day=1)` → response includes `day_card` + `tiles` map → frontend calls `replaceDayCard()` for surgical day card update + merges tiles into document store (enables hearting/referencing). Generated tiles are tagged with `meta.pinned_day` so the builder won't redistribute them on rebuild. Backend applies adjacent-day constraint filtering (e.g., no altitude activities next to diving days). Categories are optional — when omitted, the generator picks destination-appropriate activities. **Concurrency:** Per-day mutex (`claimFillDay`/`releaseFillDay` in documentStore) prevents concurrent fill-day calls on the same day. `fillDay()` in api.ts syncs the document version from the response (`useDocumentStore.setState({ version })`) to prevent 409 cascades.
+**Fill-Day Flow:** FreeDayCard → `fillDay()` API call → backend generates 1 tile via `generate_experience_tiles_for_day(tiles_per_day=1)` → response includes `day_card` + `tiles` map → frontend calls `replaceDayCard()` for surgical day card update + merges tiles into document store (enables hearting/referencing). Generated tiles are tagged with `meta.pinned_day` so the builder won't redistribute them on rebuild. Backend applies adjacent-day constraint filtering (e.g., no altitude activities next to diving days). Categories are optional — when omitted, the generator picks destination-appropriate activities. **Concurrency:** Per-day mutex (`claimFillDay`/`releaseFillDay` in documentStore) prevents concurrent fill-day calls on the same day, and frontend burst guards throttle repeat calls (1.5s cooldown via `fillDayGuards.ts`) in both timeline and browse-to-pin paths. `fillDay()` in api.ts syncs the document version from the response (`useDocumentStore.setState({ version })`) to prevent 409 cascades and preserves backend `detail` text for surfaced 429/rejection toasts.
 
 **Browse → Pin Flow:** FreeDayCard "Browse" opens `BookingDrawer` with `pinnedDayNumber` set to the day number. When the user clicks "Add to Day N" on a tile, `handleSaveTile` in StrategyStageRenderer calls `fillDay(dayNumber, undefined, [tileId])` — the backend places the existing tile on the target day via `pinned_tile_ids` (no LLM generation). Pinned tiles are persisted to `document_data.user_pinned_tiles` for rebuild survival — the builder's Phase 5.6 Pass 0 places them on their target day, and `itinerary_adapter.py` re-injects them into the tile pool during graph-built itinerary. If `pinnedDayNumber` is null (drawer opened from elsewhere), the default path fires: `toggleTilePreference` (idempotent — only if not already preferred) which triggers `usePreferenceAutoRegen`.
 
@@ -2924,7 +2925,7 @@ useCartTileIds(): Set<string>
 
 **Destination Lock:** Once a destination is set, `setFromPlanResponse()` and `mergeEnvelope()` both block LLM-initiated destination changes (case-insensitive comparison). The incoming destination is silently replaced with the current value. Only `updateTripInputs()` (user-explicit action via chips/sheets) can change the destination, and doing so clears `preferredTileIds`.
 
-When a destination change does occur (via `updateTripInputs` + subsequent graph run), stale content must be cleared. This is handled in TWO code paths in `documentStore.ts`:
+When a destination or date change does occur (via `updateTripInputs` + subsequent graph run), stale content must be cleared. This is handled in TWO code paths in `documentStore.ts`:
 
 **1. `mergeEnvelope()` - Streaming updates from SSE:**
 ```typescript
@@ -2932,8 +2933,9 @@ When a destination change does occur (via `updateTripInputs` + subsequent graph 
 const prevDest = currentDoc.trip_inputs?.destination?.toLowerCase().trim();
 const newDest = envelope.trip_inputs?.destination?.toLowerCase().trim();
 const destinationChanged = prevDest && newDest && prevDest !== newDest;
+const datesChanged = prevStartDate !== newStartDate || prevEndDate !== newEndDate;
 
-if (destinationChanged) {
+if (destinationChanged || datesChanged) {
   console.log(`[mergeEnvelope] 🌍 Destination changed: "${prevDest}" → "${newDest}"`);
   // Clear chat messages
   useChatStore.getState().resetChat();
@@ -2941,7 +2943,7 @@ if (destinationChanged) {
   tilesToMerge = envelope.tiles;
   // Strategy sections: REPLACE (not merge)
   sectionsToMerge = envelope.strategy_sections;
-  // Day cards: CLEAR (if not in envelope)
+  // Day cards: CLEAR when destination/date changed and no fresh cards provided
   dayCardsToMerge = envelope.day_cards ?? [];
 }
 ```
@@ -2972,19 +2974,19 @@ const mergedTiles = shouldReplace
   ? response.document.tiles
   : { ...currentDoc?.tiles, ...response.document.tiles };
 
-// Day cards: graph-sent cards always win; preserve existing when graph sent nothing
+// Day cards: graph-sent cards always win; clear stale cards on date change
 const graphSentCards = response.document.day_cards;
 const hasGraphSentCards = graphSentCards && graphSentCards.length > 0;
 const finalDayCards = hasGraphSentCards
   ? graphSentCards
-  : (currentDayCards ?? []);
+  : (datesChanged ? [] : (currentDayCards ?? []));
 ```
 
 **View State Downgrade Protection:**
 Backend may return S2 for benign reasons (e.g., "from rome" only runs LogisticsNode). Previously this cleared day_cards. Now the frontend blocks S3→S2 downgrade when itinerary exists:
 - `S3 → S2` with day_cards → **Blocked** (itinerary preserved)
 - `S3 → S0` (RESET) → **Allowed** (user explicit intent)
-- Destination change → **Tiles replaced**, day_cards cleared (clean slate)
+- Destination/date change → **Tiles replaced**, day_cards cleared (clean slate)
 
 **View State Upward Reconciliation (fetchDocument):**
 On page refresh, `fetchDocument()` applies upward reconciliation to repair stale persisted state. If the data in the document contradicts the stored `plan_view_state`, it promotes:
@@ -3025,6 +3027,7 @@ This prevents the cascade: expand-itinerary → markPreferencesAsApplied → pre
 [documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (destination changed)
 [documentStore.mergeEnvelope] 📝 Strategy: REPLACED (destination changed)
 [documentStore.mergeEnvelope] 📅 Day Cards: CLEARED (destination changed)
+[documentStore.mergeEnvelope] 📅 Day Cards: CLEARED (dates changed)
 ```
 
 #### F. BookingSection Mode Awareness

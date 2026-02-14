@@ -219,6 +219,58 @@ describe('mergeEnvelope', () => {
 
     expect(useDocumentStore.getState().document!.trip_inputs.destination).toBe('Lisbon');
   });
+
+  it('clears day_cards when dates change and envelope has no day_cards', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: {
+          ...DEFAULT_TRIP_INPUTS,
+          destination: 'Lisbon',
+          start_date: '2026-02-01',
+          end_date: '2026-02-07',
+        },
+        day_cards: [makeDayCard(1), makeDayCard(2)],
+      }),
+    });
+
+    useDocumentStore.getState().mergeEnvelope({
+      trip_inputs: {
+        start_date: '2026-02-01',
+        end_date: '2026-02-10',
+      },
+    });
+
+    expect(useDocumentStore.getState().document!.day_cards).toEqual([]);
+  });
+});
+
+describe('setFromPlanResponse', () => {
+  it('clears day_cards when dates change and graph returns no day_cards', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: {
+          ...DEFAULT_TRIP_INPUTS,
+          destination: 'Lisbon',
+          start_date: '2026-02-01',
+          end_date: '2026-02-07',
+        },
+        day_cards: [makeDayCard(1), makeDayCard(2)],
+      }),
+    });
+
+    const response = makePatchResponse(2, {
+      trip_inputs: {
+        ...DEFAULT_TRIP_INPUTS,
+        destination: 'Lisbon',
+        start_date: '2026-02-01',
+        end_date: '2026-02-10',
+      },
+    });
+
+    useDocumentStore.getState().setFromPlanResponse(response);
+
+    expect(useDocumentStore.getState().document!.day_cards).toEqual([]);
+  });
 });
 
 // ==========================================================================

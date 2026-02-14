@@ -6,7 +6,7 @@
 
 - **Focus:** Stages 10-13
 - **Secondary:** fix all P0/P1/P2 bugs
-- **Active work:** Centralized provider-agnostic model routing with new `backend/app/planner/llm_factory.py`, migrated planner nodes/IATA resolver/validation/experience generation to settings-driven model selection, hardened Router extraction on `parsed=None`, and upgraded Synthesizer prompt+Gemini handling with new contract tests.
+- **Active work:** Hardened date/day-card consistency across backend+frontend (clear stale itinerary cards on date edits), raised stream/fill-day rate limits with thread-safe SSE slot gating, queued fill-day behind active graph streams, tightened fill-day cross-domain checks to ignore mis-labeled non-dive blocks, and added actionable direct-flight suggestion chips plus client-side burst guards/tests.
 - **Known broken:** none
 - **DO NOT touch this sprint:** [frozen files/features]
 

@@ -58,6 +58,7 @@ You NEVER modify files — only read and report.
 - [ ] Budget check: `BUDGET_ALLOCATIONS` (30/40/30 flights/hotels/activities) respected
 - [ ] No-fly buffer: only restricts DIVING placement, not total trip capacity
 - [ ] Cross-domain: `ALTITUDE_AFTER_DIVE` blocks hiking/skiing/climbing within 24h of diving
+- [ ] Fill-day adjacent-day checks only treat `specialist_type='diving'` as authoritative when block content/constraints indicate real diving context (avoid false positives from mis-labeled generic blocks)
 - [ ] `route_after_guard()` short-circuits unfixable errors (route, specialist) to synthesizer
 - [ ] Auto-fix loop limited to `retry_count < 1` (single retry)
 - [ ] Severity hierarchy: blocking > warning > info
@@ -84,6 +85,7 @@ You NEVER modify files — only read and report.
 - [ ] UI elements transform through states, never disappear
 - [ ] `plan_view_state` from backend determines rendering, frontend doesn't fabricate (except S1_DESTINATION_SET which is frontend-only). Note: S3_PARTIAL_CONFLICT IS emitted by backend.
 - [ ] S3→S2 downgrade blocked when day_cards exist
+- [ ] Destination/date edits clear stale `day_cards` when no fresh cards are returned in the same payload
 - [ ] Coordinate format: `[lng, lat]` throughout entire pipeline
 - [ ] Dates gate Plan tab (strategy content alone doesn't unlock it)
 - [ ] Image arrays filtered for empty URLs before rendering
@@ -91,7 +93,7 @@ You NEVER modify files — only read and report.
 
 ### 7. API Contract Compliance
 
-- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 3/min;15/hr for non-stream graph_plan and remove-specialist, 10/min;40/hr for graph_plan/stream, 20/min for expand-itinerary (builder-only, no LLM), Medium: 10-15/min for mutations/validation, Light: 60/min for reads)
+- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 3/min;15/hr for non-stream graph_plan and remove-specialist, 20/min;120/hr for graph_plan/stream, 20/min for expand-itinerary (builder-only, no LLM), 30/min for fill-day, Medium: 10-15/min for validation/metadata, Light: 60/min for reads)
 - [ ] Streaming: SSE for graph_plan, NDJSON for expand-itinerary/remove-specialist
 - [ ] CSRF token required on unsafe methods (POST/PUT/PATCH/DELETE)
 - [ ] Body size limit: 512KB max

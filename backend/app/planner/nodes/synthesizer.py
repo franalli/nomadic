@@ -106,7 +106,8 @@ PILL_ACTION_MAP: Dict[str, tuple[str, Optional[str]]] = {
     # Booking settings -> open respective sheets
     "plan_hotel_stars": ("open_pill", "stays"),
     "plan_hotel_pref": ("open_pill", "stays"),
-    "plan_flight_direct": ("open_pill", "flights"),
+    "plan_flight_pref": ("trigger_action", "set_direct_flights_only"),
+    "plan_flight_direct": ("trigger_action", "set_direct_flights_only"),  # legacy alias
     # Activities -> open activities sheet
     "plan_activity_explore": ("open_pill", "activities"),
     # Budget/Travelers -> open respective sheets

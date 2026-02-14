@@ -456,7 +456,17 @@ export async function fillDay(
   });
   if (!res.ok) {
     console.error(`[fillDay] failed: status=${res.status} day=${dayNumber}`);
-    throw new Error(`fill-day failed: ${res.status}`);
+    const errorText = await res.text().catch(() => '');
+    let detail = errorText;
+    try {
+      const parsed = JSON.parse(errorText) as { detail?: string };
+      if (parsed?.detail) detail = parsed.detail;
+    } catch {
+      // keep raw text detail
+    }
+    throw new Error(
+      detail ? `fill-day failed: ${res.status} - ${detail}` : `fill-day failed: ${res.status}`
+    );
   }
   const result = await res.json();
   // Sync version to prevent 409 cascade on subsequent calls

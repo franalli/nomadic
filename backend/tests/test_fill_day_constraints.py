@@ -18,6 +18,22 @@ def _make_day_card(day_number: int, specialist_types: list[str] | None = None):
     return card
 
 
+def _make_day_card_with_blocks(day_number: int, blocks: list[dict]):
+    """Create a mock DayCard with richer block fields."""
+    card = MagicMock()
+    card.day_number = day_number
+    card.blocks = []
+    for b in blocks:
+        block = MagicMock()
+        block.specialist_type = b.get("specialist_type")
+        block.is_buffer = b.get("is_buffer", False)
+        block.activity_type = b.get("activity_type")
+        block.summary = b.get("summary")
+        block.constraints = b.get("constraints")
+        card.blocks.append(block)
+    return card
+
+
 # ── No-fly buffer ─────────────────────────────────────────────────────
 
 
@@ -160,6 +176,57 @@ class TestCrossDomainReverse:
             total_days=7,
         )
         assert result is not None
+
+    def test_hiking_adjacent_to_mislabeled_non_dive_block_is_allowed(self):
+        """
+        Guardrail: a generic activity mis-tagged as specialist_type='diving'
+        should not trigger altitude-after-dive rejection.
+        """
+        cards = [
+            _make_day_card_with_blocks(
+                3,
+                [
+                    {
+                        "specialist_type": "diving",
+                        "activity_type": "night_market_walk",
+                        "summary": "Explore local market",
+                        "constraints": [],
+                    }
+                ],
+            ),
+            _make_day_card(4),
+        ]
+        result = validate_fill_day_placement(
+            target_day=4,
+            specialist_type="hiking",
+            day_cards=cards,
+            total_days=7,
+        )
+        assert result is None
+
+    def test_hiking_adjacent_to_real_dive_block_still_rejected(self):
+        cards = [
+            _make_day_card_with_blocks(
+                3,
+                [
+                    {
+                        "specialist_type": "diving",
+                        "activity_type": "tulamben_wreck_dive",
+                        "summary": "USAT Liberty Wreck Dive",
+                        "constraints": ["surface_interval"],
+                    }
+                ],
+            ),
+            _make_day_card(4),
+        ]
+        result = validate_fill_day_placement(
+            target_day=4,
+            specialist_type="hiking",
+            day_cards=cards,
+            total_days=7,
+        )
+        assert result is not None
+        assert result.code == "ALTITUDE_AFTER_DIVE"
 
 
 # ── Non-constrained specialists ───────────────────────────────────────

@@ -93,10 +93,10 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests sha
 | Tier                     | Endpoints                                                                                                                | Limit                                           |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
 | **Heavy**                | `graph_plan/*` (non-stream), `remove-specialist`                                                                         | 3/min, 15/hr                                    |
-| **Heavy (stream)**       | `graph_plan/stream`                                                                                                      | 10/min, 40/hr                                   |
+| **Heavy (stream)**       | `graph_plan/stream`                                                                                                      | 20/min, 120/hr                                  |
 | **Heavy (builder-only)** | `expand-itinerary`                                                                                                       | 20/min (no LLM — frontend mutex prevents abuse) |
 | **Medium**               | `validate-trip-input`, `destination-image`, `tiles/refresh`                                                              | 15/min                                          |
-| **Medium-Low**           | `document/fill-day`                                                                                                      | 10/min                                          |
+| **Medium-Low**           | `document/fill-day`                                                                                                      | 30/min                                          |
 | **Light**                | `document` (GET+PATCH), `document/tiles/{branch_id}`, `chat`, `chat/last`, `session`, `tiles/click`, `suggestions/click` | 60/min                                          |
 | **Admin**                | `/api/admin/*`                                                                                                           | 10/min (+ `X-Admin-Key` required)               |
 
@@ -105,7 +105,8 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests sha
 - **Body size limit:** 512KB max (`Content-Length` check before Pydantic parsing)
 - **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
 - **Session middleware:** Skips `/health` (no session cookie overhead on health checks). Max 10 new sessions per IP per hour
-- **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP
+- **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP (thread-safe slot reserve/release)
+- **Fill-day/session ordering:** `/api/document/fill-day` waits until no active graph SSE stream exists for that session
 - **Frontend CSP:** Configured in `next.config.mjs` — `unsafe-eval` allowed in dev only
 
 ---
@@ -325,12 +326,13 @@ Module-level `_userDirtySettings: Set<string>` (not Zustand state — avoids re-
 
 - **Destination lock:** Once set, destination can't change unless S0_EMPTY reset
 - **View state downgrade protection:** Never downgrade plan_view_state when itinerary exists
-- **Destination/date change detection:** Triggers chat reset + tile/section clearing
+- **Destination/date change detection:** Triggers chat reset + tile/section clearing; destination or date changes clear stale `day_cards` unless new cards are returned in the same payload
 - **Fill-day version sync:** `fillDay()` in api.ts syncs `version` from response to store after success, preventing 409 cascade on subsequent calls
 - **Graph-built itinerary skip:** `setFromPlanResponse` maps `itinerary_day_cards` → `day_cards` if present. ChatPanel's expand gate checks `graphBuiltItinerary` flag — skips expand-itinerary when graph already built day_cards
 - **Mutation gate:** ChatPanel waits for `hasPendingMutations()` to clear (max 10s poll) before sending graph requests, preventing version conflicts from concurrent fill-day/drag-drop mutations
 - **Activity settings merge:** `setFromPlanResponse` preserves user-set `day_preferences` when backend response omits them (fallback to local `activity_settings.day_preferences`)
 - **Fill-day real-block guard:** `TimelineThread` skips fill-day if the target day already has real activity blocks (race condition with graph SSE populating the day concurrently)
+- **Fill-day burst guard:** `TimelineThread` and `StrategyStageRenderer` enforce a 1.5s local cooldown between fill-day requests
 - **Bookable activity filter:** `isBookableActivityTile()` in `tileSelectors.ts` filters fill-day generated tiles (`source_agent` in `experience_generator` or `vertical_specialist`) from the booking surface (`BookingSection`). Non-activity tiles always pass through.
 
 ---
@@ -348,7 +350,7 @@ Source: `frontend/lib/api.ts`
 | `validateTripInput()`        | POST `/api/validate-trip-input` | LLM-based validation                                                                                                                                                                                                          |
 | `fetchDestinationImage()`    | POST `/api/destination-image`   | Unsplash image                                                                                                                                                                                                                |
 | `refreshTiles()`             | POST `/api/tiles/refresh`       | Refresh tiles for branch (uses `fetchWithRetry`, 2 retries, 500ms base delay)                                                                                                                                                 |
-| `fillDay()`                  | POST `/api/document/fill-day`   | Generate activity tiles for a free day. Returns `tiles` map for store merge. Response may include `rejected: true` with `rejection_reason`, `rejection_code`, `rejection_suggestion` when Tier 1 constraint validation fails. |
+| `fillDay()`                  | POST `/api/document/fill-day`   | Generate activity tiles for a free day. Returns `tiles` map for store merge. Response may include `rejected: true` with `rejection_reason`, `rejection_code`, `rejection_suggestion` when Tier 1 constraint validation fails. Non-2xx errors preserve backend `detail` text in thrown error messages (used for 429/rejection toasts). |
 | `trackSuggestionClick()`     | POST `/api/suggestions/click`   | Fire-and-forget analytics                                                                                                                                                                                                     |
 | `resetSession()`             | DELETE `/api/session`           | Clear session                                                                                                                                                                                                                 |
 | `fetchWithRetry()`           | (wraps apiFetch)                | Exponential backoff retry on transient errors                                                                                                                                                                                 |

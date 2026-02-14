@@ -39,6 +39,7 @@ import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { fillDay } from '@/lib/api';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { getDestinationCoords } from '@/lib/destination-coords';
+import { isFillDayCooldownActive } from '@/lib/fillDayGuards';
 import {
   calculateMapCenter,
   extractPOIsFromDayCards,
@@ -346,10 +347,12 @@ export function StrategyStageRenderer({
 
   // Toggle for showing/hiding specialist cards in S3 (collapsed by default)
   const [showConstraints, setShowConstraints] = useState(false);
+  const { toast } = useToast();
 
   // Booking drawer state - allows FreeDayCard "Browse Activities" to open the drawer
   const [bookingDrawerCategory, setBookingDrawerCategory] = useState<'hotel' | 'flight' | 'activity' | null>(null);
   const [bookingDrawerPinnedDay, setBookingDrawerPinnedDay] = useState<number | null>(null);
+  const lastFillDayRequestAtRef = useRef(0);
   const handleOpenBookingDrawer = useCallback((category: 'hotel' | 'flight' | 'activity', dayNumber?: number) => {
     setBookingDrawerCategory(category);
     setBookingDrawerPinnedDay(dayNumber ?? null);
@@ -363,6 +366,12 @@ export function StrategyStageRenderer({
   const handleSaveTile = useCallback(async (tile: Tile) => {
     if (bookingDrawerPinnedDay != null) {
       const store = useDocumentStore.getState();
+      const now = Date.now();
+      if (isFillDayCooldownActive(now, lastFillDayRequestAtRef.current)) {
+        handleCloseBookingDrawer();
+        toast('Please wait a moment before adding another activity');
+        return;
+      }
       // Guard: skip if expand-itinerary is running
       if (store.expandInProgress) {
         handleCloseBookingDrawer();
@@ -373,6 +382,7 @@ export function StrategyStageRenderer({
         handleCloseBookingDrawer();
         return;
       }
+      lastFillDayRequestAtRef.current = now;
       store.claimMutation();
       // Close drawer immediately to prevent repeat clicks
       handleCloseBookingDrawer();
@@ -386,8 +396,13 @@ export function StrategyStageRenderer({
         }
       } catch (err) {
         const is409 = err instanceof Error && err.message.includes('409');
+        const is429 = err instanceof Error && err.message.includes('429');
         if (is409) {
           console.log(`[fillDay] day=${bookingDrawerPinnedDay} already filled (409), refreshing card`);
+          return;
+        }
+        if (is429) {
+          toast('Too many requests. Please wait a moment and try again');
           return;
         }
         console.warn('[StrategyStageRenderer] fill-day failed:', err);
@@ -407,7 +422,7 @@ export function StrategyStageRenderer({
     if (!currentPrefs.has(tile.id)) {
       toggle(tile.id);
     }
-  }, [bookingDrawerPinnedDay, handleCloseBookingDrawer, onSaveTile]);
+  }, [bookingDrawerPinnedDay, handleCloseBookingDrawer, onSaveTile, toast]);
 
   // Debounced density state to prevent layout flash during transitions
   // Updated via requestAnimationFrame to let browser paint current frame first
@@ -444,7 +459,6 @@ export function StrategyStageRenderer({
   }, [hasItineraryContent]);
 
   // Toast for infeasible specialists
-  const { toast } = useToast();
   const prevInfeasibleRef = useRef<Set<string>>(new Set());
 
   // Show toast when specialists become infeasible or caveat (e.g., diving in Paris)

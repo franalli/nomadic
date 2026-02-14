@@ -17,10 +17,12 @@ import {
   Waves,
   Zap,
 } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
+import { useToast } from '@/components/ui/toast';
 import { fillDay } from '@/lib/api';
 import { getDayIntensity, INTENSITY_CONFIG } from '@/lib/dayIntensity';
+import { isFillDayCooldownActive } from '@/lib/fillDayGuards';
 import { cn } from '@/lib/utils';
 import { useDocumentStore, useDocumentTripInputs } from '@/state/documentStore';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
@@ -248,6 +250,8 @@ export function TimelineThread({
     dayNumber: number;
     reason: string;
   } | null>(null);
+  const lastFillDayRequestAtRef = useRef(0);
+  const { toast } = useToast();
   const tripInputs = useDocumentTripInputs();
   const destination = tripInputs?.destination ?? null;
   const categories = tripInputs?.activity_settings?.categories;
@@ -255,6 +259,13 @@ export function TimelineThread({
     const store = useDocumentStore.getState();
     // Guard: skip if expand-itinerary is running (days may already be populated)
     if (store.expandInProgress) return;
+    const now = Date.now();
+    if (isFillDayCooldownActive(now, lastFillDayRequestAtRef.current)) {
+      const reason = 'Please wait a moment before generating activities again';
+      setFillDayRejection({ dayNumber, reason });
+      toast(reason);
+      return;
+    }
     // Per-day mutex: prevents concurrent calls from any path
     if (!store.claimFillDay(dayNumber)) return;
     // Guard: skip if day already has real activity blocks (race condition with graph SSE)
@@ -270,6 +281,7 @@ export function TimelineThread({
         return;
       }
     }
+    lastFillDayRequestAtRef.current = now;
     store.claimMutation();
     setFillingDay(dayNumber);
     setFillDayRejection(null);
@@ -291,8 +303,15 @@ export function TimelineThread({
       }
     } catch (err) {
       const is409 = err instanceof Error && err.message.includes('409');
+      const is429 = err instanceof Error && err.message.includes('429');
       if (is409) {
         console.log(`[fillDay] day=${dayNumber} already filled (409), refreshing card`);
+        return;
+      }
+      if (is429) {
+        const reason = 'Too many requests. Please wait a moment and try again';
+        setFillDayRejection({ dayNumber, reason });
+        toast(reason);
         return;
       }
       console.warn('[TimelineThread] fill-day failed:', err);
@@ -301,7 +320,7 @@ export function TimelineThread({
       useDocumentStore.getState().releaseFillDay(dayNumber);
       setFillingDay(null);
     }
-  }, [categories]);
+  }, [categories, toast]);
   const sortedDays = useMemo(() => {
     return [...dayCards].sort((a, b) => a.day_number - b.day_number);
   }, [dayCards]);

@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 from app.planner.nodes.synthesizer import (
+    PILL_ACTION_MAP,
     _build_synthesis_context,
     _get_model_id,
     _render_prompt_for_response_type,
@@ -132,3 +133,15 @@ def test_specialist_breakdown_from_metadata_object_sections() -> None:
     assert "## Specialist Activities Generated" in context
     assert "- hiking: 2 activities" in context
     assert "Use THESE counts (not day_preferences)" in context
+
+
+def test_plan_flight_pref_maps_to_direct_flights_trigger_action() -> None:
+    action_type, action_target = PILL_ACTION_MAP["plan_flight_pref"]
+    assert action_type == "trigger_action"
+    assert action_target == "set_direct_flights_only"
+
+
+def test_plan_flight_direct_legacy_alias_maps_to_direct_flights_trigger_action() -> None:
+    action_type, action_target = PILL_ACTION_MAP["plan_flight_direct"]
+    assert action_type == "trigger_action"
+    assert action_target == "set_direct_flights_only"

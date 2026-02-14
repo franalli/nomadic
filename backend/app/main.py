@@ -8,6 +8,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from threading import RLock
 from typing import Any, Dict, List
 
 # =============================================================================
@@ -563,9 +564,49 @@ async def require_admin(request: Request) -> None:
 # =============================================================================
 
 _sse_connections: dict[str, int] = defaultdict(int)
+_sse_state_lock = RLock()
 
 MAX_SSE_PER_SESSION = 2
 MAX_SSE_PER_IP = 5
+
+
+def _try_acquire_sse_slot(session_key: str, ip_key: str) -> str | None:
+    """Reserve one SSE slot if capacity allows, otherwise return limiter scope."""
+    with _sse_state_lock:
+        if _sse_connections[session_key] >= MAX_SSE_PER_SESSION:
+            return "session"
+        if _sse_connections[ip_key] >= MAX_SSE_PER_IP:
+            return "ip"
+
+        _sse_connections[session_key] += 1
+        _sse_connections[ip_key] += 1
+        return None
+
+
+def _release_sse_slot(session_key: str, ip_key: str) -> None:
+    """Release one SSE slot."""
+    with _sse_state_lock:
+        _sse_connections[session_key] = max(0, _sse_connections[session_key] - 1)
+        _sse_connections[ip_key] = max(0, _sse_connections[ip_key] - 1)
+
+
+async def _wait_for_session_stream_idle(session_key: str) -> None:
+    """Queue until this session has no active graph SSE streams."""
+    logged_wait = False
+    while True:
+        with _sse_state_lock:
+            active_streams = _sse_connections.get(session_key, 0)
+        if active_streams <= 0:
+            return
+
+        if not logged_wait:
+            logger.info(
+                "[FILL-DAY] Queued behind %d active stream(s) for %s",
+                active_streams,
+                session_key,
+            )
+            logged_wait = True
+        await asyncio.sleep(0.05)
 
 
 # Build allowed origins list from config
@@ -1883,7 +1924,7 @@ async def graph_plan_endpoint(
 
 
 @app.post("/api/graph_plan/stream")
-@limiter.limit("10/minute;40/hour")
+@limiter.limit("20/minute;120/hour")
 async def graph_plan_stream_endpoint(
     request: Request,
     req: GraphPlanRequest,
@@ -1973,13 +2014,11 @@ async def graph_plan_stream_endpoint(
     session_key = f"session:{session_id}"
     ip_key = f"ip:{client_ip}"
 
-    if _sse_connections[session_key] >= MAX_SSE_PER_SESSION:
+    limit_scope = _try_acquire_sse_slot(session_key, ip_key)
+    if limit_scope == "session":
         return JSONResponse(429, {"detail": "Too many concurrent streams for this session"})
-    if _sse_connections[ip_key] >= MAX_SSE_PER_IP:
+    if limit_scope == "ip":
         return JSONResponse(429, {"detail": "Too many concurrent streams from this IP"})
-
-    _sse_connections[session_key] += 1
-    _sse_connections[ip_key] += 1
 
     async def generate_sse():
         """Generator that yields SSE events from the streaming graph execution."""
@@ -2586,8 +2625,7 @@ async def graph_plan_stream_endpoint(
             error_payload = json.dumps({"type": "error", "message": str(e)})
             yield f"event: error\ndata: {error_payload}\n\n"
         finally:
-            _sse_connections[session_key] = max(0, _sse_connections[session_key] - 1)
-            _sse_connections[ip_key] = max(0, _sse_connections[ip_key] - 1)
+            _release_sse_slot(session_key, ip_key)
 
     return StreamingResponse(
         generate_sse(),
@@ -3183,7 +3221,7 @@ class FillDayRequest(BaseModel):
 
 
 @app.post("/api/document/fill-day")
-@limiter.limit("10/minute")
+@limiter.limit("30/minute")
 async def fill_day_endpoint(
     request: Request,
     body: FillDayRequest,
@@ -3191,6 +3229,8 @@ async def fill_day_endpoint(
 ):
     """Fill a free day with activity tiles. No LangGraph execution."""
     session_id = get_session_from_request(request)
+    session_key = f"session:{session_id}"
+    await _wait_for_session_stream_idle(session_key)
     session = await get_session_by_token(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -3252,18 +3292,49 @@ async def fill_day_endpoint(
     # ── Registry-driven constraint validation (replaces hardcoded adjacent filter) ──
     from datetime import datetime as _dt
 
+    # Derive effective total days from BOTH trip inputs and itinerary cards.
+    # This avoids stale no-fly rejections when one source lags the other.
+    trip_span_days = 0
+    has_end_date = False
     if ti.start_date and ti.end_date:
         try:
             d0 = _dt.fromisoformat(ti.start_date)
             d1 = _dt.fromisoformat(ti.end_date)
-            total_days = (d1 - d0).days + 1
+            trip_span_days = max(0, (d1 - d0).days + 1)
+            has_end_date = True
         except ValueError:
-            total_days = len(doc_data.day_cards)
-    else:
-        total_days = len(doc_data.day_cards)
+            trip_span_days = 0
 
-    has_departure = any(
+    cards_span_days = 0
+    sorted_cards = sorted(doc_data.day_cards, key=lambda dc: dc.day_number)
+    if sorted_cards:
+        first_date = sorted_cards[0].date
+        last_date = sorted_cards[-1].date
+        if first_date and last_date:
+            try:
+                cd0 = _dt.fromisoformat(first_date)
+                cd1 = _dt.fromisoformat(last_date)
+                cards_span_days = max(0, (cd1 - cd0).days + 1)
+            except ValueError:
+                cards_span_days = 0
+        # Fallback when card dates are absent/invalid: use max day_number span.
+        if cards_span_days == 0:
+            cards_span_days = max((dc.day_number for dc in sorted_cards), default=0)
+
+    effective_total_days = max(trip_span_days, cards_span_days)
+    if effective_total_days == 0:
+        effective_total_days = len(doc_data.day_cards)
+
+    has_departure_buffer = any(
         b.buffer_type == "departure" for dc in doc_data.day_cards for b in dc.blocks
+    )
+    has_departure = has_departure_buffer or has_end_date
+    logger.debug(
+        "[FILL-DAY] effective_total_days=%d (trip_span=%d cards_span=%d) has_departure=%s",
+        effective_total_days,
+        trip_span_days,
+        cards_span_days,
+        has_departure,
     )
 
     # Gate Tier 1 placement: validate constraints before placing specialist tiles
@@ -3272,7 +3343,7 @@ async def fill_day_endpoint(
             target_day=body.day_number,
             specialist_type=t1_cat.lower(),
             day_cards=doc_data.day_cards,
-            total_days=total_days,
+            total_days=effective_total_days,
             has_departure_flight=has_departure,
         )
         if rejection:
@@ -3304,7 +3375,7 @@ async def fill_day_endpoint(
                     target_day=body.day_number,
                     specialist_type=st,
                     day_cards=doc_data.day_cards,
-                    total_days=total_days,
+                    total_days=effective_total_days,
                     has_departure_flight=has_departure,
                 )
                 if rejection:
