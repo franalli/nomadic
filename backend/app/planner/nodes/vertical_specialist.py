@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel
 
+from app.config import settings
 from app.placeholders import get_activity_image
 from app.planner.services.section_builder import (
     build_specialist_section,
@@ -383,9 +384,9 @@ set feasibility_status to "infeasible" with reason"""
 
     llm_start = time.time()
     try:
-        from langchain_openai import ChatOpenAI
+        from app.planner.llm_factory import get_llm_by_model
 
-        llm = ChatOpenAI(model=os.getenv("SPECIALIST_MODEL", "gpt-4o"), temperature=0.2)
+        llm = get_llm_by_model(settings.specialist_model, temperature=0.2)
         structured_llm = llm.with_structured_output(LLMSpecialistOutput)
 
         _debug_log(f"[LLM_SPECIALIST] Calling LLM for {topic} in {destination}")
@@ -595,10 +596,10 @@ async def _check_feasibility_llm(topic: str, destination: str) -> FeasibilityChe
     from app.debug_utils import _debug_log
 
     try:
-        from langchain_openai import ChatOpenAI
+        from app.planner.llm_factory import get_llm_by_model
 
-        llm = ChatOpenAI(
-            model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),  # Quick feasibility check
+        llm = get_llm_by_model(
+            settings.router_model,  # Quick feasibility check
             temperature=0,
             max_tokens=100,
         )

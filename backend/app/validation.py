@@ -12,16 +12,16 @@ repeated LLM calls for common inputs.
 """
 
 import asyncio
-import json
 import logging
-import os
 import random
 from threading import RLock
 from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
+from pydantic import BaseModel, Field
 
-from app.config import get_async_openai_client, settings
+from app.config import settings
+from app.planner.llm_factory import get_llm_by_model
 
 logger = logging.getLogger(__name__)
 
@@ -64,16 +64,17 @@ _rate_counter_cache: TTLCache = TTLCache(
 _validation_cache_lock = RLock()
 
 
+class ValidationResponse(BaseModel):
+    """Pydantic schema for LLM validation output — enforced via structured output."""
+
+    v: list[str] = Field(default_factory=list, description="Corrected place name(s)")
+    ok: bool = Field(description="Whether the input is a valid location")
+    r: Optional[str] = Field(default=None, description="Reason if invalid")
+
+
 def _get_model_name() -> str:
-    """Get the OpenAI model name for validation (uses settings with fallback)."""
-    # Use settings.openai_plan_model which has a default of gpt-4o-mini
-    # Also check env vars as override
-    model_name = (
-        os.getenv("OPENAI_PLAN_MODEL", "").strip()
-        or settings.openai_plan_model
-        or "gpt-4o-mini"  # Ultimate fallback
-    )
-    return model_name
+    """Get the model name for validation (Guard node)."""
+    return settings.guard_model
 
 
 # =============================================================================
@@ -176,15 +177,15 @@ RULES:
 Be STRICT: Only return ok:true for real, specific, reachable destinations on Earth."""
 
 
-# Tier 11.1: Async version with non-blocking sleep for better concurrency
 async def _call_llm_validation_async(
     prompt: str,
     max_retries: int = 3,
 ) -> Optional[dict]:
     """
-    Call the LLM for validation with async retry logic.
+    Call the LLM for validation with structured output and async retry logic.
 
-    Uses asyncio.sleep instead of time.sleep for non-blocking retries.
+    Uses LangChain with_structured_output(ValidationResponse) to enforce
+    Pydantic schema for both OpenAI and Gemini providers.
 
     Args:
         prompt: The validation prompt.
@@ -193,9 +194,7 @@ async def _call_llm_validation_async(
     Returns:
         Parsed JSON dict from LLM, or None if all retries failed.
     """
-    client = get_async_openai_client()
-    if client is None:
-        return None
+    from langchain_core.messages import HumanMessage
 
     model_name = _get_model_name()
     last_error: Optional[Exception] = None
@@ -205,26 +204,21 @@ async def _call_llm_validation_async(
 
     for attempt in range(max_retries):
         try:
-            response = await client.chat.completions.create(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=settings.validation_max_tokens,
+            llm = get_llm_by_model(
+                model_name,
                 temperature=0,
-                response_format={"type": "json_object"},
+                max_tokens=settings.validation_max_tokens,
             )
-
-            if response and response.choices:
-                content = response.choices[0].message.content
-                if content:
-                    return json.loads(content)
+            structured_llm = llm.with_structured_output(ValidationResponse)
+            result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
+            return result.model_dump()
 
         except Exception as exc:
             last_error = exc
             status_code = getattr(exc, "status_code", None)
-            # Tier 11.1: Non-blocking retry with exponential backoff + jitter
             if status_code == 429 or (isinstance(status_code, int) and status_code >= 500):
                 wait_time = min(initial_delay * (2**attempt), max_delay) + random.uniform(0, 1)
-                await asyncio.sleep(wait_time)  # Non-blocking!
+                await asyncio.sleep(wait_time)
                 continue
             raise
 

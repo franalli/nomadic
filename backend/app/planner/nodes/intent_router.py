@@ -14,13 +14,13 @@ like "No, I want Paris instead."
 import hashlib
 import json
 import logging
-import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 
+from app.config import settings
+from app.planner.llm_factory import get_llm_by_model
 from app.planner.nodes.input_gates import GateRegistry
 from app.planner.nodes.router_category_sync import (
     DATE_INDICATORS,
@@ -1209,8 +1209,8 @@ Format with bullet points where appropriate.
 
 End with: {ending}"""
 
-    llm = ChatOpenAI(
-        model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
+    llm = get_llm_by_model(
+        settings.router_model,
         temperature=0.7,
         max_tokens=300,
     )
@@ -1856,7 +1856,7 @@ async def intent_router(state: GraphState) -> GraphState:
                     token_usage.get("total_tokens", 0),
                 )
                 clog.llm_call(
-                    model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
+                    model=settings.router_model,
                     prompt_tokens=token_usage.get("prompt_tokens", 0),
                     completion_tokens=token_usage.get("completion_tokens", 0),
                     purpose="post_plan_extraction",
@@ -2103,7 +2103,7 @@ async def intent_router(state: GraphState) -> GraphState:
                     )
                     # Compact logging: LLM call
                     clog.llm_call(
-                        model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
+                        model=settings.router_model,
                         prompt_tokens=token_usage.get("prompt_tokens", 0),
                         completion_tokens=token_usage.get("completion_tokens", 0),
                         purpose="opportunistic_extraction",
@@ -2208,8 +2208,10 @@ async def intent_router(state: GraphState) -> GraphState:
 
                 # CRITICAL: Set constraint hash for future change detection
                 # This ensures subsequent destination changes trigger tile clearing
-                settings = get_trip_settings(state)
-                state.last_constraint_hash = _compute_constraint_hash(state.trip_plan, settings)
+                trip_settings = get_trip_settings(state)
+                state.last_constraint_hash = _compute_constraint_hash(
+                    state.trip_plan, trip_settings
+                )
                 log("ROUTER", f"[READY] Constraint hash set: {state.last_constraint_hash[:8]}")
 
                 _debug_node_end(
@@ -2652,7 +2654,7 @@ async def intent_router(state: GraphState) -> GraphState:
                 )
                 # Compact logging: LLM call
                 clog.llm_call(
-                    model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
+                    model=settings.router_model,
                     prompt_tokens=token_usage.get("prompt_tokens", 0),
                     completion_tokens=token_usage.get("completion_tokens", 0),
                     purpose="intent_classification",

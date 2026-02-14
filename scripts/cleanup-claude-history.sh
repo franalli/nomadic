@@ -2,6 +2,18 @@
 # Cleanup Claude Code session data.
 # Safe to run — preserves: ide/, session-env, settings.json, settings.local.json
 
+# First: clear Codex local session/cache artifacts
+rm -rf "$HOME/.codex/sessions" "$HOME/.codex/shell_snapshots" "$HOME/.codex/tmp"
+rm -f "$HOME/.codex/models_cache.json"
+
+# Also clear VS Code Copilot conversation/state artifacts
+VSCODE_USER_DIR="$HOME/Library/Application Support/Code/User"
+rm -rf "$VSCODE_USER_DIR/globalStorage/github.copilot-chat"
+rm -rf "$VSCODE_USER_DIR/globalStorage/github.copilot"
+if [ -d "$VSCODE_USER_DIR/workspaceStorage" ]; then
+  find "$VSCODE_USER_DIR/workspaceStorage" -type d -name "GitHub.copilot-chat" -prune -exec rm -rf {} +
+fi
+
 CLAUDE_DIR="$HOME/.claude"
 
 echo "Cleaning Claude Code data..."

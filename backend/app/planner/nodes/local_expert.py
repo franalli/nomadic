@@ -16,11 +16,12 @@ from pathlib import Path
 from typing import List
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.data.demo_curation import DEMO_MANIFEST
 from app.placeholders import get_destination_gallery
+from app.planner.llm_factory import get_llm_by_model
 from app.planner.services.section_builder import (
     build_local_expert_section,
     mark_topic_executed,
@@ -1410,11 +1411,12 @@ Dates: {plan.start_date or "Not specified"} to {plan.end_date or "Not specified"
 Travelers: {plan.adults} adults{f", {plan.children} children" if plan.children else ""}
 """
 
-        model = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")
-        llm = ChatOpenAI(model=model, temperature=0.3, timeout=30, max_retries=1)
+        llm = get_llm_by_model(
+            settings.extraction_model, temperature=0.3, timeout=30, max_retries=1
+        )
         structured_llm = llm.with_structured_output(LocalExpertOutput)
 
-        log("LOCAL_EXPERT", f"Calling LLM ({model})...")
+        log("LOCAL_EXPERT", f"Calling LLM ({settings.extraction_model})...")
 
         try:
             response = await structured_llm.ainvoke(

@@ -7,7 +7,6 @@ description: >
   state serialization, LangGraph node modifications, FastAPI endpoints, tile service,
   caching layers, or any file under backend/app/planner/ or backend/app/services/.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: opus
 ---
 
 # Nomadic Backend Specialist
@@ -34,6 +33,7 @@ If the task involves API contracts or schemas shared with frontend, also read `d
 5. **No hard-coded world data.** Never hard-code locations, airports, IATA codes, geolocation coordinates, or any potentially infinite dataset. Use LLM logic or registry-driven lookups.
 6. **Routing functions CANNOT mutate state.** State mutations happen in NODES only. `route_after_router()`, `route_after_specialist()`, `route_after_guard()`, `route_after_architect()`, `route_after_logistics()` are pure routing decisions.
 7. **Synthesizer model routing is frozen.** Do not modify `_MODEL_BY_COMPLEXITY` without explicit approval and quality measurement.
+8. **LLM construction is centralized.** Planner/services code must create chat models via `get_llm_by_model(...)` with `settings.*_model`; avoid direct `ChatOpenAI(...)` instantiation in node/service code.
 
 ## File Ownership — Your Domain
 

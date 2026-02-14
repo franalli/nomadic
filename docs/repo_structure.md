@@ -65,6 +65,7 @@ backend/
 │   │   ├── __init__.py
 │   │   ├── cache_access.py     # Planner cache utilities
 │   │   ├── hashing.py          # Hash utilities
+│   │   ├── llm_factory.py      # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
 │   │   ├── meta.py             # Metadata utilities
 │   │   ├── meta_keys.py        # Metadata key constants
 │   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
@@ -192,6 +193,7 @@ backend/
 │   ├── test_specialist_structured.py     # Specialist structured output tests
 │   ├── test_stage2_integration.py        # Stage 2 integration tests
 │   ├── test_stage11_day_preferences.py   # Stage 11 day preference tests
+│   ├── test_synthesizer_template_contract.py  # Synthesizer prompt + model-id contract tests
 │   ├── test_tile_cache.py                # Tile cache tests (L1/L2, thread safety)
 │   ├── test_typed_meta.py                # Typed metadata bridge tests
 │   └── db/

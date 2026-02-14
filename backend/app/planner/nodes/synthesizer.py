@@ -27,8 +27,9 @@ from typing import Dict, List, Optional
 
 from jinja2 import Template
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
+from app.config import settings
+from app.planner.llm_factory import get_llm_by_model
 from app.planner.state import (
     GraphState,
     SynthesizerOutput,
@@ -38,18 +39,26 @@ from app.planner.state import (
 
 logger = logging.getLogger(__name__)
 
+
+def _get_model_id(llm) -> str:
+    """
+    Provider-agnostic model identifier.
+
+    OpenAI exposes .model_name, Gemini exposes .model.
+    """
+    return getattr(llm, "model_name", None) or getattr(llm, "model", "unknown")
+
+
 # =============================================================================
 # LLM Configuration
 # =============================================================================
 
-SYNTHESIZER_MODEL = os.getenv("SYNTHESIZER_MODEL", "gpt-4o")
-
-# Model selection by response complexity
+# Model selection by response complexity (env-configurable via .env)
 # Note: Greeting responses are gated by _should_use_llm_synthesis() and never reach this logic
 _MODEL_BY_COMPLEXITY = {
-    "exploration": "gpt-4o-mini",  # Simple conversational
-    "specialist_update": "gpt-4o-mini",  # Acknowledge specialist + counts
-    "planning": "gpt-4o",  # Complex synthesis with constraints
+    "exploration": settings.synthesizer_exploration_model,  # Simple conversational
+    "specialist_update": settings.synthesizer_exploration_model,  # Acknowledge specialist + counts
+    "planning": settings.synthesizer_planning_model,  # Complex synthesis with constraints
 }
 
 # Per-type max_tokens — exploration is terse, planning needs room for constraint reasoning
@@ -60,18 +69,18 @@ _MAX_TOKENS_BY_TYPE = {
 }
 
 
-def _get_synthesizer_llm(response_type: str = "planning") -> ChatOpenAI:
+def _get_synthesizer_llm(response_type: str = "planning"):
     """
     Get the LLM for synthesis based on response complexity.
-    Falls back to gpt-4o for unknown response types.
+    Falls back to synthesizer_planning_model for unknown response types.
     """
-    model = _MODEL_BY_COMPLEXITY.get(response_type, "gpt-4o")
+    model = _MODEL_BY_COMPLEXITY.get(response_type, settings.synthesizer_planning_model)
     max_tokens = _MAX_TOKENS_BY_TYPE.get(response_type, 500)
 
-    return ChatOpenAI(
-        model=model,
+    return get_llm_by_model(
+        model,
         temperature=0.7,  # Slightly creative for natural voice
-        streaming=True,  # Enable token streaming
+        streaming=False,  # Node uses ainvoke; graph handles streaming via astream_events
         max_tokens=max_tokens,
     )
 
@@ -414,6 +423,34 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
             "great balance'). Do NOT re-ask how many days."
         )
 
+    # Per-specialist actual activity counts from strategy sections (metadata-backed).
+    # This is more accurate than day_preferences for "what was added this turn" phrasing.
+    sections = state.metadata.get("strategy_sections", [])
+    spec_counts: Dict[str, int] = {}
+    for section in sections:
+        specialist_type = (
+            section.get("specialist_type")
+            if isinstance(section, dict)
+            else getattr(section, "specialist_type", None)
+        )
+        if not specialist_type or specialist_type == "local_expert":
+            continue
+
+        content_added = (
+            section.get("content_added")
+            if isinstance(section, dict)
+            else getattr(section, "content_added", [])
+        )
+        count = len(content_added) if content_added else 0
+        if count > 0:
+            spec_counts[specialist_type] = count
+
+    if spec_counts:
+        counts_str = ", ".join(f"{k}: {v} activities" for k, v in spec_counts.items())
+        parts.append("\n## Specialist Activities Generated")
+        parts.append(f"- {counts_str}")
+        parts.append("- Use THESE counts (not day_preferences) when mentioning activity numbers.")
+
     # Specialist content - COUNTS ONLY (descriptions are in the plan view)
     if plan.itinerary_blocks:
         activity_blocks = [b for b in plan.itinerary_blocks if not getattr(b, "is_buffer", False)]
@@ -683,7 +720,7 @@ async def synthesize_with_llm(
 
     try:
         # Log model selection for debugging
-        logger.debug(f"Using model={llm.model_name} for response_type={response_type}")
+        logger.debug(f"Using model={_get_model_id(llm)} for response_type={response_type}")
 
         # Use non-streaming for the node (streaming handled by astream_events)
         response = await llm.ainvoke(messages)
@@ -694,14 +731,195 @@ async def synthesize_with_llm(
                 "prompt_tokens": response.usage_metadata.get("input_tokens", 0),
                 "completion_tokens": response.usage_metadata.get("output_tokens", 0),
                 "total_tokens": response.usage_metadata.get("total_tokens", 0),
-                "model": llm.model_name,
+                "model": _get_model_id(llm),
             }
+            logger.info(f"[SYNTH_DEBUG] Token usage (usage_metadata): {token_usage}")
         elif hasattr(response, "response_metadata"):
             # Fallback for older LangChain versions
             token_usage = response.response_metadata.get("token_usage", {})
             if token_usage:
-                token_usage["model"] = llm.model_name  # Track model in usage
-        content = response.content
+                token_usage["model"] = _get_model_id(llm)  # Track model in usage
+                logger.info(f"[SYNTH_DEBUG] Token usage (response_metadata): {token_usage}")
+        # Extract content — handle both OpenAI (string) and Gemini (may need special handling)
+        # For Gemini specifically, try accessing the raw response parts to avoid truncation
+        model_id = _get_model_id(llm)
+        if model_id.startswith("gemini") and hasattr(response, "response_metadata"):
+            # Debug: log what's available
+            response_meta_keys = list(response.response_metadata.keys())
+            response_content_type = type(response.content).__name__
+            response_content_preview = repr(response.content)[:500]
+            logger.info(f"[SYNTH_DEBUG] Gemini response_metadata keys: {response_meta_keys}")
+            logger.info(f"[SYNTH_DEBUG] response.content type: {response_content_type}")
+            logger.info(
+                f"[SYNTH_DEBUG] response.content repr (first 500 chars): {response_content_preview}"
+            )
+            logger.info(f"[SYNTH_DEBUG] response.content str len: {len(str(response.content))}")
+
+            # Check if it's a list or has special attributes
+            if isinstance(response.content, list):
+                response_item_count = len(response.content)
+                logger.info(
+                    f"[SYNTH_DEBUG] response.content is list with {response_item_count} items"
+                )
+                for i, item in enumerate(response.content[:3]):  # First 3 items only
+                    item_public_attrs = [x for x in dir(item) if not x.startswith("_")][:10]
+                    logger.info(
+                        f"[SYNTH_DEBUG]   Item {i}: type={type(item).__name__}, "
+                        f"dir={item_public_attrs}"
+                    )
+            elif hasattr(response.content, "__dict__"):
+                logger.info(f"[SYNTH_DEBUG] response.content.__dict__: {response.content.__dict__}")
+
+            # Gemini-specific: try to get full content from response_metadata or raw response
+            raw_response = response.response_metadata.get("raw_response")
+            if raw_response and hasattr(raw_response, "candidates") and raw_response.candidates:
+                candidate = raw_response.candidates[0]
+                if hasattr(candidate, "content") and hasattr(candidate.content, "parts"):
+                    # Extract text from all parts
+                    parts_text = []
+                    for part in candidate.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            parts_text.append(part.text)
+                    if parts_text:
+                        content = "".join(parts_text)
+                        logger.info(
+                            "[SYNTH] Gemini: extracted "
+                            f"{len(content)} chars from {len(parts_text)} parts (raw response)"
+                        )
+                    else:
+                        # Fallback to response.content
+                        content = (
+                            str(response.content)
+                            if not isinstance(response.content, str)
+                            else response.content
+                        )
+                        logger.warning(
+                            "[SYNTH] Gemini: no parts.text found, using response.content "
+                            f"({len(content)} chars)"
+                        )
+                else:
+                    content = (
+                        str(response.content)
+                        if not isinstance(response.content, str)
+                        else response.content
+                    )
+                    logger.warning(
+                        "[SYNTH] Gemini: no candidate.content.parts, using response.content "
+                        f"({len(content)} chars)"
+                    )
+            else:
+                # No raw_response found - try alternative extraction methods
+                logger.warning("[SYNTH] Gemini: no raw_response in metadata")
+
+                # Try to extract from response object directly (bypass .content property)
+                extracted = False
+
+                # Method 1: Check if response has 'additional_kwargs' with full content
+                if hasattr(response, "additional_kwargs") and response.additional_kwargs:
+                    additional_kwarg_keys = list(response.additional_kwargs.keys())
+                    logger.info(f"[SYNTH_DEBUG] additional_kwargs keys: {additional_kwarg_keys}")
+
+                # Method 2: Check response_metadata for candidates or parts
+                if "candidates" in response.response_metadata:
+                    candidates = response.response_metadata["candidates"]
+                    if candidates and len(candidates) > 0:
+                        candidate = candidates[0]
+                        if isinstance(candidate, dict) and "content" in candidate:
+                            parts = candidate["content"].get("parts", [])
+                            if parts:
+                                texts = [p.get("text", "") for p in parts if isinstance(p, dict)]
+                                if texts:
+                                    content = "".join(texts)
+                                    extracted = True
+                                    logger.info(
+                                        "[SYNTH] Gemini: extracted "
+                                        f"{len(content)} chars from metadata candidates"
+                                    )
+
+                if not extracted:
+                    # Try content_blocks attribute
+                    if hasattr(response, "content_blocks") and response.content_blocks:
+                        content_block_count = len(response.content_blocks)
+                        logger.info(
+                            f"[SYNTH_DEBUG] Found content_blocks: {content_block_count} blocks"
+                        )
+                        texts = []
+                        for i, block in enumerate(response.content_blocks):
+                            logger.info(f"[SYNTH_DEBUG]   Block {i}: type={type(block).__name__}")
+                            if hasattr(block, "text"):
+                                texts.append(block.text)
+                                logger.info(
+                                    "[SYNTH_DEBUG]     Extracted "
+                                    f"{len(block.text)} chars from block.text"
+                                )
+                            elif isinstance(block, dict) and "text" in block:
+                                texts.append(block["text"])
+                            elif isinstance(block, str):
+                                texts.append(block)
+                        if texts:
+                            content = "".join(texts)
+                            extracted = True
+                            logger.info(
+                                "[SYNTH] Gemini: extracted "
+                                f"{len(content)} chars from {len(texts)} content_blocks"
+                            )
+
+                if not extracted:
+                    # Log everything we can about the response before giving up
+                    logger.warning("[SYNTH] Gemini: extraction failed, dumping response structure:")
+                    logger.warning(f"[SYNTH]   response_metadata keys: {response_meta_keys}")
+                    logger.warning(f"[SYNTH]   response.content type: {response_content_type}")
+                    logger.warning(
+                        f"[SYNTH]   response.content is string: {isinstance(response.content, str)}"
+                    )
+                    if isinstance(response.content, str):
+                        logger.warning(f"[SYNTH]   response.content value: '{response.content}'")
+                    response_attrs = [x for x in dir(response) if not x.startswith("_")][:15]
+                    logger.warning(f"[SYNTH]   response attributes: {response_attrs}")
+
+                    content = (
+                        str(response.content)
+                        if not isinstance(response.content, str)
+                        else response.content
+                    )
+                    logger.warning(
+                        f"[SYNTH] Gemini: using response.content as-is ({len(content)} chars)"
+                    )
+        elif isinstance(response.content, str):
+            content = response.content
+        elif isinstance(response.content, list):
+            # Handle list of content parts (can happen with multimodal or structured responses)
+            parts = []
+            for part in response.content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict):
+                    # Dict with "text" key
+                    parts.append(part.get("text", part.get("content", "")))
+                elif hasattr(part, "text"):
+                    # Object with .text attribute (Gemini ContentPart)
+                    parts.append(part.text)
+                elif hasattr(part, "content"):
+                    # Object with .content attribute
+                    parts.append(part.content)
+                else:
+                    # Last resort - but don't call str() as it might truncate
+                    logger.warning(
+                        f"[SYNTH] Unknown part type: {type(part).__name__}, attrs: {dir(part)}"
+                    )
+                    parts.append("")
+            content = "".join(parts)
+            if not content:
+                logger.warning(
+                    "[SYNTH] List content from "
+                    f"{_get_model_id(llm)} with {len(response.content)} parts "
+                    "resulted in empty string"
+                )
+        else:
+            # Unexpected type - try string conversion as last resort
+            logger.warning(f"[SYNTH] Unexpected content type: {type(response.content).__name__}")
+            content = str(response.content)
+
         # Strip wrapping quotes — LLM sometimes mirrors example formatting
         if content and len(content) > 2 and content[0] == '"' and content[-1] == '"':
             content = content[1:-1]

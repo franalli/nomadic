@@ -11,16 +11,16 @@ Handles:
 
 import json
 import logging
-import os
 import re
 from calendar import monthrange
 from datetime import datetime, timedelta
 from typing import List, Literal, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from app.config import settings
+from app.planner.llm_factory import get_llm_by_model
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
@@ -479,19 +479,19 @@ Respond with valid JSON. Only include fields that are explicitly mentioned."""
 # =============================================================================
 
 
-def _get_router_llm() -> ChatOpenAI:
+def _get_router_llm():
     """Get the fast LLM for intent classification."""
-    return ChatOpenAI(
-        model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
+    return get_llm_by_model(
+        settings.router_model,
         temperature=0,  # Deterministic classification
         max_tokens=150,  # Classification is short
     )
 
 
-def _get_router_extraction_llm() -> ChatOpenAI:
+def _get_router_extraction_llm():
     """Get the LLM for full Router extraction (intent + fields)."""
-    return ChatOpenAI(
-        model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
+    return get_llm_by_model(
+        settings.router_model,
         temperature=0,  # Deterministic extraction
         max_tokens=700,  # Need more tokens for field extraction + activity_categories
     )
@@ -760,6 +760,8 @@ async def _classify_and_extract_with_llm(
 
             # Extract parsed result and token usage
             parsed = result["parsed"]
+            if parsed is None:
+                raise ValueError("Structured output returned None (likely ambiguous short input)")
             raw = result["raw"]
             token_usage = {}
             if hasattr(raw, "response_metadata"):

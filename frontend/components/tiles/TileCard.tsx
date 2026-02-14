@@ -444,10 +444,10 @@ export const TileCard = memo(function TileCard({
           {tile.rating != null && (
             <div className="flex shrink-0 items-center gap-1 text-sm font-medium">
               {isHotel ? (
-                <span className="text-amber-400">{renderStarRating(tile.rating)}</span>
+                <span className="text-zinc-500 dark:text-zinc-300">{renderStarRating(tile.rating)}</span>
               ) : (
                 <>
-                  <span className="text-amber-400">★</span>
+                  <span className="text-zinc-500 dark:text-zinc-300">★</span>
                   <span className="text-foreground">{tile.rating.toFixed(1)}</span>
                 </>
               )}

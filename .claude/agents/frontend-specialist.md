@@ -8,7 +8,6 @@ description: >
   Framer Motion animations, Mapbox integration, mobile layout, or any file
   under frontend/components/, frontend/state/, frontend/hooks/, frontend/types/.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: opus
 ---
 
 # Nomadic Frontend Specialist

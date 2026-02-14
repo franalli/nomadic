@@ -193,7 +193,7 @@ export function AlternativesModal({
                   <div className="flex items-center gap-2 mt-1">
                     {currentTile.rating && (
                       <div className="flex items-center gap-0.5">
-                        <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
+                        <Star className="w-3 h-3 text-zinc-500 dark:text-zinc-300 fill-current" />
                         <span className="text-xs text-zinc-700 dark:text-zinc-300">
                           {currentTile.rating.toFixed(1)}
                         </span>
@@ -276,7 +276,7 @@ export function AlternativesModal({
                         <div className="flex items-center gap-2 mt-1">
                           {alt.rating && (
                             <div className="flex items-center gap-0.5">
-                              <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
+                              <Star className="w-3 h-3 text-zinc-500 dark:text-zinc-300 fill-current" />
                               <span className="text-xs text-zinc-700 dark:text-zinc-300">
                                 {alt.rating.toFixed(1)}
                               </span>
@@ -290,7 +290,7 @@ export function AlternativesModal({
                                 'flex items-center gap-0.5 text-[10px] font-medium px-1 py-0.5 rounded',
                                 ratingDiff.type === 'better'
                                   ? 'bg-emerald-500/20 text-emerald-400'
-                                  : 'bg-amber-500/20 text-amber-400'
+                                  : 'bg-zinc-200 text-zinc-700 dark:bg-zinc-700/50 dark:text-zinc-300'
                               )}
                             >
                               {ratingDiff.type === 'better' ? (

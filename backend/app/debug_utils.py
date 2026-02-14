@@ -133,6 +133,7 @@ class CompactLogger:
     MODEL_PRICING = {  # Per 1M tokens (USD)
         "gpt-4o": {"prompt": 2.50, "completion": 10.00},
         "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
+        "gemini-2.5-flash": {"prompt": 0.15, "completion": 0.60},
     }
 
     # Cost thresholds from environment

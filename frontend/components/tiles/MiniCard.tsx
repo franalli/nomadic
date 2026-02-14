@@ -346,10 +346,10 @@ export const MiniCard = memo(function MiniCard({
               {tile.rating != null && (
                 <div className="flex items-center gap-0.5 text-xs">
                   {isHotelType(tile.type || '') ? (
-                    <span className="text-amber-400">{renderStarRating(tile.rating)}</span>
+                    <span className="text-zinc-500 dark:text-zinc-300">{renderStarRating(tile.rating)}</span>
                   ) : (
                     <>
-                      <span className="text-amber-400">★</span>
+                      <span className="text-zinc-500 dark:text-zinc-300">★</span>
                       <span className="text-zinc-500 dark:text-zinc-400">{tile.rating.toFixed(1)}</span>
                     </>
                   )}

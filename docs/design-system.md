@@ -411,6 +411,10 @@ export function Stepper({ value, min, max, onChange }) {
 | amber/orange | `#E86A1F` (accent) | Used ONLY as brand accent (`--accent`), specialist highlight pulse, and semantic warning/rejection states (Logic Guards, constraint badges, NextStepBar validation). Do not introduce new amber/orange usage outside these patterns. |
 | teal-500 | `#14B8A6` | BANNED — replaced by emerald |
 
+**Enforcement notes:**
+- Rating stars and numeric rating text must use neutral zinc classes (`text-zinc-*`, optional `dark:text-zinc-*`), not amber.
+- Booking/cart states that are not warnings should use neutral zinc or success emerald, not amber.
+
 ### Specialist Color Palette
 
 Multi-specialist trips use color-coded visual indicators to distinguish activity sources.
@@ -585,6 +589,13 @@ All sheets live at `frontend/components/plan/sheets/`. Most sheets use raw Tailw
 | Calendar | `ui/calendar.tsx` | Custom (see Calendar section) |
 | StrategyHero | `plan/stages/StrategyHero.tsx` | `DS.text.label`, `DS.text.body`, `DS.infoBox.container` (3 variants: `hero`, `compact`, `accordion`) |
 | Stepper (shared) | `ui/stepper.tsx` | Raw DS.stepper pattern (sm/default size variants) |
+| TileCard | `tiles/TileCard.tsx` | Raw glass card pattern, rating stars use neutral zinc scale |
+| MiniCard | `tiles/MiniCard.tsx` | Compact glass card pattern, rating stars use neutral zinc scale |
+| SuggestionCard | `plan/tiles/SuggestionCard.tsx` | Suggested card variant, neutral zinc rating treatment, emerald save state |
+| BookableCard | `plan/tiles/BookableCard.tsx` | Dark booking card, in-cart/border states use zinc, booked uses emerald |
+| AlternativesModal | `plan/modals/AlternativesModal.tsx` | Sheet modal with neutral zinc rating stars and diff badges |
+| CategorySection | `plan/booking/CategorySection.tsx` | Booking status dots/text with dark-aware zinc/emerald states |
+| MapLayerFilter | `map/MapLayerFilter.tsx` | Specialist colors aligned to `frontend/lib/specialists.ts` palette |
 
 ---
 

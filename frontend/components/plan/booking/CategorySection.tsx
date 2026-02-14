@@ -75,18 +75,18 @@ function StatusBadge({ status, mode }: { status: 'available' | 'hold' | 'booked'
   // Booking mode: Show cart status
   const config = {
     available: {
-      dot: 'bg-zinc-400',
-      text: 'text-zinc-500',
+      dot: 'bg-zinc-400 dark:bg-zinc-500',
+      text: 'text-zinc-500 dark:text-zinc-400',
       label: 'Available',
     },
     hold: {
-      dot: 'bg-amber-500',
-      text: 'text-amber-500',
+      dot: 'bg-zinc-600 dark:bg-zinc-300',
+      text: 'text-zinc-700 dark:text-zinc-300',
       label: 'In Cart',
     },
     booked: {
       dot: 'bg-emerald-500',
-      text: 'text-emerald-500',
+      text: 'text-emerald-600 dark:text-emerald-500',
       label: 'Booked',
     },
   };

@@ -122,7 +122,7 @@ export function BookableCard({
         isBooked
           ? 'border-emerald-500/50'
           : isInCart
-            ? 'border-amber-500/50'
+            ? 'border-zinc-400/50'
             : 'border-zinc-700/30',
         className
       )}
@@ -152,8 +152,8 @@ export function BookableCard({
           </div>
         ) : isInCart ? (
           <div className="absolute top-3 left-3">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/30 backdrop-blur-sm border border-amber-500/50">
-              <span className="text-[10px] font-semibold text-amber-300 uppercase tracking-wide">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-500/20 backdrop-blur-sm border border-zinc-400/40">
+              <span className="text-[10px] font-semibold text-zinc-200 uppercase tracking-wide">
                 In Cart
               </span>
             </div>
@@ -177,7 +177,7 @@ export function BookableCard({
         {tile.rating && (
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1">
-              <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+              <Star className="w-4 h-4 text-zinc-300 fill-current" />
               <span className="text-sm font-medium text-zinc-200">
                 {tile.rating.toFixed(1)}
               </span>
@@ -297,7 +297,7 @@ export function BookableCard({
               className={cn(
                 'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
                 isInCart
-                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30'
+                  ? 'bg-zinc-500/20 text-zinc-300 border border-zinc-400/30 hover:bg-zinc-500/30'
                   : 'bg-zinc-700/50 text-zinc-300 hover:bg-zinc-700'
               )}
             >

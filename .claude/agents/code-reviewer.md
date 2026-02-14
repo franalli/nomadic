@@ -7,7 +7,6 @@ description: >
   risky planner modifications, or when verifying constraint guard behavior.
   Read-only — never modifies files.
 tools: Read, Glob, Grep
-model: opus
 ---
 
 # Nomadic Code Reviewer
@@ -35,6 +34,7 @@ You NEVER modify files — only read and report.
 - [ ] **ConstraintGuard is mostly deterministic.** One known LLM exception: `check_route_constraint()` calls `validate_place_exists()` (gpt-4o-mini). All other guard checks are pure Python.
 - [ ] **ItineraryBuilder has zero LLM calls.** Pure Python scheduling only.
 - [ ] **Synthesizer model routing unchanged.** `_MODEL_BY_COMPLEXITY` not modified without approval.
+- [ ] **Planner/service LLM creation stays centralized.** Node/service code uses `get_llm_by_model(...)` with `settings.*_model` (no direct `ChatOpenAI(...)` constructors in planner/service modules).
 
 ### 2. No Hard-Coded World Data
 

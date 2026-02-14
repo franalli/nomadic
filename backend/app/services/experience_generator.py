@@ -23,7 +23,6 @@ Usage:
 
 import asyncio
 import logging
-import os
 import time
 from datetime import UTC, datetime, timedelta
 from threading import RLock
@@ -31,11 +30,13 @@ from typing import Optional
 
 from cachetools import TTLCache
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
+from app.planner.llm_factory import get_llm_by_model
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +46,6 @@ logger = logging.getLogger(__name__)
 L1_TTL_SECONDS = 3600  # 1 hour
 L1_MAX_SIZE = 128
 L2_TTL_DAYS = 7
-
-EXPERIENCE_MODEL = os.getenv("EXPERIENCE_MODEL", "gpt-4o-mini")
 
 # =============================================================================
 # L1: Thread-safe in-memory cache
@@ -370,7 +369,7 @@ async def generate_single_category(
         extra_tiles = max(0, tiles_per_category - 2)
         max_tokens = min(600 + extra_tiles * 100, 1200)
 
-        llm = ChatOpenAI(model=EXPERIENCE_MODEL, temperature=0.3, max_tokens=max_tokens)
+        llm = get_llm_by_model(settings.experience_model, temperature=0.3, max_tokens=max_tokens)
         # Use compressed schema without include_raw (token logging via usage_metadata when fixed)
         structured_llm = llm.with_structured_output(ExperienceOutput)
 
@@ -631,7 +630,9 @@ async def generate_experiences(
             # Small batch: single LLM call (fast for ≤4 tiles)
             try:
                 max_tokens = min(200 * total_tiles, 2400)
-                llm = ChatOpenAI(model=EXPERIENCE_MODEL, temperature=0.3, max_tokens=max_tokens)
+                llm = get_llm_by_model(
+                    settings.experience_model, temperature=0.3, max_tokens=max_tokens
+                )
                 structured_llm = llm.with_structured_output(ExperienceOutput)
 
                 user_prompt = _build_user_prompt(

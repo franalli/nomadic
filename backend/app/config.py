@@ -1,11 +1,8 @@
 import os
-import threading
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI, OpenAI
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -82,18 +79,25 @@ class Settings(BaseSettings):
     openai_plan_temperature: float = 0.5  # Response creativity (lower = more consistent)
     llm_max_retries: int = 3  # Retry count for API errors
     openai_plan_seed: int | None = None  # Optional seed for reproducibility
-    openai_plan_model: str = os.getenv("OPENAI_PLAN_MODEL", "gpt-4o-mini")  # Model for validation
-    openai_small_model: str = "gpt-4o-mini"  # Small model for simple tasks
-    openai_medium_model: str = "gpt-4o-mini"  # Medium model for moderate tasks
-    llm_specialist_model: str = "gpt-4o-mini"  # Model for strategy specialist calls
-
     # =============================================================================
-    # V2 Model Tiering (for latency optimization)
+    # Node Model Assignments (env-driven, matches .env)
     # =============================================================================
-    router_model: str = os.getenv("ROUTER_MODEL", "gpt-4o-mini")  # Fast intent classification
-    extraction_model: str = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")  # Field extraction
-    architect_model: str = os.getenv("ARCHITECT_MODEL", "gpt-4o")  # Planning decisions
-    synthesizer_model: str = os.getenv("SYNTHESIZER_MODEL", "gpt-4o")  # Response generation
+    # intent_router, router_extraction, specialist feasibility
+    router_model: str = os.getenv("ROUTER_MODEL", "gpt-4o-mini")
+    # trip_architect, local_expert LLM
+    extraction_model: str = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")
+    # vertical_specialist domain reasoning
+    specialist_model: str = os.getenv("SPECIALIST_MODEL", "gpt-4o")
+    # constraint_guard place validation
+    guard_model: str = os.getenv("GUARD_MODEL", "gpt-4o-mini")
+    # synthesizer planning responses
+    synthesizer_planning_model: str = os.getenv("SYNTHESIZER_PLANNING_MODEL", "gpt-4o")
+    # synthesizer exploration/specialist_update
+    synthesizer_exploration_model: str = os.getenv("SYNTHESIZER_EXPLORATION_MODEL", "gpt-4o-mini")
+    # Tier 2 activity generation (experience_generator.py)
+    experience_model: str = os.getenv("EXPERIENCE_MODEL", "gpt-4o-mini")
+    # airport code extraction (iata_resolver.py)
+    iata_resolver_model: str = os.getenv("IATA_RESOLVER_MODEL", "gpt-4o-mini")
 
     # Debug flags
     debug_plan_messages: bool = False  # Enable verbose debug logging for planning
@@ -315,70 +319,6 @@ def configure_langsmith_tracing(
     os.environ["LANGCHAIN_ENDPOINT"] = settings.langsmith_endpoint
     os.environ["LANGCHAIN_TRACING_V2"] = "true" if enabled else "false"
     os.environ["LANGCHAIN_PROJECT"] = project or settings.langsmith_project
-
-
-# =============================================================================
-# OpenAI Client Singleton (Sync - for legacy code and migrations)
-# =============================================================================
-
-_openai_client: Optional[OpenAI] = None
-_openai_client_lock = threading.Lock()
-
-
-def get_openai_client() -> Optional[OpenAI]:
-    """
-    Get or create the singleton OpenAI client instance (synchronous).
-
-    Uses lazy initialization to avoid creating the client until needed.
-    The API key is read from settings or environment variable.
-
-    Returns:
-        Optional[OpenAI]: The OpenAI client, or None if no API key is configured.
-    """
-    global _openai_client
-
-    api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return None
-
-    if _openai_client is None:
-        with _openai_client_lock:
-            if _openai_client is None:
-                _openai_client = OpenAI(api_key=api_key)
-
-    return _openai_client
-
-
-# =============================================================================
-# Async OpenAI Client Singleton
-# =============================================================================
-
-_async_openai_client: Optional[AsyncOpenAI] = None
-_async_openai_client_lock = threading.Lock()
-
-
-def get_async_openai_client() -> Optional[AsyncOpenAI]:
-    """
-    Get or create the singleton AsyncOpenAI client instance.
-
-    Uses lazy initialization to avoid creating the client until needed.
-    The API key is read from settings or environment variable.
-
-    Returns:
-        Optional[AsyncOpenAI]: The async OpenAI client, or None if no API key is configured.
-    """
-    global _async_openai_client
-
-    api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return None
-
-    if _async_openai_client is None:
-        with _async_openai_client_lock:
-            if _async_openai_client is None:
-                _async_openai_client = AsyncOpenAI(api_key=api_key)
-
-    return _async_openai_client
 
 
 def generate_session_token() -> str:

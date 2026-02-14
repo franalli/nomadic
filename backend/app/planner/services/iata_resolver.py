@@ -3,8 +3,8 @@
 import json
 import logging
 
-from langchain_openai import ChatOpenAI
-
+from app.config import settings
+from app.planner.llm_factory import get_llm_by_model
 from app.planner.state.graph_state import GraphState
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ async def resolve_iata_codes(origin: str, destination: str, state: GraphState) -
         return origin_code, dest_code
 
     try:
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, max_tokens=50)
+        llm = get_llm_by_model(settings.iata_resolver_model, temperature=0, max_tokens=50)
         prompt = (
             f"Return ONLY a JSON object with IATA airport codes.\n"
             f"Use the primary international airport for each city.\n"

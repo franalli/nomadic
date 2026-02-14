@@ -31,7 +31,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 | Category            | Count | Description                                                                                                                 |
 | ------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------- |
 | LLM-Powered Nodes   | 4     | IntentRouter, TripArchitect, VerticalSpecialist, Synthesizer                                                                |
-| Domain Specialists  | 1     | LocalExpert (Static Dict + Optional LLM, gated by LOCAL_EXPERT_USE_LLM env var, default off, uses gpt-4o-mini when enabled) |
+| Domain Specialists  | 1     | LocalExpert (Static Dict + Optional LLM, gated by `LOCAL_EXPERT_USE_LLM`, default off, uses `settings.extraction_model` via `llm_factory` when enabled) |
 | Data Fetchers       | 1     | LogisticsNode (flight fetching + safety logic)                                                                              |
 | Deterministic Nodes | 1     | ConstraintGuard (mostly deterministic + one LLM-backed validation: `validate_place_exists()` via gpt-4o-mini)               |
 | **Total Nodes**     | **7** | Core graph nodes                                                                                                            |
@@ -44,7 +44,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 2. **"Diving IS an Agent"** - It requires domain logic (VerticalSpecialist)
 3. **"Architect sees the whole picture"** - Avoids context fracture
 4. **TripPlan is the SSoT** - Single Source of Truth for trip state
-5. **LLM-Based Intent Classification** - No regex minefield, GPT-4o-mini classifies
+5. **LLM-Based Intent Classification** - No regex minefield, `settings.router_model` (default `gpt-4o-mini`) classifies
 6. **Panic Button** - Hard-coded reset commands bypass LLM entirely
 7. **Constraint Injector Pattern** - Specialist runs BEFORE Architect calls tools
 8. **Local Expert Fallback** - Generic trips always have content via LocalExpert
@@ -64,6 +64,7 @@ backend/app/planner/
 ├── hashing.py               # Stable hashing utilities
 ├── meta.py                  # Metadata helpers
 ├── meta_keys.py             # Metadata key constants
+├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
 ├── telemetry.py             # Telemetry instrumentation
 ├── test_mode.py             # Test mode detection
 ├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
@@ -112,7 +113,7 @@ backend/app/planner/
                                       │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  IntentRouter (LLM - Fast: GPT-4o-mini)                                     │
+│  IntentRouter (LLM - Fast: router_model, default GPT-4o-mini)               │
 │  ─────────────────────────────────────                                      │
 │  LLM-based intent classification (no regex!)                                │
 │  • Classifies: GREETING, RESET, or PLANNING                                 │
@@ -265,15 +266,15 @@ on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 
 | Node                              | Type                       | Purpose                           | LLM Model                                                          | Max Tokens | Streaming             |
 | --------------------------------- | -------------------------- | --------------------------------- | ------------------------------------------------------------------ | ---------- | --------------------- |
-| `router` (IntentRouter)           | LLM (Fast)                 | Intent classification             | GPT-4o-mini                                                        | 150        | None                  |
-| `architect` (TripArchitect)       | LLM (Smart)                | Core planning, SSoT management    | gpt-4o-mini (via `EXTRACTION_MODEL` env var)                       | Variable   | Simulated             |
-| `specialist` (VerticalSpecialist) | LLM (Expert)               | Domain constraints + content      | gpt-4o                                                             | Variable   | Simulated             |
-| `local_expert` (LocalExpert)      | Static Dict + Optional LLM | City logistics concierge          | gpt-4o-mini (when LOCAL_EXPERT_USE_LLM=true, default off)          | N/A        | None                  |
+| `router` (IntentRouter)           | LLM (Fast)                 | Intent classification             | `settings.router_model` (default `gpt-4o-mini`, via `llm_factory`) | 150        | None                  |
+| `architect` (TripArchitect)       | LLM (Smart)                | Core planning, SSoT management    | `settings.extraction_model` (default `gpt-4o-mini`, via `llm_factory`) | Variable   | Simulated             |
+| `specialist` (VerticalSpecialist) | LLM (Expert)               | Domain constraints + content      | `settings.specialist_model` (default `gpt-4o`, via `llm_factory`) | Variable   | Simulated             |
+| `local_expert` (LocalExpert)      | Static Dict + Optional LLM | City logistics concierge          | `settings.extraction_model` (when `LOCAL_EXPERT_USE_LLM=true`, default off) | N/A        | None                  |
 | `logistics` (LogisticsNode)       | Data Fetcher               | Flight fetching + safety          | N/A                                                                | N/A        | None                  |
 | `guard` (ConstraintGuard)         | Python                     | Validation (mostly deterministic) | gpt-4o-mini (place validation only, via `validate_place_exists()`) | N/A        | None                  |
-| `synthesizer` (Synthesizer)       | LLM (Writer)               | Response generation               | gpt-4o-mini (exploration/specialist_update) or gpt-4o (planning)   | Variable   | True (astream_events) |
+| `synthesizer` (Synthesizer)       | LLM (Writer)               | Response generation               | `settings.synthesizer_exploration_model` (exploration/specialist_update) or `settings.synthesizer_planning_model` (planning), via `llm_factory` | Variable   | True (astream_events) |
 
-\*LocalExpert uses static knowledge from `LOCAL_EXPERT_KNOWLEDGE` dictionary. Optional LLM generation gated by `LOCAL_EXPERT_USE_LLM` env var (default off, uses gpt-4o-mini when enabled).
+\*LocalExpert uses static knowledge from `LOCAL_EXPERT_KNOWLEDGE` dictionary. Optional LLM generation is gated by `LOCAL_EXPERT_USE_LLM` (default off) and uses `settings.extraction_model` via `get_llm_by_model(...)`.
 
 ### NODE_STATUS_CONFIG (UI Progress Labels)
 
@@ -301,7 +302,7 @@ on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 
 ### IntentRouter
 
-LLM-based intent classification AND field extraction using GPT-4o-mini with Pydantic structured output.
+LLM-based intent classification AND field extraction using `settings.router_model` (default `gpt-4o-mini`) with Pydantic structured output via `get_llm_by_model(...)`.
 
 | Classification          | Trigger                                        | Action                                                                                 |
 | ----------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -364,13 +365,14 @@ The Router uses two distinct execution paths depending on whether a plan is alre
 
 **Structured Output Extraction:**
 
-`_classify_and_extract_with_llm()` uses `llm.with_structured_output(RouterOutput)` (GPT-4o-mini):
+`_classify_and_extract_with_llm()` uses `llm.with_structured_output(RouterOutput)` with `settings.router_model` (default `gpt-4o-mini`):
 
 1. Retries once on failure (`MAX_RETRIES = 1`) with raw error logging per attempt
-2. Extracts dates, destination, origin, travelers, budget, activity_day_preferences, modifications, and settings in ONE call
-3. Populates `state.trip_plan` immediately via `_populate_trip_plan_from_router_output(state, router_output, destination, user_text)`
-4. Sets `router_extracted_fields = True` flag for TripArchitect to skip duplicate extraction
-5. `ROUTER_EXTRACTION_PROMPT` has 9 tasks: (1) Intent Classification, (2) Field Extraction, (3) Flags, (4) Activity Categories (Tier 2), (5) Activity Day Preferences, (6) Modification Detection, (7) Settings Extraction, (8) Planning Intent Classification, (9) Question Classification. Specialist Detection is embedded in the prompt between Tasks 3 and 4.
+2. Treats `parsed is None` as a failed extraction attempt (ambiguous short input), then retries/fails through the same error path
+3. Extracts dates, destination, origin, travelers, budget, activity_day_preferences, modifications, and settings in ONE call
+4. Populates `state.trip_plan` immediately via `_populate_trip_plan_from_router_output(state, router_output, destination, user_text)`
+5. Sets `router_extracted_fields = True` flag for TripArchitect to skip duplicate extraction
+6. `ROUTER_EXTRACTION_PROMPT` has 9 tasks: (1) Intent Classification, (2) Field Extraction, (3) Flags, (4) Activity Categories (Tier 2), (5) Activity Day Preferences, (6) Modification Detection, (7) Settings Extraction, (8) Planning Intent Classification, (9) Question Classification. Specialist Detection is embedded in the prompt between Tasks 3 and 4.
 
 **Error Handling (no silent fallbacks):**
 
@@ -566,7 +568,7 @@ if skill_level:
 
 async def generate_specialist_output_llm(topic, destination, trip_plan, db=None, skill_level=None, target_activities=None):
     """Single LLM call generates feasibility + activities + constraints."""
-    llm = ChatOpenAI(model=os.getenv("SPECIALIST_MODEL", "gpt-4o"), temperature=0.2)
+    llm = get_llm_by_model(settings.specialist_model, temperature=0.2)
     return await llm.with_structured_output(LLMSpecialistOutput).ainvoke(...)
 ```
 
@@ -719,7 +721,7 @@ for current_topic in all_topics:
 
 ### LocalExpert
 
-The "Concierge" node for city trips - ensures the Agent Feed is never empty. Uses **Static Dict + Optional LLM** (gated by `LOCAL_EXPERT_USE_LLM` env var, default off, uses gpt-4o-mini when enabled).
+The "Concierge" node for city trips - ensures the Agent Feed is never empty. Uses **Static Dict + Optional LLM** (gated by `LOCAL_EXPERT_USE_LLM`, default off, uses `settings.extraction_model` via `llm_factory` when enabled).
 
 **Activation:** Default when no niche specialist (diving/hiking/skiing) is detected. Also runs first in multi-specialist flows (Trip DNA anchor).
 
@@ -815,7 +817,7 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 - IATA codes are resolved by `services/iata_resolver.py:resolve_iata_codes()`
 - Primary path: extracted by RouterOutput LLM call (piggybacks on existing intent extraction — free)
 - Fast-path (regex origin): resolved in IntentRouter origin detection block before handoff to logistics
-- Fallback: `resolve_iata_codes()` reads `state.trip_plan.origin_iata`/`destination_iata` first (instant), fires gpt-4o-mini only if missing (~50 tokens)
+- Fallback: `resolve_iata_codes()` reads `state.trip_plan.origin_iata`/`destination_iata` first (instant), fires `settings.iata_resolver_model` via `get_llm_by_model(...)` only if missing (~50 tokens)
 - No hardcoded airport mappings — all IATA codes are LLM-resolved
 
 **Safety Logic (Diving Integration):**
@@ -984,8 +986,9 @@ Unified response generator - "One voice, regardless of which agents contributed.
 **Performance Optimizations:**
 
 - **Model Routing**: Intelligent model selection by response complexity
-  - `exploration` / `specialist_update` → gpt-4o-mini (~150ms, 94% cheaper)
-  - `planning` → gpt-4o (~600ms, full reasoning)
+  - `exploration` / `specialist_update` → `settings.synthesizer_exploration_model` (default `gpt-4o-mini`)
+  - `planning` → `settings.synthesizer_planning_model` (default `gpt-4o`)
+  - Provider auto-selected by `get_llm_by_model(...)` (OpenAI/Gemini)
   - Greeting responses bypass LLM entirely (gated by `_should_use_llm_synthesis()`)
   - Gate-blocked responses use LLM (override short-circuit bypass) with pre-computed fallback
 - **Prompt Caching**: Template loading and Jinja2 rendering cached via `@lru_cache`
@@ -1009,6 +1012,7 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - Budget breakdown: Per-category cost vs allocation (flights 30%, hotels 40%, activities 30%)
 - Structured constraint violations: Budget violations get `## Budget Issue` header with conversational framing; non-budget/non-route violations get `## Constraint Alerts` with `suggested_action` passthrough. Falls back to plain `state.constraints_violated` string dump for older sessions without rich metadata.
 - Day preference context: User-requested day allocations per activity category
+- Per-specialist generated counts from `strategy_sections[].content_added` (`## Specialist Activities Generated`), used for count phrasing instead of `day_preferences` when both exist
 - Builder drop reporting: When `last_builder_drop_ratio > 0` and builder succeeded, includes "Activity placement: X of Y specialist activities placed (Z couldn't fit)" with natural-language framing guidance (e.g., "extending your trip by a couple days would fit them all"). Reads `builder_activities_input` and `builder_activities_placed` from `state.metadata`.
 - Builder scheduling conflicts: `state.metadata["builder_conflicts"]` (surfaced by `response_envelope.py` from builder results) — day, type, severity, message per conflict
 - Date change delta: When dates changed this turn, includes "Trip extended/shortened by N days" with old→new date range (from `prev_trip_values_snapshot`)
@@ -1019,7 +1023,7 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - Input gate warnings: `## Input Notes` section with each warning message, mentioned naturally in response.
 
 **LLM Failure Fallback:**
-When OpenAI returns `None`, all response types return a static `FALLBACK_MESSAGE` ("I've updated your trip plan — check the itinerary on the right. Let me know if you'd like to adjust anything."). `GREETING_TEMPLATE` is preserved for the fast greeting path (no LLM).
+When synthesis fails (provider error or unusable response payload), all response types return a static `FALLBACK_MESSAGE` ("I've updated your trip plan — check the itinerary on the right. Let me know if you'd like to adjust anything."). `GREETING_TEMPLATE` is preserved for the fast greeting path (no LLM).
 
 **Always includes:**
 
@@ -1404,13 +1408,13 @@ Pydantic structured output is used for LLM nodes that need **guaranteed schema e
 
 | Node                   | Uses Structured Output? | LLM Used?                                | Schema(s)                                             | Purpose                                                       |
 | ---------------------- | ----------------------- | ---------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------- |
-| **IntentRouter**       | ✅ Yes                  | GPT-4o-mini                              | `RouterOutput`, `IntentClassification`                | Intent + field extraction in one call                         |
-| **TripArchitect**      | ✅ Yes                  | GPT-4o-mini (via `EXTRACTION_MODEL`)     | `ExtractedTripFields`, `ExtractedSettingsFields`      | Trip field & settings extraction                              |
+| **IntentRouter**       | ✅ Yes                  | `settings.router_model` (via `llm_factory`) | `RouterOutput`, `IntentClassification`             | Intent + field extraction in one call                         |
+| **TripArchitect**      | ✅ Yes                  | `settings.extraction_model` (via `llm_factory`) | `ExtractedTripFields`, `ExtractedSettingsFields` | Trip field & settings extraction                              |
 | **LocalExpert**        | ❌ No                   | ❌ Static                                | N/A                                                   | Uses `LOCAL_EXPERT_KNOWLEDGE` dict                            |
-| **VerticalSpecialist** | ✅ Yes                  | GPT-4o                                   | `LLMSpecialistOutput`, `LLMActivity`, `LLMConstraint` | LLM-first with fallback                                       |
+| **VerticalSpecialist** | ✅ Yes                  | `settings.specialist_model` (via `llm_factory`) | `LLMSpecialistOutput`, `LLMActivity`, `LLMConstraint` | LLM-first with fallback                                   |
 | **LogisticsNode**      | ❌ No                   | ❌ N/A                                   | N/A                                                   | API calls only (Amadeus, curated data)                        |
 | **ConstraintGuard**    | ❌ No                   | gpt-4o-mini (place validation only)      | N/A                                                   | Mostly deterministic; `validate_place_exists()` is LLM-backed |
-| **Synthesizer**        | ❌ No                   | GPT-4o-mini or GPT-4o (by response type) | N/A                                                   | Free-form natural language (correct)                          |
+| **Synthesizer**        | ❌ No                   | `settings.synthesizer_*_model` (by response type, via `llm_factory`) | N/A                                      | Free-form natural language (correct)                          |
 
 > **Note:** VerticalSpecialist uses **LLM-first architecture** by default. Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
 
@@ -1475,7 +1479,7 @@ class RouterOutput(BaseModel):
     question_type: Optional[str] = None         # "weather", "safety", "costs", "visa", etc.
 
 # Usage
-llm = ChatOpenAI(model="gpt-4o-mini")
+llm = get_llm_by_model(settings.router_model)
 structured_llm = llm.with_structured_output(RouterOutput)
 result: RouterOutput = await structured_llm.ainvoke(messages)
 ```
@@ -3568,7 +3572,7 @@ LLM-backed airport code resolver with state caching. Single source of truth for 
 
 | Function                                         | Responsibility                                                                                                                                                            |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `resolve_iata_codes(origin, destination, state)` | Returns `(origin_code, dest_code)`. Reads `state.trip_plan.*_iata` first; fires gpt-4o-mini fallback (~50 tokens) only if missing. Caches resolved codes back onto state. |
+| `resolve_iata_codes(origin, destination, state)` | Returns `(origin_code, dest_code)`. Reads `state.trip_plan.*_iata` first; fires `settings.iata_resolver_model` fallback (~50 tokens) only if missing. Caches resolved codes back onto state. |
 
 Called by: IntentRouter (origin detection fast-path), LogisticsNode (flight search gating).
 

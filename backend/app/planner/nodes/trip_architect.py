@@ -20,8 +20,8 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
-from langchain_openai import ChatOpenAI
-
+from app.config import settings
+from app.planner.llm_factory import get_llm_by_model
 from app.planner.state import (
     ExtractedSettingsFields,
     ExtractedTripFields,
@@ -34,12 +34,6 @@ from app.planner.state import (
 from app.tools.tile_service import fetch_travel_tiles
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# LLM-Based Field Extraction (No Regex)
-# =============================================================================
-
-EXTRACTION_MODEL = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")
 
 
 async def _extract_fields_with_llm(
@@ -55,7 +49,7 @@ async def _extract_fields_with_llm(
     This replaces all regex-based extraction with pure LLM parsing.
     Returns tuple of (ExtractedTripFields, token_usage_dict).
     """
-    llm = ChatOpenAI(model=EXTRACTION_MODEL, temperature=0)
+    llm = get_llm_by_model(settings.extraction_model, temperature=0)
     structured_llm = llm.with_structured_output(ExtractedTripFields, include_raw=True)
 
     # Inject current date for relative date resolution
@@ -202,7 +196,7 @@ async def _extract_settings_with_llm(user_text: str) -> tuple[ExtractedSettingsF
     Only called when settings-related keywords are detected.
     Returns tuple of (ExtractedSettingsFields, token_usage_dict).
     """
-    llm = ChatOpenAI(model=EXTRACTION_MODEL, temperature=0)
+    llm = get_llm_by_model(settings.extraction_model, temperature=0)
     structured_llm = llm.with_structured_output(ExtractedSettingsFields, include_raw=True)
 
     prompt = SETTINGS_EXTRACTION_PROMPT.format(user_text=user_text)
@@ -847,7 +841,7 @@ async def trip_architect(state: GraphState) -> GraphState:
         # Compact logging: LLM call for field extraction
         if field_tokens:
             clog.llm_call(
-                model=EXTRACTION_MODEL,
+                model=settings.extraction_model,
                 prompt_tokens=field_tokens.get("prompt_tokens", 0),
                 completion_tokens=field_tokens.get("completion_tokens", 0),
                 purpose="field_extraction",
@@ -881,7 +875,7 @@ async def trip_architect(state: GraphState) -> GraphState:
                 )
                 # Compact logging: LLM call for settings extraction
                 clog.llm_call(
-                    model=EXTRACTION_MODEL,
+                    model=settings.extraction_model,
                     prompt_tokens=settings_tokens.get("prompt_tokens", 0),
                     completion_tokens=settings_tokens.get("completion_tokens", 0),
                     purpose="settings_extraction",

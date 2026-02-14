@@ -46,12 +46,12 @@ const LAYER_CONFIG: Record<string, LayerConfig> = {
   diving: {
     icon: Waves,
     label: 'Diving',
-    activeColor: 'bg-cyan-500 text-white border-cyan-500',
+    activeColor: 'bg-sky-500 text-white border-sky-500',
   },
   hiking: {
     icon: Mountain,
     label: 'Hiking',
-    activeColor: 'bg-green-500 text-white border-green-500',
+    activeColor: 'bg-emerald-500 text-white border-emerald-500',
   },
   skiing: {
     icon: Snowflake,
@@ -81,7 +81,7 @@ const LAYER_CONFIG: Record<string, LayerConfig> = {
   wildlife_safari: {
     icon: Binoculars,
     label: 'Safari',
-    activeColor: 'bg-amber-500 text-white border-amber-500',
+    activeColor: 'bg-amber-600 text-white border-amber-600',
   },
   hotel: {
     icon: Bed,

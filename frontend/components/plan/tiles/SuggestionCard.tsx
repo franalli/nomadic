@@ -191,7 +191,7 @@ export function SuggestionCard({
             </span>
             {/* Star rating for hotels */}
             {isHotel && tile.rating != null && (
-              <span className="text-[10px] text-amber-400">{renderStarRating(tile.rating)}</span>
+              <span className="text-[10px] text-zinc-500 dark:text-zinc-300">{renderStarRating(tile.rating)}</span>
             )}
           </div>
           <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">{tile.title}</p>
@@ -337,10 +337,10 @@ export function SuggestionCard({
             {tile.rating && (
               <div className="flex items-center gap-1">
                 {isHotel ? (
-                  <span className="text-sm text-amber-400">{renderStarRating(tile.rating)}</span>
+                  <span className="text-sm text-zinc-500 dark:text-zinc-300">{renderStarRating(tile.rating)}</span>
                 ) : (
                   <>
-                    <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+                    <Star className="w-4 h-4 text-zinc-500 dark:text-zinc-300 fill-current" />
                     <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{tile.rating.toFixed(1)}</span>
                   </>
                 )}
