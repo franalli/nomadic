@@ -1351,3 +1351,136 @@ class TestPhase525CoScheduling:
         ]
         assert len(pref_blocks) == 1
         assert pref_blocks[0].summary == "Sunset Yoga"
+
+    def test_preferred_activity_skips_duplicate_existing_title(self, builder: ItineraryBuilder):
+        """Preferred tile with an already-scheduled title should be skipped."""
+        days = [
+            DayCardOutput(
+                day_number=1,
+                label="Arrival",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="arrival",
+                        summary="Arrive",
+                        is_buffer=True,
+                        buffer_type="arrival",
+                    )
+                ],
+            ),
+            DayCardOutput(
+                day_number=2,
+                label="Surf Day",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="surfing_at_uluwatu",
+                        summary="Surfing at Uluwatu",
+                        specialist_type="surfing",
+                    )
+                ],
+            ),
+            DayCardOutput(
+                day_number=3,
+                label="Departure",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="departure",
+                        summary="Depart",
+                        is_buffer=True,
+                        buffer_type="departure",
+                    )
+                ],
+            ),
+        ]
+
+        tiles = {
+            "surf_pref_1": {
+                "id": "surf_pref_1",
+                "title": "Surfing at Uluwatu",
+                "type": "activity",
+                "duration": "2h",
+                "meta": {"time_of_day": "afternoon", "duration_hours": 2.0},
+            }
+        }
+        preferences = PreferenceOverrideInput(preferred_activity_ids=["surf_pref_1"])
+
+        result, dropped = builder._populate_free_days_with_preferences(days, tiles, preferences)
+
+        assert dropped == 0
+        pref_blocks = [
+            b for dc in result for b in dc.blocks if b.preference_status == "user_preferred"
+        ]
+        assert len(pref_blocks) == 0
+
+    def test_preferred_pass2_skips_duplicate_title_after_first_placement(
+        self, builder: ItineraryBuilder
+    ):
+        """Pass 2 should not co-schedule a duplicate title from another preferred tile."""
+        days = [
+            DayCardOutput(
+                day_number=1,
+                label="Arrival",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="arrival",
+                        summary="Arrive",
+                        is_buffer=True,
+                        buffer_type="arrival",
+                    )
+                ],
+            ),
+            DayCardOutput(day_number=2, label="Free Day", blocks=[]),
+            DayCardOutput(
+                day_number=3,
+                label="Departure",
+                blocks=[
+                    DayBlockOutput(
+                        period="afternoon",
+                        activity_type="departure",
+                        summary="Depart",
+                        is_buffer=True,
+                        buffer_type="departure",
+                    )
+                ],
+            ),
+        ]
+
+        tiles = {
+            "surf_pref_1": {
+                "id": "surf_pref_1",
+                "title": "Surfing at Uluwatu",
+                "type": "activity",
+                "duration": "2h",
+                "meta": {
+                    "time_of_day": "afternoon",
+                    "duration_hours": 2.0,
+                    "specialist_type": "surfing",
+                },
+            },
+            "surf_pref_2": {
+                "id": "surf_pref_2",
+                "title": "Surfing at Uluwatu",
+                "type": "activity",
+                "duration": "2h",
+                "meta": {
+                    "time_of_day": "afternoon",
+                    "duration_hours": 2.0,
+                    "specialist_type": "surfing",
+                },
+            },
+        }
+        preferences = PreferenceOverrideInput(
+            preferred_activity_ids=["surf_pref_1", "surf_pref_2"],
+            pinned_day_map={"surf_pref_1": 2, "surf_pref_2": 2},
+        )
+
+        result, dropped = builder._populate_free_days_with_preferences(days, tiles, preferences)
+
+        assert dropped == 0
+        uluwatu_blocks = [
+            b for dc in result for b in dc.blocks if b.summary == "Surfing at Uluwatu"
+        ]
+        assert len(uluwatu_blocks) == 1

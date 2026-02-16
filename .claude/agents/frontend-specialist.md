@@ -29,7 +29,7 @@ Before ANY code change, read the relevant SSoT doc:
 1. **Single Renderer Pattern.** `StrategyStageRenderer` adapts to data density. Never swap it for separate view components. Never mount/unmount entire views by state.
 2. **Right Panel NEVER empty** after first user interaction. Always show something: hero, cards, or full plan.
 3. **No UI Chrome Removal.** Elements that appear during setup must TRANSFORM through states, not disappear. Layout shift breaks spatial memory.
-4. **Backend is SSoT for `plan_view_state`.** Frontend reads it, never fabricates it (except frontend-only state: `S1_DESTINATION_SET`). Note: `S3_PARTIAL_CONFLICT` is emitted by backend's `/api/expand-itinerary` endpoint.
+4. **Backend is SSoT for `plan_view_state`.** Frontend reads it, never fabricates it (except frontend-only state: `S1_DESTINATION_SET`). Note: `S3_PARTIAL_CONFLICT` is emitted by backend itinerary build paths (graph envelope + NDJSON itinerary endpoints).
 5. **Coordinate format: `[lng, lat]`** preserved from specialist → strategy_sections → DayBlock. Never swap to `[lat, lng]`.
 6. **Dates gate Plan tab.** Plan tab MUST be locked until `start_date` is set. Strategy content alone does NOT unlock it.
 7. **Downgrade protection.** Never downgrade `plan_view_state` from S3→S2 when `day_cards` exist.

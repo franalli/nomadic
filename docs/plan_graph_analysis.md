@@ -350,8 +350,8 @@ The Router uses two distinct execution paths depending on whether a plan is alre
 **Post-plan fast path:** When `plan_is_active`, the LLM extraction call (`_classify_and_extract_with_llm()`, `max_tokens=700`) runs unconditionally. The `RouterOutput` includes 10 additional fields for modification/settings extraction (see schema below). Three shared state-mutation helpers then apply the results:
 
 1. `_apply_origin_to_state(state, origin, ...)` — sets `trip_plan.origin`, resolves IATA code
-2. `_apply_settings_to_state(state, settings_dict)` — writes hotel/flight settings to `TripSettings`
-3. `_apply_modifications_to_state(state, mods_dict)` — processes removals, skill level changes, budget/hotel resets
+2. `_apply_settings_to_state(state, settings_dict)` — writes hotel/flight settings to `TripSettings`, sets `tier2_prefetch_intent="settings"` so logistics skips waiting on activity-prefetch tasks during settings-only turns
+3. `_apply_modifications_to_state(state, mods_dict)` — processes removals, skill level changes, budget/hotel resets; when Tier 2 categories are present, sets `tier2_prefetch_intent="activity"` and starts prefetch
 
 **Regex settings merge fallback:** After LLM extraction, `_detect_settings_from_message()` (regex-based) runs as a fallback to catch settings the LLM missed (e.g., "5-star hotels only" → `hotel_min_stars`). Regex settings are merged into LLM settings for keys not already extracted. Additionally, `reset_hotel` / `reset_budget` flags are suppressed when the same extraction also sets `hotel_settings` / `budget` (prevents the LLM from incorrectly flagging a reset alongside a concrete setting).
 
@@ -370,7 +370,9 @@ The Router uses two distinct execution paths depending on whether a plan is alre
 1. Retries once on failure (`MAX_RETRIES = 1`) with raw error logging per attempt
 2. Treats `parsed is None` as a failed extraction attempt (ambiguous short input), then retries/fails through the same error path
 3. Extracts dates, destination, origin, travelers, budget, activity_day_preferences, modifications, and settings in ONE call
-4. Populates `state.trip_plan` immediately via `_populate_trip_plan_from_router_output(state, router_output, destination, user_text)`
+4. Populates `state.trip_plan` immediately via `_populate_trip_plan_from_router_output(..., category_baseline, category_merge_mode)`
+   - Baseline prefers `metadata.active_plan_categories` (fresh plan output) over persisted `trip_inputs` categories
+   - Merge mode uses `detect_category_merge_mode(user_text)`: default `add`, explicit language (`only`, `instead of`, `replace`, `swap`, `not ... but`) -> `replace`
 5. Sets `router_extracted_fields = True` flag for TripArchitect to skip duplicate extraction
 6. `ROUTER_EXTRACTION_PROMPT` has 9 tasks: (1) Intent Classification, (2) Field Extraction, (3) Flags, (4) Activity Categories (Tier 2), (5) Activity Day Preferences, (6) Modification Detection, (7) Settings Extraction, (8) Planning Intent Classification, (9) Question Classification. Specialist Detection is embedded in the prompt between Tasks 3 and 4.
 
@@ -455,6 +457,7 @@ Catches chat inputs that would otherwise be swallowed by the exploration short-c
 | Input Type               | Detection                                                 | Route                           | Example             |
 | ------------------------ | --------------------------------------------------------- | ------------------------------- | ------------------- |
 | Tier 2 activity addition | `TIER2_ACTIVITY_KEYWORDS` (from `specialist_registry.py`) | `ACTIONABLE_TO_LOGISTICS`       | "yoga as well"      |
+| Category replacement     | `detect_category_merge_mode()` explicit replace phrases   | Applied during extraction merge | "only yoga, not hiking" |
 | Activity removal         | `REMOVAL_PATTERN` + known-activity guard                  | `ACTIONABLE_TO_LOGISTICS`       | "skip the yoga"     |
 | Skill level              | `SKILL_LEVEL_MAP` keywords                                | `ACTIONABLE_TO_LOGISTICS`       | "I'm a beginner"    |
 | Budget reset             | `RESET_BUDGET_PATTERN`                                    | `ACTIONABLE_TO_LOGISTICS`       | "no budget limit"   |
@@ -693,6 +696,7 @@ for current_topic in all_topics:
 - Subsequent specialist processing deserializes cached results using `LLMSpecialistOutput.model_validate()`
 - Unsplash images cached in `_memory_cache` dict — parallel prefetch warms cache for all topics at once
 - **Single specialist:** Uses L1+L2 database cache directly (same path as parallel)
+- Per-topic latency telemetry stored in `state.metadata["specialist_latency_metrics"][topic]` with `{source, elapsed_ms, reason}`. Sources include `parallel_cache`, `llm_path`, `hardcoded_fallback`, `section_cache`, and `section_cache_infeasible`.
 
 **Debug Output (DEBUG=full):**
 
@@ -815,6 +819,7 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 **Airport Code Resolution:**
 
 - IATA codes are resolved by `services/iata_resolver.py:resolve_iata_codes()`
+- Logistics only resolves IATA when flight search is feasible (`flights_enabled` and `origin` present)
 - Primary path: extracted by RouterOutput LLM call (piggybacks on existing intent extraction — free)
 - Fast-path (regex origin): resolved in IntentRouter origin detection block before handoff to logistics
 - Fallback: `resolve_iata_codes()` reads `state.trip_plan.origin_iata`/`destination_iata` first (instant), fires `settings.iata_resolver_model` via `get_llm_by_model(...)` only if missing (~50 tokens)
@@ -842,6 +847,10 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 - `state.tiles["hotels"]` - Hotel tiles for frontend display
 - `state.tiles["activities"]` - Activity tiles for frontend display (two-tier filtering when specialists active)
 - `state.metadata["flight_options"]` - Backwards compatibility
+- `state.metadata["flight_search_possible"]` - Bool: flights requested + origin present + airport codes resolved
+- `state.metadata["flight_search_status"]` - `searched` or skip status (`skipped_disabled`, `skipped_no_origin`, `skipped_code_resolution`)
+- `state.metadata["flight_skip_reason"]` - Machine-readable skip reason for synthesizer grounding
+- `state.metadata["active_plan_categories"]` - Current Tier 1 + generated Tier 2 categories represented in this run (used by router as merge baseline on subsequent turns)
 
 **Two-Tier Activity System:**
 
@@ -1011,6 +1020,7 @@ Unified response generator - "One voice, regardless of which agents contributed.
 
 - Budget breakdown: Per-category cost vs allocation (flights 30%, hotels 40%, activities 30%)
 - Structured constraint violations: Budget violations get `## Budget Issue` header with conversational framing; non-budget/non-route violations get `## Constraint Alerts` with `suggested_action` passthrough. Falls back to plain `state.constraints_violated` string dump for older sessions without rich metadata.
+- Flight search grounding block (`## Flight Search`): includes `flights_requested`, `origin_present`, `flights_found`, `flight_search_status`, and `flight_skip_reason` so the model does not hallucinate flight inventory
 - Day preference context: User-requested day allocations per activity category
 - Per-specialist generated counts from `strategy_sections[].content_added` (`## Specialist Activities Generated`), used for count phrasing instead of `day_preferences` when both exist
 - Builder drop reporting: When `last_builder_drop_ratio > 0` and builder succeeded, includes "Activity placement: X of Y specialist activities placed (Z couldn't fit)" with natural-language framing guidance (e.g., "extending your trip by a couple days would fit them all"). Reads `builder_activities_input` and `builder_activities_placed` from `state.metadata`.
@@ -1030,6 +1040,7 @@ When synthesis fails (provider error or unusable response payload), all response
 - `suggested_replies` (up to 3 chips, no padding)
 - Image enrichment via Unsplash
 - Graceful constraint warnings
+- Final post-LLM grounding pass removes hallucinated numeric flight-count claims when no `state.tiles["flights"]` exist and appends a departure-city prompt when flights are requested but origin is missing
 
 **Suggestion Engine (registry-driven):**
 
@@ -2280,8 +2291,8 @@ Two-tier cache for destination images.
 
 1. In-memory cache (async lock, fastest)
 2. Database cache (persistent, activity-aware key)
-3. Unsplash API (2s timeout, fresh fetch)
-4. Picsum fallback (deterministic seed-based)
+3. Unsplash API (retry + timeout, fresh fetch)
+4. Unsplash placeholder fallback (deterministic seed-based)
 
 **Non-blocking in endpoints:** `get_image_url_sync()` checks memory cache only (populated by fire-and-forget prefetch). Destination images are decorative and never gate the response.
 
@@ -2370,6 +2381,8 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Inline wi
 2. L2 PostgreSQL → ~50ms (promotes to L1 on hit)
 3. `gpt-4o-mini` structured output → ~2-3s (writes to both layers)
 
+**Singleflight dedupe:** `generate_experiences()` wraps generation with an in-flight task map keyed by the same experience cache key. Concurrent callers (router prefetch + logistics) share one owner task instead of launching duplicate LLM calls. Waiters hydrate their state metadata from the shared result.
+
 **Duration clamping on cache reads:** `_clamp_tile_durations()` runs on both L1 and L2 cache returns, capping `meta.duration_hours` to 4h. Defensive against stale cache entries from before the generation-time clamp was added (LLM sometimes generates 48h multi-day retreats). Generation-time clamping at line 418-424 handles fresh tiles; cache-read clamping handles stale ones.
 
 **Single-Day Generation:** `generate_experience_tiles_for_day()` generates tiles for a specific day number. Round-robins across provided categories, calls `generate_single_category()` in parallel (reuses L1/L2 cache). `base_index = day_number * 100` for unique tile IDs. When `categories` is `None`/empty, falls back to `["activities"]` so the LLM picks destination-appropriate experiences. Used by the `/api/document/fill-day` endpoint (no graph execution).
@@ -2386,7 +2399,7 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Inline wi
 - **Single tile per fill:** `tiles_per_day=1` — generates one activity per fill request for fine-grained control
 - **Pinned placement:** Generated tiles are tagged with `meta.pinned_day = day_number`, ensuring the builder places them on the target day (via Pass 0) instead of redistributing
 - **Cross-domain exclusion:** Adjacent-day constraint filter now uses `SPECIALIST_REGISTRY[].cross_domain_blocks` instead of hardcoded diving check. Dynamically reads `target_specialists` from each adjacent day's specialist type.
-- **Rich DayBlocks:** `activity_type` uses `tile.title` (display name), `specialist_type` resolves via tile-level → requested Tier 1 → meta.category fallback. Blocks include `image_url`, `duration` (formatted string), `booked_tile`, `booking_category`, and use tile's `time_of_day` for period assignment (fallback to round-robin)
+- **Rich DayBlocks:** `activity_type` uses `tile.title` (display name), `specialist_type` resolves via tile-level → requested Tier 1 → meta.category fallback. Blocks include `image_url`, `duration` (formatted string), `booked_tile`, `booking_category`, `constraints` (meta + registry hard constraints), `coordinates` (tile/meta normalized with itinerary anchor fallback), and use tile's `time_of_day` for period assignment (fallback to round-robin)
 - **Tile store merge:** Generated tiles are added to `doc_data.tiles` map (enables hearting/referencing in frontend)
 - **Category-aware labels:** Day card label uses unique categories from generated tiles (e.g., "Yoga & Beach Day") instead of generic "Filled"
 - **Categories optional:** `categories` param no longer required (400 → graceful fallback to destination-appropriate activities)
@@ -2413,7 +2426,13 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Inline wi
 - Router fires `asyncio.create_task(generate_experiences(..., state=None))` when Tier 2 intent detected
 - **Critical:** Passes `state=None` to avoid dict mutation race condition
 - Prefetch populates L1 cache → Logistics awaits task → instant L1 cache hit
-- Logistics checks `metadata["tier2_prefetch_task"]` and awaits with 10s timeout
+- Router stores full prefetch context (`tier2_prefetch_categories`, `tier2_prefetch_tiles_per_category`, destination/month, started_at)
+- Logistics only consumes prefetch when destination/month/categories/tiles-per-category all match expected generation context
+- Logistics waits with configurable budget `settings.tier2_prefetch_wait_budget_ms` (fallback to direct generation on timeout/mismatch/error)
+- Prefetch metadata is cleared at end of logistics turn to prevent stale reuse
+- Router/logistics share the same deterministic generation key format: `tier2:{destination}:{month}:{sorted_categories}:n{tiles_per_category}`
+- Logistics reuses prior generated Tier 2 tiles when generation key matches and category snapshots exist in `metadata.generated_tier2_categories`
+- Direct generation is wrapped in wait budget `settings.tier2_generation_wait_budget_ms`; timeout/error falls back to existing matched tiles and schedules background prewarm
 - Limitation: ~0s savings for pure Tier 2 flows (no specialist to overlap with)
 - Impact: Masks 2-4s of generation time via parallel execution in mixed Tier 1+2 flows
 
@@ -2574,7 +2593,7 @@ Changed Fields Detection → Strategy Computation → Selective Execution → Ca
 
 | Strategy        | Trigger Fields                                                                              | Execution Path                    | Est. Time | LLM Calls             |
 | --------------- | ------------------------------------------------------------------------------------------- | --------------------------------- | --------- | --------------------- |
-| **BUILDER**     | `preferred_tile_ids`, `origin`                                                              | ItineraryBuilder only             | ~100ms    | None                  |
+| **BUILDER**     | `preferred_tile_ids` / `preferences`, `origin`                                              | ItineraryBuilder only             | ~100ms    | None                  |
 | **LOGISTICS**   | `adults`, `children`, `budget`, `flight_settings`, `hotel_settings`, `activity_skill_level` | LogisticsNode → Builder           | ~500ms    | None (API calls only) |
 | **SPECIALISTS** | `start_date`, `end_date`, `activity_categories`                                             | Specialists → Logistics → Builder | ~3-8s     | Yes                   |
 | **FULL**        | `destination`                                                                               | Full graph re-execution           | ~10-15s   | Yes                   |
@@ -2598,6 +2617,7 @@ FIELD_IMPACT: Dict[str, RegenStrategy] = {
     "activity_skill_level": RegenStrategy.LOGISTICS,
     # BUILDER - only affects itinerary structure, reuse cached tiles
     "origin": RegenStrategy.BUILDER,
+    "preferences": RegenStrategy.BUILDER,
 }
 ```
 
@@ -2616,13 +2636,21 @@ Field hashes are computed on-demand at the `/api/expand-itinerary` endpoint by c
 ```python
 # In expand_itinerary endpoint (main.py)
 # Compute previous field hashes from document's stored trip_inputs
-prev_trip_inputs = (
-    doc_data.trip_inputs.model_dump() if doc_data.trip_inputs else {}
-)
-previous_hashes = compute_field_hashes(prev_trip_inputs)
+prev_trip_inputs = doc_data.trip_inputs.model_dump() if doc_data.trip_inputs else {}
+previous_preferences = {"preferred_tile_ids": sorted(set(doc_data.preferred_tile_ids or []))}
+previous_hashes = compute_field_hashes(prev_trip_inputs, previous_preferences)
 
 # Compute current field hashes from request trip_inputs
-current_hashes = compute_field_hashes(trip_inputs_data)
+current_preferences = {
+    "preferred_tile_ids": sorted(
+        set(
+            (req.preferences.preferred_hotel_ids or [])
+            + (req.preferences.preferred_activity_ids or [])
+            + (req.preferences.preferred_flight_ids or [])
+        )
+    )
+}
+current_hashes = compute_field_hashes(trip_inputs_data, current_preferences)
 
 # Detect which fields changed
 changed_fields = {
@@ -3600,7 +3628,7 @@ Called by `format_result()` step 6.5 (shadow mode — exception → warning, doe
     "ready_to_generate": bool,
     "errors": [...],
     "document": {
-        "plan_view_state": "S0_BOOTSTRAP" | "S2_STRATEGY_READY",  # Computed by _compute_plan_view_state(), persisted to state.metadata for next turn
+        "plan_view_state": "S0_BOOTSTRAP" | "S2_STRATEGY_READY" | "S3_ITINERARY_READY" | "S3_EDITING" | "S3_PARTIAL_CONFLICT",  # Computed by envelope + itinerary resolver, persisted to state.metadata for next turn
         "tiles": {...},           # Flattened ID-based map (each tile gets `price_display` field: "$120" or null)
         "strategy_sections": [...], # Agent cards data (content_blocks dual-written)
         "itinerary_day_cards": [...] | null,  # ItineraryBuilder output (null until S2_STRATEGY_READY)
@@ -3622,8 +3650,9 @@ The response envelope computes `plan_view_state` based on data richness, then pe
 | --------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------- |
 | `S0_BOOTSTRAP`        | No tiles and no specialist content                                                 | Setup checklist, blank slate                 |
 | `S2_STRATEGY_READY`   | Has tiles OR has specialist strategy sections                                      | Strategy preview or full logistics dashboard |
-| `S3_ITINERARY_READY`  | Builder succeeded — day_cards exist (set by graph_plan/stream or expand-itinerary) | Full timeline with scheduled activities      |
-| `S3_PARTIAL_CONFLICT` | Conflict detected during expand-itinerary (set by frontend)                        | Partial timeline with unschedulable blocks   |
+| `S3_ITINERARY_READY`  | Builder succeeded — day_cards exist and conflict count is 0                        | Full timeline with scheduled activities      |
+| `S3_EDITING`          | Builder succeeded — day_cards exist and conflicts remain                           | Timeline visible with non-blocking conflicts |
+| `S3_PARTIAL_CONFLICT` | Builder failed with conflicts but returned partial day_cards                       | Partial timeline with unschedulable blocks   |
 
 ### Two-Mode Frontend System
 

@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import importlib
+import time
 from dataclasses import dataclass
 
 import pytest
 from langchain_core.messages import HumanMessage
 
+from app.debug_utils import RequestMetrics
 from app.planner.nodes.synthesizer import (
     PILL_ACTION_MAP,
     _build_synthesis_context,
     _get_model_id,
+    _ground_flight_response,
     _render_prompt_for_response_type,
 )
 from app.planner.state import GraphState, TripPlan
+
+synthesizer_module = importlib.import_module("app.planner.nodes.synthesizer")
 
 
 def _new_state(*, metadata: dict | None = None, last_human: str = "hello") -> GraphState:
@@ -145,3 +151,153 @@ def test_plan_flight_direct_legacy_alias_maps_to_direct_flights_trigger_action()
     action_type, action_target = PILL_ACTION_MAP["plan_flight_direct"]
     assert action_type == "trigger_action"
     assert action_target == "set_direct_flights_only"
+
+
+def test_synthesis_context_includes_no_origin_flight_guardrail() -> None:
+    state = _new_state(
+        metadata={
+            "trip_inputs": {"booking_types": {"flights": "on"}},
+            "flight_search_status": "skipped_no_origin",
+            "flight_skip_reason": "no_origin_for_flights",
+        }
+    )
+    context = _build_synthesis_context(state, response_type="specialist_update")
+
+    assert "- status: skipped_no_origin" in context
+    assert "- skip_reason: no_origin_for_flights" in context
+    assert "Do NOT claim flights were found" in context
+
+
+def test_ground_flight_response_removes_hallucinated_counts_and_prompts_origin() -> None:
+    state = _new_state(
+        metadata={
+            "trip_inputs": {"booking_types": {"flights": "on"}},
+            "flight_search_status": "skipped_no_origin",
+            "flight_skip_reason": "no_origin_for_flights",
+        }
+    )
+    state.tiles = {"flights": []}
+
+    grounded = _ground_flight_response(
+        "Now showing direct flights. Found **2 flights**.",
+        state,
+    )
+
+    assert "Found **2 flights**" not in grounded
+    assert "Now showing direct flights." not in grounded
+    assert "departure city" in grounded
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_settings_only_uses_terse_ack_without_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _new_state(
+        metadata={
+            "settings_just_updated": True,
+            "actionable_acknowledgment": "Applied your preference.",
+            "constraint_violations": [],
+            "added_categories": [],
+            "tier2_tiles_generated": False,
+            "tier2_new_content_generated": False,
+        },
+        last_human="direct flights",
+    )
+    calls = {"llm": 0}
+
+    async def _fake_enrich_with_images(_state: GraphState) -> None:
+        return None
+
+    async def _fake_synthesize_with_llm(_state: GraphState, _response_type: str):
+        calls["llm"] += 1
+        return ("should not be used", None)
+
+    monkeypatch.setattr(synthesizer_module, "enrich_with_images", _fake_enrich_with_images)
+    monkeypatch.setattr(synthesizer_module, "synthesize_with_llm", _fake_synthesize_with_llm)
+    monkeypatch.setattr(synthesizer_module, "generate_suggestions", lambda _state: [])
+
+    await synthesizer_module.synthesizer(state)
+
+    assert calls["llm"] == 0
+    assert state.last_summary == "Applied your preference."
+    assert state.metadata.get("synthesizer_output", {}).get("used_llm") is False
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_ignores_legacy_tier2_generated_flag_when_no_new_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _new_state(
+        metadata={
+            "settings_just_updated": True,
+            "actionable_acknowledgment": "Applied your preference.",
+            "constraint_violations": [],
+            "added_categories": [],
+            "tier2_tiles_generated": True,  # legacy flag can still be present
+            "tier2_new_content_generated": False,
+        },
+        last_human="direct flights",
+    )
+    calls = {"llm": 0}
+
+    async def _fake_enrich_with_images(_state: GraphState) -> None:
+        return None
+
+    async def _fake_synthesize_with_llm(_state: GraphState, _response_type: str):
+        calls["llm"] += 1
+        return ("should not be used", None)
+
+    monkeypatch.setattr(synthesizer_module, "enrich_with_images", _fake_enrich_with_images)
+    monkeypatch.setattr(synthesizer_module, "synthesize_with_llm", _fake_synthesize_with_llm)
+    monkeypatch.setattr(synthesizer_module, "generate_suggestions", lambda _state: [])
+
+    await synthesizer_module.synthesizer(state)
+
+    assert calls["llm"] == 0
+    assert state.metadata.get("synthesizer_output", {}).get("used_llm") is False
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_tracks_llm_tokens_in_compact_logger_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _new_state(
+        metadata={
+            "settings_just_updated": True,
+            "constraint_violations": [],
+            "added_categories": ["nightlife"],
+            "tier2_tiles_generated": True,
+            "tier2_new_content_generated": True,
+            "_metrics": RequestMetrics(start_time=time.time()),
+        },
+        last_human="add nightlife",
+    )
+    calls = {"llm": 0}
+
+    async def _fake_enrich_with_images(_state: GraphState) -> None:
+        return None
+
+    async def _fake_synthesize_with_llm(_state: GraphState, _response_type: str):
+        calls["llm"] += 1
+        return (
+            "LLM response",
+            {
+                "model": "gemini-2.5-flash",
+                "prompt_tokens": 123,
+                "completion_tokens": 45,
+                "total_tokens": 168,
+            },
+        )
+
+    monkeypatch.setattr(synthesizer_module, "enrich_with_images", _fake_enrich_with_images)
+    monkeypatch.setattr(synthesizer_module, "synthesize_with_llm", _fake_synthesize_with_llm)
+    monkeypatch.setattr(synthesizer_module, "generate_suggestions", lambda _state: [])
+
+    await synthesizer_module.synthesizer(state)
+
+    assert calls["llm"] == 1
+    assert state.metadata.get("synthesizer_output", {}).get("used_llm") is True
+    node_tokens = state.metadata["_metrics"].node_tokens.get("SYNTHESIZER")
+    assert node_tokens is not None
+    assert node_tokens.prompt == 123
+    assert node_tokens.completion == 45

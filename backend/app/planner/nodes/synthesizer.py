@@ -21,6 +21,7 @@ Architect, Specialist, and Guard outputs into a coherent narrative.
 
 import logging
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -400,8 +401,27 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
     if plan.trip_type:
         parts.append(f"- Trip Type: {plan.trip_type}")
 
-    # User's activity selections (from pill UI) — MUST acknowledge, never re-ask
     settings = get_trip_settings(state)
+    flights_requested = settings.booking_types.flights != "off"
+    flights_found = len([t for t in state.tiles.get("flights", []) if t]) if state.tiles else 0
+    flight_search_status = state.metadata.get("flight_search_status")
+    flight_skip_reason = state.metadata.get("flight_skip_reason")
+    parts.append("\n## Flight Search")
+    parts.append(f"- flights_requested: {flights_requested}")
+    parts.append(f"- origin_present: {bool(plan.origin)}")
+    parts.append(f"- flights_found: {flights_found}")
+    if flight_search_status:
+        parts.append(f"- status: {flight_search_status}")
+    if flight_skip_reason:
+        parts.append(f"- skip_reason: {flight_skip_reason}")
+    if flight_skip_reason == "no_origin_for_flights":
+        parts.append(
+            "- CRITICAL: Do NOT claim flights were found. Ask for the user's departure city."
+        )
+    elif flights_requested and flights_found == 0:
+        parts.append("- CRITICAL: Do NOT claim flight counts when no flights are available.")
+
+    # User's activity selections (from pill UI) — MUST acknowledge, never re-ask
     categories = settings.activity_settings.categories
     if categories:
         parts.append("\n## User's Activity Selections (from UI)")
@@ -686,6 +706,56 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
             parts.append("- NOTE: Do NOT list individual options. Just mention counts.")
 
     return "\n".join(parts)
+
+
+def _strip_hallucinated_flight_count_claims(message: str) -> str:
+    """
+    Remove sentences that claim flight counts when no flight tiles are available.
+
+    This is a narrow post-LLM safety net for phrases like:
+    - "Found **2 flights**"
+    - "Now showing direct flights. Found 2 flights."
+    """
+    sentences = re.split(r"(?<=[.!?])\s+", (message or "").strip())
+    kept: list[str] = []
+    for sentence in sentences:
+        lowered = sentence.lower()
+        has_count = re.search(r"\b\d+\b", lowered)
+        has_flight = "flight" in lowered
+        has_claim_verb = re.search(r"\b(found|showing|added|now showing)\b", lowered)
+        claims_specific_flights = "direct" in lowered or "option" in lowered
+        if has_flight and has_claim_verb and (has_count or claims_specific_flights):
+            continue
+        kept.append(sentence)
+    return " ".join(kept).strip()
+
+
+def _ground_flight_response(message: str, state: GraphState) -> str:
+    """
+    Ensure chat text doesn't claim flights that were not actually returned.
+    """
+    flights_found = len([t for t in state.tiles.get("flights", []) if t]) if state.tiles else 0
+    if flights_found > 0:
+        return message
+
+    grounded = _strip_hallucinated_flight_count_claims(message)
+    if grounded != message:
+        logger.debug("[VERIFY][SYNTH] removed_hallucinated_flight_claim")
+
+    settings = get_trip_settings(state)
+    flights_requested = settings.booking_types.flights != "off"
+    skip_reason = state.metadata.get("flight_skip_reason")
+    status = state.metadata.get("flight_search_status")
+    needs_origin = skip_reason == "no_origin_for_flights" or status == "skipped_no_origin"
+
+    if flights_requested and needs_origin:
+        lowered = grounded.lower()
+        if "departure city" not in lowered and "origin" not in lowered:
+            prompt = "Share your departure city to see flight options."
+            grounded = f"{grounded} {prompt}".strip() if grounded else prompt
+            logger.debug("[VERIFY][SYNTH] added_origin_prompt_for_flights")
+
+    return grounded or message
 
 
 async def synthesize_with_llm(
@@ -1295,19 +1365,19 @@ class Synthesizer:
     def __init__(self):
         self.debug = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
-    def synthesize_greeting(self, state: GraphState) -> str:
+    def synthesize_greeting(self, _state: GraphState) -> str:
         """Generate greeting response."""
         return GREETING_TEMPLATE
 
-    def synthesize_inspiration(self, state: GraphState) -> str:
+    def synthesize_inspiration(self, _state: GraphState) -> str:
         """Generate inspiration (pre-core) response."""
         return FALLBACK_MESSAGE
 
-    def synthesize_planning(self, state: GraphState) -> str:
+    def synthesize_planning(self, _state: GraphState) -> str:
         """Generate planning response."""
         return FALLBACK_MESSAGE
 
-    def synthesize_constraint_warning(self, state: GraphState) -> str:
+    def synthesize_constraint_warning(self, _state: GraphState) -> str:
         """Generate response highlighting constraint violations."""
         return FALLBACK_MESSAGE
 
@@ -1369,12 +1439,25 @@ async def synthesizer(state: GraphState) -> GraphState:
     Performance: Image fetch runs in parallel with LLM synthesis to mask latency.
     """
     import asyncio
+    import time
 
-    from app.debug_utils import _debug_node_end, _debug_node_start
+    from app.debug_utils import CompactLogger, _debug_node_end, _debug_node_start
+
+    node_start_time = time.time()
+    metrics = state.metadata.get("_metrics")
+    clog = CompactLogger("synthesizer", metrics=metrics)
 
     _debug_node_start(
         "synthesizer",
         "📝",
+        mode=state.metadata.get("architect_mode"),
+        has_tiles=bool(state.tiles),
+        has_specialist=bool(
+            state.active_specialist or state.metadata.get("last_executed_specialist")
+        ),
+    )
+    clog.node_start(
+        "SYNTHESIZER",
         mode=state.metadata.get("architect_mode"),
         has_tiles=bool(state.tiles),
         has_specialist=bool(
@@ -1399,6 +1482,8 @@ async def synthesizer(state: GraphState) -> GraphState:
             speculative=True,
             message_len=0,
         )
+        duration_ms = int((time.time() - node_start_time) * 1000)
+        clog.node_end("SYNTHESIZER", duration_ms, speculative=True, message_len=0)
         return state
 
     synth = Synthesizer()
@@ -1406,8 +1491,11 @@ async def synthesizer(state: GraphState) -> GraphState:
     # Start image fetch in parallel with LLM synthesis (latency masking)
     image_task = asyncio.create_task(enrich_with_images(state))
 
-    # Determine if we should use LLM synthesis or templates
-    use_llm = _should_use_llm_synthesis(state)
+    # Determine routing preference for LLM vs template paths.
+    # Observability uses runtime flags below to reflect actual calls.
+    llm_route_enabled = _should_use_llm_synthesis(state)
+    llm_attempted = False
+    llm_called = False
     message = ""
 
     from app.debug_utils import log, log_tokens
@@ -1416,51 +1504,78 @@ async def synthesizer(state: GraphState) -> GraphState:
         # Settings update gate — check if new content was generated
         # Terse ack OK for pure settings changes (e.g., "4-star hotels only")
         # Full LLM synthesis needed when tiles/categories generated or violations exist
-        has_new_content = (
-            state.metadata.get("constraint_violations")  # Violations exist
-            or state.metadata.get("tier2_tiles_generated")  # NEW Tier 2 tiles generated
+        has_violations = len(state.metadata.get("constraint_violations", [])) > 0
+        has_new_content = bool(
+            state.metadata.get("tier2_new_content_generated")  # NEW Tier 2 content this turn
             or len(state.metadata.get("added_categories", [])) > 0  # NEW categories added
         )
 
-        if state.metadata.get("settings_just_updated") and not has_new_content:
+        if (
+            state.metadata.get("settings_just_updated")
+            and not has_violations
+            and not has_new_content
+        ):
             # Only use terse ack for pure settings changes
             message = state.metadata.get("actionable_acknowledgment", "") or state.last_summary
             log("SYNTH", "Settings update (terse ack OK, no new content)")
-        elif state.metadata.get("settings_just_updated") and has_new_content:
+        elif state.metadata.get("settings_just_updated") and (has_violations or has_new_content):
             # Violations override settings shortcut — use full LLM response
-            log("SYNTH", "Settings update has violations — routing to LLM")
+            if has_violations:
+                log("SYNTH", "Settings update has violations — routing to LLM")
+            else:
+                log("SYNTH", "Settings update generated new content — routing to LLM")
             response_type = _get_response_type(state)
+            llm_attempted = True
+            llm_called = True
             llm_response, token_usage = await synthesize_with_llm(state, response_type)
             if llm_response:
                 message = llm_response
                 if token_usage:
                     model_used = token_usage.get("model", "unknown")
+                    prompt_tokens = token_usage.get("prompt_tokens", 0)
+                    completion_tokens = token_usage.get("completion_tokens", 0)
                     log_tokens(
                         "SYNTH",
-                        token_usage.get("prompt_tokens", 0),
-                        token_usage.get("completion_tokens", 0),
+                        prompt_tokens,
+                        completion_tokens,
                         token_usage.get("total_tokens", 0),
+                    )
+                    clog.llm_call(
+                        model=model_used,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        purpose=response_type,
                     )
                     log("SYNTH", f"Model: {model_used}, Response type: {response_type}")
             else:
                 output = synth.generate_response(state)
                 message = output.message
                 log("SYNTH", "Using template (LLM failed for violation response)")
-        elif use_llm:
+        elif llm_route_enabled:
             # Use LLM for complex planning responses
             logger.debug("Using LLM synthesis for response generation")
             log("SYNTH", "Generating LLM response...")
             response_type = _get_response_type(state)
+            llm_attempted = True
+            llm_called = True
             llm_response, token_usage = await synthesize_with_llm(state, response_type)
             if llm_response:
                 message = llm_response
                 if token_usage:
                     model_used = token_usage.get("model", "unknown")
+                    prompt_tokens = token_usage.get("prompt_tokens", 0)
+                    completion_tokens = token_usage.get("completion_tokens", 0)
                     log_tokens(
                         "SYNTH",
-                        token_usage.get("prompt_tokens", 0),
-                        token_usage.get("completion_tokens", 0),
+                        prompt_tokens,
+                        completion_tokens,
                         token_usage.get("total_tokens", 0),
+                    )
+                    clog.llm_call(
+                        model=model_used,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        purpose=response_type,
                     )
                     log("SYNTH", f"Model: {model_used}, Response type: {response_type}")
             else:
@@ -1505,6 +1620,9 @@ async def synthesizer(state: GraphState) -> GraphState:
         else:
             await image_task
 
+    # Final grounding pass: avoid flight-count claims when logistics skipped flights.
+    message = _ground_flight_response(message, state)
+
     # Generate suggestion chips (always template-based for consistency)
     # Always regenerate to ensure fresh suggestions on every turn
     suggested_replies = generate_suggestions(state)
@@ -1534,7 +1652,8 @@ async def synthesizer(state: GraphState) -> GraphState:
         "message": message,
         "suggested_replies": suggested_replies,
         "ui_events": [e.model_dump() for e in ui_events],
-        "used_llm": use_llm,
+        "used_llm": llm_called,
+        "llm_attempted": llm_attempted,
     }
 
     _debug_node_end(
@@ -1542,7 +1661,15 @@ async def synthesizer(state: GraphState) -> GraphState:
         "📝",
         response_len=len(message),
         suggested_replies=suggested_replies,
-        used_llm=use_llm,
+        used_llm=llm_called,
+    )
+    duration_ms = int((time.time() - node_start_time) * 1000)
+    clog.node_end(
+        "SYNTHESIZER",
+        duration_ms,
+        response_len=len(message),
+        used_llm=llm_called,
+        suggestions=len(suggested_replies),
     )
 
     return state

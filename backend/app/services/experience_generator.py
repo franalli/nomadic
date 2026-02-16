@@ -53,6 +53,8 @@ L2_TTL_DAYS = 7
 _cache_lock = RLock()
 _stats_lock = RLock()
 _experience_cache: TTLCache = TTLCache(maxsize=L1_MAX_SIZE, ttl=L1_TTL_SECONDS)
+_inflight_generation_lock = asyncio.Lock()
+_inflight_generation_tasks: dict[str, asyncio.Task[list[dict]]] = {}
 
 _cache_stats = {
     "l1_hits": 0,
@@ -61,6 +63,11 @@ _cache_stats = {
     "l2_misses": 0,
     "writes": 0,
 }
+
+
+def _set_tier2_generation_source(state, source: str) -> None:
+    if state is not None and hasattr(state, "metadata"):
+        state.metadata["tier2_generation_source_internal"] = source
 
 
 def _increment_stat(key: str) -> None:
@@ -303,11 +310,15 @@ def _experience_to_tile_dict(
     category_label = tile.category.capitalize()
     subtitle = f"{time_label} {category_label}"  # e.g., "Morning Yoga"
 
-    # Use cached Unsplash URL if prefetch populated it; None otherwise.
-    # Frontend renders a placeholder shimmer for null image_url.
-    from app.services.unsplash import get_cached_image_url
+    # Cache-first image lookup with deterministic fallback:
+    # 1. Use prefetched Unsplash variant when available.
+    # 2. Fall back to sync helper (memory cache or deterministic Unsplash placeholder).
+    # This avoids null image_url on day cards when prefetch/network misses.
+    from app.services.unsplash import get_cached_image_url, get_image_url_sync
 
     image_url = get_cached_image_url(destination, variant=index % 6, activities=[tile.category])
+    if image_url is None:
+        image_url = get_image_url_sync(destination, variant=index % 6, activities=[tile.category])
 
     return {
         "id": tile_id,
@@ -521,7 +532,35 @@ async def _parallel_category_generate(
     return tile_dicts
 
 
-async def generate_experiences(
+def _hydrate_generated_tier2_metadata(
+    state,
+    destination: str,
+    categories: list[str],
+    tiles: list[dict],
+) -> None:
+    """Populate state metadata from cached tiles so incremental generation stays consistent."""
+    if state is None or not hasattr(state, "metadata") or not tiles:
+        return
+
+    tiles_by_category: dict[str, list[dict]] = {}
+    for tile in tiles:
+        category = (tile.get("meta") or {}).get("category")
+        if not category:
+            continue
+        tiles_by_category.setdefault(category, []).append(tile)
+
+    if not tiles_by_category:
+        return
+
+    generated = state.metadata.setdefault("generated_tier2_categories", {})
+    dest_generated = generated.setdefault(destination, {})
+    for category in categories:
+        cat_tiles = tiles_by_category.get(category)
+        if cat_tiles:
+            dest_generated[category] = cat_tiles
+
+
+async def _generate_experiences_impl(
     destination: str,
     categories: list[str],
     month: str,
@@ -552,12 +591,14 @@ async def generate_experiences(
     try:
         if not destination or not categories:
             logger.warning(f"[EXPERIENCE] Early return: dest={destination}, cats={categories}")
+            _set_tier2_generation_source(state, "cache")
             return []
 
         try:
             cache_key = _experience_cache_key(destination, categories, month, tiles_per_category)
         except Exception as e:
             logger.error(f"[EXPERIENCE] Cache key computation failed: {e}", exc_info=True)
+            _set_tier2_generation_source(state, "cache")
             return []
 
         # L1: Memory cache check (fast path for exact category match)
@@ -565,6 +606,7 @@ async def generate_experiences(
         if cached is not None:
             _increment_stat("l1_hits")
             logger.info(f"[EXPERIENCE] Cache HIT (L1): {len(cached)} tiles")
+            _set_tier2_generation_source(state, "cache")
             return _clamp_tile_durations(cached)
 
         _increment_stat("l1_misses")
@@ -580,6 +622,7 @@ async def generate_experiences(
                 l2_cached = await _get_cached(db, cache_key)
                 if l2_cached is not None:
                     logger.info(f"[EXPERIENCE] Cache HIT (L2): {len(l2_cached)} tiles")
+                    _set_tier2_generation_source(state, "cache")
                     return _clamp_tile_durations(l2_cached)
         except Exception as e:
             logger.warning(f"[EXPERIENCE] L2 cache check failed: {e}")
@@ -612,6 +655,7 @@ async def generate_experiences(
             logger.info(f"[EXPERIENCE] All categories cached in state: {len(all_tiles)} tiles")
             # Cache composite result
             _cache_set(cache_key, all_tiles)
+            _set_tier2_generation_source(state, "cache")
             return _clamp_tile_durations(all_tiles)
 
         # Cache miss — generate NEW categories via LLM
@@ -677,6 +721,7 @@ async def generate_experiences(
 
         if not new_tile_dicts:
             logger.warning("[EXPERIENCE] Parallel generation returned 0 tiles")
+            _set_tier2_generation_source(state, "llm")
             return []
 
         # Prefetch Unsplash images in background (non-blocking)
@@ -736,6 +781,7 @@ async def generate_experiences(
             f"({len(new_tile_dicts)} new, {len(all_tiles) - len(new_tile_dicts)} existing) "
             f"cached for {destination}"
         )
+        _set_tier2_generation_source(state, "llm")
         return all_tiles
 
     except Exception as e:
@@ -743,4 +789,96 @@ async def generate_experiences(
             f"[EXPERIENCE] FATAL unhandled exception: {e}",
             exc_info=True,
         )
+        _set_tier2_generation_source(state, "llm")
         return []
+
+
+async def generate_experiences(
+    destination: str,
+    categories: list[str],
+    month: str,
+    budget: int | None = None,
+    tier1_specialists: list[str] | None = None,
+    tiles_per_category: int = 2,
+    state=None,
+) -> list[dict]:
+    """
+    Public entrypoint with singleflight dedupe for identical in-flight requests.
+
+    This prevents prefetch and logistics from launching duplicate LLM generation
+    for the same destination/category/month request. Waiters reuse the owner's
+    result and hydrate state metadata after cache/shared returns.
+    """
+    normalized_categories = [c.strip() for c in categories if isinstance(c, str) and c.strip()]
+    if not destination or not normalized_categories:
+        logger.warning(f"[EXPERIENCE] Early return: dest={destination}, cats={categories}")
+        return []
+
+    cache_key = _experience_cache_key(destination, normalized_categories, month, tiles_per_category)
+    owner = False
+
+    async def _cleanup_inflight(done_task: asyncio.Task[list[dict]]) -> None:
+        async with _inflight_generation_lock:
+            current = _inflight_generation_tasks.get(cache_key)
+            if current is done_task:
+                _inflight_generation_tasks.pop(cache_key, None)
+                logger.debug("[VERIFY][EXPERIENCE] inflight_cleared key=%s", cache_key)
+
+    async with _inflight_generation_lock:
+        existing = _inflight_generation_tasks.get(cache_key)
+        if existing and not existing.done():
+            task = existing
+            logger.info("[EXPERIENCE] Singleflight wait: key=%s", cache_key)
+            logger.debug("[VERIFY][EXPERIENCE] singleflight_waiter key=%s", cache_key)
+        else:
+            task = asyncio.create_task(
+                _generate_experiences_impl(
+                    destination=destination,
+                    categories=normalized_categories,
+                    month=month,
+                    budget=budget,
+                    tier1_specialists=tier1_specialists,
+                    tiles_per_category=tiles_per_category,
+                    state=state,
+                )
+            )
+            _inflight_generation_tasks[cache_key] = task
+            owner = True
+            logger.info("[EXPERIENCE] Singleflight owner: key=%s", cache_key)
+            logger.debug("[VERIFY][EXPERIENCE] singleflight_owner key=%s", cache_key)
+
+            def _on_done(done_task: asyncio.Task[list[dict]]) -> None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(_cleanup_inflight(done_task))
+                except RuntimeError:
+                    # Event loop already closed (e.g., test teardown); cleanup is best effort.
+                    pass
+
+            task.add_done_callback(_on_done)
+
+    try:
+        tiles = await asyncio.shield(task)
+    except Exception as e:
+        logger.warning("[EXPERIENCE] Singleflight task failed for %s: %s", cache_key, e)
+        return []
+    finally:
+        if owner and task.done():
+            async with _inflight_generation_lock:
+                current = _inflight_generation_tasks.get(cache_key)
+                if current is task:
+                    _inflight_generation_tasks.pop(cache_key, None)
+
+    _hydrate_generated_tier2_metadata(state, destination, normalized_categories, tiles)
+    if state is not None and hasattr(state, "metadata"):
+        state.metadata.setdefault("tier2_generation_source_internal", "cache")
+        hydrated_count = len(
+            (state.metadata.get("generated_tier2_categories", {}) or {}).get(destination, {}).keys()
+        )
+        logger.debug(
+            "[VERIFY][EXPERIENCE] metadata_hydrated dest=%s categories=%s tracked=%s",
+            destination,
+            normalized_categories,
+            hydrated_count,
+        )
+    return _clamp_tile_durations(tiles)

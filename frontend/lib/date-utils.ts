@@ -32,14 +32,3 @@ export function parseISODateLocal(dateStr: string | null | undefined): Date | nu
   const date = new Date(dateStr);
   return isNaN(date.getTime()) ? null : date;
 }
-
-/**
- * Add days to a Date object, returning a new Date.
- *
- * @example addDays(new Date(2026, 0, 31), 1) → Date for Feb 1, 2026
- */
-export function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}

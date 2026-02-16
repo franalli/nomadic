@@ -1,6 +1,14 @@
 """Tests for settings extraction/apply behavior in intent_router."""
 
-from app.planner.nodes.intent_router import _apply_settings_to_state
+import pytest
+
+from app.planner.nodes.intent_router import (
+    _apply_origin_to_state,
+    _apply_settings_to_state,
+    _detect_settings_from_message,
+    _sanitize_settings_from_message,
+)
+from app.planner.nodes.router_extraction import RouterOutput, _populate_trip_plan_from_router_output
 from app.planner.state import GraphState
 
 
@@ -15,8 +23,125 @@ def test_apply_settings_sets_flights_toggle_as_tri_state_string():
         }
     }
 
-    _apply_settings_to_state(state, detected_settings, clog=None)
+    _apply_settings_to_state(state, detected_settings, None)
 
     extracted = state.metadata.get("extracted_settings", {})
     assert extracted.get("flights_toggle") == "on"
     assert extracted.get("flight_direct_only") is True
+    assert state.metadata.get("explicit_flights_toggle") == "on"
+    assert state.metadata.get("trip_inputs", {}).get("booking_types", {}).get("flights") == "on"
+    assert state.metadata.get("tier2_prefetch_intent") == "settings"
+
+
+def test_detect_settings_supports_budget_typo_without_hotel_false_positive():
+    state = GraphState()
+    state.trip_plan.destination = "Bali"
+
+    detected = _detect_settings_from_message("3 adults 2 kids, bugdet 2000", state)
+
+    assert detected is not None
+    assert detected.get("budget") == 2000
+    assert "hotel_settings" not in detected
+
+
+def test_budget_only_update_preserves_existing_hotel_star_preference():
+    state = GraphState()
+    state.trip_plan.destination = "Bali"
+    state.metadata["trip_inputs"] = {"hotel_settings": {"min_stars": 5}}
+
+    detected = _detect_settings_from_message("Increase budget to $2,800", state)
+    assert detected == {"budget": 2800}
+
+    _apply_settings_to_state(state, detected, None)
+
+    hotel_settings = state.metadata.get("trip_inputs", {}).get("hotel_settings", {})
+    assert hotel_settings.get("min_stars") == 5
+    assert state.trip_plan.budget == 2800
+
+
+def test_sanitize_settings_drops_spurious_hotel_settings_for_budget_only_message():
+    detected = {
+        "budget": 2800,
+        "hotel_settings": {"min_stars": 0},
+    }
+
+    sanitized = _sanitize_settings_from_message(detected, "Increase budget to $2,800")
+
+    assert sanitized == {"budget": 2800}
+
+
+def test_sanitize_settings_keeps_hotel_settings_when_message_mentions_hotels():
+    detected = {
+        "budget": 2800,
+        "hotel_settings": {"min_stars": 5},
+    }
+
+    sanitized = _sanitize_settings_from_message(
+        detected,
+        "Increase budget to $2,800 and keep 5-star hotels",
+    )
+
+    assert sanitized == detected
+
+
+@pytest.mark.asyncio
+async def test_apply_origin_preserves_explicit_flights_on():
+    state = GraphState()
+    state.metadata["trip_inputs"] = {"booking_types": {"flights": "off"}}
+    state.metadata["explicit_flights_toggle"] = "on"
+
+    await _apply_origin_to_state(state, "Rome", None)
+
+    assert state.metadata["trip_inputs"]["booking_types"]["flights"] == "on"
+    assert state.metadata["extracted_settings"]["flights_toggle"] == "on"
+
+
+@pytest.mark.asyncio
+async def test_apply_origin_preserves_explicit_flights_off():
+    state = GraphState()
+    state.metadata["trip_inputs"] = {"booking_types": {"flights": "on"}}
+    state.metadata["explicit_flights_toggle"] = "off"
+
+    await _apply_origin_to_state(state, "Rome", None)
+
+    assert state.metadata["trip_inputs"]["booking_types"]["flights"] == "off"
+    assert "flights_toggle" not in state.metadata.get("extracted_settings", {})
+
+
+@pytest.mark.asyncio
+async def test_apply_origin_upgrades_default_off_to_suggested_when_not_explicit():
+    state = GraphState()
+    state.metadata["trip_inputs"] = {"booking_types": {"flights": "off"}}
+
+    await _apply_origin_to_state(state, "Rome", None)
+
+    assert state.metadata["trip_inputs"]["booking_types"]["flights"] == "suggested"
+    assert state.metadata["extracted_settings"]["flights_toggle"] == "suggested"
+
+
+def test_populate_trip_plan_skips_category_writes_without_category_intent():
+    state = GraphState()
+    state.metadata["trip_inputs"] = {"activity_settings": {"categories": ["diving", "surfing"]}}
+
+    router_output = RouterOutput(
+        intent="PLANNING",
+        confidence=0.9,
+        reasoning="settings-only",
+        activity_categories=["nightlife"],
+        specialist_hints=[],
+    )
+
+    _populate_trip_plan_from_router_output(
+        state,
+        router_output,
+        fallback_destination="Bali",
+        user_text="5-star hotels only",
+        category_baseline={"diving", "surfing"},
+        category_merge_mode="replace",
+        allow_category_updates=False,
+    )
+
+    categories = (
+        state.metadata.get("trip_inputs", {}).get("activity_settings", {}).get("categories", [])
+    )
+    assert categories == ["diving", "surfing"]

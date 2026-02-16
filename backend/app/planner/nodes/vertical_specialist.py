@@ -17,6 +17,7 @@ The Specialist runs BEFORE the Architect calls tools.
 import asyncio
 import json
 import os
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel
@@ -88,6 +89,29 @@ class LLMSpecialistOutput(BaseModel):
     feasibility_reason: Optional[str] = None
     activities: List[LLMActivity] = []
     constraints: List[LLMConstraint] = []
+
+
+def _record_specialist_latency_metric(
+    state: GraphState,
+    topic: str,
+    source: str,
+    elapsed_ms: int,
+    reason: str = "none",
+) -> None:
+    from app.debug_utils import _debug_log
+
+    metrics = state.metadata.get("specialist_latency_metrics", {}) or {}
+    metrics[topic] = {
+        "source": source,
+        "elapsed_ms": elapsed_ms,
+        "reason": reason,
+    }
+    state.metadata["specialist_latency_metrics"] = metrics
+    _debug_log(
+        "[VERIFY][LLM_LATENCY] "
+        f"component=specialist topic={topic} source={source} "
+        f"elapsed_ms={elapsed_ms} reason={reason}"
+    )
 
 
 # =============================================================================
@@ -463,7 +487,7 @@ set feasibility_status to "infeasible" with reason"""
 
 
 def _get_minimal_safety_constraints(
-    topic: str, destination: Optional[str] = None
+    topic: str, _destination: Optional[str] = None
 ) -> List[SpecialistConstraint]:
     """
     Get minimal hardcoded safety constraints as fallback.
@@ -513,7 +537,7 @@ def convert_llm_output_to_specialist_output(
     Convert LLM output to SpecialistOutput format for the graph.
 
     Maps LLMActivity -> ItineraryBlock and LLMConstraint -> SpecialistConstraint.
-    Images are fetched from Unsplash (activity-aware) with Picsum fallback.
+    Images are fetched from Unsplash (activity-aware) with Unsplash placeholder fallback.
     """
     from app.services.unsplash import get_image_url_sync
 
@@ -957,7 +981,7 @@ class VerticalSpecialist:
 
         return None
 
-    def generate_enhancements(self, state: GraphState) -> List[str]:
+    def generate_enhancements(self, _state: GraphState) -> List[str]:
         """
         Suggest enhancements to the plan. Data-driven from registry.
         """
@@ -1089,6 +1113,19 @@ class VerticalSpecialist:
         from app.debug_utils import _debug_log
 
         destination = state.trip_plan.destination or ""
+        started_at = time.monotonic()
+        latency_source = "hardcoded_fallback"
+        latency_reason = "none"
+
+        def _record_latency(source: str, reason: str = "none") -> None:
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            _record_specialist_latency_metric(
+                state=state,
+                topic=self.topic,
+                source=source,
+                elapsed_ms=elapsed_ms,
+                reason=reason,
+            )
 
         # DEBUG: Log input state
         _debug_log(
@@ -1116,6 +1153,7 @@ class VerticalSpecialist:
                 reason += "The 24h no-fly safety buffer leaves no time for activity."
 
             _debug_log(f"[SPECIALIST] INFEASIBLE: Trip too short for {self.topic}")
+            _record_latency("rule_short_trip", "insufficient_days")
             return SpecialistOutput(
                 feasibility_status="infeasible",
                 feasibility_reason=reason,
@@ -1140,6 +1178,7 @@ class VerticalSpecialist:
             # Deserialize from dict (cached results are stored via model_dump())
             try:
                 llm_output = LLMSpecialistOutput.model_validate(cached_result)
+                latency_source = "parallel_cache"
                 _debug_log(
                     f"[SPECIALIST] Using CACHED parallel result for {self.topic}: "
                     f"status={llm_output.feasibility_status}, "
@@ -1147,6 +1186,7 @@ class VerticalSpecialist:
                 )
             except Exception as e:
                 _debug_log(f"[SPECIALIST] Failed to deserialize cached result: {e}")
+                latency_reason = "parallel_cache_deserialize_error"
                 llm_output = None
         else:
             # =====================================================================
@@ -1169,8 +1209,12 @@ class VerticalSpecialist:
                         state.trip_plan,
                         skill_level=_skill,
                     )
+                    latency_source = "llm_path"
                 except Exception as e:
                     _debug_log(f"[SPECIALIST] LLM generation failed: {e}, using hardcoded fallback")
+                    latency_reason = f"llm_error:{type(e).__name__}"
+            else:
+                latency_reason = "llm_unavailable_or_missing_destination"
 
         # =====================================================================
         # STEP 1.5: Process LLM output (cached or fresh)
@@ -1184,6 +1228,7 @@ class VerticalSpecialist:
 
             # Handle infeasible from LLM
             if llm_output.feasibility_status == "infeasible":
+                _record_latency(latency_source, "llm_infeasible")
                 return SpecialistOutput(
                     feasibility_status="infeasible",
                     feasibility_reason=llm_output.feasibility_reason,
@@ -1234,6 +1279,7 @@ class VerticalSpecialist:
                     f"[SPECIALIST] Replaced LLM constraints with {len(constraints)} hardcoded"
                 )
 
+            _record_latency(latency_source)
             return SpecialistOutput(
                 feasibility_status=llm_output.feasibility_status,
                 feasibility_reason=llm_output.feasibility_reason,
@@ -1255,6 +1301,7 @@ class VerticalSpecialist:
         )
 
         if status == "infeasible":
+            _record_latency("hardcoded_fallback", latency_reason)
             return SpecialistOutput(
                 feasibility_status="infeasible",
                 feasibility_reason=reason,
@@ -1299,6 +1346,7 @@ class VerticalSpecialist:
                 ),
             )
 
+        _record_latency("hardcoded_fallback", latency_reason)
         return SpecialistOutput(
             feasibility_status=status,
             feasibility_reason=reason if status == "caveat" else None,
@@ -1381,13 +1429,13 @@ async def _merge_specialist_into_state(
     On infeasible: returns early (caller loop continues to next specialist).
     On cache hit (selective regen): returns early (topic already in state).
     """
-    import time
-
     from app.debug_utils import (
         _debug_log,
         _debug_node_timer_end,
         log,
     )
+
+    topic_started_at = time.monotonic()
 
     # ─── Selective regeneration: skip if cached section still valid ───────
     existing_sections = state.metadata.get("strategy_sections", [])
@@ -1431,6 +1479,13 @@ async def _merge_specialist_into_state(
             clog.event("cache_hit", f"Specialist ({topic})", dest=current_destination)
             duration_ms = int((time.time() - node_start_time) * 1000)
             clog.node_end("SPECIALIST", duration_ms, topic=topic, status="cache_hit")
+            _record_specialist_latency_metric(
+                state=state,
+                topic=topic,
+                source="section_cache",
+                elapsed_ms=int((time.monotonic() - topic_started_at) * 1000),
+                reason="cache_hit",
+            )
             return  # skip this topic, loop continues to next
 
         # Infeasibility is destination-dependent, not date-dependent.
@@ -1455,12 +1510,20 @@ async def _merge_specialist_into_state(
 
             duration_ms = int((time.time() - node_start_time) * 1000)
             clog.node_end("SPECIALIST", duration_ms, topic=topic, status="infeasible_cached")
+            _record_specialist_latency_metric(
+                state=state,
+                topic=topic,
+                source="section_cache_infeasible",
+                elapsed_ms=int((time.monotonic() - topic_started_at) * 1000),
+                reason="destination_infeasible_cache",
+            )
             return
 
         _debug_log(
-            f"🤿 SPECIALIST [{topic}] Cache MISS: context changed "
+            f"🤿 SPECIALIST [{topic}] Strategy cache stale: context changed "
             f"(dest: {cached_destination}->{current_destination}, "
-            f"dates: {cached_dates}->{current_dates})"
+            f"dates: {cached_dates}->{current_dates}) "
+            "(parallel LLM cache may still be reusable)"
         )
 
     # ─── Create specialist and generate output ────────────────────────────

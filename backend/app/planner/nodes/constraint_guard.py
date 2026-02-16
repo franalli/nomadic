@@ -187,7 +187,7 @@ def check_budget_constraint(
 
 def check_temporal_constraints(
     plan: TripPlan,
-    tiles: Dict[str, List[Dict[str, Any]]],
+    _tiles: Dict[str, List[Dict[str, Any]]],
 ) -> List[ConstraintViolation]:
     """
     Check temporal constraints:
@@ -255,7 +255,7 @@ def check_temporal_constraints(
 def _check_departure_buffer_conflict(
     plan: TripPlan,
     tiles: Dict[str, List[Dict[str, Any]]],
-    topic: str,
+    _topic: str,
     blocks: list,
     buffer_days: int,
 ) -> bool:

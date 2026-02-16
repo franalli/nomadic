@@ -22,6 +22,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { useToast } from '@/components/ui/toast';
 import { fillDay } from '@/lib/api';
 import { getDayIntensity, INTENSITY_CONFIG } from '@/lib/dayIntensity';
+import { debugLog } from '@/lib/debug';
 import { isFillDayCooldownActive } from '@/lib/fillDayGuards';
 import { cn } from '@/lib/utils';
 import { useDocumentStore, useDocumentTripInputs } from '@/state/documentStore';
@@ -129,6 +130,8 @@ interface TimelineThreadProps {
   onOpenStaysSettings?: () => void;
   /** Callback to open flights settings sheet */
   onOpenFlightsSettings?: () => void;
+  /** Disable fill-day actions while streaming/regenerating */
+  disableFillDayActions?: boolean;
 }
 
 /**
@@ -239,6 +242,7 @@ export function TimelineThread({
   preferredTileIds,
   onOpenStaysSettings,
   onOpenFlightsSettings,
+  disableFillDayActions = false,
 }: TimelineThreadProps) {
   // Compute effective variant: prefer explicit variant, fall back to isDraft for backward compatibility
   const effectiveVariant: TimelineVariant = variant ?? (isDraft ? 'draft' : 'real');
@@ -257,6 +261,13 @@ export function TimelineThread({
   const categories = tripInputs?.activity_settings?.categories;
   const handleFillDay = useCallback(async (dayNumber: number, _dayDate?: string | null, chipCategories?: string[]) => {
     const store = useDocumentStore.getState();
+    const generationInFlight = disableFillDayActions || Boolean(store.currentRunId);
+    if (generationInFlight) {
+      const reason = 'Please wait until itinerary updates complete';
+      setFillDayRejection({ dayNumber, reason });
+      toast(reason);
+      return;
+    }
     // Guard: skip if expand-itinerary is running (days may already be populated)
     if (store.expandInProgress) return;
     const now = Date.now();
@@ -276,7 +287,7 @@ export function TimelineThread({
         b => !b.is_buffer && b.activity_type !== 'free_day' && b.activity_type !== 'placeholder'
       );
       if (realBlocks.length > 0) {
-        console.log(`[fillDay] SKIPPED day=${dayNumber} — already has ${realBlocks.length} real blocks`);
+        debugLog(`[fillDay] SKIPPED day=${dayNumber} — already has ${realBlocks.length} real blocks`);
         store.releaseFillDay(dayNumber);
         return;
       }
@@ -305,7 +316,7 @@ export function TimelineThread({
       const is409 = err instanceof Error && err.message.includes('409');
       const is429 = err instanceof Error && err.message.includes('429');
       if (is409) {
-        console.log(`[fillDay] day=${dayNumber} already filled (409), refreshing card`);
+        debugLog(`[fillDay] day=${dayNumber} already filled (409), refreshing card`);
         return;
       }
       if (is429) {
@@ -320,7 +331,7 @@ export function TimelineThread({
       useDocumentStore.getState().releaseFillDay(dayNumber);
       setFillingDay(null);
     }
-  }, [categories, toast]);
+  }, [categories, disableFillDayActions, toast]);
   const sortedDays = useMemo(() => {
     return [...dayCards].sort((a, b) => a.day_number - b.day_number);
   }, [dayCards]);
@@ -586,6 +597,7 @@ export function TimelineThread({
                         onBrowse={() => onOpenBookingDrawer?.('activity', card.day_number)}
                         onFillDay={handleFillDay}
                         isFilling={fillingDay === card.day_number}
+                        isDisabled={disableFillDayActions}
                         rejectionMessage={
                           fillDayRejection?.dayNumber === card.day_number
                             ? fillDayRejection.reason

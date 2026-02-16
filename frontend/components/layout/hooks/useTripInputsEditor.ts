@@ -2,10 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import {
-  toTripInputsDraft,
-  type TripInputsDraft,
-} from '@/components/layout/TripDetailsForm';
 import { validateTripInput } from '@/lib/api';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
@@ -13,6 +9,30 @@ import type { ToastType } from '@/types/hooks';
 
 const SUPPORTED_CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY'] as const;
 type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
+
+type TripInputsDraft = {
+  destination: string | null;
+  origin?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  adults?: string | null;
+  children?: string | null;
+  requires_assistance?: boolean | null;
+  budget?: string | null;
+  currency?: string | null;
+};
+
+const toTripInputsDraft = (inputs: DocumentTripInputs): TripInputsDraft => ({
+  destination: inputs.destination ?? null,
+  origin: inputs.origin ?? null,
+  start_date: inputs.start_date ?? null,
+  end_date: inputs.end_date ?? null,
+  adults: inputs.adults != null ? String(inputs.adults) : null,
+  children: inputs.children != null ? String(inputs.children) : null,
+  requires_assistance: inputs.requires_assistance ?? null,
+  budget: inputs.budget != null ? String(inputs.budget) : null,
+  currency: inputs.currency ?? 'USD',
+});
 
 export interface TripInputsEditorOptions {
   tripInputs: DocumentTripInputs;

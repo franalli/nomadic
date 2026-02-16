@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import { apiFetch } from '@/lib/api';
+import { debugLog } from '@/lib/debug';
 import type {
   ActivitySettings,
   BookingTypes,
@@ -153,6 +154,248 @@ const VIEW_STATE_ORDER: Record<string, number> = {
   S3_ITINERARY_READY: 3,
 };
 
+const isS3ViewState = (state: string | null | undefined): boolean => Boolean(state?.startsWith('S3_'));
+
+function shouldBlockViewStateDowngrade(
+  prevViewState: string | null | undefined,
+  nextViewState: string | null | undefined,
+  hasDayCards: boolean
+): boolean {
+  if (!hasDayCards || !nextViewState || nextViewState === 'S0_EMPTY') {
+    return false;
+  }
+
+  // Lateral transitions inside Stage 3 are valid (e.g. READY -> EDITING on conflicts).
+  if (isS3ViewState(prevViewState) && isS3ViewState(nextViewState)) {
+    return false;
+  }
+
+  const prevOrder = VIEW_STATE_ORDER[prevViewState ?? 'S0_EMPTY'] ?? 0;
+  const nextOrder = VIEW_STATE_ORDER[nextViewState] ?? 0;
+  return nextOrder < prevOrder;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Image URL Hygiene (no Picsum hosts)
+// ─────────────────────────────────────────────────────────────────────────────
+const BLOCKED_IMAGE_HOSTS = new Set(['picsum.photos', 'fastly.picsum.photos']);
+const UNSPLASH_FALLBACK_IMAGE =
+  'https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=1200&h=800&fit=crop&auto=format';
+
+function sanitizeImageUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    if (BLOCKED_IMAGE_HOSTS.has(hostname) || hostname.endsWith('.picsum.photos')) {
+      return undefined;
+    }
+    return url;
+  } catch {
+    // Best-effort fallback for malformed URLs.
+    return url.includes('picsum.photos') ? undefined : url;
+  }
+}
+
+function sanitizeRequiredImageUrl(url: string | null | undefined): string {
+  return sanitizeImageUrl(url) ?? UNSPLASH_FALLBACK_IMAGE;
+}
+
+function sanitizeTiles(tiles: Record<string, Tile> | undefined): Record<string, Tile> | undefined {
+  if (!tiles) return tiles;
+
+  let changed = false;
+  const sanitized: Record<string, Tile> = {};
+  for (const [tileId, tile] of Object.entries(tiles)) {
+    const imageUrl = sanitizeImageUrl(tile.image_url);
+    if (imageUrl !== tile.image_url) {
+      changed = true;
+      sanitized[tileId] = { ...tile, image_url: imageUrl };
+    } else {
+      sanitized[tileId] = tile;
+    }
+  }
+
+  return changed ? sanitized : tiles;
+}
+
+function sanitizeDayCards(dayCards: DayCard[] | undefined): DayCard[] | undefined {
+  if (!dayCards) return dayCards;
+
+  let changed = false;
+  const sanitized = dayCards.map((card) => {
+    let cardChanged = false;
+    const blocks = card.blocks.map((block) => {
+      let blockChanged = false;
+      const imageUrl = sanitizeImageUrl(block.image_url);
+
+      let bookedTile = block.booked_tile;
+      if (bookedTile) {
+        const bookedTileImage = sanitizeImageUrl(bookedTile.image_url);
+        if (bookedTileImage !== bookedTile.image_url) {
+          blockChanged = true;
+          bookedTile = { ...bookedTile, image_url: bookedTileImage };
+        }
+      }
+
+      if (imageUrl !== block.image_url) {
+        blockChanged = true;
+      }
+
+      if (!blockChanged) return block;
+      cardChanged = true;
+      return {
+        ...block,
+        image_url: imageUrl,
+        booked_tile: bookedTile,
+      };
+    });
+
+    if (!cardChanged) return card;
+    changed = true;
+    return { ...card, blocks };
+  });
+
+  return changed ? sanitized : dayCards;
+}
+
+function sanitizeStrategySections(
+  strategySections: StrategySection[] | undefined
+): StrategySection[] | undefined {
+  if (!strategySections) return strategySections;
+
+  let changed = false;
+  const sanitized = strategySections.map((section) => {
+    let sectionChanged = false;
+
+    const heroImage = sanitizeImageUrl(section.hero_image);
+    if (heroImage !== section.hero_image) {
+      sectionChanged = true;
+    }
+
+    const contentAdded = section.content_added?.map((item) => {
+      const imageUrl = sanitizeImageUrl(item.image_url);
+      if (imageUrl !== item.image_url) {
+        sectionChanged = true;
+        return { ...item, image_url: imageUrl };
+      }
+      return item;
+    });
+
+    const destinationGallery = section.destination_gallery?.map((item) => {
+      const imageUrl = sanitizeRequiredImageUrl(item.image_url);
+      if (imageUrl !== item.image_url) {
+        sectionChanged = true;
+        return { ...item, image_url: imageUrl };
+      }
+      return item;
+    });
+
+    const vibeTrio = section.vibe_trio?.map((item) => {
+      const imageUrl = sanitizeRequiredImageUrl(item.image_url);
+      if (imageUrl !== item.image_url) {
+        sectionChanged = true;
+        return { ...item, image_url: imageUrl };
+      }
+      return item;
+    });
+
+    if (!sectionChanged) return section;
+    changed = true;
+    return {
+      ...section,
+      hero_image: heroImage,
+      content_added: contentAdded,
+      destination_gallery: destinationGallery,
+      vibe_trio: vibeTrio,
+    };
+  });
+
+  return changed ? sanitized : strategySections;
+}
+
+function sanitizeDocumentImages(document: PlanDocumentData): PlanDocumentData {
+  const destinationCard = (() => {
+    if (!document.destination_card) return document.destination_card;
+    const imageUrl = sanitizeImageUrl(document.destination_card.image_url);
+    if (imageUrl === document.destination_card.image_url) {
+      return document.destination_card;
+    }
+    return {
+      ...document.destination_card,
+      image_url: imageUrl,
+    };
+  })();
+  const tiles = sanitizeTiles(document.tiles);
+  const dayCards = sanitizeDayCards(document.day_cards);
+  const strategySections = sanitizeStrategySections(document.strategy_sections);
+
+  const changed =
+    destinationCard !== document.destination_card ||
+    tiles !== document.tiles ||
+    dayCards !== document.day_cards ||
+    strategySections !== document.strategy_sections;
+
+  if (!changed) return document;
+
+  return {
+    ...document,
+    destination_card: destinationCard,
+    tiles: tiles ?? {},
+    day_cards: dayCards,
+    strategy_sections: strategySections,
+  };
+}
+
+function sanitizeEnvelopeImages(envelope: Partial<PlanDocumentData>): Partial<PlanDocumentData> {
+  let changed = false;
+  const sanitized: Partial<PlanDocumentData> = { ...envelope };
+
+  if (envelope.destination_card !== undefined) {
+    const destinationCard = (() => {
+      if (!envelope.destination_card) return envelope.destination_card;
+      const imageUrl = sanitizeImageUrl(envelope.destination_card.image_url);
+      if (imageUrl === envelope.destination_card.image_url) {
+        return envelope.destination_card;
+      }
+      return {
+        ...envelope.destination_card,
+        image_url: imageUrl,
+      };
+    })();
+    if (destinationCard !== envelope.destination_card) {
+      changed = true;
+      sanitized.destination_card = destinationCard;
+    }
+  }
+
+  if (envelope.tiles !== undefined) {
+    const tiles = sanitizeTiles(envelope.tiles);
+    if (tiles !== envelope.tiles) {
+      changed = true;
+      sanitized.tiles = tiles;
+    }
+  }
+
+  if (envelope.day_cards !== undefined) {
+    const dayCards = sanitizeDayCards(envelope.day_cards);
+    if (dayCards !== envelope.day_cards) {
+      changed = true;
+      sanitized.day_cards = dayCards;
+    }
+  }
+
+  if (envelope.strategy_sections !== undefined) {
+    const strategySections = sanitizeStrategySections(envelope.strategy_sections);
+    if (strategySections !== envelope.strategy_sections) {
+      changed = true;
+      sanitized.strategy_sections = strategySections;
+    }
+  }
+
+  return changed ? sanitized : envelope;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // User-Dirty Settings Tracker
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +407,53 @@ const _userDirtySettings = new Set<string>();
 
 export function markSettingDirty(key: string) {
   _userDirtySettings.add(key);
+}
+
+type EnsureSettingsFlushOptions = {
+  requestId?: string;
+  sendCycleId?: string;
+};
+
+const DIRTY_SETTING_KEYS = [
+  'activity_settings',
+  'hotel_settings',
+  'flight_settings',
+  'transport_settings',
+  'booking_types',
+] as const;
+
+const _flushHashBySendCycle = new Map<string, string>();
+const MAX_TRACKED_SEND_CYCLES = 32;
+
+function _flushPayloadHash(payload: Partial<DocumentTripInputsPatch>): string {
+  // Payload keys are inserted deterministically in ensureSettingsFlushed.
+  return JSON.stringify(payload);
+}
+
+function _rememberFlushHash(sendCycleId: string, hash: string): boolean {
+  const existing = _flushHashBySendCycle.get(sendCycleId);
+  if (existing === hash) return false;
+  _flushHashBySendCycle.set(sendCycleId, hash);
+  if (_flushHashBySendCycle.size > MAX_TRACKED_SEND_CYCLES) {
+    const oldest = _flushHashBySendCycle.keys().next().value as string | undefined;
+    if (oldest) {
+      _flushHashBySendCycle.delete(oldest);
+    }
+  }
+  return true;
+}
+
+function _clearFlushHash(sendCycleId?: string): void {
+  if (!sendCycleId) return;
+  _flushHashBySendCycle.delete(sendCycleId);
+}
+
+function clearDirtySettingsForUpdates(updates: Partial<DocumentTripInputsPatch>): void {
+  for (const key of DIRTY_SETTING_KEYS) {
+    if (key in updates) {
+      _userDirtySettings.delete(key);
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -276,7 +566,7 @@ type DocumentState = {
   /** Async commit trip inputs to backend with validation. */
   commitTripInputs: (updates: DocumentTripInputsPatch) => Promise<boolean>;
   /** Flush all user-owned settings to backend. Call before graph runs to prevent race conditions. */
-  ensureSettingsFlushed: () => Promise<void>;
+  ensureSettingsFlushed: (options?: EnsureSettingsFlushOptions) => Promise<void>;
 
   // Actions
   fetchDocument: () => Promise<PlanDocumentData | null>;
@@ -543,6 +833,42 @@ function detectChangedFields(
   return changed;
 }
 
+function filterNoopTripInputPatch(
+  currentInputs: DocumentTripInputs | undefined,
+  updates: DocumentTripInputsPatch
+): DocumentTripInputsPatch {
+  if (!currentInputs) return updates;
+
+  const filtered: DocumentTripInputsPatch = {};
+
+  for (const [key, nextValue] of Object.entries(updates)) {
+    if (nextValue === undefined) continue;
+    const typedKey = key as keyof DocumentTripInputsPatch;
+    const currentValue = currentInputs[typedKey as keyof DocumentTripInputs];
+
+    let isSame = false;
+    if (
+      typeof nextValue === 'object' &&
+      nextValue !== null &&
+      typeof currentValue === 'object' &&
+      currentValue !== null
+    ) {
+      isSame = shallowObjectEqual(
+        nextValue as Record<string, unknown>,
+        currentValue as Record<string, unknown>
+      );
+    } else {
+      isSame = currentValue === nextValue;
+    }
+
+    if (!isSame) {
+      (filtered as Record<string, unknown>)[key] = nextValue;
+    }
+  }
+
+  return filtered;
+}
+
 export const useDocumentStore = create<DocumentState>((set, get) => ({
   ...initialState,
 
@@ -564,7 +890,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   // Sync update trip inputs locally (no API call)
   // Used for immediate state updates before validation completes
   updateTripInputs: (updates) => {
-    console.log('[documentStore] 🔄 updateTripInputs CALLED with:', updates);
+    debugLog('[documentStore] 🔄 updateTripInputs CALLED with:', updates);
     let { document } = get();
     if (!document) {
       // Create minimal document so pill settings are stored before first graph run.
@@ -584,14 +910,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     // Log destination change for debugging (tiles cleared by backend on GENERATE_PLAN_NOW)
     if (newDestination && newDestination !== previousDestination) {
-      console.log('[documentStore] 📍 Destination changed (tiles kept until Refresh):', {
+      debugLog('[documentStore] 📍 Destination changed (tiles kept until Refresh):', {
         from: previousDestination,
         to: newDestination,
       });
 
       // Clear stale preferences from old destination
       set({ preferredTileIds: new Set() });
-      console.log('[documentStore] 🧹 Cleared preferredTileIds (destination changed)');
+      debugLog('[documentStore] 🧹 Cleared preferredTileIds (destination changed)');
     }
 
     set({
@@ -606,7 +932,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     });
 
     // SYNC: Zustand set() completes before next line executes
-    console.log('[documentStore] 📝 Trip inputs updated (sync):', {
+    debugLog('[documentStore] 📝 Trip inputs updated (sync):', {
       updatedFields: Object.keys(updates),
       previousDestination,
       newDestination: newDestination || 'unchanged',
@@ -639,6 +965,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       set({ document, version });
     }
 
+    const effectiveUpdates = filterNoopTripInputPatch(document.trip_inputs, updates);
+    if (Object.keys(effectiveUpdates).length === 0) {
+      debugLog('[documentStore] ⏭️ commitTripInputs SKIP (no-op patch)', updates);
+      debugLog('[VERIFY][PATCH_DEDUPE] no-op commit skipped', {
+        attemptedFields: Object.keys(updates),
+        version,
+      });
+      clearDirtySettingsForUpdates(updates);
+      releaseCommitLock();
+      return true;
+    }
+
     // Mark as committing (for UI feedback)
     set({ isCommitting: true });
 
@@ -650,7 +988,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // We don't compute missing_fields here; the backend recomputes it on every PATCH response
       const updatedTripInputs: DocumentTripInputs = {
         ...document.trip_inputs,
-        ...updates,
+        ...effectiveUpdates,
         // Keep current missing_fields until backend responds with authoritative value
         missing_fields: document.trip_inputs.missing_fields ?? [],
       };
@@ -667,7 +1005,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const attemptPatch = async (patchVersion: number): Promise<PlanDocumentResponse> => {
         const patch: PlanDocumentPatch = {
           version: patchVersion,
-          trip_inputs: updates,
+          trip_inputs: effectiveUpdates,
         };
 
         const res = await apiFetch('/api/document', {
@@ -710,6 +1048,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           error: null,
         });
 
+        // Settings included in this successful PATCH no longer need pre-graph flush.
+        clearDirtySettingsForUpdates(effectiveUpdates);
+
         return true;
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : '';
@@ -749,6 +1090,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
               isCommitting: false,
               error: null,
             });
+
+            // Settings included in this successful retry no longer need pre-graph flush.
+            clearDirtySettingsForUpdates(effectiveUpdates);
 
             return true;
           } catch (retryErr) {
@@ -792,17 +1136,28 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  ensureSettingsFlushed: async () => {
-    console.log('[ensureSettingsFlushed] START');
+  ensureSettingsFlushed: async (options?: EnsureSettingsFlushOptions) => {
+    const requestId = options?.requestId ?? null;
+    const sendCycleId = options?.sendCycleId;
+    debugLog('[ensureSettingsFlushed] START', {
+      request_id: requestId,
+      send_cycle_id: sendCycleId,
+    });
     // Wait for any in-flight commit to complete
     if (_commitLock) {
-      console.log('[ensureSettingsFlushed] waiting for _commitLock...');
+      debugLog('[ensureSettingsFlushed] waiting for _commitLock...', {
+        request_id: requestId,
+        send_cycle_id: sendCycleId,
+      });
       await _commitLock;
     }
 
     const doc = get().document;
     if (!doc?.trip_inputs) {
-      console.log('[ensureSettingsFlushed] BAIL — no document or trip_inputs in zustand');
+      debugLog('[ensureSettingsFlushed] BAIL — no document or trip_inputs in zustand', {
+        request_id: requestId,
+        send_cycle_id: sendCycleId,
+      });
       return;
     }
 
@@ -810,10 +1165,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Prevents overwriting backend-derived values (e.g., specialist-extracted
     // categories like ["diving", "hiking"]) with empty frontend defaults.
     const dirty = new Set(_userDirtySettings);
-    _userDirtySettings.clear();
 
     if (dirty.size === 0) {
-      console.log('[ensureSettingsFlushed] SKIP — no dirty settings');
+      debugLog('[ensureSettingsFlushed] SKIP — no dirty settings', {
+        request_id: requestId,
+        send_cycle_id: sendCycleId,
+      });
       return;
     }
 
@@ -825,22 +1182,67 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (dirty.has('transport_settings')) payload.transport_settings = ti.transport_settings;
     if (dirty.has('booking_types')) payload.booking_types = ti.booking_types;
 
-    console.log('[ensureSettingsFlushed] FLUSHING dirty settings:', [...dirty]);
-    await get().commitTripInputs(payload);
-    console.log('[ensureSettingsFlushed] DONE — PATCH sent before graph');
+    const payloadKeys = Object.keys(payload);
+    if (payloadKeys.length === 0) {
+      debugLog('[ensureSettingsFlushed] SKIP — empty flush payload', {
+        request_id: requestId,
+        send_cycle_id: sendCycleId,
+        dirty: [...dirty],
+      });
+      debugLog('[VERIFY][PATCH_DEDUPE] hash=empty skipped', {
+        request_id: requestId,
+        send_cycle_id: sendCycleId,
+      });
+      return;
+    }
+
+    const payloadHash = _flushPayloadHash(payload);
+    if (sendCycleId && !_rememberFlushHash(sendCycleId, payloadHash)) {
+      debugLog('[ensureSettingsFlushed] SKIP — duplicate payload in send cycle', {
+        request_id: requestId,
+        send_cycle_id: sendCycleId,
+        hash: payloadHash,
+      });
+      debugLog(`[VERIFY][PATCH_DEDUPE] hash=${payloadHash} skipped request_id=${requestId}`);
+      return;
+    }
+
+    debugLog('[ensureSettingsFlushed] FLUSHING dirty settings:', {
+      request_id: requestId,
+      send_cycle_id: sendCycleId,
+      dirty: [...dirty],
+      payload_keys: payloadKeys,
+      payload_hash: payloadHash,
+    });
+    const committed = await get().commitTripInputs(payload);
+    if (committed) {
+      clearDirtySettingsForUpdates(payload);
+      debugLog('[ensureSettingsFlushed] DONE — settings synced before graph', {
+        request_id: requestId,
+        send_cycle_id: sendCycleId,
+      });
+      debugLog(`[VERIFY][PATCH_DEDUPE] hash=${payloadHash} committed request_id=${requestId}`);
+      return;
+    }
+    _clearFlushHash(sendCycleId);
+    debugLog('[ensureSettingsFlushed] RETAIN — commit failed, dirty settings kept', {
+      request_id: requestId,
+      send_cycle_id: sendCycleId,
+    });
+    debugLog(`[VERIFY][PATCH_DEDUPE] hash=${payloadHash} retained request_id=${requestId}`);
   },
 
   fetchDocument: async () => {
-    console.log('[documentStore.fetchDocument] 🚀 Starting fetch...');
+    debugLog('[documentStore.fetchDocument] 🚀 Starting fetch...');
     set({ isLoading: true, error: null });
     try {
       const res = await apiFetch('/api/document');
-      console.log('[documentStore.fetchDocument] 📡 Response status:', res.status);
+      debugLog('[documentStore.fetchDocument] 📡 Response status:', res.status);
 
       // Handle 204 No Content FIRST (before trying to parse JSON)
       // 204 is a success status (res.ok=true) but has no body
       if (res.status === 204) {
-        console.log('[documentStore.fetchDocument] ⚠️ No document (204 No Content)');
+        debugLog('[documentStore.fetchDocument] ⚠️ No document (204 No Content)');
         set({ isLoading: false, document: null });
         return null;
       }
@@ -848,20 +1250,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (!res.ok) {
         if (res.status === 404) {
           // 404: Legacy handling for no document
-          console.log('[documentStore.fetchDocument] ⚠️ No document (404)');
+          debugLog('[documentStore.fetchDocument] ⚠️ No document (404)');
           set({ isLoading: false, document: null });
           return null;
         }
         throw new Error(`${res.status}`);
       }
       const response: PlanDocumentResponse = await res.json();
+      const sanitizedResponseDocument = sanitizeDocumentImages(response.document);
       // DEBUG: Log document details
-      console.log('[documentStore.fetchDocument] Response:', {
-        tilesCount: Object.keys(response.document.tiles ?? {}).length,
-        preferredTileIds: response.document.preferred_tile_ids,
-        branchesCount: response.document.branches?.length ?? 0,
-        plan_view_state: response.document.plan_view_state,
-        dayCardsCount: response.document.day_cards?.length ?? 0,
+      debugLog('[documentStore.fetchDocument] Response:', {
+        tilesCount: Object.keys(sanitizedResponseDocument.tiles ?? {}).length,
+        preferredTileIds: sanitizedResponseDocument.preferred_tile_ids,
+        branchesCount: sanitizedResponseDocument.branches?.length ?? 0,
+        plan_view_state: sanitizedResponseDocument.plan_view_state,
+        dayCardsCount: sanitizedResponseDocument.day_cards?.length ?? 0,
       });
 
       // ============================================================
@@ -870,9 +1273,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // If the backend persisted a stale plan_view_state that contradicts
       // the actual data present, promote it. Guards against lateral/blocked
       // states that should not be overridden.
-      const fetchedViewState = response.document.plan_view_state;
-      const fetchedDayCards = response.document.day_cards ?? [];
-      const fetchedSections = response.document.strategy_sections ?? [];
+      const fetchedViewState = sanitizedResponseDocument.plan_view_state;
+      const fetchedDayCards = sanitizedResponseDocument.day_cards ?? [];
+      const fetchedViolations = sanitizedResponseDocument.constraint_violations ?? [];
+      const fetchedSections = sanitizedResponseDocument.strategy_sections ?? [];
       let reconciledViewState = fetchedViewState;
 
       // Day cards promotion: only from states below S3 that aren't already S3 variants
@@ -884,9 +1288,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         !fetchedViewState?.includes('BLOCKED') &&
         (VIEW_STATE_ORDER[fetchedViewState ?? 'S0_EMPTY'] ?? 0) < VIEW_STATE_ORDER['S3_ITINERARY_READY']
       ) {
-        reconciledViewState = 'S3_ITINERARY_READY';
-        console.log(
-          `[documentStore.fetchDocument] 🔧 Reconciled stale view state: ${fetchedViewState} → S3_ITINERARY_READY (${fetchedDayCards.length} day_cards exist)`
+        const promotedState = fetchedViolations.length > 0 ? 'S3_EDITING' : 'S3_ITINERARY_READY';
+        reconciledViewState = promotedState;
+        debugLog(
+          `[documentStore.fetchDocument] 🔧 Reconciled stale view state: ${fetchedViewState} → ${promotedState} (${fetchedDayCards.length} day_cards, ${fetchedViolations.length} violations)`
         );
       }
 
@@ -898,14 +1303,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         (VIEW_STATE_ORDER[fetchedViewState ?? 'S0_EMPTY'] ?? 0) < VIEW_STATE_ORDER['S2_STRATEGY_READY']
       ) {
         reconciledViewState = 'S2_STRATEGY_READY';
-        console.log(
+        debugLog(
           `[documentStore.fetchDocument] 🔧 Reconciled stale view state: ${fetchedViewState} → S2_STRATEGY_READY (${fetchedSections.length} strategy_sections exist)`
         );
       }
 
       const documentToStore = reconciledViewState !== fetchedViewState
-        ? { ...response.document, plan_view_state: reconciledViewState as typeof fetchedViewState }
-        : response.document;
+        ? {
+            ...sanitizedResponseDocument,
+            plan_view_state: reconciledViewState as typeof fetchedViewState,
+          }
+        : sanitizedResponseDocument;
 
       set({
         version: response.version,
@@ -916,13 +1324,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         // Auto-select primary branch if none selected
         selectedBranchId:
           get().selectedBranchId ||
-          response.document.branches.find((b) => b.is_primary)?.id ||
-          response.document.branches[0]?.id ||
+          sanitizedResponseDocument.branches.find((b) => b.is_primary)?.id ||
+          sanitizedResponseDocument.branches[0]?.id ||
           null,
         // Hydrate preferences from DB (replaces sessionStorage)
-        preferredTileIds: new Set(response.document.preferred_tile_ids ?? []),
+        preferredTileIds: new Set(sanitizedResponseDocument.preferred_tile_ids ?? []),
       });
-      return response.document;
+      return sanitizedResponseDocument;
     } catch (err) {
       console.error('[documentStore.fetchDocument] ❌ Error:', err);
       const message = err instanceof Error ? err.message : 'Failed to fetch document';
@@ -965,7 +1373,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         version: response.version,
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
-        document: mergedDocument,
+        document: sanitizeDocumentImages(mergedDocument),
         isLoading: false,
       });
     } catch (err) {
@@ -1039,7 +1447,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   setFromPlanResponse: (response: PlanDocumentResponse) => {
-    console.log(
+    debugLog(
       `[documentStore.setFromPlanResponse] 🏷️ Writing suggestions:`,
       `received=${response.document.suggested_responses?.length ?? 0}`,
       `values=${JSON.stringify(response.document.suggested_responses?.slice(0, 2))}`
@@ -1049,10 +1457,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const rawDoc = response.document as PlanDocumentData & { itinerary_day_cards?: DayCard[] };
     if (rawDoc.itinerary_day_cards && !rawDoc.day_cards) {
       rawDoc.day_cards = rawDoc.itinerary_day_cards;
-      console.log(`[documentStore.setFromPlanResponse] 📅 Mapped itinerary_day_cards → day_cards (${rawDoc.day_cards.length} cards)`);
+      debugLog(`[documentStore.setFromPlanResponse] 📅 Mapped itinerary_day_cards → day_cards (${rawDoc.day_cards.length} cards)`);
     }
-    if (rawDoc.day_cards?.length) {
-      console.log(`[documentStore.setFromPlanResponse] 📅 SSE day_cards: ${rawDoc.day_cards.length} cards`);
+
+    // Normalize inbound image URLs across destination_card, tiles, day_cards, strategy sections.
+    response.document = sanitizeDocumentImages(rawDoc);
+    if (response.document.day_cards?.length) {
+      debugLog(`[documentStore.setFromPlanResponse] 📅 SSE day_cards: ${response.document.day_cards.length} cards`);
     }
 
     const { document: currentDoc, llmUpdatedFields } = get();
@@ -1066,7 +1477,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     if (currentDestination && incomingDestination &&
         currentDestination.toLowerCase().trim() !== incomingDestination.toLowerCase().trim()) {
-      console.log(
+      debugLog(
         `[documentStore.setFromPlanResponse] 🔒 BLOCKED destination change: "${currentDestination}" → "${incomingDestination}" (destination locked once set)`
       );
       // Preserve current destination in the response
@@ -1081,14 +1492,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const destinationChanged = prevDestination && newDestination && prevDestination !== newDestination;
 
     if (destinationChanged) {
-      console.log(
+      debugLog(
         `[documentStore.setFromPlanResponse] 🌍 Destination changed: "${prevDestination}" → "${newDestination}"`
       );
       // Clear chat messages on destination change
 
       const { useChatStore } = require('./chatStore');
       useChatStore.getState().resetChat();
-      console.log('[documentStore.setFromPlanResponse] 💬 Chat: CLEARED (destination changed)');
+      debugLog('[documentStore.setFromPlanResponse] 💬 Chat: CLEARED (destination changed)');
     }
 
     // ============================================================
@@ -1102,7 +1513,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
                          (prevEndDate && newEndDate && prevEndDate !== newEndDate);
 
     if (datesChanged) {
-      console.log(
+      debugLog(
         `[documentStore.setFromPlanResponse] 📅 Dates changed: ${prevStartDate}→${prevEndDate} to ${newStartDate}→${newEndDate}`
       );
     }
@@ -1117,18 +1528,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     // GUARD: Never downgrade view state when itinerary exists
     // EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept
-    const wouldDowngrade = hasDayCards &&
-      newViewState !== 'S0_EMPTY' &&
-      VIEW_STATE_ORDER[newViewState ?? 'S0_EMPTY'] < VIEW_STATE_ORDER[prevViewState ?? 'S0_EMPTY'];
+    const wouldDowngrade = shouldBlockViewStateDowngrade(prevViewState, newViewState, hasDayCards);
 
     const finalViewState = wouldDowngrade ? prevViewState : newViewState;
 
     if (wouldDowngrade) {
-      console.log(`[documentStore.setFromPlanResponse] 🛡️ Blocked view state downgrade: ${prevViewState} → ${newViewState} (day_cards exist: ${currentDayCards.length})`);
+      debugLog(`[documentStore.setFromPlanResponse] 🛡️ Blocked view state downgrade: ${prevViewState} → ${newViewState} (day_cards exist: ${currentDayCards.length})`);
     }
 
     // DEBUG: Log document state when setting
-    console.log('[documentStore] setFromPlanResponse:', {
+    debugLog('[documentStore] setFromPlanResponse:', {
       strategy_sections_count: response.document.strategy_sections?.length ?? 0,
       strategy_sections: response.document.strategy_sections,
       plan_view_state: response.document.plan_view_state,
@@ -1217,7 +1626,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       : { ...currentDoc?.tiles, ...response.document.tiles };
 
     if (tilesReplaced) {
-      console.log('[documentStore.setFromPlanResponse] 🔄 Tiles: REPLACED (tiles_replaced flag)');
+      debugLog('[documentStore.setFromPlanResponse] 🔄 Tiles: REPLACED (tiles_replaced flag)');
     }
 
     // ============================================================
@@ -1233,11 +1642,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       : (datesChanged ? [] : (currentDayCards ?? []));
 
     if (hasGraphSentCards) {
-      console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: FROM GRAPH (${graphSentCards.length} cards)`);
+      debugLog(`[documentStore.setFromPlanResponse] 📅 Day cards: FROM GRAPH (${graphSentCards.length} cards)`);
     } else if (datesChanged) {
-      console.log('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (dates changed, no graph cards)');
+      debugLog('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (dates changed, no graph cards)');
     } else if (hasDayCards) {
-      console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (no graph cards, keeping ${currentDayCards.length} existing)`);
+      debugLog(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (no graph cards, keeping ${currentDayCards.length} existing)`);
     }
 
     // ============================================================
@@ -1284,25 +1693,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     })();
 
     if (datesChanged) {
-      console.log(`[documentStore.setFromPlanResponse] 📝 Strategy sections: REPLACED (dates changed, ${responseSections.length} sections)`);
+      debugLog(`[documentStore.setFromPlanResponse] 📝 Strategy sections: REPLACED (dates changed, ${responseSections.length} sections)`);
     } else if (!destinationChanged && responseSections.length !== currentSections.length) {
-      console.log(`[documentStore.setFromPlanResponse] 📝 Strategy sections: MERGED (${currentSections.length} → ${mergedSections.length} sections)`);
+      debugLog(`[documentStore.setFromPlanResponse] 📝 Strategy sections: MERGED (${currentSections.length} → ${mergedSections.length} sections)`);
     } else if (!destinationChanged && currentSections.length > 0) {
-      console.log(`[documentStore.setFromPlanResponse] 📝 Strategy sections: PRESERVED content_added (${mergedSections.length} sections)`);
+      debugLog(`[documentStore.setFromPlanResponse] 📝 Strategy sections: PRESERVED content_added (${mergedSections.length} sections)`);
     }
 
     set({
       version: response.version,
       updatedBy: response.updated_by,
       updatedAt: response.updated_at,
-      document: {
+      document: sanitizeDocumentImages({
         ...response.document,
         plan_view_state: finalViewState,
         tiles: mergedTiles,
         trip_inputs: mergedTripInputs,
         day_cards: finalDayCards,
         strategy_sections: mergedSections,
-      },
+      }),
       selectedBranchId:
         get().selectedBranchId ||
         primaryBranch?.id ||
@@ -1317,6 +1726,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const { document: currentDoc } = get();
     if (!currentDoc) return;
 
+    envelope = sanitizeEnvelopeImages(envelope);
+
     // ============================================================
     // DESTINATION LOCK: Once set, destination can only change via full trip reset
     // This prevents LLM from changing destination mid-plan (invalidates all content)
@@ -1326,7 +1737,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     if (currentDestination && incomingDestination &&
         currentDestination.toLowerCase().trim() !== incomingDestination.toLowerCase().trim()) {
-      console.log(
+      debugLog(
         `[documentStore.mergeEnvelope] 🔒 BLOCKED destination change: "${currentDestination}" → "${incomingDestination}" (destination locked once set)`
       );
       // Strip destination from incoming trip_inputs to preserve current value
@@ -1337,7 +1748,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // DEBUG: Log envelope structure for diagnostics
-    console.log('[DEBUG mergeEnvelope] Envelope structure:', {
+    debugLog('[DEBUG mergeEnvelope] Envelope structure:', {
       has_trip_inputs: !!envelope.trip_inputs,
       trip_inputs_destination: envelope.trip_inputs?.destination,
       has_tiles: !!envelope.tiles,
@@ -1347,7 +1758,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     // DEBUG: Log constraint validation data from envelope
     if (envelope.constraints_validated !== undefined || envelope.constraint_violations !== undefined) {
-      console.log('[DEBUG mergeEnvelope] Constraint data:', {
+      debugLog('[DEBUG mergeEnvelope] Constraint data:', {
         constraints_validated: envelope.constraints_validated,
         constraint_violations: envelope.constraint_violations,
       });
@@ -1359,14 +1770,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const destinationChanged = prevDestination && newDestination && prevDestination !== newDestination;
 
     if (destinationChanged) {
-      console.log(
+      debugLog(
         `[documentStore.mergeEnvelope] 🌍 Destination changed: "${prevDestination}" → "${newDestination}"`
       );
       // Clear chat messages on destination change (import chatStore at top of file)
 
       const { useChatStore } = require('./chatStore');
       useChatStore.getState().resetChat();
-      console.log('[documentStore.mergeEnvelope] 💬 Chat: CLEARED (destination changed)');
+      debugLog('[documentStore.mergeEnvelope] 💬 Chat: CLEARED (destination changed)');
     }
 
     // Detect date changes (for logging/debugging)
@@ -1378,7 +1789,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
                          (prevEndDate && newEndDate && prevEndDate !== newEndDate);
 
     if (datesChanged) {
-      console.log(
+      debugLog(
         `[documentStore.mergeEnvelope] 📅 Dates changed: ${prevStartDate}→${prevEndDate} to ${newStartDate}→${newEndDate}`
       );
     }
@@ -1393,18 +1804,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     // GUARD: Never downgrade view state when itinerary exists
     // EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept
-    const wouldDowngrade = hasDayCards && newViewState &&
-      newViewState !== 'S0_EMPTY' &&
-      VIEW_STATE_ORDER[newViewState] < VIEW_STATE_ORDER[prevViewState ?? 'S0_EMPTY'];
+    const wouldDowngrade = shouldBlockViewStateDowngrade(prevViewState, newViewState, hasDayCards);
 
     const finalViewState = wouldDowngrade ? prevViewState : (newViewState ?? prevViewState);
 
     if (wouldDowngrade) {
-      console.log(`[documentStore.mergeEnvelope] 🛡️ Blocked view state downgrade: ${prevViewState} → ${newViewState} (day_cards exist: ${currentDayCards.length})`);
+      debugLog(`[documentStore.mergeEnvelope] 🛡️ Blocked view state downgrade: ${prevViewState} → ${newViewState} (day_cards exist: ${currentDayCards.length})`);
     }
 
     // DEBUG: Log what's in the envelope (including plan_view_state transition)
-    console.log('[documentStore.mergeEnvelope] 📥 Received envelope:', {
+    debugLog('[documentStore.mergeEnvelope] 📥 Received envelope:', {
       hasTiles: envelope.tiles !== undefined,
       tilesCount: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
       hasDayCards,
@@ -1424,15 +1833,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (destinationChanged || datesChanged || tilesReplaced) {
         // Full replace: destination changed, dates changed, or backend tiles_replaced flag
         tilesToMerge = envelope.tiles;
-        console.log(`[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (${destinationChanged ? 'destination changed' : datesChanged ? 'dates changed' : 'tiles_replaced flag'})`);
+        debugLog(`[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (${destinationChanged ? 'destination changed' : datesChanged ? 'dates changed' : 'tiles_replaced flag'})`);
       } else if (Object.keys(envelope.tiles).length > 0) {
         // Same destination + non-empty: MERGE with existing tiles (additive)
         tilesToMerge = { ...currentDoc.tiles, ...envelope.tiles };
-        console.log('[documentStore.mergeEnvelope] 🔄 Tiles: MERGED (same destination)');
+        debugLog('[documentStore.mergeEnvelope] 🔄 Tiles: MERGED (same destination)');
       } else {
         // Same destination + empty: SKIP (preserve existing)
         tilesToMerge = undefined;
-        console.log('[documentStore.mergeEnvelope] ⏭️ Tiles: SKIPPED (empty envelope)');
+        debugLog('[documentStore.mergeEnvelope] ⏭️ Tiles: SKIPPED (empty envelope)');
       }
     }
 
@@ -1443,11 +1852,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (destinationChanged) {
         // Destination changed: REPLACE strategy sections (even if empty)
         sectionsToMerge = envelope.strategy_sections;
-        console.log('[documentStore.mergeEnvelope] 📝 Strategy: REPLACED (destination changed)');
+        debugLog('[documentStore.mergeEnvelope] 📝 Strategy: REPLACED (destination changed)');
       } else {
         // Same destination: merge/update
         sectionsToMerge = envelope.strategy_sections;
-        console.log('[documentStore.mergeEnvelope] 📝 Strategy: MERGED (same destination)');
+        debugLog('[documentStore.mergeEnvelope] 📝 Strategy: MERGED (same destination)');
       }
     }
 
@@ -1459,17 +1868,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (envelope.day_cards !== undefined) {
       // If day_cards explicitly provided, use them
       dayCardsToMerge = envelope.day_cards;
-      console.log(`[documentStore.mergeEnvelope] 📅 Day Cards: ${envelope.day_cards.length} cards provided`);
+      debugLog(`[documentStore.mergeEnvelope] 📅 Day Cards: ${envelope.day_cards.length} cards provided`);
     } else if (destinationChanged || datesChanged) {
       // Destination/date changed: CLEAR day_cards
       dayCardsToMerge = [];
-      console.log(
+      debugLog(
         `[documentStore.mergeEnvelope] 📅 Day Cards: CLEARED (${destinationChanged ? 'destination changed' : 'dates changed'})`
       );
     } else if (hasDayCards) {
       // Preserve existing day_cards when itinerary exists
       dayCardsToMerge = currentDayCards;
-      console.log(`[documentStore.mergeEnvelope] 📅 Day Cards: PRESERVED (itinerary exists: ${currentDayCards.length} cards)`);
+      debugLog(`[documentStore.mergeEnvelope] 📅 Day Cards: PRESERVED (itinerary exists: ${currentDayCards.length} cards)`);
     }
 
     // Merge envelope fields into current document
@@ -1502,14 +1911,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     };
 
     // DEBUG: Log final tile state
-    console.log('[documentStore.mergeEnvelope] Final tiles:', {
+    debugLog('[documentStore.mergeEnvelope] Final tiles:', {
       previousCount: Object.keys(currentDoc.tiles ?? {}).length,
       envelopeCount: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
       finalCount: Object.keys(updatedDoc.tiles ?? {}).length,
     });
 
     set({
-      document: updatedDoc,
+      document: sanitizeDocumentImages(updatedDoc),
       updatedBy: 'planner',
       updatedAt: new Date().toISOString(),
     });
@@ -1590,19 +1999,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     if (existingRunId && existingController && !existingController.signal.aborted) {
       // Already running - return null to signal caller should not proceed
-      console.log('[documentStore] ⚠️ startGeneration REJECTED - already running:', existingRunId);
+      debugLog('[documentStore] ⚠️ startGeneration REJECTED - already running:', existingRunId);
       return null;
     }
 
     // Abort any existing (stale) generation
     if (existingController) {
-      console.log('[documentStore] 🔄 Aborting stale controller');
+      debugLog('[documentStore] 🔄 Aborting stale controller');
       existingController.abort();
     }
 
     // Create new controller for this run
     const controller = new AbortController();
-    console.log('[documentStore] ✅ startGeneration ACCEPTED:', runId);
+    debugLog('[documentStore] ✅ startGeneration ACCEPTED:', runId);
     set({
       currentRunId: runId,
       abortController: controller,
@@ -1692,7 +2101,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             version: patchVersion,
             preferred_tile_ids: Array.from(currentSet),
           };
-          console.log('[documentStore] 💜 PATCH preferences:', patchData);
+          debugLog('[documentStore] 💜 PATCH preferences:', patchData);
           return apiFetch('/api/document', {
             method: 'PATCH',
             body: JSON.stringify(patchData),
@@ -1716,7 +2125,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           if (res.ok) {
             const responseData = await res.json();
             set({ version: responseData.version });
-            console.log('[documentStore] 💜 PATCH success, new version:', responseData.version);
+            debugLog('[documentStore] 💜 PATCH success, new version:', responseData.version);
           } else {
             console.error('[documentStore] 💜 PATCH failed:', res.status);
           }
@@ -1780,12 +2189,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         }
       }
       if (allMatch) {
-        console.log('[documentStore] Preferences unchanged, skipping state update');
+        debugLog('[documentStore] Preferences unchanged, skipping state update');
         return;
       }
     }
 
-    console.log('[documentStore] Marking preferences as applied:', preferredTileIds.size);
+    debugLog('[documentStore] Marking preferences as applied:', preferredTileIds.size);
     set({ lastGeneratedPreferences: new Set(preferredTileIds) });
   },
 
@@ -1851,14 +2260,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const doc = get().document;
     if (!doc) return;
 
+    const sanitizedCard = sanitizeDayCards([newCard])?.[0] ?? newCard;
+    const sanitizedTiles = sanitizeTiles(newTiles);
+
     set({
       document: {
         ...doc,
         day_cards: (doc.day_cards ?? []).map(dc =>
-          dc.day_number === dayNumber ? newCard : dc
+          dc.day_number === dayNumber ? sanitizedCard : dc
         ),
-        tiles: newTiles
-          ? { ...doc.tiles, ...newTiles }
+        tiles: sanitizedTiles
+          ? { ...doc.tiles, ...sanitizedTiles }
           : doc.tiles,
       },
       ...(newVersion !== undefined && { version: newVersion }),
@@ -1884,6 +2296,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       remainingSeconds: 0,
       cartTileIds: new Set(),
     });
+    _flushHashBySendCycle.clear();
   },
 }));
 
@@ -1898,57 +2311,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 export const useDocumentTripInputs = () =>
   useDocumentStore((state) => state.document?.trip_inputs);
 
-/**
- * Subscribe to branches only. Re-renders only when branches change.
- */
-export const useDocumentBranches = () =>
-  useDocumentStore((state) => state.document?.branches);
-
-/**
- * Subscribe to committing state only.
- */
-export const useIsCommitting = () =>
-  useDocumentStore((state) => state.isCommitting);
-
-/**
- * Subscribe to selected branch ID only.
- */
-export const useSelectedBranchId = () =>
-  useDocumentStore((state) => state.selectedBranchId);
-
-/**
- * Subscribe to LLM updated fields only.
- */
-export const useLLMUpdatedFields = () =>
-  useDocumentStore((state) => state.llmUpdatedFields);
-
-/**
- * Subscribe to active view only. Used for view navigation.
- */
-export const useActiveView = () =>
-  useDocumentStore((state) => state.activeView);
-
-/**
- * Get the setActiveView action. Used for view navigation.
- */
-export const useSetActiveView = () =>
-  useDocumentStore((state) => state.setActiveView);
-
-/**
- * Subscribe to cart tile IDs only (for BOOKING mode).
- */
-export const useCartTileIds = () =>
-  useDocumentStore((state) => state.cartTileIds);
-
 // =============================================================================
 // Heart Preference System (PLANNING mode - preference signals for AI weighting)
 // =============================================================================
-
-/**
- * Subscribe to preferred tile IDs only. Re-renders only when preferences change.
- */
-export const usePreferredTileIds = () =>
-  useDocumentStore((state) => state.preferredTileIds);
 
 /**
  * Check if a specific tile is preferred. Avoids subscribing to the whole Set.

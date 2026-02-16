@@ -1,3 +1,4 @@
+import { debugLog } from '@/lib/debug';
 import { useDocumentStore } from '@/state/documentStore';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -70,7 +71,7 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
     });
 
     // Single-line success log (collapsed from 4 lines for cleaner console)
-    console.log(`[apiFetch] ✅ ${options?.method || 'GET'} ${url} → ${res.status}`);
+    debugLog(`[apiFetch] ✅ ${options?.method || 'GET'} ${url} → ${res.status}`);
     return res;
   } catch (error) {
     // DEBUG: Log detailed error info (Error objects don't serialize well)
@@ -173,7 +174,7 @@ export interface FetchWithRetryOptions {
  * ```ts
  * const res = await fetchWithRetry('/api/document/tiles/abc', { method: 'POST' }, {
  *   maxRetries: 3,
- *   onRetry: (attempt) => console.log(`Retrying (attempt ${attempt})...`)
+ *   onRetry: (attempt) => debugLog(`Retrying (attempt ${attempt})...`)
  * });
  * ```
  */
@@ -445,7 +446,7 @@ export async function fillDay(
   rejection_code?: string;
   rejection_suggestion?: string;
 }> {
-  console.log(`[fillDay] sending day=${dayNumber} categories=${JSON.stringify(categories)} pinnedTiles=${pinnedTileIds?.length ?? 0}`);
+  debugLog(`[fillDay] sending day=${dayNumber} categories=${JSON.stringify(categories)} pinnedTiles=${pinnedTileIds?.length ?? 0}`);
   const res = await apiFetch('/api/document/fill-day', {
     method: 'POST',
     body: JSON.stringify({

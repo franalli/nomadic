@@ -53,8 +53,6 @@ async def test_unsplash():
             print(f"   Result: {url[:80]}...")
             if "unsplash" in url:
                 print("   [OK] Got Unsplash URL")
-            elif "picsum" in url:
-                print("   [WARN] Got Picsum fallback (Unsplash may have failed)")
             else:
                 print("   ? Unknown URL pattern")
         except Exception as e:
@@ -68,8 +66,8 @@ async def test_unsplash():
             print(f"   Result: {url[:80]}...")
             if "unsplash" in url:
                 print("   [OK] Got Unsplash URL from cache")
-            elif "picsum" in url:
-                print("   [WARN] Got Picsum fallback (cache miss)")
+            else:
+                print("   ? Unknown URL pattern")
         except Exception as e:
             print(f"   [FAIL] Error: {e}")
 

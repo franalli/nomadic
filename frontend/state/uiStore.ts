@@ -160,45 +160,6 @@ export const useUIStore = create<UIState>()(
   )
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Selector Hooks
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Get the current branch selection state.
- * Returns { selectedBranchId, isComparisonMode, comparisonBranchIds }
- */
-export function useBranchSelection() {
-  return useUIStore((state) => ({
-    selectedBranchId: state.selectedBranchId,
-    isComparisonMode: state.isComparisonMode,
-    comparisonBranchIds: state.comparisonBranchIds,
-  }));
-}
-
-/**
- * Get comparison mode actions.
- */
-export function useComparisonActions() {
-  return useUIStore((state) => ({
-    setComparisonMode: state.setComparisonMode,
-    toggleBranchForComparison: state.toggleBranchForComparison,
-    exitComparisonMode: state.exitComparisonMode,
-  }));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Hydration & Persistence Utils
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Check if the UI store has been hydrated from localStorage.
- * Use this to prevent flash of incorrect state on page load.
- */
-export function useUIStoreHydrated(): boolean {
-  return useUIStore.persist.hasHydrated();
-}
-
 /**
  * Clear persisted UI state from localStorage.
  * Call this on logout or when switching sessions.

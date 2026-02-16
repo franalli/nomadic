@@ -32,7 +32,7 @@ except ImportError:
 os.environ["PYTEST_RUNNING"] = "1"
 
 
-def pytest_collection_modifyitems(session, config, items):
+def pytest_collection_modifyitems(session, config, items):  # noqa: ARG001
     """Reorder tests: DB first, then langgraph."""
     db_tests = []
     langgraph_tests = []

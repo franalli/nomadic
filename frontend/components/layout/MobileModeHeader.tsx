@@ -18,6 +18,8 @@ interface MobileModeHeaderProps {
   planState?: PlanState;
   /** Callback to reset/clear the session */
   onReset?: () => void;
+  /** Whether reset is currently in-flight (guards against spamming) */
+  isResetting?: boolean;
   className?: string;
 }
 
@@ -69,6 +71,7 @@ const STATUS_CONFIG: Record<
 function MobileModeHeaderInner({
   planState = 'INCOMPLETE',
   onReset,
+  isResetting = false,
   className,
 }: MobileModeHeaderProps) {
   const isDesktop = useIsDesktop();
@@ -126,14 +129,20 @@ function MobileModeHeaderInner({
                   <>
                     <button
                       type="button"
+                      disabled={isResetting}
                       onClick={() => {
+                        if (isResetting) return;
                         setMenuOpen(false);
                         onReset();
                       }}
-                      className="flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left text-[10px] font-bold uppercase tracking-widest text-zinc-900 dark:text-white"
+                      className="flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left text-[10px] font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-60"
                     >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      <span>Reset Trip</span>
+                      {isResetting ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      )}
+                      <span>{isResetting ? 'Resetting...' : 'Reset Trip'}</span>
                     </button>
                     <div className="h-px bg-border my-1" />
                   </>

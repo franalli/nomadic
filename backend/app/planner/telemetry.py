@@ -456,7 +456,7 @@ ANOMALY_BUNDLE_MAX_CACHE_EVENTS = 50
 def emit_anomaly_bundle(
     envelope: Optional[TraceEnvelope],
     anomaly_type: str,
-    metadata: Dict[str, Any],
+    metadata: Dict[str, Any],  # noqa: ARG001
     *,
     planner_snapshot: Optional[Dict[str, Any]] = None,
     cache_summary: Optional[Dict[str, Any]] = None,
@@ -488,6 +488,7 @@ def emit_anomaly_bundle(
         response_claimed_by: Single response writer
         tripwire_triggered: Whether tripwire fired
     """
+    _ = metadata
     # Truncate large collections
     cache_events_tail = (cache_events or [])[-ANOMALY_BUNDLE_MAX_CACHE_EVENTS:]
     node_runs_tail = (node_run_journal or [])[-ANOMALY_BUNDLE_MAX_NODE_RUNS:]

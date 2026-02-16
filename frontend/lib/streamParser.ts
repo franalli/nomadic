@@ -6,7 +6,7 @@
  */
 
 import type { PlanDocumentData } from '@/types/document';
-import type { GenerationState } from '@/types/plan-envelope';
+import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
 
 /**
  * Stream event types from the backend.
@@ -14,7 +14,13 @@ import type { GenerationState } from '@/types/plan-envelope';
 export type StreamEvent =
   | { type: 'progress'; stage: GenerationState['stage']; message?: string; pct?: number }
   | { type: 'envelope'; plan_envelope: Partial<PlanDocumentData> }
-  | { type: 'done'; plan_view_state: string; dropped_preferred_count?: number; warnings?: string[]; version?: number }
+  | {
+      type: 'done';
+      plan_view_state: PlanViewState;
+      dropped_preferred_count?: number;
+      warnings?: string[];
+      version?: number;
+    }
   | { type: 'error'; message: string };
 
 /**

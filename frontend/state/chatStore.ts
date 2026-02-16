@@ -21,6 +21,9 @@ export const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
 // Default welcome message - empty, header already explains the product
 const DEFAULT_MESSAGES: ChatMessage[] = [];
 
+// Deduplicates concurrent history loads across remounts/effects.
+let _historyLoadInFlight: Promise<void> | null = null;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,34 +71,43 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   loadHistory: async () => {
     const { historyLoaded } = get();
     if (historyLoaded) return; // Already loaded, skip
-
-    set({ isLoadingHistory: true });
-
-    try {
-      const res = await apiFetch('/api/chat');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.messages && data.messages.length > 0) {
-          const loadedMessages: ChatMessage[] = data.messages.map(
-            (m: { id: string; role: string; content: string }) => ({
-              id: m.id,
-              role: m.role as 'user' | 'assistant',
-              // Transform any stored trigger to friendly text (handles legacy data)
-              content:
-                m.content === GENERATE_PLAN_TRIGGER
-                  ? 'Build Plan'
-                  : m.content,
-            })
-          );
-          set({ messages: loadedMessages });
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load chat history', error);
-      // Keep default messages on error
-    } finally {
-      set({ isLoadingHistory: false, historyLoaded: true });
+    if (_historyLoadInFlight) {
+      await _historyLoadInFlight;
+      return;
     }
+
+    _historyLoadInFlight = (async () => {
+      set({ isLoadingHistory: true });
+
+      try {
+        const res = await apiFetch('/api/chat');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.messages && data.messages.length > 0) {
+            const loadedMessages: ChatMessage[] = data.messages.map(
+              (m: { id: string; role: string; content: string }) => ({
+                id: m.id,
+                role: m.role as 'user' | 'assistant',
+                // Transform any stored trigger to friendly text (handles legacy data)
+                content:
+                  m.content === GENERATE_PLAN_TRIGGER
+                    ? 'Build Plan'
+                    : m.content,
+              })
+            );
+            set({ messages: loadedMessages });
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load chat history', error);
+        // Keep default messages on error
+      } finally {
+        set({ isLoadingHistory: false, historyLoaded: true });
+        _historyLoadInFlight = null;
+      }
+    })();
+
+    await _historyLoadInFlight;
   },
 
   setMessages: (messages) => set({ messages }),
@@ -193,45 +205,3 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }
   },
 }));
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Selector Hooks
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Get just the messages for rendering.
- */
-export function useChatMessages() {
-  return useChatStore((state) => state.messages);
-}
-
-/**
- * Check if chat history is loading.
- */
-export function useChatLoading() {
-  return useChatStore((state) => state.isLoadingHistory);
-}
-
-/**
- * Get session state for API calls.
- */
-export function useChatSessionState() {
-  return useChatStore((state) => state.sessionState);
-}
-
-/**
- * Check if user has sent any messages.
- */
-export function useHasUserMessage() {
-  return useChatStore((state) => state.messages.some((m) => m.role === 'user'));
-}
-
-/**
- * Get the last user message (for delete button visibility).
- */
-export function useLastUserMessage() {
-  return useChatStore((state) => {
-    const userMessages = state.messages.filter((m) => m.role === 'user');
-    return userMessages.length > 0 ? userMessages[userMessages.length - 1] : null;
-  });
-}

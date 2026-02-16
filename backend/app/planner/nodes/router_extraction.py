@@ -835,6 +835,9 @@ def _populate_trip_plan_from_router_output(
     router_output: RouterOutput,
     fallback_destination: Optional[str],
     user_text: str = "",
+    category_baseline: Optional[set[str]] = None,
+    category_merge_mode: str = "add",
+    allow_category_updates: bool = True,
 ) -> None:
     """
     Populate state.trip_plan fields from RouterOutput extraction.
@@ -936,22 +939,42 @@ def _populate_trip_plan_from_router_output(
         state.trip_plan.budget = router_output.budget
 
     # Persist activity categories to activity_settings (Tier 2 pipeline activation)
-    if router_output.activity_categories:
+    if allow_category_updates and (
+        router_output.activity_categories or router_output.specialist_hints
+    ):
         KNOWN_CATEGORIES = TIER1_SPECIALISTS | TIER2_ACTIVITY_KEYWORDS
         validated = [c for c in router_output.activity_categories if c.lower() in KNOWN_CATEGORIES]
-        if validated:
-            trip_inputs = state.metadata.get("trip_inputs", {})
-            activity_settings = trip_inputs.get("activity_settings", {})
-            existing = set(activity_settings.get("categories", []))
-            # Also include Tier 1 specialists as categories
-            from_specialists = set(router_output.specialist_hints)
-            merged = sorted(existing | set(validated) | from_specialists)
+        trip_inputs = state.metadata.get("trip_inputs", {})
+        activity_settings = trip_inputs.get("activity_settings", {})
+        existing = set(activity_settings.get("categories", []))
+        baseline = set(category_baseline) if category_baseline is not None else existing
+        # Also include Tier 1 specialists as categories
+        from_specialists = {s.lower() for s in router_output.specialist_hints}
+        extracted = set(validated) | from_specialists
+        if extracted:
+            if category_merge_mode == "replace":
+                merged = sorted(extracted)
+            else:
+                merged = sorted(baseline | extracted)
             activity_settings["categories"] = merged
             trip_inputs["activity_settings"] = activity_settings
             state.metadata["trip_inputs"] = trip_inputs
             state.metadata.pop("trip_settings", None)  # Clear so fallback reads trip_inputs
             state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
-            logger.info(f"[ROUTER] Categories: {merged} (from LLM: {validated})")
+            logger.debug(
+                "[VERIFY][CATEGORY_MERGE] applied mode=%s baseline=%s extracted=%s merged=%s",
+                category_merge_mode,
+                sorted(baseline),
+                sorted(extracted),
+                merged,
+            )
+            logger.info(
+                "[ROUTER] Categories: %s (merge_mode=%s, baseline=%s, extracted=%s)",
+                merged,
+                category_merge_mode,
+                sorted(baseline),
+                sorted(extracted),
+            )
 
     # Persist activity day preferences (count-based, parsed from JSON string)
     day_prefs = _parse_day_preferences(router_output.activity_day_preferences, user_text)

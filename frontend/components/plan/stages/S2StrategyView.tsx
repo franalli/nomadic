@@ -49,7 +49,6 @@ import type { DocumentTripInputs } from '@/types/document';
 import {
   type AgentStatus,
   computeAgentStatus,
-  type DestinationCard,
   type OpenDecision,
   type PlanViewModel,
   type StrategySection,
@@ -176,11 +175,7 @@ const DEFAULT_TOPIC_CONFIG = {
 
 interface S2StrategyViewProps {
   viewModel: PlanViewModel;
-  /** @deprecated Header is now rendered by StrategyStageRenderer */
-  destinationCard?: DestinationCard;
   onRefineAssumptions?: () => void;
-  /** @deprecated CTA is now rendered by NextStepBar */
-  canExpandToItinerary?: boolean;
   /** Topics pending execution (for "Updating..." state) */
   pendingTopics?: string[];
   /** Topics that have been executed (from viewModel.executed_strategy_topics) */
@@ -1156,9 +1151,7 @@ function OpenDecisionsPanel({ decisions }: { decisions: OpenDecision[] }) {
 
 export function S2StrategyView({
   viewModel,
-  destinationCard: _destinationCard,
   onRefineAssumptions,
-  canExpandToItinerary: _canExpandToItinerary,
   pendingTopics = [],
   executedTopics,
   tiles = {},
@@ -1170,10 +1163,6 @@ export function S2StrategyView({
 }: S2StrategyViewProps) {
   // FIX: Use store values with prop fallback for reactivity
   const tripInputs = useTripInputsWithFallback(propTripInputs);
-
-  // Unused props - header and CTA now owned by StrategyStageRenderer
-  void _destinationCard;
-  void _canExpandToItinerary;
 
   const { strategy_sections: rawStrategySections = [], open_decisions = [] } = viewModel;
 

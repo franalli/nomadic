@@ -937,7 +937,7 @@ The backend emits **planning phases** (not UI modes) based on data density:
 | `S3_ITINERARY_READY` | `P3_FINALIZED` | Itinerary complete |
 | `S3_EDITING` | `P3_EDITING` | User editing itinerary |
 | `S3_BLOCKED` | `P3_BLOCKED` | Itinerary blocked |
-| `S3_PARTIAL_CONFLICT` | `P3_BLOCKED` | Partial timeline with unschedulable blocks. Emitted by backend `/api/expand-itinerary` endpoint when builder produces partial results. |
+| `S3_PARTIAL_CONFLICT` | `P3_BLOCKED` | Partial timeline with unschedulable blocks. Emitted by backend itinerary build paths on partial-failure results. |
 
 ---
 
@@ -966,7 +966,7 @@ We do not swap `SetupView` for `PlanView`. We use a single **`StrategyStageRende
 
 The backend dictates the Planning Phase based on data density. The primary function is `_compute_plan_view_state()` in `response_envelope.py`.
 
-**Actual backend logic (two states only):**
+**Primary envelope base logic (`_compute_plan_view_state`):**
 
 | Logic Check | State Output | Explanation |
 | --- | --- | --- |
@@ -974,7 +974,7 @@ The backend dictates the Planning Phase based on data density. The primary funct
 | `specialist_content` exists (non-general/null sections) | `S2_STRATEGY_READY` | **Bridge State.** Strategy cards + ghost timeline before dates. |
 | Neither tiles nor specialist content | `S0_BOOTSTRAP` | **Blank slate.** Setup checklist, no specialist content. |
 
-> **Note:** The backend `_compute_plan_view_state()` only emits `S0_BOOTSTRAP` and `S2_STRATEGY_READY`. S3 states (`S3_ITINERARY_READY`, `S3_PARTIAL_CONFLICT`) are set by the `/api/expand-itinerary` endpoint. `S1_FRAMING` exists in a deprecated `compute_plan_view_state()` function in `main.py` but is not used by the primary response envelope. The frontend `computeDataDensity()` function further refines rendering by checking tiles, specialist content, and dates to determine `empty`, `ghost`, `bridge`, or `full` density levels.
+> **Note:** `_compute_plan_view_state()` still emits the base states (`S0_BOOTSTRAP`, `S2_STRATEGY_READY`). Stage-3 states are then resolved from itinerary output shape: `S3_ITINERARY_READY` (success/no conflicts), `S3_EDITING` (success/with conflicts), `S3_PARTIAL_CONFLICT` (failure/partial with conflicts). This applies to both graph shadow-builder output and NDJSON itinerary endpoints.
 
 ### Itinerary Generation State Transition
 
@@ -1614,7 +1614,9 @@ useSessionHydration() runs
     │   └── Returns full PlanDocumentData from DB
     │
     ├── fetchDocument() upward reconciliation
-    │   ├── day_cards exist + state < S3 → promote to S3_ITINERARY_READY
+    │   ├── day_cards exist + state < S3:
+    │   │   ├── constraint_violations empty → promote to S3_ITINERARY_READY
+    │   │   └── constraint_violations present → promote to S3_EDITING
     │   ├── strategy_sections exist + state < S2 → promote to S2_STRATEGY_READY
     │   └── Guards: skip BLOCKED states, skip existing S3 variants
     │
@@ -1712,7 +1714,7 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 | --- | --- | --- |
 | `S3_ITINERARY_READY` | `real` | None (finalized itinerary) |
 | `S3_EDITING`, `S2_STRATEGY_READY` | `draft` | "Draft Itinerary" (amber) |
-| All others (`S0_*`, `S1_*`) | `ghost` | "Specialist Preview" (emerald) |
+| All others (`S0_*`, `S1_*`, `S2_BLOCKED`, `S3_BLOCKED`, `S3_PARTIAL_CONFLICT`) | `ghost` | "Specialist Preview" (emerald) |
 
 **Invariant:** Regeneration is triggered via chat auto-regen, preference auto-regen, or the Build Itinerary CTA. The "Draft Itinerary" badge should NOT appear when itinerary is finalized (`S3_ITINERARY_READY`).
 
@@ -1723,8 +1725,6 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 | `getNextAction(state, generation, _hasTripContext?)` | Returns `'expand_itinerary'` for S2, `null` otherwise. Does NOT gate on dates. Third param `_hasTripContext` is deprecated (NextStepBar reads tripInputs from store). | Active |
 | `isGenerating(generation)` | Checks if any generation is in progress (`generation?.active === true`) | Active |
 | `isReady(state, generation)` | Checks if plan is in ready state (S2 or S3, not generating) | Active |
-| `canExpandToItinerary(state, generation, hasTripContext)` | Gates expand button: S2 + not generating + has trip context | Active |
-| `getStageFromState(state)` | Returns stage label: `'bootstrap'` / `'structure'` / `'strategy'` / `'itinerary'` | Active |
 | `shouldAutoTriggerItinerary(state, topics, hasDates, generation, hasItinerary)` | Path A: auto-trigger for multi-specialist trips (2+ topics, S2, has dates, no existing itinerary) | Active |
 | `isMultiSpecialistTrip(executedTopics)` | Returns true when 2+ topics executed | Active |
 | `shouldShowLeftPanelGenerateCTA(state)` | Returns true for S0/S1 (before plan exists) | Active |
@@ -1732,6 +1732,8 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 **Deleted functions (no longer in codebase):**
 - `canShowTilesPreview()` -- removed, mode is the SSoT for tile rendering
 - `canShowBookingTiles()` -- removed, mode is the SSoT for tile rendering
+- `canExpandToItinerary()` -- removed from helpers (gating now handled by renderer/store state)
+- `getStageFromState()` -- removed (PlanHeader no longer consumes stage labels)
 
 **IMPORTANT:** `getNextAction()` returns action type based on state alone. `NextStepBar` accepts the result as its `nextAction` prop. It filters out `expand_itinerary` (auto-expand handles that) and only renders when `nextAction` is `finalize_plan`.
 
@@ -2041,7 +2043,7 @@ Used when user chooses "Focus on [specialist]" resolution.
 // Response: NDJSON stream (same format as expand-itinerary)
 {"type": "progress", "stage": "itinerary", "message": "Focusing on diving...", "pct": 10}
 {"type": "envelope", "plan_envelope": {...}}  // Contains filtered strategy_sections
-{"type": "done", "plan_view_state": "S3_ITINERARY_READY"}
+{"type": "done", "plan_view_state": "S3_ITINERARY_READY|S3_EDITING|S3_PARTIAL_CONFLICT"}
 ```
 
 **Flow:**
@@ -2660,7 +2662,7 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
 | Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker. Buffer blocks (SafetyBlock) render above FreeDayCard when present | Quick-fill with generated activities or browse |
 
-**Fill-Day Flow:** FreeDayCard → `fillDay()` API call → backend generates 1 tile via `generate_experience_tiles_for_day(tiles_per_day=1)` → response includes `day_card` + `tiles` map → frontend calls `replaceDayCard()` for surgical day card update + merges tiles into document store (enables hearting/referencing). Generated tiles are tagged with `meta.pinned_day` so the builder won't redistribute them on rebuild. Backend applies adjacent-day constraint filtering (e.g., no altitude activities next to diving days). Categories are optional — when omitted, the generator picks destination-appropriate activities. **Concurrency:** Per-day mutex (`claimFillDay`/`releaseFillDay` in documentStore) prevents concurrent fill-day calls on the same day, and frontend burst guards throttle repeat calls (1.5s cooldown via `fillDayGuards.ts`) in both timeline and browse-to-pin paths. `fillDay()` in api.ts syncs the document version from the response (`useDocumentStore.setState({ version })`) to prevent 409 cascades and preserves backend `detail` text for surfaced 429/rejection toasts.
+**Fill-Day Flow:** FreeDayCard → `fillDay()` API call → backend generates 1 tile via `generate_experience_tiles_for_day(tiles_per_day=1)` → response includes `day_card` + `tiles` map → frontend calls `replaceDayCard()` for surgical day card update + merges tiles into document store (enables hearting/referencing). Generated tiles are tagged with `meta.pinned_day` so the builder won't redistribute them on rebuild. Backend applies adjacent-day constraint filtering (e.g., no altitude activities next to diving days). Categories are optional — when omitted, the generator picks destination-appropriate activities. **Concurrency:** Per-day mutex (`claimFillDay`/`releaseFillDay` in documentStore) prevents concurrent fill-day calls on the same day, frontend stream/regeneration gates (`currentRunId`/generation flags) block fill-day while itinerary updates are in flight, and burst guards throttle repeat calls (1.5s cooldown via `fillDayGuards.ts`) in both timeline and browse-to-pin paths. `fillDay()` in api.ts syncs the document version from the response (`useDocumentStore.setState({ version })`) to prevent 409 cascades and preserves backend `detail` text for surfaced 429/rejection toasts.
 
 **Browse → Pin Flow:** FreeDayCard "Browse" opens `BookingDrawer` with `pinnedDayNumber` set to the day number. When the user clicks "Add to Day N" on a tile, `handleSaveTile` in StrategyStageRenderer calls `fillDay(dayNumber, undefined, [tileId])` — the backend places the existing tile on the target day via `pinned_tile_ids` (no LLM generation). Pinned tiles are persisted to `document_data.user_pinned_tiles` for rebuild survival — the builder's Phase 5.6 Pass 0 places them on their target day, and `itinerary_adapter.py` re-injects them into the tile pool during graph-built itinerary. If `pinnedDayNumber` is null (drawer opened from elsewhere), the default path fires: `toggleTilePreference` (idempotent — only if not already preferred) which triggers `usePreferenceAutoRegen`.
 
@@ -2990,7 +2992,9 @@ Backend may return S2 for benign reasons (e.g., "from rome" only runs LogisticsN
 
 **View State Upward Reconciliation (fetchDocument):**
 On page refresh, `fetchDocument()` applies upward reconciliation to repair stale persisted state. If the data in the document contradicts the stored `plan_view_state`, it promotes:
-- `day_cards` exist + state below S3 → promote to `S3_ITINERARY_READY`
+- `day_cards` exist + state below S3:
+  - `constraint_violations` empty → promote to `S3_ITINERARY_READY`
+  - `constraint_violations` present → promote to `S3_EDITING`
 - `strategy_sections` exist + state below S2 → promote to `S2_STRATEGY_READY`
 
 Guards prevent false promotion:
@@ -3515,7 +3519,7 @@ const docGeneration = useDocumentStore((s) => s.document?.generation);
 const displayLogic = useMemo(() => {
   const hasDates = !!effectiveTripInputs?.start_date;
   const hasTiles = effectiveTiles && Object.keys(effectiveTiles).length > 0;
-  const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs);
+  const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles);
   const isShowingMirrorLoader = generating && hasDates && !hasTiles;
   return { hasDates, hasTiles, density, isShowingMirrorLoader, tripDuration };
 }, [state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs, generating]);
@@ -3534,7 +3538,12 @@ const specialistData = useMemo(() => {
 // Uses fingerprint-based dependency for true content stability
 const fullModePOIs = useMemo(() => {
   const destination = effectiveTripInputs?.destination ?? destinationCard?.title;
-  return extractPOIsFromDayCards(effectiveDayCards, specialistData.fullModeSections, destination);
+  return extractPOIsFromDayCards(
+    effectiveDayCards,
+    specialistData.fullModeSections,
+    destination,
+    dayCardsFingerprint
+  );
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [dayCardsFingerprint, specialistData.fullModeSections, effectiveTripInputs?.destination, destinationCard?.title]);
 ```
@@ -3543,6 +3552,7 @@ const fullModePOIs = useMemo(() => {
 - Density calculation only runs when state/tiles/tripInputs change
 - Specialist filtering only runs when strategy_sections change
 - POI extraction only runs when fingerprint changes (~3-4 times, not ~50)
+- `extractPOIsFromDayCards()` adds a second-level memo cache (`fingerprint + destination`) to reuse computed POIs across repeated renders
 - planContent uses pre-computed values → fewer unnecessary recomputes
 
 #### Content-Based Fingerprints for Stable Dependencies
@@ -3562,7 +3572,7 @@ const dayCardsFingerprint = useDocumentStore((s) => {
   // Fingerprint: count + IDs of blocks with coordinates (the ones that affect POIs)
   const blockIds = cards
     .flatMap(c => c.blocks || [])
-    .filter(b => b.coordinates)
+    .filter(b => b.coordinates?.lat != null && b.coordinates?.lng != null)
     .map(b => b.id)
     .join(',');
   return `${cards.length}:${blockIds}`;
@@ -3570,7 +3580,12 @@ const dayCardsFingerprint = useDocumentStore((s) => {
 
 // Use fingerprint as dependency, actual data in computation
 const fullModePOIs = useMemo(() => {
-  return extractPOIsFromDayCards(effectiveDayCards, sections, destination);
+  return extractPOIsFromDayCards(
+    effectiveDayCards,
+    sections,
+    destination,
+    dayCardsFingerprint
+  );
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [dayCardsFingerprint, sections, destination]); // fingerprint, not effectiveDayCards
 ```

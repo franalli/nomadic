@@ -196,7 +196,7 @@ class DestinationGate(InputGate):
     Never splits on "and".
     """
 
-    def evaluate(self, trip_plan, thresholds):
+    def evaluate(self, trip_plan, _thresholds):
         dest = trip_plan.destination
         if not dest:
             return None

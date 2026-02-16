@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 
 import { apiFetch } from '@/lib/api';
+import { debugLog } from '@/lib/debug';
 import { useDocumentStore } from '@/state/documentStore';
 
 export interface UsePreferenceAutoRegenReturn {
@@ -210,7 +211,7 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
     // Skip if expand-itinerary is already running (prevents cascade)
     // Queue for later instead of silently dropping
     if (expandInProgress || isStreamingResponse) {
-      console.log('[usePreferenceAutoRegen] Queuing - expand or streaming in progress');
+      debugLog('[usePreferenceAutoRegen] Queuing - expand or streaming in progress');
       pendingRegenRef.current = true;
       lastPrefsRef.current = new Set(preferredTileIds);
       return;

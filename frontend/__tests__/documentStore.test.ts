@@ -13,7 +13,11 @@ vi.mock('@/state/chatStore', () => ({
 }));
 
 import { apiFetch } from '@/lib/api';
-import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
+import {
+  DEFAULT_TRIP_INPUTS,
+  markSettingDirty,
+  useDocumentStore,
+} from '@/state/documentStore';
 import type { PlanDocumentData, PlanDocumentResponse } from '@/types/document';
 import type { DayCard, StrategySection } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
@@ -175,6 +179,21 @@ describe('mergeEnvelope', () => {
     expect(useDocumentStore.getState().document!.plan_view_state).toBe('S3_ITINERARY_READY');
   });
 
+  it('allows lateral S3 transition to editing when day_cards exist', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        plan_view_state: 'S3_ITINERARY_READY',
+        day_cards: [makeDayCard(1)],
+      }),
+    });
+
+    useDocumentStore.getState().mergeEnvelope({
+      plan_view_state: 'S3_EDITING',
+    });
+
+    expect(useDocumentStore.getState().document!.plan_view_state).toBe('S3_EDITING');
+  });
+
   it('replaces day_cards when envelope provides them', () => {
     useDocumentStore.setState({
       document: makeDoc({
@@ -237,6 +256,7 @@ describe('mergeEnvelope', () => {
       trip_inputs: {
         start_date: '2026-02-01',
         end_date: '2026-02-10',
+        missing_fields: [],
       },
     });
 
@@ -270,6 +290,24 @@ describe('setFromPlanResponse', () => {
     useDocumentStore.getState().setFromPlanResponse(response);
 
     expect(useDocumentStore.getState().document!.day_cards).toEqual([]);
+  });
+
+  it('allows S3 itinerary to transition to S3 editing from graph response', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        plan_view_state: 'S3_ITINERARY_READY',
+        day_cards: [makeDayCard(1), makeDayCard(2)],
+      }),
+    });
+
+    const response = makePatchResponse(2, {
+      plan_view_state: 'S3_EDITING',
+      day_cards: [makeDayCard(1), makeDayCard(2)],
+    });
+
+    useDocumentStore.getState().setFromPlanResponse(response);
+
+    expect(useDocumentStore.getState().document!.plan_view_state).toBe('S3_EDITING');
   });
 });
 
@@ -307,6 +345,24 @@ describe('commitTripInputs', () => {
     expect(useDocumentStore.getState().version).toBe(2);
     expect(useDocumentStore.getState().isCommitting).toBe(false);
     expect(mockApiFetch).toHaveBeenCalledOnce();
+  });
+
+  it('skips backend PATCH when updates are a no-op', async () => {
+    useDocumentStore.setState({ document: makeDoc(), version: 1 });
+
+    const noopResult = await useDocumentStore.getState().commitTripInputs({ budget: null });
+    expect(noopResult).toBe(true);
+    expect(mockApiFetch).not.toHaveBeenCalled();
+
+    // Lock should be released after no-op path.
+    mockApiFetch.mockResolvedValueOnce(
+      mockResponse(200, makePatchResponse(2, {
+        trip_inputs: { ...DEFAULT_TRIP_INPUTS, destination: 'Lisbon', budget: 1500 },
+      })),
+    );
+    const realResult = await useDocumentStore.getState().commitTripInputs({ budget: 1500 });
+    expect(realResult).toBe(true);
+    expect(mockApiFetch).toHaveBeenCalledTimes(1);
   });
 
   it('retries with fresh version on 409 conflict', async () => {
@@ -368,5 +424,106 @@ describe('commitTripInputs', () => {
     );
     pendingResolvers = [];
     await p1;
+  });
+});
+
+describe('ensureSettingsFlushed', () => {
+  // Track unresolved mock promises so afterEach can force-release the commit lock
+  let pendingResolvers: Array<(v: Response) => void> = [];
+
+  afterEach(async () => {
+    pendingResolvers.forEach((r) => r(mockResponse(200, makePatchResponse(99))));
+    pendingResolvers = [];
+    await new Promise((r) => setTimeout(r, 0));
+    useDocumentStore.getState().reset();
+    useDocumentStore.setState({ isCommitting: false });
+  });
+
+  it('skips when there are no dirty settings', async () => {
+    useDocumentStore.setState({ document: makeDoc(), version: 1 });
+
+    await useDocumentStore.getState().ensureSettingsFlushed({
+      requestId: 'req-none',
+      sendCycleId: 'cycle-none',
+    });
+
+    expect(mockApiFetch).not.toHaveBeenCalled();
+  });
+
+  it('dedupes same payload hash within one send cycle', async () => {
+    const originalCommitTripInputs = useDocumentStore.getState().commitTripInputs;
+    const commitSpy = vi.fn().mockResolvedValue(true);
+    try {
+      useDocumentStore.setState({
+        document: makeDoc({
+          trip_inputs: {
+            ...DEFAULT_TRIP_INPUTS,
+            destination: 'Lisbon',
+            hotel_settings: { min_stars: 5, amenities: [] },
+          },
+        }),
+        version: 1,
+        commitTripInputs: commitSpy,
+      });
+      markSettingDirty('hotel_settings');
+
+      await useDocumentStore.getState().ensureSettingsFlushed({
+        requestId: 'req-1',
+        sendCycleId: 'cycle-1',
+      });
+
+      // Simulate same local state re-marked dirty in the same send cycle.
+      markSettingDirty('hotel_settings');
+      await useDocumentStore.getState().ensureSettingsFlushed({
+        requestId: 'req-1b',
+        sendCycleId: 'cycle-1',
+      });
+
+      expect(commitSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      useDocumentStore.setState({ commitTripInputs: originalCommitTripInputs });
+    }
+  });
+
+  it('waits for commit lock and avoids duplicate PATCH after in-flight commit', async () => {
+    useDocumentStore.setState({ document: makeDoc(), version: 1 });
+    markSettingDirty('hotel_settings');
+
+    mockApiFetch.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          pendingResolvers.push(resolve);
+        }),
+    );
+
+    const commitPromise = useDocumentStore.getState().commitTripInputs({
+      hotel_settings: { min_stars: 5, amenities: [] },
+    });
+    // Let commitTripInputs acquire lock
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const ensurePromise = useDocumentStore.getState().ensureSettingsFlushed({
+      requestId: 'req-lock',
+      sendCycleId: 'cycle-lock',
+    });
+
+    pendingResolvers.forEach((r) =>
+      r(
+        mockResponse(200, makePatchResponse(2, {
+          trip_inputs: {
+            ...DEFAULT_TRIP_INPUTS,
+            destination: 'Lisbon',
+            hotel_settings: { min_stars: 5, amenities: [] },
+          },
+        })),
+      ),
+    );
+    pendingResolvers = [];
+
+    await commitPromise;
+    await ensurePromise;
+
+    expect(mockApiFetch).toHaveBeenCalledTimes(1);
   });
 });

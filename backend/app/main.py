@@ -93,6 +93,7 @@ from app.planner import (  # noqa: E402
     run_turn_streaming,
     validate_template_coverage,
 )
+from app.planner.nodes.router_category_sync import has_explicit_category_intent  # noqa: E402
 from app.schemas import (  # noqa: E402
     AckUpdate,
     BookingStatus,
@@ -190,6 +191,7 @@ class TripReadiness:
 
 def compute_trip_readiness(trip_inputs: Dict[str, Any], errors: List[Any] = None) -> TripReadiness:
     """Compute trip readiness from trip inputs."""
+    _ = errors  # compatibility: callers pass validation errors, readiness currently ignores them
     destination = trip_inputs.get("destination")
     return TripReadiness(
         has_origin=bool(trip_inputs.get("origin")),
@@ -253,6 +255,244 @@ def _compute_plan_view_state(metadata: dict, trip_inputs: dict) -> PlanViewState
 
     # Default fallback
     return "S0_BOOTSTRAP"
+
+
+def _resolve_stage3_view_state(builder_success: bool, conflicts: List[Any]) -> PlanViewState:
+    """Resolve Stage 3 state from ItineraryBuilder output.
+
+    Rules:
+    - success + no conflicts => S3_ITINERARY_READY
+    - success + conflicts    => S3_EDITING
+    - failure + conflicts    => S3_PARTIAL_CONFLICT
+    - failure + no conflicts => S3_BLOCKED
+    """
+    conflict_count = len(conflicts or [])
+    if builder_success:
+        return "S3_EDITING" if conflict_count > 0 else "S3_ITINERARY_READY"
+    return "S3_PARTIAL_CONFLICT" if conflict_count > 0 else "S3_BLOCKED"
+
+
+def _resolve_itinerary_document_view_state(
+    fallback_state: str | None,
+    itinerary_day_cards: List[Any] | None,
+    constraint_violations: List[Any] | None = None,
+) -> str:
+    """Resolve final document view state from persisted graph output shape."""
+    if not itinerary_day_cards:
+        return fallback_state or "S0_BOOTSTRAP"
+    # Preserve explicitly emitted Stage 3 states from upstream payloads.
+    if fallback_state in {"S3_ITINERARY_READY", "S3_EDITING", "S3_PARTIAL_CONFLICT"}:
+        return fallback_state
+    return _resolve_stage3_view_state(
+        True, constraint_violations if constraint_violations is not None else []
+    )
+
+
+def _normalized_preference_ids(values: List[str] | None) -> List[str]:
+    """Return deduplicated/sorted preference ids for stable hashing."""
+    if not values:
+        return []
+    return sorted({v for v in values if v})
+
+
+def _flatten_request_preferences(preferences: Any) -> Dict[str, Any]:
+    """Convert API request preference shape to a stable hashable snapshot."""
+    if not preferences:
+        return {"preferred_tile_ids": []}
+
+    combined_ids: List[str] = []
+    combined_ids.extend(preferences.preferred_hotel_ids or [])
+    combined_ids.extend(preferences.preferred_activity_ids or [])
+    combined_ids.extend(preferences.preferred_flight_ids or [])
+    return {"preferred_tile_ids": _normalized_preference_ids(combined_ids)}
+
+
+def _is_question_like_message(message: str) -> bool:
+    """Heuristic for question-like turns that should avoid category snapshot overrides."""
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    if text.endswith("?"):
+        return True
+    question_starts = (
+        "what ",
+        "how ",
+        "do ",
+        "does ",
+        "is ",
+        "are ",
+        "can ",
+        "could ",
+        "should ",
+        "where ",
+        "when ",
+        "which ",
+        "who ",
+    )
+    return text.startswith(question_starts)
+
+
+def _sanitize_trip_inputs_for_category_merge(
+    incoming: Dict[str, Any], message: str
+) -> Dict[str, Any]:
+    """
+    Keep document categories authoritative on generate/question turns unless
+    the user explicitly requested category changes in this message.
+    """
+    if not incoming:
+        return incoming
+
+    text = (message or "").strip()
+    is_generate_turn = text.upper() == "GENERATE_PLAN_NOW"
+    if not (is_generate_turn or _is_question_like_message(text)):
+        return incoming
+    if has_explicit_category_intent(text):
+        return incoming
+
+    activity_settings = incoming.get("activity_settings")
+    if hasattr(activity_settings, "model_dump"):
+        activity_settings = activity_settings.model_dump()
+    if not isinstance(activity_settings, dict) or "categories" not in activity_settings:
+        return incoming
+
+    sanitized = dict(incoming)
+    activity_copy = dict(activity_settings)
+    activity_copy.pop("categories", None)
+    sanitized["activity_settings"] = activity_copy
+    return sanitized
+
+
+def _conflicts_to_constraint_violations(
+    conflicts: List[Any], resolutions: List[Any] | None = None
+) -> List[Dict[str, Any]]:
+    """Map itinerary conflicts to frontend Trip DNA-style violation objects."""
+    mapped: List[Dict[str, Any]] = []
+    suggested_action = None
+    if resolutions:
+        first_resolution = resolutions[0]
+        suggested_action = (
+            first_resolution.description if hasattr(first_resolution, "description") else None
+        )
+
+    for conflict in conflicts:
+        severity = (
+            conflict.severity.value
+            if hasattr(conflict, "severity") and hasattr(conflict.severity, "value")
+            else str(getattr(conflict, "severity", "warning")).lower()
+        )
+        mapped.append(
+            {
+                "code": str(getattr(conflict, "type", "itinerary_conflict")).upper(),
+                "message": getattr(conflict, "message", "Itinerary conflict detected"),
+                "severity": severity,
+                "category": "itinerary",
+                "rule": getattr(conflict, "type", "itinerary_conflict"),
+                "suggested_action": suggested_action,
+            }
+        )
+    return mapped
+
+
+def _extract_day_block_coordinates(
+    tile: Dict[str, Any], meta: Dict[str, Any]
+) -> Dict[str, float] | None:
+    """Normalize tile coordinate payloads into DayBlock `{lat, lng}` format."""
+
+    def _coerce_pair(lat_value: Any, lng_value: Any) -> Dict[str, float] | None:
+        if lat_value is None or lng_value is None:
+            return None
+        try:
+            return {"lat": float(lat_value), "lng": float(lng_value)}
+        except (TypeError, ValueError):
+            return None
+
+    raw_coordinates = meta.get("coordinates")
+    if raw_coordinates is None:
+        raw_coordinates = tile.get("coordinates")
+
+    if isinstance(raw_coordinates, dict):
+        lng_value = raw_coordinates.get(
+            "lng",
+            raw_coordinates.get("lon", raw_coordinates.get("longitude")),
+        )
+        normalized = _coerce_pair(
+            raw_coordinates.get("lat", raw_coordinates.get("latitude")),
+            lng_value,
+        )
+        if normalized:
+            return normalized
+
+    if isinstance(raw_coordinates, (list, tuple)) and len(raw_coordinates) >= 2:
+        # Mapbox arrays are [lng, lat]
+        normalized = _coerce_pair(raw_coordinates[1], raw_coordinates[0])
+        if normalized:
+            return normalized
+
+    raw_geo = tile.get("geo")
+    if isinstance(raw_geo, dict):
+        return _coerce_pair(raw_geo.get("lat"), raw_geo.get("lng", raw_geo.get("lon")))
+
+    if hasattr(raw_geo, "lat"):
+        geo_lat = getattr(raw_geo, "lat", None)
+        geo_lng = getattr(raw_geo, "lng", getattr(raw_geo, "lon", None))
+        return _coerce_pair(geo_lat, geo_lng)
+
+    return None
+
+
+def _first_trip_anchor_coordinates(doc_data: PlanDocumentData) -> Dict[str, float] | None:
+    """Best-effort anchor coordinate for map fallback when a tile has no coordinates."""
+
+    def _coerce_dict(coords: Any) -> Dict[str, float] | None:
+        if not isinstance(coords, dict):
+            return None
+        lat = coords.get("lat")
+        lng = coords.get("lng")
+        if lat is None or lng is None:
+            return None
+        try:
+            return {"lat": float(lat), "lng": float(lng)}
+        except (TypeError, ValueError):
+            return None
+
+    # Prefer existing itinerary block coordinates (already aligned to the current trip).
+    for day_card in doc_data.day_cards:
+        for block in day_card.blocks:
+            normalized = _coerce_dict(getattr(block, "coordinates", None))
+            if normalized:
+                return normalized
+
+    # Fall back to any persisted tile coordinates/geo in the document.
+    for tile in doc_data.tiles.values():
+        tile_dict = tile.model_dump() if hasattr(tile, "model_dump") else tile
+        if not isinstance(tile_dict, dict):
+            continue
+        normalized = _extract_day_block_coordinates(tile_dict, tile_dict.get("meta") or {})
+        if normalized:
+            return normalized
+
+    return None
+
+
+def _resolve_fill_day_block_constraints(tile_specialist: str, meta: Dict[str, Any]) -> List[str]:
+    """Attach Tier-1 specialist constraint rules to fill-day blocks."""
+    constraints: List[str] = []
+
+    raw_meta_constraints = meta.get("constraints")
+    if isinstance(raw_meta_constraints, list):
+        constraints.extend(str(c) for c in raw_meta_constraints if c)
+
+    from app.planner.specialist_registry import SPECIALIST_REGISTRY
+
+    config = SPECIALIST_REGISTRY.get((tile_specialist or "").lower())
+    if config:
+        for constraint in config.hardcoded_constraints:
+            rule = constraint.get("rule")
+            if isinstance(rule, str) and rule:
+                constraints.append(rule)
+
+    # Preserve order while deduplicating.
+    return list(dict.fromkeys(constraints))
 
 
 def _build_strategy_sections(metadata: dict) -> list:
@@ -445,7 +685,7 @@ def _get_trip_input_display_value(ui_key: str, trip_inputs: dict) -> str | None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # noqa: ARG001
     """Application lifespan hooks.
 
     Used instead of deprecated @app.on_event handlers.
@@ -527,7 +767,10 @@ limiter = Limiter(key_func=_rate_key, enabled=settings.rate_limit_enabled)
 app.state.limiter = limiter
 
 
-def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+def _rate_limit_exceeded_handler(  # noqa: ARG001
+    request: Request, exc: RateLimitExceeded
+) -> JSONResponse:
+    _ = request
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Please slow down."},
@@ -738,7 +981,7 @@ class DestinationImageResponse(BaseModel):
 
 @app.post("/api/destination-image", response_model=DestinationImageResponse)
 @limiter.limit("15/minute")
-async def get_destination_image(
+async def get_destination_image(  # noqa: ARG001
     request: Request, req: DestinationImageRequest, db: AsyncSession = async_db_dependency
 ):
     """
@@ -747,6 +990,7 @@ async def get_destination_image(
     Called when user selects a destination to show the correct banner image
     immediately, without waiting for plan generation.
     """
+    _ = request
     dest_name = req.destination.strip()
     if not dest_name:
         raise HTTPException(status_code=400, detail="Destination is required")
@@ -767,7 +1011,7 @@ async def get_destination_image(
 
 @app.post("/api/admin/clear-validation-cache", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-def admin_clear_validation_cache(request: Request):
+def admin_clear_validation_cache(request: Request):  # noqa: ARG001
     """
     Clear the validation cache. For development/debugging only.
     """
@@ -787,7 +1031,7 @@ def admin_clear_validation_cache(request: Request):
 
 @app.post("/api/admin/fresh-start", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-async def admin_fresh_start(request: Request):
+async def admin_fresh_start(request: Request):  # noqa: ARG001
     """
     Perform a complete system cache and checkpoint cleanup.
 
@@ -834,7 +1078,7 @@ async def admin_fresh_start(request: Request):
 
 @app.get("/api/admin/graph-stats", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-def admin_graph_stats(request: Request):
+def admin_graph_stats(request: Request):  # noqa: ARG001
     """
     Get comprehensive graph statistics for observability.
 
@@ -863,7 +1107,7 @@ def admin_graph_stats(request: Request):
 
 @app.get("/api/admin/planner", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-def admin_planner_debug(request: Request):
+def admin_planner_debug(request: Request):  # noqa: ARG001
     """
     Get planner configuration and build identifiers for ops debugging.
 
@@ -889,7 +1133,7 @@ def admin_planner_debug(request: Request):
 
 @app.post("/api/admin/clear-all-checkpoints", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-async def admin_clear_all_checkpoints(request: Request):
+async def admin_clear_all_checkpoints(request: Request):  # noqa: ARG001
     """
     Clear ALL LangGraph checkpoints regardless of age.
 
@@ -907,7 +1151,9 @@ async def admin_clear_all_checkpoints(request: Request):
 
 @app.post("/api/admin/clear-all-caches", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-async def admin_clear_all_caches(request: Request, db: AsyncSession = async_db_dependency):
+async def admin_clear_all_caches(  # noqa: ARG001
+    request: Request, db: AsyncSession = async_db_dependency
+):
     """
     Clear ALL caches in the system - comprehensive cache reset.
 
@@ -921,6 +1167,7 @@ async def admin_clear_all_caches(request: Request, db: AsyncSession = async_db_d
 
     WARNING: Destructive operation for development/maintenance only.
     """
+    _ = request
     results = {
         "timestamp": datetime.utcnow().isoformat(),
         "caches_cleared": {},
@@ -1000,12 +1247,15 @@ async def admin_clear_all_caches(request: Request, db: AsyncSession = async_db_d
 
 @app.get("/api/admin/specialist-cache-stats", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-async def admin_specialist_cache_stats(request: Request, db: AsyncSession = async_db_dependency):
+async def admin_specialist_cache_stats(  # noqa: ARG001
+    request: Request, db: AsyncSession = async_db_dependency
+):
     """
     Get specialist LLM cache statistics for observability.
 
     Returns L1 (memory) and L2 (database) hit/miss counts, sizes, and TTLs.
     """
+    _ = request
     from sqlalchemy import func, select
 
     from app.db_models import ResponseCache
@@ -1031,12 +1281,15 @@ async def admin_specialist_cache_stats(request: Request, db: AsyncSession = asyn
 
 @app.post("/api/admin/clear-specialist-cache", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-async def admin_clear_specialist_cache(request: Request, db: AsyncSession = async_db_dependency):
+async def admin_clear_specialist_cache(  # noqa: ARG001
+    request: Request, db: AsyncSession = async_db_dependency
+):
     """
     Clear both L1 (memory) and L2 (database) specialist caches.
 
     Use for development/debugging when you want fresh LLM calls.
     """
+    _ = request
     from app.services.specialist_cache import clear_db_cache, clear_memory_cache
 
     l1_cleared = clear_memory_cache()
@@ -1058,12 +1311,15 @@ async def admin_clear_specialist_cache(request: Request, db: AsyncSession = asyn
 
 @app.get("/api/admin/tile-cache-stats", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-async def admin_tile_cache_stats(request: Request, db: AsyncSession = async_db_dependency):
+async def admin_tile_cache_stats(  # noqa: ARG001
+    request: Request, db: AsyncSession = async_db_dependency
+):
     """
     Get tile data cache statistics for observability.
 
     Returns L1 (memory) and L2 (database) hit/miss counts, sizes, and TTLs.
     """
+    _ = request
     from sqlalchemy import func, select
 
     from app.db_models import ResponseCache
@@ -1087,12 +1343,15 @@ async def admin_tile_cache_stats(request: Request, db: AsyncSession = async_db_d
 
 @app.post("/api/admin/clear-tile-cache", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-async def admin_clear_tile_cache(request: Request, db: AsyncSession = async_db_dependency):
+async def admin_clear_tile_cache(  # noqa: ARG001
+    request: Request, db: AsyncSession = async_db_dependency
+):
     """
     Clear both L1 (memory) and L2 (database) tile caches.
 
     Use for development/debugging when you want fresh provider data.
     """
+    _ = request
     from sqlalchemy import delete
 
     from app.db_models import ResponseCache
@@ -1121,7 +1380,7 @@ async def admin_clear_tile_cache(request: Request, db: AsyncSession = async_db_d
 
 @app.get("/api/admin/router-cache-stats", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-async def admin_router_cache_stats(request: Request):
+async def admin_router_cache_stats(request: Request):  # noqa: ARG001
     """
     Get router extraction cache statistics for observability.
 
@@ -1135,7 +1394,7 @@ async def admin_router_cache_stats(request: Request):
 
 @app.post("/api/admin/clear-router-cache", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-async def admin_clear_router_cache(request: Request):
+async def admin_clear_router_cache(request: Request):  # noqa: ARG001
     """
     Clear router extraction cache (L1 memory only).
 
@@ -1160,7 +1419,9 @@ async def admin_clear_router_cache(request: Request):
 
 @app.get("/api/admin/cache-stats", dependencies=[Depends(require_admin)])
 @limiter.limit("10/minute")
-async def admin_all_cache_stats(request: Request, db: AsyncSession = async_db_dependency):
+async def admin_all_cache_stats(  # noqa: ARG001
+    request: Request, db: AsyncSession = async_db_dependency
+):
     """
     Get all cache statistics in one call.
 
@@ -1169,6 +1430,7 @@ async def admin_all_cache_stats(request: Request, db: AsyncSession = async_db_de
     - Tile cache (L1 + L2)
     - Router cache (L1 only)
     """
+    _ = request
     from sqlalchemy import func, select
 
     from app.db_models import ResponseCache
@@ -1333,7 +1595,9 @@ async def graph_plan_endpoint(
         session_state["thread_id"] = str(ensure_thread_id(None))  # Force new thread
         # Initialize from trip_inputs if provided
         if req.trip_inputs:
-            session_state["trip_inputs"] = normalize_trip_inputs(dict(req.trip_inputs))
+            session_state["trip_inputs"] = normalize_trip_inputs(
+                _sanitize_trip_inputs_for_category_merge(dict(req.trip_inputs), req.message)
+            )
     elif not session_state:
         session_state = {}
 
@@ -1342,11 +1606,12 @@ async def graph_plan_endpoint(
     # the latest frontend values (destination, dates, etc.) are used.
     if "trip_inputs" not in session_state:
         raw_inputs = dict(req.trip_inputs) if req.trip_inputs else {}
+        raw_inputs = _sanitize_trip_inputs_for_category_merge(raw_inputs, req.message)
         session_state["trip_inputs"] = normalize_trip_inputs(raw_inputs)
     elif req.trip_inputs:
         # Merge incoming trip_inputs into existing (incoming takes precedence)
         existing = session_state.get("trip_inputs", {})
-        incoming = dict(req.trip_inputs)
+        incoming = _sanitize_trip_inputs_for_category_merge(dict(req.trip_inputs), req.message)
         for key, value in incoming.items():
             if value is not None:
                 existing[key] = value
@@ -1831,7 +2096,7 @@ async def graph_plan_endpoint(
     dest_name = trip_inputs.get("destination")
     if dest_name:
         # Non-blocking: check memory cache (populated by fire-and-forget prefetch),
-        # fall back to Picsum. Images are decorative — never gate response.
+        # fall back to deterministic Unsplash placeholder. Images are decorative.
         dest_image_url = get_image_url_sync(dest_name, variant=0, width=1600, height=900)
         response_document.destination_card = DestinationCard(
             title=dest_name,
@@ -1971,7 +2236,9 @@ async def graph_plan_stream_endpoint(
         session_state = {}
         session_state["thread_id"] = str(ensure_thread_id(None))
         if req.trip_inputs:
-            session_state["trip_inputs"] = normalize_trip_inputs(dict(req.trip_inputs))
+            session_state["trip_inputs"] = normalize_trip_inputs(
+                _sanitize_trip_inputs_for_category_merge(dict(req.trip_inputs), req.message)
+            )
     elif not session_state:
         session_state = {}
 
@@ -1981,11 +2248,12 @@ async def graph_plan_stream_endpoint(
     # This fixes the bug where Setup mode had stale/empty destination.
     if "trip_inputs" not in session_state:
         raw_inputs = dict(req.trip_inputs) if req.trip_inputs else {}
+        raw_inputs = _sanitize_trip_inputs_for_category_merge(raw_inputs, req.message)
         session_state["trip_inputs"] = normalize_trip_inputs(raw_inputs)
     elif req.trip_inputs:
         # Merge incoming trip_inputs into existing (incoming takes precedence)
         existing = session_state.get("trip_inputs", {})
-        incoming = dict(req.trip_inputs)
+        incoming = _sanitize_trip_inputs_for_category_merge(dict(req.trip_inputs), req.message)
         for key, value in incoming.items():
             if value is not None:
                 existing[key] = value
@@ -2109,7 +2377,10 @@ async def graph_plan_stream_endpoint(
                         # committed yet, or if get_or_create_document created a
                         # default doc with empty categories.
                         if req.trip_inputs:
-                            req_ti = dict(req.trip_inputs)
+                            req_ti = _sanitize_trip_inputs_for_category_merge(
+                                dict(req.trip_inputs),
+                                req.message,
+                            )
                             current = session_state["trip_inputs"]
                             for field in _USER_OWNED_SETTINGS:
                                 if field in req_ti and req_ti[field] is not None:
@@ -2174,7 +2445,10 @@ async def graph_plan_stream_endpoint(
                         # Prevents stale/empty doc values from clobbering
                         # correct pill selections in state_serde.restore_graph_state.
                         if req.trip_inputs:
-                            req_ti = dict(req.trip_inputs)
+                            req_ti = _sanitize_trip_inputs_for_category_merge(
+                                dict(req.trip_inputs),
+                                req.message,
+                            )
                             for field in (
                                 "activity_settings",
                                 "hotel_settings",
@@ -2336,14 +2610,16 @@ async def graph_plan_stream_endpoint(
                     # Convert graph-built day_cards for persistence
                     graph_day_cards_raw = graph_doc.get("itinerary_day_cards")
                     day_card_objs = None
-                    persist_view_state = graph_doc.get("plan_view_state")
+                    persist_view_state = _resolve_itinerary_document_view_state(
+                        graph_doc.get("plan_view_state"),
+                        graph_day_cards_raw,
+                        graph_doc.get("constraint_violations", []),
+                    )
                     if graph_day_cards_raw:
                         day_card_objs = [
                             DayCard(**dc) if isinstance(dc, dict) else dc
                             for dc in graph_day_cards_raw
                         ]
-                        # Promote to S3 when builder succeeded (matches expand-itinerary)
-                        persist_view_state = "S3_ITINERARY_READY"
 
                     updated_doc = await apply_planner_update(
                         db,
@@ -2454,7 +2730,7 @@ async def graph_plan_stream_endpoint(
             dest_name = trip_inputs.get("destination")
             if dest_name:
                 # Non-blocking: check memory cache (populated by fire-and-forget prefetch),
-                # fall back to Picsum. Images are decorative — never gate response.
+                # fall back to deterministic Unsplash placeholder. Images are decorative.
                 dest_image_url = get_image_url_sync(dest_name, variant=0, width=1600, height=900)
                 response_document.destination_card = DestinationCard(
                     title=dest_name,
@@ -2550,8 +2826,11 @@ async def graph_plan_stream_endpoint(
                     DayCard.model_validate(dc) if isinstance(dc, dict) else dc
                     for dc in graph_day_cards
                 ]
-                # Promote to S3 when builder succeeded (matches expand-itinerary)
-                response_document.plan_view_state = "S3_ITINERARY_READY"
+                response_document.plan_view_state = _resolve_itinerary_document_view_state(
+                    response_document.plan_view_state,
+                    graph_day_cards,
+                    graph_document.get("constraint_violations", []),
+                )
 
             # Copy suggestions from graph document (unfiltered by validator)
             # The validator strips question marks but synthesizer chips are curated
@@ -2881,33 +3160,47 @@ async def patch_plan_document(
             if not doc:
                 raise HTTPException(status_code=404, detail="Document not found")
 
-            # Diff guard: skip write if patch data already matches reloaded doc
-            if patch.trip_inputs is not None:
-                doc_data = get_document_data(doc)
-                existing_ti = doc_data.trip_inputs
-                patch_ti = patch.trip_inputs
-                patch_fields = getattr(patch_ti, "model_fields_set", set())
-                has_real_diff = False
-                for field_name in patch_fields:
-                    patch_val = getattr(patch_ti, field_name, None)
-                    existing_val = getattr(existing_ti, field_name, None)
-                    if hasattr(patch_val, "model_dump") and hasattr(existing_val, "model_dump"):
-                        if patch_val.model_dump() != existing_val.model_dump():
-                            has_real_diff = True
-                            break
-                    elif patch_val != existing_val:
-                        has_real_diff = True
-                        break
+    def _trip_inputs_patch_has_real_diff(existing_ti, patch_ti) -> bool:
+        patch_fields = getattr(patch_ti, "model_fields_set", set())
+        for field_name in patch_fields:
+            patch_val = getattr(patch_ti, field_name, None)
+            existing_val = getattr(existing_ti, field_name, None)
+            if hasattr(patch_val, "model_dump") and hasattr(existing_val, "model_dump"):
+                if patch_val.model_dump() != existing_val.model_dump():
+                    return True
+            elif patch_val != existing_val:
+                return True
+        return False
 
-                if not has_real_diff and patch.branches is None and patch.tiles is None:
-                    logger.info("[PATCH] No-op: patch matches current doc, skipping write")
-                    return PlanDocumentResponse(
-                        version=doc.version,
-                        updated_by=doc.updated_by,
-                        document=doc_data,
-                        updated_at=doc.updated_at.isoformat(),
-                        changes_made=False,
-                    )
+    has_non_trip_mutations = any(
+        (
+            patch.branches is not None,
+            patch.remove_branch_ids is not None,
+            patch.tiles is not None,
+            patch.remove_tile_ids is not None,
+            patch.selections is not None,
+            patch.preferred_tile_ids is not None,
+        )
+    )
+
+    # Universal diff guard: skip write if this PATCH is a pure no-op.
+    if patch.trip_inputs is not None and not has_non_trip_mutations:
+        doc_data = get_document_data(doc)
+        if not _trip_inputs_patch_has_real_diff(doc_data.trip_inputs, patch.trip_inputs):
+            patch_fields = sorted(getattr(patch.trip_inputs, "model_fields_set", set()))
+            logger.debug(
+                "[VERIFY][PATCH_DEDUPE] no-op skip fields=%s version=%s",
+                patch_fields,
+                doc.version,
+            )
+            logger.info("[PATCH] No-op: patch matches current doc, skipping write")
+            return PlanDocumentResponse(
+                version=doc.version,
+                updated_by=doc.updated_by,
+                document=doc_data,
+                updated_at=doc.updated_at.isoformat(),
+                changes_made=False,
+            )
 
     # Apply the patch using CRDT merge
     updated_doc = await apply_user_patch(db, doc=doc, patch=patch)
@@ -3548,9 +3841,11 @@ async def fill_day_endpoint(
     # Convert tiles to rich DayBlocks
     _VALID_PERIODS = {"morning", "afternoon", "evening"}
     period_cycle = ["morning", "afternoon", "evening"]
+    fallback_coordinates = _first_trip_anchor_coordinates(doc_data)
     new_blocks = []
     for i, tile in enumerate(tiles[:3]):
         meta = tile.get("meta", {})
+        block_coordinates = _extract_day_block_coordinates(tile, meta) or fallback_coordinates
         # Format duration: 2.0 -> "2 hours", 1.5 -> "1.5 hours"
         raw_hrs = meta.get("duration_hours")
         duration_str = None
@@ -3575,6 +3870,7 @@ async def fill_day_endpoint(
                     break
         if not tile_specialist:
             tile_specialist = meta.get("category", "experience")
+        block_constraints = _resolve_fill_day_block_constraints(tile_specialist, meta)
 
         new_blocks.append(
             DayBlock(
@@ -3584,8 +3880,10 @@ async def fill_day_endpoint(
                 intensity="moderate",
                 summary=tile.get("title", "Experience"),
                 specialist_type=tile_specialist,
+                constraints=block_constraints,
                 image_url=tile.get("image_url"),
                 duration=duration_str,
+                coordinates=block_coordinates,
                 booked_tile=tile,
                 booking_category="activity",
             )
@@ -3694,7 +3992,7 @@ async def expand_itinerary_endpoint(
     Streams NDJSON events:
         {"type": "progress", "stage": "itinerary", "message": "...", "pct": 30}
         {"type": "envelope", "plan_envelope": {...}}
-        {"type": "done", "plan_view_state": "S3_ITINERARY_READY"}
+        {"type": "done", "plan_view_state": "S3_ITINERARY_READY|S3_EDITING|S3_PARTIAL_CONFLICT"}
         {"type": "error", "message": "..."}
 
     NOTE: This endpoint does NOT use FastAPI's db dependency injection because
@@ -3796,10 +4094,16 @@ async def expand_itinerary_endpoint(
                 # Compute previous field hashes from document's stored trip_inputs
                 # (field_hashes are computed from trip_inputs, not stored separately)
                 prev_trip_inputs = doc_data.trip_inputs.model_dump() if doc_data.trip_inputs else {}
-                previous_hashes = compute_field_hashes(prev_trip_inputs)
+                previous_preferences = {
+                    "preferred_tile_ids": _normalized_preference_ids(
+                        doc_data.preferred_tile_ids or []
+                    )
+                }
+                previous_hashes = compute_field_hashes(prev_trip_inputs, previous_preferences)
 
                 # Compute current field hashes from request trip_inputs
-                current_hashes = compute_field_hashes(trip_inputs_data)
+                current_preferences = _flatten_request_preferences(req.preferences)
+                current_hashes = compute_field_hashes(trip_inputs_data, current_preferences)
 
                 # Detect which fields changed
                 changed_fields = detect_changed_fields(previous_hashes, current_hashes)
@@ -4028,9 +4332,20 @@ async def expand_itinerary_endpoint(
                     yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
                     return
 
-                # Handle conflicts - return error response with resolutions AND partial schedule
+                # Handle failed builds with conflicts - return partial schedule + conflict error
                 if not itinerary_result.success:
                     if itinerary_result.conflicts:
+                        failure_view_state = _resolve_stage3_view_state(
+                            itinerary_result.success, itinerary_result.conflicts
+                        )
+                        logger.info(
+                            "[expand-itinerary-state] builder_success=%s conflict_count=%s "
+                            "emitted_plan_view_state=%s changed_fields=%s",
+                            itinerary_result.success,
+                            len(itinerary_result.conflicts or []),
+                            failure_view_state,
+                            sorted(changed_fields),
+                        )
                         # NEW: Include partial day_cards in conflict response
                         # Partial schedule shows what CAN be scheduled + unschedulable markers
                         partial_day_cards = (
@@ -4048,7 +4363,7 @@ async def expand_itinerary_endpoint(
                         if partial_day_cards:
                             partial_envelope = {
                                 "day_cards": partial_day_cards,
-                                "plan_view_state": "S3_PARTIAL_CONFLICT",
+                                "plan_view_state": failure_view_state,
                             }
                             partial_event = ExpandItineraryStreamEvent(
                                 type="envelope",
@@ -4086,9 +4401,8 @@ async def expand_itinerary_endpoint(
                 )
                 yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 
-                # Build metadata from itinerary result
-                # CRITICAL: Include strategy_stage=3 so _compute_plan_view_state
-                # returns S3_ITINERARY_READY
+                # Build metadata from itinerary result.
+                # strategy_stage=3 remains required for Stage 3 rendering semantics.
                 metadata = {
                     "strategy_stage": 3,  # Force stage 3 for proper state computation
                     "day_cards": [dc.model_dump() for dc in itinerary_result.day_cards],
@@ -4112,11 +4426,22 @@ async def expand_itinerary_endpoint(
                 if "itinerary_assumptions" in metadata:
                     plan_envelope["itinerary_assumptions"] = metadata["itinerary_assumptions"]
 
-                # CRITICAL: Builder success = S3_ITINERARY_READY (bypass gate check)
-                # The gate check in _compute_plan_view_state may fail if trip_inputs
-                # is incomplete, but builder success already proves we have valid dates.
-                new_plan_view_state: PlanViewState = "S3_ITINERARY_READY"
+                new_plan_view_state: PlanViewState = _resolve_stage3_view_state(
+                    itinerary_result.success, itinerary_result.conflicts
+                )
+                logger.info(
+                    "[expand-itinerary-state] builder_success=%s conflict_count=%s "
+                    "emitted_plan_view_state=%s changed_fields=%s",
+                    itinerary_result.success,
+                    len(itinerary_result.conflicts or []),
+                    new_plan_view_state,
+                    sorted(changed_fields),
+                )
                 plan_envelope["plan_view_state"] = new_plan_view_state
+                if itinerary_result.conflicts:
+                    plan_envelope["constraint_violations"] = _conflicts_to_constraint_violations(
+                        itinerary_result.conflicts, itinerary_result.resolutions
+                    )
 
                 # Emit envelope update
                 _debug(
@@ -4219,7 +4544,7 @@ async def remove_specialist_endpoint(
     Streams NDJSON events (same format as expand-itinerary):
         {"type": "progress", "stage": "itinerary", "message": "...", "pct": 30}
         {"type": "envelope", "plan_envelope": {...}}
-        {"type": "done", "plan_view_state": "S3_ITINERARY_READY"}
+        {"type": "done", "plan_view_state": "S3_ITINERARY_READY|S3_EDITING|S3_PARTIAL_CONFLICT"}
         {"type": "error", "message": "..."}
     """
     # Check idempotency
@@ -4398,12 +4723,32 @@ async def remove_specialist_endpoint(
                 # Handle any remaining conflicts
                 if not itinerary_result.success:
                     if itinerary_result.conflicts:
+                        failure_view_state = _resolve_stage3_view_state(
+                            itinerary_result.success, itinerary_result.conflicts
+                        )
+                        logger.info(
+                            "[remove-specialist-state] builder_success=%s conflict_count=%s "
+                            "emitted_plan_view_state=%s changed_fields=%s",
+                            itinerary_result.success,
+                            len(itinerary_result.conflicts or []),
+                            failure_view_state,
+                            None,
+                        )
                         # Include partial day_cards in conflict response
                         partial_day_cards = (
                             [dc.model_dump() for dc in itinerary_result.day_cards]
                             if itinerary_result.day_cards
                             else []
                         )
+                        if partial_day_cards:
+                            partial_event = ExpandItineraryStreamEvent(
+                                type="envelope",
+                                plan_envelope={
+                                    "day_cards": partial_day_cards,
+                                    "plan_view_state": failure_view_state,
+                                },
+                            )
+                            yield json.dumps(partial_event.model_dump(exclude_none=True)) + "\n"
                         conflict_data = {
                             "error": "CONSTRAINT_CONFLICT",
                             "conflicts": [c.model_dump() for c in itinerary_result.conflicts],
@@ -4435,7 +4780,17 @@ async def remove_specialist_endpoint(
 
                 # Build envelope update with filtered topics
                 filtered_topics = [kept_specialist]
-                new_plan_view_state = "S3_ITINERARY_READY"
+                new_plan_view_state: PlanViewState = _resolve_stage3_view_state(
+                    itinerary_result.success, itinerary_result.conflicts
+                )
+                logger.info(
+                    "[remove-specialist-state] builder_success=%s conflict_count=%s "
+                    "emitted_plan_view_state=%s changed_fields=%s",
+                    itinerary_result.success,
+                    len(itinerary_result.conflicts or []),
+                    new_plan_view_state,
+                    None,
+                )
 
                 plan_envelope = {
                     "day_cards": [dc.model_dump() for dc in itinerary_result.day_cards],
@@ -4448,6 +4803,10 @@ async def remove_specialist_endpoint(
                     "executed_strategy_topics": filtered_topics,
                     "plan_view_state": new_plan_view_state,
                 }
+                if itinerary_result.conflicts:
+                    plan_envelope["constraint_violations"] = _conflicts_to_constraint_violations(
+                        itinerary_result.conflicts, itinerary_result.resolutions
+                    )
 
                 # Emit envelope update
                 _debug(

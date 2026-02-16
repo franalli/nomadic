@@ -26,6 +26,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
+from app.config import settings
 from app.data.demo_curation import CARRIER_MAP, DEMO_MANIFEST
 from app.debug_utils import (
     CompactLogger,
@@ -98,6 +99,173 @@ def _flight_logistics_hash(state: GraphState) -> str:
             "flight_settings": settings.flight_settings.model_dump(),
         }
     )
+
+
+def _tier2_generation_key(
+    destination: str,
+    month: str,
+    categories: set[str],
+    tiles_per_category: int,
+) -> str:
+    normalized_destination = (destination or "").strip().lower()
+    normalized_month = (month or "").strip().lower()
+    normalized_categories = "|".join(sorted(c.strip().lower() for c in categories if c.strip()))
+    return (
+        f"tier2:{normalized_destination}:{normalized_month}:"
+        f"{normalized_categories}:n{tiles_per_category}"
+    )
+
+
+def _cached_tier2_tiles_for_categories(
+    state: GraphState,
+    destination: str,
+    categories: set[str],
+) -> list[dict]:
+    generated = state.metadata.get("generated_tier2_categories", {}) or {}
+    destination_tiles = generated.get(destination, {}) or {}
+    tiles: list[dict] = []
+    for category in sorted(categories):
+        cat_tiles = destination_tiles.get(category, [])
+        if not cat_tiles:
+            return []
+        tiles.extend(cat_tiles)
+    return tiles
+
+
+def _fallback_tier2_tiles(existing_tiles: list[dict], categories: set[str]) -> list[dict]:
+    matching = [t for t in existing_tiles if _tile_matches_categories(t, categories)]
+    return matching or existing_tiles
+
+
+async def _resolve_tier2_experience_tiles(
+    *,
+    state: GraphState,
+    destination: str,
+    month: str,
+    categories: set[str],
+    tiles_per_category: int,
+    budget: int | None,
+    tier1_specialists: list[str] | None,
+    fallback_tiles: list[dict],
+    consume_prefetch,
+    allow_prefetch_wait: bool = True,
+    generate_fn=None,
+    create_task_fn=None,
+) -> list[dict]:
+    from app.services.experience_generator import generate_experiences
+
+    generate_fn = generate_fn or generate_experiences
+    create_task_fn = create_task_fn or asyncio.create_task
+
+    started_at = time.monotonic()
+    generation_key = _tier2_generation_key(destination, month, categories, tiles_per_category)
+    previous_key = state.metadata.get("tier2_generation_key")
+    cached_tiles = _cached_tier2_tiles_for_categories(state, destination, categories)
+    source = "llm"
+    reason = "none"
+    experience_tiles: list[dict] | None = None
+
+    if previous_key == generation_key and cached_tiles:
+        source = "reuse"
+        reason = "matching_generation_key"
+        experience_tiles = cached_tiles
+
+    if experience_tiles is None and allow_prefetch_wait:
+        prefetched = await consume_prefetch()
+        if prefetched:
+            source = "prefetch"
+            reason = "router_prefetch"
+            experience_tiles = prefetched
+
+    if experience_tiles is None:
+        wait_budget_ms = max(0, settings.tier2_generation_wait_budget_ms)
+        wait_budget_seconds = wait_budget_ms / 1000.0
+        try:
+            if wait_budget_seconds > 0:
+                experience_tiles = await asyncio.wait_for(
+                    generate_fn(
+                        destination=destination,
+                        categories=list(categories),
+                        month=month,
+                        budget=budget,
+                        tier1_specialists=tier1_specialists,
+                        tiles_per_category=tiles_per_category,
+                        state=state,
+                    ),
+                    timeout=wait_budget_seconds,
+                )
+            else:
+                experience_tiles = await generate_fn(
+                    destination=destination,
+                    categories=list(categories),
+                    month=month,
+                    budget=budget,
+                    tier1_specialists=tier1_specialists,
+                    tiles_per_category=tiles_per_category,
+                    state=state,
+                )
+            source = state.metadata.pop("tier2_generation_source_internal", "llm")
+            reason = "llm_generation" if source == "llm" else "cache_generation"
+        except asyncio.TimeoutError:
+            source = "fallback_timeout"
+            reason = "timeout"
+            experience_tiles = _fallback_tier2_tiles(fallback_tiles, categories)
+            _debug_log(
+                "[VERIFY][TIER2] generation_timeout "
+                f"key={generation_key} budget_ms={wait_budget_ms}"
+            )
+
+            async def _background_prewarm() -> None:
+                try:
+                    await generate_fn(
+                        destination=destination,
+                        categories=list(categories),
+                        month=month,
+                        budget=budget,
+                        tier1_specialists=tier1_specialists,
+                        tiles_per_category=tiles_per_category,
+                        state=None,
+                    )
+                except Exception:
+                    pass
+
+            create_task_fn(_background_prewarm())
+        except Exception as e:
+            source = "fallback_timeout"
+            reason = f"error:{type(e).__name__}"
+            experience_tiles = _fallback_tier2_tiles(fallback_tiles, categories)
+            _debug_log(
+                f"[VERIFY][TIER2] generation_error key={generation_key} err={type(e).__name__}"
+            )
+
+            async def _background_prewarm() -> None:
+                try:
+                    await generate_fn(
+                        destination=destination,
+                        categories=list(categories),
+                        month=month,
+                        budget=budget,
+                        tier1_specialists=tier1_specialists,
+                        tiles_per_category=tiles_per_category,
+                        state=None,
+                    )
+                except Exception:
+                    pass
+
+            create_task_fn(_background_prewarm())
+
+    elapsed_ms = int((time.monotonic() - started_at) * 1000)
+    state.metadata["tier2_generation_key"] = generation_key
+    state.metadata["tier2_generation_source"] = source
+    state.metadata["tier2_generation_elapsed_ms"] = elapsed_ms
+    state.metadata["tier2_generation_reason"] = reason
+    _debug_log(f"[VERIFY][TIER2] key={generation_key} source={source} elapsed_ms={elapsed_ms}")
+    _debug_log(
+        "[VERIFY][LLM_LATENCY] "
+        f"component=experience source={source} elapsed_ms={elapsed_ms} reason={reason}"
+    )
+
+    return experience_tiles or []
 
 
 # =============================================================================
@@ -191,8 +359,11 @@ async def logistics_node(state: GraphState) -> GraphState:
             changed.append("flights")
 
         if cached_hotel_hash or cached_activity_hash or cached_flight_hash:
-            log("LOGISTICS", f"Cache BUST: {', '.join(changed)} changed for {plan.destination}")
-            _debug_log(f"Selective invalidation: {', '.join(changed)}")
+            log(
+                "LOGISTICS",
+                f"State invalidation (L1): {', '.join(changed)} changed for {plan.destination}",
+            )
+            _debug_log(f"[TILE_STATE] Selective invalidation (L1): {', '.join(changed)}")
             state.metadata["_tiles_replaced"] = True
             clog.event("cache_invalidate", f"{', '.join(changed)} changed for {plan.destination}")
 
@@ -209,15 +380,18 @@ async def logistics_node(state: GraphState) -> GraphState:
     # DIAGNOSTIC LOGGING - Track origin sync (Issue 6 investigation)
     # ==========================================================================
     _logistics_settings = get_trip_settings(state)
-    flights_enabled = _logistics_settings.booking_types.flights != "off"
+    flights_requested = _logistics_settings.booking_types.flights != "off"
+    direct_only_requested = bool(_logistics_settings.flight_settings.direct_only)
     trip_inputs = state.metadata.get("trip_inputs", {})
     trip_inputs_origin = trip_inputs.get("origin")
 
     _debug_log(f"[LOGISTICS] trip_plan.origin={plan.origin!r}")
-    _debug_log(f"[LOGISTICS] flights_enabled={flights_enabled}")
+    _debug_log(
+        f"[LOGISTICS] flights_requested={flights_requested} origin_present={bool(plan.origin)}"
+    )
 
     # Skip flights if disabled in settings (even if origin exists)
-    if not flights_enabled:
+    if not flights_requested:
         _debug_log("[LOGISTICS] ⏭️ Skipping flights - disabled in settings")
     # ==========================================================================
 
@@ -230,11 +404,20 @@ async def logistics_node(state: GraphState) -> GraphState:
         clog.node_end("LOGISTICS", duration_ms, status="skipped", reason="missing_fields")
         return state
 
-    # Resolve airport codes for flights (flights need origin, hotels/activities don't)
-    # Reads state first (populated by router), falls back to LLM only if missing
-    origin_code, dest_code = await resolve_iata_codes(plan.origin or "", plan.destination, state)
-    # Can only search flights if: codes resolved + flights not disabled in settings
-    can_search_flights = bool(origin_code and dest_code) and flights_enabled
+    # Resolve airport codes only when flight search is actually possible.
+    # Avoids unnecessary LLM latency when flights are disabled or origin is missing.
+    origin_code = ""
+    dest_code = ""
+    if flights_requested and plan.origin:
+        # Reads state first (populated by router), falls back to LLM only if missing.
+        origin_code, dest_code = await resolve_iata_codes(
+            plan.origin or "", plan.destination, state
+        )
+
+    # Can only search flights if: flights enabled + origin provided + codes resolved
+    can_search_flights = flights_requested and bool(plan.origin) and bool(origin_code and dest_code)
+
+    state.metadata["flight_search_possible"] = can_search_flights
 
     # CRITICAL FIX: Always search for hotels/activities even without origin
     # Hotels and activities only need destination + dates
@@ -244,11 +427,13 @@ async def logistics_node(state: GraphState) -> GraphState:
     # Skip flight search if disabled or missing origin
     if not can_search_flights:
         # Determine the specific reason for skipping
-        if not flights_enabled:
+        if not flights_requested:
             skip_reason = "flights_disabled_in_settings"
+            status = "skipped_disabled"
             log("LOGISTICS", "Skipping flights - disabled in settings")
         elif not plan.origin:
             skip_reason = "no_origin_for_flights"
+            status = "skipped_no_origin"
             log("LOGISTICS", "Skipping flights (no origin) - hotels/activities searched")
             # Extra diagnostic if trip_inputs has origin but trip_plan doesn't
             if trip_inputs_origin:
@@ -258,13 +443,25 @@ async def logistics_node(state: GraphState) -> GraphState:
                 )
         else:
             skip_reason = "airport_code_resolution_failed"
+            status = "skipped_code_resolution"
             log("LOGISTICS", "Skipping flights - could not resolve airport codes")
+
+        state.metadata["flight_search_status"] = status
+        state.metadata["flight_skip_reason"] = skip_reason
 
         hotels_count = len(state.tiles.get("hotels", []))
         activities_count = len(state.tiles.get("activities", []))
+        booking_summary = state.metadata.get("booking_summary", {})
+        booking_summary["flights_found"] = 0
+        state.metadata["booking_summary"] = booking_summary
         logger.info(
             f"[Logistics] Skipped flights ({skip_reason}). "
             f"Hotels/activities tiles: {hotels_count} + {activities_count}"
+        )
+        _debug_log(
+            "[VERIFY][FLIGHTS] "
+            f"requested={flights_requested} search_possible={can_search_flights} "
+            f"status={status} reason={skip_reason} origin_present={bool(plan.origin)}"
         )
         _debug_node_end(
             "logistics",
@@ -328,14 +525,25 @@ async def logistics_node(state: GraphState) -> GraphState:
     # 3. PROCESS & SANITIZE
     processed_options = []
     sanitized_carriers = []
+    dropped_non_direct = 0
 
     for offer in raw_flights:
         try:
             itinerary = offer["itineraries"][0]
-            segment = itinerary["segments"][0]
+            segments = itinerary.get("segments", [])
+            if not segments:
+                logger.warning("[Logistics] Skipping offer with no segments")
+                continue
+            segment = segments[0]
             carrier_code = segment["carrierCode"]
             dep_time_str = segment["departure"]["at"]
             duration_iso = segment.get("duration", "PT6H")
+            stops = max(0, len(segments) - 1)
+            is_direct = stops == 0
+
+            if direct_only_requested and not is_direct:
+                dropped_non_direct += 1
+                continue
 
             # A. Sanitize Carrier (The "Pro" Polish)
             carrier_info = CARRIER_MAP.get(
@@ -353,6 +561,7 @@ async def logistics_node(state: GraphState) -> GraphState:
 
             # C. Format Duration
             duration_clean = duration_iso.replace("PT", "").lower()
+            stops_label = "Direct" if is_direct else f"{stops} stop{'s' if stops > 1 else ''}"
 
             # Build Tile-compatible dict for state.tiles["flights"]
             price_value = float(offer["price"]["total"])
@@ -361,7 +570,7 @@ async def logistics_node(state: GraphState) -> GraphState:
                 "type": "flight",
                 "partner": "curated" if flight_source == "curated" else "amadeus",
                 "partner_product_id": offer["id"],
-                "title": f"{carrier_info['name']} - Direct",
+                "title": f"{carrier_info['name']} - {stops_label}",
                 "subtitle": f"Departs {dep_time_str.split('T')[1][:5]} • {duration_clean}",
                 "image_url": logo_url,
                 "price_estimate": price_value,
@@ -369,7 +578,7 @@ async def logistics_node(state: GraphState) -> GraphState:
                 "price_basis": "per_person",
                 "is_estimate_only": True,
                 "deeplink_url": "#",
-                "tags": [carrier_info["name"]],
+                "tags": [carrier_info["name"], stops_label.lower()],
                 "availability_status": "available",
                 "meta": {
                     "logic_hook": logic_hook,
@@ -378,6 +587,8 @@ async def logistics_node(state: GraphState) -> GraphState:
                     "carrier_name": carrier_info["name"],
                     "departure_time": dep_time_str,
                     "duration": duration_clean,
+                    "stops": stops,
+                    "is_direct": is_direct,
                 },
                 "source": flight_source,
                 "source_agent": "logistics_node",
@@ -392,11 +603,21 @@ async def logistics_node(state: GraphState) -> GraphState:
     # Log sanitization summary
     if sanitized_carriers:
         _debug_log(f"Sanitized carriers: {', '.join(sanitized_carriers)}")
+    if direct_only_requested and dropped_non_direct > 0:
+        log(
+            "LOGISTICS",
+            "Direct-flight filter applied",
+            data=f"removed {dropped_non_direct} non-direct options",
+        )
+        _debug_log(f"[VERIFY][FLIGHTS] direct_only=true removed_non_direct={dropped_non_direct}")
 
     # 4. STORE IN STATE - Write to state.tiles["flights"] for frontend display
     state.tiles["flights"] = processed_options
     # Also keep in metadata for backwards compatibility
     state.metadata["flight_options"] = processed_options
+    state.metadata["flight_search_status"] = "searched"
+    state.metadata["flight_skip_reason"] = None
+    state.metadata["flight_search_possible"] = True
 
     # Update summary
     booking_summary = state.metadata.get("booking_summary", {})
@@ -404,7 +625,7 @@ async def logistics_node(state: GraphState) -> GraphState:
     state.metadata["booking_summary"] = booking_summary
 
     # Count safe vs unsafe flights
-    safe_count = sum(1 for opt in processed_options if opt.get("is_safe", True))
+    safe_count = sum(1 for opt in processed_options if (opt.get("meta") or {}).get("is_safe", True))
     unsafe_count = len(processed_options) - safe_count
 
     # Final logging
@@ -499,7 +720,7 @@ async def _fetch_hotels(
             _debug_log(f"[TILE_CACHE] Hotels HIT: {len(cached_hotels)} hotels from cache")
             log(
                 "LOGISTICS",
-                f"Hotels cache HIT for {plan.destination}",
+                f"Provider cache HIT (L2): hotels for {plan.destination}",
                 data=f"{len(cached_hotels)} hotels",
             )
             hotel_dicts = cached_hotels
@@ -607,7 +828,7 @@ async def _fetch_activities(
             )
             log(
                 "LOGISTICS",
-                f"Activities cache HIT for {plan.destination}",
+                f"Provider cache HIT (L2): activities for {plan.destination}",
                 data=f"{len(cached_activities)} activities",
             )
             activity_dicts = cached_activities
@@ -674,6 +895,15 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     from app.db import _get_async_session_factory
 
     _debug_log(f"Searching hotels/activities for {plan.destination}...")
+
+    def _activity_tile_id_set(tiles) -> set[str]:
+        if not isinstance(tiles, list):
+            return set()
+        return {
+            str(tile.get("id"))
+            for tile in tiles
+            if isinstance(tile, dict) and tile.get("id") is not None
+        }
 
     # Read user settings for provider filtering
     _settings = get_trip_settings(state)
@@ -761,6 +991,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     log("LOGISTICS", f"Found {len(hotel_dicts)} hotels for {plan.destination}")
     _debug_log(f"Hotels found: {len(hotel_dicts)}")
 
+    previous_activity_ids = _activity_tile_id_set(state.tiles.get("activities", []))
     state.tiles["activities"] = activity_dicts
 
     # Two-tier activity handling:
@@ -777,6 +1008,129 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     NICHE_SPECIALISTS = TIER1_SPECIALISTS
     TIER1_CATEGORIES = TIER1_SPECIALISTS
     executed = state.metadata.get("executed_strategy_topics", [])
+    used_tier2_categories: set[str] = set()
+    tier2_attempted = False
+
+    async def _consume_tier2_prefetch(
+        expected_categories: set[str],
+        expected_tiles_per_category: int,
+        expected_destination: str,
+        expected_month: str,
+    ) -> list[dict] | None:
+        wait_started_at = time.monotonic()
+        prefetch_task = state.metadata.get("tier2_prefetch_task")
+        prefetch_cats = set(state.metadata.get("tier2_prefetch_categories", []))
+        prefetch_tiles_per_cat = state.metadata.get("tier2_prefetch_tiles_per_category")
+        prefetch_destination = state.metadata.get("tier2_prefetch_destination")
+        prefetch_month = state.metadata.get("tier2_prefetch_month")
+        prefetch_key = state.metadata.get("tier2_prefetch_key")
+        wait_budget_ms = max(0, settings.tier2_prefetch_wait_budget_ms)
+        wait_budget_seconds = wait_budget_ms / 1000.0
+        expected_key = _tier2_generation_key(
+            expected_destination,
+            expected_month,
+            expected_categories,
+            expected_tiles_per_category,
+        )
+
+        if not prefetch_task:
+            _debug_log("[VERIFY][PREFETCH] no task present")
+            return None
+        if prefetch_key != expected_key:
+            _debug_log(f"[VERIFY][PREFETCH] key_skip expected={expected_key} got={prefetch_key}")
+            log(
+                "LOGISTICS",
+                (
+                    "[PREFETCH] Key mismatch - skipping prefetch "
+                    f"(expected={expected_key}, got={prefetch_key})"
+                ),
+            )
+            return None
+        _debug_log(f"[VERIFY][PREFETCH] key_match key={expected_key}")
+        if prefetch_destination != expected_destination or prefetch_month != expected_month:
+            _debug_log(
+                "[VERIFY][PREFETCH] skip=context "
+                f"expected={expected_destination}:{expected_month} "
+                f"got={prefetch_destination}:{prefetch_month}"
+            )
+            log(
+                "LOGISTICS",
+                (
+                    "[PREFETCH] Context mismatch - skipping prefetch "
+                    f"(expected={expected_destination}:{expected_month}, "
+                    f"got={prefetch_destination}:{prefetch_month})"
+                ),
+            )
+            return None
+        if prefetch_cats != expected_categories:
+            _debug_log(
+                "[VERIFY][PREFETCH] skip=categories "
+                f"expected={sorted(expected_categories)} got={sorted(prefetch_cats)}"
+            )
+            log(
+                "LOGISTICS",
+                (
+                    "[PREFETCH] Category mismatch - skipping prefetch "
+                    f"(expected={expected_categories}, got={prefetch_cats})"
+                ),
+            )
+            return None
+        if prefetch_tiles_per_cat != expected_tiles_per_category:
+            _debug_log(
+                "[VERIFY][PREFETCH] skip=tile_count "
+                f"expected={expected_tiles_per_category} got={prefetch_tiles_per_cat}"
+            )
+            log(
+                "LOGISTICS",
+                (
+                    "[PREFETCH] Tile-count mismatch - using prefetch as warmup "
+                    f"(expected={expected_tiles_per_category}, got={prefetch_tiles_per_cat})"
+                ),
+            )
+            return None
+        if wait_budget_seconds <= 0:
+            _debug_log("[VERIFY][PREFETCH] skip=budget_zero")
+            return None
+
+        log(
+            "LOGISTICS",
+            (
+                "[PREFETCH] Waiting for Router prefetch "
+                f"(cats={len(expected_categories)}, budget={wait_budget_ms}ms)"
+            ),
+        )
+        done, _ = await asyncio.wait({prefetch_task}, timeout=wait_budget_seconds)
+        if not done:
+            elapsed_ms = int((time.monotonic() - wait_started_at) * 1000)
+            _debug_log(
+                "[VERIFY][PREFETCH] fallback=timeout "
+                f"elapsed_ms={elapsed_ms} budget_ms={wait_budget_ms}"
+            )
+            log(
+                "LOGISTICS",
+                f"[PREFETCH] Budget exhausted ({wait_budget_ms}ms) - falling back",
+            )
+            return None
+
+        try:
+            result = prefetch_task.result()
+        except Exception as e:
+            elapsed_ms = int((time.monotonic() - wait_started_at) * 1000)
+            _debug_log(
+                "[VERIFY][PREFETCH] fallback=task_error "
+                f"elapsed_ms={elapsed_ms} err={type(e).__name__}"
+            )
+            log("LOGISTICS", f"[PREFETCH] Prefetch task failed - falling back: {e}")
+            return None
+
+        elapsed_ms = int((time.monotonic() - wait_started_at) * 1000)
+        _debug_log(
+            "[VERIFY][PREFETCH] consumed "
+            f"tiles={len(result)} elapsed_ms={elapsed_ms} budget_ms={wait_budget_ms}"
+        )
+        log("LOGISTICS", f"[PREFETCH] Consumed {len(result)} tiles from prefetch")
+        return result
+
     has_niche_specialist = any(t in NICHE_SPECIALISTS for t in executed)
     if has_niche_specialist:
         selected_cats = set(get_trip_settings(state).activity_settings.categories)
@@ -848,7 +1202,6 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     activity_dicts = []
         else:
             # Mixed — generate Tier 2 experience tiles via LLM
-            from app.services.experience_generator import generate_experiences
             from app.services.unsplash import prefetch_destination_images
 
             # Prefetch Unsplash for Tier 2 categories (non-blocking, ~2-3s head start)
@@ -858,56 +1211,38 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             month = str(plan.start_date)[:7] if plan.start_date else ""
             active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
             tiles_per_cat = _compute_tiles_per_category(state, tier2_cats)
-
-            # Check for prefetch task from Router
-            prefetch_task = state.metadata.get("tier2_prefetch_task")
-            prefetch_cats = set(state.metadata.get("tier2_prefetch_categories", []))
-
-            if prefetch_task and prefetch_cats == tier2_cats:
-                log(
-                    "LOGISTICS",
-                    f"[PREFETCH] Awaiting Router prefetch for {len(tier2_cats)} categories",
-                )
-                try:
-                    experience_tiles = await asyncio.wait_for(prefetch_task, timeout=10.0)
-                    log(
-                        "LOGISTICS",
-                        f"[PREFETCH] Retrieved {len(experience_tiles)} tiles from prefetch",
-                    )
-                except asyncio.TimeoutError:
-                    log("LOGISTICS", "[PREFETCH] Timeout - falling back to normal generation")
-                    experience_tiles = await generate_experiences(
-                        destination=plan.destination,
-                        categories=list(tier2_cats),
-                        month=month,
-                        budget=plan.budget,
-                        tier1_specialists=active_niche,
-                        tiles_per_category=tiles_per_cat,
-                        state=state,
-                    )
-                finally:
-                    state.metadata.pop("tier2_prefetch_task", None)
-                    state.metadata.pop("tier2_prefetch_categories", None)
-            else:
-                # No prefetch or category mismatch - normal generation
-                experience_tiles = await generate_experiences(
-                    destination=plan.destination,
-                    categories=list(tier2_cats),
-                    month=month,
-                    budget=plan.budget,
-                    tier1_specialists=active_niche,
-                    tiles_per_category=tiles_per_cat,
-                    state=state,
-                )
+            allow_prefetch_wait = bool(
+                state.metadata.get("tier2_prefetch_intent", "activity") == "activity"
+            )
+            tier2_attempted = True
+            experience_tiles = await _resolve_tier2_experience_tiles(
+                state=state,
+                destination=str(plan.destination),
+                month=month,
+                categories=tier2_cats,
+                tiles_per_category=tiles_per_cat,
+                budget=plan.budget,
+                tier1_specialists=active_niche,
+                fallback_tiles=activity_dicts if isinstance(activity_dicts, list) else [],
+                consume_prefetch=lambda: _consume_tier2_prefetch(
+                    tier2_cats,
+                    tiles_per_cat,
+                    str(plan.destination),
+                    month,
+                ),
+                allow_prefetch_wait=allow_prefetch_wait,
+            )
 
             if experience_tiles:
+                source = state.metadata.get("tier2_generation_source", "llm")
                 log(
                     "LOGISTICS",
                     f"Generated {len(experience_tiles)} Tier 2 experience tiles",
-                    data=f"specialists={active_niche}, tier2={tier2_cats}",
+                    data=f"specialists={active_niche}, tier2={tier2_cats}, source={source}",
                 )
                 state.tiles["activities"] = experience_tiles
                 activity_dicts = experience_tiles
+                used_tier2_categories = set(tier2_cats)
                 # Mark that Tier 2 tiles were generated (for synthesizer gate)
                 state.metadata["tier2_tiles_generated"] = True
             else:
@@ -936,7 +1271,6 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
         selected_cats = set(get_trip_settings(state).activity_settings.categories)
         tier2_only = selected_cats - TIER1_CATEGORIES
         if tier2_only:
-            from app.services.experience_generator import generate_experiences
             from app.services.unsplash import prefetch_destination_images
 
             # Prefetch Unsplash for Tier 2 categories (non-blocking, ~2-3s head start)
@@ -945,58 +1279,88 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
             month = str(plan.start_date)[:7] if plan.start_date else ""
             tiles_per_cat = _compute_tiles_per_category(state, tier2_only)
-
-            # Check for prefetch task from Router
-            prefetch_task = state.metadata.get("tier2_prefetch_task")
-            prefetch_cats = set(state.metadata.get("tier2_prefetch_categories", []))
-
-            if prefetch_task and prefetch_cats == tier2_only:
-                log(
-                    "LOGISTICS",
-                    f"[PREFETCH] Awaiting Router prefetch for {len(tier2_only)} categories",
-                )
-                try:
-                    experience_tiles = await asyncio.wait_for(prefetch_task, timeout=10.0)
-                    log(
-                        "LOGISTICS",
-                        f"[PREFETCH] Retrieved {len(experience_tiles)} tiles from prefetch",
-                    )
-                except asyncio.TimeoutError:
-                    log("LOGISTICS", "[PREFETCH] Timeout - falling back to normal generation")
-                    experience_tiles = await generate_experiences(
-                        destination=plan.destination,
-                        categories=list(tier2_only),
-                        month=month,
-                        budget=plan.budget,
-                        tiles_per_category=tiles_per_cat,
-                        state=state,
-                    )
-                finally:
-                    state.metadata.pop("tier2_prefetch_task", None)
-                    state.metadata.pop("tier2_prefetch_categories", None)
-            else:
-                # No prefetch or category mismatch - normal generation
-                experience_tiles = await generate_experiences(
-                    destination=plan.destination,
-                    categories=list(tier2_only),
-                    month=month,
-                    budget=plan.budget,
-                    tiles_per_category=tiles_per_cat,
-                    state=state,
-                )
+            allow_prefetch_wait = bool(
+                state.metadata.get("tier2_prefetch_intent", "activity") == "activity"
+            )
+            tier2_attempted = True
+            experience_tiles = await _resolve_tier2_experience_tiles(
+                state=state,
+                destination=str(plan.destination),
+                month=month,
+                categories=tier2_only,
+                tiles_per_category=tiles_per_cat,
+                budget=plan.budget,
+                tier1_specialists=None,
+                fallback_tiles=activity_dicts if isinstance(activity_dicts, list) else [],
+                consume_prefetch=lambda: _consume_tier2_prefetch(
+                    tier2_only,
+                    tiles_per_cat,
+                    str(plan.destination),
+                    month,
+                ),
+                allow_prefetch_wait=allow_prefetch_wait,
+            )
             if experience_tiles:
+                source = state.metadata.get("tier2_generation_source", "llm")
                 log(
                     "LOGISTICS",
                     f"Pure Tier 2: generated {len(experience_tiles)} experience tiles",
-                    data=f"categories={tier2_only}",
+                    data=f"categories={tier2_only}, source={source}",
                 )
                 state.tiles["activities"] = experience_tiles
                 activity_dicts = experience_tiles
+                used_tier2_categories = set(tier2_only)
                 # Mark that Tier 2 tiles were generated (for synthesizer gate)
                 state.metadata["tier2_tiles_generated"] = True
 
+    # Prefetch metadata is single-turn only. Always clear to avoid stale reuse.
+    state.metadata.pop("tier2_prefetch_task", None)
+    state.metadata.pop("tier2_prefetch_categories", None)
+    state.metadata.pop("tier2_prefetch_tiles_per_category", None)
+    state.metadata.pop("tier2_prefetch_started_at", None)
+    state.metadata.pop("tier2_prefetch_destination", None)
+    state.metadata.pop("tier2_prefetch_month", None)
+    state.metadata.pop("tier2_prefetch_key", None)
+    state.metadata.pop("tier2_prefetch_intent", None)
+    _debug_log("[VERIFY][PREFETCH] metadata_cleared")
+    if not tier2_attempted:
+        state.metadata.pop("tier2_generation_key", None)
+        state.metadata.pop("tier2_generation_source", None)
+        state.metadata.pop("tier2_generation_elapsed_ms", None)
+        state.metadata.pop("tier2_generation_reason", None)
+
+    if tier2_attempted:
+        current_activity_ids = _activity_tile_id_set(activity_dicts)
+        tier2_source = state.metadata.get("tier2_generation_source")
+        tier2_new_content_generated = bool(
+            tier2_source != "reuse" and current_activity_ids != previous_activity_ids
+        )
+        state.metadata["tier2_new_content_generated"] = tier2_new_content_generated
+        _debug_log(
+            "[VERIFY][TIER2_CONTENT] "
+            f"source={tier2_source} "
+            f"prev_ids={len(previous_activity_ids)} "
+            f"curr_ids={len(current_activity_ids)} "
+            f"new_content={tier2_new_content_generated}"
+        )
+    else:
+        state.metadata.pop("tier2_new_content_generated", None)
+
     log("LOGISTICS", f"Found {len(activity_dicts)} activities for {plan.destination}")
     _debug_log(f"Activities found: {len(activity_dicts)}")
+
+    # Snapshot categories actively represented in the current plan output.
+    # Router uses this as category baseline to avoid stale persisted carryover.
+    active_categories = set(t for t in executed if t in TIER1_CATEGORIES) | used_tier2_categories
+    if active_categories:
+        state.metadata["active_plan_categories"] = sorted(active_categories)
+        _debug_log(
+            f"[VERIFY][CATEGORY_BASELINE] active_plan_categories={sorted(active_categories)}"
+        )
+        _debug_log(f"[LOGISTICS] active_plan_categories={sorted(active_categories)}")
+    else:
+        state.metadata.pop("active_plan_categories", None)
+        _debug_log("[VERIFY][CATEGORY_BASELINE] active_plan_categories cleared")
 
     # Update booking summary
     booking_summary = state.metadata.get("booking_summary", {})

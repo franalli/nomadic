@@ -196,13 +196,13 @@ class TestRouteAfterGuard:
         )
         assert route_after_guard(s) == "synthesizer"
 
-    def test_fixable_blocking_to_architect(self):
+    def test_fixable_blocking_to_synthesizer(self):
         s = _state(
             has_blocking_violations=True,
             constraint_violations=[{"category": "budget", "message": "over budget"}],
             guard_retry_count=0,
         )
-        assert route_after_guard(s) == "architect"
+        assert route_after_guard(s) == "synthesizer"
 
     def test_fixable_blocking_exhausted_retries(self):
         s = _state(

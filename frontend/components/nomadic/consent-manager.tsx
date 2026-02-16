@@ -14,7 +14,6 @@ type ConsentPreferences = {
 };
 
 const CONSENT_STORAGE_KEY = 'nomadic_consent';
-const OPEN_EVENT = 'nomadic-open-consent';
 
 const defaultPreferences: ConsentPreferences = {
   essential: true,
@@ -52,11 +51,6 @@ const persistPreferences = (prefs: ConsentPreferences) => {
   );
 };
 
-export const requestOpenConsentPreferences = () => {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent(OPEN_EVENT));
-};
-
 export function ConsentManager() {
   const [preferences, setPreferences] = useState<ConsentPreferences | null>(null);
   const [showBanner, setShowBanner] = useState(false);
@@ -70,12 +64,6 @@ export function ConsentManager() {
     } else {
       setShowBanner(true);
     }
-  }, []);
-
-  useEffect(() => {
-    const handler = () => setShowPanel(true);
-    window.addEventListener(OPEN_EVENT, handler as EventListener);
-    return () => window.removeEventListener(OPEN_EVENT, handler as EventListener);
   }, []);
 
   const draft = useMemo(

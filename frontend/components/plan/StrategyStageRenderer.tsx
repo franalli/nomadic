@@ -28,6 +28,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, CheckCircle, Clock, Loader2,Shield  } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
@@ -38,6 +39,7 @@ import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { fillDay } from '@/lib/api';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
+import { debugLog } from '@/lib/debug';
 import { getDestinationCoords } from '@/lib/destination-coords';
 import { isFillDayCooldownActive } from '@/lib/fillDayGuards';
 import {
@@ -94,13 +96,10 @@ export type DataDensity = 'empty' | 'ghost' | 'bridge' | 'full';
 export function computeDataDensity(
   state: PlanViewState,
   strategySections: PlanViewModel['strategy_sections'],
-  tiles: Record<string, Tile> | undefined,
-  tripInputs: DocumentTripInputs | undefined
+  tiles: Record<string, Tile> | undefined
 ): DataDensity {
   const hasSpecialist = hasSpecialistContent(strategySections);
   const hasTiles = tiles && Object.keys(tiles).length > 0;
-  // Note: hasDateSet was removed from bridge mode condition per CRITICAL FIX comment below
-  void tripInputs; // Silence unused parameter warning (kept for future use)
 
   // Normalize legacy S* values to P* values
   const normalizedState = normalizePlanViewState(state);
@@ -138,7 +137,6 @@ import { PlanHeader } from './PlanHeader';
 import {
   type GenerationState,
   getNextAction,
-  getStageFromState,
   isGenerating,
   isMultiSpecialistTrip,
 } from './planStateHelpers';
@@ -177,8 +175,6 @@ interface StrategyStageRendererProps {
   hasDates?: boolean;
   /** Whether currently expanding to itinerary (S3 generation) */
   isExpandingItinerary?: boolean;
-  /** Current backend sub-stage for status text */
-  currentSubStage?: string | null;
   /** Handler to trigger plan generation from S0 "Build plan" CTA */
   onBuildPlan?: () => void;
   onExpandToItinerary?: () => Promise<void>;
@@ -186,12 +182,7 @@ interface StrategyStageRendererProps {
   onFinalizePlan?: () => void;
   /** Whether finalization is in progress */
   isFinalizing?: boolean;
-  onReset?: () => void;
   onRefineAssumptions?: () => void;
-  /** Last error from itinerary generation (for inline retry) */
-  lastError?: string | null;
-  /** Retry handler for itinerary generation */
-  onRetry?: () => void;
   /** Shortlist: set of saved tile IDs */
   savedTileIds?: Set<string>;
   /** Shortlist: callback when user saves/unsaves a tile */
@@ -234,15 +225,11 @@ export function StrategyStageRenderer({
   fallbackTitle,
   hasDates = false,
   isExpandingItinerary = false,
-  currentSubStage,
   onBuildPlan,
   onExpandToItinerary,
   onFinalizePlan,
   isFinalizing = false,
-  onReset: _onReset,
   onRefineAssumptions,
-  lastError: _lastError,
-  onRetry: _onRetry,
   savedTileIds = new Set(),
   onSaveTile,
   tripInputs,
@@ -256,38 +243,50 @@ export function StrategyStageRenderer({
   onOpenStaysSettings,
   onOpenFlightsSettings,
 }: StrategyStageRendererProps) {
-  // Unused props reserved for future use
-  void _onReset;
-  void _lastError;
-  void _onRetry;
-
   // FIX: Subscribe to store to catch updates even if parent doesn't re-render
   // Priority: Store (Live) > Props (Parent passed)
   const effectiveTripInputs = useTripInputsWithFallback(tripInputs);
-  const storeTiles = useDocumentStore((s) => s.document?.tiles);
+  const {
+    storeTiles,
+    dayCardsFingerprint,
+    storeDayCardsRaw,
+    preferredTileIds,
+    toggleTilePreference,
+    isRegenUpdating,
+    constraintsValidated,
+    constraintViolations,
+  } = useDocumentStore(
+    useShallow((s) => {
+      const cards = s.document?.day_cards;
+      let fingerprint: string | null = null;
+      if (cards && cards.length > 0) {
+        const blockIds = cards
+          .flatMap((c) => c.blocks || [])
+          .filter((b) => b.coordinates?.lat != null && b.coordinates?.lng != null)
+          .map((b) => b.id)
+          .join(',');
+        if (blockIds) {
+          fingerprint = `${cards.length}:${blockIds}`;
+        }
+      }
+
+      return {
+        storeTiles: s.document?.tiles,
+        dayCardsFingerprint: fingerprint,
+        storeDayCardsRaw: cards,
+        preferredTileIds: s.preferredTileIds,
+        toggleTilePreference: s.toggleTilePreference,
+        isRegenUpdating: s.isRegenerating,
+        constraintsValidated: s.document?.constraints_validated ?? EMPTY_CONSTRAINTS_VALIDATED,
+        constraintViolations: s.document?.constraint_violations ?? EMPTY_CONSTRAINT_VIOLATIONS,
+      };
+    })
+  );
   const effectiveTiles = storeTiles ?? tiles;
 
-  // FIX: Use content-based selector for day_cards to prevent spurious re-renders
-  // useShallow doesn't help because mergeEnvelope creates new DayCard objects
-  // Instead, we extract a stable "fingerprint" (count + first/last block IDs) that only changes when content changes
-  const dayCardsFingerprint = useDocumentStore((s) => {
-    const cards = s.document?.day_cards;
-    if (!cards || cards.length === 0) return null;
-    // Fingerprint: count + IDs of blocks with coordinates (the ones that affect POIs)
-    const blockIds = cards
-      .flatMap(c => c.blocks || [])
-      .filter(b => b.coordinates?.lat && b.coordinates?.lng)
-      .map(b => b.id)
-      .join(',');
-    // No blocks with coordinates → treat as no day cards (skip POI extraction)
-    // Free Day placeholders have no coords, so they won't trigger map extraction
-    if (!blockIds) return null;
-    return `${cards.length}:${blockIds}`;
-  });
   // Stabilize day_cards reference: only snapshot from store when fingerprint changes.
   // mergeEnvelope creates new DayCard objects on every update, so raw selector
-  // returns a new ref each time → causes spurious re-renders and 8x POI extractions.
-  const storeDayCardsRaw = useDocumentStore((s) => s.document?.day_cards);
+  // returns a new ref each time -> causes spurious re-renders and repeated POI extraction.
   const stableDayCardsRef = useRef(storeDayCardsRaw);
   const prevFingerprintRef = useRef(dayCardsFingerprint);
   if (dayCardsFingerprint !== prevFingerprintRef.current) {
@@ -296,18 +295,8 @@ export function StrategyStageRenderer({
   }
   const effectiveDayCards = stableDayCardsRef.current ?? viewModel.day_cards;
 
-
-  const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
-  const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
-
   // Regeneration state from document store (managed by usePreferenceAutoRegen)
-  const isRegenUpdating = useDocumentStore((s) => s.isRegenerating);
   const preferenceCount = preferredTileIds.size;
-
-  // Constraint validation state for Trip DNA bar badges
-  // NOTE: Using stable selectors - fallback arrays defined outside component to avoid infinite loops
-  const constraintsValidated = useDocumentStore((s) => s.document?.constraints_validated) ?? EMPTY_CONSTRAINTS_VALIDATED;
-  const constraintViolations = useDocumentStore((s) => s.document?.constraint_violations) ?? EMPTY_CONSTRAINT_VIOLATIONS;
 
   // Memoized sets for efficient rule lookup
   const validatedRules = useMemo(
@@ -366,6 +355,12 @@ export function StrategyStageRenderer({
   const handleSaveTile = useCallback(async (tile: Tile) => {
     if (bookingDrawerPinnedDay != null) {
       const store = useDocumentStore.getState();
+      const generationInFlight = isGenerating(generation) || isCommitting || isExpandingItinerary;
+      if (generationInFlight || store.currentRunId) {
+        handleCloseBookingDrawer();
+        toast('Please wait until itinerary updates complete');
+        return;
+      }
       const now = Date.now();
       if (isFillDayCooldownActive(now, lastFillDayRequestAtRef.current)) {
         handleCloseBookingDrawer();
@@ -398,7 +393,7 @@ export function StrategyStageRenderer({
         const is409 = err instanceof Error && err.message.includes('409');
         const is429 = err instanceof Error && err.message.includes('429');
         if (is409) {
-          console.log(`[fillDay] day=${bookingDrawerPinnedDay} already filled (409), refreshing card`);
+          debugLog(`[fillDay] day=${bookingDrawerPinnedDay} already filled (409), refreshing card`);
           return;
         }
         if (is429) {
@@ -422,7 +417,15 @@ export function StrategyStageRenderer({
     if (!currentPrefs.has(tile.id)) {
       toggle(tile.id);
     }
-  }, [bookingDrawerPinnedDay, handleCloseBookingDrawer, onSaveTile, toast]);
+  }, [
+    bookingDrawerPinnedDay,
+    generation,
+    handleCloseBookingDrawer,
+    isCommitting,
+    isExpandingItinerary,
+    onSaveTile,
+    toast,
+  ]);
 
   // Debounced density state to prevent layout flash during transitions
   // Updated via requestAnimationFrame to let browser paint current frame first
@@ -494,7 +497,6 @@ export function StrategyStageRenderer({
 
   // hasTripContext = canGeneratePlan (destination + dates set)
   const nextAction = getNextAction(state, generation, canGeneratePlan);
-  const currentStage = getStageFromState(state);
   const generating = isGenerating(generation);
 
   // =========================================================================
@@ -547,7 +549,7 @@ export function StrategyStageRenderer({
   const displayLogic = useMemo(() => {
     const hasDates = !!effectiveTripInputs?.start_date;
     const hasTiles = effectiveTiles && Object.keys(effectiveTiles).length > 0;
-    const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs);
+    const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles);
     const isShowingMirrorLoader = generating && hasDates && !hasTiles;
 
     // Calculate actual trip duration from dates (more accurate than stored trip_duration)
@@ -613,7 +615,12 @@ export function StrategyStageRenderer({
       return [];
     }
     const destination = effectiveTripInputs?.destination ?? destinationCard?.title;
-    return extractPOIsFromDayCards(effectiveDayCards, specialistData.fullModeSections, destination);
+    return extractPOIsFromDayCards(
+      effectiveDayCards,
+      specialistData.fullModeSections,
+      destination,
+      dayCardsFingerprint
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dayCardsFingerprint is content-based proxy
   }, [dayCardsFingerprint, effectiveTripInputs?.destination, destinationCard?.title]);
 
@@ -687,7 +694,6 @@ export function StrategyStageRenderer({
           {/* SPECIALIST CARDS (collapsed by default in SETUP mode) */}
           <S2StrategyView
             viewModel={filteredViewModel}
-            destinationCard={destinationCard}
             pendingTopics={viewModel.pending_strategy_topics}
             executedTopics={viewModel.executed_strategy_topics}
             tiles={{}} // No tiles in SETUP mode
@@ -777,7 +783,6 @@ export function StrategyStageRenderer({
             {/* Strategy Cards - collapsed in SETUP (no dates), auto-expand in PLAN (has dates) */}
             <S2StrategyView
               viewModel={bridgeFilteredViewModel}
-              destinationCard={destinationCard}
               pendingTopics={viewModel.pending_strategy_topics}
               executedTopics={viewModel.executed_strategy_topics}
               tiles={{}} // Empty - no booking tiles in bridge mode
@@ -789,9 +794,9 @@ export function StrategyStageRenderer({
           </div>
 
           {/* Right Column: Map (Fixed Width on Desktop) - shows destination pin or POIs */}
-          <div className="hidden lg:block w-[350px] shrink-0">
+          <div className="hidden w-[350px] shrink-0 lg:block">
             {/* Explicit height wrapper ensures Mapbox initializes correctly */}
-            <div style={{ height: 400 }} className="rounded-xl overflow-hidden sticky top-4">
+            <div className="sticky top-4 h-[400px] overflow-hidden rounded-xl">
               {bridgeMapItems.length > 0 ? (
                 <MapErrorBoundary className="h-full w-full">
                   <InteractiveMap
@@ -875,9 +880,7 @@ export function StrategyStageRenderer({
                   <S2StrategyView
                     key={`strategy-${destinationCard?.title}`}
                     viewModel={filteredViewModel}
-                    destinationCard={destinationCard}
                     onRefineAssumptions={onRefineAssumptions}
-                    canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
                     pendingTopics={viewModel.pending_strategy_topics}
                     executedTopics={viewModel.executed_strategy_topics}
                     tiles={effectiveTiles}
@@ -891,9 +894,7 @@ export function StrategyStageRenderer({
                       <S2StrategyView
                         key={`strategy-${destinationCard?.title}`}
                         viewModel={filteredViewModel}
-                        destinationCard={destinationCard}
                         onRefineAssumptions={onRefineAssumptions}
-                        canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
                         pendingTopics={viewModel.pending_strategy_topics}
                         executedTopics={viewModel.executed_strategy_topics}
                         tiles={effectiveTiles}
@@ -1102,7 +1103,7 @@ export function StrategyStageRenderer({
           {!isDesktop && hasItineraryContent && fullModePOIs.length > 0 && (
             <section className="mt-4 px-4">
               {/* Explicit height wrapper ensures Mapbox initializes correctly */}
-              <div style={{ height: 300 }} className="rounded-xl overflow-hidden border border-border/50">
+              <div className="h-[300px] overflow-hidden rounded-xl border border-border/50">
                 {destCoords ? (
                   <MapErrorBoundary className="h-full w-full">
                     <InteractiveMap
@@ -1141,6 +1142,7 @@ export function StrategyStageRenderer({
                   dayCards={viewModel.day_cards ?? []}
                   variant={computeTimelineVariant(state)}
                   useRichBlocks={true}
+                  disableFillDayActions={isStreaming}
                   savedTileIds={savedTileIds}
                   onOpenBookingDrawer={handleOpenBookingDrawer}
                   onOpenStaysSettings={onOpenStaysSettings}
@@ -1184,8 +1186,7 @@ export function StrategyStageRenderer({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.3 }}
-              className="shrink-0"
-              style={{ width: 400, maxWidth: '35vw' }}
+              className="w-[400px] max-w-[35vw] shrink-0"
             >
               <div className="sticky top-0 h-screen overflow-hidden">
                 <div className="h-full w-full">
@@ -1308,13 +1309,10 @@ export function StrategyStageRenderer({
       {/* Header - always visible, controls view navigation */}
       <PlanHeader
         destinationCard={destinationCard}
-        currentStage={currentStage}
         isGenerating={generating}
         fallbackTitle={fallbackTitle}
         planViewState={state}
-        hasDates={hasDates}
         isExpandingItinerary={isExpandingItinerary}
-        currentSubStage={currentSubStage}
         tripInputs={effectiveTripInputs}
         onOpenSheet={onOpenSheet}
         isStreaming={isStreaming}

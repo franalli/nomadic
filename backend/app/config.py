@@ -115,6 +115,23 @@ class Settings(BaseSettings):
     # external APIs
     openai_api_key: str | None = None
     unsplash_access_key: str | None = os.getenv("UNSPLASH_ACCESS_KEY")
+    unsplash_request_timeout_seconds: float = float(
+        os.getenv("UNSPLASH_REQUEST_TIMEOUT_SECONDS", "2.5")
+    )
+    unsplash_max_retries: int = int(os.getenv("UNSPLASH_MAX_RETRIES", "1"))
+    unsplash_prefetch_timeout_seconds: float = float(
+        os.getenv("UNSPLASH_PREFETCH_TIMEOUT_SECONDS", "1.5")
+    )
+    unsplash_prefetch_max_retries: int = int(os.getenv("UNSPLASH_PREFETCH_MAX_RETRIES", "0"))
+    unsplash_prefetch_failure_cooldown_seconds: float = float(
+        os.getenv("UNSPLASH_PREFETCH_FAILURE_COOLDOWN_SECONDS", "20.0")
+    )
+    unsplash_prefetch_dest_cooldown_seconds: float = float(
+        os.getenv("UNSPLASH_PREFETCH_DEST_COOLDOWN_SECONDS", "30.0")
+    )
+    unsplash_prefetch_streak_threshold: int = int(
+        os.getenv("UNSPLASH_PREFETCH_STREAK_THRESHOLD", "2")
+    )
 
     # =============================================================================
     # Cache Configuration
@@ -136,6 +153,8 @@ class Settings(BaseSettings):
     auto_correct_typo_threshold: int = 100  # Levenshtein distance for typo correction
     fuzzy_match_score_cutoff: int = 76  # rapidfuzz typo resolution threshold
     confidence_threshold_skip_router: float = 0.92  # Confidence to skip LLM router
+    tier2_prefetch_wait_budget_ms: int = int(os.getenv("TIER2_PREFETCH_WAIT_BUDGET_MS", "350"))
+    tier2_generation_wait_budget_ms: int = int(os.getenv("TIER2_GENERATION_WAIT_BUDGET_MS", "2500"))
 
     # =============================================================================
     # Security: Rate Limiting & Admin Access

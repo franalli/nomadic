@@ -662,7 +662,7 @@ class TripArchitect:
         )
         return tiles_result
 
-    def generate_planning_response(self, state: GraphState, user_text: str) -> str:
+    def generate_planning_response(self, state: GraphState, _user_text: str) -> str:
         """
         Generate a planning mode response.
 

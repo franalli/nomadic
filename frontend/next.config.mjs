@@ -20,10 +20,6 @@ const nextConfig = {
         protocol: 'https',
         hostname: 'pics.avs.io',  // Airline logos
       },
-      {
-        protocol: 'https',
-        hostname: 'picsum.photos',  // Placeholder images for tiles
-      },
     ],
     // Cache optimized images for 1 year (browser + CDN)
     minimumCacheTTL: 31536000,
@@ -35,7 +31,7 @@ const nextConfig = {
       "default-src 'self'",
       `script-src 'self' ${isDev ? "'unsafe-eval'" : ""} 'unsafe-inline'`,
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' https://*.unsplash.com https://images.unsplash.com https://plus.unsplash.com https://pics.avs.io https://picsum.photos https://api.mapbox.com https://*.mapbox.com data: blob:",
+      "img-src 'self' https://*.unsplash.com https://images.unsplash.com https://plus.unsplash.com https://pics.avs.io https://api.mapbox.com https://*.mapbox.com data: blob:",
       "font-src 'self'",
       `connect-src 'self' https://*.mapbox.com ${apiUrl}`,
       "worker-src 'self' blob:",

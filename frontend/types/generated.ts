@@ -695,7 +695,7 @@ export interface paths {
          *     Streams NDJSON events:
          *         {"type": "progress", "stage": "itinerary", "message": "...", "pct": 30}
          *         {"type": "envelope", "plan_envelope": {...}}
-         *         {"type": "done", "plan_view_state": "S3_ITINERARY_READY"}
+         *         {"type": "done", "plan_view_state": "S3_ITINERARY_READY|S3_EDITING|S3_PARTIAL_CONFLICT"}
          *         {"type": "error", "message": "..."}
          *
          *     NOTE: This endpoint does NOT use FastAPI's db dependency injection because
@@ -733,7 +733,7 @@ export interface paths {
          *     Streams NDJSON events (same format as expand-itinerary):
          *         {"type": "progress", "stage": "itinerary", "message": "...", "pct": 30}
          *         {"type": "envelope", "plan_envelope": {...}}
-         *         {"type": "done", "plan_view_state": "S3_ITINERARY_READY"}
+         *         {"type": "done", "plan_view_state": "S3_ITINERARY_READY|S3_EDITING|S3_PARTIAL_CONFLICT"}
          *         {"type": "error", "message": "..."}
          */
         post: operations["remove_specialist_endpoint_api_remove_specialist_post"];
@@ -1492,6 +1492,8 @@ export interface components {
             suggested_response_meta?: {
                 [key: string]: unknown;
             }[];
+            /** Suggestion Chips */
+            suggestion_chips?: components["schemas"]["SuggestionChip"][];
             /** Applied Updates */
             applied_updates?: ("origin" | "destination" | "dates" | "travelers" | "budget")[];
             /** Conflicts */
@@ -1532,7 +1534,7 @@ export interface components {
              * @default P0_MINIMAL
              * @enum {string}
              */
-            plan_view_state: "P0_MINIMAL" | "P1_ENRICHED" | "P2_LOGISTICS" | "P3_FINALIZED" | "P3_EDITING" | "P3_BLOCKED" | "S0_BOOTSTRAP" | "S1_FRAMING" | "S2_STRATEGY_READY" | "S2_BLOCKED" | "S3_ITINERARY_READY" | "S3_EDITING" | "S3_BLOCKED";
+            plan_view_state: "P0_MINIMAL" | "P1_ENRICHED" | "P2_LOGISTICS" | "P3_FINALIZED" | "P3_EDITING" | "P3_BLOCKED" | "S0_BOOTSTRAP" | "S1_FRAMING" | "S2_STRATEGY_READY" | "S2_BLOCKED" | "S3_ITINERARY_READY" | "S3_EDITING" | "S3_PARTIAL_CONFLICT" | "S3_BLOCKED";
             /** Strategy Sections */
             strategy_sections?: components["schemas"]["StrategySection"][];
             /** Executed Strategy Topics */
@@ -1779,6 +1781,18 @@ export interface components {
             content_blocks?: {
                 [key: string]: unknown;
             }[];
+            /** Editorial One Liner */
+            editorial_one_liner?: string | null;
+            /** Vibe Trio */
+            vibe_trio?: {
+                [key: string]: string;
+            }[] | null;
+            /** Hero Image */
+            hero_image?: string | null;
+            /** Travel Intelligence */
+            travel_intelligence?: {
+                [key: string]: unknown;
+            } | null;
             /** Destination Gallery */
             destination_gallery?: {
                 [key: string]: string;
@@ -1789,6 +1803,35 @@ export interface components {
             } | null;
             /** Bullets */
             bullets?: string[];
+        };
+        /**
+         * SuggestionChip
+         * @description Structured suggestion chip with action routing.
+         */
+        SuggestionChip: {
+            /** Message */
+            message: string;
+            /**
+             * Action Type
+             * @default send_message
+             * @enum {string}
+             */
+            action_type: "send_message" | "open_pill" | "trigger_action";
+            /** Action Target */
+            action_target?: string | null;
+            /**
+             * Chip Type
+             * @default follow_up
+             * @enum {string}
+             */
+            chip_type: "cta" | "follow_up" | "setting";
+            /**
+             * Category
+             * @default
+             */
+            category: string;
+            /** Icon */
+            icon?: string | null;
         };
         /**
          * SuggestionClickEvent

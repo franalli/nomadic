@@ -196,7 +196,7 @@ class AmadeusFlightProvider(Provider):
         # Try city-to-airport mapping
         return city_to_airport_code(normalized)
 
-    def _offer_to_tile(self, offer: FlightOffer, ctx: SearchContext) -> Tile:
+    def _offer_to_tile(self, offer: FlightOffer, _ctx: SearchContext) -> Tile:
         """Convert a FlightOffer to a Tile."""
         # Build title
         stops_text = (
@@ -370,7 +370,7 @@ class AmadeusHotelProvider(Provider):
         # Use airport code as city code (often the same)
         return city_to_airport_code(normalized)
 
-    def _hotel_to_tile(self, hotel: HotelOffer, ctx: SearchContext) -> Tile:
+    def _hotel_to_tile(self, hotel: HotelOffer, _ctx: SearchContext) -> Tile:
         """Convert a HotelOffer to a Tile."""
         # Build rating text
         rating_text = f"{hotel.rating}★" if hotel.rating else ""

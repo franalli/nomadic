@@ -9,6 +9,7 @@
  * In production, it silently logs warnings to avoid breaking the app.
  */
 
+import { debugLog } from '@/lib/debug';
 import type {
   PlanViewModel,
   PlanViewState,
@@ -154,7 +155,7 @@ function enforceRightViewPolicy(
   if (hasDayCards && (state === 'S0_BOOTSTRAP' || state === 'S1_FRAMING' || state === 'S2_STRATEGY_READY')) {
     // State hasn't caught up to data - skip validation for now
     // The unified flow renders based on data density, not state
-    console.debug(`[ContentPolicyGuard] State sync lag: state=${state} but dayCards=${viewModel.day_cards?.length}. Skipping check.`);
+    debugLog(`[ContentPolicyGuard] State sync lag: state=${state} but dayCards=${viewModel.day_cards?.length}. Skipping check.`);
     return;
   }
 

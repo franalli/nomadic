@@ -16,28 +16,6 @@ export function isGenerating(generation?: GenerationState | null): boolean {
 }
 
 /**
- * Can user expand to itinerary?
- * Requires S2 ready + trip context exists + not generating.
- * hasTripContext is the single source of truth for trip_context_id check.
- */
-export function canExpandToItinerary(
-  state: PlanViewState,
-  generation?: GenerationState | null,
-  hasTripContext?: boolean
-): boolean {
-  if (!hasTripContext) return false;
-  return state === 'S2_STRATEGY_READY' && !isGenerating(generation);
-}
-
-/** Get the appropriate stage label */
-export function getStageFromState(state: PlanViewState): 'bootstrap' | 'structure' | 'strategy' | 'itinerary' {
-  if (state === 'S0_BOOTSTRAP') return 'bootstrap';
-  if (state === 'S1_FRAMING') return 'structure';
-  if (state.startsWith('S2_')) return 'strategy';
-  return 'itinerary';
-}
-
-/**
  * Should auto-trigger itinerary generation? (Path A UX)
  *
  * Auto-trigger when:

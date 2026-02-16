@@ -29,18 +29,13 @@ import type { SheetType } from '@/types/sheets';
 
 export interface PlanHeaderProps {
   destinationCard?: DestinationCard;
-  currentStage: 'bootstrap' | 'structure' | 'strategy' | 'itinerary';
   isGenerating?: boolean;
   /** Fallback title from tripInputs if destinationCard not available */
   fallbackTitle?: string;
   /** PlanViewState for accurate step tracking */
   planViewState?: string;
-  /** Whether user has set dates */
-  hasDates?: boolean;
   /** Whether expanding to itinerary (S3 generation) */
   isExpandingItinerary?: boolean;
-  /** Current backend sub-stage (structure, strategy, itinerary, deals) */
-  currentSubStage?: string | null;
   /** Trip inputs for displaying summary pills in S1+ */
   tripInputs?: DocumentTripInputs;
   /** Handler to open a sheet for editing trip inputs */
@@ -53,14 +48,10 @@ export interface PlanHeaderProps {
 
 export function PlanHeader({
   destinationCard,
-  currentStage: _currentStage,
   isGenerating = false,
   fallbackTitle,
   planViewState = 'S0_BOOTSTRAP',
-  hasDates: _hasDates = false,
   isExpandingItinerary = false,
-
-  currentSubStage: _currentSubStage,
   tripInputs: propTripInputs,
   onOpenSheet,
   isStreaming = false,
@@ -68,11 +59,6 @@ export function PlanHeader({
 }: PlanHeaderProps) {
   // FIX: Header needs to update immediately when dates change in store
   const tripInputs = useTripInputsWithFallback(propTripInputs);
-
-  // currentStage kept for backwards compatibility but planViewState is preferred
-  void _currentStage;
-  // hasDates reserved for future use
-  void _hasDates;
   // Determine variant based on whether we have a destination
   const title = destinationCard?.title || fallbackTitle || '';
   const hasDestination = Boolean(title);

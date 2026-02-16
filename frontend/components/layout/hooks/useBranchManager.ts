@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { apiFetch, clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
+import { debugLog } from '@/lib/debug';
 import { saveTripSummary } from '@/lib/summary';
 import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
@@ -33,29 +34,10 @@ const GENERATING_MIN_DURATION_MS = 5000;
  */
 export interface BranchManagerOptions {
   /**
-   * Current trip inputs from the form.
-   * Used to determine if we have enough info to generate a plan.
-   */
-  tripInputs: DocumentTripInputs;
-
-  /**
    * Ref to the chat panel container element.
    * Used to scroll and focus after starting a new session.
    */
   chatPanelContainerRef: React.RefObject<HTMLDivElement | null>;
-
-  /**
-   * Ref to the chat panel (currently unused after removing auto-trigger).
-   * Kept for potential future use.
-   */
-  chatPanelRef?: React.RefObject<{ sendMessage: (text: string) => void } | null>;
-
-  /**
-   * Whether a plan has ever been generated in this session.
-   * When true, regeneration should be silent (no chat messages).
-   * Defaults to false if not provided.
-   */
-  hasEverHadPlan?: boolean;
 
   /**
    * Toast notification callback.
@@ -201,9 +183,7 @@ export type UseBranchManagerReturn = BranchManagerState &
  */
 export function useBranchManager(options: BranchManagerOptions): UseBranchManagerReturn {
   const {
-    // tripInputs - no longer used, settings change detection uses document store directly
     chatPanelContainerRef,
-    // hasEverHadPlan - no longer used, regeneration is now manual via RefreshButton
     onToast,
     onChatKeyIncrement,
     resetDraft,
@@ -372,20 +352,20 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * Shows a toast indicating whether server reset succeeded.
    */
   const handleStartNewSession = useCallback(async () => {
-    console.log('[branchManager.startNewSession] 🔄 Starting server reset...');
+    debugLog('[branchManager.startNewSession] 🔄 Starting server reset...');
     branchState.abortTilesFetch();
     let didResetServerState = false;
 
     try {
       const res = await resetSession();
       didResetServerState = res.ok;
-      console.log('[branchManager.startNewSession] Server DELETE /api/session →', res.status, res.ok ? '✅' : '❌');
+      debugLog('[branchManager.startNewSession] Server DELETE /api/session →', res.status, res.ok ? '✅' : '❌');
 
       // Re-establish session cookies after DELETE clears them.
       // Without this, the CSRF cookie is gone and all subsequent
       // POST/DELETE requests fail with 403 Forbidden.
       await apiFetch('/api/document');
-      console.log('[branchManager.startNewSession] ✅ Session re-established (fresh CSRF cookie)');
+      debugLog('[branchManager.startNewSession] ✅ Session re-established (fresh CSRF cookie)');
     } catch (error) {
       console.error('[branchManager.startNewSession] ❌ Server reset failed:', error);
     } finally {
@@ -522,8 +502,8 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    */
   const handleBookTrip = useCallback(
     (branchId: string) => {
-      console.log('[handleBookTrip] Called with branchId:', branchId);
-      console.log('[handleBookTrip] Available branches:', branchState.branches.map(b => ({ id: b.id, dest: b.destination })));
+      debugLog('[handleBookTrip] Called with branchId:', branchId);
+      debugLog('[handleBookTrip] Available branches:', branchState.branches.map(b => ({ id: b.id, dest: b.destination })));
 
       const branch = branchState.branches.find((b) => b.id === branchId);
       if (!branch) {
@@ -546,14 +526,14 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         generatedAt: new Date().toISOString(),
       };
 
-      console.log('[handleBookTrip] Saving payload:', payload);
+      debugLog('[handleBookTrip] Saving payload:', payload);
 
       // Save to local storage and redirect
       saveTripSummary(payload);
 
       // Verify the save worked
       const saved = localStorage.getItem('nomadic_trip_summary');
-      console.log('[handleBookTrip] Verified localStorage:', saved ? 'saved successfully' : 'SAVE FAILED');
+      debugLog('[handleBookTrip] Verified localStorage:', saved ? 'saved successfully' : 'SAVE FAILED');
 
       window.location.href = '/summary';
     },
@@ -753,7 +733,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     // Check if we have origin (required for flight search)
     const origin = selectedBranch.origin || tripInputsOrigin;
     if (!origin) {
-      console.log('[useBranchManager] No origin available for flight fetch');
+      debugLog('[useBranchManager] No origin available for flight fetch');
       return;
     }
 
@@ -761,7 +741,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     fetchedMissingFlightsRef.current.add(selectedBranchId);
 
     // Fetch missing flights
-    console.log('[useBranchManager] Auto-fetching missing flights for branch:', selectedBranchId);
+    debugLog('[useBranchManager] Auto-fetching missing flights for branch:', selectedBranchId);
     isRefreshingRef.current = true;
 
     refreshTiles(selectedBranchId, ['flight'])
@@ -788,7 +768,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
             })
           );
 
-          console.log('[useBranchManager] Fetched', response.tiles.length, 'flight tiles');
+          debugLog('[useBranchManager] Fetched', response.tiles.length, 'flight tiles');
         }
       })
       .catch((error) => {

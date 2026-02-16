@@ -222,7 +222,7 @@ class ExpandItineraryStreamEvent(BaseModel):
     pct: Optional[int] = None
     # Envelope events - partial document update
     plan_envelope: Optional[Dict[str, Any]] = None
-    # Done events
+    # Done events (S3_ITINERARY_READY | S3_EDITING | S3_PARTIAL_CONFLICT)
     plan_view_state: Optional[str] = None
     # Version sync - included in done event so frontend can sync after mergeEnvelope
     version: Optional[int] = None
@@ -521,6 +521,7 @@ PlanViewState = Literal[
     "S2_BLOCKED",  # -> P1_ENRICHED (handled by data checks)
     "S3_ITINERARY_READY",  # -> P3_FINALIZED
     "S3_EDITING",  # -> P3_EDITING
+    "S3_PARTIAL_CONFLICT",  # partial timeline with unschedulable blocks
     "S3_BLOCKED",  # -> P3_BLOCKED
 ]
 

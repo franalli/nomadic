@@ -476,10 +476,11 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     Route based on constraint violations.
 
     Logic:
-    1. Route Errors (Rome->Rome, Atlantis) → Synthesizer (skip auto-fix)
-       NOTE: Rollback happens in constraint_guard node, not here.
-    2. Budget/Time Errors → Architect (auto-fix loop, max 1 retry)
-    3. No Errors → Synthesizer (success)
+    1. Any blocking constraint → Synthesizer (no architect retry)
+    2. No blocking constraint → Synthesizer (success)
+
+    Architect retry path is intentionally disabled until a deterministic auto-fix
+    implementation exists for blocking violations.
     """
     turn = get_turn_meta(state)
     has_blocking = turn.has_blocking_violations
@@ -495,25 +496,13 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     is_unfixable = any(v.get("category") in unfixable_categories for v in violations)
 
     # Determine destination for logging
-    if is_unfixable:
-        destination = "synthesizer"
-    elif has_blocking and retry_count < 1:
-        destination = "architect"
-    else:
-        destination = "synthesizer"
+    destination = "synthesizer"
 
     # Route decision logging - shows exactly what routing decision was made and why
     logger.info(
         f"[ROUTE] after_guard: blocking={has_blocking} unfixable={is_unfixable} "
         f"retry={retry_count} → {destination}"
     )
-
-    if is_unfixable:
-        return "synthesizer"
-
-    # 2. OPTIMIZATION AUTO-FIX (Budget/Schedule - Safe to retry)
-    if has_blocking and retry_count < 1:
-        return "architect"
 
     return "synthesizer"
 
@@ -959,6 +948,16 @@ async def run_turn_streaming(
 
         # Diagnostic: what's in the SSE payload the frontend receives
         _doc = final_result.get("document", {})
+        _meta = getattr(result_state, "metadata", {}) if result_state is not None else {}
+        logger.info(
+            "[graph-complete-state] builder_success=%s conflict_count=%s "
+            "emitted_plan_view_state=%s "
+            "changed_fields=%s",
+            _meta.get("last_builder_success"),
+            len(_doc.get("constraint_violations") or []),
+            _doc.get("plan_view_state"),
+            _meta.get("changed_fields"),
+        )
         logger.debug(
             f"[SSE_COMPLETE] suggestions={_doc.get('suggested_responses', [])[:3]} "
             f"meta={_doc.get('suggested_response_meta', [])[:2]} "

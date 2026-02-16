@@ -123,6 +123,15 @@ class TestVerticalSpecialist:
         assert len(output.constraints) > 0
         assert len(output.content_blocks) > 0
         assert output.enhancements  # Should have enhancement suggestions
+        latency = state.metadata.get("specialist_latency_metrics", {}).get("diving")
+        assert latency is not None
+        assert latency["elapsed_ms"] >= 0
+        assert latency["source"] in {
+            "parallel_cache",
+            "llm_path",
+            "hardcoded_fallback",
+            "rule_short_trip",
+        }
 
 
 class TestConstraintGuard:

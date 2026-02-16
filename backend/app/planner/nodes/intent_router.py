@@ -28,7 +28,9 @@ from app.planner.nodes.router_category_sync import (
     _collect_settings_from_extraction,
     _detect_actionable_input,
     _prefetch_tier2_experiences,
+    detect_category_merge_mode,
     detect_planning_intent,
+    has_explicit_category_intent,
 )
 from app.planner.nodes.router_extraction import (
     CLASSIFICATION_PROMPT,
@@ -276,8 +278,8 @@ def _classify_question(
 
 # Budget patterns - extract numeric budget values
 BUDGET_PATTERNS = [
-    r"(?:budget|spend|spending)\s*(?:is|of|around|about)?\s*\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?",
-    r"\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?\s*budget",
+    r"(?:budget|bugdet|spend|spending)\s*(?:is|of|around|about|to|at)?\s*\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?",
+    r"\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?\s*(?:budget|bugdet)",
     # Pattern: "have/got $X to spend" or "have/got $X for the trip"
     r"(?:have|got)\s*\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?"
     r"\s*(?:to spend|for (?:the |this )?trip)?",
@@ -302,8 +304,8 @@ TRAVELER_PATTERNS = [
 # Hotel preference patterns
 HOTEL_PATTERNS = [
     r"(\d)\s*[-]?\s*star\s*(?:hotel|resort|accommodation)?",
-    r"(?:luxury|boutique|budget|mid-range|upscale)\s*(?:hotel|resort|stay)?",
-    r"(?:beachfront|oceanview|city center|downtown|airport)\s*(?:hotel|resort|stay)?",
+    r"(?:luxury|boutique|budget|mid-range|upscale)\s*(?:hotel|resort|stay|accommodation)",
+    r"(?:beachfront|oceanview|city center|downtown|airport)\s*(?:hotel|resort|stay|accommodation)",
     r"(?:with|want|need)\s*(?:pool|spa|gym|breakfast|parking|wifi)",
 ]
 
@@ -682,43 +684,51 @@ def _detect_settings_from_message(user_text: str, state: "GraphState") -> Option
                 # pattern_idx == 4 is qualitative with no numeric groups
             break
 
-    # Hotel preference detection
+    # Hotel preference detection. Guard against budget-only text accidentally
+    # mutating hotel settings (e.g., "increase budget to $2800").
+    hotel_context = bool(
+        re.search(
+            r"\b(hotel|hotels|resort|resorts|stay|stays|accommodation|accommodations)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    star_match = re.search(r"(\d)\s*[-]?\s*star", text, re.IGNORECASE)
+    hotel_pattern_match = any(re.search(pattern, text, re.IGNORECASE) for pattern in HOTEL_PATTERNS)
+
     hotel_settings = {}
-    for pattern in HOTEL_PATTERNS:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            # Star rating
-            star_match = re.search(r"(\d)\s*[-]?\s*star", text, re.IGNORECASE)
-            if star_match:
-                hotel_settings["min_stars"] = int(star_match.group(1))
+    if hotel_pattern_match and (hotel_context or star_match):
+        # Star rating
+        if star_match:
+            hotel_settings["min_stars"] = int(star_match.group(1))
 
-            # Hotel type keywords
-            if "luxury" in text or "upscale" in text:
-                hotel_settings["min_stars"] = max(hotel_settings.get("min_stars", 0), 4)
-            elif "boutique" in text:
-                hotel_settings["style"] = "boutique"
-            elif "budget" in text:
-                hotel_settings["min_stars"] = 0
-                hotel_settings["budget_friendly"] = True
+        # Hotel type keywords
+        if "luxury" in text or "upscale" in text:
+            hotel_settings["min_stars"] = max(hotel_settings.get("min_stars", 0), 4)
+        elif "boutique" in text:
+            hotel_settings["style"] = "boutique"
+        elif "budget" in text and hotel_context:
+            hotel_settings["min_stars"] = 0
+            hotel_settings["budget_friendly"] = True
 
-            # Amenities
-            amenities = []
-            if "pool" in text:
-                amenities.append("pool")
-            if "spa" in text:
-                amenities.append("spa")
-            if "gym" in text or "fitness" in text:
-                amenities.append("gym")
-            if "breakfast" in text:
-                amenities.append("breakfast")
-            if amenities:
-                hotel_settings["amenities"] = amenities
+        # Amenities
+        amenities = []
+        if "pool" in text:
+            amenities.append("pool")
+        if "spa" in text:
+            amenities.append("spa")
+        if "gym" in text or "fitness" in text:
+            amenities.append("gym")
+        if "breakfast" in text:
+            amenities.append("breakfast")
+        if amenities:
+            hotel_settings["amenities"] = amenities
 
-            # Location preferences
-            if "beachfront" in text or "oceanview" in text or "ocean view" in text:
-                hotel_settings["location"] = "beachfront"
-            elif "city center" in text or "downtown" in text:
-                hotel_settings["location"] = "city_center"
+        # Location preferences
+        if "beachfront" in text or "oceanview" in text or "ocean view" in text:
+            hotel_settings["location"] = "beachfront"
+        elif "city center" in text or "downtown" in text:
+            hotel_settings["location"] = "city_center"
 
     if hotel_settings:
         detected["hotel_settings"] = hotel_settings
@@ -761,6 +771,38 @@ def _detect_settings_from_message(user_text: str, state: "GraphState") -> Option
     # _extract_destination_context now imported from router_utils.py
     # _check_exact_match_greeting now imported from router_utils.py
     # _detect_origin_from_message now imported from router_utils.py
+
+
+def _message_has_hotel_signal(user_text: str) -> bool:
+    """Return True when the message explicitly talks about hotel preferences."""
+    text = (user_text or "").lower()
+    return bool(
+        re.search(r"(\d)\s*[-]?\s*star", text, re.IGNORECASE)
+        or re.search(
+            r"\b(hotel|hotels|resort|resorts|stay|stays|accommodation|accommodations)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _sanitize_settings_from_message(
+    detected_settings: Optional[Dict[str, Any]], user_text: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Guardrail for LLM extraction drift.
+
+    Budget-only turns can occasionally return accidental hotel settings; drop
+    them unless the user message actually includes hotel-specific language.
+    """
+    if not detected_settings:
+        return detected_settings
+
+    sanitized = dict(detected_settings)
+    if "hotel_settings" in sanitized and not _message_has_hotel_signal(user_text):
+        sanitized.pop("hotel_settings", None)
+
+    return sanitized or None
 
 
 def _check_generate_plan_trigger(text: str) -> Optional[IntentClassification]:
@@ -892,7 +934,7 @@ async def _classify_intent_with_llm(
 # =============================================================================
 
 
-def _format_section_answer(qtype: str, section: str, knowledge, destination: str) -> Optional[str]:
+def _format_section_answer(qtype: str, _section: str, knowledge, destination: str) -> Optional[str]:
     """Format comprehensive answer from Local Expert section."""
     try:
         if qtype == "couples":
@@ -1364,7 +1406,7 @@ def _get_date_suggestions(user_text: str) -> List[str]:
 # =============================================================================
 
 
-async def _apply_origin_to_state(state: GraphState, detected_origin: str, clog) -> bool:
+async def _apply_origin_to_state(state: GraphState, detected_origin: str, _clog) -> bool:
     """
     Apply detected origin to state: sync trip_inputs, enable flights,
     resolve IATA, set routing flags, build response message.
@@ -1391,15 +1433,27 @@ async def _apply_origin_to_state(state: GraphState, detected_origin: str, clog) 
     # Mark for frontend
     state.metadata["origin_just_set"] = True
 
-    # Enable flights in booking_types
+    # Enable flights for origin-based search unless the user explicitly set
+    # flights on/off in prior settings updates.
+    booking_types = trip_inputs.setdefault("booking_types", {})
+    current_toggle = booking_types.get("flights")
+    explicit_toggle = state.metadata.get("explicit_flights_toggle")
+    if explicit_toggle in {"on", "off"}:
+        target_toggle = explicit_toggle
+    elif current_toggle == "on":
+        target_toggle = "on"
+    elif current_toggle == "off":
+        # Default "off" auto-upgrades to "suggested" when origin is set.
+        target_toggle = "suggested"
+    else:
+        target_toggle = current_toggle or "suggested"
+
     if "extracted_settings" not in state.metadata:
         state.metadata["extracted_settings"] = {}
-    state.metadata["extracted_settings"]["flights_toggle"] = "suggested"
+    if target_toggle != "off":
+        state.metadata["extracted_settings"]["flights_toggle"] = target_toggle
 
-    # Also sync to trip_inputs.booking_types
-    if "booking_types" not in trip_inputs:
-        trip_inputs["booking_types"] = {}
-    trip_inputs["booking_types"]["flights"] = "suggested"
+    booking_types["flights"] = target_toggle
     state.metadata["trip_inputs"] = trip_inputs
     state.metadata.pop("trip_settings", None)
     state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
@@ -1442,7 +1496,7 @@ async def _apply_origin_to_state(state: GraphState, detected_origin: str, clog) 
         return False  # Fall through
 
 
-def _apply_settings_to_state(state: GraphState, detected_settings: dict, clog) -> None:
+def _apply_settings_to_state(state: GraphState, detected_settings: dict, _clog) -> None:
     """
     Apply detected settings to state: sync trip_inputs, set routing flags,
     build response message.  Caller should ``return state`` after this.
@@ -1484,6 +1538,9 @@ def _apply_settings_to_state(state: GraphState, detected_settings: dict, clog) -
             **existing_flight,
             **detected_settings["flight_settings"],
         }
+        # Keep routing/logistics in sync within the same turn.
+        trip_inputs.setdefault("booking_types", {})["flights"] = "on"
+        state.metadata["explicit_flights_toggle"] = "on"
 
     state.metadata["trip_inputs"] = trip_inputs
     state.metadata.pop("trip_settings", None)
@@ -1512,6 +1569,7 @@ def _apply_settings_to_state(state: GraphState, detected_settings: dict, clog) -
     state.metadata["origin_only_logistics"] = True
     state.metadata["skip_architect"] = True
     state.metadata["skip_specialists"] = True
+    state.metadata["tier2_prefetch_intent"] = "settings"
 
     # Build response message
     changes = []
@@ -1550,7 +1608,7 @@ def _apply_settings_to_state(state: GraphState, detected_settings: dict, clog) -
 
 
 def _apply_modifications_to_state(
-    state: GraphState, mods: dict, user_text: str, clog
+    state: GraphState, mods: dict, user_text: str, _clog
 ) -> Optional[GraphState]:
     """
     Apply trip modifications: add/remove categories, skill level, resets.
@@ -1612,6 +1670,7 @@ def _apply_modifications_to_state(
         all_cats = set(get_trip_settings(state).activity_settings.categories)
         tier2_to_prefetch = all_cats - TIER1_SPECIALISTS
         if tier2_to_prefetch:
+            state.metadata["tier2_prefetch_intent"] = "activity"
             _prefetch_tier2_experiences(state, tier2_to_prefetch)
 
     if not has_tier1 or removing_tier1:
@@ -1774,6 +1833,11 @@ async def intent_router(state: GraphState) -> GraphState:
     state.metadata.pop("settings_just_updated", None)
     state.metadata.pop("actionable_acknowledgment", None)
     state.metadata.pop("_tiles_replaced", None)
+    state.metadata.pop("router_detected_settings_change", None)
+    state.metadata.pop("updated_settings", None)
+    state.metadata.pop("added_categories", None)
+    state.metadata.pop("tier2_tiles_generated", None)
+    state.metadata.pop("tier2_new_content_generated", None)
 
     _debug_node_start(
         "router",
@@ -1845,6 +1909,7 @@ async def intent_router(state: GraphState) -> GraphState:
 
         try:
             router_output, token_usage = await _classify_and_extract_with_llm(user_text, state)
+            extracted_router_output = router_output.model_dump()
 
             if token_usage:
                 from app.debug_utils import log_tokens
@@ -1866,13 +1931,32 @@ async def intent_router(state: GraphState) -> GraphState:
 
             # Snapshot categories BEFORE _populate writes them — needed for
             # _collect_modifications to detect the delta (Issue #3 fix).
-            pre_cats = set(
+            # Prefer active-plan categories as baseline to avoid stale persisted carryover.
+            active_plan_cats = set(state.metadata.get("active_plan_categories", []))
+            pre_cats = active_plan_cats or set(
                 state.metadata.get("trip_inputs", {})
                 .get("activity_settings", {})
                 .get("categories", [])
             )
+            has_category_intent = has_explicit_category_intent(user_text, extracted_router_output)
+            category_merge_mode = detect_category_merge_mode(user_text, extracted_router_output)
+            _debug_log(
+                "[VERIFY][CATEGORY_MERGE] "
+                f"intent={has_category_intent} "
+                f"mode={category_merge_mode} "
+                f"baseline_source={'active_plan' if active_plan_cats else 'persisted'} "
+                f"baseline={sorted(pre_cats)}"
+            )
 
-            _populate_trip_plan_from_router_output(state, router_output, destination, user_text)
+            _populate_trip_plan_from_router_output(
+                state,
+                router_output,
+                destination,
+                user_text,
+                category_baseline=pre_cats,
+                category_merge_mode=category_merge_mode,
+                allow_category_updates=has_category_intent,
+            )
 
             # Guard against LLM drifting a date the user didn't change.
             # "Extend to Feb 22" should only change end_date, not start_date.
@@ -1890,7 +1974,7 @@ async def intent_router(state: GraphState) -> GraphState:
 
             # Flag extraction BEFORE input gates — even if gates block,
             # the Architect should NOT re-extract the same message.
-            state.metadata["router_output"] = router_output.model_dump()
+            state.metadata["router_output"] = extracted_router_output
             state.metadata["router_extracted_fields"] = True
 
             # === INPUT GATE VALIDATION ===
@@ -1928,8 +2012,12 @@ async def intent_router(state: GraphState) -> GraphState:
                     for key, val in regex_settings.items():
                         if key not in llm_settings:
                             llm_settings[key] = val
+            llm_settings = _sanitize_settings_from_message(llm_settings, user_text)
             llm_mods = _collect_modifications_from_extraction(
-                ro_dict, state, pre_populate_categories=pre_cats
+                ro_dict,
+                state,
+                pre_populate_categories=pre_cats,
+                allow_category_modifications=has_category_intent,
             )
 
             has_settings = bool(llm_settings) and bool(state.trip_plan.destination)
@@ -2091,6 +2179,7 @@ async def intent_router(state: GraphState) -> GraphState:
 
             try:
                 router_output, token_usage = await _classify_and_extract_with_llm(user_text, state)
+                extracted_router_output = router_output.model_dump()
 
                 if token_usage:
                     from app.debug_utils import log_tokens
@@ -2110,11 +2199,26 @@ async def intent_router(state: GraphState) -> GraphState:
                     )
 
                 # Immediately persist to state.trip_plan
-                _populate_trip_plan_from_router_output(state, router_output, destination, user_text)
+                has_category_intent = has_explicit_category_intent(
+                    user_text,
+                    extracted_router_output,
+                )
+                category_merge_mode = detect_category_merge_mode(
+                    user_text,
+                    extracted_router_output,
+                )
+                _populate_trip_plan_from_router_output(
+                    state,
+                    router_output,
+                    destination,
+                    user_text,
+                    category_merge_mode=category_merge_mode,
+                    allow_category_updates=has_category_intent,
+                )
 
                 # Flag extraction BEFORE input gates — even if gates block,
                 # the Architect should NOT re-extract the same message.
-                state.metadata["router_output"] = router_output.model_dump()
+                state.metadata["router_output"] = extracted_router_output
                 state.metadata["router_extracted_fields"] = True
 
                 # === INPUT GATE VALIDATION ===

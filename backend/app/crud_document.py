@@ -142,7 +142,7 @@ def merge_trip_inputs(
     existing: DocumentTripInputs,
     incoming: Optional[DocumentTripInputs | DocumentTripInputsPatch | dict],
     *,
-    replace_destinations: bool = False,
+    replace_destinations: bool = False,  # noqa: ARG001
     explicit_nulls: Optional[set[str]] = None,
 ) -> DocumentTripInputs:
     """

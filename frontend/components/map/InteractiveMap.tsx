@@ -4,7 +4,7 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 
 import { Bed, Camera, Landmark, MapPin, Mountain, Plane, Utensils, Waves } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Map, { type ErrorEvent, Layer, type MapRef, Marker, NavigationControl, Source } from 'react-map-gl/mapbox';
+import MapboxMap, { type ErrorEvent, Layer, type MapRef, Marker, NavigationControl, Source } from 'react-map-gl/mapbox';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
@@ -359,7 +359,7 @@ export function InteractiveMap({
 
   return (
     <div className={cn('w-full h-full rounded-xl overflow-hidden border border-zinc-200 dark:border-white/10', className)}>
-      <Map
+      <MapboxMap
         ref={mapRef}
         initialViewState={{
           longitude: defaultCenter.lng,
@@ -369,6 +369,8 @@ export function InteractiveMap({
         style={{ width: '100%', height: '100%' }}
         mapStyle={isDark ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'}
         mapboxAccessToken={mapboxToken}
+        // Disable Mapbox metrics collection to avoid blocked telemetry requests in ad-blocking browsers.
+        performanceMetricsCollection={false}
         interactive={interactive}
         attributionControl={showAttribution}
         onError={handleMapError}
@@ -467,7 +469,7 @@ export function InteractiveMap({
             </Marker>
           );
         })}
-      </Map>
+      </MapboxMap>
     </div>
   );
 }

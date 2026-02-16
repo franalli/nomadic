@@ -37,7 +37,7 @@
 | Method | Path            | Purpose                   | Request             | Response               | Notes                                                                       |
 | ------ | --------------- | ------------------------- | ------------------- | ---------------------- | --------------------------------------------------------------------------- |
 | GET    | `/api/document` | Get current plan document | --                  | `PlanDocumentResponse` | 204 if no doc                                                               |
-| PATCH  | `/api/document` | CRDT-style partial update | `PlanDocumentPatch` | `PlanDocumentResponse` | Last-writer-wins: reloads doc on version drift, skips write if no real diff |
+| PATCH  | `/api/document` | CRDT-style partial update | `PlanDocumentPatch` | `PlanDocumentResponse` | Last-writer-wins: reloads doc on version drift, includes universal no-op dedupe for pure `trip_inputs` patches (returns `changes_made=false`) |
 
 ### Chat & Session
 
@@ -66,7 +66,7 @@ Media type: `text/event-stream`. Events:
 | ------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `token`       | `{type: "token", data: "..."}`                                                          | Streaming text chunk                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `node_status` | `{node: "...", status: "started"\|"completed", label, icon_key, estimated_duration_ms}` | Node processing progress. `label`, `icon_key`, `estimated_duration_ms` only present on `started` events. Special node `logic_reveal` emits routing decisions (e.g., `label: "ROUTING: DIVING"`, status: `"completed"`). Frontend type also defines `stage?, tier?, topic?, max_tokens?` but these are not currently emitted by the backend.                                                                                                                                                                                                           |
-| `complete`    | `{type: "complete", data: {document, session_state, version, ...}}`                     | Full response envelope. `document` includes `day_cards` (when builder ran), `suggested_responses`, `suggested_response_meta`, `suggestion_chips` (structured chips with action routing), `constraints_validated`, `constraint_violations`, `tiles_replaced` — all passed through from graph output. When `day_cards` present, `plan_view_state` is promoted to `S3_ITINERARY_READY`. `suggested_responses` falls back to `metadata.synthesizer_output.suggested_replies` when `state.suggested_replies` is empty (GraphState parse failure recovery). |
+| `complete`    | `{type: "complete", data: {document, session_state, version, ...}}`                     | Full response envelope. `document` includes `day_cards` (when builder ran), `suggested_responses`, `suggested_response_meta`, `suggestion_chips` (structured chips with action routing), `constraints_validated`, `constraint_violations`, `tiles_replaced` — all passed through from graph output. When `day_cards` are present: `plan_view_state=S3_ITINERARY_READY` if conflict count is 0, `S3_EDITING` if conflicts exist, and `S3_PARTIAL_CONFLICT` on partial-failure path with returned day cards. `suggested_responses` falls back to `metadata.synthesizer_output.suggested_replies` when `state.suggested_replies` is empty (GraphState parse failure recovery). |
 | `error`       | `{type: "error", message: "..."}`                                                       | Error details                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### NDJSON (`/api/expand-itinerary`, `/api/remove-specialist`)
@@ -77,7 +77,7 @@ Media type: `application/x-ndjson`. Events:
 | ---------- | -------------------------------------------------------------------------------------------------------- | ------------------- |
 | `progress` | `{type: "progress", stage: "structure"\|"strategy"\|"itinerary", message: "...", pct: 30}`               | Progress update     |
 | `envelope` | `{type: "envelope", plan_envelope: {...}}`                                                               | Partial plan update |
-| `done`     | `{type: "done", plan_view_state: "S3_ITINERARY_READY", version?, dropped_preferred_count?, warnings?[]}` | Completion signal   |
+| `done`     | `{type: "done", plan_view_state: "S3_ITINERARY_READY"|"S3_EDITING"|"S3_PARTIAL_CONFLICT", version?, dropped_preferred_count?, warnings?[]}` | Completion signal   |
 | `error`    | `{type: "error", message: "..."}`                                                                        | Error details       |
 
 ### CSRF
@@ -176,7 +176,10 @@ PlanDocumentData
   |           (e.g. "Potato Head Beach Club"). specialist_type carries the
   |           category for filtering/coloring (e.g. "nightlife", "diving").
   |           Fill-day endpoint uses tile.title for activity_type and
-  |           meta.category for specialist_type (matching ItineraryBuilder).
+  |           meta.category for specialist_type (matching ItineraryBuilder),
+  |           injects Tier-1 registry hard constraints into `constraints[]`, and
+  |           normalizes `coordinates` from tile/meta payloads with itinerary-anchor
+  |           fallback when generated tiles lack explicit coordinates.
   |
   |-- trip_context_id, assistant_message_id
   |-- plan_state: PlanState, ui_phase: UIPhase, plan_view_state: PlanViewState
@@ -198,7 +201,6 @@ PlanDocumentData
   |     {chip_type: "cta"|"follow_up"|"setting", category: string, icon?: string}
   |-- suggestion_chips?: SuggestionChip[] (structured chips with action routing - Stage 11B)
   |     {message, action_type: "send_message"|"open_pill"|"trigger_action", action_target?, chip_type, category, icon?}
-  |-- changes_made?: string[] (list of change descriptions from backend)
   '-- _debug?: {router_extraction_failed: boolean}  (backend-only observability, not consumed by frontend)
 ```
 
@@ -223,9 +225,10 @@ PlanDocumentData
 ### PlanViewState (density-driven rendering)
 
 ```
-Backend-emitted states (from _compute_plan_view_state):
+Backend-emitted states (from graph envelope + itinerary endpoints):
   S0_BOOTSTRAP → S1_FRAMING → S2_STRATEGY_READY → S3_ITINERARY_READY
                                 |-- S2_BLOCKED        |-- S3_EDITING
+                                                      |-- S3_PARTIAL_CONFLICT
                                                       '-- S3_BLOCKED
 
 Defined in PlanViewState Literal but not yet emitted by backend:
@@ -235,14 +238,32 @@ Defined in PlanViewState Literal but not yet emitted by backend:
 Frontend-only states (not emitted by backend):
   S0_EMPTY — initial state before any interaction
   S1_DESTINATION_SET — destination chosen but no strategy yet
-  S3_PARTIAL_CONFLICT — partial conflict during itinerary editing
 
 Hydration guards:
   Downgrade protection (setFromPlanResponse, mergeEnvelope): S3→S2 blocked when day_cards exist
   Upward reconciliation (fetchDocument): stale state promoted when data contradicts it
-    - day_cards exist + state < S3 (not BLOCKED/S3 variant) → S3_ITINERARY_READY
+    - day_cards exist + state < S3 (not BLOCKED/S3 variant):
+      - `constraint_violations` empty → S3_ITINERARY_READY
+      - `constraint_violations` present → S3_EDITING
     - strategy_sections exist + state < S2 (not BLOCKED) → S2_STRATEGY_READY
 ```
+
+### Stage 3 Emission Contract
+
+| Builder Result | Conflicts | Emitted `plan_view_state` |
+| --- | --- | --- |
+| `success=True` | `0` | `S3_ITINERARY_READY` |
+| `success=True` | `>0` | `S3_EDITING` |
+| `success=False` | `>0` (partial day cards returned) | `S3_PARTIAL_CONFLICT` |
+
+### Selective Regen Field Mapping
+
+`backend/app/services/regen_strategy.py` maps preference-only updates to builder-only regeneration:
+
+- `preferences` -> `RegenStrategy.BUILDER`
+- source snapshots:
+  - previous: `document.preferred_tile_ids`
+  - current: request `preferences.preferred_hotel_ids|preferred_activity_ids|preferred_flight_ids`
 
 ### Other Enums
 
@@ -285,12 +306,12 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 
 | Action                                                             | Purpose                                                                                                                                 |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `setFromPlanResponse()`                                            | Merge backend GraphPlanResponse into store (destination lock, view state guard, tile/section merge)                                     |
-| `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection)                                               |
+| `setFromPlanResponse()`                                            | Merge backend GraphPlanResponse into store (destination lock, S3-safe view state guard including lateral S3 transitions, tile/section merge, image URL sanitization) |
+| `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization)                     |
 | `updateTripInputs()`                                               | Sync local trip input update (no API call)                                                                                              |
-| `commitTripInputs()`                                               | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful)                                                         |
-| `ensureSettingsFlushed()`                                          | Flush only **dirty** settings before graph run (prevents overwriting backend-derived values)                                            |
-| `fetchDocument()`                                                  | GET /api/document (with upward view state reconciliation)                                                                               |
+| `commitTripInputs()`                                               | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful). Filters no-op `trip_inputs` fields before PATCH; if empty after filtering, skips network write and returns success. Successful commits clear matching keys from `_userDirtySettings`. |
+| `ensureSettingsFlushed()`                                          | Flush only **dirty** settings before graph run (prevents overwriting backend-derived values). Per-send-cycle payload hash dedupe skips duplicate flush PATCHes for the same request cycle. |
+| `fetchDocument()`                                                  | GET /api/document (with upward view state reconciliation: promotes to `S3_EDITING` when day_cards exist with constraint violations)    |
 | `patchDocument()`                                                  | PATCH /api/document (preserves frontend-only fields)                                                                                    |
 | `toggleTilePreference()`                                           | Heart/unheart a tile (single-select for hotels, multi-select for activities). Debounced 500ms PATCH to batch rapid toggles.             |
 | `clearPreferences()`                                               | Clear all hearted tiles + sync to backend                                                                                               |
@@ -320,19 +341,24 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 
 ### User-Dirty Settings Tracker
 
-Module-level `_userDirtySettings: Set<string>` (not Zustand state — avoids re-renders). Each settings handler calls `markSettingDirty(key)` (e.g., `'activity_settings'`, `'hotel_settings'`). `ensureSettingsFlushed()` only PATCHes keys in the dirty set, then clears it. This prevents empty frontend defaults from overwriting backend-derived values (e.g., specialist-extracted categories like `["diving", "hiking"]`).
+Module-level `_userDirtySettings: Set<string>` (not Zustand state — avoids re-renders). Each settings handler calls `markSettingDirty(key)` (e.g., `'activity_settings'`, `'hotel_settings'`). `ensureSettingsFlushed()` PATCHes only dirty keys, applies per-send-cycle payload-hash dedupe, and clears keys only after a successful (or no-op-filtered) commit. Failed commits retain dirty keys for retry, preventing silent loss of pending user-owned settings.
 
 ### State Guards
 
 - **Destination lock:** Once set, destination can't change unless S0_EMPTY reset
 - **View state downgrade protection:** Never downgrade plan_view_state when itinerary exists
+- **Lateral Stage 3 transitions allowed:** `S3_ITINERARY_READY` ↔ `S3_EDITING` ↔ `S3_PARTIAL_CONFLICT` are valid and not blocked by downgrade guards
 - **Destination/date change detection:** Triggers chat reset + tile/section clearing; destination or date changes clear stale `day_cards` unless new cards are returned in the same payload
 - **Fill-day version sync:** `fillDay()` in api.ts syncs `version` from response to store after success, preventing 409 cascade on subsequent calls
 - **Graph-built itinerary skip:** `setFromPlanResponse` maps `itinerary_day_cards` → `day_cards` if present. ChatPanel's expand gate checks `graphBuiltItinerary` flag — skips expand-itinerary when graph already built day_cards
 - **Mutation gate:** ChatPanel waits for `hasPendingMutations()` to clear (max 10s poll) before sending graph requests, preventing version conflicts from concurrent fill-day/drag-drop mutations
+- **Trip-input PATCH dedupe:** frontend filters unchanged `trip_inputs` fields before PATCH; backend enforces a matching no-op guard for pure `trip_inputs` writes
+- **Pre-graph settings flush dedupe:** `ensureSettingsFlushed()` computes a stable payload hash and skips duplicate flushes for the same send cycle (`sendCycleId`)
 - **Activity settings merge:** `setFromPlanResponse` preserves user-set `day_preferences` when backend response omits them (fallback to local `activity_settings.day_preferences`)
 - **Fill-day real-block guard:** `TimelineThread` skips fill-day if the target day already has real activity blocks (race condition with graph SSE populating the day concurrently)
+- **Fill-day generation gate:** `TimelineThread`/`StrategyStageRenderer` block fill-day while stream/regeneration is active (`currentRunId`/generation flags), then surface a non-blocking wait message
 - **Fill-day burst guard:** `TimelineThread` and `StrategyStageRenderer` enforce a 1.5s local cooldown between fill-day requests
+- **Image URL hygiene:** document/envelope merge paths sanitize Picsum hosts (`picsum.photos`, `fastly.picsum.photos`) out of destination cards, tiles, day blocks, and strategy assets; required gallery/vibe images fall back to a deterministic Unsplash URL
 - **Bookable activity filter:** `isBookableActivityTile()` in `tileSelectors.ts` filters fill-day generated tiles (`source_agent` in `experience_generator` or `vertical_specialist`) from the booking surface (`BookingSection`). Non-activity tiles always pass through.
 
 ---

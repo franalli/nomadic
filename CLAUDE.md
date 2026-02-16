@@ -6,7 +6,7 @@
 
 - **Focus:** Stages 10-13
 - **Secondary:** fix all P0/P1/P2 bugs
-- **Active work:** Hardened date/day-card consistency across backend+frontend (clear stale itinerary cards on date edits), raised stream/fill-day rate limits with thread-safe SSE slot gating, queued fill-day behind active graph streams, tightened fill-day cross-domain checks to ignore mis-labeled non-dive blocks, and added actionable direct-flight suggestion chips plus client-side burst guards/tests.
+- **Active work:** Standardized Stage 3 state emission (`S3_ITINERARY_READY`/`S3_EDITING`/`S3_PARTIAL_CONFLICT`) across graph + itinerary endpoints, added preference-aware builder-only selective regen hashing, hardened fill-day placement payloads (coordinates + specialist constraints), improved router/logistics Tier-2 prefetch alignment + bounded generation fallback, grounded synthesizer flight messaging to prevent hallucinated counts, and shipped frontend store hardening (pre-graph flush dedupe + image URL sanitization + POI memoization) with expanded endpoint/store regression coverage.
 - **Known broken:** none
 - **DO NOT touch this sprint:** [frozen files/features]
 

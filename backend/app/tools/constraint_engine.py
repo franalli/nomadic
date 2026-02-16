@@ -154,7 +154,7 @@ class ConstraintEngine:
         self,
         flight: Dict[str, Any],
         last_dive_time: datetime,
-        min_safe_departure: datetime,
+        min_safe_departure: datetime,  # noqa: ARG002
         required_hours: int,
     ) -> Tuple[bool, str]:
         """
@@ -165,6 +165,8 @@ class ConstraintEngine:
         Returns:
             Tuple of (is_safe, logic_hook_message)
         """
+        _ = min_safe_departure
+
         # Get departure time from flight
         departure_time = self._get_departure_time(flight)
         if not departure_time:

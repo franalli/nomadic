@@ -55,6 +55,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { apiFetch } from '@/lib/api';
+import { debugLog } from '@/lib/debug';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { getDeepLinkParams } from '@/lib/tileUtils';
 import { cn, isFlightType } from '@/lib/utils';
@@ -272,7 +273,7 @@ export const TileCard = memo(function TileCard({
   const handlePreferenceToggle = useCallback((event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    console.log('[TileCard] 💜 Heart clicked for tile:', tile.id);
+    debugLog('[TileCard] 💜 Heart clicked for tile:', tile.id);
     // Trigger scale animation
     setHeartAnimating(true);
     setTimeout(() => setHeartAnimating(false), 200);

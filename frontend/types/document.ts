@@ -186,9 +186,6 @@ export type PlanDocumentData = {
   suggested_response_meta?: SuggestionChipMeta[];
   suggestion_chips?: SuggestionChip[];
 
-  /** List of change descriptions from the backend (e.g., field names that were updated) */
-  changes_made?: string[];
-
   // Change tracking for UI receipts (existing)
   applied_updates?: AppliedUpdateKey[];
   conflicts?: Conflict[];
@@ -241,7 +238,10 @@ export type PlanDocumentData = {
   /** Heart-selected tiles - used for AI weighting in itinerary generation */
   preferred_tile_ids?: string[];
 
-  /** Generation progress - envelope wins if present, else use local UI state */
+  /** User-pinned tiles persisted by backend for fill-day survival across rebuilds */
+  user_pinned_tiles?: Record<string, unknown>;
+
+  /** Frontend-managed generation overlay (may be absent from backend document payloads) */
   generation?: GenerationState;
 
   /** Origin update flag - frontend should trigger flight fetch when true */
@@ -277,6 +277,7 @@ export type PlanDocumentResponse = {
   updated_by: UpdatedBy;
   document: PlanDocumentData;
   updated_at: string;
+  changes_made?: boolean;
 };
 
 export type PlanDocumentPatch = {

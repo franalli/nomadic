@@ -26,11 +26,11 @@ import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
+import { debugLog } from '@/lib/debug';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
 import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
-import type { LLMUpdatableField } from '@/state/documentStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
 import type { AckUpdate, ChatMessage } from '@/types/chat';
 import {
@@ -44,7 +44,6 @@ import {
   isBookingEnabled,
   type SuggestionChip,
   type SuggestionChipMeta,
-  type TransportSettings,
 } from '@/types/document';
 import type { TriggerContext } from '@/types/loader';
 import type { PlanViewState } from '@/types/plan-envelope';
@@ -128,7 +127,7 @@ function getChatStatusConfig(
   }
 
   // Itinerary complete
-  if (['S3_ITINERARY_READY', 'P3_FINALIZED'].includes(planViewState)) {
+  if (['S3_ITINERARY_READY', 'S3_EDITING', 'P3_FINALIZED', 'P3_EDITING'].includes(planViewState)) {
     return { text: 'Itinerary complete', label: 'Ready', indicator: 'check' };
   }
 
@@ -177,6 +176,10 @@ function getErrorMessage(error: Error): string {
 const MESSAGE_BURST_COOLDOWN_MS = 1000;
 const GENERATE_BURST_COOLDOWN_MS = 3000;
 
+function buildSendRequestId(now: number): string {
+  return `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 type SendBurstGuardParams = {
   isGenerateTrigger: boolean;
   isLoading: boolean;
@@ -212,7 +215,7 @@ type SuggestionTriggerActionParams = {
   bookingTypes?: BookingTypes;
   onUpdateFlightSettings?: (settings: Partial<FlightSettings>) => void;
   onUpdateBookingTypes?: (settings: Partial<BookingTypes>) => void;
-  ensureSettingsFlushed?: () => Promise<void>;
+  ensureSettingsFlushed?: (options?: { requestId?: string; sendCycleId?: string }) => Promise<void>;
   toast?: (message: string) => void;
 };
 
@@ -360,8 +363,6 @@ interface ChatPanelProps {
   selectedBranchId: string | null;
   /** Called when generate plan trigger is sent (before API call) */
   onGeneratePlanStart?: () => void;
-  /** Called when user clicks Fresh Start to reset the session */
-  onFreshStart?: () => void;
   /** Called when chat updates plan with existing itinerary - triggers auto-expand */
   onAutoExpandItinerary?: (options?: { forceFullRebuild?: boolean }) => void;
   onPlanResult: (result: {
@@ -393,17 +394,9 @@ interface ChatPanelProps {
   dateRange?: string;
   /** Budget description for chip display */
   budget?: string;
-  /** Whether user has chosen flexible dates */
-  dateFlex?: boolean;
-  /** Trip duration in days (for flexible dates display) */
-  tripDuration?: number;
   // CTA gating flags
   /** Whether user has set a destination */
   hasDestination?: boolean;
-  /** Whether user can generate a plan (has destination + dates) */
-  canGeneratePlan?: boolean;
-  /** Whether a plan has been generated (branches exist) */
-  hasPlan?: boolean;
   // Optional Refinements Section props
   /** Whether user has set dates (for refinements gating) */
   hasDates?: boolean;
@@ -417,8 +410,6 @@ interface ChatPanelProps {
   hotelSettings?: HotelSettings;
   /** Activity settings */
   activitySettings?: ActivitySettings;
-  /** Transport settings */
-  transportSettings?: TransportSettings;
   /** Update booking types callback */
   onUpdateBookingTypes?: (settings: Partial<BookingTypes>) => void;
   /** Update flight settings callback */
@@ -427,34 +418,10 @@ interface ChatPanelProps {
   onUpdateHotelSettings?: (settings: Partial<HotelSettings>) => void;
   /** Update activity settings callback */
   onUpdateActivitySettings?: (settings: Partial<ActivitySettings>) => void;
-  /** Update transport settings callback */
-  onUpdateTransportSettings?: (settings: Partial<TransportSettings>) => void;
-  /** Add activity callback */
-  onAddActivity?: (activity: string) => void;
-  /** Remove activity callback */
-  onRemoveActivity?: (index: number) => void;
-  /** Update adults callback */
-  onUpdateAdults?: (value: number | null) => void;
-  /** Update children callback */
-  onUpdateChildren?: (value: number | null) => void;
-  /** Toggle requires assistance callback */
-  onToggleRequiresAssistance?: () => void;
-  /** LLM updated fields for visual indicators */
-  llmUpdatedFields?: Set<LLMUpdatableField>;
-  /** Acknowledge LLM update callback */
-  onAcknowledgeLLMUpdate?: (field: LLMUpdatableField) => void;
   /** Plan view state for CTA gating (hide generate after S2) */
   planViewState?: PlanViewState;
-  /** Open budget input in TripDetailsForm */
-  onOpenBudgetInput?: () => void;
   /** Shared sheet opener - opens trip input sheets at common parent level */
   onOpenSheet?: (sheet: SheetType) => void;
-  /**
-   * Whether a plan has ever been generated in this session.
-   * When true, suppress "Generate plan" user messages and full assistant streaming
-   * for regeneration triggers. Regeneration communicates via UI state instead.
-   */
-  hasEverHadPlan?: boolean;
   /**
    * Callback when user submits a message (before backend responds).
    * Used for optimistic UI - detect topics and show placeholder AgentCards.
@@ -480,19 +447,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       hasBranches,
       isGenerating,
       readyToGenerate,
-      onFreshStart: _onFreshStart, // Unused after Reset button moved to global header
       planState,
       // Onboarding chips props - click handlers are internal
       destination,
       origin,
       dateRange,
       budget,
-      dateFlex: _dateFlex,
-      tripDuration: _tripDuration,
       // CTA gating flags
       hasDestination = false,
-      canGeneratePlan: _canGeneratePlan = false,
-      hasPlan: _hasPlan = false,
       // Optional Refinements Section props
       hasDates = false,
       tripInputs,
@@ -500,43 +462,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       flightSettings,
       hotelSettings,
       activitySettings,
-      transportSettings: _transportSettings,
       onUpdateBookingTypes,
       onUpdateFlightSettings,
       onUpdateHotelSettings,
       onUpdateActivitySettings,
-      onUpdateTransportSettings: _onUpdateTransportSettings,
-      onAddActivity: _onAddActivity,
-      onRemoveActivity: _onRemoveActivity,
-      onUpdateAdults: _onUpdateAdults,
-      onUpdateChildren: _onUpdateChildren,
-      onToggleRequiresAssistance: _onToggleRequiresAssistance,
-      llmUpdatedFields: _llmUpdatedFields,
-      onAcknowledgeLLMUpdate: _onAcknowledgeLLMUpdate,
       planViewState,
-      onOpenBudgetInput: _onOpenBudgetInput,
       onOpenSheet,
-      hasEverHadPlan: _hasEverHadPlan,
       onUserMessageSubmit,
     } = props;
-
-    // Reserved for future use
-    void _onFreshStart;
-    void _dateFlex;
-    void _tripDuration;
-    void _canGeneratePlan;
-    void _hasPlan;
-    void _transportSettings;
-    void _onUpdateTransportSettings;
-    void _onAddActivity;
-    void _onRemoveActivity;
-    void _onToggleRequiresAssistance;
-    void _llmUpdatedFields;
-    void _onAcknowledgeLLMUpdate;
-    void _onOpenBudgetInput;
-    void _hasEverHadPlan;
-    void _onUpdateAdults;
-    void _onUpdateChildren;
 
     // Derive input disabled state from planState (RESOLVING = disabled)
     const isInputDisabledByPlanState = planState === 'RESOLVING';
@@ -875,13 +808,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       async (messageText: string, options?: { suggestionClicked?: string }) => {
         const trimmed = messageText.trim();
         if (!trimmed) {
-          console.log('[ChatPanel] ⏭️ Skipping - empty message');
+          debugLog('[ChatPanel] ⏭️ Skipping - empty message');
           return;
         }
 
         // SYNC GUARD: Prevent duplicate sends (React StrictMode safe)
         if (isSendingRef.current) {
-          console.log('[ChatPanel] ⏭️ Skipping - already sending (ref guard)');
+          debugLog('[ChatPanel] ⏭️ Skipping - already sending (ref guard)');
           return;
         }
 
@@ -899,12 +832,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         // Check for generate trigger FIRST (before isLoading guard)
         const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER || trimmed.toLowerCase() === 'build plan';
         const now = Date.now();
+        const requestId = buildSendRequestId(now);
 
         // DEBUG: Log all sendMessage calls
-        console.log('[ChatPanel] sendMessageCore called', {
+        debugLog('[ChatPanel] sendMessageCore called', {
           message: trimmed.slice(0, 50),
           isGenerateTrigger,
           isLoading,
+          request_id: requestId,
           destination: useDocumentStore.getState().document?.trip_inputs?.destination,
         });
 
@@ -919,7 +854,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           if (guardReason !== 'loading') {
             toast(guardReason);
           } else {
-            console.log('[ChatPanel] ⏭️ Skipping - loading');
+            debugLog('[ChatPanel] ⏭️ Skipping - loading');
           }
           return;
         }
@@ -930,7 +865,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         }
 
         if (isLoading) {
-          console.log('[ChatPanel] ⏭️ Skipping - loading');
+          debugLog('[ChatPanel] ⏭️ Skipping - loading');
           return;
         }
 
@@ -1003,7 +938,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         // Flush any pending pill/settings PATCH to the backend document before
         // the graph starts. Without this, the graph reads a stale document that
         // doesn't have the user's latest pill selections (race condition).
-        await useDocumentStore.getState().ensureSettingsFlushed();
+        await useDocumentStore.getState().ensureSettingsFlushed({
+          requestId,
+          sendCycleId: requestId,
+        });
 
         // Use SSE streaming for real-time token display
         const currentTripInputs = useDocumentStore.getState().document?.trip_inputs;
@@ -1033,7 +971,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         // DEBUG: Log API payload for regeneration triggers
         if (isGenerateTrigger) {
-          console.log('[ChatPanel] 📤 Sending GENERATE_PLAN_TRIGGER to API', {
+          debugLog('[ChatPanel] 📤 Sending GENERATE_PLAN_TRIGGER to API', {
             destination: body.trip_inputs?.destination,
             start_date: body.trip_inputs?.start_date,
             end_date: body.trip_inputs?.end_date,
@@ -1151,7 +1089,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               const hasTiles = doc.tiles && Object.keys(doc.tiles).length > 0;
 
               // DEBUG: Log response to understand tile/state issue
-              console.log('[ChatPanel] Response received:', {
+              debugLog('[ChatPanel] Response received:', {
                 hasTiles,
                 tileCount: doc.tiles ? Object.keys(doc.tiles).length : 0,
                 tileIds: doc.tiles ? Object.keys(doc.tiles).slice(0, 5) : [],
@@ -1176,7 +1114,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               const isReadyToGenerate = doc.ready_to_generate === true;
 
               // Update suggested responses from LLM (if provided)
-              console.log(
+              debugLog(
                 `[ChatPanel] 🏷️ SSE complete:`,
                 `suggestions=${JSON.stringify(doc.suggested_responses?.slice(0, 3))}`,
                 `meta=${JSON.stringify(doc.suggested_response_meta?.slice(0, 2))}`,
@@ -1191,7 +1129,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // Backend routes through LogisticsNode to fetch flights automatically
               // Tiles (including flights) come back in the response
               if (doc.origin_just_set && doc.trip_inputs?.origin) {
-                console.log('[ChatPanel] Origin set via chat:', doc.trip_inputs.origin, '- flights fetched by backend');
+                debugLog('[ChatPanel] Origin set via chat:', doc.trip_inputs.origin, '- flights fetched by backend');
               }
 
               // AUTO-EXPAND: Detect structural changes that require itinerary rebuild
@@ -1204,7 +1142,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // no need for a separate expand-itinerary call.
               const graphBuiltItinerary = (doc.day_cards?.length ?? 0) > 0;
               if (graphBuiltItinerary) {
-                console.log(`[EXPAND] SKIPPED — graph response included ${doc.day_cards!.length} day_cards`);
+                debugLog(`[EXPAND] SKIPPED — graph response included ${doc.day_cards!.length} day_cards`);
               }
 
               // Read dates from FRESH store state — the hasDates prop is a stale closure
@@ -1253,7 +1191,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 : shouldExpandDates ? 'DATE_CHANGE'
                 : shouldExpandCatchAll ? 'CATCH_ALL'
                 : 'SKIP';
-              console.log(
+              debugLog(
                 `[EXPAND] gate check: strategy=${newSpecialistTypes.length} tiles=${tileCount} ` +
                 `viewState=${viewState} hasItinerary=${hasItinerary} freshHasDates=${freshHasDates} silent=${isSilentPlanGeneration} graphBuilt=${graphBuiltItinerary} ` +
                 `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!_datesChanged} ` +
@@ -1266,7 +1204,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 v => v.severity === 'blocking'
               ) ?? [];
               if (blockingViolations.length > 0) {
-                console.log('[EXPAND] BLOCKED — blocking constraint violations exist:',
+                debugLog('[EXPAND] BLOCKED — blocking constraint violations exist:',
                   blockingViolations.map(v => v.code));
               }
 
@@ -1274,7 +1212,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // Priority gate: structural wins over trip inputs (structural rebuild incorporates inputs anyway)
               let structuralRebuildTriggered = blockingViolations.length > 0 || graphBuiltItinerary;
               if (shouldExpandStructural && !graphBuiltItinerary) {
-                console.log('[ChatPanel] Structural change detected - auto-expanding...', {
+                debugLog('[ChatPanel] Structural change detected - auto-expanding...', {
                   hasNewSpecialist,
                   hasNewTileType,
                   prevSpecialists: [...prevSpecialistTypes],
@@ -1284,13 +1222,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 setTimeout(() => {
                   // RE-CHECK: Ensure generation isn't already complete from another path
                   if (useDocumentStore.getState().expandInProgress) {
-                    console.log('[ChatPanel] ⏭️ STRUCTURAL skipped - expand already in progress');
+                    debugLog('[ChatPanel] ⏭️ STRUCTURAL skipped - expand already in progress');
                     return;
                   }
                   onAutoExpandItinerary?.({ forceFullRebuild: true });
                 }, 100);
               } else if (hasItinerary && !hasNewSpecialist && !hasNewTileType) {
-                console.log('[ChatPanel] Additive change only, itinerary preserved');
+                debugLog('[ChatPanel] Additive change only, itinerary preserved');
               }
 
               // AUTO-EXPAND: Detect trip_inputs changes that require itinerary adjustment
@@ -1309,7 +1247,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               const hasStrategyContent = (doc.strategy_sections?.length ?? 0) > 0;
 
               if (datesChanged && hasStrategyContent && !isSilentPlanGeneration && !structuralRebuildTriggered) {
-                console.log('[ChatPanel] Dates changed - triggering itinerary rebuild...', {
+                debugLog('[ChatPanel] Dates changed - triggering itinerary rebuild...', {
                   prev: `${prevInputs.start_date} - ${prevInputs.end_date}`,
                   new: `${newTripInputs?.start_date} - ${newTripInputs?.end_date}`,
                   hasItinerary, // Will be false because date change cleared day_cards
@@ -1318,7 +1256,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 setTimeout(() => {
                   // RE-CHECK: Ensure generation isn't already complete from another path
                   if (useDocumentStore.getState().expandInProgress) {
-                    console.log('[ChatPanel] ⏭️ DATE_CHANGE skipped - expand already in progress');
+                    debugLog('[ChatPanel] ⏭️ DATE_CHANGE skipped - expand already in progress');
                     return;
                   }
                   onAutoExpandItinerary?.({ forceFullRebuild: true });
@@ -1336,7 +1274,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 const otherInputsChanged = travelersChanged || budgetChanged || originChanged;
 
                 if (otherInputsChanged) {
-                  console.log('[ChatPanel] Trip inputs changed - auto-rebuilding itinerary...', {
+                  debugLog('[ChatPanel] Trip inputs changed - auto-rebuilding itinerary...', {
                     travelersChanged, budgetChanged, originChanged,
                     prev: { adults: prevInputs.adults, budget: prevInputs.budget },
                     new: { adults: newTripInputs?.adults, budget: newTripInputs?.budget },
@@ -1345,7 +1283,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   setTimeout(() => {
                     // RE-CHECK: Ensure generation isn't already complete from another path
                     if (useDocumentStore.getState().expandInProgress) {
-                      console.log('[ChatPanel] ⏭️ TRIP_INPUTS skipped - expand already in progress');
+                      debugLog('[ChatPanel] ⏭️ TRIP_INPUTS skipped - expand already in progress');
                       return;
                     }
                     onAutoExpandItinerary?.({ forceFullRebuild: true });
@@ -1358,7 +1296,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // Example: Guard violation during session - strategy preserved, day_cards cleared
               // Gate: Requires dates - without dates, ItineraryBuilder can't create DayCard[] scaffold
               if (hasStrategyContent && !hasItinerary && freshHasDates && !isSilentPlanGeneration && !structuralRebuildTriggered && viewState !== 'S0_BOOTSTRAP') {
-                console.log('[ChatPanel] Strategy exists but no itinerary - triggering rebuild...', {
+                debugLog('[ChatPanel] Strategy exists but no itinerary - triggering rebuild...', {
                   strategyCount: doc.strategy_sections?.length,
                   hasItinerary,
                   viewState,
@@ -1368,7 +1306,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   // RE-CHECK: If itinerary was generated by another path, skip
                   const freshDayCards = useDocumentStore.getState().document?.day_cards;
                   if (freshDayCards && freshDayCards.length > 0) {
-                    console.log('[ChatPanel] ⏭️ CATCH-ALL skipped - itinerary already exists');
+                    debugLog('[ChatPanel] ⏭️ CATCH-ALL skipped - itinerary already exists');
                     return;
                   }
                   onAutoExpandItinerary?.({ forceFullRebuild: true });
@@ -2099,7 +2037,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             }
             toast('Stay preferences saved');
             // Trigger plan regeneration if plan is active
-            const isActive = planViewState === 'S2_STRATEGY_READY' || planViewState === 'S3_ITINERARY_READY';
+            const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
+              planViewState ?? ''
+            );
             if (isActive) {
               const updates: AckUpdate[] = [];
               if (settings.min_stars) updates.push({ field: 'hotels', to: `${settings.min_stars}+ stars` });
@@ -2138,7 +2078,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             onUpdateActivitySettings?.(settings);
             toast('Activity preferences saved');
             // Trigger plan regeneration if plan is active
-            const isActive = planViewState === 'S2_STRATEGY_READY' || planViewState === 'S3_ITINERARY_READY';
+            const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
+              planViewState ?? ''
+            );
             if (isActive) {
               const newDayPrefs = settings.day_preferences || {};
               const newCats = new Set(settings.categories || []);

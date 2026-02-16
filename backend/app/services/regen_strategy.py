@@ -15,7 +15,7 @@ Strategy Tiers (lowest to highest cost):
 """
 
 from enum import Enum
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Iterable, Optional, Set
 
 from app.debug_utils import _debug
 from app.planner.services.state_serde import _field_hash
@@ -49,6 +49,8 @@ FIELD_IMPACT: Dict[str, RegenStrategy] = {
     "activity_skill_level": RegenStrategy.LOGISTICS,
     # BUILDER - only affects itinerary structure, reuse cached tiles
     "origin": RegenStrategy.BUILDER,
+    # BUILDER - heart preference changes only impact itinerary placement/weighting
+    "preferences": RegenStrategy.BUILDER,
 }
 
 # Strategy priority order (for computing most conservative)
@@ -69,7 +71,17 @@ def _stable_dict_hash(d: Optional[Dict[str, Any]]) -> str:
     return "|".join(f"{k}:{v}" for k, v in sorted_items)
 
 
-def compute_field_hashes(trip_inputs: Dict[str, Any]) -> Dict[str, str]:
+def _stable_list_hash(values: Optional[Iterable[Any]]) -> str:
+    """Compute stable hash for list-like values by sorting unique stringified entries."""
+    if not values:
+        return ""
+    normalized = sorted({str(v) for v in values if v is not None})
+    return "|".join(normalized)
+
+
+def compute_field_hashes(
+    trip_inputs: Dict[str, Any], preferences: Optional[Dict[str, Any]] = None
+) -> Dict[str, str]:
     """
     Compute field hashes from trip_inputs dict for comparison.
 
@@ -83,6 +95,10 @@ def compute_field_hashes(trip_inputs: Dict[str, Any]) -> Dict[str, str]:
     else:
         activity_categories = []
         activity_skill = ""
+
+    preference_ids = []
+    if preferences:
+        preference_ids = preferences.get("preferred_tile_ids", []) or []
 
     return {
         "destination": _field_hash(trip_inputs.get("destination") or ""),
@@ -101,6 +117,7 @@ def compute_field_hashes(trip_inputs: Dict[str, Any]) -> Dict[str, str]:
             "|".join(sorted(activity_categories)) if activity_categories else ""
         ),
         "activity_skill_level": _field_hash(activity_skill or ""),
+        "preferences": _field_hash(_stable_list_hash(preference_ids)),
     }
 
 

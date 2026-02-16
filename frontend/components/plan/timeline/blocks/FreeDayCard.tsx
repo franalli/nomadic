@@ -22,6 +22,7 @@ export interface FreeDayCardProps {
   onBrowse: () => void;
   onFillDay?: (dayNumber: number, dayDate: string | null, categories?: string[]) => void;
   isFilling?: boolean;
+  isDisabled?: boolean;
   rejectionMessage?: string;
 }
 
@@ -32,6 +33,7 @@ export function FreeDayCard({
   availableCategories,
   onFillDay,
   isFilling,
+  isDisabled = false,
   rejectionMessage,
 }: FreeDayCardProps) {
   // Mutually exclusive: one chip selected at a time (radio behavior)
@@ -66,11 +68,13 @@ export function FreeDayCard({
               <button
                 key={cat.value}
                 onClick={() => selectCategory(cat.value)}
+                disabled={isDisabled}
                 className={cn(
                   'px-3 py-1.5 rounded-full text-xs font-medium transition-all',
                   selectedCat === cat.value
                     ? 'bg-zinc-900 text-white dark:bg-white dark:text-black'
-                    : 'bg-white border border-zinc-200 text-zinc-600 dark:bg-white/5 dark:border-white/15 dark:text-zinc-400'
+                    : 'bg-white border border-zinc-200 text-zinc-600 dark:bg-white/5 dark:border-white/15 dark:text-zinc-400',
+                  isDisabled && 'opacity-60 cursor-not-allowed'
                 )}
               >
                 {cat.icon} {cat.label}
@@ -84,7 +88,11 @@ export function FreeDayCard({
       {onFillDay && destination && (
         <button
           onClick={handleFill}
-          disabled={isFilling || (availableCategories && availableCategories.length > 0 && !selectedCat)}
+          disabled={
+            isDisabled
+            || isFilling
+            || (availableCategories && availableCategories.length > 0 && !selectedCat)
+          }
           className={cn(
             'w-full px-4 py-2 text-sm font-medium rounded-lg transition-all',
             'bg-zinc-900 text-white hover:bg-zinc-800',

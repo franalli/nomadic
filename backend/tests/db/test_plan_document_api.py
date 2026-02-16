@@ -1009,3 +1009,35 @@ def test_patch_trip_inputs_activity_categories_preserves_existing_fields():
         "🏖️ beach",
         "🍝 food",
     ]
+
+
+def test_patch_trip_inputs_noop_does_not_bump_version():
+    """PATCH /api/document no-op should not write or increment version."""
+
+    seed = seed_session_with_document(session_token="session-noop-trip-inputs")
+
+    existing = client.get(
+        "/api/document",
+        cookies=get_session_cookies(seed["session_token"]),
+    )
+    assert existing.status_code == 200
+    existing_payload = existing.json()
+    existing_version = existing_payload["version"]
+    existing_trip_inputs = existing_payload["document"]["trip_inputs"]
+
+    response = client.patch(
+        "/api/document",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json={
+            "version": existing_version,
+            "trip_inputs": {
+                "hotel_settings": existing_trip_inputs["hotel_settings"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["changes_made"] is False
+    assert payload["version"] == existing_version

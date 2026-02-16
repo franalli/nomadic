@@ -12,6 +12,52 @@ import type { DayBlock, DayCard, StrategySection } from '@/types/plan-envelope';
 
 import { debugLog } from './debug';
 
+const POI_MEMO_MAX_ENTRIES = 32;
+const _poiMemoCache = new Map<string, MapPOI[]>();
+
+function _trimPoiMemoCache(): void {
+  if (_poiMemoCache.size <= POI_MEMO_MAX_ENTRIES) return;
+  const oldest = _poiMemoCache.keys().next().value as string | undefined;
+  if (oldest) {
+    _poiMemoCache.delete(oldest);
+  }
+}
+
+function _hashFingerprint(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
+}
+
+function _buildPoiFingerprint(
+  dayCards: import('@/types/plan-envelope').DayCard[] | undefined,
+  destination: string | undefined,
+  hint: string | null | undefined
+): string {
+  const destinationKey = (destination ?? '').trim().toLowerCase();
+  if (hint) {
+    return _hashFingerprint(`hint:${hint}|dest:${destinationKey}`);
+  }
+  if (!dayCards || dayCards.length === 0) {
+    return _hashFingerprint(`empty|dest:${destinationKey}`);
+  }
+  const tokens: string[] = [`dest:${destinationKey}`, `days:${dayCards.length}`];
+  for (const dayCard of dayCards) {
+    tokens.push(`d:${dayCard.day_number}|b:${dayCard.blocks?.length ?? 0}`);
+    dayCard.blocks?.forEach((block, idx) => {
+      if (block.is_buffer || block.is_skeleton) return;
+      const lat = block.coordinates?.lat;
+      const lng = block.coordinates?.lng;
+      const id = block.id ?? `${dayCard.day_number}-${idx}`;
+      tokens.push(`${id}:${lat ?? 'x'}:${lng ?? 'x'}`);
+    });
+  }
+  return _hashFingerprint(tokens.join('|'));
+}
+
 /**
  * Generate ghost day cards from specialist strategy sections.
  *
@@ -225,55 +271,89 @@ export function extractPOIsFromSections(
 export function extractPOIsFromDayCards(
   dayCards: import('@/types/plan-envelope').DayCard[] | undefined,
   strategySections?: import('@/types/plan-envelope').StrategySection[],
-  destination?: string
+  destination?: string,
+  fingerprintHint?: string | null
 ): MapPOI[] {
+  const fingerprint = _buildPoiFingerprint(dayCards, destination, fingerprintHint);
+  const cached = _poiMemoCache.get(fingerprint);
+  if (cached) {
+    debugLog(`[VERIFY][POI_MEMO] fingerprint=${fingerprint} cache_hit=true`);
+    return cached;
+  }
+  debugLog(`[VERIFY][POI_MEMO] fingerprint=${fingerprint} cache_hit=false`);
+
   if (!dayCards || dayCards.length === 0) {
-    debugLog('[extractPOIsFromDayCards] No day_cards, falling back to strategy sections');
-    return extractPOIsFromSections(strategySections, destination);
+    const fallback = extractPOIsFromSections(strategySections, destination);
+    _poiMemoCache.set(fingerprint, fallback);
+    _trimPoiMemoCache();
+    debugLog('[extractPOIsFromDayCards] fallback summary', {
+      reason: 'no_day_cards',
+      destination,
+      pois: fallback.length,
+    });
+    return fallback;
   }
 
   const pois: MapPOI[] = [];
-
-  // Debug: Log day_cards structure
-  debugLog('[extractPOIsFromDayCards] Processing day_cards:', {
-    count: dayCards.length,
-    blocks: dayCards.map(dc => ({
-      day: dc.day_number,
-      blockCount: dc.blocks?.length ?? 0,
-      blocksWithCoords: dc.blocks?.filter(b => b.coordinates?.lat && b.coordinates?.lng).length ?? 0,
-    })),
-  });
+  let totalBlocks = 0;
+  let blocksWithCoords = 0;
+  let skippedNoCoords = 0;
+  const skippedSamples: Array<{ day: number; summary: string | null | undefined }> = [];
 
   dayCards.forEach((dayCard) => {
     dayCard.blocks?.forEach((block, idx) => {
       // Skip buffer/skeleton blocks
       if (block.is_buffer || block.is_skeleton) return;
+      totalBlocks += 1;
 
       // Only include if block has coordinates
-      if (block.coordinates?.lat && block.coordinates?.lng) {
+      const coords = block.coordinates;
+      if (coords?.lat != null && coords?.lng != null) {
+        blocksWithCoords += 1;
         // Use block.id if available, otherwise match TimelineThread's format
         const blockId = block.id || `block-${dayCard.day_number}-${idx}`;
-        debugLog('[extractPOIsFromDayCards] Adding POI:', { blockId, title: block.summary, hasBlockId: !!block.id });
         pois.push({
           id: blockId,
           title: block.summary || block.activity_type,
           type: block.specialist_type || 'activity',
-          coordinates: block.coordinates,
+          coordinates: { lat: coords.lat, lng: coords.lng },
         });
       } else {
-        debugLog('[extractPOIsFromDayCards] Skipping block (no coords):', { day: dayCard.day_number, idx, summary: block.summary, coords: block.coordinates });
+        skippedNoCoords += 1;
+        if (skippedSamples.length < 3) {
+          skippedSamples.push({
+            day: dayCard.day_number,
+            summary: block.summary ?? null,
+          });
+        }
       }
     });
   });
 
-  debugLog('[extractPOIsFromDayCards] Extracted POIs:', pois.length);
+  debugLog('[extractPOIsFromDayCards] summary', {
+    day_cards: dayCards.length,
+    total_blocks: totalBlocks,
+    blocks_with_coords: blocksWithCoords,
+    skipped_no_coords: skippedNoCoords,
+    skipped_samples: skippedSamples,
+    pois: pois.length,
+  });
 
   // If itinerary exists but no coordinates, fall back to strategy sections
   if (pois.length === 0 && strategySections) {
-    debugLog('[extractPOIsFromDayCards] No POIs from day_cards, falling back to strategy sections');
-    return extractPOIsFromSections(strategySections, destination);
+    const fallback = extractPOIsFromSections(strategySections, destination);
+    _poiMemoCache.set(fingerprint, fallback);
+    _trimPoiMemoCache();
+    debugLog('[extractPOIsFromDayCards] fallback summary', {
+      reason: 'no_coords_in_day_cards',
+      destination,
+      pois: fallback.length,
+    });
+    return fallback;
   }
 
+  _poiMemoCache.set(fingerprint, pois);
+  _trimPoiMemoCache();
   return pois;
 }
 

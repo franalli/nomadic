@@ -193,7 +193,7 @@ class TestGateRegistry:
 
     def test_fail_open_on_gate_exception(self):
         class BrokenGate(InputGate):
-            def evaluate(self, tp, th):
+            def evaluate(self, _tp, _th):
                 raise RuntimeError("boom")
 
         reg = GateRegistry(gates=[BrokenGate()])

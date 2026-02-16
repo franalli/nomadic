@@ -14,30 +14,20 @@ import type { PlanState } from '@/types/plan-envelope';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface SplitLayoutViewProps {
-  /** Content for the left panel (Planner: TripDetailsForm + ChatPanel) */
+  /** Content for the left panel (Planner: chat + controls) */
   plannerContent: React.ReactNode;
   /** Content for the right panel (Plan View: StrategyStageRenderer) */
   planViewContent: React.ReactNode;
-  /** Content for the Book tab (BookingSection) - rendered in plan view on mobile */
-  bookContent?: React.ReactNode;
   /** Current plan state for status display */
   planState?: PlanState;
   /** Optional compact header content (branding) */
   headerContent?: React.ReactNode;
-  /** Whether a destination has been set (controls topography background opacity) */
-  hasDestination?: boolean;
   /** Callback to reset/clear the session */
   onReset?: () => void;
-  /** Callback when user sends message from minimized input */
-  onSendMessage?: (message: string) => void;
-  /** Whether message is being processed (for minimized input) */
-  isProcessing?: boolean;
-  /** Whether Plan tab is unlocked (plan has been generated) - kept for API compat */
+  /** Whether a reset request is currently in-flight */
+  isResetting?: boolean;
+  /** Whether Plan tab is unlocked (plan has been generated) */
   planTabEnabled?: boolean;
-  /** Whether the Book tab has content - kept for API compat */
-  bookTabEnabled?: boolean;
-  /** Handler for "Select Dates" CTA button */
-  onSelectDates?: () => void;
   /** Mobile-only: chat input rendered below swipe container (visible on both pages) */
   mobileInput?: React.ReactNode;
   /** Mobile-only: trip status bar rendered above swipe container (shared across pages) */
@@ -52,7 +42,7 @@ export interface SplitLayoutViewProps {
  * SplitLayoutView - Unified responsive layout for Nomadic.
  *
  * Desktop (lg+): True split view from the start
- * - Left: Planner panel (TripDetailsForm + ChatPanel), scrollable
+ * - Left: Planner panel (chat + controls), scrollable
  * - Right: Plan View (StrategyStageRenderer), always visible
  *
  * Mobile (<lg): Horizontal swipe layout (Chat ↔ Plan)
@@ -63,25 +53,14 @@ export interface SplitLayoutViewProps {
 export const SplitLayoutView = memo(function SplitLayoutView({
   plannerContent,
   planViewContent,
-  bookContent: _bookContent,
   planState = 'INCOMPLETE',
   headerContent,
-  hasDestination: _hasDestination = false,
   onReset,
-  onSendMessage: _onSendMessage,
-  isProcessing: _isProcessing = false,
+  isResetting = false,
   planTabEnabled = false,
-  bookTabEnabled: _bookTabEnabled = false,
-  onSelectDates: _onSelectDates,
   mobileInput,
   mobileStatusBar,
 }: SplitLayoutViewProps) {
-  void _hasDestination; // Reserved for future topo background control
-  void _bookTabEnabled; // Kept for API compat
-  void _onSendMessage; // Kept for API compat
-  void _isProcessing; // Kept for API compat
-  void _onSelectDates; // Kept for API compat
-  void _bookContent; // Kept for API compat
   const isDesktop = useIsDesktop();
 
   return (
@@ -97,6 +76,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       <MobileModeHeader
         planState={planState}
         onReset={onReset}
+        isResetting={isResetting}
       />
 
       {/* Main Layout Container */}
@@ -129,9 +109,9 @@ export const SplitLayoutView = memo(function SplitLayoutView({
                 'shadow-[4px_0_24px_-12px_rgba(0,0,0,0.12),8px_0_40px_-20px_rgba(0,0,0,0.08)]',
                 // Dark: tinted glass with subtle border
                 'dark:bg-black/40 dark:backdrop-blur-xl dark:border-white/5',
-                'dark:shadow-[4px_0_12px_rgba(0,0,0,0.3)]'
+                'dark:shadow-[4px_0_12px_rgba(0,0,0,0.3)]',
+                'relative z-[1]'
               )}
-              style={{ position: 'relative', zIndex: 1 }}
               aria-label="Trip planner"
             >
               <div className="flex-1 overflow-y-auto no-scrollbar p-5">

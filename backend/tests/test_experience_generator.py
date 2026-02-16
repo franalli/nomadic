@@ -13,6 +13,7 @@ Covers:
 Run with: pytest tests/test_experience_generator.py -v
 """
 
+import asyncio
 from threading import Thread
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -189,8 +190,16 @@ class TestPydanticModels:
 class TestTileConversion:
     """Test ExperienceTile → tile dict conversion."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_unsplash_memory(self):
+        from app.services.unsplash import clear_memory_cache
+
+        clear_memory_cache()
+        yield
+        clear_memory_cache()
+
     @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
-    def test_basic_conversion(self, mock_unsplash):
+    def test_basic_conversion(self, _mock_unsplash):
         from app.services.experience_generator import ExperienceTile, _experience_to_tile_dict
 
         tile = ExperienceTile(
@@ -216,7 +225,7 @@ class TestTileConversion:
         assert result["image_url"] == "https://img.test/photo.jpg"
 
     @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
-    def test_deterministic_ids(self, mock_unsplash):
+    def test_deterministic_ids(self, _mock_unsplash):
         from app.services.experience_generator import ExperienceTile, _experience_to_tile_dict
 
         tile = ExperienceTile(title="A", subtitle="B", category="yoga")
@@ -228,7 +237,7 @@ class TestTileConversion:
         assert result1["id"] == "exp_bali_yoga_0"
 
     @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
-    def test_different_indices_different_ids(self, mock_unsplash):
+    def test_different_indices_different_ids(self, _mock_unsplash):
         from app.services.experience_generator import ExperienceTile, _experience_to_tile_dict
 
         tile = ExperienceTile(title="A", subtitle="B", category="yoga")
@@ -239,7 +248,7 @@ class TestTileConversion:
         assert result0["id"] != result1["id"]
 
     @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
-    def test_tags_include_experience(self, mock_unsplash):
+    def test_tags_include_experience(self, _mock_unsplash):
         from app.services.experience_generator import ExperienceTile, _experience_to_tile_dict
 
         tile = ExperienceTile(title="A", subtitle="B", category="cooking")
@@ -250,7 +259,7 @@ class TestTileConversion:
         assert "cooking" in result["tags"]
 
     @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
-    def test_meta_fields(self, mock_unsplash):
+    def test_meta_fields(self, _mock_unsplash):
         from app.services.experience_generator import ExperienceTile, _experience_to_tile_dict
 
         tile = ExperienceTile(
@@ -269,7 +278,7 @@ class TestTileConversion:
         assert result["meta"]["duration_hours"] == 3.0
 
     @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
-    def test_multi_word_destination_normalized(self, mock_unsplash):
+    def test_multi_word_destination_normalized(self, _mock_unsplash):
         from app.services.experience_generator import ExperienceTile, _experience_to_tile_dict
 
         tile = ExperienceTile(title="A", subtitle="B", category="yoga")
@@ -387,7 +396,7 @@ class TestGenerateExperiences:
     @patch("app.db._get_async_session_factory")
     @patch("app.services.unsplash.prefetch_destination_images", new_callable=AsyncMock)
     @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
-    async def test_full_flow_mocked_llm(self, mock_img, mock_prefetch, mock_db_factory):
+    async def test_full_flow_mocked_llm(self, _mock_img, _mock_prefetch, mock_db_factory):
         from app.services.experience_generator import (
             ExperienceOutput,
             ExperienceTile,
@@ -445,10 +454,10 @@ class TestGenerateExperiences:
         mock_structured_llm = AsyncMock()
         mock_structured_llm.ainvoke = AsyncMock(return_value=fake_batch)
 
-        with patch("app.services.experience_generator.ChatOpenAI") as mock_chat:
+        with patch("app.services.experience_generator.get_llm_by_model") as mock_get_llm:
             mock_instance = MagicMock()
             mock_instance.with_structured_output.return_value = mock_structured_llm
-            mock_chat.return_value = mock_instance
+            mock_get_llm.return_value = mock_instance
 
             result = await generate_experiences(
                 destination="Bali",
@@ -499,12 +508,12 @@ class TestGenerateExperiences:
         mock_db_factory.return_value = MagicMock(return_value=mock_session)
 
         # Mock LLM that raises
-        with patch("app.services.experience_generator.ChatOpenAI") as mock_chat:
+        with patch("app.services.experience_generator.get_llm_by_model") as mock_get_llm:
             mock_instance = MagicMock()
             mock_structured = AsyncMock()
             mock_structured.ainvoke = AsyncMock(side_effect=Exception("API timeout"))
             mock_instance.with_structured_output.return_value = mock_structured
-            mock_chat.return_value = mock_instance
+            mock_get_llm.return_value = mock_instance
 
             result = await generate_experiences(
                 destination="Bali",
@@ -518,7 +527,7 @@ class TestGenerateExperiences:
     @pytest.mark.asyncio
     @patch("app.db._get_async_session_factory")
     @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
-    async def test_llm_returns_empty_activities(self, mock_img, mock_db_factory):
+    async def test_llm_returns_empty_activities(self, _mock_img, mock_db_factory):
         from app.services.experience_generator import (
             ExperienceOutput,
             generate_experiences,
@@ -544,10 +553,10 @@ class TestGenerateExperiences:
         mock_structured_llm = AsyncMock()
         mock_structured_llm.ainvoke = AsyncMock(return_value=fake_parsed)
 
-        with patch("app.services.experience_generator.ChatOpenAI") as mock_chat:
+        with patch("app.services.experience_generator.get_llm_by_model") as mock_get_llm:
             mock_instance = MagicMock()
             mock_instance.with_structured_output.return_value = mock_structured_llm
-            mock_chat.return_value = mock_instance
+            mock_get_llm.return_value = mock_instance
 
             result = await generate_experiences(
                 destination="Bali",
@@ -556,4 +565,163 @@ class TestGenerateExperiences:
             )
 
         assert result == []
+        self._clear_l1()
+
+    @pytest.mark.asyncio
+    @patch("app.services.experience_generator._generate_experiences_impl", new_callable=AsyncMock)
+    async def test_singleflight_dedupes_inflight_generation(self, mock_impl):
+        from app.services.experience_generator import generate_experiences
+
+        async def _slow_impl(*_args, **_kwargs):
+            await asyncio.sleep(0.02)
+            return [{"id": "exp_bali_yoga_0", "meta": {"category": "yoga"}}]
+
+        mock_impl.side_effect = _slow_impl
+
+        task_one = asyncio.create_task(
+            generate_experiences(
+                destination="Bali",
+                categories=["yoga"],
+                month="2099-09",
+            )
+        )
+        await asyncio.sleep(0.005)
+        task_two = asyncio.create_task(
+            generate_experiences(
+                destination="Bali",
+                categories=["yoga"],
+                month="2099-09",
+            )
+        )
+
+        first, second = await asyncio.gather(task_one, task_two)
+
+        assert mock_impl.await_count == 1
+        assert first == second
+
+    @pytest.mark.asyncio
+    @patch("app.services.experience_generator._generate_experiences_impl", new_callable=AsyncMock)
+    async def test_singleflight_waiter_hydrates_state_metadata(self, mock_impl):
+        from app.services.experience_generator import generate_experiences
+
+        class _State:
+            def __init__(self):
+                self.metadata = {}
+
+        async def _slow_impl(*_args, **_kwargs):
+            await asyncio.sleep(0.02)
+            return [{"id": "exp_bali_yoga_0", "meta": {"category": "yoga"}}]
+
+        mock_impl.side_effect = _slow_impl
+
+        owner = asyncio.create_task(
+            generate_experiences(
+                destination="Bali",
+                categories=["yoga"],
+                month="2099-10",
+                state=None,
+            )
+        )
+        await asyncio.sleep(0.005)
+
+        state = _State()
+        waiter_result = await generate_experiences(
+            destination="Bali",
+            categories=["yoga"],
+            month="2099-10",
+            state=state,
+        )
+        owner_result = await owner
+
+        assert mock_impl.await_count == 1
+        assert waiter_result == owner_result
+        assert "generated_tier2_categories" in state.metadata
+        assert "Bali" in state.metadata["generated_tier2_categories"]
+        assert "yoga" in state.metadata["generated_tier2_categories"]["Bali"]
+        assert (
+            state.metadata["generated_tier2_categories"]["Bali"]["yoga"][0]["id"]
+            == "exp_bali_yoga_0"
+        )
+
+    @pytest.mark.asyncio
+    async def test_l1_cache_hit_marks_generation_source_as_cache(self):
+        from app.services.experience_generator import (
+            _cache_set,
+            _experience_cache_key,
+            generate_experiences,
+        )
+
+        class _State:
+            def __init__(self):
+                self.metadata = {}
+
+        cache_key = _experience_cache_key("CacheMeta", ["yoga"], "2099-11")
+        cached_tiles = [{"id": "cached_tile", "meta": {"category": "yoga"}}]
+        _cache_set(cache_key, cached_tiles)
+
+        state = _State()
+        result = await generate_experiences("CacheMeta", ["yoga"], "2099-11", state=state)
+
+        assert result == cached_tiles
+        assert state.metadata.get("tier2_generation_source_internal") == "cache"
+
+    @pytest.mark.asyncio
+    @patch("app.db._get_async_session_factory")
+    @patch("app.services.unsplash.prefetch_destination_images", new_callable=AsyncMock)
+    @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
+    async def test_llm_path_marks_generation_source_as_llm(
+        self,
+        _mock_img,
+        _mock_prefetch,
+        mock_db_factory,
+    ):
+        from app.services.experience_generator import (
+            ExperienceOutput,
+            ExperienceTile,
+            generate_experiences,
+        )
+
+        class _State:
+            def __init__(self):
+                self.metadata = {}
+
+        self._clear_l1()
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.commit = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_db_factory.return_value = MagicMock(return_value=mock_session)
+
+        fake_batch = ExperienceOutput(
+            activities=[
+                ExperienceTile(
+                    title="Ubud Morning Vinyasa",
+                    category="yoga",
+                    time_of_day="morning",
+                    price_estimate=25,
+                )
+            ]
+        )
+        mock_structured_llm = AsyncMock()
+        mock_structured_llm.ainvoke = AsyncMock(return_value=fake_batch)
+
+        with patch("app.services.experience_generator.get_llm_by_model") as mock_get_llm:
+            mock_instance = MagicMock()
+            mock_instance.with_structured_output.return_value = mock_structured_llm
+            mock_get_llm.return_value = mock_instance
+
+            state = _State()
+            result = await generate_experiences(
+                destination="Bali",
+                categories=["yoga"],
+                month="2099-12",
+                state=state,
+            )
+
+        assert len(result) == 1
+        assert state.metadata.get("tier2_generation_source_internal") == "llm"
         self._clear_l1()

@@ -29,10 +29,6 @@ const STATUS_COPY = {
   } as const,
 } as const;
 
-// Type helpers
-export type StepName = (typeof STATUS_COPY.steps)[number];
-export type StageKey = keyof typeof STATUS_COPY.stages;
-
 /**
  * Get the status pill text based on generation state
  */

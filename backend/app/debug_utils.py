@@ -341,7 +341,7 @@ class CompactLogger:
 # =============================================================================
 
 
-def log(tag: str, message: str, data: str | None = None, sleep: float | None = None):
+def log(tag: str, message: str, data: str | None = None, sleep: float | None = None):  # noqa: ARG001
     """
     Agent-level log output. Shown in full mode with rich colorization.
 
@@ -602,7 +602,7 @@ class NodeTimer:
         self.start_time = time.time()
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    def __exit__(self, exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
         if get_debug_mode() != "full":
             return
         try:

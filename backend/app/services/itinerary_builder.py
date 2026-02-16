@@ -17,6 +17,7 @@ Algorithm Phases:
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -62,6 +63,11 @@ def _find_constraint(
             if rule_lower == name.lower() or name.lower() in rule_lower:
                 return c
     return None
+
+
+def _normalize_title_key(title: Optional[str]) -> str:
+    """Normalize activity titles for duplicate detection across tile IDs."""
+    return re.sub(r"\s+", " ", (title or "").strip().lower())
 
 
 # =============================================================================
@@ -2072,19 +2078,41 @@ class ItineraryBuilder:
 
         # Skip tiles already placed by Phase 5.6 Pass 0 (pinned_day placement)
         already_placed: set[str] = set()
+        scheduled_title_keys: set[str] = set()
+        _NON_ACTIVITY = {"free_day", "check-in", "check-out", "arrival", "departure"}
         for day in days:
             for block in day.blocks:
+                if not block.is_buffer and block.activity_type not in _NON_ACTIVITY:
+                    title_key = _normalize_title_key(block.summary)
+                    if title_key:
+                        scheduled_title_keys.add(title_key)
                 if block.id and block.booking_category == "activity":
                     already_placed.add(block.id)
 
         # Collect preferred tile activities (ordered by position in preferred_activity_ids)
         preferred_activities = []
+        seen_preferred_titles: set[str] = set()
         for tile_id in preferences.preferred_activity_ids:
             if tile_id in already_placed:
                 continue
             tile = tiles.get(tile_id)
             if tile and isinstance(tile, dict) and tile.get("type") == "activity":
-                preferred_activities.append({**tile, "id": tile_id})
+                title_key = _normalize_title_key(tile.get("title"))
+                if title_key and title_key in scheduled_title_keys:
+                    _debug_itinerary(
+                        f"📅 Phase 5.25: Skipping duplicate preferred title '{tile.get('title')}' "
+                        "(already scheduled)"
+                    )
+                    continue
+                if title_key and title_key in seen_preferred_titles:
+                    _debug_itinerary(
+                        f"📅 Phase 5.25: Skipping duplicate preferred title '{tile.get('title')}' "
+                        "(duplicate tile)"
+                    )
+                    continue
+                if title_key:
+                    seen_preferred_titles.add(title_key)
+                preferred_activities.append({**tile, "id": tile_id, "_title_key": title_key})
 
         if not preferred_activities:
             _debug_itinerary("📅 Phase 5.25: No valid activity tiles found in preferences")
@@ -2171,6 +2199,9 @@ class ItineraryBuilder:
 
         def _place_on_day(tile: dict, day_idx: int) -> bool:
             """Place tile on a specific day. Returns True if placed."""
+            title_key = tile.get("_title_key") or _normalize_title_key(tile.get("title"))
+            if title_key and title_key in scheduled_title_keys:
+                return False
             if day_idx not in day_slots or len(day_slots[day_idx]) >= MAX_SLOTS_PER_DAY:
                 return False
             day = days[day_idx]
@@ -2211,6 +2242,8 @@ class ItineraryBuilder:
 
             if day.label == "Free Day":
                 day.label = f"Day {day.day_number}"
+            if title_key:
+                scheduled_title_keys.add(title_key)
 
             _debug_itinerary(f"📅 Placed '{tile.get('title')}' on day {day_idx + 1} ({period})")
             return True
@@ -2240,7 +2273,8 @@ class ItineraryBuilder:
             if source_specialist:
                 specialist_count_per_day[best_day][source_specialist] += 1
 
-            _place_on_day(tile, best_day)
+            if not _place_on_day(tile, best_day):
+                deferred.append(tile)
 
         # ── Low-priority (auto-fill): preferred day only if still free, else drop ──
         for tile in low_priority:
@@ -2279,6 +2313,13 @@ class ItineraryBuilder:
                 f"scanning days for hour-based capacity"
             )
             for tile in deferred:
+                title_key = tile.get("_title_key") or _normalize_title_key(tile.get("title"))
+                if title_key and title_key in scheduled_title_keys:
+                    _debug_itinerary(
+                        f"📅 Phase 5.25 Pass 2: Skipping duplicate '{tile.get('title')}' "
+                        "(already scheduled)"
+                    )
+                    continue
                 meta = tile.get("meta") or {}
                 tile_hours = _parse_duration_hours(
                     tile.get("duration"), meta.get("duration_hours", DEFAULT_EXPERIENCE_HOURS)
@@ -2321,6 +2362,8 @@ class ItineraryBuilder:
                         booked_tile=tile,
                     )
                     day.blocks.append(activity_block)
+                    if title_key:
+                        scheduled_title_keys.add(title_key)
                     _debug_itinerary(
                         f"📅 Phase 5.25 Pass 2: Co-scheduled '{tile.get('title')}' "
                         f"on Day {best_idx + 1} (score={best_score:.2f})"

@@ -1,8 +1,9 @@
 'use client';
 
 // date-fns imports removed - no longer needed after TripDetailsForm removal
-import { Compass, RotateCcw } from 'lucide-react';
+import { Compass, Loader2, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { StartupSequence } from '@/components/animations/StartupSequence';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
@@ -39,6 +40,7 @@ import { useSpecialistDeepLink } from '@/hooks/useSpecialistDeepLink';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { apiFetch, fetchDestinationImage } from '@/lib/api';
 import { parseISODateLocal } from '@/lib/date-utils';
+import { debugLog } from '@/lib/debug';
 import type { SpecialistType } from '@/lib/specialistLinkParser';
 import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
 import { formatDateForDisplay } from '@/lib/utils';
@@ -48,6 +50,7 @@ import { useMobileNavStore } from '@/state/mobileNavStore';
 import type { DocumentTripInputs, PlanDocumentData } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { PlanState, PlanViewModel, PlanViewState } from '@/types/plan-envelope';
+import type { Tile } from '@/types/tile';
 
 // Receipt data type for showing "Updated: X, Y · Undo" after freeform extraction
 interface ChangeReceiptData {
@@ -65,6 +68,8 @@ const TOPIC_KEYWORDS: Record<string, string[]> = {
   cycling: ['bike', 'cycling', 'bicycle'],
   boating: ['sail', 'boat', 'yacht', 'kayak'],
 };
+
+const RESET_BUTTON_COOLDOWN_MS = 2500;
 
 /**
  * Detect specialist topics from user message text.
@@ -118,29 +123,75 @@ export function NomadicLanding() {
   // Viewport detection
   const isDesktop = useIsDesktop();
   // Mobile page navigation (Chat ↔ Plan swipe)
-  const mobileNavigateToPlan = useMobileNavStore((s) => s.navigateToPlan);
-  const mobileNavReset = useMobileNavStore((s) => s.reset);
-  const mobileSetHasNewContent = useMobileNavStore((s) => s.setHasNewPlanContent);
+  const { mobileNavigateToPlan, mobileNavReset, mobileSetHasNewContent } =
+    useMobileNavStore(
+      useShallow((s) => ({
+        mobileNavigateToPlan: s.navigateToPlan,
+        mobileNavReset: s.reset,
+        mobileSetHasNewContent: s.setHasNewPlanContent,
+      }))
+    );
 
-  // Document store - single source of truth for trip inputs
-  // PERF: Individual selectors prevent full-store subscription (1,500+ line component)
-  const storeTripInputs = useDocumentStore((s) => s.document?.trip_inputs);
-  const setActiveView = useDocumentStore((s) => s.setActiveView);
-  const llmUpdatedFields = useDocumentStore((s) => s.llmUpdatedFields);
-  const acknowledgeLLMUpdate = useDocumentStore((s) => s.acknowledgeLLMUpdate);
-  const restoreTripInputs = useDocumentStore((s) => s.restoreTripInputs);
-  const isCommitting = useDocumentStore((s) => s.isCommitting);
-  // Methods used inside callbacks (stable refs in Zustand, won't cause re-renders)
-  const storeReset = useDocumentStore((s) => s.reset);
-  const storeStartGeneration = useDocumentStore((s) => s.startGeneration);
-  const storeIsCurrentRun = useDocumentStore((s) => s.isCurrentRun);
-  const storeMergeEnvelope = useDocumentStore((s) => s.mergeEnvelope);
-  const storeMarkPreferencesAsApplied = useDocumentStore((s) => s.markPreferencesAsApplied);
-  const storeCompleteGeneration = useDocumentStore((s) => s.completeGeneration);
-  const storeCommitTripInputs = useDocumentStore((s) => s.commitTripInputs);
-  const storeUpdateTripInputs = useDocumentStore((s) => s.updateTripInputs);
-  const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
-  const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
+  // Document store - single source of truth for trip inputs + plan envelope
+  const {
+    storeTripInputs,
+    setActiveView,
+    isCommitting,
+    storeReset,
+    storeStartGeneration,
+    storeIsCurrentRun,
+    storeMergeEnvelope,
+    storeMarkPreferencesAsApplied,
+    storeCompleteGeneration,
+    storeCommitTripInputs,
+    storeUpdateTripInputs,
+    preferredTileIds,
+    toggleTilePreference,
+    docPlanState,
+    docDestinationCard,
+    docPlanViewState,
+    docStrategySections,
+    docTiles,
+    docExecutedTopics,
+    docPendingTopics,
+    docDayCards,
+    docGeneration,
+    docOpenDecisions,
+    docItineraryOverview,
+    docItineraryAssumptions,
+    docNeedsRefresh,
+    docCanExpand,
+  } = useDocumentStore(
+    useShallow((s) => ({
+      storeTripInputs: s.document?.trip_inputs,
+      setActiveView: s.setActiveView,
+      isCommitting: s.isCommitting,
+      storeReset: s.reset,
+      storeStartGeneration: s.startGeneration,
+      storeIsCurrentRun: s.isCurrentRun,
+      storeMergeEnvelope: s.mergeEnvelope,
+      storeMarkPreferencesAsApplied: s.markPreferencesAsApplied,
+      storeCompleteGeneration: s.completeGeneration,
+      storeCommitTripInputs: s.commitTripInputs,
+      storeUpdateTripInputs: s.updateTripInputs,
+      preferredTileIds: s.preferredTileIds,
+      toggleTilePreference: s.toggleTilePreference,
+      docPlanState: s.document?.plan_state,
+      docDestinationCard: s.document?.destination_card,
+      docPlanViewState: s.document?.plan_view_state,
+      docStrategySections: s.document?.strategy_sections,
+      docTiles: s.document?.tiles,
+      docExecutedTopics: s.document?.executed_strategy_topics,
+      docPendingTopics: s.document?.pending_strategy_topics,
+      docDayCards: s.document?.day_cards,
+      docGeneration: s.document?.generation,
+      docOpenDecisions: s.document?.open_decisions,
+      docItineraryOverview: s.document?.itinerary_overview,
+      docItineraryAssumptions: s.document?.itinerary_assumptions,
+      docNeedsRefresh: s.document?.needs_refresh,
+      docCanExpand: s.document?.can_expand_to_itinerary,
+    }))
+  );
 
   // Sheet manager - shared between header pills and chat panel
   // In S1+, header pills are the only interactive surface for trip inputs
@@ -149,7 +200,6 @@ export function NomadicLanding() {
   // View navigation - decoupled from plan_view_state
   const {
     navigateTo,
-    hasLeftSetup: _hasLeftSetup,
     finalizePlan,
     canViewPlan,
     activeView,
@@ -213,25 +263,23 @@ export function NomadicLanding() {
 
   // Local UI generation state (fallback if backend doesn't emit generation in envelope)
   const [uiGeneration, setUiGeneration] = useState<GenerationState | null>(null);
-  const [lastGenerationError, setLastGenerationError] = useState<string | null>(null);
 
   const [chatKey, setChatKey] = useState(0);
   const chatPanelContainerRef = useRef<HTMLDivElement | null>(null);
+  const [isResettingSession, setIsResettingSession] = useState(false);
+  const resetInFlightRef = useRef(false);
+  const resetCooldownUntilRef = useRef(0);
 
   // Use hook for local booking settings state management
   const {
     bookingTypes,
     flightSettings,
     hotelSettings,
-    transportSettings,
     activitySettings,
     handleUpdateBookingTypes,
     handleUpdateFlightSettings,
     handleUpdateHotelSettings,
-    handleUpdateTransportSettings,
     handleUpdateActivitySettings,
-    handleAddActivity,
-    handleRemoveActivity,
   } = useLocalBookingSettings(storeTripInputs, addToast);
 
   // Destination image state - fetched from Unsplash when destination changes
@@ -269,10 +317,7 @@ export function NomadicLanding() {
 
   // Branch manager hook - manages branches, tiles, and generating state
   const branchManager = useBranchManager({
-    tripInputs,
     chatPanelContainerRef,
-    chatPanelRef,
-    hasEverHadPlan,
     onToast: addToast,
     onChatKeyIncrement: useCallback(() => setChatKey((prev) => prev + 1), []),
     resetDraft: () => tripInputsEditorRef.current?.resetDraft(),
@@ -295,7 +340,13 @@ export function NomadicLanding() {
 
   // Wrap handleStartNewSession to also clear all local state
   const handleStartNewSession = useCallback(async () => {
-    console.log('[handleStartNewSession] 🔄 Reset triggered');
+    const now = Date.now();
+    if (resetInFlightRef.current || now < resetCooldownUntilRef.current) {
+      return;
+    }
+    resetInFlightRef.current = true;
+    setIsResettingSession(true);
+    debugLog('[handleStartNewSession] 🔄 Reset triggered');
     try {
       // CRITICAL: Reset document store FIRST (synchronously) to prevent stale state
       // from causing incorrect planViewState computation during async operations
@@ -303,12 +354,11 @@ export function NomadicLanding() {
       // Reset chat store synchronously so empty state ("Where to next?") shows
       // immediately — don't wait for async branchManagerStartNewSession network calls
       useChatStore.getState().resetChat();
-      console.log(
+      debugLog(
         '[handleStartNewSession] ✅ documentStore.reset() + chatStore.resetChat() done'
       );
       // Clear local UI generation state
       setUiGeneration(null);
-      setLastGenerationError(null);
       // Clear receipt data
       setReceiptData(null);
       previousTripInputsRef.current = null;
@@ -334,11 +384,15 @@ export function NomadicLanding() {
         mobileNavReset();
       }
       // Proceed with branch manager reset (clears server session, chat, branches, etc.)
-      console.log('[handleStartNewSession] ⏳ Calling branchManagerStartNewSession...');
+      debugLog('[handleStartNewSession] ⏳ Calling branchManagerStartNewSession...');
       await branchManagerStartNewSession();
-      console.log('[handleStartNewSession] ✅ Reset complete');
+      debugLog('[handleStartNewSession] ✅ Reset complete');
     } catch (error) {
       console.error('[handleStartNewSession] ❌ Reset failed:', error);
+    } finally {
+      resetInFlightRef.current = false;
+      resetCooldownUntilRef.current = Date.now() + RESET_BUTTON_COOLDOWN_MS;
+      setIsResettingSession(false);
     }
   }, [
     branchManagerStartNewSession,
@@ -347,6 +401,16 @@ export function NomadicLanding() {
     isDesktop,
     mobileNavReset,
   ]);
+
+  const handleSaveTilePreference = useCallback(
+    (tile: Tile) => {
+      toggleTilePreference(tile.id);
+    },
+    [toggleTilePreference]
+  );
+  const handleOpenGearActivities = useCallback(() => setGearActivitiesSheetOpen(true), []);
+  const handleOpenGearStays = useCallback(() => setGearStaysSheetOpen(true), []);
+  const handleOpenGearFlights = useCallback(() => setGearFlightsSheetOpen(true), []);
 
   // Wrapped handlers for receipt functionality
   // Snapshot trip inputs before generation starts + switch to Plan Mode on mobile
@@ -417,8 +481,7 @@ export function NomadicLanding() {
   );
 
   // Receipt undo/dismiss handlers removed - re-add when receipt UI is implemented
-  // Uses: previousTripInputsRef, storeTripInputs, restoreTripInputs, setReceiptData, detectChangedFieldNames
-  void restoreTripInputs; // Silence unused variable warning
+  // Uses: previousTripInputsRef, storeTripInputs, setReceiptData, detectChangedFieldNames
 
   // Trip inputs editor hook - manages all trip input editing state and handlers
   const tripInputsEditor = useTripInputsEditor({
@@ -432,11 +495,6 @@ export function NomadicLanding() {
     tripInputsEditorRef.current = tripInputsEditor;
   }, [tripInputsEditor]);
 
-  // Destructure commonly used values from the hook
-  // Note: resetDraft is accessed via tripInputsEditorRef.current in branchManager callback
-  const { handleUpdateAdults, handleUpdateChildren, handleToggleRequiresAssistance } =
-    tripInputsEditor;
-
   const missingFields = tripInputs.missing_fields ?? [];
 
   // Check if we have origin or destination to show route
@@ -447,24 +505,6 @@ export function NomadicLanding() {
 
   // NEW: Derive plan state envelope fields
   // Use backend-provided plan_state if available, otherwise derive from local state
-  // GRANULAR SELECTORS: Each field subscribes independently to reduce re-render cascade
-  // @see docs/ux_unified_architecture.md - Performance: Zustand selector granularity
-  const docPlanState = useDocumentStore((s) => s.document?.plan_state);
-  const docDestinationCard = useDocumentStore((s) => s.document?.destination_card);
-  const docPlanViewState = useDocumentStore((s) => s.document?.plan_view_state);
-  const docStrategySections = useDocumentStore((s) => s.document?.strategy_sections);
-  const docTiles = useDocumentStore((s) => s.document?.tiles);
-  const docExecutedTopics = useDocumentStore((s) => s.document?.executed_strategy_topics);
-  const docPendingTopics = useDocumentStore((s) => s.document?.pending_strategy_topics);
-  const docDayCards = useDocumentStore((s) => s.document?.day_cards);
-  const docGeneration = useDocumentStore((s) => s.document?.generation);
-  const docOpenDecisions = useDocumentStore((s) => s.document?.open_decisions);
-  const docItineraryOverview = useDocumentStore((s) => s.document?.itinerary_overview);
-  const docItineraryAssumptions = useDocumentStore(
-    (s) => s.document?.itinerary_assumptions
-  );
-  const docNeedsRefresh = useDocumentStore((s) => s.document?.needs_refresh);
-  const docCanExpand = useDocumentStore((s) => s.document?.can_expand_to_itinerary);
 
   const documentPlanState = docPlanState;
   const planState: PlanState = useMemo(() => {
@@ -490,10 +530,9 @@ export function NomadicLanding() {
   // Destination card (from backend or derive locally)
   // Use route-derived subtitle: "Origin → Destination · Date"
   // Include fetched destination image URL for immediate display
-  const destinationCard =
-    docDestinationCard ??
-    (hasDestination
-      ? {
+  const destinationCard = hasDestination
+    ? {
+        ...(docDestinationCard ?? {
           title: tripInputs.destination ?? '',
           subtitle: (() => {
             const parts: string[] = [];
@@ -518,10 +557,11 @@ export function NomadicLanding() {
               ? parts.join(' · ')
               : `Trip to ${tripInputs.destination ?? ''}`;
           })(),
-          // Use fetched destination image URL (from Unsplash API)
-          image_url: destinationImageUrl ?? undefined,
-        }
-      : undefined);
+        }),
+        // Prefer freshly fetched async destination image over persisted doc value.
+        image_url: destinationImageUrl ?? docDestinationCard?.image_url ?? undefined,
+      }
+    : undefined;
 
   // Booking status (from backend, for per-tab display) - kept for future booking UI
 
@@ -743,17 +783,6 @@ export function NomadicLanding() {
     return hasBranchesReady || planViewState !== 'S0_BOOTSTRAP';
   }, [hasBranchesReady, planViewState]);
 
-  // Book tab enabled when we have tiles or in a state that can show booking content
-  const bookTabEnabled = useMemo(() => {
-    const hasTiles = docTileCount > 0;
-    const inBookableState = [
-      'S2_STRATEGY_READY',
-      'S3_ITINERARY_READY',
-      'S3_EDITING',
-    ].includes(planViewState);
-    return hasTiles || inBookableState;
-  }, [docTileCount, planViewState]);
-
   // Fallback title from tripInputs (used when destinationCard not yet available)
   const fallbackTitle = tripInputs.destination ?? undefined;
 
@@ -809,7 +838,7 @@ export function NomadicLanding() {
       // (checking store directly avoids stale closure issues)
       const existingRunId = useDocumentStore.getState().currentRunId;
       if (existingRunId) {
-        console.log(
+        debugLog(
           '[proceedWithItineraryGeneration] ⏭️ Skipped - generation already registered:',
           existingRunId
         );
@@ -818,7 +847,7 @@ export function NomadicLanding() {
 
       // RACE GUARD: Check if expand is already in progress (prevents cascade)
       if (useDocumentStore.getState().expandInProgress) {
-        console.log(
+        debugLog(
           '[proceedWithItineraryGeneration] ⏭️ Skipped - expandInProgress flag set'
         );
         return;
@@ -832,7 +861,7 @@ export function NomadicLanding() {
       const abortController = storeStartGeneration(runId);
 
       if (!abortController) {
-        console.log(
+        debugLog(
           '[proceedWithItineraryGeneration] ⏭️ Skipped - startGeneration returned null'
         );
         return;
@@ -843,7 +872,6 @@ export function NomadicLanding() {
 
       // Set local UI generation state immediately
       setUiGeneration({ active: true, stage: 'itinerary' });
-      setLastGenerationError(null);
 
       // Timeout handling
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -910,7 +938,7 @@ export function NomadicLanding() {
         if (!storeIsCurrentRun(runId)) return;
 
         // Debug: Log what we're sending (using fresh state)
-        console.log('[proceedWithItineraryGeneration] 📦 Sending (fresh state):', {
+        debugLog('[proceedWithItineraryGeneration] 📦 Sending (fresh state):', {
           strategy_sections: currentDoc?.strategy_sections?.map((s) => ({
             type: s.specialist_type,
             content_added_count: s.content_added?.length ?? 0,
@@ -945,7 +973,6 @@ export function NomadicLanding() {
         }
 
         if (!response.body) {
-          setLastGenerationError('Streaming not supported. Please retry.');
           setUiGeneration(null);
           if (timeoutId) clearTimeout(timeoutId);
           return;
@@ -956,15 +983,15 @@ export function NomadicLanding() {
 
         const parser = createStreamParser((event: StreamEvent) => {
           if (!storeIsCurrentRun(runId)) {
-            console.debug('Ignoring late event from stale run');
+            debugLog('Ignoring late event from stale run');
             return;
           }
 
           resetTimeout();
 
-          console.debug('[expand-itinerary] Received event:', event.type, event);
+          debugLog('[expand-itinerary] Received event:', event.type, event);
           if (event.type === 'envelope') {
-            console.debug('[expand-itinerary] Merging envelope:', {
+            debugLog('[expand-itinerary] Merging envelope:', {
               day_cards: event.plan_envelope?.day_cards?.length ?? 0,
               plan_view_state: event.plan_envelope?.plan_view_state,
             });
@@ -977,9 +1004,8 @@ export function NomadicLanding() {
               pct: event.pct,
             });
           } else if (event.type === 'done') {
-            console.debug('[expand-itinerary] Generation complete');
+            debugLog('[expand-itinerary] Generation complete');
             setUiGeneration(null);
-            setLastGenerationError(null);
             // Sync version from backend to prevent 409 on next PATCH
             // expand-itinerary persists changes which increments version
             if (typeof event.version === 'number') {
@@ -1018,7 +1044,7 @@ export function NomadicLanding() {
                 | Array<Record<string, unknown>>
                 | undefined;
               if (dayCards && dayCards.length > 0) {
-                console.debug(
+                debugLog(
                   `[expand-itinerary] Storing ${dayCards.length} partial day cards from conflict`
                 );
                 storeMergeEnvelope({
@@ -1029,7 +1055,6 @@ export function NomadicLanding() {
               }
             } else {
               console.error('[expand-itinerary] Error received:', event.message);
-              setLastGenerationError(event.message || 'Failed to generate itinerary');
             }
           }
         });
@@ -1042,11 +1067,10 @@ export function NomadicLanding() {
         parser.flush();
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
-          console.debug('Itinerary generation aborted');
+          debugLog('Itinerary generation aborted');
           return;
         }
         console.error('Failed to expand to itinerary:', error);
-        setLastGenerationError('Something went wrong. Please try again.');
       } finally {
         if (timeoutId) clearTimeout(timeoutId);
         // Clear expand-in-progress flag
@@ -1120,7 +1144,7 @@ export function NomadicLanding() {
         // RE-CHECK: If itinerary was generated by another path (e.g., ChatPanel CATCH_ALL), skip
         const freshDayCards = useDocumentStore.getState().document?.day_cards;
         if (freshDayCards && freshDayCards.length > 0) {
-          console.log(
+          debugLog(
             '[auto-trigger] ⏭️ Skipped - itinerary already exists from another trigger'
           );
           return;
@@ -1235,14 +1259,12 @@ export function NomadicLanding() {
       selectedBranchId={selectedBranchId}
       onPlanResult={handlePlanResultWithReceipt}
       onGeneratePlanStart={handleGeneratePlanStartWithSnapshot}
-      onFreshStart={handleStartNewSession}
       onAutoExpandItinerary={proceedWithItineraryGeneration}
       fullHeight={false}
       hasBranches={hasBranchesReady}
       readyToGenerate={readyToGenerate}
       isGenerating={isGenerating}
       planState={planState}
-      hasEverHadPlan={hasEverHadPlan}
       onUserMessageSubmit={handleUserMessageSubmit}
       // Onboarding chips props - click handlers are internal to ChatPanel
       destination={tripInputs.destination ?? undefined}
@@ -1257,12 +1279,8 @@ export function NomadicLanding() {
       budget={
         tripInputs.budget != null ? `$${tripInputs.budget.toLocaleString()}` : undefined
       }
-      dateFlex={tripInputs.date_flex}
-      tripDuration={tripInputs.trip_duration ?? undefined}
       // CTA gating flags
       hasDestination={hasDestination}
-      canGeneratePlan={canGeneratePlan}
-      hasPlan={hasPlan}
       // Optional Refinements props (now rendered inside ChatPanel)
       hasDates={hasDates}
       tripInputs={tripInputs}
@@ -1270,29 +1288,17 @@ export function NomadicLanding() {
       flightSettings={flightSettings}
       hotelSettings={hotelSettings}
       activitySettings={activitySettings}
-      transportSettings={transportSettings}
       onUpdateBookingTypes={handleUpdateBookingTypes}
       onUpdateFlightSettings={handleUpdateFlightSettings}
       onUpdateHotelSettings={handleUpdateHotelSettings}
       onUpdateActivitySettings={handleUpdateActivitySettings}
-      onUpdateTransportSettings={handleUpdateTransportSettings}
-      onAddActivity={handleAddActivity}
-      onRemoveActivity={handleRemoveActivity}
-      onUpdateAdults={handleUpdateAdults}
-      onUpdateChildren={handleUpdateChildren}
-      onToggleRequiresAssistance={handleToggleRequiresAssistance}
-      llmUpdatedFields={llmUpdatedFields}
-      onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
       planViewState={planViewState}
       onOpenSheet={openSheet}
-      // Note: onOpenBudgetInput not wired - falls back to chat insertion.
-      // Users can also click budget pill in OptionalRefinementsSection directly.
     />
   );
 
   // Derive sub-stage info for header status display
   const isExpandingItinerary = generation?.stage === 'itinerary';
-  const currentSubStage = generation?.stage ?? null;
 
   // Plan View content (right panel): Stage-aware StrategyStageRenderer
   const planViewContent = (
@@ -1306,25 +1312,21 @@ export function NomadicLanding() {
       fallbackTitle={fallbackTitle}
       hasDates={hasDates}
       isExpandingItinerary={isExpandingItinerary}
-      currentSubStage={currentSubStage}
       onBuildPlan={handleBuildPlan}
       onExpandToItinerary={handleExpandToItinerary}
       onFinalizePlan={handleFinalizePlan}
       isFinalizing={isFinalizing}
-      onReset={handleStartNewSession}
-      lastError={lastGenerationError}
-      onRetry={handleExpandToItinerary}
       savedTileIds={preferredTileIds}
-      onSaveTile={(tile) => toggleTilePreference(tile.id)}
+      onSaveTile={handleSaveTilePreference}
       tripInputs={tripInputs}
       isCommitting={isCommitting}
       onOpenSheet={openSheet}
       hasEverHadPlan={hasEverHadPlan}
       isRegenerating={isRegenerating}
       onSelectNights={handleSelectNights}
-      onOpenActivitySettings={() => setGearActivitiesSheetOpen(true)}
-      onOpenStaysSettings={() => setGearStaysSheetOpen(true)}
-      onOpenFlightsSettings={() => setGearFlightsSheetOpen(true)}
+      onOpenActivitySettings={handleOpenGearActivities}
+      onOpenStaysSettings={handleOpenGearStays}
+      onOpenFlightsSettings={handleOpenGearFlights}
     />
   );
 
@@ -1337,13 +1339,9 @@ export function NomadicLanding() {
           plannerContent={plannerContent}
           planViewContent={planViewContent}
           planState={planState}
-          hasDestination={hasDestination}
           onReset={handleStartNewSession}
-          onSendMessage={handleMobileSend}
-          isProcessing={isGenerating}
+          isResetting={isResettingSession}
           planTabEnabled={planTabEnabled}
-          bookTabEnabled={bookTabEnabled}
-          onSelectDates={() => openSheet('dates')}
           mobileStatusBar={
             !isDesktop &&
             (hasDestination ||
@@ -1384,10 +1382,15 @@ export function NomadicLanding() {
                 variant="ghost"
                 size="sm"
                 onClick={handleStartNewSession}
-                className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-500 dark:hover:bg-white/5 dark:hover:text-white"
+                disabled={isResettingSession}
+                className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-500 dark:hover:bg-white/5 dark:hover:text-white disabled:opacity-60 disabled:pointer-events-none"
               >
-                <RotateCcw className="mr-1.5 h-3 w-3" />
-                Reset
+                {isResettingSession ? (
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                ) : (
+                  <RotateCcw className="mr-1.5 h-3 w-3" />
+                )}
+                {isResettingSession ? 'Resetting' : 'Reset'}
               </Button>
             </div>
           }
@@ -1522,8 +1525,9 @@ export function NomadicLanding() {
           closeSheet();
           addToast('Activity preferences saved', 'confirmation');
           // Trigger plan regeneration if plan is active
-          const isActive = planViewState === 'S2_STRATEGY_READY'
-            || planViewState === 'S3_ITINERARY_READY';
+          const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
+            planViewState
+          );
           if (isActive) {
             chatPanelRef.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
           }

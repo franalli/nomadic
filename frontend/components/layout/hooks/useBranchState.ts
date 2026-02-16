@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { fetchWithRetry } from '@/lib/api';
+import { debugLog } from '@/lib/debug';
 import type { DocumentBranch, PlanDocumentResponse } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
 
@@ -323,7 +324,7 @@ export function useBranchState(options: UseBranchStateOptions): UseBranchStateRe
             maxRetries: 3,
             baseDelay: 1000,
             onRetry: (attempt, error) => {
-              console.info(`Tile fetch retry ${attempt}:`, error);
+              debugLog(`Tile fetch retry ${attempt}:`, error);
             },
           }
         );

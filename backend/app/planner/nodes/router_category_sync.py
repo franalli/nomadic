@@ -14,6 +14,8 @@ Handles:
 import asyncio
 import logging
 import re
+import time
+from datetime import datetime
 from typing import Optional
 
 from app.config import settings
@@ -121,6 +123,23 @@ RESET_BUDGET_PATTERN = re.compile(
 RESET_HOTEL_PATTERN = re.compile(
     r"(?:no|remove|clear|reset)\s+(?:hotel|star)\s*(?:preference|filter|requirement)?"
     r"|any\s+(?:star|hotel)\s+(?:is fine|works|ok)"
+)
+
+# Explicit user language that indicates replacing current categories for this turn.
+_CATEGORY_REPLACE_PATTERNS = (
+    re.compile(r"\bonly\b"),
+    re.compile(r"\binstead of\b"),
+    re.compile(r"\brather than\b"),
+    re.compile(r"\breplace\b"),
+    re.compile(r"\bswap\b"),
+    re.compile(r"\bnot\b.+\bbut\b"),
+)
+
+_CATEGORY_INTENT_PATTERNS = (
+    re.compile(r"\b(add|include|with|plus|also)\b"),
+    re.compile(r"\b(remove|drop|skip|without)\b"),
+    re.compile(r"\b(only|instead of|rather than|replace|swap)\b"),
+    re.compile(r"\b(more|another|extra)\b"),
 )
 
 
@@ -272,6 +291,7 @@ def _collect_modifications_from_extraction(
     router_output: dict,
     state: "GraphState",
     pre_populate_categories: Optional[set] = None,
+    allow_category_modifications: bool = True,
 ) -> Optional[dict]:
     """
     Read LLM extraction output and collect trip modifications.
@@ -295,20 +315,22 @@ def _collect_modifications_from_extraction(
     else:
         existing = set(_get_current_categories(state))
 
-    cats = router_output.get("activity_categories", [])
-    hints = router_output.get("specialist_hints", [])
-    new_cats = {c.lower() for c in cats if c.lower() in known}
-    new_hints = {h.lower() for h in hints if h.lower() in known}
-    additions = (new_cats | new_hints) - existing
-    if additions:
-        changes["add_categories"] = additions
+    if allow_category_modifications:
+        cats = router_output.get("activity_categories", [])
+        hints = router_output.get("specialist_hints", [])
+        new_cats = {c.lower() for c in cats if c.lower() in known}
+        new_hints = {h.lower() for h in hints if h.lower() in known}
+        additions = (new_cats | new_hints) - existing
+        if additions:
+            changes["add_categories"] = additions
 
     # 2. Activity removals
-    removals_raw = router_output.get("removal_targets", [])
-    if removals_raw:
-        removals = {r.lower() for r in removals_raw if r.lower() in known}
-        if removals:
-            changes["remove_categories"] = removals
+    if allow_category_modifications:
+        removals_raw = router_output.get("removal_targets", [])
+        if removals_raw:
+            removals = {r.lower() for r in removals_raw if r.lower() in known}
+            if removals:
+                changes["remove_categories"] = removals
 
     # 3. Skill level
     skill = router_output.get("skill_level")
@@ -322,6 +344,51 @@ def _collect_modifications_from_extraction(
         changes["reset_hotel"] = True
 
     return changes if changes else None
+
+
+def has_explicit_category_intent(
+    user_text: str,
+    router_output: Optional[dict] = None,
+) -> bool:
+    """Return True when this turn explicitly intends to mutate activity categories."""
+    text = (user_text or "").lower().strip()
+    if not text:
+        return False
+
+    known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALIST_NAMES
+    if any(re.search(rf"\b{re.escape(category)}\b", text) for category in known):
+        return True
+
+    extracted: set[str] = set()
+    if router_output:
+        extracted = {
+            c.lower()
+            for c in (router_output.get("activity_categories") or [])
+            if c and c.lower() in known
+        } | {
+            s.lower()
+            for s in (router_output.get("specialist_hints") or [])
+            if s and s.lower() in known
+        }
+
+    if not extracted:
+        return False
+
+    if "?" not in text and len(text.split()) <= 3:
+        return True
+
+    return any(pattern.search(text) for pattern in _CATEGORY_INTENT_PATTERNS)
+
+
+def detect_category_merge_mode(user_text: str, router_output: Optional[dict] = None) -> str:
+    """Return category merge mode for this turn: 'add' (default) or 'replace'."""
+    text = (user_text or "").lower()
+    if not has_explicit_category_intent(user_text, router_output):
+        return "add"
+    for pattern in _CATEGORY_REPLACE_PATTERNS:
+        if pattern.search(text):
+            return "replace"
+    return "add"
 
 
 def _get_current_categories(state: "GraphState") -> list:
@@ -382,7 +449,7 @@ def _collect_settings_from_extraction(router_output: dict) -> Optional[dict]:
 # ============================================================================
 
 
-def detect_planning_intent(text: str, state: "GraphState") -> str:
+def detect_planning_intent(text: str, _state: "GraphState") -> str:
     """
     Detect if user is ready to plan or still exploring.
 
@@ -419,6 +486,46 @@ def detect_planning_intent(text: str, state: "GraphState") -> str:
 # ============================================================================
 
 
+def _estimate_prefetch_tiles_per_category(state: "GraphState", categories: set[str]) -> int:
+    """Estimate tiles/category so router prefetch cache keys match logistics generation."""
+    plan = state.trip_plan
+    if not plan.start_date or not plan.end_date or not categories:
+        return 2
+
+    try:
+        start = datetime.strptime(plan.start_date, "%Y-%m-%d")
+        end = datetime.strptime(plan.end_date, "%Y-%m-%d")
+        trip_days = (end - start).days + 1
+    except ValueError:
+        return 2
+
+    specialist_days = 0
+    for section in state.metadata.get("strategy_sections", []):
+        if section.get("specialist_type", "") in ("local_expert", "general"):
+            continue
+        specialist_days += len(section.get("content_added", []))
+
+    free_days = max(0, trip_days - specialist_days - 2)
+    total_placeable = free_days + specialist_days
+    per_category = total_placeable // len(categories)
+    return max(2, min(4, per_category))
+
+
+def _tier2_prefetch_key(
+    destination: str,
+    month: str,
+    categories: set[str],
+    tiles_per_category: int,
+) -> str:
+    normalized_destination = (destination or "").strip().lower()
+    normalized_month = (month or "").strip().lower()
+    normalized_categories = "|".join(sorted(c.strip().lower() for c in categories if c.strip()))
+    return (
+        f"tier2:{normalized_destination}:{normalized_month}:"
+        f"{normalized_categories}:n{tiles_per_category}"
+    )
+
+
 def _prefetch_tier2_experiences(state: "GraphState", categories: set[str]) -> None:
     """Start Tier 2 experience generation speculatively to mask latency.
 
@@ -435,7 +542,13 @@ def _prefetch_tier2_experiences(state: "GraphState", categories: set[str]) -> No
         return
 
     month = str(plan.start_date)[:7] if plan.start_date else ""
-    tiles_per_category = 2  # Logistics refines this based on trip length
+    tiles_per_category = _estimate_prefetch_tiles_per_category(state, categories)
+    prefetch_key = _tier2_prefetch_key(
+        plan.destination or "",
+        month,
+        categories,
+        tiles_per_category,
+    )
 
     log(
         "ROUTER",
@@ -456,16 +569,34 @@ def _prefetch_tier2_experiences(state: "GraphState", categories: set[str]) -> No
 
     # Add exception handler to surface errors from fire-and-forget task
     def _log_task_exception(t: asyncio.Task) -> None:
-        if t.exception():
-            import logging
+        import logging
 
-            logger = logging.getLogger(__name__)
+        logger = logging.getLogger(__name__)
+
+        if t.cancelled():
+            logger.info("[PREFETCH] Task cancelled before completion")
+            return
+
+        try:
+            exc = t.exception()
+        except asyncio.CancelledError:
+            logger.info("[PREFETCH] Task cancelled while collecting result")
+            return
+
+        if exc is not None:
             logger.error(
-                f"[PREFETCH] Task failed with exception: {t.exception()}",
-                exc_info=t.exception(),
+                "[PREFETCH] Task failed with exception: %s",
+                exc,
+                exc_info=exc,
             )
 
     task.add_done_callback(_log_task_exception)
 
     state.metadata["tier2_prefetch_task"] = task
     state.metadata["tier2_prefetch_categories"] = list(categories)
+    state.metadata["tier2_prefetch_tiles_per_category"] = tiles_per_category
+    state.metadata["tier2_prefetch_started_at"] = time.time()
+    state.metadata["tier2_prefetch_destination"] = plan.destination
+    state.metadata["tier2_prefetch_month"] = month
+    state.metadata["tier2_prefetch_key"] = prefetch_key
+    state.metadata["tier2_prefetch_intent"] = "activity"

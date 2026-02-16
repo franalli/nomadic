@@ -68,7 +68,7 @@ def _compute_plan_view_state(state: GraphState) -> str:
     State machine:
     - S0_BOOTSTRAP: Setup checklist, no specialist content yet.
     - S2_STRATEGY_READY: Strategy preview (specialist content) OR full logistics (tiles).
-    - S3_*: Itinerary states (handled by expand-itinerary endpoint)
+    - S3_*: Itinerary states (promoted after shadow itinerary build when day cards exist)
 
     Bridge State: Promotes to S2 when specialist content exists (even without dates/tiles)
     to show Strategy Cards + Sample Day Flow + POI Map immediately.
@@ -757,7 +757,7 @@ def _build_response_envelope(
 
 def format_result(
     state: GraphState,
-    original_session_state: Optional[Dict[str, Any]] = None,
+    _original_session_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Format result state for main.py response."""
     from app.debug_utils import _debug_log
@@ -812,65 +812,119 @@ def format_result(
     # turn can decide whether to suppress cross-domain violations. If the builder
     # failed (trip too short), the guard re-surfaces the violation for the synthesizer.
     itinerary_day_cards = None
+    itinerary_cache_key = (
+        f"{state.trip_plan.destination or ''}|"
+        f"{state.trip_plan.start_date or ''}|"
+        f"{state.trip_plan.end_date or ''}"
+    )
     if plan_view_state == "S2_STRATEGY_READY" and not has_blocking:
-        try:
-            from app.planner.services.itinerary_adapter import build_itinerary_from_state
+        short_circuit_type = state.metadata.get("short_circuit_type")
+        can_reuse_cached_itinerary = short_circuit_type in {"question_answer", "exploration"}
+        cached_day_cards = state.metadata.get("last_itinerary_day_cards")
+        cached_view_state = state.metadata.get("last_itinerary_view_state")
+        cached_key = state.metadata.get("last_itinerary_cache_key")
 
-            # Re-inject user-pinned tiles into tile pool so builder can place them.
-            # Must happen AFTER logistics suppression — pinned tiles are user intent.
-            pinned_tiles = state.metadata.get("user_pinned_tiles", {})
-            if pinned_tiles:
-                existing_ids: set = set()
-                for cat_tiles in state.tiles.values():
-                    if isinstance(cat_tiles, list):
-                        for t in cat_tiles:
-                            if isinstance(t, dict):
-                                existing_ids.add(t.get("id"))
-                for tid, pinned in pinned_tiles.items():
-                    if tid not in existing_ids:
-                        tile_data = pinned.get("tile", pinned)
-                        cat = pinned.get("category", "activities")
-                        state.tiles.setdefault(cat, []).append(tile_data)
+        if (
+            can_reuse_cached_itinerary
+            and isinstance(cached_day_cards, list)
+            and cached_day_cards
+            and cached_key == itinerary_cache_key
+        ):
+            itinerary_day_cards = cached_day_cards
+            if isinstance(cached_view_state, str) and cached_view_state.startswith("S3"):
+                plan_view_state = cached_view_state
+                state.metadata["plan_view_state"] = plan_view_state
+            state.metadata["last_builder_success"] = True
+            _debug_log(
+                "[format_result] Reused cached itinerary_day_cards "
+                f"(short_circuit_type={short_circuit_type}, cards={len(cached_day_cards)})"
+            )
+        else:
+            try:
+                from app.planner.services.itinerary_adapter import build_itinerary_from_state
 
-            result = build_itinerary_from_state(state)
-            if result and result.success:
-                itinerary_day_cards = [dc.model_dump() for dc in result.day_cards]
-                state.metadata["last_builder_success"] = True
-                # Track drop ratio for guard suppression accuracy
-                if result.total_activities_input > 0:
-                    state.metadata["last_builder_drop_ratio"] = 1.0 - (
-                        result.total_activities_placed / result.total_activities_input
-                    )
+                # Re-inject user-pinned tiles into tile pool so builder can place them.
+                # Must happen AFTER logistics suppression — pinned tiles are user intent.
+                pinned_tiles = state.metadata.get("user_pinned_tiles", {})
+                if pinned_tiles:
+                    existing_ids: set = set()
+                    for cat_tiles in state.tiles.values():
+                        if isinstance(cat_tiles, list):
+                            for t in cat_tiles:
+                                if isinstance(t, dict):
+                                    existing_ids.add(t.get("id"))
+                    for tid, pinned in pinned_tiles.items():
+                        if tid not in existing_ids:
+                            tile_data = pinned.get("tile", pinned)
+                            cat = pinned.get("category", "activities")
+                            state.tiles.setdefault(cat, []).append(tile_data)
+
+                result = build_itinerary_from_state(state)
+                if result and result.success:
+                    itinerary_day_cards = [dc.model_dump() for dc in result.day_cards]
+                    # Keep graph completion state consistent with emitted payload.
+                    plan_view_state = "S3_EDITING" if result.conflicts else "S3_ITINERARY_READY"
+                    state.metadata["plan_view_state"] = plan_view_state
+                    state.metadata["last_builder_success"] = True
+                    state.metadata["last_itinerary_day_cards"] = itinerary_day_cards
+                    state.metadata["last_itinerary_view_state"] = plan_view_state
+                    state.metadata["last_itinerary_cache_key"] = itinerary_cache_key
+                    # Track drop ratio for guard suppression accuracy
+                    if result.total_activities_input > 0:
+                        state.metadata["last_builder_drop_ratio"] = 1.0 - (
+                            result.total_activities_placed / result.total_activities_input
+                        )
+                    else:
+                        state.metadata["last_builder_drop_ratio"] = 0.0
+                    # Persist counts for synthesizer drop reporting
+                    state.metadata["builder_activities_input"] = result.total_activities_input
+                    state.metadata["builder_activities_placed"] = result.total_activities_placed
+                    # Surface post-placement conflicts for synthesizer
+                    if result.conflicts:
+                        state.metadata["builder_conflicts"] = [
+                            {
+                                "day": c.day if hasattr(c, "day") else None,
+                                "type": c.type,
+                                "severity": (
+                                    c.severity.value
+                                    if hasattr(c.severity, "value")
+                                    else str(c.severity)
+                                ),
+                                "message": c.message,
+                            }
+                            for c in result.conflicts
+                        ]
+                        state.metadata["constraint_violations"] = [
+                            {
+                                "code": c.type.upper(),
+                                "message": c.message,
+                                "severity": (
+                                    c.severity.value
+                                    if hasattr(c.severity, "value")
+                                    else str(c.severity)
+                                ),
+                                "category": "itinerary",
+                                "rule": c.type,
+                            }
+                            for c in result.conflicts
+                        ]
                 else:
-                    state.metadata["last_builder_drop_ratio"] = 0.0
-                # Persist counts for synthesizer drop reporting
-                state.metadata["builder_activities_input"] = result.total_activities_input
-                state.metadata["builder_activities_placed"] = result.total_activities_placed
-                # Surface post-placement conflicts for synthesizer
-                if result.conflicts:
-                    state.metadata["builder_conflicts"] = [
-                        {
-                            "day": c.day if hasattr(c, "day") else None,
-                            "type": c.type,
-                            "severity": (
-                                c.severity.value
-                                if hasattr(c.severity, "value")
-                                else str(c.severity)
-                            ),
-                            "message": c.message,
-                        }
-                        for c in result.conflicts
-                    ]
-            else:
+                    state.metadata["last_builder_success"] = False
+                    state.metadata["last_builder_drop_ratio"] = 1.0
+                    if result and result.conflicts and result.day_cards:
+                        itinerary_day_cards = [dc.model_dump() for dc in result.day_cards]
+                        plan_view_state = "S3_PARTIAL_CONFLICT"
+                        state.metadata["plan_view_state"] = plan_view_state
+                        state.metadata["last_itinerary_day_cards"] = itinerary_day_cards
+                        state.metadata["last_itinerary_view_state"] = plan_view_state
+                        state.metadata["last_itinerary_cache_key"] = itinerary_cache_key
+                    if result and result.resolutions:
+                        state.metadata["last_builder_resolutions"] = [
+                            r.model_dump() for r in result.resolutions
+                        ]
+            except Exception as e:
+                logger.warning(f"[format_result] Itinerary build failed (shadow): {e}")
                 state.metadata["last_builder_success"] = False
-                state.metadata["last_builder_drop_ratio"] = 1.0
-                if result and result.resolutions:
-                    state.metadata["last_builder_resolutions"] = [
-                        r.model_dump() for r in result.resolutions
-                    ]
-        except Exception as e:
-            logger.warning(f"[format_result] Itinerary build failed (shadow): {e}")
-            state.metadata["last_builder_success"] = False
     elif has_blocking:
         # Shadow build skipped due to blocking violations — builder can't enforce
         state.metadata["last_builder_success"] = False

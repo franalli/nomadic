@@ -30,6 +30,7 @@ import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 // TileFilterBar hidden for demo - re-enable post-launch
 import { type TileFilters } from '@/components/tiles/TileFilterBar';
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
+import { debugLog } from '@/lib/debug';
 import { getActiveSpecialists } from '@/lib/specialist-utils';
 import { activityMatchesSpecialist as registryMatch } from '@/lib/specialists';
 import { getTotalTileCount, isBookableActivityTile, normalizeTileType, selectTilesByType } from '@/lib/tileSelectors';
@@ -468,7 +469,7 @@ export function BookingSection({
                         isInCart={cartTileIds.has(tile.id)}
                         onBook={(t, partner) => {
                           // External booking redirect would happen here
-                          console.log('Book', t.id, 'via', partner);
+                          debugLog('Book', t.id, 'via', partner);
                         }}
                         onCartToggle={onCartToggle}
                         onDetailsClick={handleDetailsClick}

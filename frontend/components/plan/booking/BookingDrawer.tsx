@@ -13,6 +13,7 @@ import { Package, X } from 'lucide-react';
 
 import { MiniCard } from '@/components/tiles/MiniCard';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { debugLog } from '@/lib/debug';
 import { isBookableActivityTile, normalizeTileType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
@@ -52,9 +53,9 @@ function filterTilesByCategory(tiles: Record<string, Tile>, category: 'hotel' | 
 
   // DEBUG: Log tile type distribution to help diagnose "0 options" issue
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[BookingDrawer] Category: ${category}, Total tiles: ${all.length}, Matched: ${filtered.length}`);
+    debugLog(`[BookingDrawer] Category: ${category}, Total tiles: ${all.length}, Matched: ${filtered.length}`);
     if (filtered.length === 0 && all.length > 0) {
-      console.log('[BookingDrawer] All types:', all.map(t => `${t.id}: "${t.type}"`));
+      debugLog('[BookingDrawer] All types:', all.map(t => `${t.id}: "${t.type}"`));
     }
   }
 
