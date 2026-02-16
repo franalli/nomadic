@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 import { debugLog } from '@/lib/debug';
 import { useDocumentStore } from '@/state/documentStore';
 

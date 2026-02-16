@@ -188,6 +188,200 @@ def test_ground_flight_response_removes_hallucinated_counts_and_prompts_origin()
     assert "departure city" in grounded
 
 
+def test_ground_flight_response_corrects_hotel_activity_count_claims() -> None:
+    state = _new_state()
+    state.tiles = {
+        "hotels": [{"id": "h1"}],
+        "activities": [{"id": "a1"}, {"id": "a2"}, {"id": "a3"}],
+        "flights": [],
+    }
+
+    grounded = _ground_flight_response(
+        "Updated your plan. Found **1 hotel** and **8 activities**.",
+        state,
+    )
+
+    assert "8 activities" not in grounded
+    assert "Found **1 hotel** and **3 activities**." in grounded
+
+
+def test_ground_flight_response_appends_date_adjustment_note() -> None:
+    state = _new_state(
+        metadata={
+            "date_auto_adjustments": [
+                {
+                    "field": "start_date",
+                    "from": "2026-02-15",
+                    "to": "2027-02-15",
+                    "reason": "past_date_auto_bumped",
+                },
+                {
+                    "field": "end_date",
+                    "from": "2026-02-25",
+                    "to": "2027-02-25",
+                    "reason": "preserve_range_after_start_bump",
+                },
+            ]
+        }
+    )
+    state.tiles = {"hotels": [{"id": "h1"}], "activities": [], "flights": []}
+
+    grounded = _ground_flight_response("Plan updated.", state)
+
+    assert "2026-02-15 -> 2027-02-15" in grounded
+    assert "2026-02-25 -> 2027-02-25" in grounded
+
+
+def test_ground_flight_response_skips_date_adjustment_note_when_new_dates_present() -> None:
+    state = _new_state(
+        metadata={
+            "date_auto_adjustments": [
+                {
+                    "field": "start_date",
+                    "from": "2026-02-15",
+                    "to": "2027-02-15",
+                    "reason": "past_date_auto_bumped",
+                },
+                {
+                    "field": "end_date",
+                    "from": "2026-02-25",
+                    "to": "2027-02-25",
+                    "reason": "preserve_range_after_start_bump",
+                },
+            ]
+        }
+    )
+    state.tiles = {"hotels": [], "activities": [], "flights": []}
+
+    grounded = _ground_flight_response(
+        "Trip locked for **2027-02-15** to **2027-02-25**.",
+        state,
+    )
+
+    assert "Adjusted past dates to future dates" not in grounded
+    assert "2026-02-15 -> 2027-02-15" not in grounded
+
+
+def test_ground_flight_response_skips_date_adjustment_note_for_human_date_range() -> None:
+    state = _new_state(
+        metadata={
+            "date_auto_adjustments": [
+                {
+                    "field": "start_date",
+                    "from": "2026-02-15",
+                    "to": "2027-02-15",
+                    "reason": "past_date_auto_bumped",
+                },
+                {
+                    "field": "end_date",
+                    "from": "2026-02-25",
+                    "to": "2027-02-25",
+                    "reason": "preserve_range_after_start_bump",
+                },
+            ]
+        }
+    )
+    state.tiles = {"hotels": [{"id": "h1"}], "activities": [{"id": "a1"}], "flights": []}
+
+    grounded = _ground_flight_response(
+        (
+            "Your Bali itinerary is all set for February 15-25, 2027. "
+            "Found **1 hotel** and **1 activity**."
+        ),
+        state,
+    )
+
+    assert "Adjusted past dates to future dates" not in grounded
+    assert "2026-02-15 -> 2027-02-15" not in grounded
+
+
+def test_ground_flight_response_strips_disallowed_activity_claim_fragment() -> None:
+    state = _new_state(
+        metadata={
+            "trip_inputs": {
+                "activity_settings": {
+                    "categories": ["diving", "surfing", "nightlife", "yoga"],
+                }
+            }
+        }
+    )
+    state.tiles = {
+        "activities": [
+            {"id": "a1", "title": "Sunset Yoga at Canggu", "meta": {"category": "yoga"}},
+            {"id": "a2", "title": "Seminyak Nightlife Crawl", "meta": {"category": "nightlife"}},
+        ]
+    }
+
+    grounded = _ground_flight_response(
+        (
+            "Extended by **5 days** to **Mar 2**, adding **West Bali National Park** "
+            "to the hiking days."
+        ),
+        state,
+    )
+
+    assert "Extended by **5 days** to **Mar 2**" in grounded
+    assert "West Bali National Park" not in grounded
+    assert "hiking" not in grounded.lower()
+
+
+def test_ground_flight_response_corrects_activity_category_count_claims() -> None:
+    state = _new_state(
+        metadata={
+            "trip_inputs": {
+                "activity_settings": {
+                    "categories": ["diving", "surfing", "nightlife", "yoga"],
+                }
+            }
+        }
+    )
+    state.tiles = {
+        "activities": [
+            {"id": "a1", "title": "Sunset Yoga at Canggu", "meta": {"category": "yoga"}},
+            {"id": "a2", "title": "Beachfront Yoga Flow", "meta": {"category": "yoga"}},
+            {"id": "a3", "title": "Seminyak Nightlife Crawl", "meta": {"category": "nightlife"}},
+            {"id": "a4", "title": "Canggu Live Music Night", "meta": {"category": "nightlife"}},
+            {"id": "a5", "title": "Kuta Rooftop Bar Hop", "meta": {"category": "nightlife"}},
+            {"id": "a6", "title": "Uluwatu Late-Night Set", "meta": {"category": "nightlife"}},
+            {"id": "a7", "title": "Morning Yoga at Ubud", "meta": {"category": "yoga"}},
+            {"id": "a8", "title": "Sunset Yoga by the Cliffs", "meta": {"category": "yoga"}},
+        ]
+    }
+
+    grounded = _ground_flight_response(
+        "Added **8 nightlife spots** and **8 yoga sessions**.",
+        state,
+    )
+
+    assert grounded == "Added **4 nightlife spots** and **4 yoga sessions**."
+
+
+def test_ground_flight_response_strips_unknown_added_entity_claim() -> None:
+    state = _new_state(
+        metadata={
+            "trip_inputs": {
+                "activity_settings": {
+                    "categories": ["diving", "surfing"],
+                }
+            }
+        }
+    )
+    state.tiles = {
+        "activities": [
+            {"id": "a1", "title": "USAT Liberty Wreck Dive", "meta": {"category": "diving"}},
+            {"id": "a2", "title": "Manta Point Dive", "meta": {"category": "diving"}},
+        ]
+    }
+
+    grounded = _ground_flight_response(
+        "Extended by **5 days** to **Mar 2**, adding **West Bali National Park**.",
+        state,
+    )
+
+    assert "Extended by **5 days** to **Mar 2**" in grounded
+    assert "West Bali National Park" not in grounded
+
+
 @pytest.mark.asyncio
 async def test_synthesizer_settings_only_uses_terse_ack_without_llm(
     monkeypatch: pytest.MonkeyPatch,
@@ -301,3 +495,50 @@ async def test_synthesizer_tracks_llm_tokens_in_compact_logger_metrics(
     assert node_tokens is not None
     assert node_tokens.prompt == 123
     assert node_tokens.completion == 45
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_specialist_update_strips_day_recap_fragment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _new_state(
+        metadata={
+            "settings_just_updated": True,
+            "constraint_violations": [],
+            "added_categories": [],
+            "tier2_tiles_generated": True,
+            "tier2_new_content_generated": True,
+            "_planning_response_given": True,
+        },
+        last_human="extend by 5 days",
+    )
+    state.trip_plan.start_date = "2027-02-15"
+    state.trip_plan.end_date = "2027-03-02"
+    state.tiles = {
+        "hotels": [{"id": "h1"}],
+        "activities": [{"id": "a1"}, {"id": "a2"}],
+        "flights": [],
+    }
+
+    async def _fake_enrich_with_images(_state: GraphState) -> None:
+        return None
+
+    async def _fake_synthesize_with_llm(_state: GraphState, _response_type: str):
+        return (
+            (
+                "Your trip now extends to **March 2**, allowing more time to enjoy "
+                "**3 days of diving** and **2 days of surfing**. "
+                "Found **1 hotel** and **2 activities**."
+            ),
+            {"model": "gemini-2.5-flash", "prompt_tokens": 10, "completion_tokens": 10},
+        )
+
+    monkeypatch.setattr(synthesizer_module, "enrich_with_images", _fake_enrich_with_images)
+    monkeypatch.setattr(synthesizer_module, "synthesize_with_llm", _fake_synthesize_with_llm)
+    monkeypatch.setattr(synthesizer_module, "generate_suggestions", lambda _state: [])
+
+    await synthesizer_module.synthesizer(state)
+
+    assert "3 days of diving" not in state.last_summary
+    assert "2 days of surfing" not in state.last_summary
+    assert "extends to **March 2**" in state.last_summary

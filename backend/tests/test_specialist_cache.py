@@ -15,14 +15,14 @@ class TestCacheKeyGeneration:
     def test_basic_key(self):
         """Test cache key format with month + duration bucket + day_pref.
 
-        Format: specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{dpref}:{phash}.
+        Format: specialist::v2::{topic}::{dest}::{month}::{bucket}::{skill}::{dpref}::{phash}.
         """
         from app.services.specialist_cache import _specialist_cache_key
 
         key = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-20")
         # 6 days = "week" bucket
-        assert key.startswith("specialist:diving:bali:2025-03:week:any:dpany:")
-        assert len(key.split(":")) == 8  # 8 segments
+        assert key.startswith("specialist::v2::diving::bali::2025-03::week::any::dpany::")
+        assert len(key.split("::")) == 9  # 9 segments
 
     def test_normalized_destination(self):
         """Test destination is normalized (lowercase, trimmed)."""
@@ -250,12 +250,21 @@ class TestL2DatabaseCache:
 
     @pytest.fixture
     async def async_db_session(self):
-        """Create async database session for testing."""
-        from app.db import _get_async_session_factory
+        """Create async database session for testing.
 
-        factory = _get_async_session_factory()
+        Resets the cached engine/factory so each test gets a fresh
+        connection bound to the current event loop.
+        """
+        import app.db as db_mod
+
+        db_mod._async_engine = None
+        db_mod._async_session_factory = None
+        factory = db_mod._get_async_session_factory()
         async with factory() as session:
             yield session
+        await db_mod._async_engine.dispose()
+        db_mod._async_engine = None
+        db_mod._async_session_factory = None
 
     async def test_cache_miss_returns_none(self, async_db_session):
         """Test cache miss returns None."""
@@ -282,6 +291,7 @@ class TestL2DatabaseCache:
 
         from app.db_models import ResponseCache
         from app.services.specialist_cache import (
+            _specialist_cache_key,
             clear_memory_cache,
             get_cached_specialist_output,
             set_cached_specialist_output,
@@ -294,10 +304,16 @@ class TestL2DatabaseCache:
         test_dest = "test_bali"
         test_start = "2099-12-01"
         test_end = "2099-12-14"
+        test_cache_key = _specialist_cache_key(
+            test_topic,
+            test_dest,
+            test_start,
+            test_end,
+        )
 
         # Clean up any existing test data
         await async_db_session.execute(
-            delete(ResponseCache).where(ResponseCache.cache_key.like(f"specialist:{test_topic}:%"))
+            delete(ResponseCache).where(ResponseCache.cache_key == test_cache_key)
         )
         await async_db_session.commit()
 
@@ -366,7 +382,7 @@ class TestL2DatabaseCache:
 
         # Cleanup
         await async_db_session.execute(
-            delete(ResponseCache).where(ResponseCache.cache_key.like(f"specialist:{test_topic}:%"))
+            delete(ResponseCache).where(ResponseCache.cache_key == test_cache_key)
         )
         await async_db_session.commit()
         clear_memory_cache()

@@ -60,7 +60,7 @@ You NEVER modify files — only read and report.
 - [ ] Cross-domain: `ALTITUDE_AFTER_DIVE` blocks hiking/skiing/climbing within 24h of diving
 - [ ] Fill-day adjacent-day checks only treat `specialist_type='diving'` as authoritative when block content/constraints indicate real diving context (avoid false positives from mis-labeled generic blocks)
 - [ ] `route_after_guard()` short-circuits unfixable errors (route, specialist) to synthesizer
-- [ ] Auto-fix loop limited to `retry_count < 1` (single retry)
+- [ ] Auto-fix loop disabled — `route_after_guard()` always routes to synthesizer (architect retry path intentionally disabled)
 - [ ] Severity hierarchy: blocking > warning > info
 - [ ] `ConstraintViolation` carries: code, message, severity, category, suggested_action, conflicting_specialists, suggested_specialist
 - [ ] Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5` — dropping ≥50% re-surfaces the violation
@@ -93,8 +93,8 @@ You NEVER modify files — only read and report.
 
 ### 7. API Contract Compliance
 
-- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 3/min;15/hr for non-stream graph_plan and remove-specialist, 20/min;120/hr for graph_plan/stream, 20/min for expand-itinerary (builder-only, no LLM), 30/min for fill-day, Medium: 10-15/min for validation/metadata, Light: 60/min for reads)
-- [ ] Streaming: SSE for graph_plan, NDJSON for expand-itinerary/remove-specialist
+- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 20/min;120/hr for graph_plan/stream, 20/min for expand-itinerary (builder-only, no LLM), 30/min for fill-day, Medium: 10-15/min for validation/metadata, Light: 60/min for reads)
+- [ ] Streaming: SSE for graph_plan, NDJSON for expand-itinerary
 - [ ] CSRF token required on unsafe methods (POST/PUT/PATCH/DELETE)
 - [ ] Body size limit: 512KB max
 - [ ] Admin endpoints gated by `X-Admin-Key` header
@@ -111,7 +111,7 @@ You NEVER modify files — only read and report.
 
 - [ ] L1 cache keys include all relevant dimensions (destination, dates/month, skill level, categories)
 - [ ] L2 cache writes use correct `cache_type` column value (specialist, experience, tiles)
-- [ ] Router cache: `SHA256({normalized_text}:{today_date})[:32]` format preserved
+- [ ] Router cache: `router::v2::SHA256({normalized_text}:{today_date})[:32]` format preserved
 - [ ] Cache invalidation on constraint-relevant field changes (destination, dates, categories trigger stale content clear)
 - [ ] `_clear_stale_specialist_content()` called on constraint hash mismatch
 

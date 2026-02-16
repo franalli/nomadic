@@ -17,19 +17,23 @@ export function TimelineSkeleton() {
       {[1, 2, 3].map((i) => (
         <div
           key={i}
-          className="relative z-10 pl-10"
-          style={{ animationDelay: `${i * 150}ms` }}
+          className={cn(
+            'relative z-10 pl-10',
+            i === 1 && '[animation-delay:150ms]',
+            i === 2 && '[animation-delay:300ms]',
+            i === 3 && '[animation-delay:450ms]',
+          )}
         >
           {/* Day Header Bead - pulsing ring */}
           <div className="absolute -left-[1px] top-1">
             <div className="w-9 h-9 rounded-full bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
-            <div className="absolute inset-0 w-9 h-9 rounded-full ring-2 ring-emerald-500/20 animate-ping" style={{ animationDuration: '2s' }} />
+            <div className="absolute inset-0 w-9 h-9 rounded-full ring-2 ring-emerald-500/20 animate-ping [animation-duration:2s]" />
           </div>
 
           {/* Day Label with shimmer */}
           <div className="mb-3 space-y-2">
             <div className={cn('h-5 w-24 rounded', shimmerClasses)} />
-            <div className={cn('h-3 w-36 rounded', shimmerClasses)} style={{ animationDelay: '100ms' }} />
+            <div className={cn('h-3 w-36 rounded [animation-delay:100ms]', shimmerClasses)} />
           </div>
 
           {/* Content Card with shimmer stripes */}
@@ -40,8 +44,8 @@ export function TimelineSkeleton() {
             {/* Skeleton content */}
             <div className="p-4 space-y-3">
               <div className={cn('h-4 w-3/4 rounded', shimmerClasses)} />
-              <div className={cn('h-3 w-1/2 rounded', shimmerClasses)} style={{ animationDelay: '150ms' }} />
-              <div className={cn('h-3 w-2/3 rounded', shimmerClasses)} style={{ animationDelay: '300ms' }} />
+              <div className={cn('h-3 w-1/2 rounded [animation-delay:150ms]', shimmerClasses)} />
+              <div className={cn('h-3 w-2/3 rounded [animation-delay:300ms]', shimmerClasses)} />
             </div>
 
             {/* Building indicator */}
@@ -57,9 +61,9 @@ export function TimelineSkeleton() {
       <div className="text-center pt-4 pb-2">
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-100 dark:bg-zinc-800/50">
           <div className="flex gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce [animation-delay:0ms]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce [animation-delay:150ms]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce [animation-delay:300ms]" />
           </div>
           <span className="text-xs text-zinc-500 dark:text-zinc-400">
             Creating your personalized itinerary

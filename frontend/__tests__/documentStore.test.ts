@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * documentStore Critical Path Tests
  *

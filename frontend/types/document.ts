@@ -15,7 +15,6 @@ import type {
   Conflict,
   DayCard,
   DestinationCard,
-  GenerationState,
   ItineraryAssumptions,
   ItineraryOverview,
   OpenDecision,
@@ -240,9 +239,6 @@ export type PlanDocumentData = {
 
   /** User-pinned tiles persisted by backend for fill-day survival across rebuilds */
   user_pinned_tiles?: Record<string, unknown>;
-
-  /** Frontend-managed generation overlay (may be absent from backend document payloads) */
-  generation?: GenerationState;
 
   /** Origin update flag - frontend should trigger flight fetch when true */
   origin_just_set?: boolean;

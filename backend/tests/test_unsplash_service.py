@@ -42,7 +42,9 @@ def test_get_image_url_sync_cache_miss_uses_unsplash_placeholder() -> None:
 
 def test_get_image_url_sync_uses_activity_cache_for_destination_lookup() -> None:
     # Simulate specialist/activity prefetch key present, but base destination key absent.
-    unsplash._memory_cache["bali:diving:0"] = unsplash.UnsplashImage(image_id="abc123")
+    unsplash._memory_cache[unsplash._cache_key("Bali", 0, ["diving"])] = unsplash.UnsplashImage(
+        image_id="abc123"
+    )
 
     url = unsplash.get_image_url_sync("Bali", variant=0)
 
@@ -51,7 +53,9 @@ def test_get_image_url_sync_uses_activity_cache_for_destination_lookup() -> None
 
 
 def test_get_cached_image_url_uses_activity_cache_for_destination_lookup() -> None:
-    unsplash._memory_cache["bali:surfing:2"] = unsplash.UnsplashImage(image_id="def456")
+    unsplash._memory_cache[unsplash._cache_key("Bali", 2, ["surfing"])] = unsplash.UnsplashImage(
+        image_id="def456"
+    )
 
     url = unsplash.get_cached_image_url("Bali", variant=2)
 
@@ -61,7 +65,9 @@ def test_get_cached_image_url_uses_activity_cache_for_destination_lookup() -> No
 
 def test_get_image_url_sync_activity_lookup_uses_destination_cache() -> None:
     # Simulate destination prefetch key present, but activity key absent.
-    unsplash._memory_cache["bali:1"] = unsplash.UnsplashImage(image_id="ghi789")
+    unsplash._memory_cache[unsplash._cache_key("Bali", 1)] = unsplash.UnsplashImage(
+        image_id="ghi789"
+    )
 
     url = unsplash.get_image_url_sync("Bali", variant=1, activities=["diving"])
 
@@ -70,7 +76,9 @@ def test_get_image_url_sync_activity_lookup_uses_destination_cache() -> None:
 
 
 def test_get_cached_image_url_activity_lookup_uses_destination_cache() -> None:
-    unsplash._memory_cache["bali:4"] = unsplash.UnsplashImage(image_id="jkl012")
+    unsplash._memory_cache[unsplash._cache_key("Bali", 4)] = unsplash.UnsplashImage(
+        image_id="jkl012"
+    )
 
     url = unsplash.get_cached_image_url("Bali", variant=4, activities=["surfing"])
 
@@ -102,7 +110,9 @@ async def test_get_image_for_destination_uses_memory_cache_after_first_fetch(
 async def test_get_image_for_destination_activity_lookup_uses_destination_memory_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    unsplash._memory_cache["bali:0"] = unsplash.UnsplashImage(image_id="mno345")
+    unsplash._memory_cache[unsplash._cache_key("Bali", 0)] = unsplash.UnsplashImage(
+        image_id="mno345"
+    )
     fetch_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(unsplash, "_fetch_variants_from_unsplash", fetch_mock)
 

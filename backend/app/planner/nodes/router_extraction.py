@@ -14,7 +14,7 @@ import logging
 import re
 from calendar import monthrange
 from datetime import datetime, timedelta
-from typing import List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
@@ -252,6 +252,13 @@ class RouterOutput(BaseModel):
             "weather, safety, costs, visa, transport, cultural, activities, "
             "accommodation, scams, packing, connectivity, money, couples, family. "
             "null if not a destination question."
+        ),
+    )
+    date_auto_adjustments: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "Any date corrections applied by backend validation. "
+            "Each item has field/from/to/reason."
         ),
     )
 
@@ -599,37 +606,101 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
                 logger.warning(f"Invalid {date_field} format: {extracted[date_field]}")
                 extracted[date_field] = None
 
-    # Validate date logic (end >= start)
-    if extracted.get("start_date") and extracted.get("end_date"):
-        start = datetime.strptime(extracted["start_date"], "%Y-%m-%d")
-        end = datetime.strptime(extracted["end_date"], "%Y-%m-%d")
-        if end < start:
-            logger.warning("end_date before start_date, swapping")
-            extracted["start_date"], extracted["end_date"] = (
-                extracted["end_date"],
-                extracted["start_date"],
-            )
+    # Parse valid date objects once for range normalization.
+    start_date_obj: Optional[datetime.date] = None
+    end_date_obj: Optional[datetime.date] = None
+    date_auto_adjustments: list[dict[str, str]] = []
+    if extracted.get("start_date"):
+        start_date_obj = datetime.strptime(extracted["start_date"], "%Y-%m-%d").date()
+    if extracted.get("end_date"):
+        end_date_obj = datetime.strptime(extracted["end_date"], "%Y-%m-%d").date()
+
+    # Validate initial date logic (end >= start)
+    if start_date_obj and end_date_obj and end_date_obj < start_date_obj:
+        logger.warning("end_date before start_date, swapping")
+        start_date_obj, end_date_obj = end_date_obj, start_date_obj
+        extracted["start_date"] = start_date_obj.isoformat()
+        extracted["end_date"] = end_date_obj.isoformat()
+
+    def _bump_year_safe(date_value: datetime.date) -> datetime.date:
+        target_year = date_value.year + 1
+        max_day = monthrange(target_year, date_value.month)[1]
+        return date_value.replace(year=target_year, day=min(date_value.day, max_day))
+
+    def _auto_bump_past_date(
+        *,
+        field_name: str,
+        date_value: Optional[datetime.date],
+        today: datetime.date,
+    ) -> tuple[Optional[datetime.date], bool]:
+        if date_value is None or date_value >= today:
+            return date_value, False
+        bumped = _bump_year_safe(date_value)
+        logger.warning(
+            f"Past {field_name}: {date_value.isoformat()} → {bumped.isoformat()} "
+            f"(auto-bumped +1yr, today={today_date})"
+        )
+        extracted[field_name] = bumped.isoformat()
+        date_auto_adjustments.append(
+            {
+                "field": field_name,
+                "from": date_value.isoformat(),
+                "to": bumped.isoformat(),
+                "reason": "past_date_auto_bumped",
+            }
+        )
+        return bumped, True
 
     # Auto-correct past dates — LLM sometimes picks wrong year for NL input
-    # "Feb 15" in the past almost certainly means next Feb 15
+    # "Feb 15" in the past almost certainly means next Feb 15.
     today = datetime.strptime(today_date, "%Y-%m-%d").date()
-    for date_field in ["start_date", "end_date"]:
-        if extracted.get(date_field):
-            try:
-                d = datetime.strptime(extracted[date_field], "%Y-%m-%d").date()
-                if d < today:
-                    bumped = d.replace(year=d.year + 1)
-                    # Handle Feb 29 → Feb 28 on non-leap years
-                    if d.month == 2 and d.day == 29:
-                        max_day = monthrange(bumped.year, bumped.month)[1]
-                        bumped = bumped.replace(day=min(bumped.day, max_day))
-                    logger.warning(
-                        f"Past {date_field}: {extracted[date_field]} → {bumped.isoformat()} "
-                        f"(auto-bumped +1yr, today={today_date})"
-                    )
-                    extracted[date_field] = bumped.isoformat()
-            except ValueError:
-                pass  # Already handled by format check above
+
+    start_bumped = False
+    end_bumped = False
+    start_date_obj, start_bumped = _auto_bump_past_date(
+        field_name="start_date",
+        date_value=start_date_obj,
+        today=today,
+    )
+    end_date_obj, end_bumped = _auto_bump_past_date(
+        field_name="end_date",
+        date_value=end_date_obj,
+        today=today,
+    )
+
+    # If start_date moved to next year but end_date did not, keep the intended range
+    # by bumping end_date as well when needed.
+    if (
+        start_bumped
+        and not end_bumped
+        and start_date_obj is not None
+        and end_date_obj is not None
+        and end_date_obj < start_date_obj
+    ):
+        previous_end = end_date_obj
+        adjusted_end = _bump_year_safe(previous_end)
+        if adjusted_end >= start_date_obj:
+            logger.warning(
+                f"Adjusted end_date year to preserve range: {previous_end.isoformat()} → "
+                f"{adjusted_end.isoformat()} (start_date={start_date_obj.isoformat()})"
+            )
+            end_date_obj = adjusted_end
+            extracted["end_date"] = adjusted_end.isoformat()
+            date_auto_adjustments.append(
+                {
+                    "field": "end_date",
+                    "from": previous_end.isoformat(),
+                    "to": adjusted_end.isoformat(),
+                    "reason": "preserve_range_after_start_bump",
+                }
+            )
+
+    # Final safety guard after all normalization.
+    if start_date_obj and end_date_obj and end_date_obj < start_date_obj:
+        logger.warning("end_date before start_date after normalization, swapping")
+        start_date_obj, end_date_obj = end_date_obj, start_date_obj
+        extracted["start_date"] = start_date_obj.isoformat()
+        extracted["end_date"] = end_date_obj.isoformat()
 
     # Normalize activity categories to lowercase
     if extracted.get("activity_categories"):
@@ -653,6 +724,8 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
     for field in ["destination", "origin"]:
         if extracted.get(field):
             extracted[field] = _normalize_city_name(extracted[field])
+
+    extracted["date_auto_adjustments"] = date_auto_adjustments
 
     return extracted
 

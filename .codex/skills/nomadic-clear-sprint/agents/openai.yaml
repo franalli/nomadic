@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nomadic Clear Sprint"
+  short_description: "Reset CLAUDE.md current sprint template safely"
+  default_prompt: "Clear the current sprint section in CLAUDE.md using the standard template."

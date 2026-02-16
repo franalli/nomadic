@@ -1,9 +1,10 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 'use client';
 
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 import { Bed, Camera, Landmark, MapPin, Mountain, Plane, Utensils, Waves } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MapboxMap, { type ErrorEvent, Layer, type MapRef, Marker, NavigationControl, Source } from 'react-map-gl/mapbox';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
@@ -217,6 +218,17 @@ function getMarkerColor(type: string): string {
   return 'bg-emerald-500';
 }
 
+function normalizeMapCoordinates(
+  coordinates: { lat: number; lng: number } | null | undefined
+): { lat: number; lng: number } | null {
+  if (!coordinates) return null;
+  const lat = Number(coordinates.lat);
+  const lng = Number(coordinates.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+
 // =============================================================================
 // Route Layer Style
 // =============================================================================
@@ -231,6 +243,14 @@ const routeLayerStyle: Omit<mapboxgl.LineLayer, 'source'> = {
     'line-dasharray': [2, 1],
   },
 };
+
+const MARKER_Z_INDEX_STYLE: Record<'active' | 'hovered' | 'default', { zIndex: number }> = {
+  active: { zIndex: 100 },
+  hovered: { zIndex: 90 },
+  default: { zIndex: 1 },
+};
+
+const MAP_CONTAINER_STYLE = { width: '100%', height: '100%' } as const;
 
 // =============================================================================
 // Component
@@ -258,12 +278,52 @@ export function InteractiveMap({
   const [isDark, setIsDark] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
   );
+
+  const safeDefaultCenter = useMemo(() => {
+    const normalized = normalizeMapCoordinates({
+      lat: defaultCenter.lat,
+      lng: defaultCenter.lng,
+    });
+    if (normalized) {
+      return {
+        lat: normalized.lat,
+        lng: normalized.lng,
+        zoom: defaultCenter.zoom,
+      };
+    }
+    return { lat: 25.2048, lng: 55.2708, zoom: 10 };
+  }, [defaultCenter.lat, defaultCenter.lng, defaultCenter.zoom]);
+
+  const { normalizedItems, droppedCoordinateIds } = useMemo(() => {
+    const normalized: MapItem[] = [];
+    const dropped: string[] = [];
+    for (const item of items) {
+      const coords = normalizeMapCoordinates(item.coordinates);
+      if (!coords) {
+        dropped.push(item.id);
+        continue;
+      }
+      normalized.push({ ...item, coordinates: coords });
+    }
+    return { normalizedItems: normalized, droppedCoordinateIds: dropped };
+  }, [items]);
+
+  const droppedCoordinateSignature = droppedCoordinateIds.join('|');
+
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = (e: MediaQueryListEvent) => setIsDark(e.matches);
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, []);
+
+  useEffect(() => {
+    if (!droppedCoordinateSignature) return;
+    console.warn('[InteractiveMap] Skipping items with invalid coordinates', {
+      dropped_count: droppedCoordinateIds.length,
+      dropped_ids: droppedCoordinateIds.slice(0, 5),
+    });
+  }, [droppedCoordinateIds, droppedCoordinateSignature]);
 
   // Track mounted state for safe async operations
   useEffect(() => {
@@ -285,7 +345,7 @@ export function InteractiveMap({
     if (!isMapReady || !mapRef.current || !isMountedRef.current) return;
     // Skip auto-fit when a specific item is actively selected
     if (activeItemId) return;
-    const withCoords = items.filter((i) => i.coordinates?.lat && i.coordinates?.lng);
+    const withCoords = normalizedItems;
     if (withCoords.length < 2) return; // Single pin uses defaultCenter zoom
     const lngs = withCoords.map((i) => i.coordinates.lng);
     const lats = withCoords.map((i) => i.coordinates.lat);
@@ -307,7 +367,7 @@ export function InteractiveMap({
     } catch {
       // Silently ignore fitBounds errors during unmount
     }
-  }, [isMapReady, items, activeItemId, isDesktop]);
+  }, [isMapReady, normalizedItems, activeItemId, isDesktop]);
 
   // Scrollytelling: Fly to active item (only when map is ready)
   const flyToItem = useCallback((item: MapItem) => {
@@ -329,11 +389,11 @@ export function InteractiveMap({
   useEffect(() => {
     if (!activeItemId || !isMapReady) return;
 
-    const activeItem = items.find((i) => i.id === activeItemId);
+    const activeItem = normalizedItems.find((i) => i.id === activeItemId);
     if (activeItem?.coordinates) {
       flyToItem(activeItem);
     }
-  }, [activeItemId, items, flyToItem, isMapReady]);
+  }, [activeItemId, normalizedItems, flyToItem, isMapReady]);
 
   // Check if Mapbox token is available
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
@@ -354,19 +414,19 @@ export function InteractiveMap({
 
   // Filter items by visible layers
   const filteredItems = visibleLayers
-    ? items.filter((item) => visibleLayers.has(item.type))
-    : items;
+    ? normalizedItems.filter((item) => visibleLayers.has(item.type))
+    : normalizedItems;
 
   return (
     <div className={cn('w-full h-full rounded-xl overflow-hidden border border-zinc-200 dark:border-white/10', className)}>
       <MapboxMap
         ref={mapRef}
         initialViewState={{
-          longitude: defaultCenter.lng,
-          latitude: defaultCenter.lat,
-          zoom: defaultCenter.zoom,
+          longitude: safeDefaultCenter.lng,
+          latitude: safeDefaultCenter.lat,
+          zoom: safeDefaultCenter.zoom,
         }}
-        style={{ width: '100%', height: '100%' }}
+        style={MAP_CONTAINER_STYLE}
         mapStyle={isDark ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11'}
         mapboxAccessToken={mapboxToken}
         // Disable Mapbox metrics collection to avoid blocked telemetry requests in ad-blocking browsers.
@@ -388,8 +448,8 @@ export function InteractiveMap({
 
         {filteredItems.length === 0 && (
           <Marker
-            longitude={defaultCenter.lng}
-            latitude={defaultCenter.lat}
+            latitude={safeDefaultCenter.lat}
+            longitude={safeDefaultCenter.lng}
             anchor="bottom"
           >
             <div className="relative">
@@ -422,7 +482,13 @@ export function InteractiveMap({
               latitude={item.coordinates.lat}
               anchor="bottom"
               onClick={() => onMarkerClick?.(item.id)}
-              style={{ zIndex: isActive ? 100 : isHovered ? 90 : 1 }}
+              style={
+                isActive
+                  ? MARKER_Z_INDEX_STYLE.active
+                  : isHovered
+                    ? MARKER_Z_INDEX_STYLE.hovered
+                    : MARKER_Z_INDEX_STYLE.default
+              }
             >
               <div
                 className={cn(

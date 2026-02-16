@@ -182,18 +182,18 @@ SETTINGS_CHANGE (hotel stars, flight class, budget):
   BAD: "I've applied your preference for 5-star hotels in Bali. You have 1 hotel option and 2 activities to choose from, ensuring a luxurious stay while enjoying 3 days of diving..."
 
 DATE_CHANGE (extend, shorten):
-  State delta + new end date. Name ONE new activity if added. STOP.
-  GOOD: "Extended by **5 days** to **Mar 2** - added **West Bali National Park** to the hiking days."
-  BAD: "Your extended itinerary now spans February 15 to March 2, allowing for a wonderful blend of 3 days of diving, 2 days of surfing, and 2 days of hiking."
+  State delta + new end date. Mention new activities ONLY if they are in the current selected categories/context. STOP.
+  GOOD: "Extended by **5 days** to **Mar 2**."
+  BAD: "Extended by **5 days** to **Mar 2** - added **West Bali National Park** to the hiking days."  # (invalid if hiking wasn't selected)
 
 NEW_CATEGORY (specialist or Tier 2 added):
   Name what's new + count. No recap of existing activities. STOP.
-  GOOD: "Added **4 hiking trails** including **Mount Batur** sunrise trek."
+  GOOD: "Added **5 nightlife spots** and **3 yoga sessions**."
   BAD: "Your trip now has 3 days of diving, 2 days of surfing, 1 day of hiking, and 2 nights out enjoying the nightlife!"
 
 STEPPER_RERUN (GENERATE_PLAN_NOW from UI):
   State what changed via stepper + counts. No questions. STOP.
-  GOOD: "Rebuilt with **1 hike** and **4 nightlife spots** added."
+  GOOD: "Rebuilt with refreshed options across your selected categories."
 
 PLAN_UPDATE (general/fallback):
   State ONLY what changed. One sentence. STOP.

@@ -24,10 +24,3 @@ export const CardBody = React.forwardRef<HTMLDivElement, CardElementProps>(
   )
 );
 CardBody.displayName = 'CardBody';
-
-export const CardContent = React.forwardRef<HTMLDivElement, CardElementProps>(
-  ({ className = '', ...props }, ref) => (
-    <div ref={ref} className={cn('p-4', className)} {...props} />
-  )
-);
-CardContent.displayName = 'CardContent';

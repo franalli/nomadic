@@ -32,6 +32,28 @@ function _hashFingerprint(input: string): string {
   return (hash >>> 0).toString(16);
 }
 
+function _toFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function _normalizeMapCoordinates(
+  latValue: unknown,
+  lngValue: unknown
+): { lat: number; lng: number } | null {
+  const lat = _toFiniteNumber(latValue);
+  const lng = _toFiniteNumber(lngValue);
+  if (lat === null || lng === null) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+
 function _buildPoiFingerprint(
   dayCards: import('@/types/plan-envelope').DayCard[] | undefined,
   destination: string | undefined,
@@ -100,9 +122,12 @@ export function generateGhostDayCards(
           summary: content.title,
           // Pass through coordinates from specialist content for map integration
           // Backend sends [lng, lat] format, convert to { lat, lng } for Mapbox
-          coordinates: content.coordinates
-            ? { lat: content.coordinates[1], lng: content.coordinates[0] }
-            : undefined,
+          coordinates:
+            content.coordinates &&
+            Array.isArray(content.coordinates) &&
+            content.coordinates.length === 2
+              ? _normalizeMapCoordinates(content.coordinates[1], content.coordinates[0]) || undefined
+              : undefined,
           is_skeleton: false,
           specialist_type: section.specialist_type,
         };
@@ -229,11 +254,13 @@ export function extractPOIsFromSections(
         content.coordinates.length === 2
       ) {
         const [lng, lat] = content.coordinates;
+        const normalized = _normalizeMapCoordinates(lat, lng);
+        if (!normalized) return;
         pois.push({
           id: `poi-${section.specialist_type}-${idx}`,
           title: content.title,
           type: section.specialist_type || 'activity',
-          coordinates: { lat, lng },
+          coordinates: normalized,
         });
       }
     });
@@ -250,14 +277,21 @@ export function extractPOIsFromSections(
 
     // Import is at module level, lazy access here
     const { DEMO_POIS } = require('@/lib/destination-coords');
-    const demoPois = DEMO_POIS[normalizedDest] || [];
+    const demoPois: Array<{ lat: number; lng: number; title: string; specialist: string }> =
+      DEMO_POIS[normalizedDest] || [];
 
-    return demoPois.map((p: { lat: number; lng: number; title: string; specialist: string }, i: number) => ({
-      id: `demo-poi-${i}`,
-      title: p.title,
-      type: p.specialist,
-      coordinates: { lat: p.lat, lng: p.lng },
-    }));
+    return demoPois
+      .map((p, i) => {
+        const normalized = _normalizeMapCoordinates(p.lat, p.lng);
+        if (!normalized) return null;
+        return {
+          id: `demo-poi-${i}`,
+          title: p.title,
+          type: p.specialist,
+          coordinates: normalized,
+        };
+      })
+      .filter((poi): poi is MapPOI => poi !== null);
   }
 
   return pois;
@@ -308,7 +342,8 @@ export function extractPOIsFromDayCards(
 
       // Only include if block has coordinates
       const coords = block.coordinates;
-      if (coords?.lat != null && coords?.lng != null) {
+      const normalizedCoords = _normalizeMapCoordinates(coords?.lat, coords?.lng);
+      if (normalizedCoords) {
         blocksWithCoords += 1;
         // Use block.id if available, otherwise match TimelineThread's format
         const blockId = block.id || `block-${dayCard.day_number}-${idx}`;
@@ -316,7 +351,7 @@ export function extractPOIsFromDayCards(
           id: blockId,
           title: block.summary || block.activity_type,
           type: block.specialist_type || 'activity',
-          coordinates: { lat: coords.lat, lng: coords.lng },
+          coordinates: normalizedCoords,
         });
       } else {
         skippedNoCoords += 1;
@@ -362,13 +397,16 @@ export function extractPOIsFromDayCards(
  * Returns average of all coordinates, or Dubai default if no POIs.
  */
 export function calculateMapCenter(pois: MapPOI[]): { lat: number; lng: number; zoom: number } {
-  if (pois.length === 0) {
+  const validPois = pois
+    .map((poi) => _normalizeMapCoordinates(poi.coordinates?.lat, poi.coordinates?.lng))
+    .filter((coords): coords is { lat: number; lng: number } => coords !== null);
+  if (validPois.length === 0) {
     // Default: Dubai center
     return { lat: 25.2048, lng: 55.2708, zoom: 10 };
   }
 
-  const avgLat = pois.reduce((sum, p) => sum + p.coordinates.lat, 0) / pois.length;
-  const avgLng = pois.reduce((sum, p) => sum + p.coordinates.lng, 0) / pois.length;
+  const avgLat = validPois.reduce((sum, p) => sum + p.lat, 0) / validPois.length;
+  const avgLng = validPois.reduce((sum, p) => sum + p.lng, 0) / validPois.length;
 
   return { lat: avgLat, lng: avgLng, zoom: 11 };
 }

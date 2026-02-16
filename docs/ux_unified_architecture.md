@@ -183,6 +183,7 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
     - Normalization: `destination.split(',')[0].trim().toLowerCase()` then capitalize
     - Bali has 5 demo pins: 3 dive sites + 2 hiking trails
   - POI format: `{ lat, lng }` object (not array)
+  - All POI coordinates validated via `_normalizeMapCoordinates()` (rejects non-finite or out-of-range values)
 
 ### Scroll Behavior
 - **Strategy Cards:** Collapsed by default, user can expand
@@ -559,23 +560,24 @@ const handleAddDestination = async (destination: string) => {
 
 **Flow:**
 1. User hearts a hotel → preference change detected
-2. **Instant trigger** (no debounce for responsive UX)
+2. **1.5s debounce** to batch rapid heart toggles into a single expand call
 3. Auto-calls `/api/expand-itinerary` with current preferences
 4. Itinerary rebuilds with new preference weighting
 5. `markPreferencesAsApplied()` updates last-generated state
 
 **Cascade Prevention Guards:**
 ```typescript
-// Guard 1: Skip if regeneration already running
+// Guard 1: Skip if regeneration already running (in triggerRegeneration)
 if (useDocumentStore.getState().isRegenerating) return;
 
-// Guard 2: Skip if expand-itinerary already running (prevents cascade)
+// Guard 2: Skip if expand-itinerary already running (in triggerRegeneration)
 if (useDocumentStore.getState().expandInProgress) return;
 
-// Guard 3: Skip in useEffect if expand in progress
-if (expandInProgress) {
+// Guard 3: Skip in useEffect if expand or streaming in progress (queued, not dropped)
+if (expandInProgress || isStreamingResponse) {
+  pendingRegenRef.current = true;
   lastPrefsRef.current = new Set(preferredTileIds);
-  return;  // Update tracking but don't trigger
+  return;  // Queue for later, flush when mutex releases
 }
 ```
 
@@ -1147,28 +1149,11 @@ Highlight fades after 2 seconds
 
 ### Layer Filters
 
-Toggle visibility of activity types:
-```
-[All] [🤿 Diving] [🥾 Hiking] [🏨 Hotels] [✈️ Flights]
-```
+> **Deleted:** `MapLayerFilter.tsx` has been removed. Layer filtering is now handled internally by `InteractiveMap.tsx` via the `visibleLayers` prop (a `Set<string>` passed by the parent). No standalone filter UI component exists currently.
 
 ### Implementation
 
-**Hook:** `useMapSync` manages all map-itinerary state:
-```typescript
-const {
-  mapItems,        // Filtered items to display
-  activeItemId,    // From scroll spy
-  handleMarkerClick, // Scroll to timeline
-  routeGeoJson,    // Route line data
-  visibleLayers,   // Layer filter state
-  toggleLayer,     // Toggle layer visibility
-} = useMapSync({
-  dayCards,
-  strategySections,
-  mode: 'plan',
-});
-```
+`InteractiveMap.tsx` validates all coordinates internally via `normalizeMapCoordinates()` (rejects non-finite, out-of-range, or missing values). `ghost-timeline-adapter.ts` applies equivalent validation via `_normalizeMapCoordinates()` when extracting POIs from strategy sections.
 
 **Data Sources:**
 - `DayCard.blocks[].coordinates` - Itinerary locations
@@ -1180,6 +1165,7 @@ const {
 2. **Click triggers scroll** - Clicking pin scrolls timeline to matching item
 3. **Route only in PLAN mode** - No route line for POI-only views
 4. **Day filter persists** - Hovering day filters map to that day's pins only
+5. **Coordinate validation** - Both `InteractiveMap` and `ghost-timeline-adapter` validate coordinates before rendering (finite, |lat|<=90, |lng|<=180)
 
 ---
 
@@ -1563,9 +1549,9 @@ plan_documents.document (JSONB)
 │
 │ ─── Constraint Validation State ───────────────────────────
 │
-├── constraints_validated: List[Dict]       # ✅ Response (Trip DNA badges)
+├── constraints_validated: List[Dict]       # ❌ Response only (Trip DNA badges, empty on refresh)
 │   └── [{ rule, specialist, satisfied_at }]  # Constraints that passed
-├── constraint_violations: List[Dict]       # ✅ Response (Trip DNA badges)
+├── constraint_violations: List[Dict]       # ❌ Response only (Trip DNA badges, empty on refresh)
 │   └── [{ rule, specialist, category, severity, message }]  # Failed constraints
 │
 │ ─── Response-Only Fields (NOT Persisted) ────────────────
@@ -1635,7 +1621,6 @@ useSessionHydration() runs
 
 | Endpoint | Function | When Called | Fields Persisted |
 |----------|----------|-------------|------------------|
-| `POST /api/graph_plan` | `apply_planner_update()` | Non-streaming chat | All |
 | `POST /api/graph_plan/stream` | `apply_planner_update()` | Streaming chat | All |
 | `POST /api/expand-itinerary/stream` | `apply_planner_update()` | Build Itinerary CTA | `day_cards`, `plan_view_state` |
 | `PATCH /api/document` | `apply_user_patch()` | Tile selection, settings sheets | `branches.selections`, `trip_inputs.*_settings` |
@@ -1657,7 +1642,7 @@ useSessionHydration() runs
    └── No session cookie → Backend creates session + empty document
 
 2. Chat Interaction
-   └── graph_plan → apply_planner_update() → DB write
+   └── graph_plan/stream → apply_planner_update() → DB write
 
 3. Build Itinerary
    └── expand-itinerary → apply_planner_update(day_cards) → DB write
@@ -1724,12 +1709,12 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 | --- | --- | --- |
 | `getNextAction(state, generation, _hasTripContext?)` | Returns `'expand_itinerary'` for S2, `null` otherwise. Does NOT gate on dates. Third param `_hasTripContext` is deprecated (NextStepBar reads tripInputs from store). | Active |
 | `isGenerating(generation)` | Checks if any generation is in progress (`generation?.active === true`) | Active |
-| `isReady(state, generation)` | Checks if plan is in ready state (S2 or S3, not generating) | Active |
 | `shouldAutoTriggerItinerary(state, topics, hasDates, generation, hasItinerary)` | Path A: auto-trigger for multi-specialist trips (2+ topics, S2, has dates, no existing itinerary) | Active |
 | `isMultiSpecialistTrip(executedTopics)` | Returns true when 2+ topics executed | Active |
-| `shouldShowLeftPanelGenerateCTA(state)` | Returns true for S0/S1 (before plan exists) | Active |
 
 **Deleted functions (no longer in codebase):**
+- `isReady()` -- removed (was: checks if plan is in ready state)
+- `shouldShowLeftPanelGenerateCTA()` -- removed (was: returns true for S0/S1)
 - `canShowTilesPreview()` -- removed, mode is the SSoT for tile rendering
 - `canShowBookingTiles()` -- removed, mode is the SSoT for tile rendering
 - `canExpandToItinerary()` -- removed from helpers (gating now handled by renderer/store state)
@@ -2024,35 +2009,6 @@ User: "Plan diving and hiking Bali March 1-5"
      - Activity title shown with strikethrough
      - `unschedulable_reason` displayed as italic amber text
 
-**Remove Specialist API (`POST /api/remove-specialist`):**
-
-Used when user chooses "Focus on [specialist]" resolution.
-
-```typescript
-// Request
-{
-  idempotency_key: string,      // UUID for deduplication
-  keep_specialist: string,      // e.g., "diving"
-  remove_hearted_tiles: boolean, // Whether to remove hearted tiles from other specialists
-  trip_inputs: {...},           // Current document state
-  strategy_sections: [...],     // Current sections
-  tiles: {...},                 // Current tiles
-  preferences: {...}            // User's hearted tile preferences
-}
-
-// Response: NDJSON stream (same format as expand-itinerary)
-{"type": "progress", "stage": "itinerary", "message": "Focusing on diving...", "pct": 10}
-{"type": "envelope", "plan_envelope": {...}}  // Contains filtered strategy_sections
-{"type": "done", "plan_view_state": "S3_ITINERARY_READY|S3_EDITING|S3_PARTIAL_CONFLICT"}
-```
-
-**Flow:**
-1. Frontend calls `/api/remove-specialist?keep_specialist=diving`
-2. Backend filters `strategy_sections` → keeps only diving + general
-3. Backend re-runs `ItineraryBuilder` → success (no more conflict)
-4. Frontend receives new timeline via envelope event
-5. Toast: "Focused on diving" ✓
-
 **Single-Specialist Behavior:**
 For single-specialist trips, users trigger generation via:
 1. `FloatingBuildButton` / Build Itinerary CTA - Initial plan generation (S0 → S2)
@@ -2308,6 +2264,9 @@ For `specialist_type === 'general'` (Trip Overview):
 | `skiing` | Skiing | Snowflake | Ski slopes |
 | `cycling` | Cycling | Bike | Cycling road |
 | `surfing` | Surfing | Waves | Surfer on wave |
+| `climbing` | Climbing | Mountain | Rock face |
+| `sailing` | Sailing | Sailboat | Yacht at sea |
+| `wildlife_safari` | Wildlife Safari | Binoculars | Safari landscape |
 
 **Visual Layout:**
 ```
@@ -2351,7 +2310,7 @@ For `specialist_type === 'general'` (Trip Overview):
 | Field | Type | Source | Description |
 |-------|------|--------|-------------|
 | `id` | string | Backend | Unique section ID (e.g., `specialist_diving`) |
-| `specialist_type` | string | Backend | One of: `diving`, `hiking`, `skiing`, `cycling`, `surfing` |
+| `specialist_type` | string | Backend | One of: `diving`, `hiking`, `skiing`, `cycling`, `surfing`, `climbing`, `sailing`, `wildlife_safari` |
 | `title` | string | Backend | Card title (e.g., "Diving Strategy") |
 | `one_liner` | string | Backend | Strategy logic summary (auto-generated from top constraint if missing, see below) |
 | `hero_image` | string | Backend | Primary image URL (or use fallback) |
@@ -2492,7 +2451,7 @@ if not has_anchor and plan.destination:
 interface StrategySection {
   // Identity
   id: string;                           // e.g., "strategy_local_expert", "specialist_diving"
-  specialist_type: string;              // "local_expert" | "general" | "diving" | "hiking" | "skiing" | "cycling" | "surfing"
+  specialist_type: string;              // "local_expert" | "general" | "diving" | "hiking" | "skiing" | "cycling" | "surfing" | "climbing" | "sailing" | "wildlife_safari"
   title: string;                        // e.g., "Bali Trip Overview", "Diving Strategy"
   subtitle?: string;                    // Optional secondary title
 
@@ -2723,13 +2682,13 @@ The `no_altitude_after_dive` constraint is emitted by the diving specialist but 
 **Component Files:**
 ```
 frontend/components/plan/timeline/blocks/
-├── index.ts              # Barrel export
-├── types.ts              # DisplayTime, TimeSlot, getDisplayTime()
-├── LogisticsBlock.tsx    # Arrival/departure/check-in + gear icons
-├── SafetyBlock.tsx       # No-fly/rest-day/acclimatization constraints (default: rest_day)
-├── ActivityMiniCard.tsx  # Rich activity with context menu
-├── GhostSlot.tsx         # Unbooked placeholder
-└── FreeDayCard.tsx       # Empty day state with fill-day CTA + inline category picker
+├── types.ts                        # DisplayTime, TimeSlot, getDisplayTime()
+├── LogisticsBlock.tsx              # Arrival/departure/check-in + gear icons
+├── SafetyBlock.tsx                 # No-fly/rest-day/acclimatization constraints (default: rest_day)
+├── ActivityMiniCard.tsx            # Rich activity with context menu
+├── GhostSlot.tsx                   # Unbooked placeholder
+├── FreeDayCard.tsx                 # Empty day state with fill-day CTA + inline category picker
+└── PreferenceAttributionBadge.tsx  # "You preferred this" / "AI selected" badge
 ```
 
 **Settings Gear Icons:**
@@ -2962,11 +2921,16 @@ const VIEW_STATE_ORDER = {
 };
 
 // GUARD: Never downgrade view state when itinerary exists
-// EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept
-const wouldDowngrade = hasDayCards &&
-  newViewState !== 'S0_EMPTY' &&
-  VIEW_STATE_ORDER[newViewState] < VIEW_STATE_ORDER[prevViewState ?? 'S0_EMPTY'];
+// EXCEPTIONS:
+// - S0_EMPTY = genuine RESET intent (user said "start over"), always accept
+// - Lateral S3 transitions are valid (e.g., S3_ITINERARY_READY → S3_EDITING)
+function shouldBlockViewStateDowngrade(prev, next, hasDayCards) {
+  if (!hasDayCards || !next || next === 'S0_EMPTY') return false;
+  if (isS3ViewState(prev) && isS3ViewState(next)) return false; // Lateral S3 OK
+  return VIEW_STATE_ORDER[next] < VIEW_STATE_ORDER[prev ?? 'S0_EMPTY'];
+}
 
+const wouldDowngrade = shouldBlockViewStateDowngrade(prevViewState, newViewState, hasDayCards);
 const finalViewState = wouldDowngrade ? prevViewState : newViewState;
 
 // Tile merge: replace when `tiles_replaced` flag set or destination changed,
@@ -3223,8 +3187,8 @@ interface StrategyStageRendererProps {
 
 **Mode Derivation:**
 ```typescript
-// Derive from activeView or use explicit override
-const effectiveMode: ViewMode = explicitMode ?? (activeView === 'book' ? 'booking' : 'planning');
+// Two-mode system: use activeMode from hook, allow explicit override
+const effectiveMode: ViewMode = explicitMode ?? activeMode;
 ```
 
 Passes `mode` to BookingSection for mode-aware tile rendering.
@@ -3502,7 +3466,7 @@ const docTiles = useDocumentStore((s) => s.document?.tiles);
 const docExecutedTopics = useDocumentStore((s) => s.document?.executed_strategy_topics);
 const docPendingTopics = useDocumentStore((s) => s.document?.pending_strategy_topics);
 const docDayCards = useDocumentStore((s) => s.document?.day_cards);
-const docGeneration = useDocumentStore((s) => s.document?.generation);
+const docGeneration = useDocumentStore((s) => s.generation);
 // ... etc
 ```
 

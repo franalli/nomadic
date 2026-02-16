@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 import '@testing-library/jest-dom/vitest';
 
 import { afterEach, beforeEach, vi } from 'vitest';

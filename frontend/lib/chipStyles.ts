@@ -1,5 +1,5 @@
 /**
- * Shared chip styles - import in TileFilterBar + BookingSection + header pills
+ * Shared chip styles - import in BookingSection + header pills
  *
  * CONTRAST FLOOR RULES (apply in Phase 2 migrations):
  * - Body/meta text: use `text-muted-foreground`

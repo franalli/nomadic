@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.placeholders import get_activity_image
+from app.planner.hashing import make_cache_key
 from app.planner.services.section_builder import (
     build_specialist_section,
     mark_topic_executed,
@@ -676,7 +677,7 @@ async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
     Cache key: f"{topic}:{destination}"
     Returns: (possible, reason)
     """
-    cache_key = f"{topic}:{destination}"
+    cache_key = make_cache_key("feasibility", topic, destination)
 
     async with _feasibility_cache_lock:
         if cache_key in _feasibility_cache:

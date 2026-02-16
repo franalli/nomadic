@@ -124,8 +124,7 @@ function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = fal
           rather than stretching to the tallest sibling (plan page). */}
       <div
         ref={containerRef}
-        className="flex-1 flex overflow-x-auto overflow-y-hidden snap-x snap-mandatory no-scrollbar min-h-0 overscroll-x-contain"
-        style={{ WebkitOverflowScrolling: 'touch' }}
+        className="flex-1 flex overflow-x-auto overflow-y-hidden snap-x snap-mandatory no-scrollbar min-h-0 overscroll-x-contain webkit-momentum-scroll"
         onScroll={handleScroll}
       >
         {/* Page 0: Chat — h-full constrains to container, overflow-y-auto for independent scroll */}

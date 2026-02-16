@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 'use client';
 
 import { ArrowRight, CreditCard, ShieldCheck, X } from 'lucide-react';

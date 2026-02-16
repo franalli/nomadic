@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 'use client';
 
 import { useCallback, useMemo } from 'react';

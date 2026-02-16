@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * Content Policy Guard
  *
@@ -54,7 +55,7 @@ const FORBIDDEN_STAGE_1_2 = [
 // Error Class
 // =============================================================================
 
-export class ContentPolicyError extends Error {
+class ContentPolicyError extends Error {
   constructor(
     message: string,
     public readonly state: PlanViewState,

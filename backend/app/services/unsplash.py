@@ -23,12 +23,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.placeholders import get_placeholder_image
+from app.planner.hashing import make_cache_key
 from app.services.unsplash_queries import get_query_for_destination
 
 logger = logging.getLogger(__name__)
 
 # In-memory cache for hot destinations (avoids DB hits in same session)
-# Key format: "destination:variant" (e.g., "patagonia:0", "patagonia:1")
+# Key format: "unsplash::v2::{destination}[::{activity}]::variant-{n}"
 _memory_cache: dict[str, "UnsplashImage"] = {}
 _memory_cache_lock = asyncio.Lock()
 # In-flight fetch dedupe (destination/activity scoped).
@@ -40,6 +41,7 @@ _prefetch_destination_inflight: dict[str, asyncio.Task[List["UnsplashImage"]]] =
 _prefetch_failure_until: dict[str, float] = {}
 _prefetch_timeout_streak: dict[str, int] = {}
 _prefetch_dest_failure_until: dict[str, float] = {}
+_prefetch_cooldown_lock = asyncio.Lock()
 
 # Number of image variants to fetch per destination
 NUM_VARIANTS = 6
@@ -56,14 +58,16 @@ UNSPLASH_PREFETCH_STREAK_THRESHOLD = settings.unsplash_prefetch_streak_threshold
 
 
 def _cache_key(destination: str, variant: int, activities: list[str] | None = None) -> str:
-    """Generate cache key for destination:activity:variant."""
+    """Generate namespaced cache key for destination/activity variant entries."""
     normalized = destination.lower().strip()
-    # Only use activity in key if we have a non-empty activity string
+    parts: list[str] = ["unsplash", "v2", normalized]
+    # Only use activity in key if we have a non-empty activity string.
     if activities and len(activities) > 0:
         activity = activities[0].lower().strip()
-        if activity:  # Only include if non-empty after strip
-            return f"{normalized}:{activity}:{variant}"
-    return f"{normalized}:{variant}"
+        if activity:
+            parts.append(activity)
+    parts.append(f"variant-{variant}")
+    return make_cache_key(*parts)
 
 
 def _fetch_key(destination: str, activities: list[str] | None = None) -> str:
@@ -80,23 +84,24 @@ def _destination_key(destination: str) -> str:
     return destination.lower().strip()
 
 
-def _record_prefetch_outcome(
+async def _record_prefetch_outcome(
     *,
     key: str,
     destination: str,
     succeeded: bool,
 ) -> None:
-    if succeeded:
-        _prefetch_failure_until.pop(key, None)
-        _prefetch_timeout_streak.pop(destination, None)
-        if _prefetch_dest_failure_until.pop(destination, None) is not None:
-            logger.debug("[VERIFY][UNSPLASH] dest_cooldown_cleared dest=%s", destination)
-        logger.debug("[VERIFY][UNSPLASH] cooldown_cleared key=%s streak=0", key)
-        return
+    async with _prefetch_cooldown_lock:
+        if succeeded:
+            _prefetch_failure_until.pop(key, None)
+            _prefetch_timeout_streak.pop(destination, None)
+            if _prefetch_dest_failure_until.pop(destination, None) is not None:
+                logger.debug("[VERIFY][UNSPLASH] dest_cooldown_cleared dest=%s", destination)
+            logger.debug("[VERIFY][UNSPLASH] cooldown_cleared key=%s streak=0", key)
+            return
 
-    _prefetch_failure_until[key] = time.monotonic() + UNSPLASH_PREFETCH_FAILURE_COOLDOWN_SECONDS
-    streak = _prefetch_timeout_streak.get(destination, 0) + 1
-    _prefetch_timeout_streak[destination] = streak
+        _prefetch_failure_until[key] = time.monotonic() + UNSPLASH_PREFETCH_FAILURE_COOLDOWN_SECONDS
+        streak = _prefetch_timeout_streak.get(destination, 0) + 1
+        _prefetch_timeout_streak[destination] = streak
     logger.debug(
         "[VERIFY][UNSPLASH] cooldown_set key=%s streak=%s seconds=%.1f",
         key,
@@ -128,14 +133,14 @@ def _candidate_cache_keys(
     """
     normalized = destination.lower().strip()
     exact_key = _cache_key(destination, variant, activities)
-    base_key = f"{normalized}:{variant}"
-    prefix = f"{normalized}:"
-    suffix = f":{variant}"
+    base_key = _cache_key(destination, variant)
+    prefix = make_cache_key("unsplash", "v2", normalized)
+    suffix = f"::variant-{variant}"
 
     activity_keys = sorted(
         key
         for key in _memory_cache.keys()
-        if key.startswith(prefix) and key.endswith(suffix) and key.count(":") == 2
+        if key.startswith(f"{prefix}::") and key.endswith(suffix) and len(key.split("::")) == 5
     )
 
     ordered: list[str] = [exact_key]
@@ -385,7 +390,7 @@ async def _fetch_variants_from_unsplash(
         try:
             result = await asyncio.shield(task)
             if owner:
-                _record_prefetch_outcome(
+                await _record_prefetch_outcome(
                     key=key,
                     destination=destination_key,
                     succeeded=bool(result),
@@ -873,9 +878,15 @@ async def clear_db_cache(db: AsyncSession) -> int:
 
 def get_memory_cache_stats() -> dict:
     """Return statistics about the in-memory Unsplash cache."""
+    destinations = {
+        parts[2]
+        for key in _memory_cache.keys()
+        for parts in [key.split("::")]
+        if len(parts) >= 4 and parts[0] == "unsplash" and parts[1] == "v2"
+    }
     return {
         "entries": len(_memory_cache),
-        "destinations": len(set(k.split(":")[0] for k in _memory_cache.keys())),
+        "destinations": len(destinations),
     }
 
 

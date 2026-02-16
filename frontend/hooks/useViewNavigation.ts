@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 import { useCallback, useMemo } from 'react';
 
 import { useDocumentStore } from '@/state/documentStore';
@@ -102,7 +103,7 @@ export function useViewNavigation(): UseViewNavigationReturn {
   const storedActiveMode = useDocumentStore((s) => s.activeView ?? 'planning');
   const setActiveView = useDocumentStore((s) => s.setActiveView);
   const tiles = useDocumentStore((s) => s.document?.tiles);
-  const generation = useDocumentStore((s) => s.document?.generation);
+  const generation = useDocumentStore((s) => s.generation);
   const strategySections = useDocumentStore((s) => s.document?.strategy_sections);
   const planViewState = useDocumentStore((s) => s.document?.plan_view_state);
   const tripInputs = useDocumentStore((s) => s.document?.trip_inputs);

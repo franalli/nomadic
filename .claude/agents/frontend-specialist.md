@@ -39,26 +39,30 @@ Before ANY code change, read the relevant SSoT doc:
 ```
 frontend/
   components/
-    chat/          → ChatPanel, ChatSkeleton, CollapsedSetupSummary, SmartLoader,
+    chat/          → ChatPanel, ChatSkeleton, SmartLoader,
                      SystemAckLine, SystemReceipt, TripStatusBar,
                      HoldToDeleteButton, MobileChatInput, MobileSetupCollapsedHeader
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
-                     PlanHeader, NextStepBar,
+                     PlanHeader, NextStepBar, planStateHelpers,
                      CoreChip, UnifiedChipRow, TripHealthBar, TripSummaryPills,
                      ItineraryProgressIndicator, OriginPromptCard,
                      DestinationMapPlaceholder
-      stages/      → S2StrategyView, S3ItineraryView, StrategyHero
+      booking/     → BookingDrawer, CategorySection, CheckoutSidebar
+      modals/      → AlternativesModal
+      stages/      → S2StrategyView, StrategyHero
       sheets/      → BaseSheet, DestinationSheet, OriginSheet, DatesSheet,
                      TravelersSheet, BudgetSheet, FlightsSheet, StaysSheet,
-                     ActivitiesSheet, TripSettingsSheet
+                     ActivitiesSheet, TripSettingsSheet, GatingBlocker
       timeline/    → InlineDatePrompt, TimelineSkeleton
         blocks/    → ActivityMiniCard, LogisticsBlock, SafetyBlock, GhostSlot,
                      FreeDayCard, PreferenceAttributionBadge
+      tiles/       → BookableCard, SuggestionCard
+    tiles/         → TileCard, MiniCard, TileDetailsModal, TaxesFeesTooltip
     ui/            → Shared UI primitives
-    layout/        → SplitLayoutView, NomadicLanding, TripDetailsForm,
+    layout/        → SplitLayoutView, NomadicLanding,
                      FloatingBuildButton, MobileSwipeLayout, MobileModeHeader,
                      hooks/ (useSessionHydration, useBranchManager, useBranchState,
-                             useTileSelection, useDateRangeSelector,
+                             useTileSelection,
                              useTripInputsEditor, useLocalBookingSettings)
     map/           → Mapbox components
   state/           → documentStore.ts, chatStore.ts, uiStore.ts, mobileNavStore.ts
@@ -68,8 +72,8 @@ frontend/
   lib/             → design-system.ts, api.ts, animation-config.ts, streamParser.ts,
                      chipStyles.ts, tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
                      specialists.ts, utils.ts, contentPolicyGuard.ts,
-                     ghost-timeline-adapter.ts, destination-coords.ts, plan-transform.ts,
-                     date-utils.ts, format-utils.ts, placeholders.ts, route-utils.ts,
+                     ghost-timeline-adapter.ts, destination-coords.ts, fillDayGuards.ts,
+                     date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts
   __tests__/       → Vitest tests
@@ -153,10 +157,10 @@ Guards:
 ### Timeline Variants
 
 ```
-PlanViewState         → TimelineVariant → Badge
-S3_ITINERARY_READY    → "real"          → None
-S3_EDITING, S2_*      → "draft"         → "Draft Itinerary" (amber)
-S0_*, S1_*            → "ghost"         → "Specialist Preview" (emerald)
+PlanViewState                        → TimelineVariant → Badge
+S3_ITINERARY_READY                   → "real"          → None
+S3_EDITING, S2_STRATEGY_READY        → "draft"         → "Draft Itinerary" (amber)
+All other (S0_*, S1_*, S3_PARTIAL_*) → "ghost"         → "Specialist Preview" (emerald)
 ```
 
 ### Streaming (SSE + NDJSON)
@@ -234,3 +238,7 @@ Use Framer Motion with `AnimatePresence` for enter/exit. Timing constants in `fr
 - Vitest for tests: `cd frontend && npm run test`
 - ESLint + Prettier: `npm run lint:fix`
 - Max 8 files per task unless explicitly approved (per CLAUDE.md Hard Rule #7)
+
+## Post-Plan Execution
+
+After executing a plan, provide a concise summary of all changes made: files modified, key logic added/removed, and any follow-up items.

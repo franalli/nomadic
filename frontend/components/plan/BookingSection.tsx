@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * BookingSection
  *
@@ -27,8 +28,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
-// TileFilterBar hidden for demo - re-enable post-launch
-import { type TileFilters } from '@/components/tiles/TileFilterBar';
+interface TileFilters {
+  sort: 'recommended' | 'price_low' | 'price_high' | 'rating';
+  freeCancel: boolean;
+  maxPrice: number | null;
+}
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
 import { debugLog } from '@/lib/debug';
 import { getActiveSpecialists } from '@/lib/specialist-utils';

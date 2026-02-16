@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * StrategyHero
  *
@@ -869,17 +870,12 @@ export function StrategyHero({
           id={contentId}
           aria-hidden={!isAccordionExpanded}
           className={cn(
-            'overflow-hidden transition-all duration-300 ease-out',
+            'overflow-hidden transition-all duration-300 ease-out accordion-scrollbar',
             // Collapsed: hidden
             !isAccordionExpanded && 'max-h-0 opacity-0',
             // Expanded: visible with max height
             isAccordionExpanded && 'max-h-[300px] opacity-100 overflow-y-auto'
           )}
-          style={{
-            // Custom scrollbar styling via inline for accordion-content
-            scrollbarWidth: 'thin',
-            scrollbarColor: 'rgb(228 228 231) transparent',
-          }}
         >
           <div
             className={cn(

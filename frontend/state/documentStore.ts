@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * Centralized state store for PlanDocument using Zustand.
  * This is the single source of truth for branches and tiles in the frontend.
@@ -22,8 +23,10 @@ import type {
   TransportSettings,
   UpdatedBy,
 } from '@/types/document';
-import type { DayCard, StrategySection } from '@/types/plan-envelope';
+import type { DayCard, GenerationState, StrategySection } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
+
+type EnvelopeUpdate = Partial<PlanDocumentData> & { generation?: GenerationState };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Default Settings
@@ -553,6 +556,9 @@ type DocumentState = {
   // LLM update tracking - fields that were recently updated by the planner
   llmUpdatedFields: Set<LLMUpdatableField>;
 
+  // Envelope-driven generation status (store-owned, not persisted in document)
+  generation: GenerationState | null;
+
   // Streaming robustness - runId + abort tracking
   currentRunId: string | null;
   abortController: AbortController | null;
@@ -588,7 +594,7 @@ type DocumentState = {
   setFromPlanResponse: (response: PlanDocumentResponse) => void;
 
   // Merge partial envelope update (used for streaming updates)
-  mergeEnvelope: (envelope: Partial<PlanDocumentData>) => void;
+  mergeEnvelope: (envelope: EnvelopeUpdate) => void;
 
   // Restore trip inputs from a snapshot (used when undoing a message)
   restoreTripInputs: (tripInputs: DocumentTripInputs) => void;
@@ -656,6 +662,8 @@ const initialState = {
   _pendingMutations: 0,
   // Cart state
   cartTileIds: new Set<string>(),
+  // Envelope-driven generation status (not persisted in document payload)
+  generation: null as GenerationState | null,
 };
 
 /**
@@ -1354,7 +1362,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
       // MERGE: Preserve frontend-only fields not stored in DB
       // Backend PATCH only updates trip_inputs, branches, selections
-      // Frontend-only: plan_view_state, strategy_sections, tiles, generation, etc.
+      // Frontend-only: plan_view_state, strategy_sections, tiles, etc.
       const mergedDocument = {
         ...currentDoc,        // Keep existing frontend state
         ...response.document, // Apply PATCH updates (trip_inputs, branches, etc.)
@@ -1365,7 +1373,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
           ? currentDoc.tiles
           : response.document.tiles,
-        generation: currentDoc?.generation,
         open_decisions: currentDoc?.open_decisions ?? response.document.open_decisions,
       };
 
@@ -1722,7 +1729,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     });
   },
 
-  mergeEnvelope: (envelope: Partial<PlanDocumentData>) => {
+  mergeEnvelope: (envelope: EnvelopeUpdate) => {
     const { document: currentDoc } = get();
     if (!currentDoc) return;
 
@@ -1742,7 +1749,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       );
       // Strip destination from incoming trip_inputs to preserve current value
       if (envelope.trip_inputs) {
-        const { destination: _blocked, ...restTripInputs } = envelope.trip_inputs;
+        const restTripInputs = { ...envelope.trip_inputs };
+        delete restTripInputs.destination;
         envelope = { ...envelope, trip_inputs: restTripInputs };
       }
     }
@@ -1893,8 +1901,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ...(envelope.itinerary_assumptions !== undefined && { itinerary_assumptions: envelope.itinerary_assumptions }),
       ...(envelope.needs_refresh !== undefined && { needs_refresh: envelope.needs_refresh }),
       ...(envelope.can_expand_to_itinerary !== undefined && { can_expand_to_itinerary: envelope.can_expand_to_itinerary }),
-      // Generation state
-      ...(envelope.generation !== undefined && { generation: envelope.generation }),
       // Tiles: Apply computed merge strategy
       ...(tilesToMerge !== undefined && { tiles: tilesToMerge }),
       // Update trip_inputs if present
@@ -1921,6 +1927,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       document: sanitizeDocumentImages(updatedDoc),
       updatedBy: 'planner',
       updatedAt: new Date().toISOString(),
+      generation: envelope.generation !== undefined ? envelope.generation : get().generation,
     });
   },
 

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { apiFetch } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
+import { consumeNdjsonEnvelopeStream } from '@/lib/streamParser';
 import { useDocumentStore } from '@/state/documentStore';
 
 export interface UsePreferenceAutoRegenReturn {
@@ -130,46 +131,28 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
         throw new Error(`API error: ${response.status}`);
       }
 
-      // Parse NDJSON streaming response
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (reader) {
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const event = JSON.parse(line);
-              if (event.type === 'envelope') {
-                useDocumentStore.getState().mergeEnvelope(event.plan_envelope);
-              } else if (event.type === 'done') {
-                // CRITICAL: Sync version from backend to prevent 409 on next PATCH
-                // expand-itinerary persists changes which increments version
-                if (typeof event.version === 'number') {
-                  useDocumentStore.setState({ version: event.version });
-                }
-                // Log warning if some preferred activities couldn't fit
-                if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
-                  console.warn(
-                    `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
-                  );
-                }
-              } else if (event.type === 'error') {
-                throw new Error(event.message || 'Regeneration failed');
-              }
-            } catch {
-              // Skip unparseable lines
+      if (response.body) {
+        await consumeNdjsonEnvelopeStream(response.body, {
+          onEnvelope: (planEnvelope) => {
+            useDocumentStore.getState().mergeEnvelope(planEnvelope);
+          },
+          onDone: (event) => {
+            // CRITICAL: Sync version from backend to prevent 409 on next PATCH
+            // expand-itinerary persists changes which increments version
+            if (typeof event.version === 'number') {
+              useDocumentStore.setState({ version: event.version });
             }
-          }
-        }
+            // Log warning if some preferred activities couldn't fit
+            if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
+              console.warn(
+                `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
+              );
+            }
+          },
+          onError: (event) => {
+            throw new Error(event.message || 'Regeneration failed');
+          },
+        });
       }
 
       // Success - mark preferences as applied

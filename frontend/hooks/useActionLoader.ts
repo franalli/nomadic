@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {

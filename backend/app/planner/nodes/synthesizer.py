@@ -22,6 +22,7 @@ Architect, Specialist, and Guard outputs into a coherent narrative.
 import logging
 import os
 import re
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -31,6 +32,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.config import settings
 from app.planner.llm_factory import get_llm_by_model
+from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES, TIER2_ACTIVITY_KEYWORDS
 from app.planner.state import (
     GraphState,
     SynthesizerOutput,
@@ -365,6 +367,16 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
     parts.append(f"- Destination: {plan.destination or 'Not set'}")
     if plan.start_date:
         parts.append(f"- Dates: {plan.start_date} to {plan.end_date or 'TBD'}")
+    date_adjustments = state.metadata.get("date_auto_adjustments", []) or []
+    if date_adjustments:
+        parts.append("- Date adjustments applied this turn:")
+        for adj in date_adjustments:
+            old_date = adj.get("from")
+            new_date = adj.get("to")
+            field_name = str(adj.get("field", "date")).replace("_", " ")
+            if old_date and new_date:
+                parts.append(f"  - {field_name}: {old_date} -> {new_date}")
+        parts.append("- IMPORTANT: Mention these exact adjusted dates in your response.")
     parts.append(f"- Travelers: {plan.adults} adults, {plan.children} children")
     if plan.budget:
         parts.append(f"- Budget: {plan.currency} {plan.budget}")
@@ -708,39 +720,588 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
     return "\n".join(parts)
 
 
-def _strip_hallucinated_flight_count_claims(message: str) -> str:
-    """
-    Remove sentences that claim flight counts when no flight tiles are available.
+_TILE_CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "flights": ("flight", "flights"),
+    "hotels": ("hotel", "hotels"),
+    "activities": ("activity", "activities"),
+}
 
-    This is a narrow post-LLM safety net for phrases like:
-    - "Found **2 flights**"
-    - "Now showing direct flights. Found 2 flights."
-    """
+_TILE_CLAIM_VERB_PATTERN = re.compile(r"\b(found|showing|added|matches|now showing)\b")
+
+_ACTIVITY_CLAIM_VERB_PATTERN = re.compile(
+    r"\b(add(?:ed|ing)?|include(?:d|s|ing)?|featur(?:e|ed|es|ing)|with|plus)\b",
+    re.IGNORECASE,
+)
+
+_KNOWN_ACTIVITY_CATEGORIES: set[str] = set(TIER1_SPECIALIST_NAMES) | set(TIER2_ACTIVITY_KEYWORDS)
+
+_ACTIVITY_CATEGORY_ALIASES: dict[str, str] = {
+    "party": "nightlife",
+    "parties": "nightlife",
+    "club": "nightlife",
+    "clubs": "nightlife",
+    "clubbing": "nightlife",
+    "night out": "nightlife",
+    "night outs": "nightlife",
+    "hike": "hiking",
+    "hikes": "hiking",
+    "trek": "hiking",
+    "treks": "hiking",
+    "trekking": "hiking",
+    "surf": "surfing",
+    "surfs": "surfing",
+    "dive": "diving",
+    "dives": "diving",
+    "scuba": "diving",
+    "snorkel": "diving",
+    "snorkeling": "diving",
+    "spa": "wellness",
+    "spas": "wellness",
+}
+
+_GENERIC_ACTIVITY_ENTITY_WORDS = {
+    "day",
+    "days",
+    "night",
+    "nights",
+    "hotel",
+    "hotels",
+    "flight",
+    "flights",
+    "activity",
+    "activities",
+    "spot",
+    "spots",
+    "session",
+    "sessions",
+    "class",
+    "classes",
+    "option",
+    "options",
+    "plan",
+    "trip",
+}
+
+_ACTIVITY_COUNT_LABELS: dict[str, tuple[str, str]] = {
+    "nightlife": ("nightlife spot", "nightlife spots"),
+    "yoga": ("yoga session", "yoga sessions"),
+}
+
+_DAY_PREF_RECAP_PATTERN = re.compile(r"\*\*\d+\s+days?\s+of\s+[^*]+\*\*", re.IGNORECASE)
+
+
+def _extract_claimed_tile_categories(sentence: str) -> set[str]:
+    lowered = (sentence or "").lower()
+    has_count = bool(re.search(r"\b\d+\b", lowered))
+    has_claim_verb = bool(_TILE_CLAIM_VERB_PATTERN.search(lowered))
+    has_option_hint = "option" in lowered
+    if not (has_count or has_claim_verb or has_option_hint):
+        return set()
+
+    claimed: set[str] = set()
+    for category, keywords in _TILE_CATEGORY_KEYWORDS.items():
+        if any(kw in lowered for kw in keywords):
+            claimed.add(category)
+    return claimed
+
+
+def _canonicalize_activity_category(label: str) -> str:
+    cleaned = " ".join((label or "").strip().lower().split())
+    if not cleaned:
+        return ""
+    return _ACTIVITY_CATEGORY_ALIASES.get(cleaned, cleaned)
+
+
+def _collect_allowed_activity_categories(state: GraphState) -> set[str]:
+    settings = get_trip_settings(state)
+    allowed: set[str] = set()
+
+    for category in settings.activity_settings.categories:
+        canonical = _canonicalize_activity_category(str(category))
+        if canonical:
+            allowed.add(canonical)
+
+    for category in settings.activity_settings.day_preferences:
+        canonical = _canonicalize_activity_category(str(category))
+        if canonical:
+            allowed.add(canonical)
+
+    for category in state.metadata.get("added_categories", []) or []:
+        canonical = _canonicalize_activity_category(str(category))
+        if canonical:
+            allowed.add(canonical)
+
+    for section in state.metadata.get("strategy_sections", []) or []:
+        specialist_type = (
+            section.get("specialist_type")
+            if isinstance(section, dict)
+            else getattr(section, "specialist_type", None)
+        )
+        if not specialist_type:
+            continue
+        canonical = _canonicalize_activity_category(str(specialist_type))
+        if canonical and canonical != "local_expert":
+            allowed.add(canonical)
+
+    activities = state.tiles.get("activities", []) if state.tiles else []
+    for tile in activities:
+        if not isinstance(tile, dict):
+            continue
+        meta = tile.get("meta")
+        tile_category = meta.get("category") if isinstance(meta, dict) else tile.get("category")
+        canonical = _canonicalize_activity_category(str(tile_category or ""))
+        if canonical:
+            allowed.add(canonical)
+
+    return allowed
+
+
+def _extract_activity_mentions(sentence: str) -> set[str]:
+    lowered = (sentence or "").lower()
+    mentioned: set[str] = set()
+
+    for category in _KNOWN_ACTIVITY_CATEGORIES:
+        if re.search(rf"\b{re.escape(category)}\b", lowered):
+            mentioned.add(category)
+
+    for alias, canonical in _ACTIVITY_CATEGORY_ALIASES.items():
+        if re.search(rf"\b{re.escape(alias)}\b", lowered):
+            mentioned.add(canonical)
+
+    return mentioned
+
+
+def _normalize_entity_text(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", (value or "").lower())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _collect_known_activity_entities(state: GraphState) -> set[str]:
+    entities: set[str] = set()
+
+    activities = state.tiles.get("activities", []) if state.tiles else []
+    for tile in activities:
+        if not isinstance(tile, dict):
+            continue
+        title = tile.get("title")
+        normalized = _normalize_entity_text(str(title or ""))
+        if normalized:
+            entities.add(normalized)
+
+    for section in state.metadata.get("strategy_sections", []) or []:
+        content_added = (
+            section.get("content_added")
+            if isinstance(section, dict)
+            else getattr(section, "content_added", None)
+        )
+        if not isinstance(content_added, list):
+            continue
+        for block in content_added:
+            title = block.get("title") if isinstance(block, dict) else getattr(block, "title", None)
+            normalized = _normalize_entity_text(str(title or ""))
+            if normalized:
+                entities.add(normalized)
+
+    return entities
+
+
+def _collect_activity_tile_counts_by_category(state: GraphState) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    activities = state.tiles.get("activities", []) if state.tiles else []
+    for tile in activities:
+        if not isinstance(tile, dict):
+            continue
+        meta = tile.get("meta")
+        raw_category = meta.get("category") if isinstance(meta, dict) else tile.get("category")
+        category = _canonicalize_activity_category(str(raw_category or ""))
+        if not category:
+            continue
+        counts[category] = counts.get(category, 0) + 1
+    return counts
+
+
+def _extract_named_entity_claims(sentence: str) -> list[str]:
+    claims: list[str] = []
+    for bolded in re.findall(r"\*\*([^*]+)\*\*", sentence or ""):
+        normalized = _normalize_entity_text(bolded)
+        if not normalized:
+            continue
+        if any(ch.isdigit() for ch in normalized):
+            continue
+        words = set(normalized.split())
+        if len(words) < 2:
+            continue
+        if words & _GENERIC_ACTIVITY_ENTITY_WORDS:
+            continue
+        if words & _KNOWN_ACTIVITY_CATEGORIES:
+            continue
+        claims.append(normalized)
+    return claims
+
+
+def _entity_matches_known_activity(entity: str, known_entities: set[str]) -> bool:
+    return any(entity in known or known in entity for known in known_entities)
+
+
+def _strip_additive_activity_fragment(sentence: str) -> str:
+    trimmed = re.sub(
+        (
+            r"(?:[,;:\-]\s*|\s+)"
+            r"(?:add(?:ed|ing)?|include(?:d|s|ing)?|featur(?:e|ed|es|ing)|with|plus)\b.*$"
+        ),
+        "",
+        sentence,
+        flags=re.IGNORECASE,
+    ).strip()
+    if trimmed and trimmed != sentence:
+        return trimmed.rstrip(" ,;:-")
+
+    if re.match(
+        r"^\s*(?:add(?:ed|ing)?|include(?:d|s|ing)?|featur(?:e|ed|es|ing)|with|plus)\b",
+        sentence,
+        flags=re.IGNORECASE,
+    ):
+        return ""
+
+    return sentence.strip()
+
+
+def _build_authoritative_activity_category_sentence(
+    categories: set[str],
+    category_counts: dict[str, int],
+) -> str:
+    if not categories:
+        return ""
+
+    parts: list[str] = []
+    for category in sorted(categories):
+        count = category_counts.get(category, 0)
+        if count <= 0:
+            continue
+        singular, plural = _ACTIVITY_COUNT_LABELS.get(
+            category,
+            (f"{category} activity", f"{category} activities"),
+        )
+        label = singular if count == 1 else plural
+        parts.append(f"**{count} {label}**")
+
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return f"Added {parts[0]}."
+    if len(parts) == 2:
+        return f"Added {parts[0]} and {parts[1]}."
+    return f"Added {', '.join(parts[:-1])}, and {parts[-1]}."
+
+
+def _ground_activity_claims(message: str, state: GraphState) -> str:
+    grounded = (message or "").strip()
+    if not grounded:
+        return grounded
+
+    allowed = _collect_allowed_activity_categories(state)
+    if not allowed:
+        return grounded
+
+    category_counts = _collect_activity_tile_counts_by_category(state)
+    known_entities = _collect_known_activity_entities(state)
+    sentences = re.split(r"(?<=[.!?])\s+", grounded)
+
+    corrected = False
+    kept: list[str] = []
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+
+        if not _ACTIVITY_CLAIM_VERB_PATTERN.search(sentence):
+            kept.append(sentence)
+            continue
+
+        mentions = _extract_activity_mentions(sentence)
+        disallowed = sorted(cat for cat in mentions if cat not in allowed)
+
+        named_entities = _extract_named_entity_claims(sentence)
+        unknown_entity_claim = bool(named_entities) and all(
+            not _entity_matches_known_activity(entity, known_entities) for entity in named_entities
+        )
+
+        # Correct per-category quantity claims (e.g., "8 nightlife spots and 8 yoga sessions")
+        # using authoritative activity tile counts.
+        if (
+            mentions
+            and bool(re.search(r"\b\d+\b", sentence))
+            and "day" not in sentence.lower()
+            and "days" not in sentence.lower()
+        ):
+            authoritative = _build_authoritative_activity_category_sentence(
+                mentions,
+                category_counts,
+            )
+            if authoritative:
+                corrected = True
+                logger.debug(
+                    "[VERIFY][SYNTH] corrected_activity_category_counts categories=%s",
+                    sorted(mentions),
+                )
+                kept.append(authoritative)
+                continue
+
+        if disallowed or unknown_entity_claim:
+            trimmed = _strip_additive_activity_fragment(sentence)
+            corrected = True
+            logger.debug(
+                (
+                    "[VERIFY][SYNTH] removed_unsupported_activity_claim "
+                    "disallowed=%s unknown_entity=%s"
+                ),
+                disallowed,
+                unknown_entity_claim,
+            )
+            if trimmed:
+                if not re.search(r"[.!?]$", trimmed):
+                    trimmed = f"{trimmed}."
+                kept.append(trimmed)
+            continue
+
+        kept.append(sentence)
+
+    merged = re.sub(r"\s+([,.;!?])", r"\1", " ".join(kept).strip())
+    if corrected and not merged:
+        return "Plan updated."
+    return merged or grounded
+
+
+def _message_mentions_date(message: str, iso_date: str) -> bool:
+    text = (message or "").lower()
+    if not text or not iso_date:
+        return False
+
+    if iso_date.lower() in text:
+        return True
+
+    try:
+        parsed = datetime.strptime(iso_date, "%Y-%m-%d")
+    except ValueError:
+        return False
+
+    month_long = parsed.strftime("%B").lower()
+    month_short = parsed.strftime("%b").lower()
+    day = parsed.day
+    year = parsed.year
+    day_pattern = rf"{day}(?:st|nd|rd|th)?"
+
+    if re.search(rf"\b{parsed.month}/{parsed.day}/{year}\b", text):
+        return True
+    if re.search(rf"\b{parsed.month:02d}/{parsed.day:02d}/{year}\b", text):
+        return True
+
+    month_patterns = (month_long, month_short)
+    for month in month_patterns:
+        # Covers:
+        # - "February 15, 2027"
+        # - "Feb 15, 2027"
+        # - "February 15-25, 2027" (for start-day check)
+        # - "February 15-25, 2027" (for end-day check via second range pattern)
+        if re.search(
+            rf"\b{month}\b[^.!?\n]{{0,20}}\b{day_pattern}\b[^.!?\n]{{0,20}}\b{year}\b",
+            text,
+        ):
+            return True
+        if re.search(
+            rf"\b{month}\b[^.!?\n]{{0,20}}\b\d{{1,2}}\b\s*[-–]\s*\b{day_pattern}\b[^.!?\n]{{0,20}}\b{year}\b",
+            text,
+        ):
+            return True
+
+    return False
+
+
+def _strip_day_pref_recap_from_sentence(sentence: str) -> str:
+    if not _DAY_PREF_RECAP_PATTERN.search(sentence or ""):
+        return (sentence or "").strip()
+
+    lowered = sentence.lower()
+    first_match = _DAY_PREF_RECAP_PATTERN.search(sentence)
+    assert first_match is not None
+
+    cut_tokens = (
+        ", allowing",
+        ", with",
+        ", including",
+        ", featuring",
+        " allowing more time to enjoy ",
+        " with ",
+        " including ",
+        " featuring ",
+        " now includes ",
+        " now include ",
+    )
+    cut_points = []
+    for token in cut_tokens:
+        idx = lowered.find(token)
+        if idx != -1 and idx <= first_match.start():
+            cut_points.append(idx)
+
+    if cut_points:
+        stripped = sentence[: min(cut_points)].rstrip(" ,;:-")
+    else:
+        stripped = _DAY_PREF_RECAP_PATTERN.sub("", sentence)
+        stripped = re.sub(
+            r"\b(and|with|including|featuring)\b\s*(?=[,.;!?]|$)",
+            "",
+            stripped,
+            flags=re.I,
+        )
+        stripped = re.sub(r"\s{2,}", " ", stripped).strip(" ,;:-")
+
+    stripped = re.sub(
+        r"(?:allowing more time to enjoy|to enjoy)\s*$",
+        "",
+        stripped,
+        flags=re.IGNORECASE,
+    ).strip(" ,;:-")
+
+    if stripped and not re.search(r"[.!?]$", stripped):
+        stripped = f"{stripped}."
+
+    return stripped
+
+
+def _ground_specialist_update_response(message: str, response_type: str) -> str:
+    if response_type != "specialist_update":
+        return message
+
+    grounded = (message or "").strip()
+    if not grounded:
+        return grounded
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", grounded) if s.strip()]
+    cleaned: list[str] = []
+    for sentence in sentences:
+        updated = _strip_day_pref_recap_from_sentence(sentence)
+        if updated != sentence:
+            logger.debug("[VERIFY][SYNTH] stripped_day_preference_recap_from_specialist_update")
+        if updated:
+            cleaned.append(updated)
+
+    if len(cleaned) > 2:
+        cleaned = cleaned[:2]
+
+    return " ".join(cleaned).strip() or grounded
+
+
+def _strip_tile_count_claim_sentences(message: str) -> tuple[str, set[str]]:
+    sentences = re.split(r"(?<=[.!?])\s+", (message or "").strip())
+    kept: list[str] = []
+    claimed_categories: set[str] = set()
+
+    for sentence in sentences:
+        claimed = _extract_claimed_tile_categories(sentence)
+        if claimed:
+            claimed_categories |= claimed
+            continue
+        kept.append(sentence)
+
+    return " ".join(kept).strip(), claimed_categories
+
+
+def _build_authoritative_tile_count_sentence(state: GraphState, categories: set[str]) -> str:
+    singular_labels = {"flights": "flight", "hotels": "hotel", "activities": "activity"}
+    plural_labels = {"flights": "flights", "hotels": "hotels", "activities": "activities"}
+    activity_tiles = state.tiles.get("activities", []) if state.tiles else []
+    flight_tiles = state.tiles.get("flights", []) if state.tiles else []
+    hotel_tiles = state.tiles.get("hotels", []) if state.tiles else []
+    counts = {
+        "flights": len([t for t in flight_tiles if t]),
+        "hotels": len([t for t in hotel_tiles if t]),
+        "activities": len([t for t in activity_tiles if t]),
+    }
+
+    order = ("hotels", "flights", "activities")
+    parts = []
+    for category in order:
+        if category not in categories:
+            continue
+        count = counts[category]
+        if count <= 0:
+            continue
+        label = singular_labels[category] if count == 1 else plural_labels[category]
+        parts.append(f"**{count} {label}**")
+
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return f"Found {parts[0]}."
+    if len(parts) == 2:
+        return f"Found {parts[0]} and {parts[1]}."
+    return f"Found {parts[0]}, {parts[1]}, and {parts[2]}."
+
+
+def _strip_hallucinated_flight_count_claims(message: str) -> str:
+    """Backward-compatible helper: strip only flight count/claim sentences."""
     sentences = re.split(r"(?<=[.!?])\s+", (message or "").strip())
     kept: list[str] = []
     for sentence in sentences:
-        lowered = sentence.lower()
-        has_count = re.search(r"\b\d+\b", lowered)
-        has_flight = "flight" in lowered
-        has_claim_verb = re.search(r"\b(found|showing|added|now showing)\b", lowered)
-        claims_specific_flights = "direct" in lowered or "option" in lowered
-        if has_flight and has_claim_verb and (has_count or claims_specific_flights):
+        claimed = _extract_claimed_tile_categories(sentence)
+        if "flights" in claimed:
             continue
         kept.append(sentence)
     return " ".join(kept).strip()
+
+
+def _ground_date_adjustment_message(message: str, state: GraphState) -> str:
+    adjustments = state.metadata.get("date_auto_adjustments", []) or []
+    if not adjustments:
+        return message
+
+    grounded = (message or "").strip()
+    missing = []
+    for adj in adjustments:
+        old_date = str(adj.get("from") or "").strip()
+        new_date = str(adj.get("to") or "").strip()
+        field_name = str(adj.get("field") or "date").replace("_", " ")
+        if not old_date or not new_date:
+            continue
+        # If the response already mentions the corrected date, don't add extra noise.
+        if _message_mentions_date(grounded, new_date):
+            continue
+        missing.append((field_name, old_date, new_date))
+
+    if not missing:
+        return grounded
+
+    pairs = ", ".join(f"{field} **{old} -> {new}**" for field, old, new in missing)
+    note = f"Adjusted past dates to future dates: {pairs}."
+    logger.debug(f"[VERIFY][SYNTH] appended_date_adjustment_note adjustments={len(missing)}")
+    return f"{grounded} {note}".strip()
 
 
 def _ground_flight_response(message: str, state: GraphState) -> str:
     """
     Ensure chat text doesn't claim flights that were not actually returned.
     """
-    flights_found = len([t for t in state.tiles.get("flights", []) if t]) if state.tiles else 0
-    if flights_found > 0:
-        return message
+    grounded, claimed_categories = _strip_tile_count_claim_sentences(message)
+    if claimed_categories:
+        authoritative_counts = _build_authoritative_tile_count_sentence(state, claimed_categories)
+        if authoritative_counts:
+            grounded = (
+                f"{grounded} {authoritative_counts}".strip() if grounded else authoritative_counts
+            )
+        logger.debug(
+            "[VERIFY][SYNTH] corrected_tile_count_claims categories=%s",
+            sorted(claimed_categories),
+        )
 
-    grounded = _strip_hallucinated_flight_count_claims(message)
-    if grounded != message:
-        logger.debug("[VERIFY][SYNTH] removed_hallucinated_flight_claim")
+    grounded = _ground_activity_claims(grounded, state)
+    grounded = _ground_date_adjustment_message(grounded, state)
+
+    flights_found = len([t for t in state.tiles.get("flights", []) if t]) if state.tiles else 0
+    if flights_found <= 0:
+        stripped = _strip_hallucinated_flight_count_claims(grounded)
+        if stripped != grounded:
+            grounded = stripped
+            logger.debug("[VERIFY][SYNTH] removed_hallucinated_flight_claim")
 
     settings = get_trip_settings(state)
     flights_requested = settings.booking_types.flights != "off"
@@ -1258,14 +1819,50 @@ def generate_suggestions(state: GraphState) -> List[str]:
     CTA_CATEGORIES = {"destination_choice", "date_prompt", "date_contextual"}
     SETTING_CATEGORIES = {"plan_hotel_pref", "plan_flight_pref", "plan_budget"}
 
-    month = state.metadata.get("detected_month", "")
-    result = []
-    meta_list = []
-    for c in final:
-        text = c["template"]
+    def _render_suggestion_text(candidate: dict, month_text: str) -> str:
+        text = candidate["template"]
         text = text.replace("{destination}", dest)
-        text = text.replace("{month}", month)
-        result.append(text)
+        text = text.replace("{month}", month_text)
+        return text
+
+    def _suggestion_text_key(text: str) -> str:
+        return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+    month = state.metadata.get("detected_month", "")
+    previous_text_keys = {
+        _suggestion_text_key(text)
+        for text in state.metadata.get("last_suggested_replies", [])
+        if isinstance(text, str) and text.strip()
+    }
+    candidate_queue: list[dict] = list(final)
+    seen_candidate_ids = {id(c) for c in candidate_queue}
+    # Always append alternates so prior-turn chips can rotate out even when
+    # the first-pass queue is already length 3.
+    for candidate in sorted(eligible, key=lambda c: c["priority"]):
+        cid = id(candidate)
+        if cid in seen_candidate_ids:
+            continue
+        candidate_queue.append(candidate)
+        seen_candidate_ids.add(cid)
+
+    result: list[str] = []
+    meta_list: list[dict] = []
+    structured_chips: list[dict] = []
+    unique_candidates: list[dict] = []
+    seen_text_keys: set[str] = set()
+
+    def _append_candidate(c: dict, *, allow_previous: bool) -> bool:
+        if len(result) >= 3:
+            return False
+        text = _render_suggestion_text(c, month)
+        text_key = _suggestion_text_key(text)
+        if text_key in seen_text_keys:
+            logger.debug(f"[SUGGESTIONS] deduped duplicate chip='{text}'")
+            return False
+        if not allow_previous and text_key in previous_text_keys:
+            logger.debug(f"[SUGGESTIONS] rotated previous-turn chip='{text}'")
+            return False
+        seen_text_keys.add(text_key)
 
         cat = c.get("category", "")
         if cat in CTA_CATEGORIES or c.get("priority", 10) <= 1:
@@ -1285,32 +1882,45 @@ def generate_suggestions(state: GraphState) -> List[str]:
         elif cat in {"date_prompt", "date_contextual"}:
             icon = "calendar"
 
-        meta_list.append({"chip_type": chip_type, "category": cat, "icon": icon})
-
-    # Build structured chips for frontend action routing
-    structured_chips = []
-    for i, c in enumerate(final):
-        cat = c.get("category", "")
-        text = result[i]
+        meta = {"chip_type": chip_type, "category": cat, "icon": icon}
         action_type, action_target = PILL_ACTION_MAP.get(cat, ("send_message", None))
+
+        result.append(text)
+        meta_list.append(meta)
+        unique_candidates.append(c)
         structured_chips.append(
             {
                 "message": text,
                 "action_type": action_type,
                 "action_target": action_target,
-                "chip_type": meta_list[i]["chip_type"],
+                "chip_type": chip_type,
                 "category": cat,
-                "icon": meta_list[i]["icon"],
+                "icon": icon,
             }
         )
+        return True
+
+    # Pass 1: prefer never-shown-in-previous-turn chips.
+    for c in candidate_queue:
+        if len(result) >= 3:
+            break
+        _append_candidate(c, allow_previous=False)
+
+    # Pass 2: if we still need slots, allow repeats from previous turn.
+    if len(result) < 3:
+        for c in candidate_queue:
+            if len(result) >= 3:
+                break
+            _append_candidate(c, allow_previous=True)
 
     state.metadata["suggestion_chip_meta"] = meta_list
     state.metadata["suggestion_chips"] = structured_chips
+    state.metadata["last_suggested_replies"] = result
 
     # ── Step 7: Track shown question types for rotation ──
     shown_qtypes = [
         c["category"].replace("question_", "")
-        for c in final
+        for c in unique_candidates
         if c["category"].startswith("question_")
     ]
     if shown_qtypes:
@@ -1497,6 +2107,7 @@ async def synthesizer(state: GraphState) -> GraphState:
     llm_attempted = False
     llm_called = False
     message = ""
+    response_type = _get_response_type(state)
 
     from app.debug_utils import log, log_tokens
 
@@ -1524,7 +2135,6 @@ async def synthesizer(state: GraphState) -> GraphState:
                 log("SYNTH", "Settings update has violations — routing to LLM")
             else:
                 log("SYNTH", "Settings update generated new content — routing to LLM")
-            response_type = _get_response_type(state)
             llm_attempted = True
             llm_called = True
             llm_response, token_usage = await synthesize_with_llm(state, response_type)
@@ -1555,7 +2165,6 @@ async def synthesizer(state: GraphState) -> GraphState:
             # Use LLM for complex planning responses
             logger.debug("Using LLM synthesis for response generation")
             log("SYNTH", "Generating LLM response...")
-            response_type = _get_response_type(state)
             llm_attempted = True
             llm_called = True
             llm_response, token_usage = await synthesize_with_llm(state, response_type)
@@ -1622,6 +2231,7 @@ async def synthesizer(state: GraphState) -> GraphState:
 
     # Final grounding pass: avoid flight-count claims when logistics skipped flights.
     message = _ground_flight_response(message, state)
+    message = _ground_specialist_update_response(message, response_type)
 
     # Generate suggestion chips (always template-based for consistency)
     # Always regenerate to ensure fresh suggestions on every turn

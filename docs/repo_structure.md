@@ -9,6 +9,14 @@ nomadic/
 ├── .claude/                    # Claude Code configuration
 │   ├── agents/                 # Specialist agent specs (backend, frontend, code-reviewer)
 │   └── commands/               # Custom slash commands (audit, verify-build, etc.)
+├── .codex/                     # Local Codex skills/config for project workflows
+│   └── skills/
+│       ├── nomadic-audit-code/
+│       ├── nomadic-clear-sprint/
+│       ├── nomadic-enforce-style/
+│       ├── nomadic-reassemble-docs/
+│       ├── nomadic-update-docs/
+│       └── nomadic-verify-build/
 ├── .github/                    # GitHub workflows and instructions
 ├── .vscode/                    # VS Code settings
 ├── backend/                    # Python FastAPI backend
@@ -23,6 +31,7 @@ nomadic/
 ├── .gitignore                  # Git ignore patterns
 ├── .pre-commit-config.yaml     # Pre-commit hooks
 ├── .secrets.baseline           # detect-secrets baseline
+├── AGENTS.md                   # Local Codex agent/skill trigger instructions
 ├── CLAUDE.md                   # AI assistant instructions
 ├── docker-compose.yml          # Docker configuration
 ├── README.md                   # Project readme
@@ -117,14 +126,15 @@ backend/
 │   │
 │   ├── services/
 │   │   ├── __init__.py
-│   │   ├── experience_generator.py # Tier 2 experience tile generation via gpt-4o-mini (L1+L2 cache)
-│   │   ├── itinerary_builder.py    # Itinerary construction service
-│   │   ├── regen_strategy.py       # Selective regeneration strategy computation
-│   │   ├── router_cache.py         # Thread-safe L1 cache for router extraction (context-aware)
-│   │   ├── specialist_cache.py     # Thread-safe L1+L2 cache for specialist LLM outputs
-│   │   ├── tile_cache.py           # Thread-safe L1+L2 cache for tile provider data (24h TTL)
-│   │   ├── unsplash.py             # Unsplash image service
-│   │   └── unsplash_queries.py     # Unsplash query helpers (includes Tier 2 activity queries)
+│   │   ├── cache_core.py            # Shared MemoryCache primitive (TTLCache + RLock + stats)
+│   │   ├── experience_generator.py  # Tier 2 experience tile generation via gpt-4o-mini (L1+L2 cache)
+│   │   ├── itinerary_builder.py     # Itinerary construction service
+│   │   ├── regen_strategy.py        # Selective regeneration strategy computation
+│   │   ├── router_cache.py          # Thread-safe L1 cache for router extraction (context-aware)
+│   │   ├── specialist_cache.py      # Thread-safe L1+L2 cache for specialist LLM outputs
+│   │   ├── tile_cache.py            # Thread-safe L1+L2 cache for tile provider data (24h TTL)
+│   │   ├── unsplash.py              # Unsplash image service
+│   │   └── unsplash_queries.py      # Unsplash query helpers (includes Tier 2 activity queries)
 │   │
 │   ├── utils/                 # Shared utility modules
 │   │   ├── __init__.py
@@ -187,7 +197,7 @@ backend/
 │   ├── test_intent_router_settings.py    # IntentRouter extracted settings contract tests
 │   ├── test_itinerary_builder.py         # Itinerary builder tests
 │   ├── test_llm_feasibility.py           # LLM geographic feasibility tests
-│   ├── test_logistics_tier2.py           # Logistics Tier-2 generation fallback/reuse tests
+│   ├── test_logistics_tier2.py           # Logistics Tier-2 generation, backfill pipeline, affinity sorting tests
 │   ├── test_main_trip_input_merge.py     # Document PATCH no-op dedupe + merge behavior tests
 │   ├── test_multi_specialist_integration.py  # Multi-specialist tests
 │   ├── test_plan_schema.py               # Plan schema tests
@@ -272,15 +282,13 @@ frontend/
 │   ├── map/                    # Map components
 │   │   ├── InteractiveMap.tsx
 │   │   ├── MapboxErrorSuppressor.tsx
-│   │   ├── MapErrorBoundary.tsx
-│   │   └── MapLayerFilter.tsx
+│   │   └── MapErrorBoundary.tsx
 │   │
 │   ├── nomadic/                # Marketing/landing components
 │   │   ├── consent-manager.tsx
 │   │   └── legal-page.tsx
 │   │
 │   ├── plan/                   # Plan view components
-│   │   ├── index.ts
 │   │   ├── BookingSection.tsx
 │   │   ├── CoreChip.tsx
 │   │   ├── DestinationMapPlaceholder.tsx
@@ -301,8 +309,7 @@ frontend/
 │   │   │   └── CheckoutSidebar.tsx
 │   │   │
 │   │   ├── modals/
-│   │   │   ├── AlternativesModal.tsx
-│   │   │   └── index.ts
+│   │   │   └── AlternativesModal.tsx
 │   │   │
 │   │   ├── sheets/             # Bottom sheets
 │   │   │   ├── ActivitiesSheet.tsx
@@ -311,20 +318,18 @@ frontend/
 │   │   │   ├── DatesSheet.tsx
 │   │   │   ├── DestinationSheet.tsx
 │   │   │   ├── FlightsSheet.tsx
-│   │   │   ├── index.ts
+│   │   │   ├── GatingBlocker.tsx     # Shared gate-check blocker (gates array, used by Flights/Stays/Activities sheets)
 │   │   │   ├── OriginSheet.tsx
 │   │   │   ├── StaysSheet.tsx
 │   │   │   ├── TravelersSheet.tsx
 │   │   │   └── TripSettingsSheet.tsx
 │   │   │
 │   │   ├── stages/             # Stage-specific views
-│   │   │   ├── index.ts
 │   │   │   ├── S2StrategyView.tsx
 │   │   │   └── StrategyHero.tsx
 │   │   │
 │   │   ├── tiles/
 │   │   │   ├── BookableCard.tsx
-│   │   │   ├── index.ts
 │   │   │   └── SuggestionCard.tsx
 │   │   │
 │   │   └── timeline/
@@ -334,7 +339,6 @@ frontend/
 │   │           ├── ActivityMiniCard.tsx
 │   │           ├── FreeDayCard.tsx
 │   │           ├── GhostSlot.tsx
-│   │           ├── index.ts
 │   │           ├── LogisticsBlock.tsx
 │   │           ├── PreferenceAttributionBadge.tsx  # "You preferred this" badge
 │   │           ├── SafetyBlock.tsx
@@ -347,15 +351,13 @@ frontend/
 │   │   ├── MiniCard.tsx
 │   │   ├── TaxesFeesTooltip.tsx
 │   │   ├── TileCard.tsx
-│   │   ├── TileDetailsModal.tsx
-│   │   └── TileFilterBar.tsx
+│   │   └── TileDetailsModal.tsx
 │   │
 │   └── ui/                     # Base UI components
 │       ├── bottom-sheet.tsx
 │       ├── button.tsx
 │       ├── calendar.tsx
 │       ├── card.tsx
-│       ├── loader.tsx
 │       ├── popover.tsx
 │       ├── sheet.tsx
 │       ├── skeleton.tsx
@@ -432,6 +434,7 @@ frontend/
 │   ├── documentStore.test.ts
 │   ├── fill-day-guards.test.ts
 │   ├── ghost-timeline-adapter.test.ts
+│   ├── map-error-boundary.test.ts
 │   ├── plan-copy.test.tsx
 │   └── streaming.test.ts
 │
@@ -460,7 +463,6 @@ docs/
 ├── design-system.md            # Frontend styling SSoT
 ├── key_files/                  # Backend reference snapshots (prompts, nodes, services)
 ├── plan_graph_analysis.md      # Backend architecture SSoT
-├── remediation-proof-gates.md  # Remediation acceptance gates and proof checklist
 ├── repo_structure.md           # This file
 └── ux_unified_architecture.md  # UX/view states SSoT
 ```

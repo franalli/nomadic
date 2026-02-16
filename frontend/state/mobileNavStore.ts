@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * mobileNavStore - Zustand store for mobile horizontal page navigation.
  *

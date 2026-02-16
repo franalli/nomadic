@@ -8,7 +8,11 @@ from app.planner.nodes.intent_router import (
     _detect_settings_from_message,
     _sanitize_settings_from_message,
 )
-from app.planner.nodes.router_extraction import RouterOutput, _populate_trip_plan_from_router_output
+from app.planner.nodes.router_extraction import (
+    RouterOutput,
+    _populate_trip_plan_from_router_output,
+    _validate_extraction,
+)
 from app.planner.state import GraphState
 
 
@@ -145,3 +149,29 @@ def test_populate_trip_plan_skips_category_writes_without_category_intent():
         state.metadata.get("trip_inputs", {}).get("activity_settings", {}).get("categories", [])
     )
     assert categories == ["diving", "surfing"]
+
+
+def test_validate_extraction_bumps_end_year_when_start_auto_bumps():
+    extracted = {
+        "start_date": "2026-02-15",
+        "end_date": "2026-02-25",
+    }
+
+    validated = _validate_extraction(extracted, "2026-02-16")
+
+    assert validated["start_date"] == "2027-02-15"
+    assert validated["end_date"] == "2027-02-25"
+    assert validated["date_auto_adjustments"] == [
+        {
+            "field": "start_date",
+            "from": "2026-02-15",
+            "to": "2027-02-15",
+            "reason": "past_date_auto_bumped",
+        },
+        {
+            "field": "end_date",
+            "from": "2026-02-25",
+            "to": "2027-02-25",
+            "reason": "preserve_range_after_start_bump",
+        },
+    ]

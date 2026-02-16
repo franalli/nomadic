@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  calculateMapCenter,
   extractPOIsFromDayCards,
   type MapPOI,
 } from '@/lib/ghost-timeline-adapter';
@@ -59,6 +60,7 @@ describe('extractPOIsFromDayCards memo behavior', () => {
       id: 'act-1',
       title: 'Tulamben Dive',
       type: 'activity',
+      coordinates: { lat: -8.274, lng: 115.593 },
     });
   });
 
@@ -82,5 +84,50 @@ describe('extractPOIsFromDayCards memo behavior', () => {
     expect(first).toHaveLength(1);
     expect(first[0].title).toBe('Tulamben Dive');
     expect(second).toBe(first);
+  });
+
+  it('skips invalid day-card coordinates and falls back to strategy-section POIs', () => {
+    const invalidDayCards: DayCard[] = [
+      {
+        day_number: 1,
+        label: 'Day 1',
+        blocks: [
+          {
+            id: 'bad-1',
+            period: 'morning',
+            activity_type: 'diving',
+            summary: 'Invalid Coordinates Block',
+            coordinates: { lat: 999, lng: 999 },
+          },
+        ],
+      },
+    ];
+    const sections = makeStrategySections();
+
+    const pois = extractPOIsFromDayCards(
+      invalidDayCards,
+      sections,
+      'Bali',
+      'memo-invalid-coordinates-fallback'
+    );
+
+    expect(pois).toHaveLength(1);
+    expect(pois[0]).toMatchObject({
+      title: 'Tulamben Dive',
+      coordinates: { lat: -8.274, lng: 115.593 },
+    });
+  });
+
+  it('uses default center when POI coordinates are invalid', () => {
+    const center = calculateMapCenter([
+      {
+        id: 'bad-poi',
+        title: 'Bad POI',
+        type: 'activity',
+        coordinates: { lat: Number.NaN, lng: Number.POSITIVE_INFINITY },
+      } as MapPOI,
+    ]);
+
+    expect(center).toEqual({ lat: 25.2048, lng: 55.2708, zoom: 10 });
   });
 });

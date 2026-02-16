@@ -42,16 +42,16 @@ backend/app/planner/
   nodes/          → intent_router.py, trip_architect.py, vertical_specialist.py,
                     synthesizer.py, local_expert.py, logistics_node.py, constraint_guard.py,
                     router_extraction.py, router_utils.py, router_category_sync.py,
-                    specialist_schemas.py
+                    specialist_schemas.py, input_gates.py, input_gate_config.py
   services/       → response_envelope.py, section_builder.py, state_serde.py,
                     itinerary_adapter.py, iata_resolver.py, admin_utils.py
   state/          → graph_state.py, typed_meta.py
   *.py            → specialist_registry.py, hashing.py, cache_access.py, meta.py, meta_keys.py,
-                    telemetry.py, test_mode.py
+                    telemetry.py, test_mode.py, llm_factory.py
 backend/app/
   plan_graph.py   → LangGraph workflow definition + routing functions
   main.py         → FastAPI endpoints, middleware, rate limiting
-  services/       → specialist_cache.py, router_cache.py, tile_cache.py, base_cache.py,
+  services/       → cache_core.py, specialist_cache.py, router_cache.py, tile_cache.py,
                     experience_generator.py, regen_strategy.py, itinerary_builder.py,
                     unsplash.py, unsplash_queries.py
   tile_service/   → curated_provider.py, amadeus_provider.py, mock_provider.py,
@@ -85,9 +85,9 @@ The builder in `itinerary_builder.py` runs 7 main phases:
 3. Anchor Placement (arrival/departure from flights)
 4. Safety Buffer Injection (no-fly, acclimatization placed before first altitude-activity day)
 5. Activity Distribution (cross-domain clustering with capacity-based Phase D co-scheduling OR round-robin, preference-weighted). Phase D scores candidates: `headroom * 0.6 + complement * 0.4`, max 1 activity per specialist per day. Tier 2 reserve: 1 block + 2h/day when Tier 2 categories exist.
-   5.25. Preferred Activity Placement (user hearts)
    5.5. Free Day Placeholders
    5.6. Experience Tile Placement: Pass 0 (pinned tiles from fill-day on target day), Pass 1 (free days), Pass 2 (any day with capacity)
+   5.25. Preferred Activity Placement (user hearts) — runs AFTER experience tile placement
 6. Tile Matching (6.5: inline constraint tagging, 6.75: final chronological sort)
 7. Temporal Conflict Detection (overflow)
 
@@ -97,7 +97,7 @@ When modifying a phase, verify interactions with adjacent phases. Phase order ma
 
 - `check_budget_constraint()`, `check_temporal_constraints()`, `check_specialist_constraints()`, `check_route_constraint()` (async, LLM-backed place validation) exist
 - Cross-domain checks use `ALL_CONSTRAINT_ALIASES` for fuzzy matching
-- `route_after_guard()` → unfixable (route/specialist) short-circuits to synthesizer; auto-fixable (budget/capacity) loops to architect once
+- `route_after_guard()` → always routes to synthesizer. Architect retry path is intentionally disabled until deterministic auto-fix exists. Unfixable categories (route/specialist) are logged but all paths lead to synthesizer.
 - Violations carry: code, message, severity (blocking/warning/info), category, suggested_action, conflicting_specialists, suggested_specialist
 - `MULTI_SPECIALIST_CAPACITY_EXCEEDED` (warning/capacity): aggregate check across all specialists, fires when combined activities > `effective_days * 2`
 - Builder-aware suppression: checks both `last_builder_success` AND `last_builder_drop_ratio < 0.5` before suppressing duplicate violations
@@ -109,14 +109,14 @@ When modifying a phase, verify interactions with adjacent phases. Phase order ma
 0. Budget blocking → "Increase budget to $X", "Find cheaper {cat}", "Fewer activity days"
 1. Other blocking violations → "Extend to {date}", "Remove {specialist}", "Reduce {cat} to N days"
 2. Route violations → destination change chips
-3. Pool-based slot allocation: P0 (destination/date) fills all 3 slots; else Slot 1 = ACTION (date prompts), Slots 2-3 = DISCOVER (specialist cross-sell, plan progression, questions)
+3. Pool-based slot allocation: P0 (destination/date/date_contextual) fills all 3 slots; else Slot 1 = ACTION (date prompts, date_contextual), Slots 2-3 = DISCOVER (specialist cross-sell, plan progression, questions)
 
 ### Caching
 
 - L1: in-memory `@lru_cache` or `TTLCache` — session-scoped
 - L2: PostgreSQL `response_cache` table — cross-session, 7-day TTL for specialists
 - Cache keys include skill level, date month, destination — never full date ranges
-- Router cache: `SHA256({normalized_text}:{today_date})[:32]`, 1h TTL, 500 entries
+- Router cache: `router::v2::SHA256({normalized_text}:{today_date})[:32]`, 1h TTL, 500 entries
 - Specialist infeasibility: destination-level cache (not date-dependent). Skiing in Bali stays infeasible regardless of date changes — skip LLM re-query when destination unchanged
 
 ### State Serialization
@@ -147,3 +147,7 @@ ruff check . --fix
 ```
 
 Always verify changes don't break existing constraint logic by running the full test suite.
+
+## Post-Plan Execution
+
+After executing a plan, provide a concise summary of all changes made: files modified, key logic added/removed, and any follow-up items.

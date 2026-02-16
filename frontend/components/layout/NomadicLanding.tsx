@@ -19,16 +19,14 @@ import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEdit
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { shouldAutoTriggerItinerary } from '@/components/plan/planStateHelpers';
-import {
-  ActivitiesSheet,
-  BudgetSheet,
-  DatesSheet,
-  DestinationSheet,
-  FlightsSheet,
-  OriginSheet,
-  StaysSheet,
-  TravelersSheet,
-} from '@/components/plan/sheets';
+import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
+import { BudgetSheet } from '@/components/plan/sheets/BudgetSheet';
+import { DatesSheet } from '@/components/plan/sheets/DatesSheet';
+import { DestinationSheet } from '@/components/plan/sheets/DestinationSheet';
+import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
+import { OriginSheet } from '@/components/plan/sheets/OriginSheet';
+import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
+import { TravelersSheet } from '@/components/plan/sheets/TravelersSheet';
 import { TripSettingsSheet } from '@/components/plan/sheets/TripSettingsSheet';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
@@ -42,7 +40,7 @@ import { apiFetch, fetchDestinationImage } from '@/lib/api';
 import { parseISODateLocal } from '@/lib/date-utils';
 import { debugLog } from '@/lib/debug';
 import type { SpecialistType } from '@/lib/specialistLinkParser';
-import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
+import { consumeNdjsonEnvelopeStream } from '@/lib/streamParser';
 import { formatDateForDisplay } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
@@ -184,7 +182,7 @@ export function NomadicLanding() {
       docExecutedTopics: s.document?.executed_strategy_topics,
       docPendingTopics: s.document?.pending_strategy_topics,
       docDayCards: s.document?.day_cards,
-      docGeneration: s.document?.generation,
+      docGeneration: s.generation,
       docOpenDecisions: s.document?.open_decisions,
       docItineraryOverview: s.document?.itinerary_overview,
       docItineraryAssumptions: s.document?.itinerary_assumptions,
@@ -978,32 +976,44 @@ export function NomadicLanding() {
           return;
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
+        await consumeNdjsonEnvelopeStream(response.body, {
+          onEnvelope: (planEnvelope) => {
+            if (!storeIsCurrentRun(runId)) {
+              debugLog('Ignoring late event from stale run');
+              return;
+            }
 
-        const parser = createStreamParser((event: StreamEvent) => {
-          if (!storeIsCurrentRun(runId)) {
-            debugLog('Ignoring late event from stale run');
-            return;
-          }
-
-          resetTimeout();
-
-          debugLog('[expand-itinerary] Received event:', event.type, event);
-          if (event.type === 'envelope') {
+            resetTimeout();
+            debugLog('[expand-itinerary] Received event:', 'envelope', { type: 'envelope', plan_envelope: planEnvelope });
             debugLog('[expand-itinerary] Merging envelope:', {
-              day_cards: event.plan_envelope?.day_cards?.length ?? 0,
-              plan_view_state: event.plan_envelope?.plan_view_state,
+              day_cards: planEnvelope?.day_cards?.length ?? 0,
+              plan_view_state: planEnvelope?.plan_view_state,
             });
-            storeMergeEnvelope(event.plan_envelope);
-          } else if (event.type === 'progress') {
+            storeMergeEnvelope(planEnvelope);
+          },
+          onProgress: (event) => {
+            if (!storeIsCurrentRun(runId)) {
+              debugLog('Ignoring late event from stale run');
+              return;
+            }
+
+            resetTimeout();
+            debugLog('[expand-itinerary] Received event:', event.type, event);
             setUiGeneration({
               active: true,
               stage: event.stage,
               message: event.message,
               pct: event.pct,
             });
-          } else if (event.type === 'done') {
+          },
+          onDone: (event) => {
+            if (!storeIsCurrentRun(runId)) {
+              debugLog('Ignoring late event from stale run');
+              return;
+            }
+
+            resetTimeout();
+            debugLog('[expand-itinerary] Received event:', event.type, event);
             debugLog('[expand-itinerary] Generation complete');
             setUiGeneration(null);
             // Sync version from backend to prevent 409 on next PATCH
@@ -1025,7 +1035,15 @@ export function NomadicLanding() {
                 addToast(warning, 'info');
               });
             }
-          } else if (event.type === 'error') {
+          },
+          onError: (event) => {
+            if (!storeIsCurrentRun(runId)) {
+              debugLog('Ignoring late event from stale run');
+              return;
+            }
+
+            resetTimeout();
+            debugLog('[expand-itinerary] Received event:', event.type, event);
             // CONSTRAINT_CONFLICT is a business-logic response, not an actual error.
             // It contains partial day_cards (what CAN fit) + conflict resolutions.
             let parsed: Record<string, unknown> | null = null;
@@ -1056,15 +1074,8 @@ export function NomadicLanding() {
             } else {
               console.error('[expand-itinerary] Error received:', event.message);
             }
-          }
+          },
         });
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          parser.feed(decoder.decode(value, { stream: true }));
-        }
-        parser.flush();
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
           debugLog('Itinerary generation aborted');
@@ -1420,9 +1431,13 @@ export function NomadicLanding() {
           // SYNC: Update store immediately so RefreshButton sees new value
           storeUpdateTripInputs({ destination: value });
           // ASYNC: Persist to backend
-          await storeCommitTripInputs({ destination: value });
-          closeSheet();
-          addToast(`Destination: ${value}`, 'confirmation');
+          try {
+            await storeCommitTripInputs({ destination: value });
+            closeSheet();
+            addToast(`Destination: ${value}`, 'confirmation');
+          } catch {
+            addToast('Failed to save — please try again', 'error');
+          }
         }}
       />
 
@@ -1434,9 +1449,13 @@ export function NomadicLanding() {
           // SYNC: Update store immediately so RefreshButton sees new value
           storeUpdateTripInputs({ origin: value });
           // ASYNC: Persist to backend
-          await storeCommitTripInputs({ origin: value });
-          closeSheet();
-          addToast(`Origin: ${value}`, 'confirmation');
+          try {
+            await storeCommitTripInputs({ origin: value });
+            closeSheet();
+            addToast(`Origin: ${value}`, 'confirmation');
+          } catch {
+            addToast('Failed to save — please try again', 'error');
+          }
         }}
       />
 
@@ -1456,17 +1475,21 @@ export function NomadicLanding() {
             end_date: endStr,
           });
           // ASYNC: Persist to backend
-          await storeCommitTripInputs({
-            start_date: startStr,
-            end_date: endStr,
-          });
-          closeSheet();
+          try {
+            await storeCommitTripInputs({
+              start_date: startStr,
+              end_date: endStr,
+            });
+            closeSheet();
 
-          // Trigger itinerary rebuild if one exists
-          const hasItinerary =
-            (useDocumentStore.getState().document?.day_cards?.length ?? 0) > 0;
-          if (hasItinerary) {
-            proceedWithItineraryGeneration({ forceFullRebuild: true });
+            // Trigger itinerary rebuild if one exists
+            const hasItinerary =
+              (useDocumentStore.getState().document?.day_cards?.length ?? 0) > 0;
+            if (hasItinerary) {
+              proceedWithItineraryGeneration({ forceFullRebuild: true });
+            }
+          } catch {
+            addToast('Failed to save — please try again', 'error');
           }
         }}
       />
@@ -1480,10 +1503,14 @@ export function NomadicLanding() {
           // SYNC: Update store immediately
           storeUpdateTripInputs({ adults, children });
           // ASYNC: Persist to backend
-          await storeCommitTripInputs({ adults, children });
-          closeSheet();
-          const label = `${adults} adult${adults > 1 ? 's' : ''}${children > 0 ? `, ${children} child${children > 1 ? 'ren' : ''}` : ''}`;
-          addToast(`Travelers: ${label}`, 'confirmation');
+          try {
+            await storeCommitTripInputs({ adults, children });
+            closeSheet();
+            const label = `${adults} adult${adults > 1 ? 's' : ''}${children > 0 ? `, ${children} child${children > 1 ? 'ren' : ''}` : ''}`;
+            addToast(`Travelers: ${label}`, 'confirmation');
+          } catch {
+            addToast('Failed to save — please try again', 'error');
+          }
         }}
       />
 
@@ -1497,14 +1524,18 @@ export function NomadicLanding() {
           // SYNC: Update store immediately
           storeUpdateTripInputs({ budget: amount, currency });
           // ASYNC: Persist to backend
-          await storeCommitTripInputs({ budget: amount, currency });
-          closeSheet();
-          const formatted = new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency,
-            maximumFractionDigits: 0,
-          }).format(amount);
-          addToast(`Budget: ${formatted}`, 'confirmation');
+          try {
+            await storeCommitTripInputs({ budget: amount, currency });
+            closeSheet();
+            const formatted = new Intl.NumberFormat('en-US', {
+              style: 'currency',
+              currency,
+              maximumFractionDigits: 0,
+            }).format(amount);
+            addToast(`Budget: ${formatted}`, 'confirmation');
+          } catch {
+            addToast('Failed to save — please try again', 'error');
+          }
         }}
       />
 
@@ -1544,9 +1575,13 @@ export function NomadicLanding() {
         hasDates={hasDates}
         onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
         onSaveSettings={async (settings) => {
-          await storeCommitTripInputs({ hotel_settings: settings });
-          setGearStaysSheetOpen(false);
-          addToast('Hotel preferences saved', 'confirmation');
+          try {
+            await storeCommitTripInputs({ hotel_settings: settings });
+            setGearStaysSheetOpen(false);
+            addToast('Hotel preferences saved', 'confirmation');
+          } catch {
+            addToast('Failed to save — please try again', 'error');
+          }
         }}
         onOpenDestination={() => openSheet('destination')}
         onOpenDates={() => openSheet('dates')}
@@ -1569,9 +1604,13 @@ export function NomadicLanding() {
         hasDates={hasDates}
         onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
         onSaveSettings={async (settings) => {
-          await storeCommitTripInputs({ flight_settings: settings });
-          setGearFlightsSheetOpen(false);
-          addToast('Flight preferences saved', 'confirmation');
+          try {
+            await storeCommitTripInputs({ flight_settings: settings });
+            setGearFlightsSheetOpen(false);
+            addToast('Flight preferences saved', 'confirmation');
+          } catch {
+            addToast('Failed to save — please try again', 'error');
+          }
         }}
         onOpenOrigin={() => openSheet('origin')}
         onOpenDestination={() => openSheet('destination')}

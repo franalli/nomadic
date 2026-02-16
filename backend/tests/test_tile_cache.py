@@ -25,7 +25,7 @@ class TestTileCacheKeyGeneration:
     def test_basic_key(self):
         """Test basic cache key format."""
         key = _tile_cache_key("amadeus", "hotel", "Bali", "2025-03-01", "2025-03-14")
-        assert key == "tiles:amadeus:hotel:bali:2025-03-01:2025-03-14"
+        assert key == "tile::v2::amadeus::hotel::bali::2025-03-01::2025-03-14"
 
     def test_normalized_destination(self):
         """Test destination normalization (lowercase, stripped)."""
@@ -210,7 +210,7 @@ class TestL2DatabaseCache:
         from app.services.tile_cache import get_cached_tiles, set_cached_tiles
 
         # Clean up stale test data from previous runs
-        cache_key = "tiles:amadeus:hotel:testcity:2025-03-01:2025-03-14"
+        cache_key = _tile_cache_key("amadeus", "hotel", "TestCity", "2025-03-01", "2025-03-14")
         await async_db_session.execute(
             delete(ResponseCache).where(ResponseCache.cache_key == cache_key)
         )
@@ -267,7 +267,7 @@ class TestL2DatabaseCache:
         from app.services.tile_cache import get_cached_tiles, set_cached_tiles
 
         # Clean up stale test data
-        cache_key = "tiles:amadeus:hotel:persistcity:2025-04-01:2025-04-14"
+        cache_key = _tile_cache_key("amadeus", "hotel", "PersistCity", "2025-04-01", "2025-04-14")
         await async_db_session.execute(
             delete(ResponseCache).where(ResponseCache.cache_key == cache_key)
         )

@@ -48,7 +48,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 6. **Panic Button** - Hard-coded reset commands bypass LLM entirely
 7. **Constraint Injector Pattern** - Specialist runs BEFORE Architect calls tools
 8. **Local Expert Fallback** - Generic trips always have content via LocalExpert
-9. **Auto-Fix Loop** - ConstraintGuard can loop back to Architect once to self-correct
+9. **Auto-Fix Loop (DISABLED)** - ConstraintGuard always routes to Synthesizer. The architect retry path is intentionally disabled until a deterministic auto-fix implementation exists for blocking violations
 10. **Itinerary Synthesis** - ItineraryBuilder is pure Python (no LLM) for deterministic scheduling
 11. **Exploration Mode** - Conversational Q&A using Local Expert knowledge before planning
 12. **Progressive Nudging** - Gradual transition from exploration to planning (1st: open, 2nd: soft nudge, 3rd+: invitation)
@@ -196,10 +196,10 @@ backend/app/planner/
 │                                    │            │
 │  Returns: violations[], has_blocking│           │
 │                                    │            │
-│  AUTO-FIX LOOP (NEW):              │            │
-│  If blocking + retry_count < 1     │            │
-│    → Route back to Architect       │            │
-│    → Self-correct before user sees │            │
+│  AUTO-FIX LOOP (DISABLED):          │            │
+│  Always routes to Synthesizer.     │            │
+│  Architect retry intentionally     │            │
+│  disabled pending deterministic fix│            │
 └───────────────┬────────────────────┘            │
                 │                                 │
                 └────────────────┬────────────────┘
@@ -396,11 +396,17 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
     # Validate date format (must be YYYY-MM-DD)
     # Swap if end < start
 
+    # Auto-bump past dates (+1yr), track adjustments
+    # Cascade: if start bumped but end didn't, bump end to preserve range
+
     # Normalize activities to lowercase
     # "Scuba Diving" → "diving"
 
+    extracted["date_auto_adjustments"] = date_auto_adjustments
     return extracted
 ```
+
+**Date Auto-Adjustment Tracking:** `_validate_extraction()` now returns a `date_auto_adjustments` list on the `RouterOutput`, recording each past-date bump (`{field, from, to, reason}`). When start bumps to the next year but end doesn't, end is also bumped to preserve the intended date range. IntentRouter syncs these adjustments to `state.metadata["date_auto_adjustments"]` (cleared each turn). The Synthesizer's `_build_synthesis_context()` injects the adjustment details into the LLM context so the response can acknowledge exact corrected dates.
 
 The LLM prompt also instructs canonical extraction:
 
@@ -629,7 +635,7 @@ possible, reason = get_feasibility_llm("diving", "Chamonix")
 # LLM determines: landlocked alpine town → diving impossible
 ```
 
-**Caching:** `@lru_cache(maxsize=1000)` - cache key is `f"{topic}:{destination}"`
+**Caching:** `_feasibility_cache` dict with `asyncio.Lock` for thread safety. Cache key is generated via `make_cache_key("feasibility", topic, destination)`. Lookups and writes are protected by `_feasibility_cache_lock` (async lock). The LLM call runs outside the lock to avoid blocking concurrent checks.
 
 **Cost:** ~$0.0001 per check, ~200ms latency (first call only)
 
@@ -836,10 +842,11 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 - Maps test carrier codes to real airlines (XX → Emirates)
 - Uses `CARRIER_MAP` from `demo_curation.py`
 
-**Cache Key Split:** Logistics uses separate hashes for hotels and activities to prevent cross-busting (changing activity settings shouldn't invalidate hotel cache and vice versa):
+**Cache Key Split:** Logistics uses separate hashes for hotels, activities, and flights to prevent cross-busting (changing activity settings shouldn't invalidate hotel cache and vice versa):
 
-- `_hotel_logistics_hash()`: origin, destination, dates, travelers, budget, hotel_settings, flight_settings
-- `_activity_logistics_hash()`: origin, destination, dates, travelers, budget, activity categories, skill_level
+- `_hotel_logistics_hash()`: destination, dates, travelers (adults + children), budget, hotel_settings
+- `_activity_logistics_hash()`: destination, dates, travelers (adults + children), activity_skill_level, activity_categories
+- `_flight_logistics_hash()`: destination, origin, dates, travelers (adults + children), flight_settings
 
 **Output:**
 
@@ -878,6 +885,11 @@ if has_niche_specialist:
         # If free_days <= 1: full suppression (specialist fills trip).
         # If free_days > 1: keeps up to free_days logistics activities
         # for Phase 5.6 to place on actual free days.
+        # When curated/mock inventory < free_days, _supplement_backfill() runs a
+        # two-tier pipeline: (1) experience-generator LLM (destination-aware, cached)
+        # using affinity-based categories from specialist_registry.backfill_affinity_tags,
+        # (2) MockActivityProvider fallback (offline-safe, sorted by affinity tags).
+        # Both tiers exclude active specialist categories.
         state.tiles["activities"] = kept_or_empty
     else:
         # Mixed — generate Tier 2 experience tiles via LLM
@@ -914,7 +926,7 @@ Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured outp
 
 **Duration constraint:** System prompt enforces 1–4 hour single-session activities. Post-processing clamps `duration_hours > 4` to 4h to prevent multi-day retreats from being generated (e.g., "Bali Yoga Retreat" at 48h).
 
-**Image resolution:** `_experience_to_tile_dict()` uses `get_cached_image_url()` (memory cache lookup only, no API call). If the Unsplash prefetch hasn't populated the cache, `image_url` is `None` and the frontend renders a placeholder shimmer.
+**Image resolution:** `_experience_to_tile_dict()` first tries `get_cached_image_url()` (memory cache lookup only, no API call). If the Unsplash prefetch hasn't populated the cache, falls back to `get_image_url_sync()` which checks memory cache again and returns a deterministic Unsplash placeholder URL if still not found. This avoids null `image_url` on day cards when prefetch/network misses.
 
 **Parallel category generation:** `_parallel_category_generate()` runs all category LLM calls concurrently via `asyncio.gather()`, reusing L1/L2 cache per category. Used by `generate_experiences()` for multi-category requests.
 
@@ -946,7 +958,9 @@ All other checks are registry-driven pure Python. Geographic and seasonal checks
 | Specialist      | Cross-domain from strategy sections (stateless fallback) | blocking |
 | Capacity        | Activity count > available days (registry-driven)        | blocking |
 
-**Auto-Fix Loop with Route Error Short-Circuit:**
+**Route After Guard (Auto-Fix DISABLED):**
+
+The architect retry path is intentionally disabled until a deterministic auto-fix implementation exists for blocking violations. All paths currently return `"synthesizer"`.
 
 ```python
 def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
@@ -959,14 +973,8 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     # Route and specialist errors are unfixable by Architect.
     unfixable_categories = {"route", "specialist"}
     is_unfixable = any(v.get("category") in unfixable_categories for v in violations)
-    if is_unfixable:
-        return "synthesizer"
 
-    # 2. OPTIMIZATION AUTO-FIX
-    # Budget/capacity errors can be self-corrected by the Architect.
-    if has_blocking and retry_count < 1:
-        return "architect"  # Loop back for auto-fix
-
+    # Always routes to synthesizer — auto-fix loop disabled
     return "synthesizer"
 ```
 
@@ -1021,6 +1029,7 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - Budget breakdown: Per-category cost vs allocation (flights 30%, hotels 40%, activities 30%)
 - Structured constraint violations: Budget violations get `## Budget Issue` header with conversational framing; non-budget/non-route violations get `## Constraint Alerts` with `suggested_action` passthrough. Falls back to plain `state.constraints_violated` string dump for older sessions without rich metadata.
 - Flight search grounding block (`## Flight Search`): includes `flights_requested`, `origin_present`, `flights_found`, `flight_search_status`, and `flight_skip_reason` so the model does not hallucinate flight inventory
+- Date auto-adjustments: When `state.metadata["date_auto_adjustments"]` is present, injects exact from→to corrections so the model mentions the adjusted dates
 - Day preference context: User-requested day allocations per activity category
 - Per-specialist generated counts from `strategy_sections[].content_added` (`## Specialist Activities Generated`), used for count phrasing instead of `day_preferences` when both exist
 - Builder drop reporting: When `last_builder_drop_ratio > 0` and builder succeeded, includes "Activity placement: X of Y specialist activities placed (Z couldn't fit)" with natural-language framing guidance (e.g., "extending your trip by a couple days would fit them all"). Reads `builder_activities_input` and `builder_activities_placed` from `state.metadata`.
@@ -1037,10 +1046,10 @@ When synthesis fails (provider error or unusable response payload), all response
 
 **Always includes:**
 
-- `suggested_replies` (up to 3 chips, no padding)
+- `suggested_replies` (up to 3 chips, no padding, two-pass rotation: pass 1 prefers never-shown-in-previous-turn chips, pass 2 allows repeats if slots remain)
 - Image enrichment via Unsplash
 - Graceful constraint warnings
-- Final post-LLM grounding pass removes hallucinated numeric flight-count claims when no `state.tiles["flights"]` exist and appends a departure-city prompt when flights are requested but origin is missing
+- Final post-LLM grounding pass: (1) Category-aware hallucination stripping removes numeric tile-count claims (flights, hotels, activities) when the claimed category has zero tiles in `state.tiles`; (2) Activity category validation strips mentions of categories not in the user's allowed set (derived from `activity_settings.categories`, `day_preferences`, `added_categories`, strategy sections, and actual activity tiles); (3) Named-entity verification checks bolded activity names against known tile titles and strategy content; (4) Departure-city prompt appended when flights are requested but origin is missing
 
 **Suggestion Engine (registry-driven):**
 
@@ -1169,7 +1178,7 @@ if total_activity_days > max_capacity:
 **Two-Layer No-Fly Enforcement:**
 
 1. **Phase 2b (Count):** Truncates diving activity count to fit available slots (`diving_slots = usable_days - buffer_days`)
-2. **Phase 4 (Placement):** Restricts diving to days at or before `departure - 1 - buffer_days` (e.g., Day 2 at latest for a 4-day trip). If the round-robin lands on a restricted day for diving, it wraps to an earlier valid day. Other specialists (hiking, etc.) are unaffected and can still use those days.
+2. **Phase 6.5 (Inline Display):** Tags the last dive block with a `no_fly_buffer` inline constraint badge when within 2 days of departure. Phase 4 (`_inject_safety_buffers`) no longer inserts standalone "No-Fly Day" buffer cards — the constraint is shown as an inline badge on the relevant dive activity instead.
 
 **Cross-Domain Clustering (Phase 4 — `no_altitude_after_dive`):**
 
@@ -1991,7 +2000,7 @@ specialist → specialist/local_expert (pending queue safety guard) OR logistics
 local_expert → specialist/local_expert (pending queue) OR logistics (booking) OR architect (general) OR synthesizer (speculative)
 logistics → architect/guard/synthesizer (conditional - skip architect if already ran)
 architect → specialist/local_expert (deferred dispatch) OR logistics (auto-fetch) OR guard/synthesizer (conditional)
-guard → architect/synthesizer (conditional - auto-fix loop)
+guard → synthesizer (always — auto-fix loop to architect is disabled)
 synthesizer → END
 ```
 
@@ -2071,41 +2080,38 @@ def _should_run_guard(state: GraphState) -> Literal["guard", "synthesizer"]:
     return "synthesizer"
 ```
 
-### Route After Guard (Auto-Fix vs. Rejection)
+### Route After Guard (Auto-Fix DISABLED)
+
+The architect retry path is intentionally disabled. All violations route to synthesizer.
 
 ```python
 def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     turn = get_turn_meta(state)
     has_blocking = turn.has_blocking_violations
-    retry_count = state.guard_retry_count
     violations = turn.constraint_violations  # List[Dict[str, Any]]
 
-    # 1. UNFIXABLE SHORT-CIRCUIT (route + specialist errors)
-    # User Intent errors (Rome->Rome, Atlantis) and specialist conflicts
-    # are UNFIXABLE by the Architect — bypass auto-fix loop.
+    # Unfixable detection exists but result is always "synthesizer"
     unfixable_categories = {"route", "specialist"}
-    if any(v.get("category") in unfixable_categories for v in violations):
-        return "synthesizer"  # Triggers Amber "REJECTED" receipt
+    is_unfixable = any(v.get("category") in unfixable_categories for v in violations)
 
-    # 2. OPTIMIZATION AUTO-FIX
-    # Budget/Schedule errors can be self-corrected by the Architect.
-    if has_blocking and retry_count < 1:
-        return "architect"
-
+    # Always routes to synthesizer — auto-fix loop disabled
+    # Comment in code: "Architect retry path is intentionally disabled until
+    # a deterministic auto-fix implementation exists for blocking violations."
     return "synthesizer"
 ```
 
-**Route errors bypass auto-fix because:**
+**All violations go to synthesizer because:**
 
-- The Architect cannot fix user intent errors (it would hallucinate destinations)
-- The user must provide valid input
-- Triggers Amber "REJECTED" receipt in UI (DS Section 20)
+- The auto-fix loop is disabled pending a deterministic implementation
+- Route errors (Rome->Rome, invalid destination) are unfixable by Architect
+- Budget/capacity errors would theoretically be auto-fixable, but the loop is not yet enabled
+- Triggers Amber "REJECTED" receipt in UI for blocking violations (DS Section 20)
 
 ---
 
 ## Specialist Domain Knowledge
 
-> **SSoT:** All specialist configuration (keywords, constraints, enhancements, flags) lives in `backend/app/planner/specialist_registry.py`. Top destinations and activities are LLM-generated per prompt file — no hardcoded destination lists. Router LLM prompts (`CLASSIFICATION_PROMPT`, `ROUTER_EXTRACTION_PROMPT`), Pydantic schemas (`SpecialistOutput.specialist_type`, `RouterOutput.specialist_hints`), and validation sets (`KNOWN_CATEGORIES`) are all derived from the registry at module load time. Adding a specialist requires only: 1) add entry to `SPECIALIST_REGISTRY`, 2) create `prompts/specialists/{topic}.txt`.
+> **SSoT:** All specialist configuration (keywords, constraints, enhancements, flags, backfill affinity) lives in `backend/app/planner/specialist_registry.py`. Top destinations and activities are LLM-generated per prompt file — no hardcoded destination lists. Router LLM prompts (`CLASSIFICATION_PROMPT`, `ROUTER_EXTRACTION_PROMPT`), Pydantic schemas (`SpecialistOutput.specialist_type`, `RouterOutput.specialist_hints`), and validation sets (`KNOWN_CATEGORIES`) are all derived from the registry at module load time. `backfill_affinity_tags` (e.g., `["water", "outdoors"]`) drives complementary category selection for free-day backfill in `_select_backfill_categories()`. Adding a specialist requires only: 1) add entry to `SPECIALIST_REGISTRY`, 2) create `prompts/specialists/{topic}.txt`.
 
 **Fill-Day Validation:** `validate_fill_day_placement(target_day, specialist_type, day_cards, total_days, has_departure_flight)` checks placement against registry constraints: cross-domain buffers on adjacent days, no-fly buffer proximity to departure, arrival/departure day restrictions, and `min_days_needed`. Returns `FillDayRejection(code, reason, suggestion)` or `None` if valid.
 
@@ -2117,7 +2123,7 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 | `no_fly_24h` | temporal | blocking | flights |
 | `no_altitude_after_dive` | safety | blocking | hiking, trekking, mountaineering, skiing, climbing |
 
-**Registry flags:** `has_geographic_constraint=True`, `has_nofly_buffer=True`, `min_days_needed=4`
+**Registry flags:** `has_geographic_constraint=True`, `has_nofly_buffer=True`, `min_days_needed=4`, `backfill_affinity_tags=["water", "outdoors"]`
 **Cross-domain blocks:** `ALTITUDE_AFTER_DIVE` → skiing, hiking, climbing (24h buffer, blocking)
 
 **Note:** Top destinations are LLM-generated from `specialists/diving.txt` using world knowledge.
@@ -2196,17 +2202,17 @@ No hardcoded constraints (LLM-generated only)
 | ---------- | ---------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------ |
 | **Route**  | `origin == destination`                                                            | **blocking** | Triggers `SAME_CITY_ERROR`                                                     |
 | **Route**  | `validate_place_exists(dest)`                                                      | **blocking** | Triggers `UNKNOWN_DESTINATION_ERROR`                                           |
-| Budget     | `total_cost > budget`                                                              | blocking     | Auto-fixable, `suggested_action="Reduce total spend by $N or increase budget"` |
-| Budget     | `category_cost > allocation`                                                       | warning      | Auto-fixable, `suggested_action="Look for more affordable {category} options"` |
-| Temporal   | `end_date < start_date`                                                            | blocking     | Auto-fixable                                                                   |
+| Budget     | `total_cost > budget`                                                              | blocking     | `suggested_action="Reduce total spend by $N or increase budget"` (auto-fix loop disabled) |
+| Budget     | `category_cost > allocation`                                                       | warning      | `suggested_action="Look for more affordable {category} options"` (auto-fix loop disabled) |
+| Temporal   | `end_date < start_date`                                                            | blocking     | Routes to synthesizer (auto-fix loop disabled)                                 |
 | Temporal   | `duration > 30 days`                                                               | info         |                                                                                |
 | Temporal   | `duration < 1 day`                                                                 | warning      |                                                                                |
 | Specialist | Departure buffer (registry: `has_nofly_buffer`)                                    | blocking     | Unfixable                                                                      |
 | Specialist | Cross-domain via blocks (registry: `cross_domain_blocks`)                          | blocking     | Unfixable                                                                      |
 | Specialist | Cross-domain via sections (stateless fallback)                                     | blocking     | Unfixable                                                                      |
-| Capacity   | Activity count > available days                                                    | blocking     | Auto-fixable                                                                   |
-| Capacity   | Day preference count > effective days (`DAY_PREFERENCE_EXCEEDS_CAPACITY`)          | blocking     | Auto-fixable                                                                   |
-| Capacity   | Multi-specialist aggregate exceeds capacity (`MULTI_SPECIALIST_CAPACITY_EXCEEDED`) | warning      | Auto-fixable                                                                   |
+| Capacity   | Activity count > available days                                                    | blocking     | Routes to synthesizer (auto-fix loop disabled)                                 |
+| Capacity   | Day preference count > effective days (`DAY_PREFERENCE_EXCEEDS_CAPACITY`)          | blocking     | Routes to synthesizer (auto-fix loop disabled)                                 |
+| Capacity   | Multi-specialist aggregate exceeds capacity (`MULTI_SPECIALIST_CAPACITY_EXCEEDED`) | warning      | Routes to synthesizer (auto-fix loop disabled)                                 |
 
 **Multi-Specialist Aggregate Capacity Check:** Sums activity counts across ALL active specialists. Individual specialist checks may pass, but combined they can exceed timeline capacity (`effective_days * 2` specialist activities max, since specialist activities are 3-5h each). Accounts for cross-domain buffer days. Fires when `len(active_specialists) >= 2` and `total_activities > max_capacity`.
 
@@ -2226,18 +2232,19 @@ When the ItineraryBuilder persists a constraint rule (e.g., `no_fly_buffer`) and
 ### Cache Implementations
 
 **Planner Caches (Session-Scoped):**
-| Cache | Class | Max Size | TTL | Key Components | Purpose |
-|-------|-------|----------|-----|----------------|---------|
-| `ResponseCache` | `CacheNode` | 200 | 3600s | node_name, core_fields_hash, follow_up_hash | Reuse responses |
-| `TileCache` | `CacheNode` | 100 | 300s | session_id, tile_type, query_hash | Cache tile API results |
+
+Thread-safe in-process caches managed via `CacheHandle` wrappers in `backend/app/planner/cache_access.py`. Each handle wraps a `TTLCache` with a `threading.Lock`. Named slots: `follow_up`, `router`, `required_fields`, `extractor`, `strategy`, `tile`. Operations: `cache_get()`, `cache_set()`, `cache_pop()`, `cache_delete()`, `cache_clear()`, `cache_len()`, `cache_contains()`. Counter updates use a separate `_cache_counters_lock`.
 
 **Two-Tier LLM/API Caches (Cross-Session):**
+
+All four caches share a common `MemoryCache` primitive from `backend/app/services/cache_core.py` — thread-safe `TTLCache` wrapper with `RLock` for cache ops and separate `_stats_lock` for hit/miss counters. Each service instantiates its own `MemoryCache` with domain-specific config (maxsize, TTL, stat keys).
+
 | Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
 |-------|-------------|---------|--------|--------|------------|---------|
-| Specialist | `specialist_cache.py` | 128 | 1h | 7 days | `specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{dpref}:{phash}` | LLM outputs |
-| Experience | `experience_generator.py` | 128 | 1h | 7 days | `experience:{dest}:{sorted_cats}:{month}:n{tiles_per_category}` | Tier 2 tiles |
-| Tile | `tile_cache.py` | 256 | 24h | 24h | `tiles:{provider}:{type}:{dest}:{dates}` | Provider API data |
-| Router | `router_cache.py` | 500 | 1h | N/A | `SHA256({text}:{date})` | NL extraction |
+| Specialist | `specialist_cache.py` | 128 | 1h | 7 days | `specialist::v2::{topic}::{dest}::{month}::{bucket}::{skill}::{dpref}::{phash}` | LLM outputs |
+| Experience | `experience_generator.py` | 128 | 1h | 7 days | `experience::v2::{dest}::{sorted_cats}::{month}::n{tiles_per_category}` | Tier 2 tiles |
+| Tile | `tile_cache.py` | 256 | 24h | 24h | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}` | Provider API data |
+| Router | `router_cache.py` | 500 | 1h | N/A | `router::v2::SHA256({text}:{date})[:32]` | NL extraction |
 
 **Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'tiles'`).
 
@@ -2296,6 +2303,8 @@ Two-tier cache for destination images.
 
 **Non-blocking in endpoints:** `get_image_url_sync()` checks memory cache only (populated by fire-and-forget prefetch). Destination images are decorative and never gate the response.
 
+**Prefetch cooldown lock:** `_prefetch_cooldown_lock` (`asyncio.Lock`) protects the shared `_prefetch_cooldown` dict from concurrent read/write races during `_record_prefetch_outcome()`. Prevents duplicate prefetch bursts when multiple graph turns overlap.
+
 ### Specialist LLM Cache
 
 Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for repeated destination/activity queries.
@@ -2304,11 +2313,10 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 
 **Tier 1: In-Memory TTLCache (Thread-Safe)**
 
-- Storage: `cachetools.TTLCache` with `RLock` for thread safety
-- Separate `_stats_lock` RLock for hit/miss counters (prevents counter race conditions)
+- Storage: `MemoryCache` instance from `cache_core.py` (wraps `cachetools.TTLCache` with `RLock` + separate `_stats_lock`)
 - Max size: 128 entries
 - TTL: 1 hour
-- Key format: `specialist:{topic}:{dest}:{month}:{bucket}:{skill}:{dpref}:{phash}`
+- Key format: `specialist::v2::{topic}::{dest}::{month}::{bucket}::{skill}::{dpref}::{phash}`
 
 **Tier 2: Database Cache**
 
@@ -2346,16 +2354,16 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 
 ### Experience Generator Cache
 
-Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Inline within `experience_generator.py` (same pattern as specialist cache, no separate cache module).
+Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Uses shared `MemoryCache` primitive from `cache_core.py`.
 
 **Service:** `backend/app/services/experience_generator.py`
 
 **Tier 1: In-Memory TTLCache (Thread-Safe)**
 
-- Storage: `cachetools.TTLCache` with `RLock` for thread safety
+- Storage: `MemoryCache` instance from `cache_core.py`
 - Max size: 128 entries
 - TTL: 1 hour
-- Key format: `experience:{destination}:{sorted_categories}:{month}:n{tiles_per_category}`
+- Key format: `experience::v2::{destination}::{sorted_categories}::{month}::n{tiles_per_category}`
 
 **Tier 2: Database Cache**
 
@@ -2512,10 +2520,10 @@ Two-tier cache for hotel/activity provider data. Reduces API calls and improves 
 
 **Tier 1: In-Memory TTLCache (Thread-Safe)**
 
-- Storage: `cachetools.TTLCache` with `RLock` for thread safety
+- Storage: `MemoryCache` instance from `cache_core.py`
 - Max size: 256 entries
 - TTL: 24 hours
-- Key format: `tiles:{provider}:{type}:{dest}:{start_date}:{end_date}`
+- Key format: `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}`
 
 **Tier 2: Database Cache**
 
@@ -2548,10 +2556,10 @@ L1-only cache for IntentRouter NL extraction results. Only caches self-contained
 
 **Tier 1: In-Memory TTLCache (Thread-Safe)**
 
-- Storage: `cachetools.TTLCache` with `RLock`
+- Storage: `MemoryCache` instance from `cache_core.py` (custom stat keys: `hits`, `misses`, `skipped_context_dependent`)
 - Max size: 500 entries
 - TTL: 1 hour
-- Key format: `SHA256({normalized_text}:{today_date})[:32]`
+- Key format: `router::v2::SHA256({normalized_text}:{today_date})[:32]`
 
 **No L2:** Conversational context is short-lived; L2 would have low hit rate.
 
@@ -2806,8 +2814,8 @@ these fields. The graph session must never overwrite them with defaults.
 
 | Layer          | File                                                 | What it does                                                                                                                                                                                                                                                                                 |
 | -------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Emission       | `plan_graph.py` `_trip_plan_to_trip_inputs()`        | Settings fields **omitted** from TripPlan conversion — they live on the document, not `TripPlan`                                                                                                                                                                                             |
-| Restoration    | `plan_graph.py` `_build_trip_inputs_with_settings()` | Reads typed `TripSettings` via `get_trip_settings(state)` and serializes sub-models into output `trip_inputs`. **Override:** if `metadata["trip_inputs"]["activity_settings"]` has non-empty categories (from router's in-turn sync), those win over typed settings to survive serialization |
+| Emission       | `state_serde.py` `trip_plan_to_trip_inputs()`        | Settings fields **omitted** from TripPlan conversion — they live on the document, not `TripPlan`                                                                                                                                                                                             |
+| Restoration    | `response_envelope.py` `_build_trip_inputs_with_settings()` | Reads typed `TripSettings` via `get_trip_settings(state)` and serializes sub-models into output `trip_inputs`. **Override:** if `metadata["trip_inputs"]["activity_settings"]` has non-empty categories (from router's in-turn sync), those win over typed settings to survive serialization |
 | Input merge    | `main.py` both chat endpoints                        | `_USER_OWNED_SETTINGS` guard — document baseline wins for settings fields                                                                                                                                                                                                                    |
 | Output persist | `crud_document.py` `apply_planner_update()`          | Strips settings from graph output before `merge_trip_inputs()`                                                                                                                                                                                                                               |
 
@@ -3382,7 +3390,7 @@ class Resolution(BaseModel):
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `planner`           | `run_turn`, `run_turn_streaming`, `GraphState`                                                                                                                 |
 | `planner.state`     | `GraphState`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistOutput`, `UIEvent`, `MissingFieldsResponse`, `SynthesizerOutput` |
-| `planner.hashing`   | `stable_hash`, `stable_hash_int`, `stable_hash_index`, `make_cache_key`                                                                                        |
+| `planner.hashing`   | `stable_hash`, `stable_hash_short`, `canonicalize_destinations`, `canonicalize_dict`, `make_cache_key`                                                          |
 | `planner.telemetry` | `TraceEnvelope`, `create_envelope`, `emit_event`, `emit_node_start`, `emit_node_end`                                                                           |
 | `planner.nodes`     | `intent_router`, `trip_architect`, `vertical_specialist`, `local_expert`, `logistics_node`, `constraint_guard`, `synthesizer`                                  |
 

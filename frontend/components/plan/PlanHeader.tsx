@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * PlanHeader
  *
@@ -147,39 +148,9 @@ export function PlanHeader({
     return (
       <div className="relative flex-shrink-0">
         <div className={`relative ${HERO_HEIGHT} overflow-y-clip overflow-x-visible`}>
-          <div
-            className="absolute inset-0 z-10"
-            style={{
-              backgroundColor: 'hsl(var(--background))',
-              maskImage:
-                'radial-gradient(ellipse at center, black 40%, transparent 100%)',
-              WebkitMaskImage:
-                'radial-gradient(ellipse at center, black 40%, transparent 100%)',
-            }}
-          >
-            <div
-              className="absolute inset-0 z-0"
-              style={{
-                maskImage:
-                  'radial-gradient(circle at center, black 0%, transparent 70%)',
-                WebkitMaskImage:
-                  'radial-gradient(circle at center, black 0%, transparent 70%)',
-              }}
-            >
-              <div
-                className="absolute inset-0 animate-topo-drift opacity-[0.12] dark:opacity-[0.18]"
-                style={{
-                  maskImage: 'url("/assets/contours.svg")',
-                  WebkitMaskImage: 'url("/assets/contours.svg")',
-                  maskSize: '600px',
-                  WebkitMaskSize: '600px',
-                  maskRepeat: 'repeat',
-                  WebkitMaskRepeat: 'repeat',
-                  maskPosition: '0% 0%',
-                  WebkitMaskPosition: '0% 0%',
-                  willChange: '-webkit-mask-position, mask-position',
-                }}
-              >
+          <div className="absolute inset-0 z-10 hero-radial-mask-bg">
+            <div className="absolute inset-0 z-0 hero-radial-mask-inner">
+              <div className="absolute inset-0 animate-topo-drift topo-contour-mask-600 opacity-[0.12] dark:opacity-[0.18]">
                 <div className="absolute inset-0 bg-zinc-900 dark:bg-white" />
               </div>
             </div>

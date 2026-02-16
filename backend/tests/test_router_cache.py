@@ -40,10 +40,13 @@ class TestRouterCacheKeyGeneration:
         assert key1 == key2
 
     def test_key_length(self):
-        """Test that key is SHA256 truncated to 32 chars."""
+        """Test namespaced key format with SHA256 payload hash."""
         key = _router_cache_key("test", "2025-03-01")
-        assert len(key) == 32
-        assert all(c in "0123456789abcdef" for c in key)
+        parts = key.split("::")
+        assert parts[0] == "router"
+        assert parts[1] == "v2"
+        assert len(parts[2]) == 32
+        assert all(c in "0123456789abcdef" for c in parts[2])
 
     def test_same_input_same_key(self):
         """Test deterministic key generation."""

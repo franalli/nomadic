@@ -6,7 +6,7 @@
 
 - **Focus:** Stages 10-13
 - **Secondary:** fix all P0/P1/P2 bugs
-- **Active work:** Standardized Stage 3 state emission (`S3_ITINERARY_READY`/`S3_EDITING`/`S3_PARTIAL_CONFLICT`) across graph + itinerary endpoints, added preference-aware builder-only selective regen hashing, hardened fill-day placement payloads (coordinates + specialist constraints), improved router/logistics Tier-2 prefetch alignment + bounded generation fallback, grounded synthesizer flight messaging to prevent hallucinated counts, and shipped frontend store hardening (pre-graph flush dedupe + image URL sanitization + POI memoization) with expanded endpoint/store regression coverage.
+- **Active work:** Full code health audit + remediation: deleted 1,185 lines dead code from main.py (non-streaming graph_plan, remove-specialist endpoints, 5 dead builder functions, 3 dead helpers), removed 8 dead frontend files (6 barrel indexes, TileFilterBar, loader.tsx), extracted shared `MemoryCache` primitive (`cache_core.py`) used by all 4 cache services, added `_prefetch_cooldown_lock` to unsplash.py, wrapped `storeCommitTripInputs` in try/catch (NomadicLanding), consolidated ChatPanel selectors via `useShallow`, fixed fire-and-forget `setTimeout` in TileCard via `useEffect` cleanup, added ChatPanel timeout refs for auto-expand, extracted shared `GatingBlocker` component (Flights/Stays/Activities sheets), deduplicated `AckStatus`/`AckUpdate` types (chat.ts re-exports from plan-envelope.ts), fixed feasibility cache key to use `make_cache_key`.
 - **Known broken:** none
 - **DO NOT touch this sprint:** [frozen files/features]
 
@@ -202,6 +202,7 @@ Prompt templates cached in-memory — restart server after modifying `backend/ap
 - **Make the change, show the diff, done.**
 - **Ask clarifying questions BEFORE writing code**, not after.
 - **No narration.** Don't summarize what you changed after changing it unless asked.
+- **Post-plan execution summary.** After executing a plan, provide a concise summary of all changes made: files modified, key logic added/removed, and any follow-up items.
 
 ---
 

@@ -20,6 +20,8 @@ interface State {
  * Catches internal Mapbox errors (like errorCb race conditions) and shows fallback UI.
  */
 export class MapErrorBoundary extends Component<Props, State> {
+  private recoverTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(props: Props) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -43,28 +45,52 @@ export class MapErrorBoundary extends Component<Props, State> {
     console.error('[MapErrorBoundary] Map error:', error, errorInfo);
   }
 
-  // Reset error state when children change (allows recovery on re-render)
-  componentDidUpdate(prevProps: Props) {
-    if (this.state.hasError && prevProps.children !== this.props.children) {
-      this.setState({ hasError: false, error: null });
+  private clearRecoverTimer() {
+    if (this.recoverTimer !== null) {
+      clearTimeout(this.recoverTimer);
+      this.recoverTimer = null;
     }
+  }
+
+  private scheduleRecovery() {
+    if (this.recoverTimer !== null) return;
+    this.recoverTimer = setTimeout(() => {
+      this.recoverTimer = null;
+      this.setState({ hasError: false, error: null });
+    }, 100);
+  }
+
+  // Reset error state when children change (allows recovery on re-render)
+  componentDidUpdate(prevProps: Props, prevState: State) {
+    if (this.state.hasError && prevProps.children !== this.props.children) {
+      this.clearRecoverTimer();
+      this.setState({ hasError: false, error: null });
+      return;
+    }
+
+    if (!this.state.hasError) {
+      this.clearRecoverTimer();
+      return;
+    }
+
+    // Recoverable map errors can auto-reset after a brief delay.
+    const message = this.state.error?.message || '';
+    const isRecoverable =
+      message.includes('errorCb is not a function') ||
+      message.includes('Map container is already removed');
+    if (isRecoverable && (!prevState.hasError || prevState.error !== this.state.error)) {
+      this.scheduleRecovery();
+    } else if (!isRecoverable) {
+      this.clearRecoverTimer();
+    }
+  }
+
+  componentWillUnmount() {
+    this.clearRecoverTimer();
   }
 
   render() {
     if (this.state.hasError) {
-      // Check if it's a recoverable Mapbox error
-      const message = this.state.error?.message || '';
-      const isRecoverable =
-        message.includes('errorCb is not a function') ||
-        message.includes('Map container is already removed');
-
-      if (isRecoverable) {
-        // Auto-recover by resetting state after a brief delay
-        setTimeout(() => {
-          this.setState({ hasError: false, error: null });
-        }, 100);
-      }
-
       return (
         <div
           className={cn(

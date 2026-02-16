@@ -10,10 +10,8 @@
 
 | Method | Path                     | Purpose                        | Request                   | Response            | Streaming  |
 | ------ | ------------------------ | ------------------------------ | ------------------------- | ------------------- | ---------- |
-| POST   | `/api/graph_plan`        | Non-streaming plan generation  | `GraphPlanRequest`        | `GraphPlanResponse` | --         |
 | POST   | `/api/graph_plan/stream` | Streaming plan generation      | `GraphPlanRequest`        | SSE                 | **SSE**    |
 | POST   | `/api/expand-itinerary`  | Strategy -> full itinerary     | `ExpandItineraryRequest`  | NDJSON              | **NDJSON** |
-| POST   | `/api/remove-specialist` | Remove specialist & regenerate | `RemoveSpecialistRequest` | NDJSON              | **NDJSON** |
 
 ### Validation & Metadata
 
@@ -65,11 +63,11 @@ Media type: `text/event-stream`. Events:
 | Event         | Data                                                                                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `token`       | `{type: "token", data: "..."}`                                                          | Streaming text chunk                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `node_status` | `{node: "...", status: "started"\|"completed", label, icon_key, estimated_duration_ms}` | Node processing progress. `label`, `icon_key`, `estimated_duration_ms` only present on `started` events. Special node `logic_reveal` emits routing decisions (e.g., `label: "ROUTING: DIVING"`, status: `"completed"`). Frontend type also defines `stage?, tier?, topic?, max_tokens?` but these are not currently emitted by the backend.                                                                                                                                                                                                           |
+| `node_status` | `{node: "...", status: "running"\|"started"\|"completed", label, icon_key, estimated_duration_ms}` | Node processing progress. `label`, `icon_key`, `estimated_duration_ms` only present on `started` events. Router emits `status: "running"` as its initial status. Special node `logic_reveal` emits routing decisions (e.g., `label: "ROUTING: DIVING"`, status: `"completed"`). Frontend type also defines `stage?, tier?, topic?, max_tokens?` but these are not currently emitted by the backend. |
 | `complete`    | `{type: "complete", data: {document, session_state, version, ...}}`                     | Full response envelope. `document` includes `day_cards` (when builder ran), `suggested_responses`, `suggested_response_meta`, `suggestion_chips` (structured chips with action routing), `constraints_validated`, `constraint_violations`, `tiles_replaced` — all passed through from graph output. When `day_cards` are present: `plan_view_state=S3_ITINERARY_READY` if conflict count is 0, `S3_EDITING` if conflicts exist, and `S3_PARTIAL_CONFLICT` on partial-failure path with returned day cards. `suggested_responses` falls back to `metadata.synthesizer_output.suggested_replies` when `state.suggested_replies` is empty (GraphState parse failure recovery). |
 | `error`       | `{type: "error", message: "..."}`                                                       | Error details                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
-### NDJSON (`/api/expand-itinerary`, `/api/remove-specialist`)
+### NDJSON (`/api/expand-itinerary`)
 
 Media type: `application/x-ndjson`. Events:
 
@@ -79,6 +77,8 @@ Media type: `application/x-ndjson`. Events:
 | `envelope` | `{type: "envelope", plan_envelope: {...}}`                                                               | Partial plan update |
 | `done`     | `{type: "done", plan_view_state: "S3_ITINERARY_READY"|"S3_EDITING"|"S3_PARTIAL_CONFLICT", version?, dropped_preferred_count?, warnings?[]}` | Completion signal   |
 | `error`    | `{type: "error", message: "..."}`                                                                        | Error details       |
+
+**Frontend consumption:** `consumeNdjsonEnvelopeStream()` in `streamParser.ts` provides a shared NDJSON parser with typed callbacks (`onEnvelope`, `onProgress`, `onDone`, `onError`). Used by `usePreferenceAutoRegen` and `NomadicLanding` expand-itinerary flows to avoid duplicated stream parsing.
 
 ### CSRF
 
@@ -92,7 +92,6 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests sha
 
 | Tier                     | Endpoints                                                                                                                | Limit                                           |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
-| **Heavy**                | `graph_plan/*` (non-stream), `remove-specialist`                                                                         | 3/min, 15/hr                                    |
 | **Heavy (stream)**       | `graph_plan/stream`                                                                                                      | 20/min, 120/hr                                  |
 | **Heavy (builder-only)** | `expand-itinerary`                                                                                                       | 20/min (no LLM — frontend mutex prevents abuse) |
 | **Medium**               | `validate-trip-input`, `destination-image`, `tiles/refresh`                                                              | 15/min                                          |
@@ -179,7 +178,9 @@ PlanDocumentData
   |           meta.category for specialist_type (matching ItineraryBuilder),
   |           injects Tier-1 registry hard constraints into `constraints[]`, and
   |           normalizes `coordinates` from tile/meta payloads with itinerary-anchor
-  |           fallback when generated tiles lack explicit coordinates.
+  |           fallback when generated tiles lack explicit coordinates. Coordinate
+  |           extraction (`_extract_day_block_coordinates`, `_first_trip_anchor_coordinates`)
+  |           now validates `isfinite()` and range (|lat|<=90, |lng|<=180).
   |
   |-- trip_context_id, assistant_message_id
   |-- plan_state: PlanState, ui_phase: UIPhase, plan_view_state: PlanViewState
@@ -208,10 +209,8 @@ PlanDocumentData
 
 | Model                         | Purpose                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GraphPlanRequest`            | Plan generation: message, trip_inputs, session_state, document_id, ui_phase, expected_version, thread_id, reset, suggestion_clicked                                                                                                                                                                                                                                                                              |
-| `GraphPlanResponse`           | Response: document (PlanDocumentData), session_state, version, observability, updated_by, updated_at, changes_made, request_id                                                                                                                                                                                                                                                                                   |
+| `GraphPlanRequest`            | Plan generation: message, trip_inputs, session_state, document_id, ui_phase, expected_version, thread_id, reset, suggestion_clicked. Session state bootstrap/merge handled by shared `_prepare_graph_plan_session_state()` (used by `/graph_plan/stream`). User-owned settings (`activity_settings`, `hotel_settings`, `flight_settings`, `transport_settings`, `booking_types`) use deep merge via `_merge_user_owned_trip_settings()` to avoid clobbering omitted keys. |
 | `ExpandItineraryRequest`      | Stage 2->3: idempotency_key, strategy_sections, tiles, preferences, trip_inputs, force_full_rebuild. **Tile source selection:** `force_full_rebuild=true` (auto-expand after chat) uses DB tiles (authoritative — written by `apply_planner_update`); `force_full_rebuild=false` (preference regen / manual) uses frontend tiles (includes hearted tiles, filters); empty frontend tiles falls back to DB tiles. |
-| `RemoveSpecialistRequest`     | Conflict resolution: keep_specialist, remove_hearted_tiles, idempotency_key, trip_inputs, strategy_sections, tiles, preferences                                                                                                                                                                                                                                                                                  |
 | `PlanDocumentPatch`           | CRDT update: version, branches?, tiles?, selections?, trip_inputs?, remove_branch_ids?, remove_tile_ids?, preferred_tile_ids?                                                                                                                                                                                                                                                                                    |
 | `PlanDocumentResponse`        | Document fetch: version, updated_by, document, updated_at, changes_made: bool                                                                                                                                                                                                                                                                                                                                    |
 | `TileRefreshRequest/Response` | Refresh tiles for branch with new settings                                                                                                                                                                                                                                                                                                                                                                       |
@@ -255,6 +254,7 @@ Hydration guards:
 | `success=True` | `0` | `S3_ITINERARY_READY` |
 | `success=True` | `>0` | `S3_EDITING` |
 | `success=False` | `>0` (partial day cards returned) | `S3_PARTIAL_CONFLICT` |
+| `success=False` | `0` | `S3_BLOCKED` |
 
 ### Selective Regen Field Mapping
 
@@ -299,6 +299,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | Fill-day mutex | `_fillingDays` (Set\<number\>) — per-day concurrency guard                                        |
 | Mutation mutex | `_pendingMutations` (number) — general mutation counter (fill-day, drag-drop)                     |
 | Streaming      | `currentRunId`, `abortController`                                                                 |
+| Generation     | `generation` (`GenerationState \| null`) — envelope-driven generation status stored at root store level (not persisted in `document`) |
 | Cart           | `cartTileIds` (Set)                                                                               |
 | LLM Updates    | `llmUpdatedFields` (Set of field names LLM recently modified)                                     |
 
@@ -307,7 +308,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | Action                                                             | Purpose                                                                                                                                 |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `setFromPlanResponse()`                                            | Merge backend GraphPlanResponse into store (destination lock, S3-safe view state guard including lateral S3 transitions, tile/section merge, image URL sanitization) |
-| `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization)                     |
+| `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization) plus root-level `generation` merge from envelope |
 | `updateTripInputs()`                                               | Sync local trip input update (no API call)                                                                                              |
 | `commitTripInputs()`                                               | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful). Filters no-op `trip_inputs` fields before PATCH; if empty after filtering, skips network write and returns success. Successful commits clear matching keys from `_userDirtySettings`. |
 | `ensureSettingsFlushed()`                                          | Flush only **dirty** settings before graph run (prevents overwriting backend-derived values). Per-send-cycle payload hash dedupe skips duplicate flush PATCHes for the same request cycle. |
@@ -330,12 +331,11 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | `hasPendingMutations()`                                            | Returns true when `_pendingMutations > 0` — ChatPanel mutation gate polls this before sending graph requests to avoid version conflicts |
 | `markPreferencesAsApplied()`                                       | Sync lastGeneratedPreferences after expand completes                                                                                    |
 | `awaitPreferencePatch()`                                           | Wait for pending preference PATCH to complete before proceeding                                                                         |
-
-| `setActiveView()` | Switch between 'planning' and 'booking' views |
-| `setFinalized()` | Set plan finalization flag (gates Book view access) |
-| `addToCart()` / `removeFromCart()` / `clearCart()` | Cart operations for booking mode |
-| `hasAllRequiredFields()` | Computed selector: returns true when destination is set (only requirement) |
-| `reset()` | Full store reset (aborts in-flight generation) |
+| `setActiveView()`                                                  | Switch between 'planning' and 'booking' views                                                                                           |
+| `setFinalized()`                                                   | Set plan finalization flag (gates Book view access)                                                                                     |
+| `addToCart()` / `removeFromCart()` / `clearCart()`                  | Cart operations for booking mode                                                                                                        |
+| `hasAllRequiredFields()`                                           | Computed selector: returns true when destination is set (only requirement)                                                              |
+| `reset()`                                                          | Full store reset (aborts in-flight generation)                                                                                          |
 
 **`usePreferenceAutoRegen` hook** (`frontend/hooks/usePreferenceAutoRegen.ts`): Watches `preferredTileIds` changes and triggers `expand-itinerary` regen. Debounced 1.5s to batch rapid heart toggles into a single expand call. Also gates on `isStreamingResponse` (defers during active plan generation). When `expandInProgress` or streaming mutex blocks, the hook queues the pending regen via `pendingRegenRef` and flushes it when both mutexes clear (500ms debounce, dedup check against `lastGeneratedPreferences`). Avoids silently dropping preference changes made during an active expand.
 

@@ -31,7 +31,7 @@ class TestCacheKeyGeneration:
         from app.services.experience_generator import _experience_cache_key
 
         key = _experience_cache_key("Bali", ["yoga", "cooking"], "2026-03")
-        assert key == "experience:bali:cooking|yoga:2026-03:n2"
+        assert key == "experience::v2::bali::cooking|yoga::2026-03::n2"
 
     def test_categories_sorted_alphabetically(self):
         from app.services.experience_generator import _experience_cache_key
@@ -65,7 +65,7 @@ class TestCacheKeyGeneration:
         from app.services.experience_generator import _experience_cache_key
 
         key = _experience_cache_key("Bali", ["yoga"], "")
-        assert ":unknown:" in key
+        assert "::unknown::" in key
 
     def test_different_categories_different_keys(self):
         from app.services.experience_generator import _experience_cache_key
@@ -357,10 +357,9 @@ class TestGenerateExperiences:
     """Test the main generate_experiences function with mocked dependencies."""
 
     def _clear_l1(self):
-        from app.services.experience_generator import _experience_cache
+        from app.services.experience_generator import clear_experience_cache
 
-        with __import__("threading").Lock():
-            _experience_cache.clear()
+        clear_experience_cache()
 
     @pytest.mark.asyncio
     async def test_empty_destination_returns_empty(self):

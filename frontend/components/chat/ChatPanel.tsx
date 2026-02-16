@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 // frontend/components/ChatPanel.tsx
 'use client';
 
@@ -14,12 +15,11 @@ import {
 } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { useShallow } from 'zustand/react/shallow';
 
-import {
-  ActivitiesSheet,
-  FlightsSheet,
-  StaysSheet,
-} from '@/components/plan/sheets';
+import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
+import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
+import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
 import { UnifiedChipRow } from '@/components/plan/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
 import { useActionLoader } from '@/hooks/useActionLoader';
@@ -175,6 +175,19 @@ function getErrorMessage(error: Error): string {
 
 const MESSAGE_BURST_COOLDOWN_MS = 1000;
 const GENERATE_BURST_COOLDOWN_MS = 3000;
+const MESSAGE_DELAY_CLASS_BY_MS: Record<number, string> = {
+  0: '[animation-delay:0ms]',
+  30: '[animation-delay:30ms]',
+  60: '[animation-delay:60ms]',
+  90: '[animation-delay:90ms]',
+  120: '[animation-delay:120ms]',
+  150: '[animation-delay:150ms]',
+};
+
+function getMessageDelayClass(idx: number): string {
+  const delayMs = Math.min(idx * 30, 150);
+  return MESSAGE_DELAY_CLASS_BY_MS[delayMs] ?? MESSAGE_DELAY_CLASS_BY_MS[150];
+}
 
 function buildSendRequestId(now: number): string {
   return `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
@@ -475,16 +488,29 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const isInputDisabledByPlanState = planState === 'RESOLVING';
 
     // Use chat store for messages, history loading, and session state
-    const messages = useChatStore((state) => state.messages);
-    const addMessage = useChatStore((state) => state.addMessage);
-    const updateMessage = useChatStore((state) => state.updateMessage);
-    const appendToMessage = useChatStore((state) => state.appendToMessage);
-    const updateMessageId = useChatStore((state) => state.updateMessageId);
-    const filterMessages = useChatStore((state) => state.filterMessages);
-    const isLoadingHistory = useChatStore((state) => state.isLoadingHistory);
-    const loadHistory = useChatStore((state) => state.loadHistory);
-    const sessionState = useChatStore((state) => state.sessionState);
-    const setSessionState = useChatStore((state) => state.setSessionState);
+    const {
+      messages,
+      addMessage,
+      updateMessage,
+      appendToMessage,
+      updateMessageId,
+      filterMessages,
+      isLoadingHistory,
+      loadHistory,
+      sessionState,
+      setSessionState,
+    } = useChatStore(useShallow((state) => ({
+      messages: state.messages,
+      addMessage: state.addMessage,
+      updateMessage: state.updateMessage,
+      appendToMessage: state.appendToMessage,
+      updateMessageId: state.updateMessageId,
+      filterMessages: state.filterMessages,
+      isLoadingHistory: state.isLoadingHistory,
+      loadHistory: state.loadHistory,
+      sessionState: state.sessionState,
+      setSessionState: state.setSessionState,
+    })));
     // Delete functionality removed for demo - re-enable post-launch
     // const deleteLastMessageFromStore = useChatStore((state) => state.deleteLastMessage);
     // const restoreTripInputs = useDocumentStore((state) => state.restoreTripInputs);
@@ -553,6 +579,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
     const isUserScrolledUpRef = useRef(false);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const autoExpandTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const abortStreamRef = useRef<(() => void) | null>(null);
     // SYNC GUARD: Prevent duplicate message sends (React StrictMode safe)
     const isSendingRef = useRef(false);
@@ -720,11 +747,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       prevIsLoadingRef.current = isLoading;
     }, [isLoading, scrollToBottom, scrollPanelIntoView]);
 
-    // Cleanup timeout on unmount
+    // Cleanup timeouts on unmount
     useEffect(() => {
       return () => {
         if (scrollTimeoutRef.current) {
           clearTimeout(scrollTimeoutRef.current);
+        }
+        if (autoExpandTimeoutRef.current) {
+          clearTimeout(autoExpandTimeoutRef.current);
         }
       };
     }, []);
@@ -1219,7 +1249,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   newSpecialists: newSpecialistTypes,
                 });
                 structuralRebuildTriggered = true;
-                setTimeout(() => {
+                if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
+                autoExpandTimeoutRef.current = setTimeout(() => {
                   // RE-CHECK: Ensure generation isn't already complete from another path
                   if (useDocumentStore.getState().expandInProgress) {
                     debugLog('[ChatPanel] ⏭️ STRUCTURAL skipped - expand already in progress');
@@ -1253,7 +1284,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   hasItinerary, // Will be false because date change cleared day_cards
                 });
                 structuralRebuildTriggered = true; // Prevent duplicate trigger from other checks
-                setTimeout(() => {
+                if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
+                autoExpandTimeoutRef.current = setTimeout(() => {
                   // RE-CHECK: Ensure generation isn't already complete from another path
                   if (useDocumentStore.getState().expandInProgress) {
                     debugLog('[ChatPanel] ⏭️ DATE_CHANGE skipped - expand already in progress');
@@ -1280,7 +1312,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     new: { adults: newTripInputs?.adults, budget: newTripInputs?.budget },
                   });
                   structuralRebuildTriggered = true;
-                  setTimeout(() => {
+                  if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
+                  autoExpandTimeoutRef.current = setTimeout(() => {
                     // RE-CHECK: Ensure generation isn't already complete from another path
                     if (useDocumentStore.getState().expandInProgress) {
                       debugLog('[ChatPanel] ⏭️ TRIP_INPUTS skipped - expand already in progress');
@@ -1302,7 +1335,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   viewState,
                 });
                 structuralRebuildTriggered = true;
-                setTimeout(() => {
+                if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
+                autoExpandTimeoutRef.current = setTimeout(() => {
                   // RE-CHECK: If itinerary was generated by another path, skip
                   const freshDayCards = useDocumentStore.getState().document?.day_cards;
                   if (freshDayCards && freshDayCards.length > 0) {
@@ -1510,18 +1544,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     className="relative -mx-4 -mt-4 mb-0 w-[calc(100%+2rem)] overflow-hidden border-b border-border/30"
                   >
                     <div
-                      className="absolute inset-0 animate-topo-drift opacity-[0.12] dark:opacity-[0.08]"
-                      style={{
-                        maskImage: 'url("/assets/contours.svg")',
-                        WebkitMaskImage: 'url("/assets/contours.svg")',
-                        maskSize: '350px',
-                        WebkitMaskSize: '350px',
-                        maskRepeat: 'repeat',
-                        WebkitMaskRepeat: 'repeat',
-                        maskPosition: '0% 0%',
-                        WebkitMaskPosition: '0% 0%',
-                        willChange: '-webkit-mask-position, mask-position',
-                      }}
+                      className="absolute inset-0 animate-topo-drift topo-contour-mask-350 opacity-[0.12] dark:opacity-[0.08]"
                     >
                       <div className="absolute inset-0 bg-black dark:bg-white" />
                     </div>
@@ -1609,8 +1632,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         <div
           ref={scrollContainerRef}
-          className={cn("min-h-0 flex-1 overflow-y-auto text-sm no-scrollbar relative z-50 pt-2", !isDesktop && "flex flex-col")}
-          style={{ overflowAnchor: 'none' }}
+          className={cn(
+            'min-h-0 flex-1 overflow-y-auto text-sm no-scrollbar relative z-50 pt-2 no-overflow-anchor',
+            !isDesktop && 'flex flex-col',
+          )}
           role="log"
           aria-label="Chat messages"
           aria-busy={isLoadingHistory || isLoading}
@@ -1668,8 +1693,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   return (
                     <div
                       key={m.id}
-                      className="message-enter"
-                      style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
+                      className={cn('message-enter', getMessageDelayClass(idx))}
                     >
                       <SystemAckLine
                         status={m.ackStatus || 'applied'}
@@ -1683,8 +1707,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 return (
                   <div
                     key={m.id}
-                    className={`${isUserMessage ? 'text-right' : 'text-left'} message-enter ${spacingClass}`}
-                    style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
+                    className={cn(
+                      isUserMessage ? 'text-right' : 'text-left',
+                      'message-enter',
+                      spacingClass,
+                      getMessageDelayClass(idx),
+                    )}
                   >
                     {/* Message container */}
                     <div className="inline-block relative max-w-[85%]">

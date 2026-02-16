@@ -1838,6 +1838,7 @@ async def intent_router(state: GraphState) -> GraphState:
     state.metadata.pop("added_categories", None)
     state.metadata.pop("tier2_tiles_generated", None)
     state.metadata.pop("tier2_new_content_generated", None)
+    state.metadata.pop("date_auto_adjustments", None)
 
     _debug_node_start(
         "router",
@@ -1903,6 +1904,13 @@ async def intent_router(state: GraphState) -> GraphState:
 
         log("ROUTER", "[POST-PLAN] LLM-first extraction for active plan...")
 
+        def _sync_date_auto_adjustments() -> None:
+            adjustments = router_output.date_auto_adjustments
+            if adjustments:
+                state.metadata["date_auto_adjustments"] = adjustments
+            else:
+                state.metadata.pop("date_auto_adjustments", None)
+
         old_start = state.trip_plan.start_date
         old_end = state.trip_plan.end_date
         old_origin = state.trip_plan.origin
@@ -1957,6 +1965,7 @@ async def intent_router(state: GraphState) -> GraphState:
                 category_merge_mode=category_merge_mode,
                 allow_category_updates=has_category_intent,
             )
+            _sync_date_auto_adjustments()
 
             # Guard against LLM drifting a date the user didn't change.
             # "Extend to Feb 22" should only change end_date, not start_date.
@@ -2215,6 +2224,11 @@ async def intent_router(state: GraphState) -> GraphState:
                     category_merge_mode=category_merge_mode,
                     allow_category_updates=has_category_intent,
                 )
+                adjustments = router_output.date_auto_adjustments
+                if adjustments:
+                    state.metadata["date_auto_adjustments"] = adjustments
+                else:
+                    state.metadata.pop("date_auto_adjustments", None)
 
                 # Flag extraction BEFORE input gates — even if gates block,
                 # the Architect should NOT re-extract the same message.

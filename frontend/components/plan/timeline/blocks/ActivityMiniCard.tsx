@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * ActivityMiniCard
  *
@@ -14,7 +15,6 @@ import Image from 'next/image';
 import { useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { getSpecialistColor } from '@/lib/specialists';
 import { cn, normalizeTitle } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
 
@@ -92,19 +92,30 @@ export function ActivityMiniCard({
   const bg = bgColorClass[st] || 'bg-zinc-100 dark:bg-zinc-800/50';
   const iconColor = iconColorClass[st] || 'text-zinc-500';
   const badgeBg = badgeBgClass[st] || 'bg-zinc-100 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-400';
-
-  // Hex border color from registry
-  const borderColor = getSpecialistColor(block.specialist_type);
+  const borderAccentClass: Record<string, string> = {
+    diving: 'border-l-cyan-500',
+    hiking: 'border-l-emerald-500',
+    skiing: 'border-l-blue-500',
+    cycling: 'border-l-lime-500',
+    surfing: 'border-l-indigo-500',
+    boating: 'border-l-indigo-500',
+    sailing: 'border-l-cyan-500',
+    climbing: 'border-l-orange-500',
+    wildlife_safari: 'border-l-amber-500',
+  };
+  const activityBorderClass = isUnschedulable
+    ? 'border-l-amber-500'
+    : borderAccentClass[st] || 'border-l-zinc-300 dark:border-l-zinc-600';
 
   return (
     <div
       className={cn(
-        'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border transition-shadow',
+        'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-l-4 transition-shadow',
         isUnschedulable
           ? 'bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/40'
-          : 'bg-white dark:bg-zinc-800/50 hover:shadow-md'
+          : 'bg-white dark:bg-zinc-800/50 hover:shadow-md',
+        activityBorderClass,
       )}
-      style={{ borderLeftWidth: '4px', borderLeftColor: isUnschedulable ? '#f59e0b' : borderColor }}
     >
 
       {/* Thumbnail — full-width banner on mobile, inline 80×80 on desktop */}

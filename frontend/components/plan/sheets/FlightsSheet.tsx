@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * FlightsSheet
  *
@@ -8,7 +9,7 @@
 
 'use client';
 
-import { AlertCircle, Plane } from 'lucide-react';
+import { Plane } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
 import { Switch } from '@/components/ui/switch';
@@ -17,6 +18,7 @@ import { cn } from '@/lib/utils';
 import type { FlightSettings } from '@/types/document';
 
 import { BaseSheet } from './BaseSheet';
+import { GatingBlocker } from './GatingBlocker';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -54,110 +56,6 @@ const STOPS_OPTIONS = [
   { value: 'any', label: 'Any stops', directOnly: false },
   { value: 'nonstop', label: 'Nonstop only', directOnly: true },
 ];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Gating Blocker Component
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface GatingBlockerProps {
-  hasOrigin: boolean;
-  hasDestination: boolean;
-  hasDates: boolean;
-  onOpenOrigin?: () => void;
-  onOpenDestination?: () => void;
-  onOpenDates?: () => void;
-  onClose: () => void;
-}
-
-function GatingBlocker({
-  hasOrigin,
-  hasDestination,
-  hasDates,
-  onOpenOrigin,
-  onOpenDestination,
-  onOpenDates,
-  onClose,
-}: GatingBlockerProps) {
-  const missing: string[] = [];
-  if (!hasOrigin) missing.push('Origin');
-  if (!hasDestination) missing.push('Destination');
-  if (!hasDates) missing.push('Dates');
-
-  return (
-    <div className={cn(
-      // Clean, cool technical surface - not muddy
-      'mb-4 p-5 rounded-xl flex gap-4 items-start',
-      'bg-zinc-50 dark:bg-white/[0.02]',
-      'border border-zinc-200 dark:border-white/5'
-    )}>
-      <AlertCircle className="h-5 w-5 text-zinc-400 dark:text-zinc-500 flex-shrink-0 mt-0.5" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          To include flights, set {missing.join(' + ')}.
-        </p>
-        <div className="flex flex-wrap gap-2 mt-4">
-          {!hasOrigin && onOpenOrigin && (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                setTimeout(onOpenOrigin, 150);
-              }}
-              className={cn(
-                'text-[10px] font-bold uppercase tracking-wide',
-                'bg-zinc-800 dark:bg-zinc-700 text-white',
-                'px-3 py-1.5 rounded-lg',
-                'hover:bg-emerald-600 dark:hover:bg-emerald-500',
-                'transition-colors'
-              )}
-            >
-              Set origin
-            </button>
-          )}
-          {!hasDestination && onOpenDestination && (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                setTimeout(onOpenDestination, 150);
-              }}
-              className={cn(
-                'text-[10px] font-bold uppercase tracking-wide',
-                'bg-zinc-800 dark:bg-zinc-700 text-white',
-                'px-3 py-1.5 rounded-lg',
-                'hover:bg-emerald-600 dark:hover:bg-emerald-500',
-                'transition-colors'
-              )}
-            >
-              Set destination
-            </button>
-          )}
-          {!hasDates && onOpenDates && (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                setTimeout(onOpenDates, 150);
-              }}
-              className={cn(
-                'text-[10px] font-bold uppercase tracking-wide',
-                'bg-zinc-800 dark:bg-zinc-700 text-white',
-                'px-3 py-1.5 rounded-lg',
-                'hover:bg-emerald-600 dark:hover:bg-emerald-500',
-                'transition-colors'
-              )}
-            >
-              Set dates
-            </button>
-          )}
-        </div>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2">
-          You can keep defaults for everything else.
-        </p>
-      </div>
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -261,17 +159,15 @@ function FlightsSheetInner({
     >
       <div className="space-y-6">
         {/* Gating blocker */}
-        {!prerequisitesMet && (
-          <GatingBlocker
-            hasOrigin={hasOrigin}
-            hasDestination={hasDestination}
-            hasDates={hasDates}
-            onOpenOrigin={onOpenOrigin}
-            onOpenDestination={onOpenDestination}
-            onOpenDates={onOpenDates}
-            onClose={() => onOpenChange(false)}
-          />
-        )}
+        <GatingBlocker
+          featureLabel="flights"
+          gates={[
+            { label: 'Origin', met: hasOrigin, onOpen: onOpenOrigin },
+            { label: 'Destination', met: hasDestination, onOpen: onOpenDestination },
+            { label: 'Dates', met: hasDates, onOpen: onOpenDates },
+          ]}
+          onClose={() => onOpenChange(false)}
+        />
 
         {/* Include toggle */}
         <div className="flex items-center justify-between py-3 border-b border-zinc-200 dark:border-white/10">

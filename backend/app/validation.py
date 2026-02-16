@@ -21,6 +21,7 @@ from cachetools import TTLCache
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.planner.hashing import make_cache_key
 from app.planner.llm_factory import get_llm_by_model
 
 logger = logging.getLogger(__name__)
@@ -121,7 +122,7 @@ class ValidationResult:
 def _cache_key(field_type: str, value: str) -> str:
     """Generate a cache key from field type and normalized value."""
     normalized = value.strip().lower()
-    return f"{field_type}:{normalized}"
+    return make_cache_key("validation", "v2", field_type, normalized)
 
 
 def _build_prompt(field_type: str, normalized_value: str) -> str:

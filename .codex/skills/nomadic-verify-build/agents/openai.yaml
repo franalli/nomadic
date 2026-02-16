@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nomadic Verify Build"
+  short_description: "Run Render-equivalent build and pre-commit checks"
+  default_prompt: "Run full backend/frontend/pre-commit pipeline, fix issues, and report status."

@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 import { Check, Clock, Heart, MapPin, Moon, Settings, Sun, Sunset } from 'lucide-react';
 import {
   type KeyboardEvent,
@@ -179,6 +180,11 @@ export const TileCard = memo(function TileCard({
   const [justSelected, setJustSelected] = useState(false);
   // Track heart animation state
   const [heartAnimating, setHeartAnimating] = useState(false);
+  useEffect(() => {
+    if (!heartAnimating) return;
+    const timer = setTimeout(() => setHeartAnimating(false), 200);
+    return () => clearTimeout(timer);
+  }, [heartAnimating]);
   // Track previous selection state to detect transitions
   const prevSelectedRef = useRef(isSelected);
   // Tier 11.7: Track image loading state for skeleton feedback
@@ -274,9 +280,8 @@ export const TileCard = memo(function TileCard({
     event.preventDefault();
     event.stopPropagation();
     debugLog('[TileCard] 💜 Heart clicked for tile:', tile.id);
-    // Trigger scale animation
+    // Trigger scale animation (cleared by heartAnimating useEffect)
     setHeartAnimating(true);
-    setTimeout(() => setHeartAnimating(false), 200);
     // Toggle in Zustand store (persists to DB via PATCH)
     toggleTilePreference(tile.id);
   }, [toggleTilePreference, tile.id]);

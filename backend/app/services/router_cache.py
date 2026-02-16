@@ -8,7 +8,7 @@ CRITICAL: Only caches self-contained queries (no context dependencies).
 Context-dependent queries like "Show me diving there" would return wrong results
 if cached across different conversations.
 
-Cache key format: SHA256({normalized_text}:{today_date})[:32]
+Cache key format: router::v2::SHA256({normalized_text}:{today_date})[:32]
 
 Usage:
     from app.services.router_cache import (
@@ -28,10 +28,10 @@ Usage:
 
 import hashlib
 import logging
-from threading import RLock
 from typing import Optional
 
-from cachetools import TTLCache
+from app.planner.hashing import make_cache_key
+from app.services.cache_core import MemoryCache
 
 logger = logging.getLogger(__name__)
 
@@ -44,27 +44,16 @@ L1_MAX_SIZE = 500
 # =============================================================================
 # L1: Thread-safe in-memory cache
 # =============================================================================
-_cache_lock = RLock()
-_stats_lock = RLock()
-_router_cache: TTLCache = TTLCache(maxsize=L1_MAX_SIZE, ttl=L1_TTL_SECONDS)
-
-# Hit/miss counters for observability
-_cache_stats = {
-    "hits": 0,
-    "misses": 0,
-    "skipped_context_dependent": 0,
-}
-
-
-def _increment_stat(key: str) -> None:
-    """Thread-safe stats increment."""
-    with _stats_lock:
-        _cache_stats[key] += 1
+_mem = MemoryCache(
+    maxsize=L1_MAX_SIZE,
+    ttl=L1_TTL_SECONDS,
+    stat_keys=["hits", "misses", "skipped_context_dependent"],
+)
 
 
 def _router_cache_key(user_text: str, today_date: str) -> str:
     """
-    Generate cache key with SHA256 (not truncated MD5).
+    Generate stable namespaced cache key with SHA256 payload hash.
 
     CRITICAL: Key includes today_date because relative dates like "next Friday"
     depend on when the query is made.
@@ -74,11 +63,12 @@ def _router_cache_key(user_text: str, today_date: str) -> str:
         today_date: Current date in YYYY-MM-DD format
 
     Returns:
-        SHA256 hash truncated to 32 characters
+        Namespaced cache key with version token
     """
     normalized = user_text.lower().strip()
     content = f"{normalized}:{today_date}"
-    return hashlib.sha256(content.encode()).hexdigest()[:32]
+    payload_hash = hashlib.sha256(content.encode()).hexdigest()[:32]
+    return make_cache_key("router", "v2", payload_hash)
 
 
 def _is_self_contained_query(user_text: str, extraction: dict) -> bool:
@@ -157,16 +147,15 @@ def get_cached_extraction(user_text: str, today_date: str) -> Optional[dict]:
     """
     key = _router_cache_key(user_text, today_date)
 
-    with _cache_lock:
-        cached = _router_cache.get(key)
+    cached = _mem.get(key)
 
     if cached is not None:
-        _increment_stat("hits")
+        _mem.increment_stat("hits")
         dest = cached.get("destination", "?")
         logger.info(f"[ROUTER_CACHE] ✅ HIT: '{user_text[:40]}' → dest={dest}")
         return cached
 
-    _increment_stat("misses")
+    _mem.increment_stat("misses")
     logger.info(f"[ROUTER_CACHE] ❌ MISS: '{user_text[:40]}'")
     return None
 
@@ -184,14 +173,13 @@ def set_cached_extraction(user_text: str, today_date: str, extraction: dict) -> 
     """
     # Validate before caching
     if not _is_self_contained_query(user_text, extraction):
-        _increment_stat("skipped_context_dependent")
+        _mem.increment_stat("skipped_context_dependent")
         logger.info(f"[ROUTER_CACHE] ⚠️ SKIP (context-dependent): '{user_text[:40]}'")
         return
 
     key = _router_cache_key(user_text, today_date)
 
-    with _cache_lock:
-        _router_cache[key] = extraction
+    _mem.set(key, extraction)
 
     dest = extraction.get("destination", "?")
     logger.info(f"[ROUTER_CACHE] 💾 CACHED: '{user_text[:40]}' → dest={dest}")
@@ -204,13 +192,9 @@ def set_cached_extraction(user_text: str, today_date: str, extraction: dict) -> 
 
 def get_cache_stats() -> dict:
     """Return cache statistics for observability."""
-    with _cache_lock:
-        size = len(_router_cache)
-    with _stats_lock:
-        stats_copy = dict(_cache_stats)
     return {
-        **stats_copy,
-        "size": size,
+        **_mem.get_stats(),
+        "size": _mem.size(),
         "maxsize": L1_MAX_SIZE,
         "ttl_seconds": L1_TTL_SECONDS,
     }
@@ -218,8 +202,6 @@ def get_cache_stats() -> dict:
 
 def clear_cache() -> int:
     """Clear cache. Returns count cleared."""
-    with _cache_lock:
-        count = len(_router_cache)
-        _router_cache.clear()
+    count = _mem.clear()
     logger.info(f"[ROUTER_CACHE] Cleared ({count} entries)")
     return count

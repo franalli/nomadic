@@ -96,21 +96,18 @@ export const HoldToDeleteButton = memo(function HoldToDeleteButton({
       onContextMenu={(e) => e.preventDefault()}
       className={`relative flex items-center justify-center w-6 h-6 rounded-full
         bg-black/50 hover:bg-black/70 touch-none select-none
+        transition-[transform,background-color] duration-100 ease-out
+        ${isHolding ? 'scale-[1.2]' : 'scale-100'}
         ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
         ${className}`}
-      style={{
-        transform: isHolding ? 'scale(1.2)' : 'scale(1)',
-        transition: 'transform 100ms ease-out, background-color 100ms ease-out'
-      }}
       title="Hold to delete"
       aria-label="Hold to delete this message"
     >
       {/* Circular progress SVG */}
       <svg
-        className="absolute inset-0 w-full h-full pointer-events-none"
         viewBox="0 0 24 24"
         fill="none"
-        style={{ transform: 'rotate(-90deg)' }}
+        className="absolute inset-0 w-full h-full pointer-events-none -rotate-90"
       >
         {/* Background circle */}
         <circle
@@ -134,19 +131,15 @@ export const HoldToDeleteButton = memo(function HoldToDeleteButton({
           strokeDasharray={CIRCLE_CIRCUMFERENCE}
           strokeDashoffset={strokeDashoffset}
           opacity={isHolding ? 1 : 0}
-          style={{
-            filter: progress >= 1 ? 'drop-shadow(0 0 6px #22c55e)' : 'none'
-          }}
+          className={progress >= 1 ? 'drop-shadow-[0_0_6px_#22c55e]' : undefined}
         />
       </svg>
 
       {/* Trash icon */}
       <Trash2
-        className="h-3 w-3 relative z-10 pointer-events-none"
-        style={{
-          color: isHolding ? '#22c55e' : 'rgba(255, 255, 255, 0.9)',
-          transition: 'color 100ms ease-out'
-        }}
+        className={`h-3 w-3 relative z-10 pointer-events-none transition-colors duration-100 ease-out ${
+          isHolding ? 'text-green-500' : 'text-white/90'
+        }`}
       />
     </button>
   );

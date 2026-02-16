@@ -92,7 +92,22 @@ docker-compose.override.yml
 .DS_Store
 **/.DS_Store
 
+# Codex
+.codex/
+
+# Agents doc
+AGENTS.md
+
 # Python tooling caches
 .mypy_cache/
 .tox/
 .nox/
+pip-wheel-metadata/
+**/*.egg/
+**/pip-log.txt
+**/pip-delete-this-directory.txt
+
+# Frontend caches
+frontend/.eslintcache
+**/.swc/
+**/.parcel-cache/

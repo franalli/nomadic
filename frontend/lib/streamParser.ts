@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * Stream Parser
  *
@@ -8,12 +9,16 @@
 import type { PlanDocumentData } from '@/types/document';
 import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
 
+export type StreamEnvelope = Partial<PlanDocumentData> & {
+  generation?: GenerationState;
+};
+
 /**
  * Stream event types from the backend.
  */
 export type StreamEvent =
   | { type: 'progress'; stage: GenerationState['stage']; message?: string; pct?: number }
-  | { type: 'envelope'; plan_envelope: Partial<PlanDocumentData> }
+  | { type: 'envelope'; plan_envelope: StreamEnvelope }
   | {
       type: 'done';
       plan_view_state: PlanViewState;
@@ -62,12 +67,14 @@ export function createStreamParser(onEvent: (event: StreamEvent) => void) {
 
       for (const line of lines) {
         if (!line.trim()) continue;
+        let event: StreamEvent;
         try {
-          const event = JSON.parse(line) as StreamEvent;
-          onEvent(event);
+          event = JSON.parse(line) as StreamEvent;
         } catch (e) {
           console.error('Failed to parse stream line:', line, e);
+          continue;
         }
+        onEvent(event);
       }
     },
 
@@ -77,12 +84,15 @@ export function createStreamParser(onEvent: (event: StreamEvent) => void) {
      */
     flush() {
       if (buffer.trim()) {
+        let event: StreamEvent;
         try {
-          const event = JSON.parse(buffer) as StreamEvent;
-          onEvent(event);
+          event = JSON.parse(buffer) as StreamEvent;
         } catch (e) {
           console.error('Failed to parse final buffer:', buffer, e);
+          buffer = '';
+          return;
         }
+        onEvent(event);
         buffer = '';
       }
     },
@@ -94,4 +104,58 @@ export function createStreamParser(onEvent: (event: StreamEvent) => void) {
       buffer = '';
     },
   };
+}
+
+type StreamDoneEvent = Extract<StreamEvent, { type: 'done' }>;
+type StreamErrorEvent = Extract<StreamEvent, { type: 'error' }>;
+type StreamProgressEvent = Extract<StreamEvent, { type: 'progress' }>;
+
+type NdjsonEnvelopeCallbacks = {
+  onEnvelope?(envelope: StreamEnvelope): void;
+  onProgress?(event: StreamProgressEvent): void;
+  onDone?(event: StreamDoneEvent): void;
+  onError?(event: StreamErrorEvent): void;
+  onUnknown?(event: StreamEvent): void;
+};
+
+/**
+ * Consume NDJSON stream output from itinerary endpoints using shared parsing logic.
+ * Accepts either a `Response` or a `ReadableStream`.
+ */
+export async function consumeNdjsonEnvelopeStream(
+  source: Response | ReadableStream<Uint8Array>,
+  callbacks: NdjsonEnvelopeCallbacks
+): Promise<void> {
+  const stream = source instanceof Response ? source.body : source;
+  if (!stream) {
+    throw new Error('Streaming response body is missing');
+  }
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const parser = createStreamParser((event) => {
+    switch (event.type) {
+      case 'envelope':
+        callbacks.onEnvelope?.(event.plan_envelope);
+        return;
+      case 'progress':
+        callbacks.onProgress?.(event);
+        return;
+      case 'done':
+        callbacks.onDone?.(event);
+        return;
+      case 'error':
+        callbacks.onError?.(event);
+        return;
+      default:
+        callbacks.onUnknown?.(event);
+    }
+  });
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parser.feed(decoder.decode(value, { stream: true }));
+  }
+  parser.flush();
 }

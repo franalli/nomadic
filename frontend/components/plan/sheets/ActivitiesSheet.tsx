@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * ActivitiesSheet
  *
@@ -8,7 +9,7 @@
 
 'use client';
 
-import { AlertCircle, Ticket } from 'lucide-react';
+import { Ticket } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
 import { Stepper } from '@/components/ui/stepper';
@@ -18,6 +19,7 @@ import { cn } from '@/lib/utils';
 import type { ActivitySettings } from '@/types/document';
 
 import { BaseSheet } from './BaseSheet';
+import { GatingBlocker } from './GatingBlocker';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -62,63 +64,6 @@ const SKILL_OPTIONS = [
   { value: 'intermediate', label: 'Intermediate', description: 'Some experience helpful' },
   { value: 'advanced', label: 'Advanced', description: 'Challenging activities for experienced' },
 ];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Gating Blocker Component
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface GatingBlockerProps {
-  hasDestination: boolean;
-  onOpenDestination?: () => void;
-  onClose: () => void;
-}
-
-function GatingBlocker({
-  hasDestination,
-  onOpenDestination,
-  onClose,
-}: GatingBlockerProps) {
-  if (hasDestination) return null;
-
-  return (
-    <div className={cn(
-      // Clean, cool technical surface
-      'mb-4 p-5 rounded-xl flex gap-4 items-start',
-      'bg-zinc-50 dark:bg-white/[0.02]',
-      'border border-zinc-200 dark:border-white/5'
-    )}>
-      <AlertCircle className="h-5 w-5 text-zinc-400 dark:text-zinc-500 flex-shrink-0 mt-0.5" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          To include activities, set a destination.
-        </p>
-        <div className="flex flex-wrap gap-2 mt-4">
-          {onOpenDestination && (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                setTimeout(onOpenDestination, 150);
-              }}
-              className={cn(
-                'text-[10px] font-bold uppercase tracking-wide',
-                'bg-zinc-800 dark:bg-zinc-700 text-white',
-                'px-3 py-1.5 rounded-lg',
-                'hover:bg-emerald-600 dark:hover:bg-emerald-500',
-                'transition-colors'
-              )}
-            >
-              Set destination
-            </button>
-          )}
-        </div>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2">
-          You can keep defaults for everything else.
-        </p>
-      </div>
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -194,7 +139,8 @@ function ActivitiesSheetInner({
   const handleDayPreferenceChange = useCallback((category: string, days: number) => {
     setLocalDayPreferences(prev => {
       if (days === 0) {
-        const { [category]: _, ...rest } = prev;
+        const rest = { ...prev };
+        delete rest[category];
         return rest; // Remove key when 0 (no preference)
       }
       return { ...prev, [category]: days };
@@ -241,13 +187,13 @@ function ActivitiesSheetInner({
     >
       <div className="space-y-6">
         {/* Gating blocker */}
-        {!prerequisitesMet && (
-          <GatingBlocker
-            hasDestination={hasDestination}
-            onOpenDestination={onOpenDestination}
-            onClose={() => onOpenChange(false)}
-          />
-        )}
+        <GatingBlocker
+          featureLabel="activities"
+          gates={[
+            { label: 'Destination', met: hasDestination, onOpen: onOpenDestination },
+          ]}
+          onClose={() => onOpenChange(false)}
+        />
 
         {/* Include toggle */}
         <div className="flex items-center justify-between py-3 border-b border-zinc-200 dark:border-white/10">

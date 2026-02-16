@@ -173,6 +173,16 @@ const DEFAULT_TOPIC_CONFIG = {
   updatingAction: 'Analyzing...',
 };
 
+const TOPIC_COLOR_STYLE_CACHE = new Map<string, React.CSSProperties>();
+
+function getTopicColorStyle(topic: string): React.CSSProperties {
+  const cached = TOPIC_COLOR_STYLE_CACHE.get(topic);
+  if (cached) return cached;
+  const style = { '--topic-color': getSpecialistColorRgb(topic) } as React.CSSProperties;
+  TOPIC_COLOR_STYLE_CACHE.set(topic, style);
+  return style;
+}
+
 interface S2StrategyViewProps {
   viewModel: PlanViewModel;
   onRefineAssumptions?: () => void;
@@ -509,7 +519,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
     <div
       ref={cardRef}
       data-topic={topic}
-      style={{ '--topic-color': getSpecialistColorRgb(topic) } as React.CSSProperties}
+      style={getTopicColorStyle(topic)}
       className={cn(
         "rounded-2xl border overflow-hidden topic-border-left transition-all duration-200",
         // Light: Pure white card with premium soft shadow
@@ -1036,7 +1046,7 @@ function StrategyStack({
           <div
             key={`pending-${topic}`}
             data-topic={topic}
-            style={{ '--topic-color': getSpecialistColorRgb(topic) } as React.CSSProperties}
+            style={getTopicColorStyle(topic)}
             className="bg-card rounded-lg border border-border px-4 py-3 topic-border-left"
           >
             <div className="flex items-center gap-2">

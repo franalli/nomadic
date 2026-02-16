@@ -28,6 +28,7 @@ Map each changed file to its affected SSoT doc(s):
 | `frontend/lib/api.ts`                         | `docs/data-contracts.md` (frontend API client, retry logic)                          |
 | `frontend/lib/planStateHelpers.ts`            | `docs/ux_unified_architecture.md` (state helpers, timeline variants)                 |
 | `frontend/lib/animation-config.ts`            | `docs/ux_unified_architecture.md` (animation timing)                                 |
+| `.codex/*`                                    | `docs/repo_structure.md` (local Codex skills/config tree)                            |
 
 | Any new/deleted/moved file OR new directory | `docs/repo_structure.md` (directory tree, key architectural notes) |
 

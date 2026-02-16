@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 'use client';
 
 import type { LucideIcon } from 'lucide-react';
@@ -28,14 +29,12 @@ import { cn } from '@/lib/utils';
 import { useDocumentStore, useDocumentTripInputs } from '@/state/documentStore';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
-import {
-  ActivityMiniCard,
-  FreeDayCard,
-  getDisplayTime,
-  GhostSlot,
-  LogisticsBlock,
-  SafetyBlock,
-} from './timeline/blocks';
+import { ActivityMiniCard } from './timeline/blocks/ActivityMiniCard';
+import { FreeDayCard } from './timeline/blocks/FreeDayCard';
+import { GhostSlot } from './timeline/blocks/GhostSlot';
+import { LogisticsBlock } from './timeline/blocks/LogisticsBlock';
+import { SafetyBlock } from './timeline/blocks/SafetyBlock';
+import { getDisplayTime } from './timeline/blocks/types';
 import { InlineDatePrompt } from './timeline/InlineDatePrompt';
 
 // =============================================================================

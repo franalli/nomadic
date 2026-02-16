@@ -27,6 +27,11 @@ def test_extract_coordinates_returns_none_when_unavailable() -> None:
     assert _extract_day_block_coordinates({}, {}) is None
 
 
+def test_extract_coordinates_rejects_out_of_range_values() -> None:
+    coords = _extract_day_block_coordinates({}, {"coordinates": [181, 91]})
+    assert coords is None
+
+
 def test_first_trip_anchor_coordinates_prefers_existing_day_blocks() -> None:
     doc_data = PlanDocumentData(
         day_cards=[
@@ -63,6 +68,40 @@ def test_first_trip_anchor_coordinates_falls_back_to_tiles() -> None:
                 geo={"lat": 25.2048, "lon": 55.2708},
             )
         }
+    )
+
+    coords = _first_trip_anchor_coordinates(doc_data)
+    assert coords == {"lat": 25.2048, "lng": 55.2708}
+
+
+def test_first_trip_anchor_coordinates_skips_invalid_day_block_coords() -> None:
+    doc_data = PlanDocumentData(
+        day_cards=[
+            DayCard(
+                day_number=1,
+                label="Day 1",
+                blocks=[
+                    DayBlock(
+                        period="morning",
+                        activity_type="Dive briefing",
+                        summary="Dive briefing",
+                        coordinates={"lat": 999, "lng": 999},
+                    )
+                ],
+            )
+        ],
+        tiles={
+            "hotel_1": Tile(
+                id="hotel_1",
+                type="hotel",
+                partner="mock",
+                partner_product_id="h1",
+                deeplink_url="",
+                title="Hotel",
+                currency="USD",
+                geo={"lat": 25.2048, "lon": 55.2708},
+            )
+        },
     )
 
     coords = _first_trip_anchor_coordinates(doc_data)

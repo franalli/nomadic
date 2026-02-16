@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nomadic Reassemble Docs"
+  short_description: "Run full code-to-docs reconciliation pass"
+  default_prompt: "Fully reconcile SSoT docs against the live codebase."

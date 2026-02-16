@@ -23,7 +23,6 @@ EXPECTED_ROUTES: set[tuple[str, str]] = {
     ("GET", "/api/admin/cache-stats"),
     ("POST", "/api/tiles/click"),
     ("POST", "/api/suggestions/click"),
-    ("POST", "/api/graph_plan"),
     ("POST", "/api/graph_plan/stream"),
     ("DELETE", "/api/session"),
     ("GET", "/api/chat"),
@@ -34,7 +33,6 @@ EXPECTED_ROUTES: set[tuple[str, str]] = {
     ("POST", "/api/tiles/refresh"),
     ("POST", "/api/document/fill-day"),
     ("POST", "/api/expand-itinerary"),
-    ("POST", "/api/remove-specialist"),
 }
 
 

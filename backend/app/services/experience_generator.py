@@ -8,7 +8,7 @@ after the first unique query.
 L1: In-memory TTLCache with RLock (1h TTL, 128 entries)
 L2: PostgreSQL response_cache (7d TTL) via ResponseCache table
 
-Cache key format: experience:{destination}:{sorted_categories}:{month}
+Cache key format: experience::v2::{destination}::{sorted_categories}::{month}::n{count}
 
 Usage:
     from app.services.experience_generator import generate_experiences
@@ -25,10 +25,8 @@ import asyncio
 import logging
 import time
 from datetime import UTC, datetime, timedelta
-from threading import RLock
 from typing import Optional
 
-from cachetools import TTLCache
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select, update
@@ -36,7 +34,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.planner.hashing import make_cache_key
 from app.planner.llm_factory import get_llm_by_model
+from app.services.cache_core import MemoryCache
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +50,14 @@ L2_TTL_DAYS = 7
 # =============================================================================
 # L1: Thread-safe in-memory cache
 # =============================================================================
-_cache_lock = RLock()
-_stats_lock = RLock()
-_experience_cache: TTLCache = TTLCache(maxsize=L1_MAX_SIZE, ttl=L1_TTL_SECONDS)
+_mem = MemoryCache(maxsize=L1_MAX_SIZE, ttl=L1_TTL_SECONDS)
+
+# Aliases for test compatibility
+_cache_get = _mem.get
+_cache_set = _mem.set
+
 _inflight_generation_lock = asyncio.Lock()
 _inflight_generation_tasks: dict[str, asyncio.Task[list[dict]]] = {}
-
-_cache_stats = {
-    "l1_hits": 0,
-    "l1_misses": 0,
-    "l2_hits": 0,
-    "l2_misses": 0,
-    "writes": 0,
-}
 
 
 def _set_tier2_generation_source(state, source: str) -> None:
@@ -70,27 +65,9 @@ def _set_tier2_generation_source(state, source: str) -> None:
         state.metadata["tier2_generation_source_internal"] = source
 
 
-def _increment_stat(key: str) -> None:
-    with _stats_lock:
-        _cache_stats[key] += 1
-
-
-def _cache_get(key: str) -> Optional[list]:
-    with _cache_lock:
-        return _experience_cache.get(key)
-
-
-def _cache_set(key: str, value: list) -> None:
-    with _cache_lock:
-        _experience_cache[key] = value
-
-
 def clear_experience_cache() -> int:
     """Clear L1 experience cache. Returns count of cleared entries."""
-    with _cache_lock:
-        count = len(_experience_cache)
-        _experience_cache.clear()
-    return count
+    return _mem.clear()
 
 
 # =============================================================================
@@ -102,17 +79,25 @@ def _experience_cache_key(
     destination: str, categories: list[str], month: str, tiles_per_category: int = 2
 ) -> str:
     """
-    Generate stable cache key: experience:{dest}:{sorted_cats}:{month}:n{count}
+    Generate stable cache key:
+    experience::v2::{dest}::{sorted_cats}::{month}::n{count}
 
     Categories are sorted alphabetically for stable keys regardless of input order.
     Month granularity (not full dates) — experiences are seasonal, not date-specific.
 
-    Example: "experience:bali:cooking|nightlife|yoga:2026-03:n4"
+    Example: "experience::v2::bali::cooking|nightlife|yoga::2026-03::n4"
     """
     dest_normalized = destination.lower().strip() if destination else "unknown"
     cats_normalized = "|".join(sorted(c.lower().strip() for c in categories))
     month_normalized = month if month else "unknown"
-    key = f"experience:{dest_normalized}:{cats_normalized}:{month_normalized}:n{tiles_per_category}"
+    key = make_cache_key(
+        "experience",
+        "v2",
+        dest_normalized,
+        cats_normalized,
+        month_normalized,
+        f"n{tiles_per_category}",
+    )
     logger.info(f"[EXPERIENCE_CACHE] Key: {key}")
     return key
 
@@ -136,9 +121,9 @@ async def _get_cached(db: AsyncSession, cache_key: str) -> Optional[list]:
         row = result.scalar_one_or_none()
 
         if row:
-            _increment_stat("l2_hits")
+            _mem.increment_stat("l2_hits")
             logger.info(f"[EXPERIENCE_CACHE] key={cache_key} → HIT (L2)")
-            _cache_set(cache_key, row.response_json)  # Promote to L1
+            _mem.set(cache_key, row.response_json)  # Promote to L1
 
             stmt = (
                 update(ResponseCache)
@@ -152,7 +137,7 @@ async def _get_cached(db: AsyncSession, cache_key: str) -> Optional[list]:
             await db.commit()
             return row.response_json
 
-        _increment_stat("l2_misses")
+        _mem.increment_stat("l2_misses")
         logger.info(f"[EXPERIENCE_CACHE] key={cache_key} → MISS (L2)")
         return None
 
@@ -187,7 +172,7 @@ async def _set_cached(db: AsyncSession, cache_key: str, output: list) -> None:
         )
         await db.execute(stmt)
         await db.commit()
-        _increment_stat("writes")
+        _mem.increment_stat("writes")
         logger.info(f"[EXPERIENCE_CACHE] Cached: {cache_key} (expires: {expires_at.date()})")
 
     except Exception as e:
@@ -602,14 +587,14 @@ async def _generate_experiences_impl(
             return []
 
         # L1: Memory cache check (fast path for exact category match)
-        cached = _cache_get(cache_key)
+        cached = _mem.get(cache_key)
         if cached is not None:
-            _increment_stat("l1_hits")
+            _mem.increment_stat("l1_hits")
             logger.info(f"[EXPERIENCE] Cache HIT (L1): {len(cached)} tiles")
             _set_tier2_generation_source(state, "cache")
             return _clamp_tile_durations(cached)
 
-        _increment_stat("l1_misses")
+        _mem.increment_stat("l1_misses")
 
         # L2: Database cache check (own session)
         logger.info("[EXPERIENCE] Checking L2 cache...")
@@ -654,7 +639,7 @@ async def _generate_experiences_impl(
                 all_tiles.extend(existing_tiles_by_cat.get(cat, []))
             logger.info(f"[EXPERIENCE] All categories cached in state: {len(all_tiles)} tiles")
             # Cache composite result
-            _cache_set(cache_key, all_tiles)
+            _mem.set(cache_key, all_tiles)
             _set_tier2_generation_source(state, "cache")
             return _clamp_tile_durations(all_tiles)
 
@@ -771,7 +756,7 @@ async def _generate_experiences_impl(
             all_tiles = new_tile_dicts
 
         # Cache the FULL composite result (L1 + L2)
-        _cache_set(cache_key, all_tiles)
+        _mem.set(cache_key, all_tiles)
 
         async with async_session_factory() as db:
             await _set_cached(db, cache_key, all_tiles)

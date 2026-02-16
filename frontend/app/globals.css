@@ -265,6 +265,58 @@ input[type="number"]::-webkit-outer-spin-button {
   scrollbar-width: none;  /* Firefox */
 }
 
+.no-overflow-anchor {
+  overflow-anchor: none;
+}
+
+.webkit-momentum-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+.topo-contour-mask-350 {
+  mask-image: url('/assets/contours.svg');
+  -webkit-mask-image: url('/assets/contours.svg');
+  mask-size: 350px;
+  -webkit-mask-size: 350px;
+  mask-repeat: repeat;
+  -webkit-mask-repeat: repeat;
+  mask-position: 0% 0%;
+  -webkit-mask-position: 0% 0%;
+  will-change: -webkit-mask-position, mask-position;
+}
+
+.topo-contour-mask-600 {
+  mask-image: url('/assets/contours.svg');
+  -webkit-mask-image: url('/assets/contours.svg');
+  mask-size: 600px;
+  -webkit-mask-size: 600px;
+  mask-repeat: repeat;
+  -webkit-mask-repeat: repeat;
+  mask-position: 0% 0%;
+  -webkit-mask-position: 0% 0%;
+  will-change: -webkit-mask-position, mask-position;
+}
+
+.hero-radial-mask-bg {
+  background-color: hsl(var(--background));
+  mask-image: radial-gradient(ellipse at center, black 40%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 40%, transparent 100%);
+}
+
+.hero-radial-mask-inner {
+  mask-image: radial-gradient(circle at center, black 0%, transparent 70%);
+  -webkit-mask-image: radial-gradient(circle at center, black 0%, transparent 70%);
+}
+
+.accordion-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(228 228 231) transparent;
+}
+
+.dark .accordion-scrollbar {
+  scrollbar-color: rgb(82 82 91) transparent;
+}
+
 /* React Day Picker styles */
 .rdp {
   --rdp-cell-size: 36px;

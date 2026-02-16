@@ -207,6 +207,143 @@ class TestSynthesizer:
         suggestions = generate_suggestions(state)
         assert 1 <= len(suggestions) <= 3
 
+    def test_suggested_replies_are_unique_by_text(self):
+        """Duplicate template text should collapse to one chip."""
+        state = GraphState(
+            trip_plan=TripPlan(destination="Bali", start_date="2027-02-15", end_date="2027-02-25"),
+            metadata={
+                "plan_view_state": "S3_ITINERARY_READY",
+                "strategy_sections": [
+                    {"specialist_type": "local_expert"},
+                    {"specialist_type": "diving"},
+                    {"specialist_type": "surfing"},
+                ],
+                "suggested_question_types": [
+                    "weather",
+                    "safety",
+                    "costs",
+                    "accommodation",
+                    "packing",
+                    "visa",
+                    "transport",
+                ],
+                "trip_settings": {
+                    "booking_types": {
+                        "hotels": "suggested",
+                        "flights": "off",
+                        "ground_transport": "off",
+                        "activities": "suggested",
+                    },
+                    "flight_settings": {
+                        "round_trip": True,
+                        "cabin_class": "economy",
+                        "direct_only": False,
+                    },
+                    "hotel_settings": {"min_stars": 5, "amenities": []},
+                    "activity_settings": {
+                        "categories": [],
+                        "skill_level": None,
+                        "day_preferences": {"diving": 3, "surfing": 2},
+                    },
+                    "transport_settings": {"car": False, "train": False, "bus": False},
+                    "date_flex": False,
+                    "trip_duration": None,
+                    "date_window_start": None,
+                    "date_window_end": None,
+                },
+            },
+        )
+
+        suggestions = generate_suggestions(state)
+        normalized = {s.strip().lower() for s in suggestions}
+        assert len(suggestions) == len(normalized)
+        assert suggestions.count("What are must-do activities in Bali?") == 1
+
+    def test_suggested_replies_rotate_from_previous_turn(self):
+        """When alternatives exist, avoid repeating the exact same chip from last turn."""
+        state = GraphState(
+            trip_plan=TripPlan(destination="Bali", start_date="2027-02-15", end_date="2027-02-25"),
+            metadata={
+                "plan_view_state": "S3_ITINERARY_READY",
+                "strategy_sections": [
+                    {"specialist_type": "local_expert"},
+                    {"specialist_type": "diving"},
+                    {"specialist_type": "surfing"},
+                ],
+                "last_suggested_replies": ["5-star hotels only"],
+                "trip_settings": {
+                    "booking_types": {
+                        "hotels": "suggested",
+                        "flights": "off",
+                        "ground_transport": "off",
+                        "activities": "suggested",
+                    },
+                    "flight_settings": {
+                        "round_trip": True,
+                        "cabin_class": "economy",
+                        "direct_only": False,
+                    },
+                    "hotel_settings": {"min_stars": 5, "amenities": []},
+                    "activity_settings": {
+                        "categories": [],
+                        "skill_level": None,
+                        "day_preferences": {"diving": 3, "surfing": 2},
+                    },
+                    "transport_settings": {"car": False, "train": False, "bus": False},
+                    "date_flex": False,
+                    "trip_duration": None,
+                    "date_window_start": None,
+                    "date_window_end": None,
+                },
+            },
+        )
+
+        suggestions = generate_suggestions(state)
+        assert "5-star hotels only" not in suggestions
+
+    def test_suggested_replies_rotate_even_when_initial_slots_are_full(self):
+        """Rotate previous chip even when slot allocation already produced 3 candidates."""
+        state = GraphState(
+            trip_plan=TripPlan(destination="Bali", start_date="2027-02-15", end_date="2027-02-25"),
+            metadata={
+                "plan_view_state": "S3_ITINERARY_READY",
+                "strategy_sections": [
+                    {"specialist_type": "local_expert"},
+                    {"specialist_type": "diving"},
+                    {"specialist_type": "surfing"},
+                ],
+                "last_suggested_replies": ["5-star hotels only"],
+                "trip_settings": {
+                    "booking_types": {
+                        "hotels": "suggested",
+                        "flights": "off",
+                        "ground_transport": "off",
+                        "activities": "suggested",
+                    },
+                    "flight_settings": {
+                        "round_trip": True,
+                        "cabin_class": "economy",
+                        "direct_only": False,
+                    },
+                    "hotel_settings": {"min_stars": 0, "amenities": []},
+                    "activity_settings": {
+                        "categories": ["diving", "surfing"],
+                        "skill_level": None,
+                        "day_preferences": {"diving": 3, "surfing": 2},
+                    },
+                    "transport_settings": {"car": False, "train": False, "bus": False},
+                    "date_flex": False,
+                    "trip_duration": None,
+                    "date_window_start": None,
+                    "date_window_end": None,
+                },
+            },
+        )
+
+        suggestions = generate_suggestions(state)
+        assert len(suggestions) == 3
+        assert "5-star hotels only" not in suggestions
+
     def test_all_suggestions_are_executable(self):
         """Every suggestion the engine can produce must be routable."""
         import re

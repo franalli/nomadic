@@ -1,3 +1,4 @@
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * StrategyStageRenderer
  *
@@ -524,7 +525,7 @@ export function StrategyStageRenderer({
   const isStreaming = generating || isCommitting || isExpandingItinerary;
 
   // View navigation - two-mode system (PLANNING + BOOKING)
-  const { activeMode, canViewBooking: _canViewBooking, activeView: _activeView, canViewSetup: _canViewSetup, canViewPlan: _canViewPlan } = useViewNavigation();
+  const { activeMode } = useViewNavigation();
 
   // Two-mode system: use activeMode from hook, allow explicit override
   const effectiveMode: ViewMode = explicitMode ?? activeMode;

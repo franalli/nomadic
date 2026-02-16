@@ -198,23 +198,26 @@ Hearts indicate user preference for AI weighting, not cart additions.
 
 Map panels use sticky positioning during timeline scroll (P3+ only).
 
-| Property | Desktop Value | Mobile Value |
-|----------|---------------|--------------|
-| Map Width | Fixed `400px`, max `35vw` | `100%` |
-| Map Height | `400px` (explicit inline) | `300px` (explicit inline) |
-| Content Width | `flex-1`, min `720px`, max `900px` | `100%` |
-| Top offset | `sticky top-20 z-10` | Non-sticky (inline) |
-| Border | `border border-border/50` | `border border-border/50` |
-| Corner | `rounded-xl overflow-hidden` | `rounded-xl overflow-hidden` |
-| Visibility | When destination is set (`!!destCoords`) | P3+ (hasItineraryContent) |
+Two map panels exist in `StrategyStageRenderer`:
+- **Bridge mode map** (S2, destination set): `w-[350px]`, `sticky top-4`, `h-[400px]`
+- **Full mode map** (S3, itinerary content): `w-[400px] max-w-[35vw]`, `sticky top-0 h-screen`
+
+| Property | Bridge Mode (S2) | Full Mode (S3) | Mobile |
+|----------|-----------------|----------------|--------|
+| Map Width | `w-[350px]` | `w-[400px] max-w-[35vw]` | `100%` |
+| Map Height | `h-[400px]` | `h-screen` | `h-[300px]` |
+| Content Width | N/A (map beside hero) | `flex-1`, min `720px`, max `900px` | `100%` |
+| Top offset | `sticky top-4` | `sticky top-0` | Non-sticky (inline) |
+| Border | None | None | `border border-border/50` |
+| Corner | `rounded-xl overflow-hidden` | None (full-height) | `rounded-xl overflow-hidden` |
 
 **Why Fixed Map Width:**
-- 400px provides sufficient spatial awareness without dominating content
+- 400px (full mode) provides sufficient spatial awareness without dominating content
 - Content area (720px min) ensures comfortable 2-column tile grid
 - 900px max maintains readability limit
 - Fixed width prevents layout shifts during zoom/interactions
 
-**Desktop Usage (P3+):**
+**Desktop Usage (Full Mode / S3):**
 ```tsx
 {/* Content + fixed map layout */}
 <div className="flex gap-6">
@@ -224,30 +227,30 @@ Map panels use sticky positioning during timeline scroll (P3+ only).
   >
     {/* Content: Specialists → Tiles → Timeline */}
   </div>
-  <div className="shrink-0" style={{ width: 400, maxWidth: '35vw' }}>
-    <div className="sticky top-20 z-10">
-      {/* Explicit height wrapper ensures Mapbox initializes correctly */}
-      <div style={{ height: 400 }} className="rounded-xl overflow-hidden border border-border/50">
-        <InteractiveMap className="h-full w-full" />
-      </div>
+  <div className="w-[400px] max-w-[35vw] shrink-0">
+    <div className="sticky top-0 h-screen overflow-hidden">
+      <InteractiveMap className="h-full w-full" />
     </div>
   </div>
 </div>
 ```
 
-**Mobile Usage (P3+):**
+**Desktop Usage (Bridge Mode / S2):**
 ```tsx
-{/* Inline before timeline - explicit height required */}
-<div style={{ height: 300 }} className="rounded-xl overflow-hidden border border-border/50">
-  <InteractiveMap className="h-full w-full" interactive={false} />
+<div className="hidden w-[350px] shrink-0 lg:block">
+  <div className="sticky top-4 h-[400px] overflow-hidden rounded-xl">
+    <InteractiveMap className="h-full w-full" />
+  </div>
 </div>
 ```
 
-**Important: Mapbox Height Requirements**
-- Mapbox GL requires explicit container dimensions to initialize
-- Use inline `style={{ height: N }}` instead of Tailwind classes like `h-[300px]`
-- Tailwind classes can fail when merged with `h-full` in nested components
-- The wrapper ensures correct height, inner component uses `h-full w-full`
+**Mobile Usage (S3):**
+```tsx
+{/* Inline before timeline */}
+<div className="h-[300px] overflow-hidden rounded-xl border border-border/50">
+  <InteractiveMap className="h-full w-full" />
+</div>
+```
 
 **fitBounds Behavior:**
 - Uses responsive padding: desktop 40px, mobile 20px (via `useIsDesktop` hook)
@@ -438,23 +441,35 @@ All specialist data (colors, icons, keywords, display names) lives in a single r
 
 #### Timeline Block Styling
 
-Each activity block in the S3 Itinerary View shows specialist attribution via colored borders:
+Each activity block in the S3 Itinerary View shows specialist attribution via colored borders. ActivityMiniCard uses **static Tailwind class maps** (not inline styles) to ensure JIT compatibility:
 
 ```tsx
-// 4px colored left-border per specialist — color from registry
-import { getSpecialistColor } from '@/lib/specialists';
+// Static Tailwind class lookups per specialist type (JIT needs static strings)
+const borderAccentClass: Record<string, string> = {
+  diving: 'border-l-cyan-500',
+  hiking: 'border-l-emerald-500',
+  skiing: 'border-l-blue-500',
+  cycling: 'border-l-lime-500',
+  surfing: 'border-l-indigo-500',
+  sailing: 'border-l-cyan-500',
+  climbing: 'border-l-orange-500',
+  wildlife_safari: 'border-l-amber-500',
+};
 
 <div
-  className="rounded-xl border bg-white dark:bg-zinc-800/50"
-  style={{ borderLeftWidth: '4px', borderLeftColor: getSpecialistColor(block.specialist_type) }}
+  className={cn(
+    'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-l-4 transition-shadow',
+    'bg-white dark:bg-zinc-800/50 hover:shadow-md',
+    borderAccentClass[block.specialist_type] || 'border-l-zinc-300 dark:border-l-zinc-600'
+  )}
 >
 ```
 
 **Visual Treatment:**
-- 4px colored left-border on each ActivityMiniCard
-- Icon color matches specialist
+- `border-l-4` colored left-border on each ActivityMiniCard (Tailwind classes, not inline styles)
+- Icon color matches specialist via static class maps
 - Card background: neutral white/zinc
-- Safety buffers: Amber (`#F59E0B`) or Red (`#EF4444`) for no-fly constraints
+- Unschedulable activities: `bg-amber-50/50 dark:bg-amber-900/10 border-amber-200` with `border-l-amber-500`
 
 #### Implementation Reference
 
@@ -471,7 +486,7 @@ SPECIALIST_IDS                   // ['diving', 'hiking', 'skiing', 'cycling', 's
 
 **CSS Topic Color System:** `--topic-color` is set inline via `getSpecialistColorRgb()`, consumed by `.topic-badge`, `.topic-border-left`, `.topic-header-tint` classes in `globals.css`.
 
-**Note:** Hex values are used for inline `style` props—NOT Tailwind classes—to ensure precise color matching and avoid dynamic class generation.
+**Note:** S2StrategyView uses `getSpecialistColorRgb()` with inline `style` props and CSS custom properties (`--topic-color`). ActivityMiniCard timeline blocks use static Tailwind class maps instead (see Timeline Block Styling above).
 
 #### Trip DNA Bar
 
@@ -487,13 +502,13 @@ The Trip DNA bar shows engine constraints from niche specialists (all entries in
 - Prevents mid-word clipping of destination descriptions
 
 **Constraint Priority Colors:**
-| Priority | Keywords | Icon | Border | Background | Text (Light) | Text (Dark) |
-|----------|----------|------|--------|------------|--------------|-------------|
-| **Blocking** | `no_fly`, `no-fly`, `nofly`, `safety`, `altitude`, `buffer`, `24h`, `24 hour`, `diving`, `dive`, `scuba`, `decompression`, `fly`, `flight` | `AlertTriangle` | `border-red-500/40` | `bg-red-500/10` | `text-red-600` | `text-red-300` |
-| **Strong** | `morning`, `footwear`, `gear`, `timing`, `equipment`, `certification` | `Clock` | `border-amber-500/40` | `bg-amber-500/10` | `text-amber-600` | `text-amber-300` |
-| **Soft** | Default (all others) | `Shield` | `border-zinc-400/40` | `bg-zinc-500/10` | `text-zinc-600` | `text-zinc-400` |
+| Priority | Keywords | Icon | Border (Light / Dark) | Background (Light / Dark) | Text (Light / Dark) |
+|----------|----------|------|-----------------------|---------------------------|---------------------|
+| **Blocking** | `no_fly`, `no-fly`, `nofly`, `safety`, `altitude`, `buffer`, `24h`, `24 hour`, `diving`, `dive`, `scuba`, `decompression`, `fly`, `flight` | `AlertTriangle` | `border-red-500/40` / `dark:border-red-500/40` | `bg-red-500/10` / `dark:bg-red-500/15` | `text-red-600` / `dark:text-red-300` |
+| **Strong** | `morning`, `footwear`, `gear`, `timing`, `equipment`, `certification` | `Clock` | `border-amber-500/40` / `dark:border-amber-500/40` | `bg-amber-500/10` / `dark:bg-amber-500/15` | `text-amber-600` / `dark:text-amber-300` |
+| **Soft** | Default (all others) | `Shield` | `border-zinc-400/40` / `dark:border-zinc-500/40` | `bg-zinc-500/10` / `dark:bg-zinc-500/15` | `text-zinc-600` / `dark:text-zinc-400` |
 
-> **Light Mode Fix:** Text colors use `-600` suffix for light mode visibility (red-600, amber-600, zinc-600) instead of `-300` which is invisible on white backgrounds.
+> **Light Mode Fix:** Text colors use `-600` suffix for light mode visibility (red-600, amber-600, zinc-600) instead of `-300` which is invisible on white backgrounds. Dark mode backgrounds use `/15` opacity (vs `/10` in light) for better visibility against dark surfaces.
 
 **Priority-Based Icons:**
 Icons are selected based on constraint keyword matching against the combined `type + rule + reason` text:
@@ -508,8 +523,8 @@ return <Shield />;
 
 **Three-State Validation Override:**
 When backend populates `constraints_validated` and `constraint_violations`:
-- If constraint is **violated** → Amber ring (`ring-2 ring-amber-400/60`) with AlertTriangle icon
-- If constraint is **validated** → Emerald (`border-emerald-300 bg-emerald-50`) with CheckCircle icon
+- If constraint is **violated** → Amber with ring: `bg-amber-50 dark:bg-amber-900/30 border-amber-400 dark:border-amber-500/60 ring-2 ring-amber-400/60` with `AlertTriangle` icon
+- If constraint is **validated** → Emerald: `bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-600/50` with `CheckCircle` icon
 - Otherwise → Priority coloring above (blocking/strong/soft)
 
 **Styling:**
@@ -593,9 +608,9 @@ All sheets live at `frontend/components/plan/sheets/`. Most sheets use raw Tailw
 | MiniCard | `tiles/MiniCard.tsx` | Compact glass card pattern, rating stars use neutral zinc scale |
 | SuggestionCard | `plan/tiles/SuggestionCard.tsx` | Suggested card variant, neutral zinc rating treatment, emerald save state |
 | BookableCard | `plan/tiles/BookableCard.tsx` | Dark booking card, in-cart/border states use zinc, booked uses emerald |
+| GatingBlocker | `plan/sheets/GatingBlocker.tsx` | Shared prerequisite-gating notice for module sheets (Flights/Stays/Activities). Raw infoBox pattern (`bg-zinc-50 dark:bg-white/[0.02]`), raw smallAction pattern buttons |
 | AlternativesModal | `plan/modals/AlternativesModal.tsx` | Sheet modal with neutral zinc rating stars and diff badges |
 | CategorySection | `plan/booking/CategorySection.tsx` | Booking status dots/text with dark-aware zinc/emerald states |
-| MapLayerFilter | `map/MapLayerFilter.tsx` | Specialist colors aligned to `frontend/lib/specialists.ts` palette |
 
 ---
 
@@ -1367,11 +1382,11 @@ Stepper buttons and interactive controls must look like physical buttons, not gh
 
 | State | Light Mode | Dark Mode |
 |-------|------------|-----------|
-| **Enabled** | `bg-white border-2 border-zinc-400` | `bg-white/5 border-white/15` |
-| **Hover** | `bg-zinc-900 border-zinc-900 text-white` | `bg-white border-white text-black` |
-| **Disabled** | `bg-zinc-100 border-2 border-zinc-300 text-zinc-400` | `bg-white/[0.02] border-white/5 text-zinc-700` |
+| **Enabled** | `bg-white border-2 border-zinc-300 text-zinc-700` | `bg-white/5 border-white/15 text-zinc-400` |
+| **Hover** | `hover:border-zinc-900 hover:bg-zinc-900 hover:text-white` | `hover:bg-white hover:border-white hover:text-black` |
+| **Disabled** | `bg-zinc-50 border-2 border-zinc-200 text-zinc-300` | `bg-white/[0.02] border-white/5 text-zinc-700` |
 
-**Key Principle:** Borders should be visible without squinting. Mobile steppers use `border-zinc-400` for extra visibility; desktop steppers (DS token and `ui/stepper.tsx`) use `border-zinc-300`.
+**Key Principle:** Borders should be visible without squinting. Both mobile (`TravelersSheet`, `w-12 h-12`) and desktop (`DS.stepper.button`, `w-10 h-10`) steppers use `border-zinc-300`. The `ui/stepper.tsx` shared component also uses `border-zinc-300`.
 
 **Code Example:**
 
@@ -1379,9 +1394,9 @@ Stepper buttons and interactive controls must look like physical buttons, not gh
 const buttonEnabled = cn(
   'w-12 h-12 rounded-full flex items-center justify-center',
   // Light: White with STRONG visible border
-  'bg-white border-2 border-zinc-400 text-zinc-700',
+  'bg-white border-2 border-zinc-300 text-zinc-700',
   // Dark: Glass Fill
-  'dark:bg-white/5 dark:border-white/15 dark:text-zinc-400',
+  'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
   'transition-all duration-150',
   // Hover: Snap to black/white
   'hover:border-zinc-900 hover:bg-zinc-900 hover:text-white',
@@ -1506,48 +1521,63 @@ The toast system is implemented in `frontend/components/ui/toast.tsx`.
 
 ---
 
-## 14. Primary Navigation (Setup / Plan / Book)
+## 14. Primary Navigation (Chat / Plan)
 
-The main navigation bar follows the **"Beacon Rule"** to anchor the user's location in the app flow. The active tab must be maximally visible—a glowing white beacon in dark mode.
+Mobile uses a horizontal swipe layout with a compact tab bar. Desktop uses a split panel layout (no tabs — both Chat and Plan are visible simultaneously).
 
-### Design Philosophy
+### Mobile Tab Bar
 
-**Problem:** A dark grey active tab (`bg-zinc-800`) in Dark Mode looks "muddy" and low-confidence. It blends into the surrounding dark UI instead of anchoring the user.
+The tab bar sits between the header and the swipe container in `MobileSwipeLayout`. It uses CSS variable-based colors (`foreground`, `muted-foreground`) for theme compatibility.
 
-**Solution:** The active tab should be **Solid White** (The Beacon), matching the user chat bubbles and active toggle pills. This creates visual consistency across all "user intent" elements.
-
-### Visual Specifications
-
-| Element | Light Mode | Dark Mode |
-|---------|------------|-----------|
-| **Container (Track)** | `bg-zinc-100 border-zinc-200 rounded-full` | `bg-black/40 border-white/10 backdrop-blur-xl` |
-| **Active Tab** | `bg-white text-zinc-950 ring-1 ring-black/5 shadow-md` | `bg-white text-zinc-950 shadow-[0_0_15px_-3px_rgba(255,255,255,0.4)]` |
-| **Inactive Tab** | `text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100/80` | `text-white/60 hover:text-white hover:bg-white/10` |
-| **Locked Tab** | `text-zinc-400 opacity-40 cursor-not-allowed` | `text-white/40 opacity-40` |
+| Element | Active State | Inactive State | Locked State |
+|---------|-------------|----------------|--------------|
+| **Tab** | `bg-foreground/10 text-foreground` | `text-muted-foreground hover:text-foreground` | `text-muted-foreground/40 cursor-not-allowed` |
+| **Shape** | `px-3 py-1 rounded-full text-xs font-medium` | Same | Same |
+| **Plan badge** | Emerald dot (`w-2 h-2 rounded-full bg-emerald-500`) when new content + not on Plan page | — | — |
 
 ### Code Example
 
 ```tsx
-// GlassCommandBar Active State
-isActive && [
-  // Light: Pure white cutout from grey track
-  'bg-white shadow-md ring-1 ring-black/5',
-  'text-zinc-950 font-bold',
-  // Dark: THE BEACON - Solid white with glow
-  'dark:bg-white dark:text-zinc-950 dark:ring-0',
-  'dark:shadow-[0_0_15px_-3px_rgba(255,255,255,0.4)]',
-]
+// MobileSwipeLayout tab bar
+<div className="flex items-center gap-1 px-3 py-1 border-b border-white/10">
+  <button
+    className={cn(
+      'px-3 py-1 rounded-full text-xs font-medium transition-colors',
+      activePage === 0
+        ? 'bg-foreground/10 text-foreground'
+        : 'text-muted-foreground hover:text-foreground'
+    )}
+  >
+    Chat
+  </button>
+  <button
+    disabled={!planTabEnabled}
+    className={cn(
+      'px-3 py-1 rounded-full text-xs font-medium transition-colors relative',
+      !planTabEnabled
+        ? 'text-muted-foreground/40 cursor-not-allowed'
+        : activePage === 1
+          ? 'bg-foreground/10 text-foreground'
+          : 'text-muted-foreground hover:text-foreground'
+    )}
+  >
+    Plan
+    {planTabEnabled && hasNewPlanContent && activePage !== 1 && (
+      <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500" />
+    )}
+  </button>
+</div>
 ```
 
-### Why This Works
+### Desktop Layout
 
-1. **Anchoring:** The bright white beacon instantly shows the user where they are in the Setup → Plan → Book flow.
-2. **Consistency:** Matches the "Solid White = User Intent" pattern used in chat bubbles and active pills.
-3. **Contrast:** Maximum contrast against the dark glass container makes the selection unambiguous.
+On desktop, both Chat and Plan panels are visible side-by-side in `SplitLayoutView`. No tab bar is needed.
 
 ### Implementation Reference
 
-The primary navigation is implemented via a split layout on desktop (`frontend/components/layout/SplitLayoutView.tsx`) and mode switching on mobile (`frontend/components/layout/MobileModeHeader.tsx`).
+- Mobile tabs + swipe: `frontend/components/layout/MobileSwipeLayout.tsx`
+- Mobile header (branding/status): `frontend/components/layout/MobileModeHeader.tsx`
+- Desktop split: `frontend/components/layout/SplitLayoutView.tsx`
 
 ---
 
@@ -1625,16 +1655,13 @@ This creates a direct visual link: "What I typed → is being processed."
 | **Border** | `border-emerald-500/50` | `border-emerald-500/40` |
 | **Shadow** | `shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]` | `shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]` |
 | **Animation** | `animate-pulse` (subtle) | Same |
-| **Status Text** | `text-emerald-600 font-mono text-xs` | `text-emerald-400` |
-| **Status Icon** | `<Cpu />` | Same |
-
 ### Code Example
 
 ```tsx
 // Input Capsule with Living Void State
 <div
   className={cn(
-    'relative flex items-center w-full h-14 rounded-[28px] transition-all duration-300',
+    'relative flex items-center w-full min-h-14 rounded-[28px] transition-all duration-300',
     'bg-zinc-50 dark:bg-black/40',
 
     // Priority 1: "Living Void" - AI Processing
@@ -1648,19 +1675,9 @@ This creates a direct visual link: "What I typed → is being processed."
       : 'border border-zinc-200 dark:border-white/10'
   )}
 >
-  {/* Status indicator overlay - inside the capsule during processing */}
-  {isLoading && nodeStatus?.node && (
-    <div className="absolute left-6 flex items-center gap-2 text-xs font-mono text-emerald-600 dark:text-emerald-400 pointer-events-none z-10">
-      <Cpu className="w-3 h-3" />
-      <span className="tracking-tight opacity-80">
-        {nodeLabel || 'Processing...'}
-      </span>
-    </div>
-  )}
-
-  {/* Input field - placeholder hidden when status is showing */}
-  <input
-    placeholder={isLoading && nodeStatus?.node ? '' : 'Type a message...'}
+  {/* Input field — placeholder changes contextually */}
+  <textarea
+    placeholder={isInputDisabledByPlanState ? 'Updating...' : 'Where to?'}
     ...
   />
 </div>
@@ -2015,35 +2032,25 @@ The Reset button allows users to start over with a fresh planning session. It mu
 - **Light Mode:** `text-zinc-600`
 - **Dark Mode:** `text-emerald-500` + `drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]`
 
-#### C. The Logic Terminal (Loading State)
+#### C. The Smart Loader (Loading State)
 
-**Purpose:** Transparent thought process showing accumulated processing steps, routing decisions, and specialist activations. The "brain activity" of the Travel Architect.
+**Purpose:** A single mutating status line that shows the current processing node. Cleaner than a scrolling log for consumer apps.
 
 **Layout:**
-- Glass Bubble (visual anchor) above stacked log entries
-- Left-aligned as Assistant placeholder
+- Single-line container: icon + text, left-aligned as assistant placeholder
+- No glass bubble, no scrolling log
 
-**Glass Bubble (The Hardware):**
-- `rounded-2xl border` (NO speech tail - status indicator, not message)
-- Uses `DS.materials.surface` token
-- Contents: 3 bouncing dots (`animate-bounce` with staggered delays)
-- Dot colors: `bg-zinc-400` / `dark:bg-emerald-500`
+**Icon:** Dynamic Lucide icon mapped from backend `icon_key` (Brain, Building2, Plane, Shield, PenTool, Star, MapPin). Defaults to `Loader2` spinner.
+- Icon color: `text-zinc-500 dark:text-emerald-500 animate-pulse`
 
-**Log Entries (The Software):**
-- Typography: `font-mono text-[10px] uppercase tracking-widest`
-- **Completed step:** Checkmark icon (`text-emerald-500`) + dimmed text (`text-zinc-400` / `dark:text-zinc-500`)
-- **Active step:** Pulsing dot (`bg-emerald-500 animate-pulse`) + bold text (`text-zinc-900` / `dark:text-emerald-400`)
-- **Routing detail:** `text-[9px] text-emerald-600` / `dark:text-emerald-500/80` with left border (`border-l border-emerald-500/20`)
+**Text:**
+- Typography: `font-mono text-[10px] uppercase tracking-widest font-bold`
+- Color: `text-zinc-600 dark:text-emerald-500/80`
+- Animate on change: `animate-in fade-in slide-in-from-left-1 duration-300`
 
 **Example Output:**
 ```
-[ (• • •) ]
-✓ READING_YOUR_MESSAGE
-  >> ROUTING: DIVING
-✓ CONSULTING_EXPERT
-  >> ACTIVATING: DIVING
-● CHECKING_CONSTRAINTS
-  >> VALIDATING_CONSTRAINTS
+🧠 ROUTING_TO_SPECIALIST
 ```
 
 #### D. The Architect (Assistant Response)

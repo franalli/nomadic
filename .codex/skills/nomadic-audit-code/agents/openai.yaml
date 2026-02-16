@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nomadic Audit Code"
+  short_description: "Run full repo code health audit without edits"
+  default_prompt: "Audit frontend and backend code health and return a structured findings report."
