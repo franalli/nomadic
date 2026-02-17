@@ -890,7 +890,7 @@ export function StrategyHero({
             {/* Strategy Logic / One-liner */}
             {(section.one_liner || section.editorial_one_liner) && (
               <div className="space-y-1">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5">
+                <h4 className={cn(DS.text.label, 'flex items-center gap-1.5')}>
                   <Sparkles className="w-3 h-3" />
                   Strategy Logic
                 </h4>
@@ -903,7 +903,7 @@ export function StrategyHero({
             {/* Constraints - Label changes based on specialist type */}
             {constraints.length > 0 && (
               <div className="space-y-2">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5">
+                <h4 className={cn(DS.text.label, 'flex items-center gap-1.5')}>
                   <AlertCircle className="w-3 h-3" />
                   {getConstraintSectionLabel(topic)}
                 </h4>
@@ -937,7 +937,7 @@ export function StrategyHero({
               }) || [];
               return uniquePrinciples.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5">
+                  <h4 className={cn(DS.text.label, 'flex items-center gap-1.5')}>
                     <Info className="w-3 h-3" />
                     Key Principles
                   </h4>
@@ -956,7 +956,7 @@ export function StrategyHero({
             {/* Content Added (Recommendations) - show first 3 */}
             {section.content_added && section.content_added.length > 0 && (
               <div className="space-y-2">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5">
+                <h4 className={cn(DS.text.label, 'flex items-center gap-1.5')}>
                   <Sparkles className="w-3 h-3" />
                   Recommendations
                 </h4>

@@ -50,7 +50,7 @@
 
 All admin routes require `X-Admin-Key` header matching `ADMIN_API_KEY` env var. Rate limited: 10/min.
 
-Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified). Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache`, `clear-router-cache`, `clear-all-caches`, `clear-all-checkpoints`, `clear-validation-cache`, `fresh-start`. Config (GET): `planner`, `graph-stats`.
+Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified). Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache` (L1+L2), `clear-router-cache`, `clear-all-caches` (clears planner + unsplash + specialist L1/L2 + tile L1/L2 + experience L1/L2 + router), `clear-all-checkpoints`, `clear-validation-cache`, `fresh-start`. Config (GET): `planner`, `graph-stats`.
 
 ---
 

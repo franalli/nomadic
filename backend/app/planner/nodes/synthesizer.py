@@ -31,7 +31,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.config import settings
 from app.planner.llm_factory import get_llm_by_model
-from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES, TIER2_ACTIVITY_KEYWORDS
+from app.planner.specialist_registry import (
+    ALL_DISPLAY_ALIASES,
+    TIER1_SPECIALIST_NAMES,
+    display_name,
+)
 from app.planner.state import (
     GraphState,
     SynthesizerOutput,
@@ -147,22 +151,33 @@ def _get_response_type(state) -> str:
     # Detect significant changes that warrant full planning-depth response
     # even after the first plan has been given.
     turn_applied = meta.get("turn_applied_fields", [])
-    has_significant_change = (
+    added_cats = meta.get("added_categories", [])
+    has_structural_change = (
         meta.get("specialist_just_ran")
         or meta.get("constraint_violations")
         or any(f in turn_applied for f in ("start_date", "end_date"))
-        or len(meta.get("added_categories", [])) > 0
     )
+    has_significant_change = has_structural_change or len(added_cats) > 0
 
     logger.info(
         "[SYNTH_ROUTE] turn_applied=%s added_cats=%s "
         "planning_given=%s has_full_trip=%s has_sig_change=%s",
         turn_applied,
-        meta.get("added_categories"),
+        added_cats,
         meta.get("_planning_response_given"),
         has_full_trip,
         has_significant_change,
     )
+
+    # Category-only additions after plan is shown → terse specialist_update
+    # so the NEW_CATEGORY directive fires (gated on specialist_update type).
+    if (
+        has_full_trip
+        and meta.get("_planning_response_given")
+        and len(added_cats) > 0
+        and not has_structural_change
+    ):
+        return "specialist_update"
 
     # Planning mode: constraint violations with material plan change
     if meta.get("constraint_violations") and has_full_trip:
@@ -434,7 +449,7 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
                 }.get(cat, 0.25)
                 status = "over" if cat_total > allocation else "within"
                 budget_parts.append(
-                    f"  - {cat.title()}: ${cat_total:.0f} / ${allocation:.0f} "
+                    f"  - {display_name(cat)}: ${cat_total:.0f} / ${allocation:.0f} "
                     f"allocated ({status} budget)"
                 )
                 grand_total += cat_total
@@ -700,7 +715,7 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
                 if isinstance(section, dict)
                 else getattr(section, "alternative_suggestion", "")
             )
-            parts.append(f"- {specialist.title()}: {reason}")
+            parts.append(f"- {display_name(specialist)}: {reason}")
             if suggestion:
                 parts.append(f"  Suggestion: {suggestion}")
         parts.append(
@@ -767,31 +782,12 @@ _ACTIVITY_CLAIM_VERB_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-_KNOWN_ACTIVITY_CATEGORIES: set[str] = set(TIER1_SPECIALIST_NAMES) | set(TIER2_ACTIVITY_KEYWORDS)
 
-_ACTIVITY_CATEGORY_ALIASES: dict[str, str] = {
-    "party": "nightlife",
-    "parties": "nightlife",
-    "club": "nightlife",
-    "clubs": "nightlife",
-    "clubbing": "nightlife",
-    "night out": "nightlife",
-    "night outs": "nightlife",
-    "hike": "hiking",
-    "hikes": "hiking",
-    "trek": "hiking",
-    "treks": "hiking",
-    "trekking": "hiking",
-    "surf": "surfing",
-    "surfs": "surfing",
-    "dive": "diving",
-    "dives": "diving",
-    "scuba": "diving",
-    "snorkel": "diving",
-    "snorkeling": "diving",
-    "spa": "wellness",
-    "spas": "wellness",
-}
+def _get_active_categories(state: GraphState) -> set[str]:
+    """Active categories from state — whatever's been accepted is known."""
+    settings = get_trip_settings(state)
+    return set(settings.activity_settings.categories) | set(TIER1_SPECIALIST_NAMES)
+
 
 _GENERIC_ACTIVITY_ENTITY_WORDS = {
     "day",
@@ -843,7 +839,7 @@ def _canonicalize_activity_category(label: str) -> str:
     cleaned = " ".join((label or "").strip().lower().split())
     if not cleaned:
         return ""
-    return _ACTIVITY_CATEGORY_ALIASES.get(cleaned, cleaned)
+    return ALL_DISPLAY_ALIASES.get(cleaned, cleaned)
 
 
 def _collect_allowed_activity_categories(state: GraphState) -> set[str]:
@@ -890,15 +886,15 @@ def _collect_allowed_activity_categories(state: GraphState) -> set[str]:
     return allowed
 
 
-def _extract_activity_mentions(sentence: str) -> set[str]:
+def _extract_activity_mentions(sentence: str, known_categories: set[str]) -> set[str]:
     lowered = (sentence or "").lower()
     mentioned: set[str] = set()
 
-    for category in _KNOWN_ACTIVITY_CATEGORIES:
+    for category in known_categories:
         if re.search(rf"\b{re.escape(category)}\b", lowered):
             mentioned.add(category)
 
-    for alias, canonical in _ACTIVITY_CATEGORY_ALIASES.items():
+    for alias, canonical in ALL_DISPLAY_ALIASES.items():
         if re.search(rf"\b{re.escape(alias)}\b", lowered):
             mentioned.add(canonical)
 
@@ -954,7 +950,7 @@ def _collect_activity_tile_counts_by_category(state: GraphState) -> dict[str, in
     return counts
 
 
-def _extract_named_entity_claims(sentence: str) -> list[str]:
+def _extract_named_entity_claims(sentence: str, known_categories: set[str]) -> list[str]:
     claims: list[str] = []
     for bolded in re.findall(r"\*\*([^*]+)\*\*", sentence or ""):
         normalized = _normalize_entity_text(bolded)
@@ -967,7 +963,7 @@ def _extract_named_entity_claims(sentence: str) -> list[str]:
             continue
         if words & _GENERIC_ACTIVITY_ENTITY_WORDS:
             continue
-        if words & _KNOWN_ACTIVITY_CATEGORIES:
+        if words & known_categories:
             continue
         claims.append(normalized)
     return claims
@@ -1037,6 +1033,7 @@ def _ground_activity_claims(message: str, state: GraphState) -> str:
     if not allowed:
         return grounded
 
+    active_cats = _get_active_categories(state)
     category_counts = _collect_activity_tile_counts_by_category(state)
     known_entities = _collect_known_activity_entities(state)
     sentences = re.split(r"(?<=[.!?])\s+", grounded)
@@ -1052,10 +1049,10 @@ def _ground_activity_claims(message: str, state: GraphState) -> str:
             kept.append(sentence)
             continue
 
-        mentions = _extract_activity_mentions(sentence)
+        mentions = _extract_activity_mentions(sentence, active_cats)
         disallowed = sorted(cat for cat in mentions if cat not in allowed)
 
-        named_entities = _extract_named_entity_claims(sentence)
+        named_entities = _extract_named_entity_claims(sentence, active_cats)
         unknown_entity_claim = bool(named_entities) and all(
             not _entity_matches_known_activity(entity, known_entities) for entity in named_entities
         )

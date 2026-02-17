@@ -19,6 +19,7 @@ import { createPortal } from 'react-dom';
 import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { useToast } from '@/components/ui/toast';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,7 +222,7 @@ function DatesSheetInner({
               {/* ═══════════════════════════════════════════════════════════════ */}
               <div className="pt-6 px-6 pb-4 border-b border-zinc-100 dark:border-white/5">
                 {/* Header */}
-                <h2 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mb-4">
+                <h2 className={cn(DS.text.label, 'mb-4')}>
                   Timeline
                 </h2>
                 {/* Quick Select Pills - High Contrast Wireframe Look */}
@@ -281,7 +282,7 @@ function DatesSheetInner({
               )}>
                 {/* Selection Display */}
                 <div className="flex flex-col">
-                  <span className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider mb-0.5">
+                  <span className={cn(DS.text.label, 'mb-0.5')}>
                     Selection
                   </span>
                   <span className="text-sm font-bold text-zinc-900 dark:text-white tracking-wide">
@@ -308,13 +309,8 @@ function DatesSheetInner({
                     onClick={handleSave}
                     disabled={!canSave}
                     className={cn(
-                      'px-6 py-2.5 rounded-xl',
-                      'text-xs font-bold uppercase tracking-widest',
-                      'transition-all duration-200 active:scale-95',
-                      canSave
-                        // Light: Solid Black / Dark: Glowing Emerald
-                        ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]'
-                        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600 cursor-not-allowed'
+                      canSave ? DS.actions.primary : DS.actions.primaryDisabled,
+                      'px-6 py-2.5 text-xs uppercase tracking-widest active:scale-95'
                     )}
                   >
                     Apply Dates

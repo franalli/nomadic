@@ -4,10 +4,10 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** Stages 10-13
-- **Secondary:** fix all P0/P1/P2 bugs
-- **Active work:** Code health audit round 2 + chip rendering fix. Deleted telemetry.py/meta.py/meta_keys.py (1,189L), canonicalize_dict, RemoveSpecialistRequest, 6 stale generated.ts blocks. Fixed fire-and-forget setTimeout in 4 components via ref+cleanup. Upgraded synthesizer response-type routing: significant changes (date shifts, new categories, specialist runs) now re-fire planning-depth LLM. Added `requested_already_active` metadata to prevent hallucinated category additions. Fixed ChatPanel chip visibility: input area (chips + input bar) moved outside scroll container with `shrink-0` pinning. Fixed intent_router date-change routing: both post-plan and pre-plan paths now populate `turn_applied_fields` + `prev_trip_values_snapshot` so synthesizer routes to `gpt-4o / planning`. Cleaned up diagnostic logging (removed [GRAPH_CAPTURE], [FORMAT_RESULT], [CHIP_PIPE] temp logs; kept [SYNTH] response log).
-- **Known broken:** none
+- **Focus:** Code health audit fixes (T3 tier)
+- **Secondary:** DS token adoption
+- **Active work:** Completed Batches A-H of code health audit + 3 trace-derived UX fixes: (1) synthesizer category-only additions → specialist_update response type, (2) L1 cold probe skips prefetch wait budget, (3) specialist content continuity reuse on same-dest date extensions
+- **Known broken:** Pre-existing test failures: `test_facade_exports_meta_helpers` (missing init_turn_metadata export), `test_ground_flight_response_appends_date_adjustment_note`
 - **DO NOT touch this sprint:** [frozen files/features]
 
 ---

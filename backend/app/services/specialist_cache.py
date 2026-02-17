@@ -31,11 +31,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import delete, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.planner.hashing import make_cache_key
-from app.services.cache_core import MemoryCache
+from app.services.cache_core import MemoryCache, l2_upsert
 
 logger = logging.getLogger(__name__)
 
@@ -250,42 +249,25 @@ async def set_cached_specialist_output(
         day_pref: User's requested activity count for this topic
     """
 
-    # Import here to avoid circular imports
-    from app.db_models import ResponseCache
-
     cache_key = _specialist_cache_key(
         topic, destination, start_date, end_date, skill_level, day_pref=day_pref
     )
-    expires_at = datetime.now(UTC) + timedelta(days=L2_TTL_DAYS)
 
     # L1: Thread-safe write
     _mem.set(cache_key, output)
 
     # L2: Upsert to database
     try:
-        stmt = pg_insert(ResponseCache).values(
+        await l2_upsert(
+            db,
             cache_key=cache_key,
             cache_type="specialist",
             response_json=output,
-            created_at=datetime.now(UTC),
-            expires_at=expires_at,
-            hit_count=0,
-            last_hit_at=None,
+            ttl=timedelta(days=L2_TTL_DAYS),
         )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["cache_key"],
-            set_={
-                "response_json": output,
-                "created_at": datetime.now(UTC),
-                "expires_at": expires_at,
-            },
-        )
-        await db.execute(stmt)
-        await db.commit()
-
         _mem.increment_stat("writes")
-        logger.info(f"[SPECIALIST_CACHE] Cached: {cache_key} (expires: {expires_at.date()})")
-
+        exp = (datetime.now(UTC) + timedelta(days=L2_TTL_DAYS)).date()
+        logger.info(f"[SPECIALIST_CACHE] Cached: {cache_key} (expires: {exp})")
     except Exception as e:
         logger.warning(f"[SPECIALIST_CACHE] L2 write failed: {e}")
         await db.rollback()
@@ -300,7 +282,7 @@ def get_cache_stats() -> dict:
     """Return cache statistics for observability."""
     return {
         **_mem.get_stats(),
-        "l1_size": _mem.size(),
+        "l1_size": len(_mem),
         "l1_maxsize": L1_MAX_SIZE,
         "l1_ttl_seconds": L1_TTL_SECONDS,
         "l2_ttl_days": L2_TTL_DAYS,
@@ -315,14 +297,16 @@ def clear_memory_cache() -> int:
 
 
 async def clear_db_cache(db: AsyncSession) -> int:
-    """Clear all L2 cache entries. Returns count deleted."""
+    """Clear specialist L2 cache entries only. Returns count deleted."""
     from app.db_models import ResponseCache
 
     try:
-        result = await db.execute(delete(ResponseCache))
+        result = await db.execute(
+            delete(ResponseCache).where(ResponseCache.cache_type == "specialist")
+        )
         await db.commit()
         deleted = result.rowcount
-        logger.info(f"[SPECIALIST_CACHE] Cleared L2: {deleted} entries")
+        logger.info(f"[SPECIALIST_CACHE] Cleared L2: {deleted} specialist entries")
         return deleted
     except Exception as e:
         logger.warning(f"[SPECIALIST_CACHE] Clear L2 failed: {e}")

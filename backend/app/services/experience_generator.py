@@ -29,14 +29,14 @@ from typing import Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.planner.hashing import make_cache_key
 from app.planner.llm_factory import get_llm_by_model
-from app.services.cache_core import MemoryCache
+from app.services.cache_core import MemoryCache, l2_upsert
+from app.services.task_tracker import track as _track_task
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,23 @@ def _set_tier2_generation_source(state, source: str) -> None:
 def clear_experience_cache() -> int:
     """Clear L1 experience cache. Returns count of cleared entries."""
     return _mem.clear()
+
+
+async def clear_experience_db_cache(db: AsyncSession) -> int:
+    """Clear all L2 experience cache entries. Returns count deleted."""
+    from app.db_models import ResponseCache
+
+    try:
+        result = await db.execute(
+            delete(ResponseCache).where(ResponseCache.cache_type == "experience")
+        )
+        await db.commit()
+        deleted = result.rowcount
+        return deleted
+    except Exception as e:
+        logger.warning(f"[EXPERIENCE] Clear L2 failed: {e}")
+        await db.rollback()
+        return 0
 
 
 # =============================================================================
@@ -148,33 +165,17 @@ async def _get_cached(db: AsyncSession, cache_key: str) -> Optional[list]:
 
 async def _set_cached(db: AsyncSession, cache_key: str, output: list) -> None:
     """Write experience output to L2 cache."""
-    from app.db_models import ResponseCache
-
-    expires_at = datetime.now(UTC) + timedelta(days=L2_TTL_DAYS)
-
     try:
-        stmt = pg_insert(ResponseCache).values(
+        await l2_upsert(
+            db,
             cache_key=cache_key,
             cache_type="experience",
             response_json=output,
-            created_at=datetime.now(UTC),
-            expires_at=expires_at,
-            hit_count=0,
-            last_hit_at=None,
+            ttl=timedelta(days=L2_TTL_DAYS),
         )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["cache_key"],
-            set_={
-                "response_json": output,
-                "created_at": datetime.now(UTC),
-                "expires_at": expires_at,
-            },
-        )
-        await db.execute(stmt)
-        await db.commit()
         _mem.increment_stat("writes")
-        logger.info(f"[EXPERIENCE_CACHE] Cached: {cache_key} (expires: {expires_at.date()})")
-
+        exp = (datetime.now(UTC) + timedelta(days=L2_TTL_DAYS)).date()
+        logger.info(f"[EXPERIENCE_CACHE] Cached: {cache_key} (expires: {exp})")
     except Exception as e:
         logger.warning(f"[EXPERIENCE_CACHE] L2 write failed: {e}")
         await db.rollback()
@@ -723,7 +724,8 @@ async def _generate_experiences_impl(
                 logger.warning(f"[EXPERIENCE] Background prefetch failed: {e}")
 
         # Fire and forget - images will populate asynchronously
-        asyncio.create_task(_background_prefetch())
+        task = asyncio.create_task(_background_prefetch())
+        _track_task(task)
 
         # Update state metadata with new tiles by category
         if state is not None and hasattr(state, "metadata"):

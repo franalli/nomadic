@@ -190,27 +190,13 @@ def get_query_for_destination(destination: str, activities: list[str] | None = N
         if activity in ACTIVITY_QUERIES:
             # Land-based activities: combine destination for location-specific imagery
             # e.g., "bali hiking mountain trail" instead of generic "mountain hiking trail"
-            land_based = {
-                "hiking",
-                "skiing",
-                "climbing",
-                "cycling",
-                "surfing",
-                "yoga",
-                "cooking",
-                "nightlife",
-                "sailing",
-                "food",
-                "wine",
-                "photography",
-                "wellness",
-                "culture",
-                "music",
-            }
-            if activity in land_based:
+            _UNDERWATER = {"diving", "snorkeling"}
+            if activity not in _UNDERWATER:
                 return f"{destination} {activity} {ACTIVITY_QUERIES[activity]}"
             # Underwater activities: use pure activity query (coral looks the same everywhere)
             return ACTIVITY_QUERIES[activity]
+        # Novel Tier 2 category — generate a reasonable query
+        return f"{destination} {activity} travel experience"
 
     # Fallback to destination-based query
     normalized = destination.lower().strip()

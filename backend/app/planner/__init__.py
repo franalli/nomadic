@@ -15,15 +15,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-# Cache access
-from app.planner.cache_access import (
-    cache_clear,
-    cache_delete,
-    cache_get,
-    cache_pop,
-    cache_set,
-)
-
 # Stable hashing
 from app.planner.hashing import (
     canonicalize_destinations,
@@ -176,12 +167,6 @@ __all__ = [
     "trip_plan_to_trip_inputs",
     # Test mode
     "is_test_mode",
-    # Cache access
-    "cache_get",
-    "cache_set",
-    "cache_pop",
-    "cache_delete",
-    "cache_clear",
     # Stable hashing
     "stable_hash",
     "stable_hash_short",

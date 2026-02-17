@@ -128,6 +128,9 @@ import {
   SPRING_CONFIG,
 } from '@/lib/animation-config';
 
+/** Style for left content column when desktop map sidebar is visible */
+const DESKTOP_MAP_CONTENT_STYLE = { minWidth: 720, maxWidth: 900 } as const;
+
 import { BookingDrawer } from './booking/BookingDrawer';
 import { BookingSection } from './BookingSection';
 import { DestinationMapPlaceholder } from './DestinationMapPlaceholder';
@@ -869,7 +872,7 @@ export function StrategyStageRenderer({
             'flex flex-col min-w-0',
             showDesktopMap ? 'flex-1' : 'w-full'
           )}
-          style={showDesktopMap ? { minWidth: 720, maxWidth: 900 } : undefined}
+          style={showDesktopMap ? DESKTOP_MAP_CONTENT_STYLE : undefined}
         >
           {/* SECTION 1: SPECIALISTS */}
           <section id="specialists-section" className="relative">

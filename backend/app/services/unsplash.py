@@ -25,13 +25,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.placeholders import get_placeholder_image
 from app.planner.hashing import make_cache_key
+from app.services.cache_core import MemoryCache
 from app.services.unsplash_queries import get_query_for_destination
 
 logger = logging.getLogger(__name__)
 
 # In-memory cache for hot destinations (avoids DB hits in same session)
 # Key format: "unsplash::v2::{destination}[::{activity}]::variant-{n}"
-_memory_cache: dict[str, "UnsplashImage"] = {}
+# Capped at 512 entries with 2h TTL — MemoryCache provides internal RLock.
+_memory_cache: MemoryCache = MemoryCache(maxsize=512, ttl=7200)
 _memory_cache_lock = asyncio.Lock()
 # Threading lock for sync access paths (get_cached_image_url, get_image_url_sync,
 # clear_memory_cache, get_memory_cache_stats). The asyncio.Lock above only
@@ -60,6 +62,30 @@ UNSPLASH_PREFETCH_MAX_RETRIES = settings.unsplash_prefetch_max_retries
 UNSPLASH_PREFETCH_FAILURE_COOLDOWN_SECONDS = settings.unsplash_prefetch_failure_cooldown_seconds
 UNSPLASH_PREFETCH_DEST_COOLDOWN_SECONDS = settings.unsplash_prefetch_dest_cooldown_seconds
 UNSPLASH_PREFETCH_STREAK_THRESHOLD = settings.unsplash_prefetch_streak_threshold
+
+
+def _prune_expired_cooldowns() -> int:
+    """Remove expired entries from cooldown dicts. Returns count removed."""
+    now = time.monotonic()
+    pruned = 0
+    for key in list(_prefetch_failure_until):
+        if _prefetch_failure_until[key] <= now:
+            del _prefetch_failure_until[key]
+            pruned += 1
+    # Track which dest-level cooldowns were just removed (fully expired)
+    expired_dests: set[str] = set()
+    for key in list(_prefetch_dest_failure_until):
+        if _prefetch_dest_failure_until[key] <= now:
+            del _prefetch_dest_failure_until[key]
+            expired_dests.add(key)
+            pruned += 1
+    # Only prune streaks for destinations whose dest-level cooldown has expired.
+    # Streaks still accumulating (no dest cooldown yet) must be kept.
+    for dest in list(_prefetch_timeout_streak):
+        if dest in expired_dests:
+            del _prefetch_timeout_streak[dest]
+            pruned += 1
+    return pruned
 
 
 def _cache_key(destination: str, variant: int, activities: list[str] | None = None) -> str:
@@ -107,22 +133,22 @@ async def _record_prefetch_outcome(
         _prefetch_failure_until[key] = time.monotonic() + UNSPLASH_PREFETCH_FAILURE_COOLDOWN_SECONDS
         streak = _prefetch_timeout_streak.get(destination, 0) + 1
         _prefetch_timeout_streak[destination] = streak
-    logger.debug(
-        "[VERIFY][UNSPLASH] cooldown_set key=%s streak=%s seconds=%.1f",
-        key,
-        streak,
-        UNSPLASH_PREFETCH_FAILURE_COOLDOWN_SECONDS,
-    )
-    if streak >= max(1, UNSPLASH_PREFETCH_STREAK_THRESHOLD):
-        _prefetch_dest_failure_until[destination] = (
-            time.monotonic() + UNSPLASH_PREFETCH_DEST_COOLDOWN_SECONDS
-        )
         logger.debug(
-            "[VERIFY][UNSPLASH] dest_cooldown_set dest=%s seconds=%.1f streak=%s",
-            destination,
-            UNSPLASH_PREFETCH_DEST_COOLDOWN_SECONDS,
+            "[VERIFY][UNSPLASH] cooldown_set key=%s streak=%s seconds=%.1f",
+            key,
             streak,
+            UNSPLASH_PREFETCH_FAILURE_COOLDOWN_SECONDS,
         )
+        if streak >= max(1, UNSPLASH_PREFETCH_STREAK_THRESHOLD):
+            _prefetch_dest_failure_until[destination] = (
+                time.monotonic() + UNSPLASH_PREFETCH_DEST_COOLDOWN_SECONDS
+            )
+            logger.debug(
+                "[VERIFY][UNSPLASH] dest_cooldown_set dest=%s seconds=%.1f streak=%s",
+                destination,
+                UNSPLASH_PREFETCH_DEST_COOLDOWN_SECONDS,
+                streak,
+            )
 
 
 def _candidate_cache_keys(
@@ -351,7 +377,12 @@ async def _fetch_variants_from_unsplash(
     now = time.monotonic()
 
     if prefetch:
-        dest_until = _prefetch_dest_failure_until.get(destination_key)
+        async with _prefetch_cooldown_lock:
+            # Periodic pruning under lock (cheap, ~O(n) on small dicts)
+            _prune_expired_cooldowns()
+            dest_until = _prefetch_dest_failure_until.get(destination_key)
+            until = _prefetch_failure_until.get(key)
+
         if dest_until and dest_until > now:
             logger.debug(
                 "[VERIFY][UNSPLASH] cooldown_skip key=%s dest=%s remaining_s=%.1f",
@@ -361,7 +392,6 @@ async def _fetch_variants_from_unsplash(
             )
             return []
 
-        until = _prefetch_failure_until.get(key)
         if until and until > now:
             logger.debug(
                 "[VERIFY][UNSPLASH] cooldown_skip key=%s remaining_s=%.1f",
@@ -634,7 +664,7 @@ async def prefetch_destination_images(
                     base_key = _cache_key(destination, i)
                     base_img = _memory_cache.get(base_key)
                     if base_img is not None:
-                        _memory_cache[_cache_key(destination, i, activities)] = base_img
+                        _memory_cache.set(_cache_key(destination, i, activities), base_img)
                 logger.info(
                     "[UNSPLASH] Reused %s base variants for %s%s",
                     base_count,
@@ -652,7 +682,7 @@ async def prefetch_destination_images(
                 # Populate memory cache from DB
                 async with _memory_cache_lock:
                     for i, img in enumerate(db_images):
-                        _memory_cache[_cache_key(destination, i, activities)] = img
+                        _memory_cache.set(_cache_key(destination, i, activities), img)
                 logger.info(f"[UNSPLASH] Loaded {len(db_images)} variants from DB for {normalized}")
                 return len(db_images)
             # Activity prefetch DB fast-path: reuse base destination DB cache
@@ -662,7 +692,7 @@ async def prefetch_destination_images(
                 if base_images:
                     async with _memory_cache_lock:
                         for i, img in enumerate(base_images):
-                            _memory_cache[_cache_key(destination, i, activities)] = img
+                            _memory_cache.set(_cache_key(destination, i, activities), img)
                     logger.info(
                         f"[UNSPLASH] Reused {len(base_images)} base DB variants for "
                         f"{normalized}{activity_str}"
@@ -681,10 +711,10 @@ async def prefetch_destination_images(
                 base_key = _cache_key(destination, i)
                 canonical = _memory_cache.get(base_key)
                 if canonical is None:
-                    _memory_cache[base_key] = img
+                    _memory_cache.set(base_key, img)
                     canonical = img
                 scoped_key = _cache_key(destination, i, activities)
-                _memory_cache[scoped_key] = canonical
+                _memory_cache.set(scoped_key, canonical)
 
         # Store in DB (activity-aware key prevents collisions)
         if db:
@@ -708,7 +738,7 @@ async def prefetch_destination_images(
                 # (using activity key for consistency)
                 async with _memory_cache_lock:
                     for i, img in enumerate(db_images):
-                        _memory_cache[_cache_key(destination, i, activities)] = img
+                        _memory_cache.set(_cache_key(destination, i, activities), img)
                 logger.info(
                     f"[UNSPLASH] Fallback: loaded {len(db_images)} base "
                     f"variants from DB for {normalized}"
@@ -775,7 +805,7 @@ async def get_image_for_destination(
             cached = await _get_from_db_cache(db, destination, variant, activities)
             if cached:
                 async with _memory_cache_lock:
-                    _memory_cache[cache_key] = cached
+                    _memory_cache.set(cache_key, cached)
                 url = build_image_url(cached.image_id, width, height)
                 logger.info(f"[UNSPLASH] DB cache HIT for {cache_key}: {url[:80]}...")
                 return url
@@ -784,7 +814,7 @@ async def get_image_for_destination(
                 base_cached = await _get_from_db_cache(db, destination, variant)
                 if base_cached:
                     async with _memory_cache_lock:
-                        _memory_cache[cache_key] = base_cached
+                        _memory_cache.set(cache_key, base_cached)
                     url = build_image_url(base_cached.image_id, width, height)
                     logger.info(
                         f"[UNSPLASH] DB fallback HIT for {cache_key} using "
@@ -803,7 +833,7 @@ async def get_image_for_destination(
         # Store all fetched variants in memory cache
         async with _memory_cache_lock:
             for i, img in enumerate(images):
-                _memory_cache[_cache_key(destination, i, activities)] = img
+                _memory_cache.set(_cache_key(destination, i, activities), img)
         logger.info(
             f"[UNSPLASH] API SUCCESS: cached {len(images)} variants for {normalized}{activity_str}"
         )

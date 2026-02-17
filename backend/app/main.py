@@ -6,7 +6,6 @@ import os
 import secrets
 import warnings
 from collections import defaultdict
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from threading import RLock
@@ -25,14 +24,11 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response  # noqa: 
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
-from slowapi import Limiter  # noqa: E402
 from slowapi.errors import RateLimitExceeded  # noqa: E402
-from slowapi.util import get_remote_address  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
-from sqlalchemy.orm import Session  # noqa: E402
 
 import app.db_models as db_models  # noqa: E402
-import app.schemas as schemas  # noqa: E402
+from app.analytics_routes import router as analytics_router  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.crud_document import (  # noqa: E402
     add_tiles_to_branch,
@@ -51,7 +47,7 @@ from app.crud_trip import (  # noqa: E402
     get_session_by_token,
     record_chat_message,
 )
-from app.db import _get_async_session_factory, get_async_db, get_db  # noqa: E402
+from app.db import _get_async_session_factory, get_async_db  # noqa: E402
 from app.debug_utils import _debug, _debug_info, log_llm_output, log_user_input  # noqa: E402
 from app.graph_plan_utils import (  # noqa: E402
     compute_today_iso,
@@ -62,6 +58,7 @@ from app.graph_plan_utils import (  # noqa: E402
     truncate_assistant_message,
     validate_suggested_responses,
 )
+from app.lifespan import lifespan as _lifespan  # noqa: E402
 from app.middleware import (  # noqa: E402
     CSRFMiddleware,
     SessionMiddleware,
@@ -80,12 +77,11 @@ from app.planner import (  # noqa: E402
     condense_long_message,
     get_graph_stats,
     get_planner_debug_info,
-    prewarm_prompts,
     response_cache_stats,
     run_turn_streaming,
-    validate_template_coverage,
 )
 from app.planner.nodes.router_category_sync import has_explicit_category_intent  # noqa: E402
+from app.rate_limit import limiter as _shared_limiter  # noqa: E402
 from app.schemas import (  # noqa: E402
     AckUpdate,
     BookingStatus,
@@ -615,65 +611,9 @@ def _get_trip_input_display_value(ui_key: str, trip_inputs: dict) -> str | None:
     return None
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):  # noqa: ARG001
-    """Application lifespan hooks.
+app = FastAPI(title=settings.app_name, lifespan=_lifespan)
+app.include_router(analytics_router)
 
-    Used instead of deprecated @app.on_event handlers.
-    Pre-warms caches and compiles templates to eliminate cold-start latency.
-    Validates template coverage at startup - fails fast on mismatch.
-    """
-    # Configure logging (suppress noisy loggers in non-full modes)
-    from app.debug_utils import _debug, configure_logging
-
-    configure_logging()
-
-    # Log build info for cache debugging
-    logger.info(
-        "[Startup] Build info: prompt_bundle_hash=%s, planner_build_id=%s, cache_schema_version=%s",
-        PROMPT_BUNDLE_HASH,
-        PLANNER_BUILD_ID,
-        CACHE_SCHEMA_VERSION,
-    )
-    _debug(
-        f"[Startup] prompt_bundle_hash={PROMPT_BUNDLE_HASH}, "
-        f"planner_build_id={PLANNER_BUILD_ID}, cache_schema_version={CACHE_SCHEMA_VERSION}"
-    )
-
-    # Prewarm validation cache
-    validation_count = prewarm_cache()
-    _debug(f"[Validation] Pre-warmed cache with {validation_count} entries")
-
-    # Prewarm prompts and templates (Jinja2 compilation)
-    warmup_stats = prewarm_prompts()
-    _debug(
-        f"[Warmup] Pre-compiled {warmup_stats['prompts_warmed']} prompts, "
-        f"{warmup_stats['templates_loaded']} templates in {warmup_stats['warmup_ms']}ms"
-    )
-
-    # Validate template coverage - FATAL on failure
-    # This prevents deploy-time prompt/template drift that causes hard-to-debug runtime behavior
-    template_validation = validate_template_coverage()
-    if not template_validation["valid"]:
-        error_msg = (
-            f"[FATAL] Template coverage validation failed: "
-            f"missing_fields={template_validation['missing_fields']}, "
-            f"errors={template_validation['errors'][:3]}"
-        )
-        logger.error(error_msg)
-        raise RuntimeError(error_msg)
-    _debug(
-        f"[Startup] Template coverage validation passed "
-        f"(insufficient_suggestions={template_validation.get('insufficient_suggestions', {})})"
-    )
-
-    yield
-
-
-app = FastAPI(title=settings.app_name, lifespan=lifespan)
-
-# Sync DB dependency for legacy endpoints and migrations
-db_dependency = Depends(get_db)
 # Async DB dependency for async endpoints
 async_db_dependency = Depends(get_async_db)
 
@@ -683,18 +623,7 @@ async_db_dependency = Depends(get_async_db)
 # =============================================================================
 
 
-def _rate_key(request: Request) -> str:
-    """Session cookie -> IP fallback for rate limit keying.
-
-    OPTIONS preflights share a single bucket so CORS preflight requests
-    never exhaust a real user's rate limit.
-    """
-    if request.method == "OPTIONS":
-        return "__preflight__"
-    return request.cookies.get("session_id") or get_remote_address(request)
-
-
-limiter = Limiter(key_func=_rate_key, enabled=settings.rate_limit_enabled)
+limiter = _shared_limiter  # local alias used by route decorators in this file
 app.state.limiter = limiter
 
 
@@ -758,10 +687,14 @@ def _try_acquire_sse_slot(session_key: str, ip_key: str) -> str | None:
 
 
 def _release_sse_slot(session_key: str, ip_key: str) -> None:
-    """Release one SSE slot."""
+    """Release one SSE slot and prune zero-value entries."""
     with _sse_state_lock:
-        _sse_connections[session_key] = max(0, _sse_connections[session_key] - 1)
-        _sse_connections[ip_key] = max(0, _sse_connections[ip_key] - 1)
+        for key in (session_key, ip_key):
+            val = max(0, _sse_connections[key] - 1)
+            if val == 0:
+                _sse_connections.pop(key, None)
+            else:
+                _sse_connections[key] = val
 
 
 async def _wait_for_session_stream_idle(session_key: str) -> None:
@@ -1133,18 +1066,32 @@ async def admin_clear_all_caches(  # noqa: ARG001
     results["caches_cleared"]["specialist_database"] = specialist_db_count
 
     # 6. Clear Tile cache (L1 + L2)
+    from app.services.tile_cache import clear_db_cache as clear_tile_db
     from app.services.tile_cache import clear_memory_cache as clear_tile_memory
 
     tile_memory_count = clear_tile_memory()
+    tile_db_count = await clear_tile_db(db)
     results["caches_cleared"]["tile_memory"] = tile_memory_count
+    results["caches_cleared"]["tile_database"] = tile_db_count
 
-    # 7. Clear Router cache (L1 only)
+    # 7. Clear Experience cache (L1 + L2)
+    from app.services.experience_generator import (
+        clear_experience_cache,
+        clear_experience_db_cache,
+    )
+
+    experience_memory_count = clear_experience_cache()
+    experience_db_count = await clear_experience_db_cache(db)
+    results["caches_cleared"]["experience_memory"] = experience_memory_count
+    results["caches_cleared"]["experience_database"] = experience_db_count
+
+    # 8. Clear Router cache (L1 only)
     from app.services.router_cache import clear_cache as clear_router_cache
 
     router_count = clear_router_cache()
     results["caches_cleared"]["router_memory"] = router_count
 
-    # 8. Summary
+    # 9. Summary
     total = (
         planner_cleared
         + unsplash_memory_count
@@ -1152,6 +1099,9 @@ async def admin_clear_all_caches(  # noqa: ARG001
         + specialist_memory_count
         + specialist_db_count
         + tile_memory_count
+        + tile_db_count
+        + experience_memory_count
+        + experience_db_count
         + router_count
     )
     results["total_entries_cleared"] = total
@@ -1283,17 +1233,10 @@ async def admin_clear_tile_cache(  # noqa: ARG001
     Use for development/debugging when you want fresh provider data.
     """
     _ = request
-    from sqlalchemy import delete
-
-    from app.db_models import ResponseCache
-    from app.services.tile_cache import clear_memory_cache
+    from app.services.tile_cache import clear_db_cache, clear_memory_cache
 
     l1_cleared = clear_memory_cache()
-
-    # Clear L2 (tiles only)
-    result = await db.execute(delete(ResponseCache).where(ResponseCache.cache_type == "tiles"))
-    await db.commit()
-    l2_cleared = result.rowcount
+    l2_cleared = await clear_db_cache(db)
 
     return {
         "cleared": {
@@ -1399,55 +1342,6 @@ async def admin_all_cache_stats(  # noqa: ARG001
         "tiles": tile_stats,
         "router": router_stats,
     }
-
-
-@app.post("/api/tiles/click")
-@limiter.limit("60/minute")
-def track_tile_click(
-    request: Request,
-    event: schemas.TileClickEvent,
-    db: Session = db_dependency,
-):
-    """
-    Persist a tile click for analytics.
-    """
-    session_id = get_session_from_request(request)
-    click = db_models.TileClick(
-        tile_identifier=event.tile_id,
-        branch_identifier=event.branch_id,
-        session_id=session_id,
-        request_id=event.request_id,
-    )
-
-    db.add(click)
-    db.commit()
-
-    return {"status": "ok"}
-
-
-@app.post("/api/suggestions/click")
-@limiter.limit("60/minute")
-def track_suggestion_click(
-    request: Request,
-    event: schemas.SuggestionClickEvent,
-    db: Session = db_dependency,
-):
-    """
-    Persist a suggestion pill click for analytics.
-    Tracks which LLM-generated suggestions users find valuable.
-    """
-    session_id = get_session_from_request(request)
-    click = db_models.SuggestionClick(
-        suggestion_text=event.suggestion_text[:128],  # Truncate to fit column
-        suggestion_index=event.suggestion_index,
-        session_id=session_id,
-        request_id=event.request_id,
-    )
-
-    db.add(click)
-    db.commit()
-
-    return {"status": "ok"}
 
 
 # =============================================================================

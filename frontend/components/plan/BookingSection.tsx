@@ -28,6 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
+import { ModalErrorBoundary } from '@/components/ui/ModalErrorBoundary';
 interface TileFilters {
   sort: 'recommended' | 'price_low' | 'price_high' | 'rating';
   freeCancel: boolean;
@@ -377,7 +378,7 @@ export function BookingSection({
   // Mode is the SSoT for UI variant, not state. See docs/ux_unified_architecture.md
   if (effectiveMode === 'planning' && totalTiles > 0 && !isGenerating(generation)) {
     return (
-      <>
+      <ModalErrorBoundary>
         <div id="booking-section">
           <div className="px-4 pt-2 pb-1">
             {savedTileIds.size > 0 && (
@@ -526,7 +527,7 @@ export function BookingSection({
             onSelect={handleSelectAlternative}
           />
         )}
-      </>
+      </ModalErrorBoundary>
     );
   }
 
@@ -573,7 +574,7 @@ export function BookingSection({
 
     // Manifest layout: Categories + Checkout Sidebar
     return (
-      <>
+      <ModalErrorBoundary>
         <div id="booking-section" className="h-full">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full p-4 lg:p-6">
             {/* LEFT: Category Manifest (Scrollable) - pb-24 reserves space for mobile checkout footer */}
@@ -655,7 +656,7 @@ export function BookingSection({
           onClose={handleCloseModal}
           onSaveClick={handleSaveClick}
         />
-      </>
+      </ModalErrorBoundary>
     );
   }
 

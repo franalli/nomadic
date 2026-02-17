@@ -56,9 +56,11 @@ class TestGetQueryForDestination:
         result = get_query_for_destination("Bali", activities=["diving", "hiking"])
         assert result == ACTIVITY_QUERIES["diving"]
 
-    def test_unknown_activity_falls_back_to_destination(self) -> None:
+    def test_unknown_activity_generates_query(self) -> None:
+        """Novel Tier 2 categories get a generated query instead of falling back to destination."""
         result = get_query_for_destination("Bali", activities=["bungee_jumping"])
-        assert result == DESTINATION_QUERIES["bali"]
+        assert "Bali" in result
+        assert "bungee_jumping" in result
 
     def test_empty_activities_list(self) -> None:
         result = get_query_for_destination("Bali", activities=[])

@@ -129,10 +129,10 @@ function MobileChatInputInner({
               onClick={(e) => canSend && handleSubmit(e as unknown as React.FormEvent)}
               disabled={!canSend}
               className={cn(
-                'h-10 w-10 flex items-center justify-center rounded-[20px] transition-all duration-300',
+                'flex items-center justify-center h-10 w-10 rounded-[20px] transition-all duration-300',
                 canSend
-                  ? 'bg-zinc-900 text-white hover:bg-zinc-800 hover:scale-105 active:scale-95 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:shadow-[0_0_12px_-3px_rgba(16,185,129,0.4)]'
-                  : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600'
+                  ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)] dark:hover:bg-emerald-500 hover:scale-105 active:scale-95'
+                  : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600',
               )}
               title="Send message"
             >

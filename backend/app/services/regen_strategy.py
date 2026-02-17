@@ -18,7 +18,7 @@ from enum import Enum
 from typing import Any, Dict, Iterable, Optional, Set
 
 from app.debug_utils import _debug
-from app.planner.services.state_serde import _field_hash
+from app.planner.hashing import field_hash as _field_hash
 
 
 class RegenStrategy(str, Enum):

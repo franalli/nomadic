@@ -48,6 +48,7 @@ Python FastAPI application with LangGraph-based trip planning.
 backend/
 ├── app/
 │   ├── __init__.py
+│   ├── analytics_routes.py     # Analytics API routes (extracted from main.py)
 │   ├── config.py               # Application configuration
 │   ├── crud_document.py        # Document CRUD operations
 │   ├── crud_trip.py            # Trip CRUD operations
@@ -55,9 +56,11 @@ backend/
 │   ├── db_models.py            # SQLAlchemy models
 │   ├── debug_utils.py          # Debugging utilities
 │   ├── graph_plan_utils.py     # LangGraph plan utilities
+│   ├── lifespan.py             # Application lifespan hooks (startup + shutdown)
 │   ├── main.py                 # FastAPI application entry
 │   ├── placeholders.py         # Placeholder data
 │   ├── plan_graph.py           # LangGraph workflow definition
+│   ├── rate_limit.py           # Rate limiting configuration (extracted from main.py)
 │   ├── safety_snippets.json    # Safety-related content
 │   ├── schemas.py              # Pydantic request/response schemas
 │   ├── validation.py           # Input validation
@@ -72,7 +75,6 @@ backend/
 │   │
 │   ├── planner/                # LangGraph trip planner (7-node architecture)
 │   │   ├── __init__.py
-│   │   ├── cache_access.py     # Planner cache utilities
 │   │   ├── hashing.py          # Hash utilities
 │   │   ├── llm_factory.py      # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
 │   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
@@ -123,14 +125,15 @@ backend/
 │   │
 │   ├── services/
 │   │   ├── __init__.py
-│   │   ├── cache_core.py            # Shared MemoryCache primitive (TTLCache + RLock + stats)
+│   │   ├── cache_core.py            # Shared MemoryCache primitive (TTLCache + RLock + stats) + l2_upsert()
 │   │   ├── experience_generator.py  # Tier 2 experience tile generation via gpt-4o-mini (L1+L2 cache)
 │   │   ├── itinerary_builder.py     # Itinerary construction service
 │   │   ├── regen_strategy.py        # Selective regeneration strategy computation
 │   │   ├── router_cache.py          # Thread-safe L1 cache for router extraction (context-aware)
 │   │   ├── specialist_cache.py      # Thread-safe L1+L2 cache for specialist LLM outputs
+│   │   ├── task_tracker.py          # Shared fire-and-forget background task tracker
 │   │   ├── tile_cache.py            # Thread-safe L1+L2 cache for tile provider data (24h TTL)
-│   │   ├── unsplash.py              # Unsplash image service
+│   │   ├── unsplash.py              # Unsplash image service (cooldown pruning on prefetch)
 │   │   └── unsplash_queries.py      # Unsplash query helpers (includes Tier 2 activity queries)
 │   │
 │   ├── utils/                 # Shared utility modules
@@ -252,15 +255,18 @@ frontend/
 │   │   └── Typewriter.tsx
 │   │
 │   ├── chat/                   # Chat interface components
+│   │   ├── ChatInputBar.tsx          # Desktop input capsule (extracted from ChatPanel)
 │   │   ├── ChatPanel.tsx
 │   │   ├── ChatSkeleton.tsx
+│   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
 │   │   ├── HoldToDeleteButton.tsx
 │   │   ├── MobileChatInput.tsx
 │   │   ├── MobileSetupCollapsedHeader.tsx
 │   │   ├── SmartLoader.tsx
 │   │   ├── SystemAckLine.tsx
 │   │   ├── SystemReceipt.tsx
-│   │   └── TripStatusBar.tsx
+│   │   ├── TripStatusBar.tsx
+│   │   └── suggestion-actions.ts     # Shared trigger_action handler (avoids circular import)
 │   │
 │   ├── layout/                 # Layout components
 │   │   ├── FloatingBuildButton.tsx
@@ -279,7 +285,8 @@ frontend/
 │   ├── map/                    # Map components
 │   │   ├── InteractiveMap.tsx
 │   │   ├── MapboxErrorSuppressor.tsx
-│   │   └── MapErrorBoundary.tsx
+│   │   ├── MapErrorBoundary.tsx
+│   │   └── mapbox-error-handler.ts   # Global Mapbox error suppression (shared patterns)
 │   │
 │   ├── nomadic/                # Marketing/landing components
 │   │   ├── consent-manager.tsx
@@ -351,6 +358,7 @@ frontend/
 │   │   └── TileDetailsModal.tsx
 │   │
 │   └── ui/                     # Base UI components
+│       ├── ModalErrorBoundary.tsx  # Error boundary for modals/sheets (crash isolation)
 │       ├── bottom-sheet.tsx
 │       ├── button.tsx
 │       ├── calendar.tsx

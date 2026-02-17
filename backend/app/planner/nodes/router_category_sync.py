@@ -30,7 +30,7 @@ from app.planner.nodes.router_utils import (  # noqa: F401 — re-exported
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
-    TIER2_ACTIVITY_KEYWORDS,
+    TIER2_COMMON_HINTS,
 )
 from app.planner.state import GraphState
 
@@ -43,16 +43,26 @@ try:
 except ImportError:
     _FUZZY_AVAILABLE = False
 
-_FUZZY_VOCAB = sorted(TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALIST_NAMES)
+_BASE_FUZZY_VOCAB = sorted(TIER2_COMMON_HINTS | TIER1_SPECIALIST_NAMES)
 
 
-def _fuzzy_resolve_token(token: str) -> Optional[str]:
+def _get_fuzzy_vocab(state: "GraphState") -> list[str]:
+    """Fuzzy match vocabulary: hints + session-active categories."""
+    session_cats = set(
+        state.metadata.get("trip_inputs", {}).get("activity_settings", {}).get("categories", [])
+    )
+    if not session_cats:
+        return _BASE_FUZZY_VOCAB
+    return sorted(TIER2_COMMON_HINTS | TIER1_SPECIALIST_NAMES | session_cats)
+
+
+def _fuzzy_resolve_token(token: str, vocab: list[str]) -> Optional[str]:
     """Resolve misspelled token to nearest known category/specialist. None if no match."""
     if not _FUZZY_AVAILABLE or len(token) < 3:
         return None
     match = process.extractOne(
         token.lower(),
-        _FUZZY_VOCAB,
+        vocab,
         scorer=fuzz.ratio,
         score_cutoff=settings.fuzzy_match_score_cutoff,
     )
@@ -160,16 +170,15 @@ def _detect_actionable_input(user_text: str, state: "GraphState") -> Optional[di
     text_lower = user_text.lower().strip()
     changes: dict = {}
 
-    # 1. Tier 2 activity additions (word-boundary match)
-    detected_t2 = {kw for kw in TIER2_ACTIVITY_KEYWORDS if re.search(rf"\b{kw}\b", text_lower)}
+    # 1. Tier 2 activity additions — fast path for common hints
+    detected_t2 = {kw for kw in TIER2_COMMON_HINTS if re.search(rf"\b{kw}\b", text_lower)}
     if detected_t2:
         changes["add_categories"] = detected_t2
 
-    # 2. Activity removals
+    # 2. Activity removals — accept any category string (could be novel Tier 2)
     for m in REMOVAL_PATTERN.finditer(text_lower):
-        target = m.group(1)
-        all_known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALIST_NAMES
-        if target in all_known:
+        target = m.group(1).strip()
+        if target:
             changes.setdefault("remove_categories", set()).add(target)
 
     # 3. Skill level
@@ -190,7 +199,7 @@ def _detect_actionable_input(user_text: str, state: "GraphState") -> Optional[di
     # that the LLM alias resolver can map to known categories.
     # The ≤5 words guard prevents questions like "what's the party scene
     # like in Bali" from being swallowed — those still reach exploration.
-    all_known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALIST_NAMES
+    all_known = TIER2_COMMON_HINTS | TIER1_SPECIALIST_NAMES
     stop_words = {
         # intent/filler
         "also",
@@ -263,9 +272,10 @@ def _detect_actionable_input(user_text: str, state: "GraphState") -> Optional[di
     remaining -= set(SKILL_LEVEL_MAP.keys())
 
     # Fuzzy-match before declaring unresolved
+    fuzzy_vocab = _get_fuzzy_vocab(state)
     still_unresolved = set()
     for token in remaining:
-        match = _fuzzy_resolve_token(token)
+        match = _fuzzy_resolve_token(token, fuzzy_vocab)
         if match:
             logger.info(f"[CATEGORY_SYNC] Fuzzy: '{token}' → '{match}'")
             changes.setdefault("add_categories", set()).add(match)
@@ -309,7 +319,7 @@ def _collect_modifications_from_extraction(
     changes: dict = {}
 
     # 1. Activity additions (Tier 1 + Tier 2) — detect NEW categories only
-    known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALIST_NAMES
+    # Tier 1 hints gated by registry; Tier 2 is open-ended
     if pre_populate_categories is not None:
         existing = pre_populate_categories
     else:
@@ -318,8 +328,10 @@ def _collect_modifications_from_extraction(
     if allow_category_modifications:
         cats = router_output.get("activity_categories", [])
         hints = router_output.get("specialist_hints", [])
-        new_cats = {c.lower() for c in cats if c.lower() in known}
-        new_hints = {h.lower() for h in hints if h.lower() in known}
+        new_cats = {c.lower().strip() for c in cats if c.strip()}
+        new_hints = {
+            h.lower().strip() for h in hints if h.lower().strip() in TIER1_SPECIALIST_NAMES
+        }
         requested = new_cats | new_hints
         additions = requested - existing
         already_active = requested & existing
@@ -332,7 +344,7 @@ def _collect_modifications_from_extraction(
     if allow_category_modifications:
         removals_raw = router_output.get("removal_targets", [])
         if removals_raw:
-            removals = {r.lower() for r in removals_raw if r.lower() in known}
+            removals = {r.lower().strip() for r in removals_raw if r.strip()}
             if removals:
                 changes["remove_categories"] = removals
 
@@ -359,20 +371,20 @@ def has_explicit_category_intent(
     if not text:
         return False
 
-    known = TIER2_ACTIVITY_KEYWORDS | TIER1_SPECIALIST_NAMES
-    if any(re.search(rf"\b{re.escape(category)}\b", text) for category in known):
+    # Check Tier 1 by registry, Tier 2 by common hints (fast path)
+    all_hints = TIER2_COMMON_HINTS | TIER1_SPECIALIST_NAMES
+    if any(re.search(rf"\b{re.escape(category)}\b", text) for category in all_hints):
         return True
 
+    # LLM extraction may have found novel Tier 2 categories not in hints
     extracted: set[str] = set()
     if router_output:
         extracted = {
-            c.lower()
-            for c in (router_output.get("activity_categories") or [])
-            if c and c.lower() in known
+            c.lower() for c in (router_output.get("activity_categories") or []) if c and c.strip()
         } | {
             s.lower()
             for s in (router_output.get("specialist_hints") or [])
-            if s and s.lower() in known
+            if s and s.lower().strip() in TIER1_SPECIALIST_NAMES
         }
 
     if not extracted:

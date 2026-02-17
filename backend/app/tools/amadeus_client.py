@@ -244,6 +244,9 @@ class AmadeusClient:
         self._token_expires_at: Optional[datetime] = None
         self._token_lock = asyncio.Lock()
 
+        # Persistent HTTP client (lazy-initialized)
+        self._http: Optional[httpx.AsyncClient] = None
+
         # Circuit breaker
         self.circuit_breaker = CircuitBreaker(
             failure_threshold=config["circuit_breaker_threshold"],
@@ -260,6 +263,18 @@ class AmadeusClient:
             if cls._instance is None:
                 cls._instance = AmadeusClient()
             return cls._instance
+
+    def _get_http(self) -> httpx.AsyncClient:
+        """Get or create persistent HTTP client."""
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(timeout=30.0)
+        return self._http
+
+    async def close(self) -> None:
+        """Close the persistent HTTP client."""
+        if self._http and not self._http.is_closed:
+            await self._http.aclose()
+            self._http = None
 
     def is_configured(self) -> bool:
         """Check if API credentials are configured."""
@@ -282,34 +297,32 @@ class AmadeusClient:
             # Request new token
             logger.info("Requesting new Amadeus access token")
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/v1/security/oauth2/token",
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": self.api_key,
-                        "client_secret": self.api_secret,
-                    },
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+            client = self._get_http()
+            response = await client.post(
+                f"{self.base_url}/v1/security/oauth2/token",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self.api_key,
+                    "client_secret": self.api_secret,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+            if response.status_code != 200:
+                error_text = response.text
+                logger.error(f"Failed to get Amadeus token: {response.status_code} - {error_text}")
+                raise AmadeusAPIError(
+                    code="AUTH_FAILED",
+                    message=f"Failed to authenticate with Amadeus: {response.status_code}",
                 )
 
-                if response.status_code != 200:
-                    error_text = response.text
-                    logger.error(
-                        f"Failed to get Amadeus token: {response.status_code} - {error_text}"
-                    )
-                    raise AmadeusAPIError(
-                        code="AUTH_FAILED",
-                        message=f"Failed to authenticate with Amadeus: {response.status_code}",
-                    )
+            data = response.json()
+            self._access_token = data["access_token"]
+            expires_in = data.get("expires_in", 1799)  # Default 30 min
+            self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
 
-                data = response.json()
-                self._access_token = data["access_token"]
-                expires_in = data.get("expires_in", 1799)  # Default 30 min
-                self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
-
-                logger.info(f"Got Amadeus token, expires in {expires_in}s")
-                return self._access_token
+            logger.info(f"Got Amadeus token, expires in {expires_in}s")
+            return self._access_token
 
     async def _make_request(
         self,
@@ -350,31 +363,31 @@ class AmadeusClient:
         headers = {"Authorization": f"Bearer {token}"}
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                if method == "GET":
-                    response = await client.get(url, params=params, headers=headers)
-                else:
-                    response = await client.post(url, json=json_data, headers=headers)
+            client = self._get_http()
+            if method == "GET":
+                response = await client.get(url, params=params, headers=headers)
+            else:
+                response = await client.post(url, json=json_data, headers=headers)
 
-                # Handle errors
-                if response.status_code >= 400:
-                    self.circuit_breaker.record_failure()
-                    error_data = response.json() if response.text else {}
-                    errors = error_data.get("errors", [])
-                    error_msg = (
-                        errors[0].get("detail", str(response.status_code))
-                        if errors
-                        else str(response.status_code)
-                    )
+            # Handle errors
+            if response.status_code >= 400:
+                self.circuit_breaker.record_failure()
+                error_data = response.json() if response.text else {}
+                errors = error_data.get("errors", [])
+                error_msg = (
+                    errors[0].get("detail", str(response.status_code))
+                    if errors
+                    else str(response.status_code)
+                )
 
-                    raise AmadeusAPIError(
-                        code=f"HTTP_{response.status_code}",
-                        message=f"Amadeus API error: {error_msg}",
-                        details=error_data,
-                    )
+                raise AmadeusAPIError(
+                    code=f"HTTP_{response.status_code}",
+                    message=f"Amadeus API error: {error_msg}",
+                    details=error_data,
+                )
 
-                self.circuit_breaker.record_success()
-                return response.json()
+            self.circuit_breaker.record_success()
+            return response.json()
 
         except httpx.TimeoutException as e:
             self.circuit_breaker.record_failure()
@@ -627,41 +640,3 @@ class AmadeusAPIError(Exception):
         self.code = code
         self.message = message
         self.details = details or {}
-
-
-# =============================================================================
-# Utility Functions
-# =============================================================================
-
-
-# City to IATA airport code mapping for common destinations
-CITY_TO_AIRPORT: Dict[str, str] = {
-    "dubai": "DXB",
-    "rome": "FCO",
-    "paris": "CDG",
-    "london": "LHR",
-    "new york": "JFK",
-    "los angeles": "LAX",
-    "tokyo": "NRT",
-    "singapore": "SIN",
-    "hong kong": "HKG",
-    "sydney": "SYD",
-    "bali": "DPS",
-    "maldives": "MLE",
-    "chamonix": "GVA",  # Nearest major airport
-    "geneva": "GVA",
-    "milan": "MXP",
-}
-
-
-def city_to_airport_code(city: str) -> Optional[str]:
-    """
-    Convert a city name to its primary airport IATA code.
-
-    Args:
-        city: City name (case-insensitive)
-
-    Returns:
-        IATA airport code or None if not found
-    """
-    return CITY_TO_AIRPORT.get(city.lower().strip())

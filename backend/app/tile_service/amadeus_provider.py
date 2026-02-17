@@ -20,7 +20,6 @@ from app.tools.amadeus_client import (
     AmadeusClient,
     FlightOffer,
     HotelOffer,
-    city_to_airport_code,
 )
 
 from .models import SearchContext
@@ -92,9 +91,11 @@ class AmadeusFlightProvider(Provider):
         self._client: Optional[AmadeusClient] = None
 
     def _get_client(self) -> AmadeusClient:
-        """Get or create the Amadeus client."""
+        """Get or create the Amadeus client (uses singleton)."""
         if self._client is None:
-            self._client = AmadeusClient()
+            if AmadeusClient._instance is None:
+                AmadeusClient._instance = AmadeusClient()
+            self._client = AmadeusClient._instance
         return self._client
 
     def search(self, ctx: SearchContext) -> List[Tile]:
@@ -143,7 +144,7 @@ class AmadeusFlightProvider(Provider):
             return []
 
         # Prefer pre-resolved IATA codes from planner graph (LLM-backed),
-        # fall back to hardcoded city→airport lookup.
+        # fall back to 3-letter code passthrough (no city name resolution).
         origin_code = ctx.origin_iata or self._resolve_airport_code(ctx.origin)
         dest_code = ctx.destination_iata or self._resolve_airport_code(ctx.destination)
 
@@ -183,19 +184,13 @@ class AmadeusFlightProvider(Provider):
         """Resolve a location to an airport code."""
         if not location:
             return None
-
-        # Normalize location name (strip country suffixes)
         normalized = _normalize_city_for_amadeus(location)
-
         if normalized != location:
             logger.info(f"[AMADEUS] Normalized location: '{location}' → '{normalized}'")
-
-        # Check if already an airport code (3 letters)
         if len(normalized) == 3 and normalized.isalpha():
             return normalized.upper()
-
-        # Try city-to-airport mapping
-        return city_to_airport_code(normalized)
+        logger.warning("[AMADEUS] No IATA code for '%s' — use iata_resolver in planner", normalized)
+        return None
 
     def _offer_to_tile(self, offer: FlightOffer, _ctx: SearchContext) -> Tile:
         """Convert a FlightOffer to a Tile."""
@@ -274,9 +269,11 @@ class AmadeusHotelProvider(Provider):
         self._client: Optional[AmadeusClient] = None
 
     def _get_client(self) -> AmadeusClient:
-        """Get or create the Amadeus client."""
+        """Get or create the Amadeus client (uses singleton)."""
         if self._client is None:
-            self._client = AmadeusClient()
+            if AmadeusClient._instance is None:
+                AmadeusClient._instance = AmadeusClient()
+            self._client = AmadeusClient._instance
         return self._client
 
     def search(self, ctx: SearchContext) -> List[Tile]:
@@ -357,19 +354,13 @@ class AmadeusHotelProvider(Provider):
         """Resolve a destination to a city IATA code."""
         if not destination:
             return None
-
-        # Normalize city name (strip country suffixes like ", France")
         normalized = _normalize_city_for_amadeus(destination)
-
         if normalized != destination:
             logger.info(f"[AMADEUS] Normalized destination: '{destination}' → '{normalized}'")
-
-        # Check if already a code (3 letters)
         if len(normalized) == 3 and normalized.isalpha():
             return normalized.upper()
-
-        # Use airport code as city code (often the same)
-        return city_to_airport_code(normalized)
+        logger.warning("[AMADEUS] No IATA code for '%s' — use iata_resolver in planner", normalized)
+        return None
 
     def _hotel_to_tile(self, hotel: HotelOffer, _ctx: SearchContext) -> Tile:
         """Convert a HotelOffer to a Tile."""

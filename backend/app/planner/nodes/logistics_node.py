@@ -41,12 +41,12 @@ from app.planner.specialist_registry import get as get_specialist_config
 from app.planner.state.graph_state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
 from app.services.experience_generator import generate_single_category
+from app.services.task_tracker import track as _track_task
 from app.tile_service.curated_provider import CuratedProvider
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
 from app.tile_service.models import SearchContext
 
 logger = logging.getLogger(__name__)
-
 
 # =============================================================================
 # Backfill category selection — maps specialist affinity → experience-gen cats
@@ -1306,6 +1306,25 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             _debug_log("[VERIFY][PREFETCH] skip=budget_zero")
             return None
 
+        # Skip wait if L1 is cold — prefetch hasn't populated the cache yet,
+        # so waiting just wastes the budget. Singleflight in generate_experiences()
+        # will join the running task anyway.
+        from app.services.experience_generator import _experience_cache_key
+        from app.services.experience_generator import _mem as _exp_l1
+
+        probe_key = _experience_cache_key(
+            expected_destination,
+            sorted(expected_categories),
+            expected_month,
+            expected_tiles_per_category,
+        )
+        if prefetch_task.done():
+            pass  # Task finished — always consume result
+        elif _exp_l1.get(probe_key) is None:
+            _debug_log("[VERIFY][PREFETCH] skip=l1_cold (singleflight will join)")
+            log("LOGISTICS", "[PREFETCH] L1 cold — skipping wait, singleflight will join")
+            return None
+
         log(
             "LOGISTICS",
             (
@@ -1447,7 +1466,10 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
             # Prefetch Unsplash for Tier 2 categories (non-blocking, ~2-3s head start)
             for cat in tier2_cats:
-                asyncio.create_task(prefetch_destination_images(plan.destination, activities=[cat]))
+                t = asyncio.create_task(
+                    prefetch_destination_images(plan.destination, activities=[cat])
+                )
+                _track_task(t)
 
             month = str(plan.start_date)[:7] if plan.start_date else ""
             active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
@@ -1516,7 +1538,10 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
             # Prefetch Unsplash for Tier 2 categories (non-blocking, ~2-3s head start)
             for cat in tier2_only:
-                asyncio.create_task(prefetch_destination_images(plan.destination, activities=[cat]))
+                t = asyncio.create_task(
+                    prefetch_destination_images(plan.destination, activities=[cat])
+                )
+                _track_task(t)
 
             month = str(plan.start_date)[:7] if plan.start_date else ""
             tiles_per_cat = _compute_tiles_per_category(state, tier2_only)

@@ -18,7 +18,7 @@ import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBooki
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
-import { shouldAutoTriggerItinerary } from '@/components/plan/planStateHelpers';
+import { isBootstrap, isFraming, isStrategyReady, shouldAutoTriggerItinerary } from '@/components/plan/planStateHelpers';
 import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { BudgetSheet } from '@/components/plan/sheets/BudgetSheet';
 import { DatesSheet } from '@/components/plan/sheets/DatesSheet';
@@ -132,10 +132,11 @@ export function NomadicLanding() {
     );
 
   // Document store - single source of truth for trip inputs + plan envelope
+  // Split into focused selectors by render concern to reduce unnecessary re-renders
+
+  // Actions (stable references, rarely change)
   const {
-    storeTripInputs,
     setActiveView,
-    isCommitting,
     storeReset,
     storeStartGeneration,
     storeIsCurrentRun,
@@ -144,8 +145,32 @@ export function NomadicLanding() {
     storeCompleteGeneration,
     storeCommitTripInputs,
     storeUpdateTripInputs,
-    preferredTileIds,
     toggleTilePreference,
+  } = useDocumentStore(
+    useShallow((s) => ({
+      setActiveView: s.setActiveView,
+      storeReset: s.reset,
+      storeStartGeneration: s.startGeneration,
+      storeIsCurrentRun: s.isCurrentRun,
+      storeMergeEnvelope: s.mergeEnvelope,
+      storeMarkPreferencesAsApplied: s.markPreferencesAsApplied,
+      storeCompleteGeneration: s.completeGeneration,
+      storeCommitTripInputs: s.commitTripInputs,
+      storeUpdateTripInputs: s.updateTripInputs,
+      toggleTilePreference: s.toggleTilePreference,
+    }))
+  );
+
+  // Trip inputs + commit state
+  const { storeTripInputs, isCommitting } = useDocumentStore(
+    useShallow((s) => ({
+      storeTripInputs: s.document?.trip_inputs,
+      isCommitting: s.isCommitting,
+    }))
+  );
+
+  // Plan document data (for rendering)
+  const {
     docPlanState,
     docDestinationCard,
     docPlanViewState,
@@ -160,21 +185,9 @@ export function NomadicLanding() {
     docItineraryAssumptions,
     docNeedsRefresh,
     docCanExpand,
+    preferredTileIds,
   } = useDocumentStore(
     useShallow((s) => ({
-      storeTripInputs: s.document?.trip_inputs,
-      setActiveView: s.setActiveView,
-      isCommitting: s.isCommitting,
-      storeReset: s.reset,
-      storeStartGeneration: s.startGeneration,
-      storeIsCurrentRun: s.isCurrentRun,
-      storeMergeEnvelope: s.mergeEnvelope,
-      storeMarkPreferencesAsApplied: s.markPreferencesAsApplied,
-      storeCompleteGeneration: s.completeGeneration,
-      storeCommitTripInputs: s.commitTripInputs,
-      storeUpdateTripInputs: s.updateTripInputs,
-      preferredTileIds: s.preferredTileIds,
-      toggleTilePreference: s.toggleTilePreference,
       docPlanState: s.document?.plan_state,
       docDestinationCard: s.document?.destination_card,
       docPlanViewState: s.document?.plan_view_state,
@@ -189,6 +202,7 @@ export function NomadicLanding() {
       docItineraryAssumptions: s.document?.itinerary_assumptions,
       docNeedsRefresh: s.document?.needs_refresh,
       docCanExpand: s.document?.can_expand_to_itinerary,
+      preferredTileIds: s.preferredTileIds,
     }))
   );
 
@@ -695,7 +709,7 @@ export function NomadicLanding() {
 
   // Auto-switch to Plan view when generation is in progress
   useEffect(() => {
-    if (planViewState === 'S1_FRAMING') {
+    if (isFraming(planViewState)) {
       if (!isDesktop) {
         mobileNavigateToPlan(); // Auto-swipe to plan page
       }
@@ -779,7 +793,7 @@ export function NomadicLanding() {
   // Plan tab enabled when we have branches/plan content (unlocked after Build)
   const planTabEnabled = useMemo(() => {
     // Plan is available if we have branches or are past S0
-    return hasBranchesReady || planViewState !== 'S0_BOOTSTRAP';
+    return hasBranchesReady || !isBootstrap(planViewState);
   }, [hasBranchesReady, planViewState]);
 
   // Fallback title from tripInputs (used when destinationCard not yet available)
@@ -1118,7 +1132,7 @@ export function NomadicLanding() {
   // Reset auto-trigger flag when itinerary is cleared and we're back at S2
   // This handles the S3 → S2 revert when a new specialist is added
   useEffect(() => {
-    if (!hasItineraryContent && planViewState === 'S2_STRATEGY_READY') {
+    if (!hasItineraryContent && isStrategyReady(planViewState)) {
       hasAutoTriggeredRef.current = false;
     }
   }, [hasItineraryContent, planViewState]);

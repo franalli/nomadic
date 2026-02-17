@@ -3,7 +3,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, Check, Loader2, RotateCcw, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { Check, Loader2, RotateCcw } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -17,6 +17,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useShallow } from 'zustand/react/shallow';
 
+import { isBootstrap, isFraming } from '@/components/plan/planStateHelpers';
 import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
 import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
@@ -25,7 +26,7 @@ import { useToast } from '@/components/ui/toast';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
-import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
+import { type SSENodeStatusEvent, streamGraphPlan } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
@@ -50,7 +51,9 @@ import type { PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
+import { ChatInputBar } from './ChatInputBar';
 import { ChatSkeleton } from './ChatSkeleton';
+import { ChatSuggestionChips } from './ChatSuggestionChips';
 // HoldToDeleteButton removed for demo - re-enable post-launch
 // import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { MobileSetupCollapsedHeader } from './MobileSetupCollapsedHeader';
@@ -114,20 +117,20 @@ function getChatStatusConfig(
   destination: string | undefined,
   dateRange: string | undefined,
 ): { text: string; label: string; indicator: 'blink' | 'spin' | 'pulse' | 'check' } {
-  // S0: Setup phase — progressive prompts
-  if (!planViewState || planViewState === 'S0_BOOTSTRAP') {
+  // Active generation / resolving (check BEFORE bootstrap — S1_FRAMING normalizes to P0_MINIMAL)
+  if (isFraming(planViewState) || isGenerating || planState === 'RESOLVING') {
+    return { text: 'Building your trip...', label: 'Generating', indicator: 'spin' };
+  }
+
+  // S0/P0: Setup phase — progressive prompts
+  if (isBootstrap(planViewState)) {
     if (!destination) return { text: 'Where to next?', label: 'Awaiting Input', indicator: 'blink' };
     if (!dateRange) return { text: 'When would you like to go?', label: 'Set Dates', indicator: 'blink' };
     return { text: 'Ready to build your plan', label: 'Generating Plan', indicator: 'blink' };
   }
 
-  // Active generation / resolving
-  if (planViewState === 'S1_FRAMING' || isGenerating || planState === 'RESOLVING') {
-    return { text: 'Building your trip...', label: 'Generating', indicator: 'spin' };
-  }
-
   // Itinerary complete
-  if (['S3_ITINERARY_READY', 'S3_EDITING', 'P3_FINALIZED', 'P3_EDITING'].includes(planViewState)) {
+  if (planViewState && ['S3_ITINERARY_READY', 'S3_EDITING', 'P3_FINALIZED', 'P3_EDITING'].includes(planViewState)) {
     return { text: 'Itinerary complete', label: 'Ready', indicator: 'check' };
   }
 
@@ -223,37 +226,8 @@ export function getSendBurstGuardReason(params: SendBurstGuardParams): string | 
   return null;
 }
 
-type SuggestionTriggerActionParams = {
-  actionTarget?: string | null;
-  bookingTypes?: BookingTypes;
-  onUpdateFlightSettings?: (settings: Partial<FlightSettings>) => void;
-  onUpdateBookingTypes?: (settings: Partial<BookingTypes>) => void;
-  ensureSettingsFlushed?: (options?: { requestId?: string; sendCycleId?: string }) => Promise<void>;
-  toast?: (message: string) => void;
-};
-
-export function handleSuggestionTriggerAction(params: SuggestionTriggerActionParams): boolean {
-  const {
-    actionTarget,
-    bookingTypes,
-    onUpdateFlightSettings,
-    onUpdateBookingTypes,
-    ensureSettingsFlushed,
-    toast,
-  } = params;
-
-  if (actionTarget !== 'set_direct_flights_only') {
-    return false;
-  }
-
-  onUpdateFlightSettings?.({ direct_only: true });
-  if (bookingTypes?.flights === 'off') {
-    onUpdateBookingTypes?.({ flights: 'on' });
-  }
-  void ensureSettingsFlushed?.();
-  toast?.('Direct flights only enabled');
-  return true;
-}
+// Re-export for backward compatibility (moved to suggestion-actions.ts)
+export { handleSuggestionTriggerAction } from './suggestion-actions';
 
 // Tier 11.12: Check if an error message is retryable (transient network/server issues)
 function isRetryableError(content: string): boolean {
@@ -626,10 +600,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         result = filtered.filter((s) => s.toLowerCase() !== 'build plan');
       }
 
-      const dropped = suggestedResponses.length - result.length;
-      if (dropped > 0) {
-        console.warn('[suggestions] raw from SSE:', suggestedResponses.length, 'after dedup:', filtered.length, 'after desktop filter:', result.length, 'dropped:', dropped);
-      }
       return result;
     }, [suggestedResponses, isDesktop]);
 
@@ -1344,7 +1314,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // This ensures itinerary generation even when backend clears day_cards
               // Example: Guard violation during session - strategy preserved, day_cards cleared
               // Gate: Requires dates - without dates, ItineraryBuilder can't create DayCard[] scaffold
-              if (hasStrategyContent && !hasItinerary && freshHasDates && !isSilentPlanGeneration && !structuralRebuildTriggered && viewState !== 'S0_BOOTSTRAP') {
+              if (hasStrategyContent && !hasItinerary && freshHasDates && !isSilentPlanGeneration && !structuralRebuildTriggered && !isBootstrap(doc.plan_view_state)) {
                 debugLog('[ChatPanel] Strategy exists but no itinerary - triggering rebuild...', {
                   strategyCount: doc.strategy_sections?.length,
                   hasItinerary,
@@ -1539,8 +1509,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, dateRange);
           return (
             <AnimatePresence mode="wait">
-              {planViewState === 'S0_BOOTSTRAP' ? (
-                // S0: Full hero banner (collapses on scroll)
+              {isBootstrap(planViewState) ? (
+                // S0/P0: Full hero banner (collapses on scroll)
                 isSetupHeaderCollapsed ? (
                   <MobileSetupCollapsedHeader
                     key="collapsed-header"
@@ -1623,7 +1593,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         })()}
 
         {/* ── DESKTOP: Unified Chip Row (S0 only) ── */}
-        {isDesktop && planViewState === 'S0_BOOTSTRAP' && !isSetupHeaderCollapsed && (
+        {isDesktop && isBootstrap(planViewState) && !isSetupHeaderCollapsed && (
           <UnifiedChipRow
             destination={destination}
             origin={origin}
@@ -1667,7 +1637,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               {/* Mobile empty-state placeholder — decorative prompt, not an input */}
               {/* Positioned at ~55-60% of viewport via mt-[42vh] (header+tab offset
                   pushes visual center to ~57% of total viewport) */}
-              {!isDesktop && visibleMessages.length === 0 && planViewState === 'S0_BOOTSTRAP' && (
+              {!isDesktop && visibleMessages.length === 0 && isBootstrap(planViewState) && (
                 <div className="flex flex-col items-center text-center px-6 mt-[42vh]">
                   <span className="text-3xl mb-3" role="img" aria-label="Globe">🌍</span>
                   <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
@@ -1818,211 +1788,40 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           {isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
             <SmartLoader status={activeStatus} />
           )}
-          {/* Dynamic suggestions - structured chips with action routing (Stage 11B) */}
-          {effectiveSuggestions.length > 0 && !isLoading && (
-            <div
-              key={`suggestions-container-${effectiveSuggestions.length}`}
-              className="flex flex-wrap justify-center gap-2 pt-3 pb-1 px-2"
-            >
-              {(() => {
-                // Prefer structured chips if available, fallback to legacy string array
-                const chips: SuggestionChip[] = suggestionChips.length > 0
-                  ? suggestionChips
-                  : effectiveSuggestions.map((text, i) => ({
-                      message: text,
-                      action_type: 'send_message' as const,
-                      action_target: null,
-                      chip_type: suggestedResponseMeta[i]?.chip_type || 'follow_up',
-                      category: suggestedResponseMeta[i]?.category || '',
-                      icon: suggestedResponseMeta[i]?.icon || null,
-                    }));
-
-                return chips.map((chip, idx) => {
-                  const isCta = chip.chip_type === 'cta';
-                  const isPlanningTrigger = isCta || /\bplan\b/i.test(chip.message);
-                  const isSheetAction = chip.action_type === 'open_pill';
-
-                  // Action routing: open_pill -> sheet, send_message -> chat
-                  const handleChipClick = () => {
-                    trackSuggestionClick(chip.message, idx);
-
-                    if (chip.action_type === 'open_pill' && chip.action_target) {
-                      const sheetMap: Record<string, () => void> = {
-                        'dates': () => onOpenSheet?.('dates'),
-                        'origin': () => onOpenSheet?.('origin'),
-                        'destination': () => onOpenSheet?.('destination'),
-                        'travelers': () => onOpenSheet?.('travelers'),
-                        'budget': () => onOpenSheet?.('budget'),
-                        'flights': () => setFlightsSheetOpen(true),
-                        'stays': () => setStaysSheetOpen(true),
-                        'activities': () => setActivitiesSheetOpen(true),
-                      };
-
-                      const opener = sheetMap[chip.action_target];
-                      if (opener) {
-                        opener();
-                      } else {
-                        console.warn(`[ChatPanel] Unknown sheet target: ${chip.action_target}`);
-                        sendMessageCore(chip.message, { suggestionClicked: chip.message });
-                      }
-                    } else if (chip.action_type === 'trigger_action') {
-                      const handled = handleSuggestionTriggerAction({
-                        actionTarget: chip.action_target,
-                        bookingTypes,
-                        onUpdateFlightSettings,
-                        onUpdateBookingTypes,
-                        ensureSettingsFlushed: () => useDocumentStore.getState().ensureSettingsFlushed(),
-                        toast,
-                      });
-                      if (!handled) {
-                        console.warn(`[ChatPanel] Unknown trigger_action target: ${chip.action_target}`);
-                        sendMessageCore(chip.message, { suggestionClicked: chip.message });
-                      }
-                    } else {
-                      sendMessageCore(chip.message, { suggestionClicked: chip.message });
-                    }
-                  };
-
-                  return (
-                    <button
-                      key={`sugg-${chip.message.slice(0, 20)}-${idx}`}
-                      type="button"
-                      onClick={handleChipClick}
-                      className={cn(
-                        'px-4 py-2.5 rounded-lg',
-                        'text-xs font-bold uppercase tracking-wide',
-                        'transition-all duration-150 active:scale-95',
-                        'max-w-full truncate',
-                        isPlanningTrigger ? [
-                          'bg-emerald-50 dark:bg-emerald-950/30',
-                          'border-2 border-emerald-500/40 dark:border-emerald-500/30',
-                          'text-emerald-700 dark:text-emerald-400',
-                          'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
-                          'hover:bg-emerald-100 hover:border-emerald-500 hover:shadow-md',
-                          'dark:hover:bg-emerald-900/40 dark:hover:border-emerald-400/50',
-                        ] : [
-                          'bg-white dark:bg-white/5',
-                          'border-2 border-zinc-200 dark:border-white/15',
-                          'text-zinc-600 dark:text-zinc-400',
-                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
-                        ]
-                      )}
-                    >
-                      {isSheetAction && (
-                        <SlidersHorizontal className="w-3 h-3 mr-1.5 inline-block" />
-                      )}
-                      {isPlanningTrigger && !isSheetAction && (
-                        <Sparkles className="w-3 h-3 mr-1.5 inline-block" />
-                      )}
-                      {chip.message}
-                    </button>
-                  );
-                });
-              })()}
-            </div>
-          )}
+          <ChatSuggestionChips
+            effectiveSuggestions={effectiveSuggestions}
+            suggestionChips={suggestionChips}
+            suggestedResponseMeta={suggestedResponseMeta}
+            isLoading={isLoading}
+            bookingTypes={bookingTypes}
+            onUpdateFlightSettings={onUpdateFlightSettings}
+            onUpdateBookingTypes={onUpdateBookingTypes}
+            onOpenSheet={onOpenSheet}
+            onSendMessage={sendMessageCore}
+            onOpenFlights={() => setFlightsSheetOpen(true)}
+            onOpenStays={() => setStaysSheetOpen(true)}
+            onOpenActivities={() => setActivitiesSheetOpen(true)}
+            toast={toast}
+          />
 
           {/* Exploration Progress + Action Bar — desktop only (mobile uses MobileChatInput) */}
           {isDesktop && (
-            <>
-              {/* Action Bar: Unified Capsule Design with "Living Void" Effect */}
-              {/* Input and button merged into one continuous capsule (like Perplexity/ChatGPT) */}
-              {/* During AI processing: the input BECOMES the status indicator (emerald glow + pulse) */}
-              <div
-                className={cn(
-                  'relative flex items-center w-full min-h-14 rounded-[28px] transition-all duration-300',
-                  'bg-zinc-50 dark:bg-black/40',
-                  // Priority 1: "Living Void" - AI Processing state
-                  isLoading && nodeStatus?.node
-                    ? [
-                        'border border-emerald-500/50 dark:border-emerald-500/40',
-                        'shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)] dark:shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]',
-                        'animate-pulse',
-                      ]
-                    // Priority 2: Ready to Generate highlight
-                    : readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches
-                      ? 'border border-emerald-500/50 ring-1 ring-emerald-500/30 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]'
-                      // Default state
-                      : [
-                          'shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]',
-                          'border border-zinc-200 dark:border-white/10',
-                        ]
-                )}
-              >
-                {/* Input Field - takes remaining space */}
-                {/* Note: Status text removed - Logic Terminal in chat list is the single source of truth (DS Section 19.C) */}
-                <form onSubmit={handleSubmit} className="flex-1 h-full">
-                  <textarea
-                    ref={inputRef}
-                    disabled={isInputDisabledByPlanState}
-                    className="w-full bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-4 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
-                    placeholder={
-                      isInputDisabledByPlanState
-                        ? 'Updating...'
-                        : readyToGenerate
-                          ? 'Type to refine...'
-                          : !hasDestination
-                            ? 'Where to?'
-                            : 'Tell me more...'
-                    }
-                    value={input}
-                    onChange={(e) => {
-                      setInput(e.target.value);
-                      // Auto-grow textarea to fit content (max 5 rows)
-                      const el = e.target;
-                      el.style.height = 'auto';
-                      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-                    }}
-                    onKeyDown={(e) => {
-                      // Submit on Enter without Shift
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSubmit(e);
-                      }
-                    }}
-                    rows={1}
-                  />
-                </form>
-
-                {/* Button - inside the capsule */}
-                <div className="pr-1.5 py-1.5 flex-shrink-0">
-                  {isLoading && hasReceivedFirstToken ? (
-                    // Stop streaming button - minimal monochrome (not red - that's for errors)
-                    <button
-                      type="button"
-                      onClick={handleStopStreaming}
-                      className={cn(
-                        'h-11 w-11 flex items-center justify-center rounded-[22px] transition-all hover:scale-105 active:scale-95',
-                        'bg-zinc-200 dark:bg-white/10',
-                        'hover:bg-zinc-300 dark:hover:bg-white/20',
-                        'border border-zinc-300 dark:border-white/10'
-                      )}
-                      title="Stop"
-                    >
-                      {/* Minimal square icon - matches theme */}
-                      <div className="w-3 h-3 bg-zinc-900 dark:bg-white rounded-[2px]" />
-                    </button>
-                  ) : (
-                    // SEND STATE: Arrow button inside capsule
-                    <button
-                      type="button"
-                      onClick={(e) => input.trim() && handleSubmit(e as unknown as React.FormEvent)}
-                      disabled={isLoading || !input.trim()}
-                      className={cn(
-                        'h-11 w-11 flex items-center justify-center rounded-[22px] transition-all duration-300',
-                        input.trim() && !isLoading
-                          ? 'bg-zinc-900 text-white hover:bg-zinc-800 hover:scale-105 active:scale-95 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)]'
-                          : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600'
-                      )}
-                      title="Send message (Enter)"
-                    >
-                      <ArrowUp className="h-5 w-5" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </>
+            <ChatInputBar
+              input={input}
+              onInputChange={setInput}
+              onSubmit={handleSubmit}
+              isLoading={isLoading}
+              isInputDisabledByPlanState={isInputDisabledByPlanState}
+              hasReceivedFirstToken={hasReceivedFirstToken}
+              nodeStatus={nodeStatus}
+              readyToGenerate={readyToGenerate}
+              isGenerating={isGenerating}
+              hasBranches={hasBranches}
+              hasDestination={hasDestination}
+              planViewState={planViewState}
+              onStopStreaming={handleStopStreaming}
+              inputRef={inputRef}
+            />
           )}
         </div>{/* close input area */}
 

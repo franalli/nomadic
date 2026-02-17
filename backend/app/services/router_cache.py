@@ -194,7 +194,7 @@ def get_cache_stats() -> dict:
     """Return cache statistics for observability."""
     return {
         **_mem.get_stats(),
-        "size": _mem.size(),
+        "size": len(_mem),
         "maxsize": L1_MAX_SIZE,
         "ttl_seconds": L1_TTL_SECONDS,
     }

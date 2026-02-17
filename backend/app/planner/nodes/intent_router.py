@@ -49,7 +49,6 @@ from app.planner.specialist_registry import (
     ALL_CATEGORY_TO_SPECIALIST,
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
-    TIER2_ACTIVITY_KEYWORDS,
 )
 from app.planner.state import GraphState, TripPlan
 from app.planner.state.typed_meta import get_trip_settings
@@ -57,12 +56,6 @@ from app.planner.state.typed_meta import get_trip_settings
 logger = logging.getLogger(__name__)
 
 _gate_registry = GateRegistry()
-
-# Tier 2 activities — not in ALL_SPECIALIST_KEYWORDS (Tier 1 only).
-# "sailing" included: Tier 1 in registry but KNOWN_CATEGORIES lists it,
-# and logistics treats it as Tier 2 for tile generation.
-# Now imported from router_category_sync.py
-
 
 # Derived constant for suggestion prompts
 _SPECIALIST_NAMES_CSV = ", ".join(sorted(TIER1_SPECIALIST_NAMES))
@@ -1938,7 +1931,7 @@ async def intent_router(state: GraphState) -> GraphState:
                     purpose="post_plan_extraction",
                 )
 
-            destination = _extract_destination_context(user_text, state)
+            destination = _extract_destination_context(state)
 
             # Snapshot categories BEFORE _populate writes them — needed for
             # _collect_modifications to detect the delta (Issue #3 fix).
@@ -2125,11 +2118,11 @@ async def intent_router(state: GraphState) -> GraphState:
                     try:
                         router_output, _ = await _classify_and_extract_with_llm(user_text, state)
                         if router_output and router_output.activity_categories:
-                            known = TIER1_SPECIALISTS | TIER2_ACTIVITY_KEYWORDS
+                            # Tier 2 is open-ended — accept any LLM-extracted category
                             resolved = {
-                                c.lower()
+                                c.lower().strip()
                                 for c in router_output.activity_categories
-                                if c.lower() in known
+                                if c.strip()
                             }
                             existing_cats = set(
                                 state.metadata.get("trip_inputs", {})
@@ -2191,7 +2184,7 @@ async def intent_router(state: GraphState) -> GraphState:
                 }
             )
 
-        destination = _extract_destination_context(user_text, state)
+        destination = _extract_destination_context(state)
 
         # =====================================================================
         # OPPORTUNISTIC EXTRACTION: Extract dates/fields from EVERY message

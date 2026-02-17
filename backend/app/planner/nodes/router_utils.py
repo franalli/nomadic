@@ -102,42 +102,17 @@ def get_new_specialists_from_text(text: str, existing_specialists: List[str]) ->
 # ============================================================================
 
 
-def _extract_destination_context(text: str, state: "GraphState") -> Optional[str]:
-    """
-    Extract destination from question or use conversation context.
+def _extract_destination_context(state: "GraphState") -> Optional[str]:
+    """Extract destination from conversation context or trip plan.
 
     Priority:
-    1. Check if destination mentioned in current question (excluding origin cities)
-    2. Use last_destination_context from state
-    3. Use trip_plan.destination if set
+    1. Conversation context (last_destination_context)
+    2. trip_plan.destination
 
-    NOTE: Cities following origin indicators (e.g., "from rome") are NOT destinations.
+    NOTE: Direct destination detection from text is handled by the LLM extraction
+    path (_classify_and_extract_with_llm), not here. This function only provides
+    fallback context for the router.
     """
-    from app.planner.nodes.local_expert import LOCAL_EXPERT_KNOWLEDGE
-
-    text_lower = text.lower()
-
-    # Extract cities that follow origin patterns - these are NOT destinations
-    origin_cities = set()
-    for pattern in ORIGIN_PATTERNS:
-        match = re.match(pattern, text, re.IGNORECASE)
-        if match:
-            city = match.group(1).strip().rstrip(".!?,")
-            # Truncate at destination indicators: "rome to bali" → "rome"
-            city = re.split(r"\s+to\s+", city, maxsplit=1, flags=re.IGNORECASE)[0].strip()
-            city = city.lower()
-            # Add both full match and first word (handles "rome italy")
-            origin_cities.add(city)
-            if city:
-                origin_cities.add(city.split()[0])
-
-    # Check LOCAL_EXPERT_KNOWLEDGE keys first (known destinations)
-    # But SKIP cities that appear in origin context
-    for dest_key in LOCAL_EXPERT_KNOWLEDGE.keys():
-        dest_lower = dest_key.lower()
-        if dest_lower in text_lower and dest_lower not in origin_cities:
-            return dest_key.capitalize()
-
     # Fallback to conversation context
     if state.metadata.get("last_destination_context"):
         return state.metadata["last_destination_context"]

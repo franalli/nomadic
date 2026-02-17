@@ -620,21 +620,26 @@ TIER1_SPECIALIST_NAMES: frozenset[str] = frozenset(
     topic for topic, cfg in SPECIALIST_REGISTRY.items() if cfg.tier == 1
 )
 
-TIER2_ACTIVITY_KEYWORDS: set[str] = {
-    "yoga",
-    "cooking",
-    "nightlife",
-    "temples",
-    "beach",
-    "shopping",
-    "photography",
-    "sailing",
-    "wellness",
-    "culture",
-    "music",
-    "wine",
-    "food",
-}
+TIER2_COMMON_HINTS: frozenset[str] = frozenset(
+    {
+        "yoga",
+        "cooking",
+        "nightlife",
+        "temples",
+        "beach",
+        "shopping",
+        "photography",
+        "sailing",
+        "wellness",
+        "culture",
+        "music",
+        "wine",
+        "food",
+    }
+)
+
+# Backward-compat alias — consumers being migrated
+TIER2_ACTIVITY_KEYWORDS = TIER2_COMMON_HINTS
 
 ALL_SPECIALIST_KEYWORDS: dict[str, list[str]] = {
     cfg.topic: cfg.keywords for cfg in SPECIALIST_REGISTRY.values() if cfg.keywords
@@ -643,6 +648,38 @@ ALL_SPECIALIST_KEYWORDS: dict[str, list[str]] = {
 ALL_CATEGORY_TO_SPECIALIST: dict[str, str] = {}
 for _cfg in SPECIALIST_REGISTRY.values():
     ALL_CATEGORY_TO_SPECIALIST.update(_cfg.category_mappings)
+
+# Tier 2 display aliases (for synthesizer output normalization)
+# Covers informal/plural forms that aren't in Tier 1 category_mappings.
+TIER2_CATEGORY_ALIASES: dict[str, str] = {
+    "party": "nightlife",
+    "parties": "nightlife",
+    "club": "nightlife",
+    "clubs": "nightlife",
+    "clubbing": "nightlife",
+    "night out": "nightlife",
+    "night outs": "nightlife",
+    "hike": "hiking",
+    "hikes": "hiking",
+    "trek": "hiking",
+    "treks": "hiking",
+    "trekking": "hiking",
+    "surf": "surfing",
+    "surfs": "surfing",
+    "dive": "diving",
+    "dives": "diving",
+    "scuba": "diving",
+    "snorkel": "diving",
+    "snorkeling": "diving",
+    "spa": "wellness",
+    "spas": "wellness",
+}
+
+# Merged view: Tier 1 category_mappings + Tier 2 display aliases
+ALL_DISPLAY_ALIASES: dict[str, str] = {
+    **ALL_CATEGORY_TO_SPECIALIST,
+    **TIER2_CATEGORY_ALIASES,
+}
 
 ALL_CONSTRAINT_ALIASES: dict[str, list[str]] = {}
 for _cfg in SPECIALIST_REGISTRY.values():
@@ -676,6 +713,20 @@ DOMAIN_DEFAULT_FALLBACK: list[str] = [
 def get(topic: str) -> Optional[SpecialistConfig]:
     """Look up a specialist config by topic name."""
     return SPECIALIST_REGISTRY.get(topic)
+
+
+def display_name(category: str) -> str:
+    """Canonical display name for an activity category."""
+    return _DISPLAY_NAMES.get(category, category.replace("_", " ").title())
+
+
+_DISPLAY_NAMES: dict[str, str] = {
+    # Override .title() only where it gives wrong results
+    "nightlife": "Nightlife",
+    "wellness": "Wellness",
+    "food": "Food & Drink",
+    "wine": "Wine",
+}
 
 
 def load_prompt(topic: str) -> Optional[str]:

@@ -585,21 +585,21 @@ Activity and logistics blocks display inline constraint badges to show constrain
 
 ## 6. Component Mapping
 
-All sheets live at `frontend/components/plan/sheets/`. Most sheets use raw Tailwind classes that match DS token values rather than importing `DS` directly. The table below reflects actual DS token imports and inline DS-pattern usage.
+All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` directly for primary buttons (`DS.actions.primary`, `DS.actions.primaryDisabled`) and section labels (`DS.text.label`). Remaining patterns (inputs, pills, glass) use raw Tailwind matching DS token values.
 
 | Component | Location | Key DS Tokens / Patterns |
 |-----------|----------|--------------------------|
 | BaseSheet | `plan/sheets/BaseSheet.tsx` | Raw glass pattern (matches `DS.materials.glass`), raw iconBtn pattern |
-| DestinationSheet | `plan/sheets/DestinationSheet.tsx` | `DS.text.label`, raw Void Input pattern, raw Tactile pills |
-| OriginSheet | `plan/sheets/OriginSheet.tsx` | Raw Void Input pattern, raw Tactile pills (no DS import) |
-| TravelersSheet | `plan/sheets/TravelersSheet.tsx` | Raw Tactile pills, inline stepper (w-12 h-12 mobile variant) |
-| BudgetSheet | `plan/sheets/BudgetSheet.tsx` | Raw inputLarge pattern (text-5xl), raw Tactile pills |
-| FlightsSheet | `plan/sheets/FlightsSheet.tsx` | Raw infoBox pattern, `Switch` component (toggle), raw Tactile pills |
-| StaysSheet | `plan/sheets/StaysSheet.tsx` | Same as Flights |
-| ActivitiesSheet | `plan/sheets/ActivitiesSheet.tsx` | Same as Flights, `Stepper` from `ui/stepper.tsx` (day preference steppers) |
+| DestinationSheet | `plan/sheets/DestinationSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, raw Void Input pattern, raw Tactile pills |
+| OriginSheet | `plan/sheets/OriginSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, raw Void Input pattern, raw Tactile pills |
+| TravelersSheet | `plan/sheets/TravelersSheet.tsx` | `DS.actions.primary`, `DS.text.label`, raw Tactile pills, inline stepper (w-12 h-12 mobile variant) |
+| BudgetSheet | `plan/sheets/BudgetSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, raw inputLarge pattern (text-5xl), raw Tactile pills |
+| FlightsSheet | `plan/sheets/FlightsSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, raw infoBox pattern, `Switch` component (toggle), raw Tactile pills |
+| StaysSheet | `plan/sheets/StaysSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, same patterns as Flights |
+| ActivitiesSheet | `plan/sheets/ActivitiesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, same as Flights, `Stepper` from `ui/stepper.tsx` (day preference steppers) |
 | TripSettingsSheet | `plan/sheets/TripSettingsSheet.tsx` | BaseSheet, field rows for mobile settings relay |
-| DatesSheet | `plan/sheets/DatesSheet.tsx` | Raw glass pattern, raw Tactile pills, raw primary button |
-| ChatPanel | `chat/ChatPanel.tsx` | Raw Tactile pills (suggestion chips), Living Void pattern |
+| DatesSheet | `plan/sheets/DatesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, raw glass pattern, raw Tactile pills |
+| ChatPanel | `chat/ChatPanel.tsx` | `DS.actions.primary`, raw Tactile pills (suggestion chips), Living Void pattern |
 | UnifiedChipRow | `plan/UnifiedChipRow.tsx` | `CoreChip` (CSS custom properties, not DS pills) |
 | Calendar | `ui/calendar.tsx` | Custom (see Calendar section) |
 | StrategyHero | `plan/stages/StrategyHero.tsx` | `DS.text.label`, `DS.text.body`, `DS.infoBox.container` (3 variants: `hero`, `compact`, `accordion`) |

@@ -14,6 +14,7 @@
 
 import { CalendarDays } from 'lucide-react';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 // Quick pick options matching TripLengthSheet
@@ -50,9 +51,8 @@ export function InlineDatePrompt({
           type="button"
           onClick={onOpenDatePicker}
           className={cn(
-            'w-full flex items-center justify-center gap-2 p-3 rounded-lg',
-            'bg-zinc-900 text-white font-medium',
-            'hover:bg-zinc-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 transition-colors'
+            DS.actions.primary,
+            'w-full p-3 rounded-lg'
           )}
         >
           <CalendarDays className="h-4 w-4" />

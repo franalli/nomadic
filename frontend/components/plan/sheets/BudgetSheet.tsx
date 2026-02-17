@@ -11,6 +11,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 import { BaseSheet } from './BaseSheet';
@@ -155,11 +156,8 @@ function BudgetSheetInner({
             onClick={handleSave}
             disabled={!canSave}
             className={cn(
-              'flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold',
-              'transition-all active:scale-[0.98]',
-              canSave
-                ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]'
-                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600 cursor-not-allowed'
+              canSave ? DS.actions.primary : DS.actions.primaryDisabled,
+              'flex-1 px-4 py-2.5 font-semibold'
             )}
           >
             Save
@@ -170,7 +168,7 @@ function BudgetSheetInner({
       <div className="space-y-6">
         {/* Currency selector */}
         <div>
-          <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
+          <h3 className={cn(DS.text.label, 'mb-3')}>
             Currency
           </h3>
           <div className="flex flex-wrap gap-2">
@@ -205,7 +203,7 @@ function BudgetSheetInner({
 
         {/* Amount input - THE BIG NUMBER */}
         <div>
-          <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
+          <h3 className={cn(DS.text.label, 'mb-3')}>
             Amount
           </h3>
           <div className="relative flex justify-center py-8">
@@ -266,7 +264,7 @@ function BudgetSheetInner({
 
         {/* Budget type selector */}
         <div>
-          <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
+          <h3 className={cn(DS.text.label, 'mb-3')}>
             Budget basis
           </h3>
           <div className="flex gap-2">

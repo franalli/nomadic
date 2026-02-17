@@ -254,7 +254,7 @@ export type PlanViewState =
   | 'P3_EDITING'       // User editing itinerary assumptions/constraints
   | 'P3_BLOCKED'       // Itinerary requested but blocked (missing locks)
   // Legacy aliases (for migration - will be removed)
-  | 'S0_EMPTY'         // -> P0_MINIMAL (reset state)
+  | 'S0_EMPTY'         // FE-only reset sentinel, never emitted by backend -> P0_MINIMAL
   | 'S0_BOOTSTRAP'     // -> P0_MINIMAL
   | 'S1_FRAMING'       // -> P0_MINIMAL (merged)
   | 'S2_STRATEGY_READY' // -> P1_ENRICHED
@@ -270,6 +270,7 @@ export type PlanViewState =
  */
 export function normalizePlanViewState(state: PlanViewState): PlanViewState {
   switch (state) {
+    case 'S0_EMPTY':
     case 'S0_BOOTSTRAP':
     case 'S1_FRAMING':
       return 'P0_MINIMAL';
@@ -821,6 +822,8 @@ export interface UndoSnapshot {
 
 /**
  * Ack status for collapsible messages.
+ * - 'pending': FE-only optimistic state (set before backend ack arrives, never from backend)
+ * - All others: from backend AckUpdate response
  */
 export type AckStatus = 'pending' | 'applied' | 'partial' | 'no_change' | 'needs_clarification' | 'failed' | 'rejected';
 

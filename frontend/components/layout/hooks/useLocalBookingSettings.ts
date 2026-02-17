@@ -218,14 +218,18 @@ export function useLocalBookingSettings(
       const queuedCommits = pendingCommitsQueue.current;
       pendingCommitsQueue.current = null;
       // Commit all queued changes in a single batched request
-      commitTripInputs(queuedCommits).then(() => {
-        // Clear all pending flags after successful commit
-        hasPendingBookingTypesChanges.current = false;
-        hasPendingFlightChanges.current = false;
-        hasPendingHotelChanges.current = false;
-        hasPendingTransportChanges.current = false;
-        hasPendingActivityChanges.current = false;
-      });
+      commitTripInputs(queuedCommits)
+        .then(() => {
+          // Clear all pending flags after successful commit
+          hasPendingBookingTypesChanges.current = false;
+          hasPendingFlightChanges.current = false;
+          hasPendingHotelChanges.current = false;
+          hasPendingTransportChanges.current = false;
+          hasPendingActivityChanges.current = false;
+        })
+        .catch((e) => {
+          console.error('[useLocalBookingSettings] commitTripInputs failed:', e);
+        });
     }
   }, [hasDocument, commitTripInputs]);
 

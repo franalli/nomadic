@@ -46,6 +46,7 @@ from app.planner.state import (
     SpecialistOutput,
     get_trip_settings,
 )
+from app.services.task_tracker import track as _track_task
 
 # =============================================================================
 # LLM Specialist Output Schema (for structured output)
@@ -1246,9 +1247,10 @@ class VerticalSpecialist:
             try:
                 from app.services.unsplash import prefetch_destination_images
 
-                asyncio.create_task(
+                t = asyncio.create_task(
                     prefetch_destination_images(destination, activities=[self.topic])
                 )
+                _track_task(t)
                 _debug_log(
                     f"[SPECIALIST] Unsplash prefetch fired (non-blocking) "
                     f"for {destination}/{self.topic}"
@@ -1489,6 +1491,40 @@ async def _merge_specialist_into_state(
                 reason="cache_hit",
             )
             return  # skip this topic, loop continues to next
+
+        # Continuity preference: if only dates changed (same destination, same
+        # day_pref), reuse existing content to avoid silently swapping activities
+        # when the duration bucket changes (e.g., "extended" → "twoweek").
+        if (
+            cached_destination
+            and cached_destination == current_destination
+            and cached_dates
+            and cached_dates != current_dates
+            and cached_day_pref == _current_day_pref
+            and cached_section.get("content_added")
+            and cached_section.get("feasibility_status") != "infeasible"
+        ):
+            # Update the cached dates to reflect the new trip dates so
+            # subsequent turns see an exact match and skip re-evaluation.
+            cached_section["_cache_dates"] = current_dates
+            _debug_log(
+                f"🤿 SPECIALIST [{topic}] Continuity reuse: same destination "
+                f"({current_destination}), dates changed "
+                f"({cached_dates} → {current_dates})"
+            )
+            state.metadata["last_executed_specialist"] = topic
+
+            clog.event("continuity_reuse", f"Specialist ({topic})", dest=current_destination)
+            duration_ms = int((time.time() - node_start_time) * 1000)
+            clog.node_end("SPECIALIST", duration_ms, topic=topic, status="continuity_reuse")
+            _record_specialist_latency_metric(
+                state=state,
+                topic=topic,
+                source="section_cache_continuity",
+                elapsed_ms=int((time.monotonic() - topic_started_at) * 1000),
+                reason="continuity_reuse",
+            )
+            return  # Reuse existing content_added, skip LLM
 
         # Infeasibility is destination-dependent, not date-dependent.
         # Skiing in Bali stays infeasible regardless of trip duration.
@@ -2071,9 +2107,10 @@ async def vertical_specialist(state: GraphState) -> GraphState:
 
         for t in topics_to_prefetch:
             try:
-                asyncio.create_task(
+                bg = asyncio.create_task(
                     prefetch_destination_images(state.trip_plan.destination, activities=[t])
                 )
+                _track_task(bg)
             except Exception:
                 pass  # non-fatal
         _debug_log(

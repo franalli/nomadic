@@ -15,6 +15,7 @@ import Image from 'next/image';
 import { useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { DS } from '@/lib/design-system';
 import { cn, normalizeTitle } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
 
@@ -276,7 +277,7 @@ export function ActivityMiniCard({
       {mode === 'booking' && !isBooked && onBook && (
         <button
           onClick={onBook}
-          className="self-center px-3 py-1.5 text-xs font-semibold bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 transition-colors shrink-0"
+          className={cn(DS.actions.primary, 'self-center px-3 py-1.5 text-xs font-semibold rounded-lg shrink-0')}
         >
           Book
         </button>

@@ -2178,7 +2178,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       method: 'PATCH',
       body: JSON.stringify(patch),
     }).catch((err) => {
-      console.warn('[documentStore] Failed to clear preferences:', err);
+      console.error('[documentStore] Failed to clear preferences:', err);
     });
   },
 

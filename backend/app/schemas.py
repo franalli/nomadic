@@ -70,8 +70,8 @@ TileProvider = Literal["expedia", "booking", "unknown"]
 class Tile(BaseModel):
     id: str
     type: TileType
-    partner: str
-    partner_product_id: str
+    partner: Optional[str] = None
+    partner_product_id: Optional[str] = None
 
     title: str
     subtitle: Optional[str] = None

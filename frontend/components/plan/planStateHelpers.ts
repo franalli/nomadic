@@ -7,6 +7,7 @@
  */
 
 import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
+import { normalizePlanViewState } from '@/types/plan-envelope';
 
 // Re-export for convenience
 export type { GenerationState };
@@ -15,9 +16,10 @@ export type { GenerationState };
 // State predicates — use these instead of raw string comparisons
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Is the plan in the initial bootstrap phase? */
+/** Is the plan in the initial bootstrap/empty phase? (P0_MINIMAL or any legacy S0/S1 alias) */
 export function isBootstrap(state: PlanViewState | undefined | null): boolean {
-  return state === 'S0_BOOTSTRAP';
+  if (!state) return true;
+  return normalizePlanViewState(state) === 'P0_MINIMAL';
 }
 
 /** Is the plan in the framing phase (first user message received)? */
@@ -25,9 +27,23 @@ export function isFraming(state: PlanViewState | undefined | null): boolean {
   return state === 'S1_FRAMING';
 }
 
-/** Is the plan in the strategy-ready phase? */
+/** Is the plan in the strategy-ready phase? (P1_ENRICHED or legacy S2_STRATEGY_READY) */
 export function isStrategyReady(state: PlanViewState | undefined | null): boolean {
-  return state === 'S2_STRATEGY_READY';
+  if (!state) return false;
+  return normalizePlanViewState(state) === 'P1_ENRICHED' && state !== 'S2_BLOCKED';
+}
+
+/** Is the itinerary ready / finalized? (P3_FINALIZED or legacy S3_ITINERARY_READY) */
+export function isItineraryReady(state: PlanViewState | undefined | null): boolean {
+  if (!state) return false;
+  return normalizePlanViewState(state) === 'P3_FINALIZED';
+}
+
+/** Does the plan have strategy content (S2+ or P1+, including editing/blocked states)? */
+export function hasStrategy(state: PlanViewState | undefined | null): boolean {
+  if (!state) return false;
+  const norm = normalizePlanViewState(state);
+  return norm === 'P1_ENRICHED' || norm.startsWith('P3');
 }
 
 /** Is generation in progress? Data-driven, not state-inferred. */
@@ -53,8 +69,8 @@ export function shouldAutoTriggerItinerary(
   generation?: GenerationState | null,
   hasItineraryContent?: boolean
 ): boolean {
-  // Must be in S2_STRATEGY_READY state
-  if (state !== 'S2_STRATEGY_READY') return false;
+  // Must be in strategy-ready state (S2 / P1_ENRICHED)
+  if (!isStrategyReady(state)) return false;
 
   // Must not be currently generating
   if (isGenerating(generation)) return false;
@@ -97,8 +113,8 @@ export function getNextAction(
   _hasTripContext?: boolean // Deprecated: validation now handled by NextStepBar
 ): 'expand_itinerary' | 'finalize_plan' | null {
   if (isGenerating(generation)) return null;
-  // S2 shows expand_itinerary CTA (NextStepBar gates enabled/disabled via validation)
-  if (state === 'S2_STRATEGY_READY') return 'expand_itinerary';
-  // S3 uses inline "The Bridge" CTA, not NextStepBar
+  // Strategy-ready shows expand_itinerary CTA (NextStepBar gates enabled/disabled via validation)
+  if (isStrategyReady(state)) return 'expand_itinerary';
+  // Itinerary-ready uses inline "The Bridge" CTA, not NextStepBar
   return null;
 }

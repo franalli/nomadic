@@ -19,6 +19,9 @@ import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
+/** Fallback width for indeterminate progress bar animation */
+const INDETERMINATE_PROGRESS_STYLE = { width: '30%' } as const;
+
 export type ProgressStage = 'analyzing' | 'checking' | 'building' | 'conflict_detected' | 'success' | 'error';
 
 interface ItineraryProgressIndicatorProps {
@@ -153,7 +156,7 @@ export function ItineraryProgressIndicator({
             }
             style={
               progress == null
-                ? { width: '30%' }
+                ? INDETERMINATE_PROGRESS_STYLE
                 : undefined
             }
           />

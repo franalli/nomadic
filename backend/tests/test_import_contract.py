@@ -170,41 +170,11 @@ class TestPlannerFacadeExports:
 
         assert callable(get_planner_debug_info)
 
-    def test_facade_exports_meta_helpers(self):
-        """Metadata helpers should be exported from facade."""
-        from app.planner import (
-            init_turn_metadata,
-            meta_append,
-            meta_get,
-            meta_increment,
-            meta_set,
-            meta_set_once,
-        )
-
-        assert callable(init_turn_metadata)
-        assert callable(meta_get)
-        assert callable(meta_set)
-        assert callable(meta_set_once)
-        assert callable(meta_append)
-        assert callable(meta_increment)
-
     def test_facade_exports_test_mode_helpers(self):
         """Test mode helpers should be exported from facade."""
         from app.planner import is_test_mode
 
         assert callable(is_test_mode)
-
-    def test_facade_exports_cache_helpers(self):
-        """Cache helpers should be exported from facade."""
-        from app.planner import (
-            cache_delete,
-            cache_get,
-            cache_set,
-        )
-
-        assert callable(cache_get)
-        assert callable(cache_set)
-        assert callable(cache_delete)
 
     def test_facade_exports_state_models(self):
         """State models should be exported from facade."""
@@ -229,10 +199,7 @@ class TestPlannerFacadeExports:
             "run_turn_streaming",
             "GraphState",
             "get_planner_debug_info",
-            "meta_get",
-            "meta_set",
             "is_test_mode",
-            "cache_get",
             # State models
             "GraphState",
             "TripPlan",

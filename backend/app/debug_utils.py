@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -551,11 +552,13 @@ def _debug_log(message: str, **kwargs: Any) -> None:
 
 # Global dict to track node start times
 _node_start_times: dict[str, float] = {}
+_node_times_lock = threading.Lock()
 
 
 def _debug_node_timer_start(node_name: str) -> None:
     """Start timing a node. Call at node entry."""
-    _node_start_times[node_name] = time.time()
+    with _node_times_lock:
+        _node_start_times[node_name] = time.time()
 
 
 def _debug_node_timer_end(node_name: str, emoji: str = "", **outputs: Any) -> None:
@@ -566,7 +569,8 @@ def _debug_node_timer_end(node_name: str, emoji: str = "", **outputs: Any) -> No
     if get_debug_mode() != "full":
         return
     try:
-        start_time = _node_start_times.pop(node_name, None)
+        with _node_times_lock:
+            start_time = _node_start_times.pop(node_name, None)
         if start_time:
             duration_ms = (time.time() - start_time) * 1000
             outputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in outputs.items())

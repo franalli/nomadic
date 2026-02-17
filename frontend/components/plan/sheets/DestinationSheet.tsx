@@ -131,11 +131,8 @@ function DestinationSheetInner({
             onClick={handleSave}
             disabled={!canSave}
             className={cn(
-              'flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold',
-              'transition-all active:scale-[0.98]',
-              canSave
-                ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]'
-                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600 cursor-not-allowed'
+              canSave ? DS.actions.primary : DS.actions.primaryDisabled,
+              'flex-1 px-4 py-2.5 font-semibold'
             )}
           >
             Save
@@ -176,7 +173,7 @@ function DestinationSheetInner({
         {/* Recent destinations */}
         {recentDestinations.length > 0 && (
           <div>
-            <h3 className={DS.text.label + ' mb-3'}>
+            <h3 className={cn(DS.text.label, 'mb-3')}>
               Recent
             </h3>
             <div className="flex flex-wrap gap-2">
@@ -208,7 +205,7 @@ function DestinationSheetInner({
 
         {/* Popular destinations */}
         <div>
-          <h3 className={DS.text.label + ' mb-3'}>
+          <h3 className={cn(DS.text.label, 'mb-3')}>
             Popular
           </h3>
           <div className="flex flex-wrap gap-2">

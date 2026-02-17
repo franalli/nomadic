@@ -14,6 +14,7 @@ import { ChevronDown, ChevronUp, Heart, RefreshCw, Sparkles, Star } from 'lucide
 import Image from 'next/image';
 import { useCallback, useMemo, useState } from 'react';
 
+import { DS } from '@/lib/design-system';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
@@ -412,7 +413,7 @@ export function SuggestionCard({
               'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
               isSaved
                 ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                : 'bg-zinc-900 dark:bg-emerald-600 text-white hover:bg-zinc-800 dark:hover:bg-emerald-500'
+                : DS.actions.primary
             )}
           >
             {isSaved ? 'Saved' : 'Save to Trip'}

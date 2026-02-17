@@ -26,6 +26,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { ModalErrorBoundary } from '@/components/ui/ModalErrorBoundary';
 import { formatTilePriceDetailed } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
@@ -285,6 +286,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
 
   // Use portal to render at document root, escaping stacking contexts
   return createPortal(
+    <ModalErrorBoundary>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
@@ -591,7 +593,8 @@ export const TileDetailsModal = memo(function TileDetailsModal({
           )}
         </div>
       </div>
-    </div>,
+    </div>
+    </ModalErrorBoundary>,
     document.body
   );
 });

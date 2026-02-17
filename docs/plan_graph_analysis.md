@@ -60,8 +60,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 ```
 backend/app/planner/
 ├── __init__.py              # Facade exports (stable public API)
-├── cache_access.py          # Cache utilities
-├── hashing.py               # Stable hashing utilities
+├── hashing.py               # Stable hashing utilities (make_cache_key, field_hash)
 ├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
 ├── test_mode.py             # Test mode detection
 ├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
@@ -213,10 +212,11 @@ backend/app/planner/
 │                                                                             │
 │  Response Type Classification:                                              │
 │  • greeting: short_circuit_type in ("greeting", "reset")                    │
-│  • planning: first plan OR significant change (specialist ran, violations,  │
-│    date change, new categories) — re-fires gpt-4o even after first plan    │
+│  • planning: first plan OR structural change (specialist ran, violations,   │
+│    date change) — re-fires gpt-4o even after first plan                    │
 │  • exploration: exploration_mode flag set                                   │
 │  • specialist_update: specialist_hint OR specialist_just_ran (no sig.change)│
+│    OR category-only additions (added_cats > 0, no structural change)       │
 │                                                                             │
 │  Solver Identity (planning/specialist_update):                              │
 │  - "Expedition Leader" voice: SHOW expertise through specifics              │
@@ -460,9 +460,9 @@ Catches chat inputs that would otherwise be swallowed by the exploration short-c
 
 | Input Type               | Detection                                                 | Route                           | Example             |
 | ------------------------ | --------------------------------------------------------- | ------------------------------- | ------------------- |
-| Tier 2 activity addition | `TIER2_ACTIVITY_KEYWORDS` (from `specialist_registry.py`) | `ACTIONABLE_TO_LOGISTICS`       | "yoga as well"      |
+| Tier 2 activity addition | `TIER2_COMMON_HINTS` fast-path + open-ended LLM extraction | `ACTIONABLE_TO_LOGISTICS`       | "yoga as well"      |
 | Category replacement     | `detect_category_merge_mode()` explicit replace phrases   | Applied during extraction merge | "only yoga, not hiking" |
-| Activity removal         | `REMOVAL_PATTERN` + known-activity guard                  | `ACTIONABLE_TO_LOGISTICS`       | "skip the yoga"     |
+| Activity removal         | `REMOVAL_PATTERN` (accepts any category string)           | `ACTIONABLE_TO_LOGISTICS`       | "skip the yoga"     |
 | Skill level              | `SKILL_LEVEL_MAP` keywords                                | `ACTIONABLE_TO_LOGISTICS`       | "I'm a beginner"    |
 | Budget reset             | `RESET_BUDGET_PATTERN`                                    | `ACTIONABLE_TO_LOGISTICS`       | "no budget limit"   |
 | Hotel reset              | `RESET_HOTEL_PATTERN`                                     | `ACTIONABLE_TO_LOGISTICS`       | "any hotel is fine" |
@@ -472,7 +472,7 @@ Catches chat inputs that would otherwise be swallowed by the exploration short-c
 **Fuzzy Typo Resolution (Pre-LLM):**
 
 Unresolved tokens (words not matching any known category, stop word, or skill level) are fuzzy-matched
-against `_FUZZY_VOCAB` (union of `TIER2_ACTIVITY_KEYWORDS` and `TIER1_SPECIALIST_NAMES`) using
+against a dynamic vocabulary via `_get_fuzzy_vocab(state)` (union of `TIER2_COMMON_HINTS`, `TIER1_SPECIALIST_NAMES`, and session-active categories from `activity_settings`) using
 `rapidfuzz.fuzz.ratio` with `score_cutoff` from `settings.fuzzy_match_score_cutoff` (default 76).
 Matches are added directly to `add_categories`; only truly unresolved tokens fall through to
 the LLM alias resolution path in `intent_router.py`. Graceful degradation: if `rapidfuzz` is
@@ -690,6 +690,7 @@ for current_topic in all_topics:
 - Selective regeneration check at top (skip cached topics via `return`, not `return state`)
 - Creates `VerticalSpecialist(topic)`, calls `generate_output(state)` (Unsplash cache already warm)
 - Handles infeasible (`return` — loop continues), caveat, feasible paths
+- **Continuity reuse:** When only dates changed (same destination, same `day_pref`), reuses existing `content_added` to avoid silently swapping activity names when the duration bucket changes (e.g., `extended` → `twoweek`). Updates `_cache_dates` in-place so subsequent turns see an exact match. Logs `continuity_reuse` source in latency metrics. Note: ItineraryBuilder Phase 2b handles overflow if the trip shortened significantly.
 - **Destination-level infeasibility cache:** If a cached section has `feasibility_status == "infeasible"` and the destination hasn't changed, the specialist is skipped without re-querying the LLM (infeasibility is destination-dependent, not date-dependent — skiing in Bali stays infeasible regardless of trip duration). Returns early with `specialist_infeasible` metadata + `SPECIALIST_INFEASIBLE` UI event.
 - **Parallel batch filter:** Before parallel execution, specialists already marked infeasible at the current destination (via `strategy_sections`) are filtered from `all_specialists` to avoid redundant LLM calls.
 - Assembles strategy section, injects constraints/content blocks, builds UI state
@@ -700,7 +701,7 @@ for current_topic in all_topics:
 - Subsequent specialist processing deserializes cached results using `LLMSpecialistOutput.model_validate()`
 - Unsplash images cached in `_memory_cache` dict — parallel prefetch warms cache for all topics at once
 - **Single specialist:** Uses L1+L2 database cache directly (same path as parallel)
-- Per-topic latency telemetry stored in `state.metadata["specialist_latency_metrics"][topic]` with `{source, elapsed_ms, reason}`. Sources include `parallel_cache`, `llm_path`, `hardcoded_fallback`, `section_cache`, and `section_cache_infeasible`.
+- Per-topic latency telemetry stored in `state.metadata["specialist_latency_metrics"][topic]` with `{source, elapsed_ms, reason}`. Sources include `parallel_cache`, `llm_path`, `hardcoded_fallback`, `section_cache`, `section_cache_infeasible`, and `section_cache_continuity`.
 
 **Debug Output (DEBUG=full):**
 
@@ -859,14 +860,13 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 
 **Two-Tier Activity System:**
 
-Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** categories (yoga, cooking, nightlife, temples, beach, shopping, photography, sailing, wellness, culture, music, wine, food) generate real, destination-specific experience tiles via `gpt-4o-mini` structured output.
+Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** is **open-ended** — any recreational activity string is accepted (not limited to a fixed set). Common hints (`TIER2_COMMON_HINTS`: yoga, cooking, nightlife, temples, beach, shopping, photography, sailing, wellness, culture, music, wine, food) serve as fast-path detection and fuzzy match vocabulary, but novel categories like "pottery", "horseback riding", "birdwatching" flow through the same pipeline. Tier 2 tiles are generated via `gpt-4o-mini` structured output.
 
 When niche specialists are active, suppression is tier-aware:
 
 ```python
 # Canonical constant — single source of truth
-TIER1_SPECIALISTS = TIER1_SPECIALIST_NAMES  # from specialist_registry (8 specialists)
-NICHE_SPECIALISTS = TIER1_SPECIALISTS
+NICHE_SPECIALISTS = TIER1_SPECIALIST_NAMES  # from specialist_registry (8 specialists)
 TIER1_CATEGORIES = TIER1_SPECIALISTS
 
 executed = state.metadata.get("executed_strategy_topics", [])
@@ -1459,7 +1459,7 @@ class RouterOutput(BaseModel):
 
     # ── Specialist & activity detection ──
     specialist_hints: List[str] = []
-    activity_categories: List[str] = []  # Tier 2 categories (yoga, cooking, nightlife, etc.)
+    activity_categories: List[str] = []  # Tier 2 categories (open-ended — any recreational activity)
     activity_day_preferences: Optional[str] = None  # JSON string: '{"diving": 3, "hiking": 2}'
 
     # ── Core trip fields ──
@@ -1508,7 +1508,7 @@ result: RouterOutput = await structured_llm.ainvoke(messages)
 1. Intent Classification (GREETING/RESET/PLANNING)
 2. Field Extraction (destination, origin, IATA codes, dates, travelers, budget)
 3. Flags (has_dates_in_message, has_activity_in_message, planning_ready)
-4. Activity Categories (Tier 2: yoga, cooking, nightlife, etc.)
+4. Activity Categories (Tier 2: open-ended, any recreational activity)
 5. Activity Day Preferences (day count JSON string)
 6. Modification Detection (removal_targets, skill_level, reset flags)
 7. Settings Extraction (hotel stars/style/amenities/location, flight direct/cabin)
@@ -2110,7 +2110,7 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 
 ## Specialist Domain Knowledge
 
-> **SSoT:** All specialist configuration (keywords, constraints, enhancements, flags, backfill affinity) lives in `backend/app/planner/specialist_registry.py`. Top destinations and activities are LLM-generated per prompt file — no hardcoded destination lists. Router LLM prompts (`CLASSIFICATION_PROMPT`, `ROUTER_EXTRACTION_PROMPT`), Pydantic schemas (`SpecialistOutput.specialist_type`, `RouterOutput.specialist_hints`), and validation sets (`KNOWN_CATEGORIES`) are all derived from the registry at module load time. `backfill_affinity_tags` (e.g., `["water", "outdoors"]`) drives complementary category selection for free-day backfill in `_select_backfill_categories()`. Adding a specialist requires only: 1) add entry to `SPECIALIST_REGISTRY`, 2) create `prompts/specialists/{topic}.txt`.
+> **SSoT:** All specialist configuration (keywords, constraints, enhancements, flags, backfill affinity) lives in `backend/app/planner/specialist_registry.py`. Top destinations and activities are LLM-generated per prompt file — no hardcoded destination lists. Router LLM prompts (`CLASSIFICATION_PROMPT`, `ROUTER_EXTRACTION_PROMPT`), Pydantic schemas (`SpecialistOutput.specialist_type`, `RouterOutput.specialist_hints`), and Tier 1 validation sets are all derived from the registry at module load time. Tier 2 is open-ended (no fixed validation set). `display_name(category)` provides canonical display names (uses `_DISPLAY_NAMES` dict with `.replace("_", " ").title()` fallback). `backfill_affinity_tags` (e.g., `["water", "outdoors"]`) drives complementary category selection for free-day backfill in `_select_backfill_categories()`. Adding a specialist requires only: 1) add entry to `SPECIALIST_REGISTRY`, 2) create `prompts/specialists/{topic}.txt`.
 
 **Fill-Day Validation:** `validate_fill_day_placement(target_day, specialist_type, day_cards, total_days, has_departure_flight)` checks placement against registry constraints: cross-domain buffers on adjacent days, no-fly buffer proximity to departure, arrival/departure day restrictions, and `min_days_needed`. Returns `FillDayRejection(code, reason, suggestion)` or `None` if valid.
 
@@ -2232,11 +2232,11 @@ When the ItineraryBuilder persists a constraint rule (e.g., `no_fly_buffer`) and
 
 **Planner Caches (Session-Scoped):**
 
-Thread-safe in-process caches managed via `CacheHandle` wrappers in `backend/app/planner/cache_access.py`. Each handle wraps a `TTLCache` with a `threading.Lock`. Named slots: `follow_up`, `router`, `required_fields`, `extractor`, `strategy`, `tile`. Operations: `cache_get()`, `cache_set()`, `cache_pop()`, `cache_delete()`, `cache_clear()`, `cache_len()`, `cache_contains()`. Counter updates use a separate `_cache_counters_lock`.
+Thread-safe in-process caches managed via per-node `TTLCache` instances with `threading.Lock` guards. Named slots: `follow_up`, `router`, `required_fields`, `extractor`, `strategy`, `tile`.
 
 **Two-Tier LLM/API Caches (Cross-Session):**
 
-All four caches share a common `MemoryCache` primitive from `backend/app/services/cache_core.py` — thread-safe `TTLCache` wrapper with `RLock` for cache ops and separate `_stats_lock` for hit/miss counters. Each service instantiates its own `MemoryCache` with domain-specific config (maxsize, TTL, stat keys).
+All four caches share a common `MemoryCache` primitive from `backend/app/services/cache_core.py` — thread-safe `TTLCache` wrapper with `RLock` for cache ops and separate `_stats_lock` for hit/miss counters. Each service instantiates its own `MemoryCache` with domain-specific config (maxsize, TTL, stat keys). L2 writes use the shared `l2_upsert()` function in `cache_core.py` — a `pg_insert().on_conflict_do_update()` pattern that commits internally.
 
 | Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
 |-------|-------------|---------|--------|--------|------------|---------|
@@ -2435,6 +2435,7 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Uses shar
 - Prefetch populates L1 cache → Logistics awaits task → instant L1 cache hit
 - Router stores full prefetch context (`tier2_prefetch_categories`, `tier2_prefetch_tiles_per_category`, destination/month, started_at)
 - Logistics only consumes prefetch when destination/month/categories/tiles-per-category all match expected generation context
+- **L1 cold probe:** Before waiting, logistics checks if the expected cache key exists in L1. If L1 is cold (prefetch hasn't populated yet) and the task isn't done, the wait is skipped entirely — singleflight in `generate_experiences()` will join the running task anyway. This saves the full wait budget (~350ms) on cold starts.
 - Logistics waits with configurable budget `settings.tier2_prefetch_wait_budget_ms` (fallback to direct generation on timeout/mismatch/error)
 - Prefetch metadata is cleared at end of logistics turn to prevent stale reuse
 - Router/logistics share the same deterministic generation key format: `tier2:{destination}:{month}:{sorted_categories}:n{tiles_per_category}`

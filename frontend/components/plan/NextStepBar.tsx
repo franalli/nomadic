@@ -14,6 +14,7 @@
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { PlanViewState } from '@/types/plan-envelope';
@@ -165,7 +166,7 @@ export function NextStepBar({
         {/* LEFT: Context (Tight) */}
         <div className="px-4 flex flex-col justify-center">
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
+            <span className={cn(DS.text.label, 'tracking-widest')}>
               Timeline
             </span>
             {dateDisplay?.pastDates ? (

@@ -27,13 +27,12 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import List, Optional
 
-from sqlalchemy import select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.planner.hashing import make_cache_key
-from app.services.cache_core import MemoryCache
+from app.services.cache_core import MemoryCache, l2_upsert
 
 logger = logging.getLogger(__name__)
 
@@ -209,42 +208,23 @@ async def set_cached_tiles(
         end_date: Trip end date
         tiles: List of tile dicts (already serialized)
     """
-    # Import here to avoid circular imports
-    from app.db_models import ResponseCache
-
     cache_key = _tile_cache_key(provider, tile_type, destination, start_date, end_date)
-    expires_at = datetime.now(UTC) + timedelta(hours=L2_TTL_HOURS)
 
     # L1: Always write to memory (fast path)
     _mem.set(cache_key, tiles)
 
     # L2: Best-effort database write
     try:
-        stmt = pg_insert(ResponseCache).values(
+        await l2_upsert(
+            db,
             cache_key=cache_key,
             cache_type="tiles",
             response_json=tiles,
-            created_at=datetime.now(UTC),
-            expires_at=expires_at,
-            hit_count=0,
-            last_hit_at=None,
+            ttl=timedelta(hours=L2_TTL_HOURS),
         )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["cache_key"],
-            set_={
-                "response_json": tiles,
-                "created_at": datetime.now(UTC),
-                "expires_at": expires_at,
-            },
-        )
-        await db.execute(stmt)
-        await db.commit()
-
         _mem.increment_stat("writes")
         logger.info(f"[TILE_CACHE] Wrote: {cache_key} ({len(tiles)} tiles)")
-
     except OperationalError as e:
-        # Database unavailable - L1 cache still works
         logger.warning(f"[TILE_CACHE] L2 write failed (DB error): {e}")
     except Exception as e:
         logger.error(f"[TILE_CACHE] Write error: {e}")
@@ -260,7 +240,7 @@ def get_cache_stats() -> dict:
     """Return cache statistics for observability."""
     return {
         **_mem.get_stats(),
-        "l1_size": _mem.size(),
+        "l1_size": len(_mem),
         "l1_maxsize": L1_MAX_SIZE,
         "l1_ttl_seconds": L1_TTL_SECONDS,
         "l2_ttl_hours": L2_TTL_HOURS,
@@ -272,3 +252,19 @@ def clear_memory_cache() -> int:
     count = _mem.clear()
     logger.info(f"[TILE_CACHE] Cleared L1 ({count} entries)")
     return count
+
+
+async def clear_db_cache(db: AsyncSession) -> int:
+    """Clear all L2 tile cache entries. Returns count deleted."""
+    from app.db_models import ResponseCache
+
+    try:
+        result = await db.execute(delete(ResponseCache).where(ResponseCache.cache_type == "tiles"))
+        await db.commit()
+        deleted = result.rowcount
+        logger.info(f"[TILE_CACHE] Cleared L2: {deleted} entries")
+        return deleted
+    except Exception as e:
+        logger.warning(f"[TILE_CACHE] Clear L2 failed: {e}")
+        await db.rollback()
+        return 0

@@ -21,6 +21,7 @@ import {
 import Image from 'next/image';
 import { memo, useCallback, useMemo, useState } from 'react';
 
+import { ModalErrorBoundary } from '@/components/ui/ModalErrorBoundary';
 import {
   Sheet,
   SheetClose,
@@ -163,6 +164,7 @@ export function AlternativesModal({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto bg-white dark:bg-zinc-900">
+        <ModalErrorBoundary>
         <SheetHeader className="border-b border-zinc-200 dark:border-zinc-700/50 pb-4">
           <SheetTitle className="text-zinc-900 dark:text-zinc-100">
             Change {category}
@@ -335,6 +337,7 @@ export function AlternativesModal({
             )}
           </div>
         </div>
+        </ModalErrorBoundary>
       </SheetContent>
     </Sheet>
   );

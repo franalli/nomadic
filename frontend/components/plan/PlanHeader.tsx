@@ -19,13 +19,14 @@
 import { Loader2 } from 'lucide-react';
 import React from 'react';
 
+import { isBootstrap } from '@/components/plan/planStateHelpers';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
 import { getStatusPillText } from '@/lib/statusCopyMap';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
-import type { DestinationCard } from '@/types/plan-envelope';
+import type { DestinationCard, PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 
 export interface PlanHeaderProps {
@@ -83,7 +84,7 @@ export function PlanHeader({
 
   // Check if we should show pills (S1+ with tripInputs and handler)
   const showPills =
-    planViewState !== 'S0_BOOTSTRAP' && tripInputs && onOpenSheet;
+    !isBootstrap(planViewState as PlanViewState) && tripInputs && onOpenSheet;
 
   // Format date range for collapsed view (must be before early return to maintain hook order)
   const startDate = tripInputs?.start_date;

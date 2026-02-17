@@ -24,7 +24,7 @@ from app.planner.llm_factory import get_llm_by_model
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
-    TIER2_ACTIVITY_KEYWORDS,
+    TIER2_COMMON_HINTS,
 )
 from app.planner.state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # Derived prompt fragments — single source of truth from registry
 _SPECIALIST_NAMES_CSV = ", ".join(sorted(TIER1_SPECIALIST_NAMES))
 _SPECIALIST_HINTS_JSON = json.dumps(sorted(TIER1_SPECIALIST_NAMES))
-_TIER2_NAMES_CSV = ", ".join(sorted(TIER2_ACTIVITY_KEYWORDS))
+_TIER2_EXAMPLES_CSV = ", ".join(sorted(TIER2_COMMON_HINTS))
 
 
 def _build_specialist_keyword_prompt() -> str:
@@ -85,10 +85,12 @@ class RouterOutput(BaseModel):
         default_factory=list, description="List of detected specialist activities"
     )
 
-    # Tier 2 activity categories (yoga, cooking, nightlife, etc.)
+    # Tier 2 activity categories — any recreational activity (open-ended)
     activity_categories: List[str] = Field(
         default_factory=list,
-        description=f"Activity categories mentioned: {_TIER2_NAMES_CSV}",
+        description="Activity categories mentioned. Common: "
+        + _TIER2_EXAMPLES_CSV
+        + ". But accept ANY activity the user mentions.",
     )
 
     # Activity day preferences as JSON string (gpt-4o-mini handles str better than Dict)
@@ -389,10 +391,14 @@ Include all matching specialists (use CANONICAL lowercase names):
 
 ## Task 4: Activity Categories
 
-Extract any activity categories the user mentions or implies. Use these canonical names:
-"""
-    + _TIER2_NAMES_CSV
+Extract any activity categories the user mentions or implies.
+Tier 2 is OPEN-ENDED — accept ANY recreational activity, not just a fixed list.
+Use short canonical lowercase forms (e.g., "horseback riding" not "horseback riding lessons").
+
+Common categories: """
+    + _TIER2_EXAMPLES_CSV
     + """
+But also accept: pottery, meditation, birdwatching, fishing, paragliding, horseback riding, etc.
 
 Examples:
 - "I want to party" → ["nightlife"]
@@ -400,6 +406,7 @@ Examples:
 - "relaxing trip with spa" → ["yoga", "wellness"]
 - "diving and cooking" → ["cooking"] (diving goes in specialist_hints, not here)
 - "temple tours and wine tasting" → ["temples", "wine"]
+- "horseback riding and pottery class" → ["horseback riding", "pottery"]
 
 Do NOT include Tier 1 specialist activities ("""
     + _SPECIALIST_NAMES_CSV
@@ -923,9 +930,6 @@ def _populate_trip_plan_from_router_output(
         router_output: Extracted fields from LLM
         fallback_destination: Destination from context extraction (used if LLM didn't extract one)
     """
-    # TIER1_SPECIALIST_NAMES already imported at module level
-    TIER1_SPECIALISTS = TIER1_SPECIALIST_NAMES
-
     # Set destination (prefer extracted, fallback to context)
     if router_output.destination:
         state.trip_plan.destination = router_output.destination
@@ -1015,14 +1019,20 @@ def _populate_trip_plan_from_router_output(
     if allow_category_updates and (
         router_output.activity_categories or router_output.specialist_hints
     ):
-        KNOWN_CATEGORIES = TIER1_SPECIALISTS | TIER2_ACTIVITY_KEYWORDS
-        validated = [c for c in router_output.activity_categories if c.lower() in KNOWN_CATEGORIES]
+        # Tier 1 validated by registry; Tier 2 is open-ended — accept any reasonable string
+        validated = [
+            c.lower().strip().replace("_", " ")
+            for c in router_output.activity_categories
+            if c.strip() and len(c.strip()) <= 40
+        ]
         trip_inputs = state.metadata.get("trip_inputs", {})
         activity_settings = trip_inputs.get("activity_settings", {})
         existing = set(activity_settings.get("categories", []))
         baseline = set(category_baseline) if category_baseline is not None else existing
-        # Also include Tier 1 specialists as categories
-        from_specialists = {s.lower() for s in router_output.specialist_hints}
+        # Also include Tier 1 specialists as categories (gated by registry)
+        from_specialists = {
+            s.lower() for s in router_output.specialist_hints if s.lower() in TIER1_SPECIALIST_NAMES
+        }
         extracted = set(validated) | from_specialists
         if extracted:
             if category_merge_mode == "replace":

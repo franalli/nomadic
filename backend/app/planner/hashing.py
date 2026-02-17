@@ -129,6 +129,15 @@ def make_cache_key(*parts: Any) -> str:
     return "::".join(key_parts)
 
 
+def field_hash(value: str) -> str:
+    """Stable hash for selective regeneration change detection.
+
+    Canonical implementation — used by state_serde and regen_strategy
+    to detect which trip fields changed between requests.
+    """
+    return hashlib.sha256((value or "").encode()).hexdigest()[:12]
+
+
 # Mapping for ban enforcement
 BANNED_PATTERNS = [
     r"(?<![_a-zA-Z])hash\(",  # hash( not preceded by identifier char

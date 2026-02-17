@@ -11,12 +11,12 @@ Extracted from plan_graph.py (Stage 7, Phase 1).
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import Any, Dict, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from app.planner.hashing import field_hash as _field_hash
 from app.planner.state import GraphState, TripPlan, TripSettings
 from app.schemas import (
     ActivitySettings,
@@ -182,11 +182,6 @@ def restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
 # =============================================================================
 # Private Helpers
 # =============================================================================
-
-
-def _field_hash(value: str) -> str:
-    """Stable hash for selective regeneration change detection."""
-    return hashlib.sha256((value or "").encode()).hexdigest()[:12]
 
 
 def _compute_field_hashes(trip_plan: TripPlan) -> Dict[str, str]:

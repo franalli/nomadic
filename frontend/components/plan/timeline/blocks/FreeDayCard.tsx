@@ -13,6 +13,7 @@
 import { ShieldAlert, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 export interface FreeDayCardProps {
@@ -95,9 +96,8 @@ export function FreeDayCard({
             || (availableCategories && availableCategories.length > 0 && !selectedCat)
           }
           className={cn(
-            'w-full px-4 py-2 text-sm font-medium rounded-lg transition-all',
-            'bg-zinc-900 text-white hover:bg-zinc-800',
-            'dark:bg-emerald-600 dark:hover:bg-emerald-500',
+            DS.actions.primary,
+            'w-full px-4 py-2 rounded-lg text-sm font-medium',
             'disabled:opacity-50 disabled:cursor-not-allowed'
           )}
         >

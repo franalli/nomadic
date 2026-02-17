@@ -37,7 +37,7 @@ const safeParsePreferences = (): ConsentPreferences | null => {
     };
   } catch (error) {
     if (process.env.NODE_ENV !== 'production') {
-      console.warn('Failed to parse consent preferences', error);
+      console.error('Failed to parse consent preferences', error);
     }
     return null;
   }

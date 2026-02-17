@@ -20,8 +20,8 @@ CSRF Protection:
 - Unsafe methods: POST, PUT, PATCH, DELETE
 """
 
+import asyncio
 import secrets
-from threading import RLock
 from typing import Callable
 
 from cachetools import TTLCache
@@ -39,7 +39,7 @@ SESSION_MAX_AGE = 14 * 24 * 60 * 60  # 14 days in seconds
 
 # Session creation throttle: max 10 new sessions per IP per hour
 _session_creation_counter: TTLCache = TTLCache(maxsize=10_000, ttl=3600)
-_session_creation_lock = RLock()
+_session_creation_lock = asyncio.Lock()
 _MAX_SESSIONS_PER_IP_PER_HOUR = 10
 
 
@@ -104,7 +104,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         if new_session:
             # Throttle session creation by IP
             client_ip = request.client.host if request.client else "unknown"
-            with _session_creation_lock:
+            async with _session_creation_lock:
                 count = _session_creation_counter.get(client_ip, 0) + 1
                 if count > _MAX_SESSIONS_PER_IP_PER_HOUR:
                     return JSONResponse(
@@ -185,9 +185,10 @@ CSRF_HEADER_NAME = "X-CSRF-Token"
 def _get_cors_headers(request: Request) -> dict:
     """Get CORS headers for error responses based on request origin."""
     origin = request.headers.get("origin", "")
-    # Only allow known origins (localhost for dev)
-    allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
-    if origin in allowed_origins:
+    allowed = {settings.frontend_origin}
+    if settings.env in ("local", "development", "test"):
+        allowed.update({"http://localhost:3000", "http://127.0.0.1:3000"})
+    if origin in allowed:
         return {
             "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Credentials": "true",

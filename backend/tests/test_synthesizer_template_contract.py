@@ -205,7 +205,8 @@ def test_ground_flight_response_corrects_hotel_activity_count_claims() -> None:
     assert "Found **1 hotel** and **3 activities**." in grounded
 
 
-def test_ground_flight_response_appends_date_adjustment_note() -> None:
+def test_ground_flight_response_ignores_date_adjustments_in_metadata() -> None:
+    """Date adjustment note appending was removed; metadata is ignored."""
     state = _new_state(
         metadata={
             "date_auto_adjustments": [
@@ -228,8 +229,8 @@ def test_ground_flight_response_appends_date_adjustment_note() -> None:
 
     grounded = _ground_flight_response("Plan updated.", state)
 
-    assert "2026-02-15 -> 2027-02-15" in grounded
-    assert "2026-02-25 -> 2027-02-25" in grounded
+    assert "2026-02-15 -> 2027-02-15" not in grounded
+    assert "Adjusted past dates" not in grounded
 
 
 def test_ground_flight_response_skips_date_adjustment_note_when_new_dates_present() -> None:
