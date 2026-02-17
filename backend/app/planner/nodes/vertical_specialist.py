@@ -20,6 +20,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from cachetools import TTLCache
 from pydantic import BaseModel
 
 from app.config import settings
@@ -665,8 +666,8 @@ Respond JSON only: {{"possible": true/false, "reason": "brief"}}"""
         return FeasibilityCheck(possible=True, reason="Unknown, proceeding")
 
 
-# Simple async cache for feasibility checks
-_feasibility_cache: Dict[str, Tuple[bool, str]] = {}
+# Bounded async cache for feasibility checks (24h TTL, 256 entries max)
+_feasibility_cache: TTLCache = TTLCache(maxsize=256, ttl=86400)
 _feasibility_cache_lock = asyncio.Lock()
 
 

@@ -11,6 +11,25 @@ import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
 // Re-export for convenience
 export type { GenerationState };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// State predicates — use these instead of raw string comparisons
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Is the plan in the initial bootstrap phase? */
+export function isBootstrap(state: PlanViewState | undefined | null): boolean {
+  return state === 'S0_BOOTSTRAP';
+}
+
+/** Is the plan in the framing phase (first user message received)? */
+export function isFraming(state: PlanViewState | undefined | null): boolean {
+  return state === 'S1_FRAMING';
+}
+
+/** Is the plan in the strategy-ready phase? */
+export function isStrategyReady(state: PlanViewState | undefined | null): boolean {
+  return state === 'S2_STRATEGY_READY';
+}
+
 /** Is generation in progress? Data-driven, not state-inferred. */
 export function isGenerating(generation?: GenerationState | null): boolean {
   return generation?.active === true;

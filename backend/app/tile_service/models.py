@@ -31,6 +31,11 @@ class SearchContext(BaseModel):
     currency: str = "USD"
     response_mode: Optional[str] = None
 
+    # Pre-resolved IATA codes (from iata_resolver in planner graph).
+    # Used by Amadeus providers; falls back to hardcoded lookup if absent.
+    origin_iata: Optional[str] = None
+    destination_iata: Optional[str] = None
+
     # Budget constraints for filtering tiles
     budget: Optional[float] = None  # Total trip budget
     budget_per_category: Optional[float] = None  # Suggested allocation per category

@@ -30,6 +30,7 @@ import { TravelersSheet } from '@/components/plan/sheets/TravelersSheet';
 import { TripSettingsSheet } from '@/components/plan/sheets/TripSettingsSheet';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { useToast } from '@/components/ui/toast';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { usePreferenceAutoRegen } from '@/hooks/usePreferenceAutoRegen';
@@ -1264,48 +1265,50 @@ export function NomadicLanding() {
 
   // Planner content (left panel): ChatPanel (primary funnel with refinements inside)
   const plannerContent = (
-    <ChatPanel
-      ref={chatPanelRef}
-      key={chatKey}
-      selectedBranchId={selectedBranchId}
-      onPlanResult={handlePlanResultWithReceipt}
-      onGeneratePlanStart={handleGeneratePlanStartWithSnapshot}
-      onAutoExpandItinerary={proceedWithItineraryGeneration}
-      fullHeight={false}
-      hasBranches={hasBranchesReady}
-      readyToGenerate={readyToGenerate}
-      isGenerating={isGenerating}
-      planState={planState}
-      onUserMessageSubmit={handleUserMessageSubmit}
-      // Onboarding chips props - click handlers are internal to ChatPanel
-      destination={tripInputs.destination ?? undefined}
-      origin={tripInputs.origin ?? undefined}
-      dateRange={
-        hasStartDate && hasEndDate
-          ? `${formatDateForDisplay(tripInputs.start_date)} - ${formatDateForDisplay(tripInputs.end_date)}`
-          : hasStartDate
-            ? `${formatDateForDisplay(tripInputs.start_date)} → ?` // Incomplete state
-            : undefined
-      }
-      budget={
-        tripInputs.budget != null ? `$${tripInputs.budget.toLocaleString()}` : undefined
-      }
-      // CTA gating flags
-      hasDestination={hasDestination}
-      // Optional Refinements props (now rendered inside ChatPanel)
-      hasDates={hasDates}
-      tripInputs={tripInputs}
-      bookingTypes={bookingTypes}
-      flightSettings={flightSettings}
-      hotelSettings={hotelSettings}
-      activitySettings={activitySettings}
-      onUpdateBookingTypes={handleUpdateBookingTypes}
-      onUpdateFlightSettings={handleUpdateFlightSettings}
-      onUpdateHotelSettings={handleUpdateHotelSettings}
-      onUpdateActivitySettings={handleUpdateActivitySettings}
-      planViewState={planViewState}
-      onOpenSheet={openSheet}
-    />
+    <ErrorBoundary label="Chat">
+      <ChatPanel
+        ref={chatPanelRef}
+        key={chatKey}
+        selectedBranchId={selectedBranchId}
+        onPlanResult={handlePlanResultWithReceipt}
+        onGeneratePlanStart={handleGeneratePlanStartWithSnapshot}
+        onAutoExpandItinerary={proceedWithItineraryGeneration}
+        fullHeight={false}
+        hasBranches={hasBranchesReady}
+        readyToGenerate={readyToGenerate}
+        isGenerating={isGenerating}
+        planState={planState}
+        onUserMessageSubmit={handleUserMessageSubmit}
+        // Onboarding chips props - click handlers are internal to ChatPanel
+        destination={tripInputs.destination ?? undefined}
+        origin={tripInputs.origin ?? undefined}
+        dateRange={
+          hasStartDate && hasEndDate
+            ? `${formatDateForDisplay(tripInputs.start_date)} - ${formatDateForDisplay(tripInputs.end_date)}`
+            : hasStartDate
+              ? `${formatDateForDisplay(tripInputs.start_date)} → ?` // Incomplete state
+              : undefined
+        }
+        budget={
+          tripInputs.budget != null ? `$${tripInputs.budget.toLocaleString()}` : undefined
+        }
+        // CTA gating flags
+        hasDestination={hasDestination}
+        // Optional Refinements props (now rendered inside ChatPanel)
+        hasDates={hasDates}
+        tripInputs={tripInputs}
+        bookingTypes={bookingTypes}
+        flightSettings={flightSettings}
+        hotelSettings={hotelSettings}
+        activitySettings={activitySettings}
+        onUpdateBookingTypes={handleUpdateBookingTypes}
+        onUpdateFlightSettings={handleUpdateFlightSettings}
+        onUpdateHotelSettings={handleUpdateHotelSettings}
+        onUpdateActivitySettings={handleUpdateActivitySettings}
+        planViewState={planViewState}
+        onOpenSheet={openSheet}
+      />
+    </ErrorBoundary>
   );
 
   // Derive sub-stage info for header status display
@@ -1313,32 +1316,34 @@ export function NomadicLanding() {
 
   // Plan View content (right panel): Stage-aware StrategyStageRenderer
   const planViewContent = (
-    <StrategyStageRenderer
-      state={planViewState}
-      viewModel={planViewModel}
-      destinationCard={destinationCard ?? undefined}
-      tiles={tiles}
-      generation={generation}
-      canGeneratePlan={canGeneratePlan}
-      fallbackTitle={fallbackTitle}
-      hasDates={hasDates}
-      isExpandingItinerary={isExpandingItinerary}
-      onBuildPlan={handleBuildPlan}
-      onExpandToItinerary={handleExpandToItinerary}
-      onFinalizePlan={handleFinalizePlan}
-      isFinalizing={isFinalizing}
-      savedTileIds={preferredTileIds}
-      onSaveTile={handleSaveTilePreference}
-      tripInputs={tripInputs}
-      isCommitting={isCommitting}
-      onOpenSheet={openSheet}
-      hasEverHadPlan={hasEverHadPlan}
-      isRegenerating={isRegenerating}
-      onSelectNights={handleSelectNights}
-      onOpenActivitySettings={handleOpenGearActivities}
-      onOpenStaysSettings={handleOpenGearStays}
-      onOpenFlightsSettings={handleOpenGearFlights}
-    />
+    <ErrorBoundary label="Plan View">
+      <StrategyStageRenderer
+        state={planViewState}
+        viewModel={planViewModel}
+        destinationCard={destinationCard ?? undefined}
+        tiles={tiles}
+        generation={generation}
+        canGeneratePlan={canGeneratePlan}
+        fallbackTitle={fallbackTitle}
+        hasDates={hasDates}
+        isExpandingItinerary={isExpandingItinerary}
+        onBuildPlan={handleBuildPlan}
+        onExpandToItinerary={handleExpandToItinerary}
+        onFinalizePlan={handleFinalizePlan}
+        isFinalizing={isFinalizing}
+        savedTileIds={preferredTileIds}
+        onSaveTile={handleSaveTilePreference}
+        tripInputs={tripInputs}
+        isCommitting={isCommitting}
+        onOpenSheet={openSheet}
+        hasEverHadPlan={hasEverHadPlan}
+        isRegenerating={isRegenerating}
+        onSelectNights={handleSelectNights}
+        onOpenActivitySettings={handleOpenGearActivities}
+        onOpenStaysSettings={handleOpenGearStays}
+        onOpenFlightsSettings={handleOpenGearFlights}
+      />
+    </ErrorBoundary>
   );
 
   return (
@@ -1640,7 +1645,9 @@ function AppWithStartup() {
           hasBooted ? 'opacity-100 transition-opacity duration-300' : 'opacity-0'
         }
       >
-        <NomadicLanding />
+        <ErrorBoundary label="App">
+          <NomadicLanding />
+        </ErrorBoundary>
       </div>
     </>
   );

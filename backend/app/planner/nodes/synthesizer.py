@@ -299,7 +299,11 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
         parts.append(f"- resolved_start_date: {meta.get('resolved_start_date')}")
         parts.append(f"- resolved_end_date: {meta.get('resolved_end_date')}")
 
-    # Fields changed this turn (for acknowledgment)
+    # Fields changed this turn (for acknowledgment).
+    # Filter out auto-bumped date fields — these are internal router
+    # adjustments (past→future year bump), not user-initiated changes.
+    if meta.get("date_auto_adjustments"):
+        turn_applied = [f for f in turn_applied if f not in ("start_date", "end_date")]
     if turn_applied:
         parts.append(f"- Fields changed this turn: {', '.join(turn_applied)}")
 

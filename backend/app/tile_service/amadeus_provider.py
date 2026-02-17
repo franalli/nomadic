@@ -142,9 +142,10 @@ class AmadeusFlightProvider(Provider):
             logger.warning("Amadeus API not configured, skipping flight search")
             return []
 
-        # Convert city names to airport codes
-        origin_code = self._resolve_airport_code(ctx.origin)
-        dest_code = self._resolve_airport_code(ctx.destination)
+        # Prefer pre-resolved IATA codes from planner graph (LLM-backed),
+        # fall back to hardcoded city→airport lookup.
+        origin_code = ctx.origin_iata or self._resolve_airport_code(ctx.origin)
+        dest_code = ctx.destination_iata or self._resolve_airport_code(ctx.destination)
 
         if not origin_code or not dest_code:
             logger.warning(f"Could not resolve airport codes: {ctx.origin} -> {ctx.destination}")
@@ -322,8 +323,8 @@ class AmadeusHotelProvider(Provider):
             logger.warning("Amadeus API not configured, skipping hotel search")
             return []
 
-        # Get city code
-        city_code = self._resolve_city_code(ctx.destination)
+        # Prefer pre-resolved IATA code from planner graph, fall back to lookup
+        city_code = ctx.destination_iata or self._resolve_city_code(ctx.destination)
         if not city_code:
             logger.warning(f"Could not resolve city code for: {ctx.destination}")
             return []

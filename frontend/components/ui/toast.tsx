@@ -38,7 +38,7 @@ import { cn } from '@/lib/utils';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ToastType = 'success' | 'info' | 'warning' | 'error';
+export type ToastType = 'success' | 'info' | 'warning' | 'error' | 'confirmation';
 
 export interface Toast {
   id: string;
@@ -123,6 +123,9 @@ const ToastItem = memo(function ToastItem({ toast, onDismiss }: ToastItemProps) 
         )}
         {type === 'error' && (
           <AlertCircle className="h-4 w-4 text-red-400" />
+        )}
+        {type === 'confirmation' && (
+          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
         )}
       </div>
 

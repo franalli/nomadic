@@ -1,5 +1,6 @@
 # backend/app/db.py
 import re
+import threading
 from typing import AsyncGenerator, Generator, Optional
 
 from sqlalchemy import create_engine
@@ -70,9 +71,10 @@ def _to_async_database_url(url: str) -> str:
 
 ASYNC_DATABASE_URL = _to_async_database_url(DATABASE_URL)
 
-# Lazy-initialized async engine and session factory
+# Lazy-initialized async engine and session factory (double-checked locking)
 _async_engine: Optional[AsyncEngine] = None
 _async_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+_async_init_lock = threading.RLock()
 
 
 def _get_async_engine() -> AsyncEngine:
@@ -86,23 +88,25 @@ def _get_async_engine() -> AsyncEngine:
     """
     global _async_engine
     if _async_engine is None:
-        engine_kwargs: dict = {
-            "future": True,
-            "echo": False,
-        }
-
-        # SQLite does not support QueuePool settings like max_overflow.
-        if not ASYNC_DATABASE_URL.startswith("sqlite+"):
-            engine_kwargs.update(
-                {
-                    "pool_size": 15,
-                    "max_overflow": 25,
-                    "pool_recycle": 3600,
-                    "pool_pre_ping": True,
+        with _async_init_lock:
+            if _async_engine is None:
+                engine_kwargs: dict = {
+                    "future": True,
+                    "echo": False,
                 }
-            )
 
-        _async_engine = create_async_engine(ASYNC_DATABASE_URL, **engine_kwargs)
+                # SQLite does not support QueuePool settings like max_overflow.
+                if not ASYNC_DATABASE_URL.startswith("sqlite+"):
+                    engine_kwargs.update(
+                        {
+                            "pool_size": 15,
+                            "max_overflow": 25,
+                            "pool_recycle": 3600,
+                            "pool_pre_ping": True,
+                        }
+                    )
+
+                _async_engine = create_async_engine(ASYNC_DATABASE_URL, **engine_kwargs)
     return _async_engine
 
 
@@ -110,13 +114,15 @@ def _get_async_session_factory() -> async_sessionmaker[AsyncSession]:
     """Get or create the async session factory (lazy initialization)."""
     global _async_session_factory
     if _async_session_factory is None:
-        _async_session_factory = async_sessionmaker(
-            _get_async_engine(),
-            class_=AsyncSession,
-            autocommit=False,
-            autoflush=False,
-            expire_on_commit=False,
-        )
+        with _async_init_lock:
+            if _async_session_factory is None:
+                _async_session_factory = async_sessionmaker(
+                    _get_async_engine(),
+                    class_=AsyncSession,
+                    autocommit=False,
+                    autoflush=False,
+                    expire_on_commit=False,
+                )
     return _async_session_factory
 
 

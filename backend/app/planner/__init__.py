@@ -18,14 +18,10 @@ from typing import TYPE_CHECKING
 # Cache access
 from app.planner.cache_access import (
     cache_clear,
-    cache_contains,
     cache_delete,
     cache_get,
-    cache_len,
     cache_pop,
     cache_set,
-    update_counters_safe,
-    update_nested_counters_safe,
 )
 
 # Stable hashing
@@ -186,10 +182,6 @@ __all__ = [
     "cache_pop",
     "cache_delete",
     "cache_clear",
-    "cache_len",
-    "cache_contains",
-    "update_counters_safe",
-    "update_nested_counters_safe",
     # Stable hashing
     "stable_hash",
     "stable_hash_short",

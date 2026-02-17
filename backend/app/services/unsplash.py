@@ -12,6 +12,7 @@ Features:
 
 import asyncio
 import logging
+import threading
 import time
 from datetime import UTC, datetime
 from typing import List, Optional
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 # Key format: "unsplash::v2::{destination}[::{activity}]::variant-{n}"
 _memory_cache: dict[str, "UnsplashImage"] = {}
 _memory_cache_lock = asyncio.Lock()
+# Threading lock for sync access paths (get_cached_image_url, get_image_url_sync,
+# clear_memory_cache, get_memory_cache_stats). The asyncio.Lock above only
+# protects async callers; sync functions called from thread-pool executors need this.
+_sync_lock = threading.RLock()
 # In-flight fetch dedupe (destination/activity scoped).
 _inflight_fetches: dict[str, asyncio.Task[List["UnsplashImage"]]] = {}
 _inflight_fetches_lock = asyncio.Lock()
@@ -831,15 +836,16 @@ async def get_image_for_destination(
 
 def clear_memory_cache() -> None:
     """Clear the in-memory cache (useful for testing)."""
-    for task in _prefetch_destination_inflight.values():
-        if not task.done():
-            task.cancel()
-    _memory_cache.clear()
-    _inflight_fetches.clear()
-    _prefetch_destination_inflight.clear()
-    _prefetch_failure_until.clear()
-    _prefetch_timeout_streak.clear()
-    _prefetch_dest_failure_until.clear()
+    with _sync_lock:
+        for task in _prefetch_destination_inflight.values():
+            if not task.done():
+                task.cancel()
+        _memory_cache.clear()
+        _inflight_fetches.clear()
+        _prefetch_destination_inflight.clear()
+        _prefetch_failure_until.clear()
+        _prefetch_timeout_streak.clear()
+        _prefetch_dest_failure_until.clear()
 
 
 async def clear_db_cache(db: AsyncSession) -> int:
@@ -878,16 +884,17 @@ async def clear_db_cache(db: AsyncSession) -> int:
 
 def get_memory_cache_stats() -> dict:
     """Return statistics about the in-memory Unsplash cache."""
-    destinations = {
-        parts[2]
-        for key in _memory_cache.keys()
-        for parts in [key.split("::")]
-        if len(parts) >= 4 and parts[0] == "unsplash" and parts[1] == "v2"
-    }
-    return {
-        "entries": len(_memory_cache),
-        "destinations": len(destinations),
-    }
+    with _sync_lock:
+        destinations = {
+            parts[2]
+            for key in _memory_cache.keys()
+            for parts in [key.split("::")]
+            if len(parts) >= 4 and parts[0] == "unsplash" and parts[1] == "v2"
+        }
+        return {
+            "entries": len(_memory_cache),
+            "destinations": len(destinations),
+        }
 
 
 def get_cached_image_url(
@@ -898,11 +905,12 @@ def get_cached_image_url(
     activities: list[str] | None = None,
 ) -> str | None:
     """Return cached Unsplash URL or None. No blocking I/O."""
-    for key in _candidate_cache_keys(destination, variant, activities):
-        image = _memory_cache.get(key)
-        if image is not None:
-            return build_image_url(image.image_id, width, height)
-    return None
+    with _sync_lock:
+        for key in _candidate_cache_keys(destination, variant, activities):
+            image = _memory_cache.get(key)
+            if image is not None:
+                return build_image_url(image.image_id, width, height)
+        return None
 
 
 def get_image_url_sync(
@@ -936,12 +944,13 @@ def get_image_url_sync(
     )
 
     # Check in-memory cache (may be populated by previous async calls or prefetch)
-    for key in _candidate_cache_keys(destination, variant, activities):
-        image = _memory_cache.get(key)
-        if image is not None:
-            url = build_image_url(image.image_id, width, height)
-            logger.info(f"[UNSPLASH-SYNC] Cache HIT for {cache_key} using {key}: {url[:80]}...")
-            return url
+    with _sync_lock:
+        for key in _candidate_cache_keys(destination, variant, activities):
+            image = _memory_cache.get(key)
+            if image is not None:
+                url = build_image_url(image.image_id, width, height)
+                logger.info(f"[UNSPLASH-SYNC] Cache HIT for {cache_key} using {key}: {url[:80]}...")
+                return url
 
     # Fall back to activity-aware placeholder if activities specified,
     # otherwise use deterministic Unsplash destination placeholder.

@@ -4,11 +4,6 @@
  */
 
 /**
- * Toast notification type.
- * Used across multiple hooks and components for consistent toast styling.
- * - 'confirmation': Subtle feedback for UI setting changes (bottom-center, fast dismiss)
- * - 'info': General information (bottom-center)
- * - 'success': Positive feedback (bottom-center)
- * - 'error': Important errors requiring attention (top-right)
+ * Toast notification type — re-exported from the canonical definition in toast.tsx.
  */
-export type ToastType = 'info' | 'success' | 'error' | 'confirmation';
+export type { ToastType } from '@/components/ui/toast';

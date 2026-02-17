@@ -41,9 +41,6 @@ _cache_handles: Dict[CacheName, CacheHandle] = {}
 # Initialization flag to guard against access before init
 _initialized = False
 
-# Lock for protecting _cache_counters updates
-_cache_counters_lock = threading.Lock()
-
 
 def cache_get(
     name: CacheName,
@@ -187,82 +184,3 @@ def cache_clear(name: CacheName) -> None:
 
     with handle.lock:
         handle.cache_obj.clear()
-
-
-def cache_len(name: CacheName) -> int:
-    """
-    Thread-safe cache length query.
-
-    Args:
-        name: Name of the cache
-
-    Returns:
-        Number of items in the cache
-    """
-    handle = _cache_handles.get(name)
-    if handle is None:
-        return 0
-
-    with handle.lock:
-        return len(handle.cache_obj)
-
-
-def cache_contains(name: CacheName, key: str) -> bool:
-    """
-    Thread-safe check if key exists in cache.
-
-    Args:
-        name: Name of the cache
-        key: Cache key
-
-    Returns:
-        True if key exists in cache
-    """
-    handle = _cache_handles.get(name)
-    if handle is None:
-        return False
-
-    with handle.lock:
-        return key in handle.cache_obj
-
-
-def update_counters_safe(
-    counters: Dict[str, int],
-    key: str,
-    amount: int = 1,
-) -> None:
-    """
-    Thread-safe counter increment.
-
-    Uses the global _cache_counters_lock.
-
-    Args:
-        counters: The counter dict to update
-        key: Counter key
-        amount: Amount to increment
-    """
-    with _cache_counters_lock:
-        counters[key] = counters.get(key, 0) + amount
-
-
-def update_nested_counters_safe(
-    counters: Dict[str, Dict[str, int]],
-    outer_key: str,
-    inner_key: str,
-    amount: int = 1,
-) -> None:
-    """
-    Thread-safe nested counter increment.
-
-    Uses the global _cache_counters_lock.
-
-    Args:
-        counters: The nested counter dict to update
-        outer_key: Outer dict key
-        inner_key: Inner dict key
-        amount: Amount to increment
-    """
-    with _cache_counters_lock:
-        if outer_key not in counters:
-            counters[outer_key] = {}
-        counters[outer_key][inner_key] = counters[outer_key].get(inner_key, 0) + amount
