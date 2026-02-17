@@ -22,7 +22,6 @@ Architect, Specialist, and Guard outputs into a coherent narrative.
 import logging
 import os
 import re
-from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -406,16 +405,9 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
     parts.append(f"- Destination: {plan.destination or 'Not set'}")
     if plan.start_date:
         parts.append(f"- Dates: {plan.start_date} to {plan.end_date or 'TBD'}")
-    date_adjustments = state.metadata.get("date_auto_adjustments", []) or []
-    if date_adjustments:
-        parts.append("- Date adjustments applied this turn:")
-        for adj in date_adjustments:
-            old_date = adj.get("from")
-            new_date = adj.get("to")
-            field_name = str(adj.get("field", "date")).replace("_", " ")
-            if old_date and new_date:
-                parts.append(f"  - {field_name}: {old_date} -> {new_date}")
-        parts.append("- IMPORTANT: Mention these exact adjusted dates in your response.")
+    # NOTE: date_auto_adjustments (past→future year bump) is an internal
+    # router convenience — never surface it to the user. The final dates
+    # on trip_plan are already correct; the LLM only needs those.
     parts.append(f"- Travelers: {plan.adults} adults, {plan.children} children")
     if plan.budget:
         parts.append(f"- Budget: {plan.currency} {plan.budget}")
@@ -1110,51 +1102,6 @@ def _ground_activity_claims(message: str, state: GraphState) -> str:
     return merged or grounded
 
 
-def _message_mentions_date(message: str, iso_date: str) -> bool:
-    text = (message or "").lower()
-    if not text or not iso_date:
-        return False
-
-    if iso_date.lower() in text:
-        return True
-
-    try:
-        parsed = datetime.strptime(iso_date, "%Y-%m-%d")
-    except ValueError:
-        return False
-
-    month_long = parsed.strftime("%B").lower()
-    month_short = parsed.strftime("%b").lower()
-    day = parsed.day
-    year = parsed.year
-    day_pattern = rf"{day}(?:st|nd|rd|th)?"
-
-    if re.search(rf"\b{parsed.month}/{parsed.day}/{year}\b", text):
-        return True
-    if re.search(rf"\b{parsed.month:02d}/{parsed.day:02d}/{year}\b", text):
-        return True
-
-    month_patterns = (month_long, month_short)
-    for month in month_patterns:
-        # Covers:
-        # - "February 15, 2027"
-        # - "Feb 15, 2027"
-        # - "February 15-25, 2027" (for start-day check)
-        # - "February 15-25, 2027" (for end-day check via second range pattern)
-        if re.search(
-            rf"\b{month}\b[^.!?\n]{{0,20}}\b{day_pattern}\b[^.!?\n]{{0,20}}\b{year}\b",
-            text,
-        ):
-            return True
-        if re.search(
-            rf"\b{month}\b[^.!?\n]{{0,20}}\b\d{{1,2}}\b\s*[-–]\s*\b{day_pattern}\b[^.!?\n]{{0,20}}\b{year}\b",
-            text,
-        ):
-            return True
-
-    return False
-
-
 def _strip_day_pref_recap_from_sentence(sentence: str) -> str:
     if not _DAY_PREF_RECAP_PATTERN.search(sentence or ""):
         return (sentence or "").strip()
@@ -1288,33 +1235,6 @@ def _strip_hallucinated_flight_count_claims(message: str) -> str:
     return " ".join(kept).strip()
 
 
-def _ground_date_adjustment_message(message: str, state: GraphState) -> str:
-    adjustments = state.metadata.get("date_auto_adjustments", []) or []
-    if not adjustments:
-        return message
-
-    grounded = (message or "").strip()
-    missing = []
-    for adj in adjustments:
-        old_date = str(adj.get("from") or "").strip()
-        new_date = str(adj.get("to") or "").strip()
-        field_name = str(adj.get("field") or "date").replace("_", " ")
-        if not old_date or not new_date:
-            continue
-        # If the response already mentions the corrected date, don't add extra noise.
-        if _message_mentions_date(grounded, new_date):
-            continue
-        missing.append((field_name, old_date, new_date))
-
-    if not missing:
-        return grounded
-
-    pairs = ", ".join(f"{field} **{old} -> {new}**" for field, old, new in missing)
-    note = f"Adjusted past dates to future dates: {pairs}."
-    logger.debug(f"[VERIFY][SYNTH] appended_date_adjustment_note adjustments={len(missing)}")
-    return f"{grounded} {note}".strip()
-
-
 def _ground_flight_response(message: str, state: GraphState) -> str:
     """
     Ensure chat text doesn't claim flights that were not actually returned.
@@ -1332,7 +1252,6 @@ def _ground_flight_response(message: str, state: GraphState) -> str:
         )
 
     grounded = _ground_activity_claims(grounded, state)
-    grounded = _ground_date_adjustment_message(grounded, state)
 
     flights_found = len([t for t in state.tiles.get("flights", []) if t]) if state.tiles else 0
     if flights_found <= 0:
