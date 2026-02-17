@@ -580,6 +580,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const isUserScrolledUpRef = useRef(false);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const autoExpandTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const focusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const sheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const abortStreamRef = useRef<(() => void) | null>(null);
     // SYNC GUARD: Prevent duplicate message sends (React StrictMode safe)
     const isSendingRef = useRef(false);
@@ -619,11 +621,19 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
       // On desktop, filter out "Build Plan" chip since the right panel has that CTA
       // Keep one primary CTA at a time to avoid competing buttons
+      let result = filtered;
       if (isDesktop) {
-        return filtered.filter((s) => s.toLowerCase() !== 'build plan');
+        result = filtered.filter((s) => s.toLowerCase() !== 'build plan');
       }
-      return filtered;
+
+      const dropped = suggestedResponses.length - result.length;
+      if (dropped > 0) {
+        console.warn('[suggestions] raw from SSE:', suggestedResponses.length, 'after dedup:', filtered.length, 'after desktop filter:', result.length, 'dropped:', dropped);
+      }
+      return result;
     }, [suggestedResponses, isDesktop]);
+
+
 
     // Dynamic height — mobile fills parent (docked input), desktop grows naturally
     const panelHeightClass = fullHeight
@@ -755,6 +765,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         }
         if (autoExpandTimeoutRef.current) {
           clearTimeout(autoExpandTimeoutRef.current);
+        }
+        if (focusTimeoutRef.current) {
+          clearTimeout(focusTimeoutRef.current);
+        }
+        if (sheetOpenTimeoutRef.current) {
+          clearTimeout(sheetOpenTimeoutRef.current);
         }
       };
     }, []);
@@ -1459,7 +1475,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       if (inputRef.current) {
         inputRef.current.style.height = 'auto';
       }
-      setTimeout(() => inputRef.current?.focus(), 0);
+      focusTimeoutRef.current = setTimeout(() => inputRef.current?.focus(), 0);
       await sendMessageCore(trimmed);
     }
 
@@ -1642,7 +1658,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onScroll={handleScroll}
         >
           {/* Inner wrapper: messages flow top-down; on mobile, mt-auto anchors to bottom */}
-          <div className={cn("flex flex-col space-y-3", !isDesktop && visibleMessages.length > 0 && "mt-auto")}>
+          <div className={cn("flex flex-col space-y-4", !isDesktop && visibleMessages.length > 0 && "mt-auto")}>
           {isLoadingHistory ? (
             /* Tier 9: Skeleton loading for better perceived performance */
             <ChatSkeleton count={2} />
@@ -1794,9 +1810,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </>
           )}
         </div>
+        </div>{/* close scroll container */}
 
-        {/* Input area with suggestions - grouped together at bottom */}
-        <div className="mt-auto space-y-3 pb-0">
+        {/* Input area with suggestions — pinned below scroll container */}
+        <div className="shrink-0 space-y-4 pb-0">
           {/* Smart Loader: Status line above input - DS Section 19.C */}
           {isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
             <SmartLoader status={activeStatus} />
@@ -2007,8 +2024,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               </div>
             </>
           )}
-        </div>{/* close inner wrapper */}
-        </div>{/* close scroll container */}
+        </div>{/* close input area */}
 
         {/* Module sheets (flights/stays/activities) - control booking types */}
         {/* Trip input sheets (destination/origin/dates/travelers/budget) are in NomadicLanding */}
@@ -2034,15 +2050,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           }}
           onOpenOrigin={() => {
             setFlightsSheetOpen(false);
-            setTimeout(() => onOpenSheet?.('origin'), 150);
+            sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('origin'), 150);
           }}
           onOpenDestination={() => {
             setFlightsSheetOpen(false);
-            setTimeout(() => onOpenSheet?.('destination'), 150);
+            sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('destination'), 150);
           }}
           onOpenDates={() => {
             setFlightsSheetOpen(false);
-            setTimeout(() => onOpenSheet?.('dates'), 150);
+            sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('dates'), 150);
           }}
         />
 
@@ -2079,11 +2095,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           }}
           onOpenDestination={() => {
             setStaysSheetOpen(false);
-            setTimeout(() => onOpenSheet?.('destination'), 150);
+            sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('destination'), 150);
           }}
           onOpenDates={() => {
             setStaysSheetOpen(false);
-            setTimeout(() => onOpenSheet?.('dates'), 150);
+            sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('dates'), 150);
           }}
         />
 
@@ -2141,7 +2157,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           }}
           onOpenDestination={() => {
             setActivitiesSheetOpen(false);
-            setTimeout(() => onOpenSheet?.('destination'), 150);
+            sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('destination'), 150);
           }}
         />
       </div>

@@ -75,10 +75,7 @@ backend/
 │   │   ├── cache_access.py     # Planner cache utilities
 │   │   ├── hashing.py          # Hash utilities
 │   │   ├── llm_factory.py      # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
-│   │   ├── meta.py             # Metadata utilities
-│   │   ├── meta_keys.py        # Metadata key constants
 │   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
-│   │   ├── telemetry.py        # Telemetry/logging
 │   │   ├── test_mode.py        # Test mode utilities
 │   │   │
 │   │   ├── nodes/              # LangGraph nodes (7-node structure)

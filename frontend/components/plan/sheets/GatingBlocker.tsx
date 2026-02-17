@@ -9,6 +9,7 @@
 'use client';
 
 import { AlertCircle } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -39,6 +40,14 @@ export interface GatingBlockerProps {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function GatingBlocker({ featureLabel, gates, onClose }: GatingBlockerProps) {
+  const gateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (gateTimeoutRef.current) clearTimeout(gateTimeoutRef.current);
+    };
+  }, []);
+
   const unmet = gates.filter((g) => !g.met);
 
   if (unmet.length === 0) return null;
@@ -50,7 +59,7 @@ export function GatingBlocker({ featureLabel, gates, onClose }: GatingBlockerPro
       // Clean, cool technical surface
       'mb-4 p-5 rounded-xl flex gap-4 items-start',
       'bg-zinc-50 dark:bg-white/[0.02]',
-      'border border-zinc-200 dark:border-white/5'
+      'border border-zinc-100 dark:border-white/5'
     )}>
       <AlertCircle className="h-5 w-5 text-zinc-400 dark:text-zinc-500 flex-shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
@@ -65,7 +74,7 @@ export function GatingBlocker({ featureLabel, gates, onClose }: GatingBlockerPro
                 type="button"
                 onClick={() => {
                   onClose();
-                  setTimeout(gate.onOpen!, 150);
+                  gateTimeoutRef.current = setTimeout(gate.onOpen!, 150);
                 }}
                 className={cn(
                   'text-[10px] font-bold uppercase tracking-wide',

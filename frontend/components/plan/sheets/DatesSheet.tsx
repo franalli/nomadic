@@ -221,7 +221,7 @@ function DatesSheetInner({
               {/* ═══════════════════════════════════════════════════════════════ */}
               <div className="pt-6 px-6 pb-4 border-b border-zinc-100 dark:border-white/5">
                 {/* Header */}
-                <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-500 mb-4">
+                <h2 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mb-4">
                   Timeline
                 </h2>
                 {/* Quick Select Pills - High Contrast Wireframe Look */}
@@ -236,10 +236,10 @@ function DatesSheetInner({
                         'transition-all duration-200',
                         activePreset === preset.label
                           // Selected: Solid Black (Light) / Solid White (Dark)
-                          ? 'bg-zinc-900 text-white dark:bg-white dark:text-black shadow-md'
+                          ? 'bg-zinc-900 text-white border-2 border-transparent dark:bg-white dark:text-black dark:border-transparent shadow-md'
                           // Unselected: White with border
                           : cn(
-                              'border-2 border-zinc-200 dark:border-2 dark:border-white/15',
+                              'bg-white border-2 border-zinc-200 dark:border-2 dark:border-white/15',
                               'dark:bg-white/5',
                               'text-zinc-600 dark:text-zinc-400',
                               'hover:border-zinc-900 hover:bg-zinc-50 dark:hover:border-white/40 dark:hover:bg-white/5'

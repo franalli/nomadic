@@ -195,7 +195,7 @@ export function CategorySection({
                     {/* Rating */}
                     {tile.rating && (
                       <div className="mt-1 flex items-center gap-1 text-sm">
-                        <span className="text-emerald-500">★</span>
+                        <span className="text-zinc-500 dark:text-zinc-300">★</span>
                         <span className="font-medium">{tile.rating.toFixed(1)}</span>
                       </div>
                     )}

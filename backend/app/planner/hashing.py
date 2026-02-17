@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 
 def stable_hash(value: Any, *, length: int = 16) -> str:
@@ -91,24 +91,6 @@ def canonicalize_destinations(destinations: Optional[Sequence[str]]) -> str:
     # Normalize: lowercase, strip, sort
     normalized = sorted(d.strip().lower() for d in destinations if d and d.strip())
     return "|".join(normalized)
-
-
-def canonicalize_dict(d: Optional[Mapping[str, Any]]) -> str:
-    """
-    Create a canonical JSON string from a dict for cache keys.
-
-    Ensures consistent key ordering.
-
-    Args:
-        d: Dictionary or None
-
-    Returns:
-        Canonical JSON string
-    """
-    if not d:
-        return "{}"
-
-    return json.dumps(dict(d), sort_keys=True, default=str, ensure_ascii=True)
 
 
 def make_cache_key(*parts: Any) -> str:

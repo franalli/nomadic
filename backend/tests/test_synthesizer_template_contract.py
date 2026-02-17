@@ -113,10 +113,10 @@ def test_specialist_breakdown_from_metadata_dict_sections() -> None:
 
     context = _build_synthesis_context(state, response_type="specialist_update")
 
-    assert "## Specialist Activities Generated" in context
-    assert "- diving: 3 activities" in context
+    assert "## What Changed This Turn" in context
+    assert "- Specialist activities placed: diving: 3" in context
     assert "local_expert" not in context
-    assert "Use THESE counts (not day_preferences)" in context
+    assert "Mention what changed, not inventory" in context
 
 
 @dataclass
@@ -136,9 +136,9 @@ def test_specialist_breakdown_from_metadata_object_sections() -> None:
 
     context = _build_synthesis_context(state, response_type="specialist_update")
 
-    assert "## Specialist Activities Generated" in context
-    assert "- hiking: 2 activities" in context
-    assert "Use THESE counts (not day_preferences)" in context
+    assert "## What Changed This Turn" in context
+    assert "- Specialist activities placed: hiking: 2" in context
+    assert "Mention what changed, not inventory" in context
 
 
 def test_plan_flight_pref_maps_to_direct_flights_trigger_action() -> None:
@@ -415,6 +415,41 @@ async def test_synthesizer_settings_only_uses_terse_ack_without_llm(
     assert calls["llm"] == 0
     assert state.last_summary == "Applied your preference."
     assert state.metadata.get("synthesizer_output", {}).get("used_llm") is False
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_settings_with_date_change_routes_to_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Date changes bypass terse ack even when settings_just_updated is true."""
+    state = _new_state(
+        metadata={
+            "settings_just_updated": True,
+            "actionable_acknowledgment": "Updated dates.",
+            "constraint_violations": [],
+            "added_categories": [],
+            "tier2_new_content_generated": False,
+            "turn_applied_fields": ["end_date"],
+        },
+        last_human="extend by 5 days",
+    )
+    calls = {"llm": 0}
+
+    async def _fake_enrich_with_images(_state: GraphState) -> None:
+        return None
+
+    async def _fake_synthesize_with_llm(_state: GraphState, _response_type: str):
+        calls["llm"] += 1
+        return ("Extended by **5 days** to **Mar 13**.", None)
+
+    monkeypatch.setattr(synthesizer_module, "enrich_with_images", _fake_enrich_with_images)
+    monkeypatch.setattr(synthesizer_module, "synthesize_with_llm", _fake_synthesize_with_llm)
+    monkeypatch.setattr(synthesizer_module, "generate_suggestions", lambda _state: [])
+
+    await synthesizer_module.synthesizer(state)
+
+    assert calls["llm"] == 1
+    assert state.metadata.get("synthesizer_output", {}).get("used_llm") is True
 
 
 @pytest.mark.asyncio

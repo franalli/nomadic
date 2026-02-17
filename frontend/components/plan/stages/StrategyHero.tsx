@@ -1,3 +1,4 @@
+// TODO: DS spacing audit — requires visual QA pass
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * StrategyHero

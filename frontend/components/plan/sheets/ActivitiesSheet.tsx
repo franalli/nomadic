@@ -306,7 +306,7 @@ function ActivitiesSheetInner({
                       'transition-all duration-150 text-left',
                       isSelected
                         // Selected: Strong ring for emphasis
-                        ? 'bg-zinc-100 dark:bg-white/10 border-2 border-zinc-900 dark:border-white/40'
+                        ? 'bg-zinc-900 text-white border-2 border-transparent shadow-md dark:bg-white dark:text-black dark:border-transparent'
                         // Inactive: Glass Fill
                         : cn(
                             'bg-white border-2 border-zinc-200',
@@ -321,7 +321,7 @@ function ActivitiesSheetInner({
                       className={cn(
                         'text-sm font-semibold',
                         isSelected
-                          ? 'text-zinc-900 dark:text-white'
+                          ? 'text-white dark:text-black'
                           : 'text-zinc-600 dark:text-zinc-400'
                       )}
                     >

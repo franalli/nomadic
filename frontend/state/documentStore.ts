@@ -1457,7 +1457,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     debugLog(
       `[documentStore.setFromPlanResponse] 🏷️ Writing suggestions:`,
       `received=${response.document.suggested_responses?.length ?? 0}`,
-      `values=${JSON.stringify(response.document.suggested_responses?.slice(0, 2))}`
+      `values=${JSON.stringify(response.document.suggested_responses)}`,
+      `chips=${response.document.suggestion_chips?.length ?? 0}`
     );
 
     // Safety net: map legacy itinerary_day_cards → day_cards if present

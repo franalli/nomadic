@@ -449,35 +449,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/graph_plan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Graph Plan Endpoint
-         * @description LangGraph-based planning endpoint.
-         *
-         *     Accepts a user message and optional session state, runs the graph planner,
-         *     persists document updates, and returns the updated session state.
-         *
-         *     Features:
-         *     - Feature flag gating (ENABLE_GRAPH_PLAN_ROUTE)
-         *     - Payload size validation
-         *     - Optimistic concurrency via document versioning
-         *     - Cache-Control: no-store to prevent caching of personalized responses
-         */
-        post: operations["graph_plan_endpoint_api_graph_plan_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/graph_plan/stream": {
         parameters: {
             query?: never;
@@ -704,39 +675,6 @@ export interface paths {
          *     the generator using the session factory.
          */
         post: operations["expand_itinerary_endpoint_api_expand_itinerary_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/remove-specialist": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Remove Specialist Endpoint
-         * @description Remove specialists and regenerate itinerary (conflict resolution).
-         *
-         *     When ItineraryBuilder detects a constraint conflict (e.g., diving + hiking
-         *     in 4 days), user can choose "Focus on diving". This endpoint:
-         *     1. Removes other specialists from executed_strategy_topics
-         *     2. Filters strategy_sections to keep only the kept specialist
-         *     3. Clears day_cards (they'll be regenerated)
-         *     4. Re-runs ItineraryBuilder with the simplified plan
-         *
-         *     Streams NDJSON events (same format as expand-itinerary):
-         *         {"type": "progress", "stage": "itinerary", "message": "...", "pct": 30}
-         *         {"type": "envelope", "plan_envelope": {...}}
-         *         {"type": "done", "plan_view_state": "S3_ITINERARY_READY|S3_EDITING|S3_PARTIAL_CONFLICT"}
-         *         {"type": "error", "message": "..."}
-         */
-        post: operations["remove_specialist_endpoint_api_remove_specialist_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1357,34 +1295,6 @@ export interface components {
             suggestion_clicked?: string | null;
         };
         /**
-         * GraphPlanResponse
-         * @description Response from /v1/graph_plan endpoint.
-         */
-        GraphPlanResponse: {
-            document: components["schemas"]["PlanDocumentData"];
-            /** Session State */
-            session_state: {
-                [key: string]: unknown;
-            };
-            /** Version */
-            version: number;
-            /**
-             * Updated By
-             * @enum {string}
-             */
-            updated_by: "user" | "planner";
-            /** Updated At */
-            updated_at: string;
-            /**
-             * Changes Made
-             * @default false
-             */
-            changes_made: boolean;
-            /** Request Id */
-            request_id: string;
-            observability?: components["schemas"]["GraphPlanObservability"] | null;
-        };
-        /**
          * GraphPlanTokens
          * @description Token usage for observability.
          */
@@ -1663,54 +1573,6 @@ export interface components {
             key: "origin" | "destination" | "start_date" | "end_date" | "travelers" | "budget";
             /** Ok */
             ok: boolean;
-        };
-        /**
-         * RemoveSpecialistRequest
-         * @description Request to remove specialists and regenerate itinerary (conflict resolution).
-         *
-         *     Used when ItineraryBuilder detects a constraint conflict and user chooses
-         *     to focus on one specialist (e.g., "Focus on diving" when diving + hiking conflicts).
-         */
-        RemoveSpecialistRequest: {
-            /**
-             * Idempotency Key
-             * @description Client-generated UUID to prevent duplicate generation
-             */
-            idempotency_key: string;
-            /**
-             * Keep Specialist
-             * @description The specialist to keep (e.g., 'diving', 'hiking')
-             */
-            keep_specialist: string;
-            /**
-             * Remove Hearted Tiles
-             * @description If true, removes hearted tiles from removed specialists
-             * @default false
-             */
-            remove_hearted_tiles: boolean;
-            /**
-             * Trip Inputs
-             * @description Trip inputs from frontend document
-             */
-            trip_inputs?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Strategy Sections
-             * @description Strategy sections from frontend document
-             */
-            strategy_sections?: {
-                [key: string]: unknown;
-            }[] | null;
-            /**
-             * Tiles
-             * @description Tiles from frontend document
-             */
-            tiles?: {
-                [key: string]: unknown;
-            } | null;
-            /** @description User's hearted tile preferences for AI weighting */
-            preferences?: components["schemas"]["PreferenceOverride"] | null;
         };
         /**
          * ResolverState
@@ -2437,39 +2299,6 @@ export interface operations {
             };
         };
     };
-    graph_plan_endpoint_api_graph_plan_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GraphPlanRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GraphPlanResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     graph_plan_stream_endpoint_api_graph_plan_stream_post: {
         parameters: {
             query?: never;
@@ -2721,39 +2550,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ExpandItineraryRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_specialist_endpoint_api_remove_specialist_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RemoveSpecialistRequest"];
             };
         };
         responses: {

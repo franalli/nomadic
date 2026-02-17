@@ -1836,9 +1836,12 @@ async def intent_router(state: GraphState) -> GraphState:
     state.metadata.pop("router_detected_settings_change", None)
     state.metadata.pop("updated_settings", None)
     state.metadata.pop("added_categories", None)
+    state.metadata.pop("requested_already_active", None)
     state.metadata.pop("tier2_tiles_generated", None)
     state.metadata.pop("tier2_new_content_generated", None)
     state.metadata.pop("date_auto_adjustments", None)
+    state.metadata.pop("turn_applied_fields", None)
+    state.metadata.pop("prev_trip_values_snapshot", None)
 
     _debug_node_start(
         "router",
@@ -2133,9 +2136,14 @@ async def intent_router(state: GraphState) -> GraphState:
                                 .get("activity_settings", {})
                                 .get("categories", [])
                             )
-                            if resolved - existing_cats:
-                                actionable.setdefault("add_categories", set()).update(resolved)
-                                log("ROUTER", f"[ACTIONABLE] LLM resolved: {resolved}")
+                            new_cats = resolved - existing_cats
+                            already_active = resolved & existing_cats
+                            if new_cats:
+                                actionable.setdefault("add_categories", set()).update(new_cats)
+                                log("ROUTER", f"[ACTIONABLE] LLM resolved: {new_cats}")
+                            if already_active:
+                                state.metadata["requested_already_active"] = sorted(already_active)
+                                log("ROUTER", f"[ACTIONABLE] Already active: {already_active}")
                     except Exception as e:
                         log("ROUTER", f"[ACTIONABLE] LLM resolution failed: {e}")
                         state.metadata["router_extraction_failed"] = True
@@ -2168,6 +2176,20 @@ async def intent_router(state: GraphState) -> GraphState:
             from app.debug_utils import log
 
             log("ROUTER", "[POST-PLAN] Dates changed, upgrading to soft_transition")
+            # Populate turn_applied_fields NOW — the architect won't detect the
+            # change because the router already applied new dates to state.trip_plan.
+            taf = state.metadata.get("turn_applied_fields", [])
+            if state.trip_plan.start_date != old_start and "start_date" not in taf:
+                taf.append("start_date")
+            if state.trip_plan.end_date != old_end and "end_date" not in taf:
+                taf.append("end_date")
+            state.metadata["turn_applied_fields"] = taf
+            state.metadata.setdefault("prev_trip_values_snapshot", {}).update(
+                {
+                    "start_date": old_start,
+                    "end_date": old_end,
+                }
+            )
 
         destination = _extract_destination_context(user_text, state)
 
@@ -2257,6 +2279,20 @@ async def intent_router(state: GraphState) -> GraphState:
         if state.trip_plan.start_date != old_start_date or state.trip_plan.end_date != old_end_date:
             planning_intent = "soft_transition"
             log("ROUTER", "[OPPORTUNISTIC] Dates changed, upgrading to soft_transition")
+            # Populate turn_applied_fields NOW — the architect won't detect the
+            # change because we already applied the new dates to state.trip_plan.
+            # Without this, _get_response_type() misses the date shift and falls
+            # through to specialist_update instead of planning.
+            taf = state.metadata.get("turn_applied_fields", [])
+            if state.trip_plan.start_date != old_start_date and "start_date" not in taf:
+                taf.append("start_date")
+            if state.trip_plan.end_date != old_end_date and "end_date" not in taf:
+                taf.append("end_date")
+            state.metadata["turn_applied_fields"] = taf
+            state.metadata["prev_trip_values_snapshot"] = {
+                "start_date": old_start_date,
+                "end_date": old_end_date,
+            }
 
         log(
             "ROUTER",

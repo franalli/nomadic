@@ -145,16 +145,34 @@ def _get_response_type(state) -> str:
         and state.trip_plan.end_date
     )
 
-    # Planning mode when constraint violations exist on FIRST plan only.
-    # After first plan, constraint reasoning appears in Logic Log — terse ack suffices.
-    if meta.get("constraint_violations"):
-        if not meta.get("_planning_response_given"):
-            if has_full_trip:
-                state.metadata["_planning_response_given"] = True
+    # Detect significant changes that warrant full planning-depth response
+    # even after the first plan has been given.
+    turn_applied = meta.get("turn_applied_fields", [])
+    has_significant_change = (
+        meta.get("specialist_just_ran")
+        or meta.get("constraint_violations")
+        or any(f in turn_applied for f in ("start_date", "end_date"))
+        or len(meta.get("added_categories", [])) > 0
+    )
+
+    logger.info(
+        "[SYNTH_ROUTE] turn_applied=%s added_cats=%s "
+        "planning_given=%s has_full_trip=%s has_sig_change=%s",
+        turn_applied,
+        meta.get("added_categories"),
+        meta.get("_planning_response_given"),
+        has_full_trip,
+        has_significant_change,
+    )
+
+    # Planning mode: constraint violations with material plan change
+    if meta.get("constraint_violations") and has_full_trip:
+        if has_significant_change or not meta.get("_planning_response_given"):
+            state.metadata["_planning_response_given"] = True
             return "planning"
 
-    # Planning mode: first time all core fields are set (one-time flag)
-    if has_full_trip and not meta.get("_planning_response_given"):
+    # Planning mode: first time all core fields are set OR significant re-plan
+    if has_full_trip and (not meta.get("_planning_response_given") or has_significant_change):
         state.metadata["_planning_response_given"] = True
         return "planning"
 
@@ -162,7 +180,7 @@ def _get_response_type(state) -> str:
     if meta.get("exploration_mode"):
         return "exploration"
 
-    # Check if specialist just ran (adding diving, hiking, etc.)
+    # Specialist ran but no significant structural change — terse ack
     if (
         meta.get("specialist_hint")
         or meta.get("specialist_just_ran")
@@ -170,7 +188,7 @@ def _get_response_type(state) -> str:
     ):
         return "specialist_update"
 
-    # Check for active planning (has destination)
+    # Active planning (has destination, no significant change)
     if state.trip_plan and state.trip_plan.destination:
         return "specialist_update"
 
@@ -239,16 +257,31 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
     """
     parts = []
     plan = state.trip_plan
+    meta = state.metadata or {}
+
+    # Diagnostic: log what the synthesizer receives as context signals
+    turn_applied = meta.get("turn_applied_fields", [])
+    added_cats = meta.get("added_categories", [])
+    logger.info(
+        "[SYNTH_CONTEXT] response_type=%s turn_applied=%s added_cats=%s "
+        "specialist_just_ran=%s planning_given=%s requested_already_active=%s",
+        response_type,
+        turn_applied,
+        added_cats,
+        meta.get("specialist_just_ran"),
+        meta.get("_planning_response_given"),
+        meta.get("requested_already_active"),
+    )
 
     # Architect mode context - CRITICAL for LLM to know what response to generate
-    architect_mode = state.metadata.get("architect_mode", "unknown")
+    architect_mode = meta.get("architect_mode", "unknown")
     parts.append("## Current Mode")
     parts.append(f"- Architect mode: {architect_mode}")
 
     # Planning phase for tone differentiation
     # P0/P1/P2 = gathering/exploring phase (conversational, guiding)
     # P3 = finalized phase (confirming, ready to book)
-    plan_view_state = state.metadata.get("plan_view_state", "P0_MINIMAL")
+    plan_view_state = meta.get("plan_view_state", "P0_MINIMAL")
     # Normalize legacy S* values to P* for tone calculation
     if plan_view_state.startswith("S0") or plan_view_state.startswith("S1"):
         plan_view_state = "P0_MINIMAL"
@@ -262,19 +295,25 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
     parts.append(f"- Tone mode: {tone_mode}")
 
     # Flexible date resolution info
-    if state.metadata.get("flexible_date_resolved"):
+    if meta.get("flexible_date_resolved"):
         parts.append("- flexible_date_resolved: true")
-        parts.append(f"- resolved_start_date: {state.metadata.get('resolved_start_date')}")
-        parts.append(f"- resolved_end_date: {state.metadata.get('resolved_end_date')}")
+        parts.append(f"- resolved_start_date: {meta.get('resolved_start_date')}")
+        parts.append(f"- resolved_end_date: {meta.get('resolved_end_date')}")
 
     # Fields changed this turn (for acknowledgment)
-    turn_applied = state.metadata.get("turn_applied_fields", [])
     if turn_applied:
         parts.append(f"- Fields changed this turn: {', '.join(turn_applied)}")
 
-    added_cats = state.metadata.get("added_categories", [])
     if added_cats:
         parts.append(f"- NEW categories this turn: {', '.join(added_cats)}")
+
+    already_active = meta.get("requested_already_active", [])
+    if already_active:
+        parts.append(
+            f"- User requested {', '.join(already_active)} but "
+            f"{'it was' if len(already_active) == 1 else 'they were'} already active. "
+            f"Do NOT say {'it was' if len(already_active) == 1 else 'they were'} added."
+        )
 
     # Inject change_type signal for specialist_update prompt routing
     if response_type == "specialist_update":
@@ -479,21 +518,20 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
             spec_counts[specialist_type] = count
 
     if spec_counts:
-        counts_str = ", ".join(f"{k}: {v} activities" for k, v in spec_counts.items())
-        parts.append("\n## Specialist Activities Generated")
-        parts.append(f"- {counts_str}")
-        parts.append("- Use THESE counts (not day_preferences) when mentioning activity numbers.")
+        counts_str = ", ".join(f"{k}: {v}" for k, v in spec_counts.items())
+        parts.append("\n## What Changed This Turn")
+        parts.append(f"- Specialist activities placed: {counts_str}")
+        parts.append("- Mention what changed, not inventory. Counts are context, not copy.")
 
-    # Specialist content - COUNTS ONLY (descriptions are in the plan view)
+    # Specialist content — totals for grounding only (plan view has details)
     if plan.itinerary_blocks:
         activity_blocks = [b for b in plan.itinerary_blocks if not getattr(b, "is_buffer", False)]
         buffer_blocks = [b for b in plan.itinerary_blocks if getattr(b, "is_buffer", False)]
-        parts.append("\n## Specialist Content (counts only - details in plan view)")
         if activity_blocks:
-            parts.append(f"- Activities added: {len(activity_blocks)}")
+            parts.append(f"- Total specialist activities in plan: {len(activity_blocks)}")
         if buffer_blocks:
-            parts.append(f"- Safety buffers: {len(buffer_blocks)}")
-        parts.append("- NOTE: Do NOT describe activities in chat. Just mention counts.")
+            parts.append(f"- Safety buffers in plan: {len(buffer_blocks)}")
+        parts.append("- NOTE: Do NOT list or count activities in chat. Describe what changed.")
 
     # Builder drop reporting — tell user when activities couldn't fit
     drop_ratio = state.metadata.get("last_builder_drop_ratio", 0.0)
@@ -2114,11 +2152,15 @@ async def synthesizer(state: GraphState) -> GraphState:
     try:
         # Settings update gate — check if new content was generated
         # Terse ack OK for pure settings changes (e.g., "4-star hotels only")
-        # Full LLM synthesis needed when tiles/categories generated or violations exist
+        # Full LLM synthesis needed when tiles/categories generated, violations,
+        # or structural changes (date shifts) that require natural-language framing
+        turn_applied_fields = state.metadata.get("turn_applied_fields", [])
         has_violations = len(state.metadata.get("constraint_violations", [])) > 0
+        has_date_change = any(f in turn_applied_fields for f in ("start_date", "end_date"))
         has_new_content = bool(
             state.metadata.get("tier2_new_content_generated")  # NEW Tier 2 content this turn
             or len(state.metadata.get("added_categories", [])) > 0  # NEW categories added
+            or has_date_change  # Date shift needs LLM framing, not terse ack
         )
 
         if (
@@ -2238,7 +2280,13 @@ async def synthesizer(state: GraphState) -> GraphState:
     suggested_replies = generate_suggestions(state)
 
     # Log response details
-    log("SYNTH", f"Response: {len(message)} chars")
+    _chips = state.metadata.get("suggestion_chips", [])
+    _meta = state.metadata.get("suggestion_chip_meta", [])
+    log(
+        "SYNTH",
+        f"Response: {len(message)} chars | "
+        f"replies={len(suggested_replies)} chips={len(_chips)} meta={len(_meta)}",
+    )
     log("SYNTH", f"Suggested replies: {suggested_replies[:3]}")
 
     # Update state

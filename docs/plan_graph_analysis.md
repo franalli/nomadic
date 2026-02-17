@@ -62,10 +62,7 @@ backend/app/planner/
 ├── __init__.py              # Facade exports (stable public API)
 ├── cache_access.py          # Cache utilities
 ├── hashing.py               # Stable hashing utilities
-├── meta.py                  # Metadata helpers
-├── meta_keys.py             # Metadata key constants
 ├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
-├── telemetry.py             # Telemetry instrumentation
 ├── test_mode.py             # Test mode detection
 ├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
 #   Frontend mirror: frontend/lib/specialists.ts (colors, icons, keywords, display names)
@@ -216,9 +213,10 @@ backend/app/planner/
 │                                                                             │
 │  Response Type Classification:                                              │
 │  • greeting: short_circuit_type in ("greeting", "reset")                    │
+│  • planning: first plan OR significant change (specialist ran, violations,  │
+│    date change, new categories) — re-fires gpt-4o even after first plan    │
 │  • exploration: exploration_mode flag set                                   │
-│  • specialist_update: specialist_hint OR specialist_just_ran                │
-│  • planning: trip_plan.destination exists (default solver tone)             │
+│  • specialist_update: specialist_hint OR specialist_just_ran (no sig.change)│
 │                                                                             │
 │  Solver Identity (planning/specialist_update):                              │
 │  - "Expedition Leader" voice: SHOW expertise through specifics              │
@@ -429,7 +427,7 @@ This fixes the bug where users said "I want to go diving March 1-8" but were ask
 
 **Plan-Active Extraction Gate:** When a plan is active (`plan_view_state` in `S2_STRATEGY_READY`/`S3_ITINERARY_READY`), the LLM extractor fires on EVERY message (post-plan LLM-first path). This ensures date modifications from suggestion chips (e.g., "Extend to Feb 17" -- abbreviated months that regex misses) are always extracted. Cost: ~$0.0004/call x 5-8 planning turns.
 
-**Post-Extraction Intent Upgrade:** After opportunistic extraction, if dates changed (`start_date != old_start_date or end_date != old_end_date`), `planning_intent` is upgraded to `"soft_transition"` regardless of the initial classification. This routes to the soft_transition path that re-queues specialists with new dates, preventing the stale "exploring" classification from short-circuiting.
+**Post-Extraction Intent Upgrade:** After opportunistic extraction, if dates changed (`start_date != old_start_date or end_date != old_end_date`), `planning_intent` is upgraded to `"soft_transition"` regardless of the initial classification. This routes to the soft_transition path that re-queues specialists with new dates, preventing the stale "exploring" classification from short-circuiting. Both the post-plan and pre-plan date-change paths now populate `turn_applied_fields` (e.g., `["start_date", "end_date"]`) and `prev_trip_values_snapshot` (old date values) immediately, since the architect won't detect the change (the router already applied new dates to `state.trip_plan`). These metadata keys drive the synthesizer's `has_significant_change` gate, ensuring date extensions route to `gpt-4o / planning` instead of falling through to `specialist_update`.
 
 **Post-Plan Date Drift Guard:** After LLM extraction in the post-plan path, the router checks whether the user's text actually mentions date-change signals before accepting extracted date mutations. If `start_date` changed but the user text lacks start-related keywords ("start", "begin", "from", "depart", "leave on", "move"), the start date is reverted to `old_start`. Same for `end_date` with end-related keywords ("extend", "until", "end", "through", "shorten", "move"). Prevents the LLM from drifting dates on messages like "tell me more about diving" that happen to re-extract dates with slight shifts.
 
@@ -1031,11 +1029,12 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - Flight search grounding block (`## Flight Search`): includes `flights_requested`, `origin_present`, `flights_found`, `flight_search_status`, and `flight_skip_reason` so the model does not hallucinate flight inventory
 - Date auto-adjustments: When `state.metadata["date_auto_adjustments"]` is present, injects exact from→to corrections so the model mentions the adjusted dates
 - Day preference context: User-requested day allocations per activity category
-- Per-specialist generated counts from `strategy_sections[].content_added` (`## Specialist Activities Generated`), used for count phrasing instead of `day_preferences` when both exist
+- Per-specialist generated counts from `strategy_sections[].content_added` (`## What Changed This Turn`), framed as context ("Specialist activities placed: diving: 3") not inventory. Instruction: "Mention what changed, not inventory. Counts are context, not copy."
 - Builder drop reporting: When `last_builder_drop_ratio > 0` and builder succeeded, includes "Activity placement: X of Y specialist activities placed (Z couldn't fit)" with natural-language framing guidance (e.g., "extending your trip by a couple days would fit them all"). Reads `builder_activities_input` and `builder_activities_placed` from `state.metadata`.
 - Builder scheduling conflicts: `state.metadata["builder_conflicts"]` (surfaced by `response_envelope.py` from builder results) — day, type, severity, message per conflict
 - Date change delta: When dates changed this turn, includes "Trip extended/shortened by N days" with old→new date range (from `prev_trip_values_snapshot`)
 - Added categories: `state.metadata["added_categories"]` — new categories this turn for targeted acknowledgment
+- Already-active categories: `state.metadata["requested_already_active"]` — categories the user requested that were already in baseline. Injects "User requested X but it was already active. Do NOT say it was added." to prevent hallucinating additions
 - Turn number + anti-repetition: Injects turn count and strict instructions to vary sentence structure, opening, and flow across consecutive responses
 - `change_type` signal (specialist_update only): Classifies the update trigger for prompt routing — `STEPPER_RERUN` (synthetic GENERATE_PLAN_NOW), `SETTINGS_CHANGE` (settings_just_updated flag), `NEW_CATEGORY` (added_categories present), `DATE_CHANGE` (start_date/end_date in turn_applied), `PLAN_UPDATE` (fallback). The prompt template uses `change_type` to select per-type response templates (terse ack for settings, delta + date for extensions, etc.)
 - Input gate violations: `## Input Validation Issue` section with each violation message + suggested action. Instructs LLM to explain naturally without using technical terms ("validation", "gate", "constraint").
@@ -1080,7 +1079,7 @@ backfill and are actionable post-planning (routed through the `question_answer` 
 
 **Safety Constraint Surfacing:** When non-route blocking violations are detected (e.g., diving surface interval), the synthesis context includes a `⚠️ SAFETY CONSTRAINT VIOLATION` section prompting the LLM to mention the safety issue and suggest plan adjustments.
 
-**Settings-Update Violation Override:** When `settings_just_updated` is true AND `constraint_violations` exist (e.g., user adds hiking to a diving trip), the synthesizer routes to the full LLM path instead of using the short acknowledgment string. This ensures violations are surfaced in the chat response even during settings updates. Suggestion chips are also always regenerated when violations are present.
+**Settings-Update Gate:** When `settings_just_updated` is true, the synthesizer checks whether to use a terse acknowledgment string or route to full LLM synthesis. The gate bypasses terse ack and routes to LLM when ANY of: (1) `constraint_violations` exist, (2) `added_categories` is non-empty, (3) `tier2_new_content_generated` is set, or (4) `turn_applied_fields` contains `start_date`/`end_date` (date changes need natural-language framing). This ensures violations, new content, and structural date changes are surfaced in the chat response even during settings updates. Suggestion chips are also always regenerated when violations are present.
 
 **True Streaming:**
 Uses LangGraph's `astream_events` to tap into the LLM token stream:
@@ -1803,7 +1802,7 @@ has_activity = any(
 | Intent                  | Condition                                                                       | Behavior                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ----------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ready`                 | Explicit planning signal OR (date AND activity)                                 | Continue to PLANNING flow                                                                                                                                                                                                                                                                                                                                                                                    |
-| `actionable`            | Tier 2 activity, removal, skill level, or setting reset (pre-exploration check) | Update categories/settings → `ACTIONABLE_TO_LOGISTICS` fast path. If mixed Tier 1+2, updates categories then falls through to `soft_transition`                                                                                                                                                                                                                                                              |
+| `actionable`            | Tier 2 activity, removal, skill level, or setting reset (pre-exploration check) | Update categories/settings → `ACTIONABLE_TO_LOGISTICS` fast path. If mixed Tier 1+2, updates categories then falls through to `soft_transition`. Categories that were already active are tracked via `state.metadata["requested_already_active"]` (prevents synthesizer from hallucinating "I've added yoga" when yoga was already in baseline) |
 | `soft_transition`       | Has date OR activity (Tier 1 keyword)                                           | **Routes to PLANNING** (dates/activities = actionable input). Detects specialists from both message text AND `activity_settings.categories` (UI pill selections). Syncs detected specialists to `activity_settings.categories`. On date changes, clears `constraint_hash`, `itinerary_blocks` (prevents false ALTITUDE_AFTER_DIVE from stale blocks), and `parallel_llm_results` (forces specialist re-run). |
 | `exploring`             | Generic question, no planning signals                                           | Comprehensive answer + "What else?". **Auto-upgrade:** If destination + start_date + end_date already collected from prior turns and no plan is active yet, upgrades to `soft_transition` (prevents "dates turn 1 + destination turn 2" from stalling in exploration)                                                                                                                                        |
 | `exploring` (post-plan) | Question with active plan (S2/S3)                                               | Section-specific answer via `question_answer` short-circuit                                                                                                                                                                                                                                                                                                                                                  |
@@ -3390,8 +3389,7 @@ class Resolution(BaseModel):
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `planner`           | `run_turn`, `run_turn_streaming`, `GraphState`                                                                                                                 |
 | `planner.state`     | `GraphState`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistOutput`, `UIEvent`, `MissingFieldsResponse`, `SynthesizerOutput` |
-| `planner.hashing`   | `stable_hash`, `stable_hash_short`, `canonicalize_destinations`, `canonicalize_dict`, `make_cache_key`                                                          |
-| `planner.telemetry` | `TraceEnvelope`, `create_envelope`, `emit_event`, `emit_node_start`, `emit_node_end`                                                                           |
+| `planner.hashing`   | `stable_hash`, `stable_hash_short`, `canonicalize_destinations`, `make_cache_key`                                                                              |
 | `planner.nodes`     | `intent_router`, `trip_architect`, `vertical_specialist`, `local_expert`, `logistics_node`, `constraint_guard`, `synthesizer`                                  |
 
 ---

@@ -228,7 +228,7 @@ function TravelersSheetInner({
         </div>
 
         {/* Steppers */}
-        <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+        <div className="divide-y divide-zinc-200 dark:divide-white/10">
           <Stepper
             label="Adults"
             value={adults}
@@ -246,7 +246,7 @@ function TravelersSheetInner({
         </div>
 
         {/* Summary */}
-        <div className="text-center text-sm text-zinc-500 dark:text-zinc-500">
+        <div className="text-center text-sm text-zinc-600 dark:text-zinc-400">
           {formatTravelers(adults, children)}
         </div>
       </div>

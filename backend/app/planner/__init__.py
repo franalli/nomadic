@@ -31,25 +31,9 @@ from app.planner.cache_access import (
 # Stable hashing
 from app.planner.hashing import (
     canonicalize_destinations,
-    canonicalize_dict,
     make_cache_key,
     stable_hash,
     stable_hash_short,
-)
-
-# Metadata helpers
-from app.planner.meta import (
-    init_turn_metadata,
-    meta_append,
-    meta_get,
-    meta_increment,
-    meta_set,
-    meta_set_once,
-)
-from app.planner.meta_keys import (
-    ALL_META_KEYS,
-    PER_TURN_KEYS,
-    TRACE_ENVELOPE,
 )
 
 # State models
@@ -66,26 +50,6 @@ from app.planner.state import (
     create_missing_fields_response,
     get_missing_fields,
     trip_plan_is_ready,
-)
-
-# Telemetry
-from app.planner.telemetry import (
-    TraceEnvelope,
-    compute_latency_breakdown,
-    create_envelope,
-    emit_anomaly_bundle,
-    emit_cache_event,
-    emit_event,
-    emit_gate_eval_end,
-    emit_llm_call_end,
-    emit_node_end,
-    emit_node_start,
-    emit_request_end,
-    emit_request_start,
-    force_verbose_on_anomaly,
-    now_ns,
-    redact_prompt,
-    redact_text,
 )
 
 # Test mode detection
@@ -214,16 +178,6 @@ __all__ = [
     "restore_graph_state",
     "state_to_session_state",
     "trip_plan_to_trip_inputs",
-    # Metadata
-    "init_turn_metadata",
-    "meta_get",
-    "meta_set",
-    "meta_set_once",
-    "meta_append",
-    "meta_increment",
-    "ALL_META_KEYS",
-    "PER_TURN_KEYS",
-    "TRACE_ENVELOPE",
     # Test mode
     "is_test_mode",
     # Cache access
@@ -240,23 +194,5 @@ __all__ = [
     "stable_hash",
     "stable_hash_short",
     "canonicalize_destinations",
-    "canonicalize_dict",
     "make_cache_key",
-    # Telemetry
-    "TraceEnvelope",
-    "create_envelope",
-    "emit_event",
-    "emit_request_start",
-    "emit_request_end",
-    "emit_gate_eval_end",
-    "emit_node_start",
-    "emit_node_end",
-    "emit_llm_call_end",
-    "emit_cache_event",
-    "emit_anomaly_bundle",
-    "force_verbose_on_anomaly",
-    "redact_text",
-    "redact_prompt",
-    "now_ns",
-    "compute_latency_breakdown",
 ]

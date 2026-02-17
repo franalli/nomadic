@@ -57,7 +57,7 @@ class TurnMeta(BaseModel):
     input_gate_violations: List[Dict[str, Any]] = Field(default_factory=list)
     input_gate_warnings: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # --- Observability (from meta_keys.py PER_TURN_KEYS) ---
+    # --- Observability (per-turn keys) ---
     llm_calls_this_turn: int = 0
     llm_nodes_called_this_turn: List[str] = Field(default_factory=list)
     llm_call_blocked_reason: Optional[str] = None

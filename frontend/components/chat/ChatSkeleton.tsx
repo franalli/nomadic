@@ -23,7 +23,7 @@ function MessageSkeleton({ isUser = false }: { isUser?: boolean }) {
   return (
     <div
       className={cn(
-        'flex w-full gap-3 py-3',
+        'flex w-full gap-4 py-4',
         isUser && 'flex-row-reverse'
       )}
     >
@@ -85,7 +85,7 @@ export const ChatSkeleton = memo(function ChatSkeleton({
       {count > 2 && (
         <>
           <MessageSkeleton isUser={true} />
-          <div className="flex w-full gap-3 py-3">
+          <div className="flex w-full gap-4 py-4">
             <Skeleton className="h-8 w-8 shrink-0 rounded-full bg-muted" />
             <div className="flex flex-col gap-2">
               <div className="flex flex-col gap-2 rounded-2xl rounded-bl-sm bg-muted/50 px-4 py-3">

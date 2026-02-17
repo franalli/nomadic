@@ -1664,7 +1664,7 @@ useSessionHydration() runs
 | `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
 | `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack/StrategyHero) |
 | `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts` |
-| `ChatPanel` | Chat orchestration for SSE runs and suggestion chips. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown) and handles `trigger_action` chips (e.g., direct flights only) |
+| `ChatPanel` | Chat orchestration for SSE runs and suggestion chips. Input area (chips + SmartLoader + text input) is pinned below the scroll container via `shrink-0` (not inside it), ensuring chips are always visible. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown) and handles `trigger_action` chips (e.g., direct flights only) |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available |

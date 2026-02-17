@@ -119,7 +119,7 @@ export const SPECIALIST_DISPLAY_NAMES: Record<string, string> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function getSpecialistColor(type?: string): string {
+function getSpecialistColor(type?: string): string {
   return SPECIALIST_COLORS[type || ''] || SPECIALIST_COLORS.default;
 }
 

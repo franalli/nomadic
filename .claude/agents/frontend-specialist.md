@@ -39,6 +39,7 @@ Before ANY code change, read the relevant SSoT doc:
 ```
 frontend/
   components/
+    animations/    → StartupSequence, Typewriter
     chat/          → ChatPanel, ChatSkeleton, SmartLoader,
                      SystemAckLine, SystemReceipt, TripStatusBar,
                      HoldToDeleteButton, MobileChatInput, MobileSetupCollapsedHeader
@@ -55,7 +56,7 @@ frontend/
                      ActivitiesSheet, TripSettingsSheet, GatingBlocker
       timeline/    → InlineDatePrompt, TimelineSkeleton
         blocks/    → ActivityMiniCard, LogisticsBlock, SafetyBlock, GhostSlot,
-                     FreeDayCard, PreferenceAttributionBadge
+                     FreeDayCard, PreferenceAttributionBadge, types.ts
       tiles/       → BookableCard, SuggestionCard
     tiles/         → TileCard, MiniCard, TileDetailsModal, TaxesFeesTooltip
     ui/            → Shared UI primitives
@@ -64,9 +65,13 @@ frontend/
                      hooks/ (useSessionHydration, useBranchManager, useBranchState,
                              useTileSelection,
                              useTripInputsEditor, useLocalBookingSettings)
-    map/           → Mapbox components
+    map/           → InteractiveMap, MapErrorBoundary, MapboxErrorSuppressor
+    nomadic/       → consent-manager, legal-page
+    providers/     → Providers (context wrappers)
   state/           → documentStore.ts, chatStore.ts, uiStore.ts, mobileNavStore.ts
-  hooks/           → Custom hooks
+  hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
+                     usePreferenceAutoRegen, useScrollCollapse, useSheetManager,
+                     useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation
   types/           → chat.ts, document.ts, generated.ts, hooks.ts, loader.ts,
                      plan-envelope.ts, sheets.ts, summary.ts, tile.ts
   lib/             → design-system.ts, api.ts, animation-config.ts, streamParser.ts,

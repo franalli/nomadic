@@ -34,6 +34,7 @@ interface MobileSwipeLayoutProps {
 
 function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = false }: MobileSwipeLayoutProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const swipeResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activePage = useMobileNavStore((s) => s.activePage);
   const hasNewPlanContent = useMobileNavStore((s) => s.hasNewPlanContent);
   const setActivePage = useMobileNavStore((s) => s.setActivePage);
@@ -67,13 +68,19 @@ function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = fal
     if (page === 1 && !planTabEnabled) {
       isProgrammatic.current = true;
       el.scrollTo({ left: 0, behavior: 'smooth' });
-      setTimeout(() => { isProgrammatic.current = false; }, 400);
+      swipeResetTimeoutRef.current = setTimeout(() => { isProgrammatic.current = false; }, 400);
       return;
     }
     if (page !== useMobileNavStore.getState().activePage) {
       setActivePage(page);
     }
   }, [setActivePage, planTabEnabled]);
+
+  useEffect(() => {
+    return () => {
+      if (swipeResetTimeoutRef.current) clearTimeout(swipeResetTimeoutRef.current);
+    };
+  }, []);
 
   // Tab tap handler
   const goToPage = useCallback(

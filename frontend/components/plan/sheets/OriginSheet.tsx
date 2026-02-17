@@ -188,7 +188,7 @@ function OriginSheetInner({
                     // Light: White card with border
                     'bg-white border-2 border-zinc-200',
                     'text-xs font-semibold text-zinc-600',
-                    'hover:border-zinc-900 hover:text-zinc-900 hover:shadow-sm',
+                    'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 hover:shadow-sm',
                     // Dark: Glass Fill - substance, not just outline
                     'dark:bg-white/5 dark:border-2 dark:border-white/15',
                     'dark:text-zinc-400',
@@ -220,7 +220,7 @@ function OriginSheetInner({
                   // Light: White card with border
                   'bg-white border-2 border-zinc-200',
                   'text-xs font-semibold text-zinc-600',
-                  'hover:border-zinc-900 hover:text-zinc-900 hover:shadow-sm',
+                  'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 hover:shadow-sm',
                   // Dark: Glass Fill - substance, not just outline
                   'dark:bg-white/5 dark:border-2 dark:border-white/15',
                   'dark:text-zinc-400',

@@ -3,6 +3,8 @@
 import { Trash2 } from 'lucide-react';
 import { memo, useEffect, useRef, useState } from 'react';
 
+import { cn } from '@/lib/utils';
+
 const HOLD_DURATION_MS = 1000;
 const CIRCLE_RADIUS = 10;
 const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
@@ -94,12 +96,14 @@ export const HoldToDeleteButton = memo(function HoldToDeleteButton({
       onPointerCancel={handlePointerCancel}
       onPointerLeave={handlePointerCancel}
       onContextMenu={(e) => e.preventDefault()}
-      className={`relative flex items-center justify-center w-6 h-6 rounded-full
-        bg-black/50 hover:bg-black/70 touch-none select-none
-        transition-[transform,background-color] duration-100 ease-out
-        ${isHolding ? 'scale-[1.2]' : 'scale-100'}
-        ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
-        ${className}`}
+      className={cn(
+        'relative flex items-center justify-center w-6 h-6 rounded-full',
+        'bg-black/50 hover:bg-black/70 touch-none select-none',
+        'transition-[transform,background-color] duration-100 ease-out',
+        isHolding ? 'scale-[1.2]' : 'scale-100',
+        disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+        className
+      )}
       title="Hold to delete"
       aria-label="Hold to delete this message"
     >
@@ -114,7 +118,7 @@ export const HoldToDeleteButton = memo(function HoldToDeleteButton({
           cx="12"
           cy="12"
           r={CIRCLE_RADIUS}
-          stroke="rgba(34, 197, 94, 0.3)"
+          stroke="rgba(16, 185, 129, 0.3)"
           strokeWidth="2.5"
           fill="none"
           opacity={isHolding ? 1 : 0}
@@ -124,22 +128,23 @@ export const HoldToDeleteButton = memo(function HoldToDeleteButton({
           cx="12"
           cy="12"
           r={CIRCLE_RADIUS}
-          stroke="#22c55e"
+          stroke="#10b981"
           strokeWidth="2.5"
           fill="none"
           strokeLinecap="round"
           strokeDasharray={CIRCLE_CIRCUMFERENCE}
           strokeDashoffset={strokeDashoffset}
           opacity={isHolding ? 1 : 0}
-          className={progress >= 1 ? 'drop-shadow-[0_0_6px_#22c55e]' : undefined}
+          className={progress >= 1 ? 'drop-shadow-[0_0_6px_#10b981]' : undefined}
         />
       </svg>
 
       {/* Trash icon */}
       <Trash2
-        className={`h-3 w-3 relative z-10 pointer-events-none transition-colors duration-100 ease-out ${
-          isHolding ? 'text-green-500' : 'text-white/90'
-        }`}
+        className={cn(
+          'h-3 w-3 relative z-10 pointer-events-none transition-colors duration-100 ease-out',
+          isHolding ? 'text-emerald-500' : 'text-white/90'
+        )}
       />
     </button>
   );

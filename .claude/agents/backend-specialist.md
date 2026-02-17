@@ -46,11 +46,18 @@ backend/app/planner/
   services/       → response_envelope.py, section_builder.py, state_serde.py,
                     itinerary_adapter.py, iata_resolver.py, admin_utils.py
   state/          → graph_state.py, typed_meta.py
-  *.py            → specialist_registry.py, hashing.py, cache_access.py, meta.py, meta_keys.py,
-                    telemetry.py, test_mode.py, llm_factory.py
+  *.py            → specialist_registry.py, hashing.py, cache_access.py,
+                    test_mode.py, llm_factory.py
 backend/app/
   plan_graph.py   → LangGraph workflow definition + routing functions
   main.py         → FastAPI endpoints, middleware, rate limiting
+  schemas.py      → Pydantic request/response schemas (shared with frontend types)
+  config.py, db.py, db_models.py → App config, DB connection, SQLAlchemy models
+  debug_utils.py  → Logging helpers (_debug_log)
+  graph_plan_utils.py → Graph plan utility helpers
+  placeholders.py → Placeholder content/data
+  prompts/        → synthesizer.txt, specialists/*.txt (diving, hiking, skiing, cycling,
+                    surfing, sailing, climbing, wildlife_safari, local_expert)
   services/       → cache_core.py, specialist_cache.py, router_cache.py, tile_cache.py,
                     experience_generator.py, regen_strategy.py, itinerary_builder.py,
                     unsplash.py, unsplash_queries.py

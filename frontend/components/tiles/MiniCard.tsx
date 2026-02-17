@@ -82,7 +82,7 @@ export interface MiniCardProps {
 export const MiniCardSkeleton = memo(function MiniCardSkeleton() {
   return (
     <div className="relative rounded-lg border border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-white/5 shadow-sm p-3">
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-4">
         <Skeleton className="h-16 w-16 flex-shrink-0 rounded-md bg-zinc-200/50 dark:bg-zinc-700/50" />
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <Skeleton className="h-4 w-3/4 bg-zinc-200/50 dark:bg-zinc-700/50" />
@@ -294,7 +294,7 @@ export const MiniCard = memo(function MiniCard({
       )}
     >
       {/* Main content area */}
-      <div className="flex items-start gap-3 p-3">
+      <div className="flex items-start gap-4 p-4">
         {/* Thumbnail - white circle for flight logos (transparent PNGs) */}
         <div className={cn(
           'relative flex-shrink-0 overflow-hidden',

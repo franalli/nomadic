@@ -202,22 +202,6 @@ class TestRoundTrip:
         assert meta2.trip_inputs == {"destination": "Bali"}
 
 
-class TestFieldCoverage:
-    """Ensure meta_keys.py PER_TURN_KEYS are covered by TurnMeta."""
-
-    def test_meta_keys_per_turn_covered(self):
-        from app.planner.meta_keys import PER_TURN_KEYS
-
-        missing = [k for k in PER_TURN_KEYS if k not in _TURN_FIELDS]
-        assert missing == [], f"PER_TURN_KEYS not in TurnMeta: {missing}"
-
-    def test_meta_keys_cross_turn_covered(self):
-        from app.planner.meta_keys import LLM_CALL_BLOCKED_COUNT, TODAY_ISO, TRACE_ENVELOPE
-
-        for key in (LLM_CALL_BLOCKED_COUNT, TODAY_ISO, TRACE_ENVELOPE):
-            assert key in _PERSISTENT_FIELDS, f"Cross-turn key '{key}' not in PersistentMeta"
-
-
 # =============================================================================
 # TripSettings model tests
 # =============================================================================

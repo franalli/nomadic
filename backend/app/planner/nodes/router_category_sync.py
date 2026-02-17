@@ -320,9 +320,13 @@ def _collect_modifications_from_extraction(
         hints = router_output.get("specialist_hints", [])
         new_cats = {c.lower() for c in cats if c.lower() in known}
         new_hints = {h.lower() for h in hints if h.lower() in known}
-        additions = (new_cats | new_hints) - existing
+        requested = new_cats | new_hints
+        additions = requested - existing
+        already_active = requested & existing
         if additions:
             changes["add_categories"] = additions
+        if already_active:
+            state.metadata["requested_already_active"] = sorted(already_active)
 
     # 2. Activity removals
     if allow_category_modifications:

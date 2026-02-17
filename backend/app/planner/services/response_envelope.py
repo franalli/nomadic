@@ -678,16 +678,6 @@ def _build_response_envelope(
     # CRITICAL: Capture session_state AFTER metadata is updated (not before!)
     updated_session_state = state_to_session_state(state)
 
-    # Diagnostic: trace suggested_replies through format_result
-    _raw_sr = state.suggested_replies
-    _meta_sr = state.metadata.get("synthesizer_output", {}).get("suggested_replies", [])
-    _parse_failed = state.metadata.get("_graph_state_parse_failed", False)
-    logger.debug(
-        f"[FORMAT_RESULT] suggested_replies: "
-        f"state.field={_raw_sr[:3]} metadata_backup={_meta_sr[:3]} "
-        f"parse_failed={_parse_failed}"
-    )
-
     # Build document object matching PlanDocumentData type expected by frontend
     document = {
         "trip_context_id": None,

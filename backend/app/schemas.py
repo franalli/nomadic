@@ -232,39 +232,6 @@ class ExpandItineraryStreamEvent(BaseModel):
     warnings: Optional[List[str]] = None
 
 
-class RemoveSpecialistRequest(BaseModel):
-    """Request to remove specialists and regenerate itinerary (conflict resolution).
-
-    Used when ItineraryBuilder detects a constraint conflict and user chooses
-    to focus on one specialist (e.g., "Focus on diving" when diving + hiking conflicts).
-    """
-
-    idempotency_key: str = Field(
-        description="Client-generated UUID to prevent duplicate generation"
-    )
-    keep_specialist: str = Field(description="The specialist to keep (e.g., 'diving', 'hiking')")
-    # Optional: whether to remove hearted tiles for removed specialists
-    remove_hearted_tiles: bool = Field(
-        default=False,
-        description="If true, removes hearted tiles from removed specialists",
-    )
-    # Document context for regeneration
-    trip_inputs: Optional[Dict[str, Any]] = Field(
-        default=None, description="Trip inputs from frontend document"
-    )
-    strategy_sections: Optional[List[Dict[str, Any]]] = Field(
-        default=None, description="Strategy sections from frontend document"
-    )
-    tiles: Optional[Dict[str, Any]] = Field(
-        default=None, description="Tiles from frontend document"
-    )
-    # User heart preferences - filtered to kept specialist
-    preferences: Optional[PreferenceOverride] = Field(
-        default=None,
-        description="User's hearted tile preferences for AI weighting",
-    )
-
-
 class TileClickEvent(BaseModel):
     request_id: Optional[str] = None
     tile_id: str  # the tile identifier coming from the UI

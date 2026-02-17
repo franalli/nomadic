@@ -50,7 +50,7 @@ export function SmartLoader({ status }: SmartLoaderProps) {
 
   return (
     // Single line container - no bubble, just icon + text
-    <div className="flex items-center gap-3 mb-2 ml-1 h-6 animate-in fade-in slide-in-from-bottom-1 duration-300">
+    <div className="flex items-center gap-2 mb-2 ml-1 h-6 animate-in fade-in slide-in-from-bottom-1 duration-300">
       {/* 1. Dynamic Mutating Icon */}
       <IconComponent className="w-4 h-4 text-zinc-500 dark:text-emerald-500 animate-pulse" />
 

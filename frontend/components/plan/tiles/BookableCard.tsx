@@ -119,12 +119,12 @@ export function BookableCard({
     <div
       className={cn(
         'rounded-xl overflow-hidden',
-        'bg-zinc-800/40 border',
+        'bg-white dark:bg-zinc-800/40 border',
         isBooked
           ? 'border-emerald-500/50'
           : isInCart
             ? 'border-zinc-400/50'
-            : 'border-zinc-700/30',
+            : 'border-zinc-200 dark:border-zinc-700/30',
         className
       )}
     >
@@ -173,18 +173,18 @@ export function BookableCard({
       </div>
 
       {/* Body */}
-      <div className="p-4 space-y-3">
+      <div className="p-4 space-y-4">
         {/* Rating row */}
         {tile.rating && (
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1">
-              <Star className="w-4 h-4 text-zinc-300 fill-current" />
-              <span className="text-sm font-medium text-zinc-200">
+              <Star className="w-4 h-4 text-zinc-500 dark:text-zinc-300 fill-current" />
+              <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                 {tile.rating.toFixed(1)}
               </span>
             </div>
             {tile.location_label && (
-              <span className="text-sm text-zinc-400">{tile.location_label}</span>
+              <span className="text-sm text-zinc-500 dark:text-zinc-400">{tile.location_label}</span>
             )}
           </div>
         )}
@@ -193,13 +193,13 @@ export function BookableCard({
         {bestPrice && (
           <div className="flex items-baseline justify-between">
             <div>
-              <span className="text-2xl font-bold text-white">
+              <span className="text-2xl font-bold text-zinc-900 dark:text-white">
                 {formatPrice(bestPrice.price, bestPrice.currency)}
               </span>
-              {isHotel && <span className="text-sm text-zinc-400">/night</span>}
+              {isHotel && <span className="text-sm text-zinc-500 dark:text-zinc-400">/night</span>}
             </div>
             {sortedPrices.length > 1 && (
-              <span className="text-xs text-zinc-500">
+              <span className="text-xs text-zinc-500 dark:text-zinc-500">
                 from {sortedPrices.length} partners
               </span>
             )}
@@ -220,7 +220,7 @@ export function BookableCard({
                     'flex items-center justify-between p-2 rounded-lg transition-colors',
                     isBest
                       ? 'bg-emerald-500/10 border border-emerald-500/30'
-                      : 'bg-zinc-800/50 hover:bg-zinc-700/50'
+                      : 'bg-zinc-100 dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-700/50'
                   )}
                 >
                   {/* Partner info */}
@@ -233,7 +233,7 @@ export function BookableCard({
                     >
                       {partnerInfo.name.charAt(0)}
                     </div>
-                    <span className="text-sm text-zinc-300">{partnerInfo.name}</span>
+                    <span className="text-sm text-zinc-700 dark:text-zinc-300">{partnerInfo.name}</span>
                     {isBest && (
                       <span className="text-[10px] font-medium text-emerald-400 uppercase">
                         Best Price
@@ -246,7 +246,7 @@ export function BookableCard({
                     <span
                       className={cn(
                         'text-sm font-medium',
-                        isBest ? 'text-emerald-400' : 'text-zinc-300'
+                        isBest ? 'text-emerald-400' : 'text-zinc-700 dark:text-zinc-300'
                       )}
                     >
                       {formatPrice(pp.price, pp.currency)}
@@ -257,10 +257,10 @@ export function BookableCard({
                       className={cn(
                         'flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors',
                         isBooked
-                          ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                          ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-400 dark:text-zinc-500 cursor-not-allowed'
                           : isBest
                             ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                            : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                            : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600'
                       )}
                     >
                       Book
@@ -275,12 +275,12 @@ export function BookableCard({
 
         {/* No partner prices - show fallback */}
         {sortedPrices.length === 0 && tile.price_estimate && (
-          <div className="p-3 rounded-lg bg-zinc-800/50 text-center">
-            <span className="text-lg font-bold text-white">
+          <div className="p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/50 text-center">
+            <span className="text-lg font-bold text-zinc-900 dark:text-white">
               {formatPrice(tile.price_estimate)}
             </span>
-            {isHotel && <span className="text-sm text-zinc-400">/night</span>}
-            <p className="text-xs text-zinc-500 mt-1">Price comparison loading...</p>
+            {isHotel && <span className="text-sm text-zinc-500 dark:text-zinc-400">/night</span>}
+            <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">Price comparison loading...</p>
           </div>
         )}
 
@@ -288,7 +288,7 @@ export function BookableCard({
         <div className="flex items-center gap-2 pt-1">
           <button
             onClick={() => onDetailsClick?.(tile)}
-            className="flex-1 px-3 py-2 rounded-lg text-sm font-medium text-zinc-300 bg-zinc-700/50 hover:bg-zinc-700 transition-colors text-center"
+            className="flex-1 px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-700/50 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors text-center"
           >
             View Details
           </button>
@@ -298,8 +298,8 @@ export function BookableCard({
               className={cn(
                 'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
                 isInCart
-                  ? 'bg-zinc-500/20 text-zinc-300 border border-zinc-400/30 hover:bg-zinc-500/30'
-                  : 'bg-zinc-700/50 text-zinc-300 hover:bg-zinc-700'
+                  ? 'bg-zinc-200 dark:bg-zinc-500/20 text-zinc-700 dark:text-zinc-300 border border-zinc-300 dark:border-zinc-400/30 hover:bg-zinc-300 dark:hover:bg-zinc-500/30'
+                  : 'bg-zinc-100 dark:bg-zinc-700/50 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
               )}
             >
               {isInCart ? 'Remove' : 'Add to Cart'}

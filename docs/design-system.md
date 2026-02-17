@@ -612,6 +612,8 @@ All sheets live at `frontend/components/plan/sheets/`. Most sheets use raw Tailw
 | AlternativesModal | `plan/modals/AlternativesModal.tsx` | Sheet modal with neutral zinc rating stars and diff badges |
 | CategorySection | `plan/booking/CategorySection.tsx` | Booking status dots/text with dark-aware zinc/emerald states |
 
+**Out of DS scope:** `consent-manager.tsx`, `legal-page.tsx` — follows shadcn/prose tokens.
+
 ---
 
 ## 7. Calendar Component ("The Seamless Pill")
@@ -1833,6 +1835,8 @@ All spacing (gap, padding, margin) MUST snap to one of three tiers for consisten
 | **Major** | `gap-6`, `space-y-6`, `p-6`, `px-6`, `py-6`, `mt-6`, `mb-6` | Major boundaries (hero→content, grid columns, panel sections) |
 
 **Banned in-between values:** `gap-3`, `space-y-3`, `gap-5`, `space-y-5`, `pb-8`, `gap-7`, `gap-9`, `mt-3`, `mb-3`, `mt-5`, `mb-5`. Round to the nearest tier.
+
+**Exception:** Action button rows (Cancel/Save pairs) use `gap-3` for touch-target spacing.
 
 ### Allowed Exceptions
 

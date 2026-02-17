@@ -171,14 +171,14 @@ function ImageCarousel({ images }: { images: string[] }) {
 
   if (images.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center bg-gradient-to-br from-zinc-700 to-zinc-800">
-        <MapPin className="h-12 w-12 text-zinc-500" />
+      <div className="flex h-64 items-center justify-center bg-gradient-to-br from-zinc-200 to-zinc-300 dark:from-zinc-700 dark:to-zinc-800">
+        <MapPin className="h-12 w-12 text-zinc-500 dark:text-zinc-500" />
       </div>
     );
   }
 
   return (
-    <div className="relative h-64 overflow-hidden bg-zinc-800">
+    <div className="relative h-64 overflow-hidden bg-zinc-100 dark:bg-zinc-800">
       <img
         src={images[currentIndex]}
         alt=""
@@ -293,16 +293,16 @@ export const TileDetailsModal = memo(function TileDetailsModal({
       />
 
       {/* Modal */}
-      <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-hidden rounded-xl bg-zinc-900 shadow-2xl">
+      <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-hidden rounded-xl bg-white dark:bg-zinc-900 shadow-2xl">
         {/* Header with close button */}
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 py-3">
-          <h2 className="line-clamp-1 text-lg font-semibold text-zinc-100">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3">
+          <h2 className="line-clamp-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
             {tile.title}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded-full p-1.5 text-zinc-500 dark:text-zinc-400 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-200"
           >
             <X className="h-5 w-5" />
           </button>
@@ -318,18 +318,18 @@ export const TileDetailsModal = memo(function TileDetailsModal({
             {/* Rating and location row */}
             <div className="flex items-center justify-between text-sm">
               {tile.rating != null && (
-                <div className="flex items-center gap-1.5 text-zinc-300">
-                  <Star className="h-4 w-4 fill-emerald-400 text-emerald-400" />
+                <div className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300">
+                  <Star className="h-4 w-4 fill-zinc-400 text-zinc-500 dark:text-zinc-400" />
                   <span className="font-medium">{tile.rating.toFixed(1)}</span>
                   {reviewCount != null && (
-                    <span className="text-zinc-500">
+                    <span className="text-zinc-500 dark:text-zinc-500">
                       ({reviewCount} reviews)
                     </span>
                   )}
                 </div>
               )}
               {tile.location_label && (
-                <div className="flex items-center gap-1 text-zinc-400">
+                <div className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
                   <MapPin className="h-4 w-4" />
                   <span>{tile.location_label}</span>
                 </div>
@@ -338,8 +338,8 @@ export const TileDetailsModal = memo(function TileDetailsModal({
 
             {/* Key facts */}
             <div className="space-y-2">
-              <h3 className="text-sm font-medium text-zinc-300">Key facts</h3>
-              <ul className="space-y-1 text-sm text-zinc-400">
+              <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Key facts</h3>
+              <ul className="space-y-1 text-sm text-zinc-500 dark:text-zinc-400">
                 {checkTimes.checkIn && (
                   <li>• Check-in: {checkTimes.checkIn}</li>
                 )}
@@ -378,26 +378,26 @@ export const TileDetailsModal = memo(function TileDetailsModal({
               return (
                 <div className="space-y-2">
                   {desc && (
-                    <p className="text-sm italic text-zinc-400">{desc}</p>
+                    <p className="text-sm italic text-zinc-500 dark:text-zinc-400">{desc}</p>
                   )}
                   <div className="flex flex-wrap gap-1.5">
                     {category && (
-                      <span className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-400 uppercase tracking-wide">
+                      <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
                         {category}
                       </span>
                     )}
                     {duration != null && (
-                      <span className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-400">
+                      <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-400">
                         {duration}h
                       </span>
                     )}
                     {timeOfDay && (
-                      <span className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-400">
+                      <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-400">
                         {timeOfDay.charAt(0).toUpperCase() + timeOfDay.slice(1)}
                       </span>
                     )}
                     {skillLevel && (
-                      <span className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-400">
+                      <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-400">
                         {skillLevel.charAt(0).toUpperCase() + skillLevel.slice(1)}
                       </span>
                     )}
@@ -409,18 +409,18 @@ export const TileDetailsModal = memo(function TileDetailsModal({
             {/* Amenities */}
             {amenities.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-sm font-medium text-zinc-300">Amenities</h3>
+                <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Amenities</h3>
                 <div className="flex flex-wrap gap-1.5">
                   {amenities.slice(0, 8).map((amenity) => (
                     <span
                       key={amenity}
-                      className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-400"
+                      className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-400"
                     >
                       {amenity}
                     </span>
                   ))}
                   {amenities.length > 8 && (
-                    <span className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-500">
+                    <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-500">
                       +{amenities.length - 8} more
                     </span>
                   )}
@@ -429,15 +429,15 @@ export const TileDetailsModal = memo(function TileDetailsModal({
             )}
 
             {/* Price block */}
-            <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
-              <div className="text-lg font-semibold text-zinc-100">
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/50 p-3">
+              <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
                 {priceDisplay.perUnit}
               </div>
               {priceDisplay.total && (
-                <div className="text-sm text-zinc-400">{priceDisplay.total}</div>
+                <div className="text-sm text-zinc-500 dark:text-zinc-400">{priceDisplay.total}</div>
               )}
               {tile.provider && (
-                <div className="mt-1 text-xs text-zinc-500">
+                <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
                   via {tile.provider}
                 </div>
               )}
@@ -450,7 +450,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="text-sm">✨</span>
-                  <h3 className="text-sm font-medium text-zinc-300">
+                  <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
                     Why this suggestion?
                   </h3>
                   {aiPick && (
@@ -460,7 +460,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
                   )}
                 </div>
                 {aiReasoning && (
-                  <p className="text-sm text-zinc-400 leading-relaxed">
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
                     {aiReasoning}
                   </p>
                 )}
@@ -470,7 +470,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
             {/* BOOKING mode: Partner price comparison */}
             {mode === 'booking' && partnerPrices && partnerPrices.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-sm font-medium text-zinc-300">
+                <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
                   Compare prices
                 </h3>
                 <div className="space-y-2">
@@ -481,7 +481,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
                         'flex items-center justify-between p-3 rounded-lg border transition-colors',
                         pp.isBestPrice
                           ? 'border-emerald-500/50 bg-emerald-500/10'
-                          : 'border-zinc-700 bg-zinc-800/30 hover:bg-zinc-800/50'
+                          : 'border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/30 hover:bg-zinc-100 dark:hover:bg-zinc-800/50'
                       )}
                     >
                       <div className="flex items-center gap-3">
@@ -492,7 +492,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
                             className="h-6 w-auto object-contain"
                           />
                         ) : (
-                          <span className="text-sm text-zinc-300 font-medium">
+                          <span className="text-sm text-zinc-700 dark:text-zinc-300 font-medium">
                             {pp.partner}
                           </span>
                         )}
@@ -503,7 +503,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
                         )}
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="text-sm font-semibold text-zinc-100">
+                        <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                           {new Intl.NumberFormat('en-US', {
                             style: 'currency',
                             currency: pp.currency,
@@ -534,7 +534,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
         </div>
 
         {/* Sticky footer */}
-        <div className="sticky bottom-0 border-t border-zinc-800 bg-zinc-900 p-4">
+        <div className="sticky bottom-0 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -543,7 +543,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
                 'flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition-colors',
                 isSaved
                   ? 'bg-emerald-500/20 text-emerald-400'
-                  : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700'
               )}
             >
               <Heart className={cn('h-4 w-4', isSaved && 'fill-emerald-400')} />
@@ -566,7 +566,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
           ) : (
             // S2: Locked state with actionable CTA
             <div className="mt-3 space-y-2">
-              <div className="flex items-center justify-center gap-1.5 text-xs text-zinc-500">
+              <div className="flex items-center justify-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-500">
                 <Lock className="h-3 w-3" />
                 <span>Booking links are locked</span>
               </div>
@@ -577,13 +577,13 @@ export const TileDetailsModal = memo(function TileDetailsModal({
                     onOpenSheet('dates');
                     onClose();
                   }}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 py-2 text-sm font-medium text-zinc-800 dark:text-zinc-200 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-700"
                 >
                   Set trip dates to unlock
                 </button>
               )}
               {!onOpenSheet && (
-                <p className="text-center text-xs text-zinc-500">
+                <p className="text-center text-xs text-zinc-500 dark:text-zinc-500">
                   Set trip dates and create your itinerary to unlock booking links.
                 </p>
               )}

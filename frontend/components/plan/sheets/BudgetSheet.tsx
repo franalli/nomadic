@@ -190,9 +190,9 @@ function BudgetSheetInner({
                       // Inactive: Glass Fill (Dark) - substance, not just outline
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-600',
-                          'hover:border-zinc-900 hover:text-zinc-900',
+                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
                           'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white'
+                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
                         )
                   )}
                 >
@@ -247,7 +247,7 @@ function BudgetSheetInner({
                     'transition-all duration-150',
                     isSelected
                       // Selected: Solid Black / White
-                      ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-black'
+                      ? 'bg-zinc-900 text-white border-2 border-transparent shadow-sm dark:bg-white dark:text-black dark:border-transparent'
                       // Inactive: Glass Fill
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-500',

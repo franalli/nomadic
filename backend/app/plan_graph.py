@@ -875,19 +875,10 @@ async def run_turn_streaming(
         # Convert final output to GraphState
         if final_output is not None:
             if isinstance(final_output, dict):
-                _sr = final_output.get("suggested_replies", [])
-                _ls = (final_output.get("last_summary") or "")[:40]
-                logger.debug(
-                    f"[GRAPH_CAPTURE] final_output type=dict keys={sorted(final_output.keys())}"
-                )
-                logger.debug(f"[GRAPH_CAPTURE] suggested_replies={_sr[:3]} last_summary='{_ls}...'")
                 try:
                     result_state = GraphState(**final_output)
                 except Exception as e:
-                    logger.warning(f"[GRAPH_CAPTURE] GraphState parse FAILED: {e}")
-                    logger.warning(
-                        f"[GRAPH_CAPTURE] final_output keys: {list(final_output.keys())}"
-                    )
+                    logger.warning(f"GraphState parse failed: {e}")
                     # PARTIAL RECOVERY: Extract key fields even if full parse fails
                     # This preserves tiles/sections instead of losing all node-computed state
                     try:
@@ -912,10 +903,6 @@ async def run_turn_streaming(
                     except Exception as e2:
                         logger.warning(f"Partial state recovery also failed: {e2}")
             elif isinstance(final_output, GraphState):
-                logger.debug(
-                    "[GRAPH_CAPTURE] final_output type=GraphState "
-                    f"suggested_replies={final_output.suggested_replies[:3]}"
-                )
                 result_state = final_output
 
         # If still no state, construct from input state + streamed tokens

@@ -16,7 +16,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
@@ -37,6 +37,7 @@ export const StartupSequence = memo(function StartupSequence({
   const [phase, setPhase] = useState<'typing' | 'grid' | 'verify' | 'beacon' | 'done'>('typing');
   const [isVisible, setIsVisible] = useState(true);
   const [shouldSkip, setShouldSkip] = useState(false);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Check if already booted this session or reduced motion preferred
   useEffect(() => {
@@ -60,9 +61,15 @@ export const StartupSequence = memo(function StartupSequence({
     }
   }, [onComplete]);
 
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    };
+  }, []);
+
   // Phase progression
   const handleTypingComplete = useCallback(() => {
-    setTimeout(() => setPhase('grid'), 200);
+    typingTimeoutRef.current = setTimeout(() => setPhase('grid'), 200);
   }, []);
 
   useEffect(() => {

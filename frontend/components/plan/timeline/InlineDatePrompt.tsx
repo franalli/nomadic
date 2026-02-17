@@ -42,7 +42,7 @@ export function InlineDatePrompt({
   if (!startDate) {
     return (
       <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-6 mb-6">
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center gap-2 mb-4">
           <CalendarDays className="h-5 w-5 text-emerald-500" />
           <h3 className="font-medium text-foreground">When are you traveling?</h3>
         </div>
@@ -65,7 +65,7 @@ export function InlineDatePrompt({
   // Has start date but no duration - show quick picks
   return (
     <div className="bg-muted/30 border border-border rounded-xl p-6 mb-6">
-      <div className="flex items-center gap-3 mb-2">
+      <div className="flex items-center gap-2 mb-2">
         <CalendarDays className="h-5 w-5 text-muted-foreground" />
         <h3 className="font-medium text-foreground">How long is your trip?</h3>
       </div>
