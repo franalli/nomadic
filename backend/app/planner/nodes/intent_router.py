@@ -102,6 +102,7 @@ def _compute_constraint_hash(trip_plan: TripPlan, settings: Any) -> str:
         hash_payload["origin"] = trip_plan.origin.lower().strip()
 
     hash_str = json.dumps(hash_payload, sort_keys=True)
+    # SECURITY: md5 for cache dedup — not auth. Collision resistance not required.
     computed_hash = hashlib.md5(hash_str.encode()).hexdigest()
 
     logger.debug(f"[REACTIVITY] Hash components: {hash_payload}")

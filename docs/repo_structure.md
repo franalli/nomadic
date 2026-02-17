@@ -59,6 +59,8 @@ backend/
 │   ├── lifespan.py             # Application lifespan hooks (startup + shutdown)
 │   ├── main.py                 # FastAPI application entry
 │   ├── placeholders.py         # Placeholder data
+│   ├── streaming.py            # SSE + NDJSON streaming generators (extracted from main.py)
+│   ├── validation_cache.py     # Validation cache infrastructure (6 TTL caches, extracted from validation.py)
 │   ├── plan_graph.py           # LangGraph workflow definition
 │   ├── rate_limit.py           # Rate limiting configuration (extracted from main.py)
 │   ├── safety_snippets.json    # Safety-related content
@@ -89,6 +91,7 @@ backend/
 │   │   │   │   ├── router_extraction.py        # LLM extraction & field validation (Stage 9A)
 │   │   │   ├── router_category_sync.py     # Tier 2 detection & actionable input (Stage 9B)
 │   │   │   ├── router_utils.py             # Shared router utilities (greetings, origin detection, destination context)
+│   │   │   ├── expert_constraints.py      # Local expert Pydantic schemas + static knowledge data (extracted from local_expert.py)
 │   │   │   ├── local_expert.py             # Local knowledge node
 │   │   │   ├── logistics_node.py           # Flights/hotels data fetcher
 │   │   │   ├── specialist_schemas.py  # Specialist Pydantic schemas
@@ -192,6 +195,7 @@ backend/
 │   ├── test_experience_generator.py      # Experience generator tests
 │   ├── test_fill_day_coordinates.py      # Fill-day coordinate + constraint mapping tests
 │   ├── test_hash_ban.py                  # Hash ban tests
+│   ├── test_iata_resolver.py             # IATA resolver tests
 │   ├── test_import_contract.py           # Import contract tests
 │   ├── test_input_gates.py              # Input gate validation tests (5 gates + registry)
 │   ├── test_intent_router_settings.py    # IntentRouter extracted settings contract tests
@@ -215,6 +219,14 @@ backend/
 │   ├── test_synthesizer_template_contract.py  # Synthesizer prompt + model-id contract tests
 │   ├── test_tile_cache.py                # Tile cache tests (L1/L2, thread safety)
 │   ├── test_typed_meta.py                # Typed metadata bridge tests
+│   ├── test_admin_utils.py               # Admin utility tests
+│   ├── test_amadeus_client.py            # Amadeus client tests
+│   ├── test_cache_core.py                # Cache core tests
+│   ├── test_constraint_engine.py         # Constraint engine tests
+│   ├── test_itinerary_adapter.py         # Itinerary adapter tests
+│   ├── test_llm_factory.py              # LLM factory tests
+│   ├── test_section_builder.py          # Section builder tests
+│   ├── test_state_serde.py              # State serde tests
 │   ├── test_unsplash_service.py          # Unsplash service fallback + retry tests
 │   └── db/
 │       ├── test_expand_itinerary_api.py
@@ -241,11 +253,13 @@ frontend/
 │   ├── icon.png                # App icon
 │   ├── layout.tsx              # Root layout
 │   ├── page.tsx                # Home page
+│   ├── error.tsx               # Root error boundary
 │   ├── contact/page.tsx
 │   ├── cookies/page.tsx
 │   ├── credits/page.tsx
 │   ├── privacy/page.tsx
 │   ├── sitemap/page.tsx
+│   ├── summary/error.tsx
 │   ├── summary/page.tsx
 │   └── terms/page.tsx
 │
@@ -256,6 +270,7 @@ frontend/
 │   │
 │   ├── chat/                   # Chat interface components
 │   │   ├── ChatInputBar.tsx          # Desktop input capsule (extracted from ChatPanel)
+│   │   ├── ChatMessageRenderer.tsx  # Individual message rendering (extracted from ChatPanel)
 │   │   ├── ChatPanel.tsx
 │   │   ├── ChatSkeleton.tsx
 │   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
@@ -391,7 +406,7 @@ frontend/
 │   ├── dayIntensity.ts         # Day intensity scoring (relaxed/balanced/packed) from DayBlock hours
 │   ├── debug.ts                # Debug/logging utilities
 │   ├── design-system.ts        # Design system tokens
-│   ├── destination-coords.ts   # Destination coordinate lookup (~90 destinations)
+│   ├── destination-coords.ts   # Demo POI data for curated destinations (Bali dive/hike)
 │   ├── fillDayGuards.ts        # Fill-day client cooldown guard helpers
 │   ├── format-utils.ts         # Formatting utilities
 │   ├── ghost-timeline-adapter.ts

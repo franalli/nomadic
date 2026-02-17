@@ -2121,7 +2121,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
           // Handle 409 Conflict (version mismatch) - refetch and retry once
           if (res.status === 409) {
-            console.warn('[documentStore] 💜 Version conflict (409), refetching and retrying...');
+            debugLog('[documentStore] Version conflict (409), refetching and retrying...');
             const freshRes = await apiFetch('/api/document');
             if (freshRes.ok) {
               const freshDoc = await freshRes.json();

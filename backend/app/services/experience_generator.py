@@ -87,6 +87,14 @@ async def clear_experience_db_cache(db: AsyncSession) -> int:
         return 0
 
 
+def has_cached(
+    destination: str, categories: list[str], month: str, tiles_per_category: int = 2
+) -> bool:
+    """Check if L1 cache has results for this generation key."""
+    key = _experience_cache_key(destination, categories, month, tiles_per_category)
+    return _mem.get(key) is not None
+
+
 # =============================================================================
 # Cache Key
 # =============================================================================

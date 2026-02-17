@@ -2261,7 +2261,7 @@ All four caches share a common `MemoryCache` primitive from `backend/app/service
 
 ### Validation Cache (Origin/Destination Verification)
 
-Located in `backend/app/validation.py`, stores LLM-verified place names.
+Cache infrastructure in `backend/app/validation_cache.py`, validation logic in `backend/app/validation.py`. Stores LLM-verified place names.
 
 | Parameter               | Value           | Purpose                         |
 | ----------------------- | --------------- | ------------------------------- |

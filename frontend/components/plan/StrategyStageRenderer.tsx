@@ -41,7 +41,6 @@ import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { fillDay } from '@/lib/api';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { debugLog } from '@/lib/debug';
-import { getDestinationCoords } from '@/lib/destination-coords';
 import { isFillDayCooldownActive } from '@/lib/fillDayGuards';
 import {
   calculateMapCenter,
@@ -252,7 +251,6 @@ export function StrategyStageRenderer({
   const effectiveTripInputs = useTripInputsWithFallback(tripInputs);
   const {
     storeTiles,
-    dayCardsFingerprint,
     storeDayCardsRaw,
     preferredTileIds,
     toggleTilePreference,
@@ -260,32 +258,28 @@ export function StrategyStageRenderer({
     constraintsValidated,
     constraintViolations,
   } = useDocumentStore(
-    useShallow((s) => {
-      const cards = s.document?.day_cards;
-      let fingerprint: string | null = null;
-      if (cards && cards.length > 0) {
-        const blockIds = cards
-          .flatMap((c) => c.blocks || [])
-          .filter((b) => b.coordinates?.lat != null && b.coordinates?.lng != null)
-          .map((b) => b.id)
-          .join(',');
-        if (blockIds) {
-          fingerprint = `${cards.length}:${blockIds}`;
-        }
-      }
-
-      return {
-        storeTiles: s.document?.tiles,
-        dayCardsFingerprint: fingerprint,
-        storeDayCardsRaw: cards,
-        preferredTileIds: s.preferredTileIds,
-        toggleTilePreference: s.toggleTilePreference,
-        isRegenUpdating: s.isRegenerating,
-        constraintsValidated: s.document?.constraints_validated ?? EMPTY_CONSTRAINTS_VALIDATED,
-        constraintViolations: s.document?.constraint_violations ?? EMPTY_CONSTRAINT_VIOLATIONS,
-      };
-    })
+    useShallow((s) => ({
+      storeTiles: s.document?.tiles,
+      storeDayCardsRaw: s.document?.day_cards,
+      preferredTileIds: s.preferredTileIds,
+      toggleTilePreference: s.toggleTilePreference,
+      isRegenUpdating: s.isRegenerating,
+      constraintsValidated: s.document?.constraints_validated ?? EMPTY_CONSTRAINTS_VALIDATED,
+      constraintViolations: s.document?.constraint_violations ?? EMPTY_CONSTRAINT_VIOLATIONS,
+    }))
   );
+
+  // Compute fingerprint outside selector — avoids running on every store update
+  const dayCardsFingerprint = useMemo(() => {
+    const cards = storeDayCardsRaw;
+    if (!cards || cards.length === 0) return null;
+    const blockIds = cards
+      .flatMap((c) => c.blocks || [])
+      .filter((b) => b.coordinates?.lat != null && b.coordinates?.lng != null)
+      .map((b) => b.id)
+      .join(',');
+    return blockIds ? `${cards.length}:${blockIds}` : null;
+  }, [storeDayCardsRaw]);
   const effectiveTiles = storeTiles ?? tiles;
 
   // Stabilize day_cards reference: only snapshot from store when fingerprint changes.
@@ -315,6 +309,9 @@ export function StrategyStageRenderer({
   // Unified regeneration state - combine plan regen (prop) and itinerary regen (store)
   // Shows overlay when EITHER is regenerating, locks UI during any regeneration
   const isAnyRegenerating = isRegenerating || isRegenUpdating;
+
+  // Data guard: strategy_sections array has items (distinct from hasStrategy state check)
+  const hasSectionData = (viewModel.strategy_sections?.length ?? 0) > 0;
 
   // Get desktop state for mobile-specific rendering
   const isDesktop = useIsDesktop();
@@ -404,7 +401,7 @@ export function StrategyStageRenderer({
           toast('Too many requests. Please wait a moment and try again');
           return;
         }
-        console.warn('[StrategyStageRenderer] fill-day failed:', err);
+        console.error('[StrategyStageRenderer] fill-day failed:', err);
       } finally {
         useDocumentStore.getState().releaseMutation();
         useDocumentStore.getState().releaseFillDay(bookingDrawerPinnedDay);
@@ -741,24 +738,12 @@ export function StrategyStageRenderer({
       const effectiveDestination = effectiveTripInputs?.destination ?? destinationCard?.title;
       const mapPOIs = extractPOIsFromSections(sections, effectiveDestination);
 
-      // Get destination coordinates for map center
-      const bridgeDestCoords = getDestinationCoords(destinationCard?.title);
-      const bridgeMapCenter = bridgeDestCoords
-        ? { lng: bridgeDestCoords[0], lat: bridgeDestCoords[1], zoom: 10 }
-        : calculateMapCenter(mapPOIs);
+      // Map center: derive from POIs, fall back to world view
+      const bridgeMapCenter = mapPOIs.length > 0
+        ? calculateMapCenter(mapPOIs)
+        : { lat: 20, lng: 0, zoom: 2 };
 
-      // Destination pin for the map (shown when no POIs available)
-      const bridgeDestMarker: import('@/components/map/InteractiveMap').MapItem[] = bridgeDestCoords
-        ? [{
-            id: 'destination-pin',
-            title: destinationCard?.title || 'Destination',
-            type: 'destination',
-            coordinates: { lat: bridgeDestCoords[1], lng: bridgeDestCoords[0] },
-          }]
-        : [];
-
-      // Use POIs if available, otherwise show destination pin
-      const bridgeMapItems = mapPOIs.length > 0 ? mapPOIs : bridgeDestMarker;
+      const bridgeMapItems = mapPOIs;
 
       // SETUP vs PLAN mode detection handled via displayLogic.hasDates
       // Constraints count handled via specialistData.totalConstraints
@@ -831,34 +816,22 @@ export function StrategyStageRenderer({
 
     // PERF: fullModeSections and filteredViewModel already destructured from specialistData above
 
-    // Get destination coordinates for map (used in P3+ only)
-    const destCoords = getDestinationCoords(destinationCard?.title);
-    const mapCenter = destCoords
-      ? { lng: destCoords[0], lat: destCoords[1], zoom: 8 }
-      : { lng: 0, lat: 0, zoom: 4 }; // Fallback world view
-
-    // Desktop: Show sticky map sidebar when destination is set
-    // Map appears immediately when destination is known, not just after itinerary
-    const showDesktopMap = isDesktop && !!destCoords;
-
     // U5: POIs for full mode map - pre-computed in MEMO 3 (fullModePOIs) to avoid recalculation
     // See MEMO 3 above: extractPOIsFromDayCards is memoized with minimal dependencies
-
-    // Destination pin for the map center
-    const destinationMarker: import('@/components/map/InteractiveMap').MapItem[] = destCoords
-      ? [{
-          id: 'destination-pin',
-          title: destinationCard?.title || 'Destination',
-          type: 'destination',
-          coordinates: { lat: destCoords[1], lng: destCoords[0] },
-        }]
+    // Fallback to section-based POIs when day_cards don't have coordinates yet
+    const effectiveFullDest = effectiveTripInputs?.destination ?? destinationCard?.title;
+    const sectionFallbackPOIs = fullModePOIs.length === 0
+      ? extractPOIsFromSections(specialistData.fullModeSections, effectiveFullDest)
       : [];
+    const fullModeMapItems = fullModePOIs.length > 0 ? fullModePOIs : sectionFallbackPOIs;
 
-    // U5: Combine destination marker + POIs for full mode map
-    const fullModeMapItems = [
-      ...destinationMarker,
-      ...fullModePOIs,
-    ];
+    // Map center: derive from POIs, fall back to world view
+    const mapCenter = fullModeMapItems.length > 0
+      ? calculateMapCenter(fullModeMapItems)
+      : { lat: 20, lng: 0, zoom: 2 };
+
+    // Desktop: Show sticky map sidebar when POIs exist (from day_cards or sections)
+    const showDesktopMap = isDesktop && fullModeMapItems.length > 0;
 
     return (
       <div className={cn(
@@ -1091,7 +1064,7 @@ export function StrategyStageRenderer({
                 state={state}
                 tiles={effectiveTiles}
                 generation={generation}
-                hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
+                hasStrategyContent={hasSectionData}
                 savedTileIds={savedTileIds}
                 onSaveTile={handleSaveTile}
                 hasDates={!!effectiveTripInputs?.start_date}
@@ -1108,22 +1081,14 @@ export function StrategyStageRenderer({
             <section className="mt-4 px-4">
               {/* Explicit height wrapper ensures Mapbox initializes correctly */}
               <div className="h-[300px] overflow-hidden rounded-xl border border-border/50">
-                {destCoords ? (
-                  <MapErrorBoundary className="h-full w-full">
-                    <InteractiveMap
-                      items={fullModeMapItems}
-                      activeItemId={null}
-                      defaultCenter={mapCenter}
-                      className="h-full w-full"
-                    />
-                  </MapErrorBoundary>
-                ) : (
-                  <DestinationMapPlaceholder
-                    destination={destinationCard?.title || 'Destination'}
-                    imageUrl={destinationCard?.image_url || ''}
-                    className="h-full"
+                <MapErrorBoundary className="h-full w-full">
+                  <InteractiveMap
+                    items={fullModeMapItems}
+                    activeItemId={null}
+                    defaultCenter={mapCenter}
+                    className="h-full w-full"
                   />
-                )}
+                </MapErrorBoundary>
               </div>
             </section>
           )}
@@ -1259,7 +1224,7 @@ export function StrategyStageRenderer({
       state={state}
       tiles={effectiveTiles}
       generation={generation}
-      hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
+      hasStrategyContent={hasSectionData}
       savedTileIds={savedTileIds}
       onSaveTile={handleSaveTile}
       hasDates={!!effectiveTripInputs?.start_date}
@@ -1267,7 +1232,7 @@ export function StrategyStageRenderer({
       strategySections={viewModel.strategy_sections}
       onOpenStaysSettings={onOpenStaysSettings}
     />
-  ), [state, effectiveTiles, generation, viewModel.strategy_sections, savedTileIds, handleSaveTile, effectiveTripInputs?.start_date, onOpenStaysSettings]);
+  ), [state, effectiveTiles, generation, viewModel.strategy_sections, hasSectionData, savedTileIds, handleSaveTile, effectiveTripInputs?.start_date, onOpenStaysSettings]);
 
   // MOBILE: Simplified layout - no absolute positioning layer system
   // Desktop uses layers to preserve scroll position across view switches

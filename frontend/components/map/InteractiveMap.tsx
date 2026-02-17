@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MapboxMap, { type ErrorEvent, Layer, type MapRef, Marker, NavigationControl, Source } from 'react-map-gl/mapbox';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { debugLog } from '@/lib/debug';
 import { cn } from '@/lib/utils';
 
 import { isMapboxTimingError } from './mapbox-error-handler';
@@ -204,7 +205,7 @@ export function InteractiveMap({
 
   useEffect(() => {
     if (!droppedCoordinateSignature) return;
-    console.warn('[InteractiveMap] Skipping items with invalid coordinates', {
+    debugLog('[InteractiveMap] Skipping items with invalid coordinates', {
       dropped_count: droppedCoordinateIds.length,
       dropped_ids: droppedCoordinateIds.slice(0, 5),
     });

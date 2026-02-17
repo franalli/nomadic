@@ -1717,9 +1717,9 @@ export interface components {
              */
             type: "flight" | "hotel" | "activity";
             /** Partner */
-            partner: string;
+            partner?: string | null;
             /** Partner Product Id */
-            partner_product_id: string;
+            partner_product_id?: string | null;
             /** Title */
             title: string;
             /** Subtitle */

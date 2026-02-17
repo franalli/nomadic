@@ -321,7 +321,7 @@ export function NomadicLanding() {
       })
       .catch((err) => {
         if (!controller.signal.aborted) {
-          console.warn('Failed to fetch destination image:', err);
+          console.error('Failed to fetch destination image:', err);
         }
       });
 
@@ -1040,8 +1040,8 @@ export function NomadicLanding() {
             storeMarkPreferencesAsApplied();
             // Log warning if some preferred activities couldn't fit
             if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
-              console.warn(
-                `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
+              debugLog(
+                `[itinerary] ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
               );
             }
             // Show toast for activity reductions (e.g., diving truncated due to no-fly buffer)
@@ -1072,7 +1072,7 @@ export function NomadicLanding() {
             }
 
             if (parsed && parsed.error === 'CONSTRAINT_CONFLICT') {
-              console.warn('[expand-itinerary] Constraint conflict:', parsed);
+              debugLog('[expand-itinerary] Constraint conflict:', parsed);
               const dayCards = parsed.day_cards as
                 | Array<Record<string, unknown>>
                 | undefined;
@@ -1248,25 +1248,29 @@ export function NomadicLanding() {
 
   // Handler for "Finalize & Unlock Booking" CTA (The Bridge)
   // Sets plan as finalized and navigates to Book view
-  const handleFinalizePlan = useCallback(async () => {
+  const finalizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (finalizeTimerRef.current) clearTimeout(finalizeTimerRef.current);
+  }, []);
+
+  const handleFinalizePlan = useCallback(() => {
     setIsFinalizing(true);
 
     // Simulate "Scanning best rates..." delay for UX polish
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // Mark plan as finalized (unlocks Book view)
-    finalizePlan();
-
-    // Navigate to Book view
-    navigateTo('book');
-
-    setIsFinalizing(false);
+    finalizeTimerRef.current = setTimeout(() => {
+      finalizeTimerRef.current = null;
+      // Mark plan as finalized (unlocks Book view)
+      finalizePlan();
+      // Navigate to Book view
+      navigateTo('book');
+      setIsFinalizing(false);
+    }, 1500);
   }, [finalizePlan, navigateTo]);
 
   // Handler for mobile chat input — guards against ref not ready during first render
   const handleMobileSend = useCallback((message: string) => {
     if (!chatPanelRef.current?.sendMessage) {
-      console.warn('[MobileChatInput] ChatPanel ref not ready');
+      debugLog('[MobileChatInput] ChatPanel ref not ready');
       return;
     }
     chatPanelRef.current.sendMessage(message);

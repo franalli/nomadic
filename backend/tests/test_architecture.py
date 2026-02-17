@@ -508,26 +508,34 @@ class TestLocalExpert:
     """Test Local Expert static knowledge and fallback behavior."""
 
     def test_dubai_local_expert_knowledge(self):
-        """Dubai should have static local expert knowledge."""
+        """Dubai should have static local expert constraints."""
         from app.planner.nodes.local_expert import _get_static_local_knowledge
 
         knowledge = _get_static_local_knowledge("Dubai")
 
         assert len(knowledge.constraints) > 0, "Dubai should have constraints"
-        assert len(knowledge.recommendations) > 0, "Dubai should have recommendations"
+        # Static knowledge contains only stable constraints, not volatile recommendations
+        assert len(knowledge.recommendations) == 0, (
+            "Static knowledge should not have recommendations"
+        )
 
-        # Check for specific Dubai content
-        rec_titles = [r.title for r in knowledge.recommendations]
-        assert any("Metro" in t for t in rec_titles), f"Should include Dubai Metro: {rec_titles}"
+        # Check for specific Dubai constraint content
+        constraint_descs = [c.description for c in knowledge.constraints]
+        assert any("modestly" in d for d in constraint_descs), (
+            f"Should include dress code constraint: {constraint_descs}"
+        )
 
     def test_paris_local_expert_knowledge(self):
-        """Paris should have static local expert knowledge."""
+        """Paris should have static local expert constraints."""
         from app.planner.nodes.local_expert import _get_static_local_knowledge
 
         knowledge = _get_static_local_knowledge("Paris")
 
         assert len(knowledge.constraints) > 0, "Paris should have constraints"
-        assert len(knowledge.recommendations) > 0, "Paris should have recommendations"
+        # Static knowledge contains only stable constraints, not volatile recommendations
+        assert len(knowledge.recommendations) == 0, (
+            "Static knowledge should not have recommendations"
+        )
 
         # Check for Louvre closed Tuesday constraint
         constraint_descs = [c.description for c in knowledge.constraints]
@@ -544,15 +552,32 @@ class TestLocalExpert:
         assert len(knowledge.constraints) == 0, "Unknown place should have no constraints"
         assert len(knowledge.recommendations) == 0, "Unknown place should have no recommendations"
 
-    def test_local_expert_logic_hooks(self):
-        """Local Expert recommendations should have logic_hooks."""
+    def test_bali_comprehensive_stable_categories(self):
+        """Bali comprehensive format should include stable categories only."""
         from app.planner.nodes.local_expert import _get_static_local_knowledge
 
-        knowledge = _get_static_local_knowledge("Tokyo")
+        knowledge = _get_static_local_knowledge("Bali")
 
-        # All recommendations should have logic_hooks
-        for rec in knowledge.recommendations:
-            assert rec.logic_hook, f"Recommendation '{rec.title}' missing logic_hook"
+        # Stable categories should be present
+        assert knowledge.destination_overview is not None, "Should have destination_overview"
+        assert knowledge.visa_entry is not None, "Should have visa_entry"
+        assert knowledge.safety_health is not None, "Should have safety_health"
+        assert knowledge.cultural_norms is not None, "Should have cultural_norms"
+        assert knowledge.seasonality is not None, "Should have seasonality"
+        assert knowledge.packing is not None, "Should have packing"
+        assert len(knowledge.constraints) > 0, "Should have constraints"
+
+        # Volatile categories should be empty defaults (not populated from static data)
+        assert not knowledge.money_costs.currency, "money_costs should be empty default"
+        assert not knowledge.transportation.ride_apps, "transportation should be empty default"
+        assert not knowledge.connectivity.best_sim_provider, "connectivity should be empty default"
+        assert not knowledge.things_to_do.must_do, "things_to_do should be empty default"
+        assert not knowledge.neighborhoods.where_to_stay, "neighborhoods should be empty default"
+        assert not knowledge.accommodation.types_available, "accommodation should be empty default"
+        assert not knowledge.scams_traps.common_scams, "scams_traps should be empty default"
+        assert len(knowledge.recommendations) == 0, (
+            "Static knowledge should not have recommendations"
+        )
 
 
 # =============================================================================

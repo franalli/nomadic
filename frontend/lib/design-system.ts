@@ -254,4 +254,25 @@ export const DS = {
     icon: 'w-5 h-5 text-zinc-500 dark:text-zinc-400 shrink-0',
     text: 'text-sm text-zinc-600 dark:text-zinc-400',
   },
+  // ---------------------------------------------------------------------------
+  // 7. GLOW VALUES (Raw CSS shadow strings for emerald bioluminescence)
+  // ---------------------------------------------------------------------------
+  glow: {
+    /** Subtle focus ring (inputs, cards) — opacity 0.1–0.15 */
+    focusSm: '0 0 20px -5px rgba(16,185,129,0.15)',
+    /** Default button/card glow — opacity 0.3–0.4 */
+    md: '0 0 20px -5px rgba(16,185,129,0.4)',
+    /** Accent icon/text drop-shadow — opacity 0.5 */
+    dropText: '0 0 8px rgba(16,185,129,0.5)',
+    /** Cursor blink / small indicator — opacity 0.6 */
+    dropCursor: '0 0 6px rgba(16,185,129,0.6)',
+  },
+
+  // ---------------------------------------------------------------------------
+  // 8. TEXT SIZES (Micro sizes below Tailwind defaults)
+  // ---------------------------------------------------------------------------
+  textSize: {
+    /** 10px — labels, badges, technical metadata */
+    micro: 'text-[10px]',
+  },
 } as const;

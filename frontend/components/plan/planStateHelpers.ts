@@ -33,12 +33,6 @@ export function isStrategyReady(state: PlanViewState | undefined | null): boolea
   return normalizePlanViewState(state) === 'P1_ENRICHED' && state !== 'S2_BLOCKED';
 }
 
-/** Is the itinerary ready / finalized? (P3_FINALIZED or legacy S3_ITINERARY_READY) */
-export function isItineraryReady(state: PlanViewState | undefined | null): boolean {
-  if (!state) return false;
-  return normalizePlanViewState(state) === 'P3_FINALIZED';
-}
-
 /** Does the plan have strategy content (S2+ or P1+, including editing/blocked states)? */
 export function hasStrategy(state: PlanViewState | undefined | null): boolean {
   if (!state) return false;

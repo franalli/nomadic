@@ -424,13 +424,3 @@ class ConstraintEngine:
 # =============================================================================
 # Helper Functions
 # =============================================================================
-
-
-def create_blocked_summary(blocked_count: int, reason: str) -> Dict[str, Any]:
-    """Create a standardized blocked summary for UI display."""
-    return {
-        "count": blocked_count,
-        "reason": reason,
-        "icon": "",
-        "message": f"{blocked_count} flight option{'s' if blocked_count != 1 else ''} removed",
-    }

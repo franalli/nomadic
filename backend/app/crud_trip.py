@@ -4,30 +4,8 @@ from typing import Optional
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 
 from app import db_models as models
-
-# =============================================================================
-# Sync functions (for legacy endpoints and migrations)
-# =============================================================================
-
-
-def get_session_by_token_sync(
-    db: Session,
-    session_token: str,
-    lock_for_update: bool = False,
-) -> Optional[models.Session]:
-    """Look up a session by token without creating one if missing (sync version)."""
-    query = db.query(models.Session).filter(models.Session.session_token == session_token)
-    if lock_for_update:
-        query = query.with_for_update()
-    return query.first()
-
-
-# =============================================================================
-# Async functions (for async endpoints and LangGraph)
-# =============================================================================
 
 
 async def get_session_by_token(

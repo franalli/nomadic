@@ -6,8 +6,8 @@
 
 - **Focus:** Code health audit fixes (T3 tier)
 - **Secondary:** DS token adoption
-- **Active work:** Completed Batches A-H of code health audit + 3 trace-derived UX fixes: (1) synthesizer category-only additions → specialist_update response type, (2) L1 cold probe skips prefetch wait budget, (3) specialist content continuity reuse on same-dest date extensions
-- **Known broken:** Pre-existing test failures: `test_facade_exports_meta_helpers` (missing init_turn_metadata export), `test_ground_flight_response_appends_date_adjustment_note`
+- **Active work:** Staged cleanup plan (Stages 1-8 complete): dead code removal, hard-coded data cleanup, console.warn→debugLog, DS token adoption, component size extractions (streaming.py, validation_cache.py, ChatMessageRenderer.tsx, expert_constraints.py), destination-coords refactor (removed 90-city lookup, POI-driven maps)
+- **Known broken:** Pre-existing test failures: `test_facade_exports_meta_helpers` (missing init_turn_metadata export), `test_full_graph_execution` (KeyError)
 - **DO NOT touch this sprint:** [frozen files/features]
 
 ---

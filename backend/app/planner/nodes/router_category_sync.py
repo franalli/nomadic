@@ -9,6 +9,16 @@ Handles:
 - Tier 2 experience prefetch coordination
 - Activity category state synchronization
 - Setting reset handling
+
+Regex Fast-Path Principle:
+    The regex patterns in this module (REMOVAL_PATTERN, RESET_BUDGET_PATTERN,
+    RESET_HOTEL_PATTERN, _CATEGORY_REPLACE_PATTERNS, _CATEGORY_INTENT_PATTERNS,
+    DATE_INDICATORS) are OPTIMIZATIONS, not gates. They provide instant detection
+    for common user phrasings before the LLM runs.
+
+    The LLM extraction (_collect_modifications_from_extraction) is the AUTHORITY.
+    If a regex misses a novel phrasing, the LLM will still catch it. Do NOT
+    expand the regex patterns to chase edge cases — that's the LLM's job.
 """
 
 import asyncio

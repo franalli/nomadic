@@ -144,8 +144,8 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
             }
             // Log warning if some preferred activities couldn't fit
             if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
-              console.warn(
-                `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
+              debugLog(
+                `[itinerary] ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
               );
             }
           },

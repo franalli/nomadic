@@ -324,7 +324,7 @@ export function TimelineThread({
         toast(reason);
         return;
       }
-      console.warn('[TimelineThread] fill-day failed:', err);
+      console.error('[TimelineThread] fill-day failed:', err);
     } finally {
       useDocumentStore.getState().releaseMutation();
       useDocumentStore.getState().releaseFillDay(dayNumber);

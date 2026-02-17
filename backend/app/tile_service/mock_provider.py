@@ -28,7 +28,11 @@ def _parse_budget(value) -> Optional[float]:
 
 
 def _dest_hash(dest: str) -> str:
-    """Generate a 6-char hash from destination for tile ID namespacing."""
+    """Generate a 6-char hash from destination for tile ID namespacing.
+
+    SECURITY: md5 is intentional — used for deterministic cache key generation,
+    not for authentication or integrity. Collision resistance is not required.
+    """
     return hashlib.md5(dest.lower().strip().encode()).hexdigest()[:6]
 
 

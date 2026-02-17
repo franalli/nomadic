@@ -104,7 +104,7 @@ const TILE_TYPE_MAPPINGS: Record<string, NormalizedTileCategory> = {
  */
 export function normalizeTileType(type: string | undefined | null): NormalizedTileCategory {
   if (!type) {
-    console.warn('[normalizeTileType] Received null/undefined type');
+    // null/undefined type — return 'unknown' for caller to handle
     return 'unknown';
   }
 
@@ -130,8 +130,7 @@ export function normalizeTileType(type: string | undefined | null): NormalizedTi
     }
   }
 
-  // DEBUG: Log unrecognized types to help identify missing mappings
-  console.warn(`[normalizeTileType] Unknown type: "${type}" → "${lower}"`);
+  // Unrecognized type — return 'unknown' for caller to handle
   return 'unknown';
 }
 

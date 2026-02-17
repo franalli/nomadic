@@ -4,6 +4,12 @@ Shared L1 in-memory cache primitive with thread-safe stats.
 Each service instantiates its own MemoryCache with domain-specific config.
 Eliminates copy-pasted _increment_stat / _cache_get / _cache_set / _stats_lock
 boilerplate across specialist_cache, tile_cache, router_cache, experience_generator.
+
+Cache Invalidation Note:
+    L1 (memory) and L2 (DB) clears are non-atomic. If the process crashes
+    between L1 and L2 clear, L2 repopulates L1 with stale data on next read.
+    This is acceptable: stale cache data causes at most one TTL window of
+    outdated results, not incorrect results.
 """
 
 from datetime import UTC, datetime, timedelta

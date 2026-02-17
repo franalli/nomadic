@@ -45,6 +45,8 @@ def upgrade() -> None:
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(days=90)
 
+    # SECURITY: f-string is safe here — values are code-generated datetime isoformat
+    # strings, not user input. Alembic migrations run offline, never with untrusted data.
     op.execute(
         sa.text(
             f"UPDATE sessions SET last_activity_at = '{now.isoformat()}', "

@@ -104,7 +104,7 @@ class Settings(BaseSettings):
     aggressive_cache_clear: bool = False  # Clear ALL caches on Fresh Start (dev mode)
     precise_token_count: bool = False  # Use tiktoken for precise token counting
 
-    # backend
+    # backend — 0.0.0.0 required for container environments (Render, Docker)
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
     app_name: str = "Nomadic Backend"  # Application name for OpenAPI docs

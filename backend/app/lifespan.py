@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     )
 
     # Prewarm validation cache
-    validation_count = prewarm_cache()
+    validation_count = await prewarm_cache()
     _debug(f"[Validation] Pre-warmed cache with {validation_count} entries")
 
     # Prewarm prompts and templates (Jinja2 compilation)

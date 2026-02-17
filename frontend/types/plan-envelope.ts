@@ -588,6 +588,9 @@ export interface StrategySection {
     reason?: string;
   }>;
 
+  // Typed content blocks — mirrors content_added as a first-class field
+  content_blocks?: Array<Record<string, unknown>>;
+
   content_added?: Array<{
     title: string;
     day?: number;

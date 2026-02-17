@@ -3,7 +3,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, Loader2, RotateCcw } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -13,8 +13,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { useShallow } from 'zustand/react/shallow';
 
 import { isBootstrap, isFraming } from '@/components/plan/planStateHelpers';
@@ -29,7 +27,6 @@ import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { type SSENodeStatusEvent, streamGraphPlan } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
-import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
 import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
@@ -52,6 +49,7 @@ import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
 import { ChatInputBar } from './ChatInputBar';
+import { ChatMessageRenderer, type VisibleMessage } from './ChatMessageRenderer';
 import { ChatSkeleton } from './ChatSkeleton';
 import { ChatSuggestionChips } from './ChatSuggestionChips';
 // HoldToDeleteButton removed for demo - re-enable post-launch
@@ -60,8 +58,6 @@ import { MobileSetupCollapsedHeader } from './MobileSetupCollapsedHeader';
 // TripStatusBar is mobile-only (rendered in SplitLayoutView shared slot)
 // NodeProgress removed - replaced by Live Logic Status Pill above input
 import { type ActiveStatus,SmartLoader } from './SmartLoader';
-import { SystemAckLine } from './SystemAckLine';
-import { SystemReceipt } from './SystemReceipt';
 
 // Helper to fix escaped characters from backend
 // Converts literal escape sequences to actual characters for proper markdown rendering
@@ -178,20 +174,6 @@ function getErrorMessage(error: Error): string {
 
 const MESSAGE_BURST_COOLDOWN_MS = 1000;
 const GENERATE_BURST_COOLDOWN_MS = 3000;
-const MESSAGE_DELAY_CLASS_BY_MS: Record<number, string> = {
-  0: '[animation-delay:0ms]',
-  30: '[animation-delay:30ms]',
-  60: '[animation-delay:60ms]',
-  90: '[animation-delay:90ms]',
-  120: '[animation-delay:120ms]',
-  150: '[animation-delay:150ms]',
-};
-
-function getMessageDelayClass(idx: number): string {
-  const delayMs = Math.min(idx * 30, 150);
-  return MESSAGE_DELAY_CLASS_BY_MS[delayMs] ?? MESSAGE_DELAY_CLASS_BY_MS[150];
-}
-
 function buildSendRequestId(now: number): string {
   return `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -229,122 +211,6 @@ export function getSendBurstGuardReason(params: SendBurstGuardParams): string | 
 // Re-export for backward compatibility (moved to suggestion-actions.ts)
 export { handleSuggestionTriggerAction } from './suggestion-actions';
 
-// Tier 11.12: Check if an error message is retryable (transient network/server issues)
-function isRetryableError(content: string): boolean {
-  const retryablePatterns = [
-    "couldn't connect",
-    'check your internet',
-    'took too long',
-    'check your connection',
-    'too quickly',
-    'wait a moment',
-    'went wrong on our end',
-    'try again in a few',
-  ];
-  const lowerContent = content.toLowerCase();
-  return retryablePatterns.some((pattern) => lowerContent.includes(pattern));
-}
-// Markdown components config - extracted to module level to prevent recreation on each render
-// Full GFM support with professional styling for chat bubbles
-const MARKDOWN_COMPONENTS = {
-  // Paragraphs with proper spacing - mb-4 creates "Visual Islands" separation
-  p: ({ children }: { children?: React.ReactNode }) => (
-    <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>
-  ),
-  // Bold text with emphasis - zinc for key variables (dates, prices, locations)
-  strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong className="font-semibold text-zinc-900 dark:text-emerald-400">{children}</strong>
-  ),
-  // Italic text
-  em: ({ children }: { children?: React.ReactNode }) => (
-    <em className="italic">{children}</em>
-  ),
-  // Unordered lists with proper bullet styling
-  ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="my-2 ml-1 list-none space-y-1.5 first:mt-0 last:mb-0">{children}</ul>
-  ),
-  // Ordered lists with proper number styling
-  ol: ({ children }: { children?: React.ReactNode }) => (
-    <ol className="my-2 ml-1 list-decimal space-y-1.5 pl-4 first:mt-0 last:mb-0">{children}</ol>
-  ),
-  // List items with custom bullet point styling (hidden when emoji acts as bullet)
-  li: ({ children }: { children?: React.ReactNode }) => {
-    // Extract text content to check if it starts with an emoji
-    const getTextContent = (node: React.ReactNode): string => {
-      if (typeof node === 'string') return node;
-      if (Array.isArray(node)) return node.map(getTextContent).join('');
-      if (node && typeof node === 'object' && 'props' in node) {
-        const element = node as { props?: { children?: React.ReactNode } };
-        return getTextContent(element.props?.children);
-      }
-      return '';
-    };
-    const text = getTextContent(children);
-    const startsWithEmoji = /^[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u.test(text);
-
-    return (
-      <li className={`relative pl-4 ${!startsWithEmoji ? "before:absolute before:left-0 before:top-[0.6em] before:h-1.5 before:w-1.5 before:rounded-full before:bg-primary/60 before:content-['']" : ''}`}>
-        {children}
-      </li>
-    );
-  },
-  // Inline code for technical terms
-  code: ({ children }: { children?: React.ReactNode }) => (
-    <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-sm">{children}</code>
-  ),
-  // Links with proper styling - includes specialist deep link support
-  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
-    // Handle specialist: protocol links (deep links to specialist cards)
-    if (href?.startsWith('specialist:')) {
-      const specialistType = href.replace('specialist:', '');
-      return (
-        <button
-          type="button"
-          onClick={() => {
-            // Dispatch custom event for specialist navigation
-            window.dispatchEvent(
-              new CustomEvent('specialist-navigate', {
-                detail: { specialistType },
-              })
-            );
-          }}
-          className="text-zinc-900 dark:text-emerald-400 font-semibold hover:underline cursor-pointer inline"
-        >
-          {children}
-        </button>
-      );
-    }
-    // Regular external links
-    return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-primary underline decoration-primary/50 underline-offset-2 hover:decoration-primary transition-colors"
-      >
-        {children}
-      </a>
-    );
-  },
-  // Blockquotes for emphasis or quotes
-  blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <blockquote className="my-2 border-l-2 border-primary/40 pl-3 italic text-muted-foreground first:mt-0 last:mb-0">
-      {children}
-    </blockquote>
-  ),
-  // Horizontal rules for section breaks
-  hr: () => <hr className="my-3 border-border/50" />,
-  // Headers (rarely used in chat but supported)
-  h1: ({ children }: { children?: React.ReactNode }) => (
-    <h1 className="mb-2 text-lg font-bold first:mt-0">{children}</h1>
-  ),
-  h2: ({ children }: { children?: React.ReactNode }) => (
-    <h2 className="mb-2 text-base font-semibold first:mt-0">{children}</h2>
-  ),
-  h3: ({ children }: { children?: React.ReactNode }) => (
-    <h3 className="mb-1.5 text-sm font-semibold first:mt-0">{children}</h3>
-  ),
-};
 
 interface ChatPanelProps {
   selectedBranchId: string | null;
@@ -1474,7 +1340,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         ...m,
         content: sanitizeContent(m.content),
       }))
-      .flatMap((m): (ChatMessage & { _isPartOfSplit?: boolean; _isFirstPart?: boolean; _isLastPart?: boolean })[] => {
+      .flatMap((m): VisibleMessage[] => {
         // Only split assistant messages by paragraph breaks
         if (m.role === 'assistant') {
           const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
@@ -1655,126 +1521,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 </div>
               )}
 
-              {visibleMessages.map((m, idx) => {
-                // Check if this is part of a split message (for styling and retry button logic)
-                const isSplitMessage = '_isPartOfSplit' in m && m._isPartOfSplit;
-                const isFirstPart = '_isFirstPart' in m && m._isFirstPart;
-                const isLastPart = '_isLastPart' in m && m._isLastPart;
-                // Extract original message ID for streaming check (handles split messages)
-                const originalId = m.id.replace(/_p\d+$/, '');
-                const isStreaming = streamingMessageId === originalId && !isSplitMessage;
-                // Tighter spacing for consecutive parts of split messages
-                const spacingClass = isSplitMessage && !isFirstPart ? '-mt-1.5' : '';
-
-                // For user messages, wrap in a relative container for delete button positioning
-                const isUserMessage = m.role === 'user';
-                // DISABLED: Delete functionality removed for demo
-                // const showDeleteButton = isUserMessage && originalId === lastUserMessageId && !isLoading;
-
-                // Check if this user message has ack updates (for SystemReceipt display)
-                const hasAckUpdates = isUserMessage && m.ackUpdates && m.ackUpdates.length > 0;
-
-                // Render system ack line for system messages or ack_line displayMode
-                if (m.role === 'system' || m.displayMode === 'ack_line') {
-                  return (
-                    <div
-                      key={m.id}
-                      className={cn('message-enter', getMessageDelayClass(idx))}
-                    >
-                      <SystemAckLine
-                        status={m.ackStatus || 'applied'}
-                        updates={m.ackUpdates}
-                        isPending={m.ackStatus === 'pending'}
-                      />
-                    </div>
-                  );
-                }
-
-                return (
-                  <div
-                    key={m.id}
-                    className={cn(
-                      isUserMessage ? 'text-right' : 'text-left',
-                      'message-enter',
-                      spacingClass,
-                      getMessageDelayClass(idx),
-                    )}
-                  >
-                    {/* Message container */}
-                    <div className="inline-block relative max-w-[85%]">
-                      {/* "Command & Receipt" pattern: User message + SystemReceipt below */}
-                      {isUserMessage ? (
-                        <div className="flex flex-col items-end">
-                          {/* The Commander (User Bubble) */}
-                          <div
-                            className={cn(
-                              // Shape: Speech bubble with sharp bottom-right corner
-                              'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all',
-                              // Light Mode: Solid Black (The Commander)
-                              'bg-zinc-900 text-white border border-zinc-900',
-                              'shadow-md hover:shadow-lg hover:-translate-y-0.5',
-                              'hover:bg-zinc-800 hover:border-zinc-800',
-                              // Dark Mode: Solid White (Maximum Contrast Signal)
-                              'dark:bg-white dark:text-zinc-950 dark:border-white',
-                              'dark:shadow-[0_0_20px_-5px_rgba(255,255,255,0.3)]',
-                              'dark:hover:bg-zinc-100'
-                            )}
-                          >
-                            {m.content}
-                          </div>
-                          {/* The System Receipt - DS Section 19 */}
-                          {hasAckUpdates && (
-                            <SystemReceipt
-                              ackStatus={m.ackStatus || 'applied'}
-                              ackUpdates={m.ackUpdates || []}
-                            />
-                          )}
-                        </div>
-                      ) : (
-                        /* Assistant message */
-                        <div
-                          className={cn(
-                            // Shape: Speech bubble with sharp bottom-left corner
-                            'rounded-2xl rounded-bl-sm px-4 py-2.5 transition-all',
-                            // Light Mode: Glass effect
-                            'bg-white/80 backdrop-blur-sm',
-                            'border border-zinc-200',
-                            'shadow-sm',
-                            'hover:shadow-md hover:-translate-y-0.5',
-                            // Dark Mode: Dark Glass (The System/Infrastructure)
-                            'dark:bg-white/5 dark:backdrop-blur-sm',
-                            'dark:border-white/10',
-                            'dark:shadow-none',
-                            // Text: High contrast
-                            'text-zinc-700 dark:text-zinc-300',
-                            isStreaming && 'typing-pulse'
-                          )}
-                        >
-                          <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                            {preprocessSpecialistLinks(m.content)}
-                          </Markdown>
-                          {/* Tier 11.12: Retry button for transient errors - only on last part of split messages */}
-                          {originalId.startsWith('a_err_') &&
-                            lastUserMessage &&
-                            isRetryableError(m.content) &&
-                            !isLoading &&
-                            (!isSplitMessage || isLastPart) && (
-                              <button
-                                type="button"
-                                onClick={() => sendMessageCore(lastUserMessage)}
-                                className="mt-2 flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
-                              >
-                                <RotateCcw className="h-3 w-3" />
-                                Retry
-                              </button>
-                            )}
-                        </div>
-                      )}
-                      {/* Delete button removed for demo - re-enable post-launch */}
-                    </div>
-                  </div>
-                );
-              })}
+              {visibleMessages.map((m, idx) => (
+                <ChatMessageRenderer
+                  key={m.id}
+                  message={m}
+                  index={idx}
+                  streamingMessageId={streamingMessageId}
+                  isLoading={isLoading}
+                  lastUserMessage={lastUserMessage}
+                  onRetry={sendMessageCore}
+                />
+              ))}
               {/* Invisible sentinel for smooth scroll-to-bottom */}
               <div ref={bottomSentinelRef} aria-hidden="true" className="h-px -mt-2" />
             </>

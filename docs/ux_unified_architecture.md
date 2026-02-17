@@ -173,9 +173,9 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 | No Destination | Hidden | Hidden |
 
 **Map Content:**
-- Static destination pin centered on map (zoom level 8 in full mode, zoom level 10 in bridge mode, zoom level 4 fallback when no coords)
-- Uses `getDestinationCoords()` lookup for ~90 destinations
-- Falls back to `DestinationMapPlaceholder` if coords not found
+- Map centered on POIs via `calculateMapCenter()` (zoom derived from POI spread)
+- Falls back to world view (`lat: 20, lng: 0, zoom: 2`) when no POIs available
+- Falls back to `DestinationMapPlaceholder` in bridge mode when no POIs found
 - **POI Pins:** Activity markers from `extractPOIsFromSections()` in `ghost-timeline-adapter.ts`
   - Extracts coordinates from strategy section tiles and activities
   - **Destination fallback chain:** `effectiveTripInputs?.destination ?? destinationCard?.title`
@@ -299,7 +299,7 @@ All animations use Framer Motion with `AnimatePresence` for enter/exit:
   - **No Destination:** Single column `<div className="flex flex-col w-full">`
   - **With Destination (Desktop):** Content (flex-1, min 720px, max 900px) + Map (fixed 400px, max 35vw)
   - **With Destination (Mobile):** Single column with inline map (300px height, shown after itinerary)
-- Desktop map visibility controlled by `showDesktopMap = isDesktop && !!destCoords` (shows immediately when destination is set)
+- Desktop map visibility controlled by `showDesktopMap = isDesktop && fullModeMapItems.length > 0` (shows when POIs exist from day_cards or strategy sections)
 - Mobile map only shows when `hasItineraryContent && fullModePOIs.length > 0` (not just destination pin)
 - Timeline section conditionally renders when `hasItineraryContent === true`
 - Mode prop threads through TimelineThread → ActivityMiniCard for Book button visibility
@@ -1664,7 +1664,8 @@ useSessionHydration() runs
 | `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
 | `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack/StrategyHero) |
 | `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts` |
-| `ChatPanel` | Chat orchestration for SSE runs and suggestion chips. Input area (chips + SmartLoader + text input) is pinned below the scroll container via `shrink-0` (not inside it), ensuring chips are always visible. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown) and handles `trigger_action` chips (e.g., direct flights only) |
+| `ChatPanel` | Chat orchestration for SSE runs and suggestion chips. Input area (chips + SmartLoader + text input) is pinned below the scroll container via `shrink-0` (not inside it), ensuring chips are always visible. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown) and handles `trigger_action` chips (e.g., direct flights only). Delegates individual message rendering to `ChatMessageRenderer` |
+| `ChatMessageRenderer` | Renders individual chat messages: system ack lines, user bubbles with SystemReceipt, assistant bubbles with markdown/specialist deep links/streaming pulse/retry button (extracted from ChatPanel) |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available |

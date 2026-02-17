@@ -1309,18 +1309,16 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
         # Skip wait if L1 is cold — prefetch hasn't populated the cache yet,
         # so waiting just wastes the budget. Singleflight in generate_experiences()
         # will join the running task anyway.
-        from app.services.experience_generator import _experience_cache_key
-        from app.services.experience_generator import _mem as _exp_l1
+        from app.services.experience_generator import has_cached as _exp_has_cached
 
-        probe_key = _experience_cache_key(
+        if prefetch_task.done():
+            pass  # Task finished — always consume result
+        elif not _exp_has_cached(
             expected_destination,
             sorted(expected_categories),
             expected_month,
             expected_tiles_per_category,
-        )
-        if prefetch_task.done():
-            pass  # Task finished — always consume result
-        elif _exp_l1.get(probe_key) is None:
+        ):
             _debug_log("[VERIFY][PREFETCH] skip=l1_cold (singleflight will join)")
             log("LOGISTICS", "[PREFETCH] L1 cold — skipping wait, singleflight will join")
             return None

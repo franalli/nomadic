@@ -392,21 +392,6 @@ def log(tag: str, message: str, data: str | None = None, sleep: float | None = N
         pass
 
 
-def log_phase(phase: str, title: str):
-    """Print a phase header box. Shown in full mode with rich colorization."""
-    if get_debug_mode() != "full":
-        return
-
-    try:
-        _console.print()
-        _console.print()
-        _console.print("[bold cyan]" + "─" * 50 + "[/bold cyan]")
-        _console.print(f"   [bold]{phase}: {title}[/bold]")
-        _console.print("[bold cyan]" + "─" * 50 + "[/bold cyan]")
-    except Exception:
-        pass
-
-
 def log_tokens(component: str, prompt: int, completion: int, total: int):
     """Log token usage. Shown in full mode."""
     log(
