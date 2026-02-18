@@ -41,6 +41,7 @@ import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { fillDay } from '@/lib/api';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { debugLog } from '@/lib/debug';
+import { DS } from '@/lib/design-system';
 import { isFillDayCooldownActive } from '@/lib/fillDayGuards';
 import {
   calculateMapCenter,
@@ -686,7 +687,7 @@ export function StrategyStageRenderer({
               </h3>
             </div>
             {specialistData.totalConstraints > 0 && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 font-medium">
+              <span className={`${DS.textSize.micro} px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 font-medium`}>
                 {specialistData.totalConstraints} constraint{specialistData.totalConstraints > 1 ? 's' : ''} applied
               </span>
             )}
@@ -762,7 +763,7 @@ export function StrategyStageRenderer({
                   </h3>
                 </div>
                 {specialistData.totalConstraints > 0 && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 font-medium">
+                  <span className={`${DS.textSize.micro} px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 font-medium`}>
                     {specialistData.totalConstraints} constraint{specialistData.totalConstraints > 1 ? 's' : ''} applied
                   </span>
                 )}

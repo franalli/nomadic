@@ -57,6 +57,7 @@ import {
 } from '@/components/ui/tooltip';
 import { apiFetch } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
+import { DS } from '@/lib/design-system';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { getDeepLinkParams } from '@/lib/tileUtils';
 import { cn, isFlightType } from '@/lib/utils';
@@ -247,7 +248,7 @@ export const TileCard = memo(function TileCard({
     }).catch((error) => {
       if (error instanceof Error && error.name === 'AbortError') return;
       if (process.env.NODE_ENV !== 'production') {
-        console.warn('Click tracking failed:', error);
+        debugLog('Click tracking failed:', error);
       }
     });
   }, [tile.id, branchId]);
@@ -584,7 +585,7 @@ export const TileCard = memo(function TileCard({
                     side="top"
                     className="max-w-xs bg-zinc-900 text-zinc-100 text-xs font-mono p-3 rounded-lg shadow-lg"
                   >
-                    <div className="text-zinc-400 text-[10px] uppercase tracking-wider mb-1.5">
+                    <div className={`text-zinc-400 ${DS.textSize.micro} uppercase tracking-wider mb-1.5`}>
                       API Params
                     </div>
                     <pre className="whitespace-pre-wrap break-all">
@@ -602,7 +603,7 @@ export const TileCard = memo(function TileCard({
                 Book
               </Button>
             </div>
-            <span className="text-[10px] text-muted-foreground">
+            <span className={`${DS.textSize.micro} text-muted-foreground`}>
               Opens partner site
             </span>
           </div>

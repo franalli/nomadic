@@ -24,6 +24,7 @@ import { useToast } from '@/components/ui/toast';
 import { fillDay } from '@/lib/api';
 import { getDayIntensity, INTENSITY_CONFIG } from '@/lib/dayIntensity';
 import { debugLog } from '@/lib/debug';
+import { DS } from '@/lib/design-system';
 import { isFillDayCooldownActive } from '@/lib/fillDayGuards';
 import { cn } from '@/lib/utils';
 import { useDocumentStore, useDocumentTripInputs } from '@/state/documentStore';
@@ -534,7 +535,7 @@ export function TimelineThread({
                     const cfg = INTENSITY_CONFIG[intensity];
                     const Icon = INTENSITY_ICON_MAP[cfg.icon];
                     return (
-                      <span className={cn('ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium', cfg.pillClass)}>
+                      <span className={cn(`ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${DS.textSize.mini} font-medium`, cfg.pillClass)}>
                         <Icon className="h-3 w-3" />
                         {cfg.label}
                       </span>

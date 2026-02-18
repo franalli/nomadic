@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TileType = Literal["flight", "hotel", "activity"]
 
@@ -31,7 +31,15 @@ ChatRole = Literal["user", "assistant"]
 
 class Geo(BaseModel):
     lat: float
-    lon: float
+    lng: float
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_lon(cls, data: Any) -> Any:
+        """Accept legacy ``"lon"`` key from persisted DB data."""
+        if isinstance(data, dict) and "lon" in data and "lng" not in data:
+            data["lng"] = data.pop("lon")
+        return data
 
 
 # =============================================================================

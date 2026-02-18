@@ -8,6 +8,7 @@
 
 'use client';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { AckStatus, AckUpdate, ChatPhase } from '@/types/chat';
 
@@ -107,12 +108,12 @@ export function SystemReceipt({ ackStatus, ackUpdates, mode }: SystemReceiptProp
       <span
         className={cn(
           // Typography: Technical Monospace with bold for legibility at 10px
-          'font-mono text-[10px] uppercase tracking-widest font-bold',
+          `font-mono ${DS.textSize.micro} uppercase tracking-widest font-bold`,
           isRejected
             ? // Rejection: Amber with glow (DS Section 20)
               'text-amber-600 dark:text-amber-500 dark:drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]'
             : // Standard: Zinc/Emerald ("System Pulse")
-              'text-zinc-600 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+              `text-zinc-600 dark:text-emerald-500 dark:${DS.glowClass.dropText}`
         )}
       >
         &gt;&gt; {verb}: {fields.join(' · ')}

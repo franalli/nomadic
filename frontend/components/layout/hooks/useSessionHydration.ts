@@ -82,7 +82,7 @@ function isSessionExpired(): boolean {
  * Document structure returned from the session hydration API.
  * Contains all data needed to restore a previous planning session.
  */
-export interface SessionDocument {
+interface SessionDocument {
   /** Unique identifier for the trip context (may be undefined for new sessions) */
   trip_context_id?: number | null;
   /** All branches (trip suggestions) for this session */
@@ -94,7 +94,7 @@ export interface SessionDocument {
 /**
  * Options for the useSessionHydration hook.
  */
-export interface UseSessionHydrationOptions {
+interface UseSessionHydrationOptions {
   /**
    * Function to fetch the session document from the store.
    * Should return the cached document or fetch from API.
@@ -146,7 +146,7 @@ export interface UseSessionHydrationOptions {
 /**
  * Return type for the useSessionHydration hook.
  */
-export interface UseSessionHydrationReturn {
+interface UseSessionHydrationReturn {
   /**
    * Whether the session is currently being restored from storage/API.
    * True during initial mount while fetching saved session data.

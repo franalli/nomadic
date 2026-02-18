@@ -11,6 +11,7 @@
 import { AlertCircle } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,7 +78,7 @@ export function GatingBlocker({ featureLabel, gates, onClose }: GatingBlockerPro
                   gateTimeoutRef.current = setTimeout(gate.onOpen!, 150);
                 }}
                 className={cn(
-                  'text-[10px] font-bold uppercase tracking-wide',
+                  `${DS.textSize.micro} font-bold uppercase tracking-wide`,
                   'bg-zinc-800 dark:bg-zinc-700 text-white',
                   'px-3 py-1.5 rounded-lg',
                   'hover:bg-emerald-600 dark:hover:bg-emerald-500',

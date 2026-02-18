@@ -4,6 +4,7 @@
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 
+import { DS } from '@/lib/design-system';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
@@ -63,7 +64,7 @@ function StatusBadge({ status, mode }: { status: 'available' | 'hold' | 'booked'
   if (mode === 'planning') {
     if (status === 'hold') {
       return (
-        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-500">
+        <div className={`flex items-center gap-1.5 ${DS.textSize.micro} font-bold uppercase tracking-wide text-emerald-500`}>
           <span className="text-sm">❤️</span>
           Preferred
         </div>
@@ -95,7 +96,7 @@ function StatusBadge({ status, mode }: { status: 'available' | 'hold' | 'booked'
   const { dot, text, label } = config[status];
 
   return (
-    <div className={cn('flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide', text)}>
+    <div className={cn(`flex items-center gap-1.5 ${DS.textSize.micro} font-bold uppercase tracking-wide`, text)}>
       <span className={cn('w-2 h-2 rounded-full', dot)} />
       {label}
     </div>

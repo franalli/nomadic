@@ -170,15 +170,15 @@ export function NextStepBar({
               Timeline
             </span>
             {dateDisplay?.pastDates ? (
-              <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-400/10 px-1.5 py-0.5 rounded">
+              <span className={`${DS.textSize.micro} font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-400/10 px-1.5 py-0.5 rounded`}>
                 past dates
               </span>
             ) : dateDisplay?.days != null && dateDisplay.days >= 2 ? (
-              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-400/10 px-1.5 py-0.5 rounded">
+              <span className={`${DS.textSize.micro} font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-400/10 px-1.5 py-0.5 rounded`}>
                 {dateDisplay.days} {dateDisplay.days === 1 ? 'day' : 'days'}
               </span>
             ) : dateDisplay?.incomplete ? (
-              <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-400/10 px-1.5 py-0.5 rounded">
+              <span className={`${DS.textSize.micro} font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-400/10 px-1.5 py-0.5 rounded`}>
                 needs dates
               </span>
             ) : null}
@@ -207,7 +207,7 @@ export function NextStepBar({
             'transition-all duration-300',
             // Ready state: Green with localized glow
             isActionReady &&
-              'bg-emerald-500 hover:bg-emerald-400 text-white shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)] active:scale-95',
+              `bg-emerald-500 hover:bg-emerald-400 text-white ${DS.glowClass.action} active:scale-95`,
             // Processing state
             isFinalizing &&
               'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 cursor-not-allowed'

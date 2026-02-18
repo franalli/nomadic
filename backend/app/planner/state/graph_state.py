@@ -234,11 +234,12 @@ class TripPlan(BaseModel):
 # =============================================================================
 
 
-class SpecialistOutput(BaseModel):
+class SpecialistStateOutput(BaseModel):
     """
-    Output from the Vertical Specialist node.
+    Internal state representation of specialist output (not LLM schema).
 
     Contains BOTH constraints AND content (the key insight from planning).
+    See specialist_schemas.py for the LLM structured-output schema.
     """
 
     # Feasibility assessment (checked BEFORE generating content)

@@ -9,6 +9,7 @@
  */
 import * as React from 'react';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 type ButtonVariant = 'primary' | 'outline' | 'ghost' | 'secondary';
@@ -26,7 +27,7 @@ const variantClasses: Record<ButtonVariant, string> = {
     'bg-zinc-900 text-white border border-zinc-900 shadow-lg shadow-zinc-900/10',
     'hover:bg-zinc-800 hover:border-zinc-800',
     'dark:bg-emerald-600 dark:border-emerald-600 dark:text-white',
-    'dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]',
+    `dark:${DS.glowClass.lg}`,
     'dark:hover:bg-emerald-500 dark:hover:border-emerald-500'
   ),
   // DS.actions.secondary: Grey text, darkens/whitens on hover

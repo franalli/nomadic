@@ -37,7 +37,7 @@ export function isMapboxTimingError(input: string | Error | unknown): boolean {
 // Install comprehensive error suppression ONCE
 let _globalHandlerInstalled = false;
 
-export function installGlobalMapboxErrorHandler(): void {
+function installGlobalMapboxErrorHandler(): void {
   if (_globalHandlerInstalled || typeof window === 'undefined') return;
   _globalHandlerInstalled = true;
 

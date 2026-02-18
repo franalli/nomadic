@@ -55,7 +55,7 @@ function shallowSettingsEqual<T extends Record<string, unknown>>(
   return true;
 }
 
-export interface UseLocalBookingSettingsReturn {
+interface UseLocalBookingSettingsReturn {
   bookingTypes: BookingTypes;
   flightSettings: FlightSettings;
   hotelSettings: HotelSettings;

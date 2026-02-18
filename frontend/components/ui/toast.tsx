@@ -32,6 +32,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,7 +108,7 @@ const ToastItem = memo(function ToastItem({ toast, onDismiss }: ToastItemProps) 
         // Dark Mode: "The Emerald Signal" - Deep glass with glow
         'dark:bg-zinc-950/90 dark:backdrop-blur-md dark:text-white',
         'dark:border dark:border-emerald-500/20',
-        'dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.3)]'
+        `dark:${DS.glowClass.md}`
       )}
     >
       {/* Icon - colored by type */}

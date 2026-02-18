@@ -104,7 +104,7 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests sha
 - **Body size limit:** 512KB max (`Content-Length` check before Pydantic parsing)
 - **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
 - **Session middleware:** Skips `/health` (no session cookie overhead on health checks). Max 10 new sessions per IP per hour
-- **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP (thread-safe slot reserve/release)
+- **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP (thread-safe slot reserve/release). SSE state extracted to `backend/app/sse_state.py` to break circular import between `main.py` and `lifespan.py`
 - **Fill-day/session ordering:** `/api/document/fill-day` waits until no active graph SSE stream exists for that session
 - **Frontend CSP:** Configured in `next.config.mjs` — `unsafe-eval` allowed in dev only
 
@@ -141,7 +141,7 @@ PlanDocumentData
   |     |-- partner, partner_product_id, deeplink_url
   |     |-- price_estimate?, live_price?, currency, price_basis?, is_estimate_only?
   |     |-- price_display? (NOT on Pydantic model — injected at response time by response_envelope)
-  |     |-- rating?, review_count?, location_label?, geo: {lat, lon}?
+  |     |-- rating?, review_count?, location_label?, geo: {lat, lng}?
   |     |-- tags[], availability_status? (available|low|unknown|not_available), meta?, score?, source?, source_agent?
   |     |-- provider (expedia|booking|unknown), cancel_policy_summary?
   |     '-- total_inclusive?, tax_and_service_fee?, property_fee?, is_refundable?

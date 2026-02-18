@@ -4,6 +4,8 @@
 import { SlidersHorizontal, Sparkles } from 'lucide-react';
 
 import { trackSuggestionClick } from '@/lib/api';
+import { debugLog } from '@/lib/debug';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type {
@@ -91,7 +93,7 @@ export function ChatSuggestionChips({
             if (opener) {
               opener();
             } else {
-              console.error(`[ChatPanel] Unknown sheet target: ${chip.action_target}`);
+              debugLog(`[ChatPanel] Unknown sheet target: ${chip.action_target}`);
               onSendMessage(chip.message, { suggestionClicked: chip.message });
             }
           } else if (chip.action_type === 'trigger_action') {
@@ -104,7 +106,7 @@ export function ChatSuggestionChips({
               toast,
             });
             if (!handled) {
-              console.error(`[ChatPanel] Unknown trigger_action target: ${chip.action_target}`);
+              debugLog(`[ChatPanel] Unknown trigger_action target: ${chip.action_target}`);
               onSendMessage(chip.message, { suggestionClicked: chip.message });
             }
           } else {
@@ -126,7 +128,7 @@ export function ChatSuggestionChips({
                 'bg-emerald-50 dark:bg-emerald-950/30',
                 'border-2 border-emerald-500/40 dark:border-emerald-500/30',
                 'text-emerald-700 dark:text-emerald-400',
-                'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
+                DS.glowClass.chip,
                 'hover:bg-emerald-100 hover:border-emerald-500 hover:shadow-md',
                 'dark:hover:bg-emerald-900/40 dark:hover:border-emerald-400/50',
               ] : [

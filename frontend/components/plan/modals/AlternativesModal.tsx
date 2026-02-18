@@ -29,6 +29,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { DS } from '@/lib/design-system';
 import { formatPrice } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn } from '@/lib/utils';
@@ -290,7 +291,7 @@ export function AlternativesModal({
                           {ratingDiff && ratingDiff.type !== 'same' && (
                             <span
                               className={cn(
-                                'flex items-center gap-0.5 text-[10px] font-medium px-1 py-0.5 rounded',
+                                `flex items-center gap-0.5 ${DS.textSize.micro} font-medium px-1 py-0.5 rounded`,
                                 ratingDiff.type === 'better'
                                   ? 'bg-emerald-500/20 text-emerald-400'
                                   : 'bg-zinc-200 text-zinc-700 dark:bg-zinc-700/50 dark:text-zinc-300'
@@ -316,7 +317,7 @@ export function AlternativesModal({
                           {priceDiff && priceDiff.type !== 'same' && (
                             <span
                               className={cn(
-                                'flex items-center gap-0.5 text-[10px] font-medium px-1 py-0.5 rounded',
+                                `flex items-center gap-0.5 ${DS.textSize.micro} font-medium px-1 py-0.5 rounded`,
                                 priceDiff.type === 'cheaper'
                                   ? 'bg-emerald-500/20 text-emerald-400'
                                   : 'bg-rose-500/20 text-rose-400'

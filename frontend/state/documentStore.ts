@@ -41,23 +41,23 @@ export const DEFAULT_BOOKING_TYPES: BookingTypes = {
   activities: 'suggested',
 };
 
-export const DEFAULT_FLIGHT_SETTINGS: FlightSettings = {
+const DEFAULT_FLIGHT_SETTINGS: FlightSettings = {
   round_trip: true,
   cabin_class: 'economy',
   direct_only: false,
 };
 
-export const DEFAULT_HOTEL_SETTINGS: HotelSettings = {
+const DEFAULT_HOTEL_SETTINGS: HotelSettings = {
   min_stars: 0,
   amenities: [],
 };
 
-export const DEFAULT_ACTIVITY_SETTINGS: ActivitySettings = {
+const DEFAULT_ACTIVITY_SETTINGS: ActivitySettings = {
   categories: [],
   skill_level: null,
 };
 
-export const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
+const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
   car: false,
   train: false,
   bus: false,
@@ -98,7 +98,7 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
  * Fields that can be tracked for LLM updates.
  * Used to show sparkle animation when LLM modifies trip inputs.
  */
-export type LLMUpdatableField =
+type LLMUpdatableField =
   // Core trip inputs
   | 'origin'
   | 'destination'

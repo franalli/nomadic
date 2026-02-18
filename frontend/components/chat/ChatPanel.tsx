@@ -26,6 +26,7 @@ import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { type SSENodeStatusEvent, streamGraphPlan } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
+import { DS } from '@/lib/design-system';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
@@ -1405,10 +1406,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                         {status.text}
                       </h1>
                       <div className="mt-1.5 flex items-center gap-1.5">
-                        <span className="font-mono text-[9px] uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
+                        <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
                           {status.label}
                         </span>
-                        <div className="w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+                        <div className={`w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:${DS.glowClass.cursor}`} />
                       </div>
                     </div>
                   </motion.div>
@@ -1448,7 +1449,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                       {status.text}
                     </span>
                     {/* Label badge */}
-                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] font-bold text-zinc-500 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
+                    <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-500 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
                       {status.label}
                     </span>
                   </div>
@@ -1513,10 +1514,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     Try: &ldquo;Bali from Rome, Feb 11-14&rdquo;
                   </p>
                   <div className="mt-3 flex items-center gap-1.5">
-                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
+                    <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
                       Awaiting Input
                     </span>
-                    <div className="w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+                    <div className={`w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:${DS.glowClass.cursor}`} />
                   </div>
                 </div>
               )}

@@ -32,6 +32,7 @@ import {
 import { memo } from 'react';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import { type ActivitySettings,type BookingTypes, type FlightSettings, type HotelSettings, isBookingEnabled } from '@/types/document';
 import type { ViewMode } from '@/types/plan-envelope';
@@ -285,7 +286,7 @@ const CoreChip = memo(function CoreChip({
       <span className="text-xs font-semibold uppercase tracking-wide truncate max-w-[100px]">
         {value || label}
         {!value && isOptional && (
-          <span className="text-[10px] opacity-50 ml-1 normal-case tracking-normal">(opt)</span>
+          <span className={`${DS.textSize.micro} opacity-50 ml-1 normal-case tracking-normal`}>(opt)</span>
         )}
       </span>
     </button>

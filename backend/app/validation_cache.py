@@ -178,8 +178,13 @@ async def prewarm_cache() -> int:
     Pre-populate the cache with common destinations.
 
     Called on server startup. Returns the number of entries added.
+
+    These are CACHE WARM-UP hints — NOT a destination whitelist.
+    Any destination works; these just avoid cold-start latency for common ones.
+    Remove entries freely; add sparingly (each adds ~100ms to startup).
     """
-    # Common destinations (top ~50 cities)
+    # Top 20 destinations by search volume — optimization hints only.
+    # The system works without this list (just slower on first request).
     common_destinations = [
         "Paris",
         "London",
@@ -190,47 +195,17 @@ async def prewarm_cache() -> int:
         "Amsterdam",
         "Dubai",
         "Singapore",
-        "Hong Kong",
-        "Los Angeles",
-        "San Francisco",
-        "Miami",
-        "Las Vegas",
-        "Chicago",
-        "Sydney",
-        "Melbourne",
         "Bangkok",
         "Bali",
-        "Phuket",
-        "Berlin",
-        "Munich",
-        "Vienna",
-        "Prague",
-        "Budapest",
-        "Lisbon",
-        "Madrid",
-        "Milan",
-        "Venice",
-        "Florence",
-        "Athens",
+        "Sydney",
+        "Los Angeles",
         "Istanbul",
-        "Cairo",
-        "Marrakech",
-        "Cape Town",
-        "Rio de Janeiro",
-        "Buenos Aires",
-        "Mexico City",
-        "Cancun",
+        "Miami",
+        "Berlin",
         "Toronto",
-        "Vancouver",
-        "Montreal",
-        "Reykjavik",
-        "Dublin",
-        "Edinburgh",
-        "Copenhagen",
-        "Stockholm",
-        "Oslo",
-        "Helsinki",
-        "Zurich",
+        "Seoul",
+        "Lisbon",
+        "Prague",
     ]
 
     count = 0

@@ -7,7 +7,6 @@
  * IMPORTANT: Frontend must NEVER infer plan_state from other fields.
  */
 
-import type { SuggestionChipMeta } from './document';
 import type { Tile } from './tile';
 
 // =============================================================================
@@ -107,7 +106,7 @@ export function computePlanningProgress(phase: PlanningPhase): number {
 /**
  * Fixed resolver steps - exactly one active at a time.
  */
-export type ResolverStep =
+type ResolverStep =
   | 'processing_constraints'
   | 'matching_inventory'
   | 'updating_itinerary';
@@ -121,15 +120,6 @@ export interface ResolverState {
   completed_steps: ResolverStep[];
 }
 
-/**
- * Fixed order of resolver steps for rendering.
- */
-export const RESOLVER_STEPS: ResolverStep[] = [
-  'processing_constraints',
-  'matching_inventory',
-  'updating_itinerary',
-];
-
 // =============================================================================
 // Readiness (Constraint Completeness)
 // =============================================================================
@@ -137,7 +127,7 @@ export const RESOLVER_STEPS: ResolverStep[] = [
 /**
  * Fixed set of readiness keys for constraint completeness.
  */
-export type ReadinessKey =
+type ReadinessKey =
   | 'origin'
   | 'destination'
   | 'start_date'
@@ -151,30 +141,6 @@ export type ReadinessKey =
 export interface ReadinessItem {
   key: ReadinessKey;
   ok: boolean;
-}
-
-/**
- * Trip Health status for General Agent dashboard.
- * Shows constraint validation, inventory counts, and alerts.
- */
-export interface TripHealth {
-  /** Constraint validation status (green/yellow/red) */
-  constraints: Array<{
-    key: ReadinessKey;
-    status: 'valid' | 'warning' | 'error';
-    label: string;
-  }>;
-  /** Inventory counts from tiles */
-  inventory: {
-    hotels: number;
-    flights: number;
-    activities: number;
-  };
-  /** Critical alerts from open_decisions where is_blocking: true */
-  alerts: Array<{
-    level: 'warning' | 'error';
-    message: string;
-  }>;
 }
 
 // =============================================================================
@@ -197,12 +163,12 @@ export interface DestinationCard {
 /**
  * Booking status states per tab.
  */
-export type BookingState = 'idle' | 'loading' | 'ready' | 'error';
+type BookingState = 'idle' | 'loading' | 'ready' | 'error';
 
 /**
  * Status for a single booking category.
  */
-export interface BookingStatusItem {
+interface BookingStatusItem {
   state: BookingState;
   summary: string; // Short factual string, no tone, no emoji
 }
@@ -291,22 +257,9 @@ export function normalizePlanViewState(state: PlanViewState): PlanViewState {
 }
 
 /**
- * Plan view events for state machine transitions.
- */
-export type PlanViewEvent =
-  | { type: 'E_USER_INPUT'; payload?: unknown }
-  | { type: 'E_CLICK_GENERATE_PLAN' }
-  | { type: 'E_STAGE1_DONE'; payload: unknown }
-  | { type: 'E_STAGE2_DONE'; payloads: Record<string, unknown> }
-  | { type: 'E_CLICK_EXPAND_TO_ITINERARY' }
-  | { type: 'E_STAGE3_DONE'; payload: unknown }
-  | { type: 'E_CLICK_VIEW_BOOKING_OPTIONS' }
-  | { type: 'E_RESET' };
-
-/**
  * Booking artifacts - counts of tiles produced by this agent.
  */
-export interface BookingArtifacts {
+interface BookingArtifacts {
   activities_count: number;
   hotels_count: number;
 }
@@ -843,67 +796,3 @@ export interface AckUpdate {
  * Update provenance for debugging.
  */
 export type UpdateProvenance = 'lqa' | 'extractor' | 'user_edit';
-
-// =============================================================================
-// Plan Envelope (Full Response Shape)
-// =============================================================================
-
-/**
- * Complete plan state envelope from backend.
- * This is the source of truth for UI rendering.
- */
-export interface PlanEnvelope {
-  // Backend-authoritative state
-  ui_phase: UIPhase;
-  plan_state: PlanState;
-
-  // RESOLVING only
-  resolver: ResolverState | null;
-
-  // Constraint completeness (recommended always)
-  readiness: ReadinessItem[];
-
-  // Content anchor
-  destination_card?: DestinationCard;
-
-  // Tabs + micro-status
-  booking_status?: BookingStatus;
-
-  // Receipt system
-  applied_updates?: AppliedUpdateKey[];
-  conflicts?: Conflict[];
-  undo_snapshot?: UndoSnapshot | null;
-  update_provenance?: UpdateProvenance | null;
-  // Detailed ack payload for collapsible messages
-  ack_status?: AckStatus;
-  ack_updates?: AckUpdate[];
-
-  // Suggestions (backend emits, frontend displays only in bootstrap)
-  suggested_responses?: string[];
-  suggested_response_meta?: SuggestionChipMeta[];
-
-  // ==========================================================================
-  // Generation State (Progress Tracking)
-  // ==========================================================================
-  /** Generation progress - envelope wins if present, else use local UI state */
-  generation?: GenerationState;
-
-  // ==========================================================================
-  // Planning Phase (Density-Oriented State)
-  // ==========================================================================
-  plan_view_state?: PlanViewState;
-
-  // Enriched phase content (P1+)
-  strategy_sections?: StrategySection[];
-  executed_strategy_topics?: string[]; // Topics that ran: ["hiking", "diving"]
-  open_decisions?: OpenDecision[];
-
-  // Finalized phase content (P3)
-  itinerary_overview?: ItineraryOverview;
-  day_cards?: DayCard[];
-  itinerary_assumptions?: ItineraryAssumptions;
-
-  // State flags
-  needs_refresh?: boolean;
-  can_expand_to_itinerary?: boolean;
-}

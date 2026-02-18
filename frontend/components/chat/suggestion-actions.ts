@@ -5,7 +5,7 @@
 
 import type { BookingTypes, FlightSettings } from '@/types/document';
 
-export type SuggestionTriggerActionParams = {
+type SuggestionTriggerActionParams = {
   actionTarget?: string | null;
   bookingTypes?: BookingTypes;
   onUpdateFlightSettings?: (settings: Partial<FlightSettings>) => void;

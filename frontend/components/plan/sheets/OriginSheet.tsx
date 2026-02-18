@@ -163,7 +163,7 @@ function OriginSheetInner({
               'placeholder:text-zinc-400 dark:placeholder:text-zinc-600',
               // Focus effects
               'focus:outline-none focus:ring-0',
-              'focus:shadow-lg focus:shadow-zinc-200/50 dark:focus:shadow-[0_0_20px_-5px_rgba(16,185,129,0.15)]',
+              `focus:shadow-lg focus:shadow-zinc-200/50 dark:focus:${DS.glowClass.focusSm}`,
               'transition-all duration-200'
             )}
           />

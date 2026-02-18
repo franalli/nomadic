@@ -62,6 +62,25 @@ UNSPLASH_PREFETCH_MAX_RETRIES = settings.unsplash_prefetch_max_retries
 UNSPLASH_PREFETCH_FAILURE_COOLDOWN_SECONDS = settings.unsplash_prefetch_failure_cooldown_seconds
 UNSPLASH_PREFETCH_DEST_COOLDOWN_SECONDS = settings.unsplash_prefetch_dest_cooldown_seconds
 UNSPLASH_PREFETCH_STREAK_THRESHOLD = settings.unsplash_prefetch_streak_threshold
+_MAX_COOLDOWN_ENTRIES = 500  # Safety valve — way beyond realistic traffic
+
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client(timeout: float = UNSPLASH_REQUEST_TIMEOUT_SECONDS) -> httpx.AsyncClient:
+    """Get or create shared HTTP client for connection reuse."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=timeout)
+    return _http_client
+
+
+async def close_http_client() -> None:
+    """Close the shared HTTP client. Call during shutdown."""
+    global _http_client
+    if _http_client and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
 
 
 def _prune_expired_cooldowns() -> int:
@@ -85,6 +104,16 @@ def _prune_expired_cooldowns() -> int:
         if dest in expired_dests:
             del _prefetch_timeout_streak[dest]
             pruned += 1
+    # Hard cap: evict oldest entries if dicts grow beyond safety valve
+    for d in (_prefetch_failure_until, _prefetch_dest_failure_until):
+        if len(d) > _MAX_COOLDOWN_ENTRIES:
+            sorted_keys = sorted(d, key=d.get)
+            for k in sorted_keys[: len(d) - _MAX_COOLDOWN_ENTRIES]:
+                del d[k]
+                pruned += 1
+    if len(_prefetch_timeout_streak) > _MAX_COOLDOWN_ENTRIES:
+        _prefetch_timeout_streak.clear()
+        pruned += 1
     return pruned
 
 
@@ -287,20 +316,20 @@ async def _fetch_variants_from_unsplash_once(
 
     for attempt in range(max_retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-                response = await client.get(
-                    "https://api.unsplash.com/search/photos",
-                    params={
-                        "query": query,
-                        "per_page": NUM_VARIANTS,
-                        "orientation": "landscape",
-                        "order_by": "relevant",
-                        "content_filter": "high",
-                    },
-                    headers={
-                        "Authorization": f"Client-ID {api_key}",
-                    },
-                )
+            client = _get_http_client(timeout=timeout_seconds)
+            response = await client.get(
+                "https://api.unsplash.com/search/photos",
+                params={
+                    "query": query,
+                    "per_page": NUM_VARIANTS,
+                    "orientation": "landscape",
+                    "order_by": "relevant",
+                    "content_filter": "high",
+                },
+                headers={
+                    "Authorization": f"Client-ID {api_key}",
+                },
+            )
 
             logger.info(
                 f"[UNSPLASH-API] Response status={response.status_code} attempt={attempt + 1}"
@@ -347,7 +376,7 @@ async def _fetch_variants_from_unsplash_once(
             )
             if attempt >= max_retries:
                 return []
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(
                 f"[UNSPLASH-API] Error for destination={destination} attempt={attempt + 1}: {e}"
             )
@@ -864,18 +893,25 @@ async def get_image_for_destination(
     return fallback_url
 
 
-def clear_memory_cache() -> None:
+async def clear_memory_cache() -> None:
     """Clear the in-memory cache (useful for testing)."""
-    with _sync_lock:
+    _memory_cache.clear()  # MemoryCache has internal RLock — safe from any context
+
+    async with _prefetch_cooldown_lock:
         for task in _prefetch_destination_inflight.values():
             if not task.done():
                 task.cancel()
-        _memory_cache.clear()
         _inflight_fetches.clear()
         _prefetch_destination_inflight.clear()
         _prefetch_failure_until.clear()
         _prefetch_timeout_streak.clear()
         _prefetch_dest_failure_until.clear()
+
+    # Close shared HTTP client so it's recreated fresh
+    global _http_client
+    if _http_client and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
 
 
 async def clear_db_cache(db: AsyncSession) -> int:

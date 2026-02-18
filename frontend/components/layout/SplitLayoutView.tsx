@@ -6,6 +6,7 @@ import React, { memo } from 'react';
 import { MobileModeHeader } from '@/components/layout/MobileModeHeader';
 import { MobileSwipeLayout } from '@/components/layout/MobileSwipeLayout';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { PlanState } from '@/types/plan-envelope';
 
@@ -118,7 +119,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
                 {plannerContent}
               </div>
               {/* Desktop footer - pinned at bottom of left rail */}
-              <footer className="shrink-0 flex items-center justify-center gap-2 px-4 py-2 border-t border-[var(--theme-hairline)] text-[11px] text-[var(--theme-link-muted)]">
+              <footer className={`shrink-0 flex items-center justify-center gap-2 px-4 py-2 border-t border-[var(--theme-hairline)] ${DS.textSize.mini} text-[var(--theme-link-muted)]`}>
                 <Link href="/privacy" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Privacy</Link>
                 <span aria-hidden="true" className="opacity-30">·</span>
                 <Link href="/terms" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Terms</Link>

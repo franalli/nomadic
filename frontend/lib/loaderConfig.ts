@@ -100,7 +100,7 @@ const VERTICAL_FETCH_NODE_MAP: Record<string, VerticalFetchType> = {
 /**
  * Result of action classification.
  */
-export interface ActionClassification {
+interface ActionClassification {
   actionType: LoaderActionType;
   verticalType?: VerticalFetchType;
 }

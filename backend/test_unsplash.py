@@ -39,7 +39,7 @@ async def test_unsplash():
         return
 
     # Clear any existing cache
-    clear_memory_cache()
+    await clear_memory_cache()
     print("\n2. Cache cleared")
 
     # Test destinations

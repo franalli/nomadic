@@ -6,10 +6,11 @@
  * Handles partial chunks across reads safely.
  */
 
+import { debugLog } from '@/lib/debug';
 import type { PlanDocumentData } from '@/types/document';
 import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
 
-export type StreamEnvelope = Partial<PlanDocumentData> & {
+type StreamEnvelope = Partial<PlanDocumentData> & {
   generation?: GenerationState;
 };
 
@@ -71,7 +72,7 @@ export function createStreamParser(onEvent: (event: StreamEvent) => void) {
         try {
           event = JSON.parse(line) as StreamEvent;
         } catch (e) {
-          console.error('Failed to parse stream line:', line, e);
+          debugLog('Failed to parse stream line:', line, e);
           continue;
         }
         onEvent(event);
@@ -88,7 +89,7 @@ export function createStreamParser(onEvent: (event: StreamEvent) => void) {
         try {
           event = JSON.parse(buffer) as StreamEvent;
         } catch (e) {
-          console.error('Failed to parse final buffer:', buffer, e);
+          debugLog('Failed to parse final buffer:', buffer, e);
           buffer = '';
           return;
         }

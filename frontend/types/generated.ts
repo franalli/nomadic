@@ -1210,8 +1210,8 @@ export interface components {
         Geo: {
             /** Lat */
             lat: number;
-            /** Lon */
-            lon: number;
+            /** Lng */
+            lng: number;
         };
         /**
          * GraphPlanObservability

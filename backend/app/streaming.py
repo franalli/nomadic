@@ -10,8 +10,9 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, AsyncIterator, Callable, Dict, List
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -239,7 +240,7 @@ async def generate_sse(
     today_iso: str,
     session_key: str,
     ip_key: str,
-    release_sse_slot: Callable[[str, str], None],
+    release_sse_slot: Callable[[str, str], Awaitable[None]],
     sanitize_trip_inputs_for_category_merge: Callable[[Dict[str, Any], str], Dict[str, Any]],
     merge_user_owned_trip_settings: Callable[..., None],
     resolve_itinerary_document_view_state: Callable[..., str],
@@ -599,7 +600,7 @@ async def generate_sse(
                 )
 
                 await db.commit()
-            except Exception as e:
+            except (SQLAlchemyError, ValueError) as e:
                 logger.error(f"[{request_id}] Failed to persist document: {e}")
                 await db.rollback()
 
@@ -846,7 +847,7 @@ async def generate_sse(
         error_payload = json.dumps({"type": "error", "message": str(e)})
         yield f"event: error\ndata: {error_payload}\n\n"
     finally:
-        release_sse_slot(session_key, ip_key)
+        await release_sse_slot(session_key, ip_key)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1317,8 +1318,9 @@ async def generate_ndjson(
                         can_expand_to_itinerary=True,
                     )
                     await db.commit()
-                except Exception as e:
+                except (SQLAlchemyError, ValueError) as e:
                     logger.warning(f"Failed to persist itinerary: {e}")
+                    await db.rollback()
 
             # Emit done with version for frontend sync (prevents 409 on next PATCH)
             event = ExpandItineraryStreamEvent(

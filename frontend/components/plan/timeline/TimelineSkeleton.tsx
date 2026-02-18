@@ -1,5 +1,6 @@
 'use client';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 /**
@@ -49,7 +50,7 @@ export function TimelineSkeleton() {
             </div>
 
             {/* Building indicator */}
-            <div className="absolute bottom-3 right-3 flex items-center gap-1.5 text-[10px] text-zinc-400">
+            <div className={`absolute bottom-3 right-3 flex items-center gap-1.5 ${DS.textSize.micro} text-zinc-400`}>
               <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
               Building day {i}
             </div>

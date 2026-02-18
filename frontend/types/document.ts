@@ -31,7 +31,7 @@ import type { Tile } from './tile';
 
 export type UpdatedBy = 'user' | 'planner';
 
-export type BranchTileIds = {
+type BranchTileIds = {
   stays: string[];
   flights: string[];
   activities: string[];
@@ -288,13 +288,13 @@ export type PlanDocumentPatch = {
 };
 
 // Graph planner types (superset of PlanDocumentResponse)
-export type GraphPlanTokens = {
+type GraphPlanTokens = {
   prompt: number;
   completion: number;
   total: number;
 };
 
-export type GraphPlanObservability = {
+type GraphPlanObservability = {
   tokens: GraphPlanTokens;
   model_used?: string | null;
   router_intent?: string | null;

@@ -12,8 +12,6 @@ import { useCallback,useState } from 'react';
 
 import type { SheetType } from '@/types/sheets';
 
-export type { SheetType } from '@/types/sheets';
-
 export function useSheetManager() {
   const [activeSheet, setActiveSheet] = useState<SheetType | null>(null);
 

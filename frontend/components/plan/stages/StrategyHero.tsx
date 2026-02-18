@@ -332,19 +332,19 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
             <div className="grid grid-cols-3 gap-2 mt-2">
               {backpacker && (
                 <div className="text-center p-2 rounded bg-zinc-50 dark:bg-zinc-800">
-                  <p className="text-[10px] uppercase text-zinc-500">Budget</p>
+                  <p className={`${DS.textSize.micro} uppercase text-zinc-500`}>Budget</p>
                   <p className="font-medium">{backpacker}</p>
                 </div>
               )}
               {midRange && (
                 <div className="text-center p-2 rounded bg-zinc-50 dark:bg-zinc-800">
-                  <p className="text-[10px] uppercase text-zinc-500">Mid</p>
+                  <p className={`${DS.textSize.micro} uppercase text-zinc-500`}>Mid</p>
                   <p className="font-medium">{midRange}</p>
                 </div>
               )}
               {luxury && (
                 <div className="text-center p-2 rounded bg-zinc-50 dark:bg-zinc-800">
-                  <p className="text-[10px] uppercase text-zinc-500">Luxury</p>
+                  <p className={`${DS.textSize.micro} uppercase text-zinc-500`}>Luxury</p>
                   <p className="font-medium">{luxury}</p>
                 </div>
               )}
@@ -475,7 +475,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
                   <div key={i} className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800">
                     <p className="font-medium text-zinc-900 dark:text-white">{item.name}</p>
                     {item.why && <p className="text-zinc-500 mt-0.5">{item.why}</p>}
-                    <div className="flex gap-2 mt-1 text-[10px]">
+                    <div className={`flex gap-2 mt-1 ${DS.textSize.micro}`}>
                       {item.cost && <span className="text-emerald-600">{item.cost}</span>}
                       {item.booking && <span className="text-zinc-500 dark:text-zinc-400">{item.booking}</span>}
                     </div>
@@ -507,7 +507,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
                 <div key={i} className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800">
                   <p className="font-medium text-zinc-900 dark:text-white">{n.name}</p>
                   {n.vibe && <p className="text-zinc-500 mt-0.5">{n.vibe}</p>}
-                  <div className="flex gap-2 mt-1 text-[10px]">
+                  <div className={`flex gap-2 mt-1 ${DS.textSize.micro}`}>
                     {n.price_range && <span className="px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700">{n.price_range}</span>}
                     {Array.isArray(n.best_for) && n.best_for.slice(0, 2).map((b, j) => (
                       <span key={j} className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">{b}</span>
@@ -541,7 +541,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
             <div className="grid grid-cols-2 gap-2">
               {priceItems.map(({ key, value }) => (
                 <div key={key} className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800">
-                  <p className="text-[10px] uppercase text-zinc-500">{key.replace('_', ' ')}</p>
+                  <p className={`${DS.textSize.micro} uppercase text-zinc-500`}>{key.replace('_', ' ')}</p>
                   <p className="font-medium">{value}</p>
                 </div>
               ))}
@@ -834,7 +834,7 @@ export function StrategyHero({
               </span>
               {/* Infeasible badge */}
               {isInfeasible && (
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400">
+                <span className={`px-1.5 py-0.5 rounded ${DS.textSize.nano} font-bold bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400`}>
                   Unavailable
                 </span>
               )}
@@ -849,7 +849,7 @@ export function StrategyHero({
           </div>
 
           {/* Summary Badge (hidden on small screens) */}
-          <span className="hidden sm:inline-flex text-[10px] font-medium uppercase tracking-wide px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400">
+          <span className={`hidden sm:inline-flex ${DS.textSize.micro} font-medium uppercase tracking-wide px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400`}>
             {summaryText}
           </span>
 
@@ -913,7 +913,7 @@ export function StrategyHero({
                       key={i}
                       className={cn(
                         'inline-flex items-center gap-1 px-2 py-0.5 rounded-md',
-                        'text-[11px] font-medium',
+                        `${DS.textSize.mini} font-medium`,
                         c.type === 'safety' || c.type?.includes('safety')
                           ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700/50'
                           : 'bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700/50'
@@ -1043,14 +1043,14 @@ export function StrategyHero({
 
               {/* Infeasible badge */}
               {isInfeasible && (
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400">
+                <span className={`px-1.5 py-0.5 rounded ${DS.textSize.nano} font-bold bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400`}>
                   Unavailable
                 </span>
               )}
 
               {/* Constraint Count Badge */}
               {constraintCount > 0 && !isInfeasible && (
-                <span className="px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-[9px] font-bold text-amber-700 dark:text-amber-400">
+                <span className={`px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 ${DS.textSize.nano} font-bold text-amber-700 dark:text-amber-400`}>
                   {constraintCount} {constraintCount === 1 ? 'Rule' : 'Rules'}
                 </span>
               )}
@@ -1090,17 +1090,17 @@ export function StrategyHero({
                   <div className="grid grid-cols-3 gap-2">
                     <div className={cn(DS.infoBox.container, 'p-3 flex flex-col items-center text-center')}>
                       <MapPin className="w-4 h-4 text-emerald-500 mb-1" />
-                      <span className="text-[10px] uppercase text-zinc-500 dark:text-zinc-400 font-bold">Dest</span>
+                      <span className={`${DS.textSize.micro} uppercase text-zinc-500 dark:text-zinc-400 font-bold`}>Dest</span>
                       <span className="text-sm font-medium text-zinc-900 dark:text-white">{section.trip_summary.destination}</span>
                     </div>
                     <div className={cn(DS.infoBox.container, 'p-3 flex flex-col items-center text-center')}>
                       <Calendar className="w-4 h-4 text-emerald-500 mb-1" />
-                      <span className="text-[10px] uppercase text-zinc-500 dark:text-zinc-400 font-bold">Dates</span>
+                      <span className={`${DS.textSize.micro} uppercase text-zinc-500 dark:text-zinc-400 font-bold`}>Dates</span>
                       <span className="text-xs font-medium text-zinc-900 dark:text-white">{section.trip_summary.dates}</span>
                     </div>
                     <div className={cn(DS.infoBox.container, 'p-3 flex flex-col items-center text-center')}>
                       <Users className="w-4 h-4 text-emerald-500 mb-1" />
-                      <span className="text-[10px] uppercase text-zinc-500 dark:text-zinc-400 font-bold">Travelers</span>
+                      <span className={`${DS.textSize.micro} uppercase text-zinc-500 dark:text-zinc-400 font-bold`}>Travelers</span>
                       <span className="text-xs font-medium text-zinc-900 dark:text-white">{section.trip_summary.travelers}</span>
                     </div>
                   </div>
@@ -1144,7 +1144,7 @@ export function StrategyHero({
                                 sizes="200px"
                               />
                               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-3">
-                                <span className="text-white text-[10px] font-bold uppercase tracking-wider drop-shadow-md">
+                                <span className={`text-white ${DS.textSize.micro} font-bold uppercase tracking-wider drop-shadow-md`}>
                                   {vibe.label}
                                 </span>
                               </div>
@@ -1274,7 +1274,7 @@ export function StrategyHero({
                             <div className="flex items-start justify-between gap-2">
                               <p className="text-sm font-bold text-zinc-900 dark:text-white">{item.title}</p>
                               {item.type && (
-                                <span className="text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded uppercase shrink-0">
+                                <span className={`${DS.textSize.micro} font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded uppercase shrink-0`}>
                                   {item.type}
                                 </span>
                               )}
@@ -1285,7 +1285,7 @@ export function StrategyHero({
                               </p>
                             )}
                             {item.logic_hook && (
-                              <div className="text-[11px] mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700/60">
+                              <div className={`${DS.textSize.mini} mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700/60`}>
                                 <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                                 <span className="font-medium">{item.logic_hook}</span>
                               </div>
@@ -1323,7 +1323,7 @@ export function StrategyHero({
                   <div className="absolute bottom-3 left-3 right-3">
                     <span
                       className={cn(
-                        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest',
+                        `inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md ${DS.textSize.micro} font-bold uppercase tracking-widest`,
                         'bg-white/20 backdrop-blur-md text-white border border-white/20'
                       )}
                     >
@@ -1404,7 +1404,7 @@ export function StrategyHero({
                             <div className="flex items-start justify-between gap-2">
                               <p className="text-sm font-bold text-zinc-900 dark:text-white">{item.title}</p>
                               {item.type && (
-                                <span className="text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded uppercase shrink-0">
+                                <span className={`${DS.textSize.micro} font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded uppercase shrink-0`}>
                                   {item.type}
                                 </span>
                               )}
@@ -1415,7 +1415,7 @@ export function StrategyHero({
                               </p>
                             )}
                             {item.logic_hook && (
-                              <div className="text-[11px] mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700/60">
+                              <div className={`${DS.textSize.mini} mt-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700/60`}>
                                 <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                                 <span className="font-medium">{item.logic_hook}</span>
                               </div>
@@ -1488,7 +1488,7 @@ export function StrategyHero({
         <div className="mb-2">
           <span
             className={cn(
-              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest',
+              `inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md ${DS.textSize.micro} font-bold uppercase tracking-widest`,
               'bg-white/20 backdrop-blur-md text-white border border-white/20'
             )}
           >
@@ -1498,7 +1498,7 @@ export function StrategyHero({
 
           {/* Infeasible badge */}
           {isInfeasible && (
-            <span className="ml-2 px-2 py-1 rounded-md text-[10px] font-bold bg-red-500/80 text-white">
+            <span className={`ml-2 px-2 py-1 rounded-md ${DS.textSize.micro} font-bold bg-red-500/80 text-white`}>
               Unavailable
             </span>
           )}
@@ -1588,15 +1588,15 @@ export function StrategyHero({
             {section.trip_summary && (
               <div className="grid grid-cols-3 gap-3">
                 <div className="p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/50">
-                  <span className="text-[10px] uppercase tracking-widest text-zinc-500 dark:text-zinc-400">Destination</span>
+                  <span className={`${DS.textSize.micro} uppercase tracking-widest text-zinc-500 dark:text-zinc-400`}>Destination</span>
                   <p className="text-sm font-medium text-zinc-900 dark:text-white mt-0.5">{section.trip_summary.destination}</p>
                 </div>
                 <div className="p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/50">
-                  <span className="text-[10px] uppercase tracking-widest text-zinc-500 dark:text-zinc-400">Dates</span>
+                  <span className={`${DS.textSize.micro} uppercase tracking-widest text-zinc-500 dark:text-zinc-400`}>Dates</span>
                   <p className="text-sm font-medium text-zinc-900 dark:text-white mt-0.5">{section.trip_summary.dates}</p>
                 </div>
                 <div className="p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/50">
-                  <span className="text-[10px] uppercase tracking-widest text-zinc-500 dark:text-zinc-400">Travelers</span>
+                  <span className={`${DS.textSize.micro} uppercase tracking-widest text-zinc-500 dark:text-zinc-400`}>Travelers</span>
                   <p className="text-sm font-medium text-zinc-900 dark:text-white mt-0.5">{section.trip_summary.travelers}</p>
                 </div>
               </div>
@@ -1613,7 +1613,7 @@ export function StrategyHero({
                       <div key={idx} className="relative w-32 h-24 rounded-lg overflow-hidden shrink-0">
                         <Image src={img.image_url} alt={img.label || 'Destination image'} fill className="object-cover" sizes="128px" />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                        <span className="absolute bottom-2 left-2 text-[10px] font-medium text-white">{img.label}</span>
+                        <span className={`absolute bottom-2 left-2 ${DS.textSize.micro} font-medium text-white`}>{img.label}</span>
                       </div>
                     ))}
                 </div>
@@ -1657,7 +1657,7 @@ export function StrategyHero({
                           <p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{item.title}</p>
                           <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{item.description}</p>
                           {item.logic_hook && (
-                            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 font-medium">
+                            <p className={`${DS.textSize.micro} text-emerald-600 dark:text-emerald-400 mt-1 font-medium`}>
                               💡 {item.logic_hook}
                             </p>
                           )}
@@ -1685,7 +1685,7 @@ export function StrategyHero({
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
               <div className="absolute bottom-3 left-3">
                 <span className={cn(
-                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest',
+                  `inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md ${DS.textSize.micro} font-bold uppercase tracking-widest`,
                   'bg-white/20 backdrop-blur-md text-white border border-white/20'
                 )}>
                   {renderTopicIcon(topic, "w-3 h-3")}
@@ -1758,7 +1758,7 @@ export function StrategyHero({
                           <p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{item.title}</p>
                           <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{item.description}</p>
                           {item.logic_hook && (
-                            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 font-medium">
+                            <p className={`${DS.textSize.micro} text-emerald-600 dark:text-emerald-400 mt-1 font-medium`}>
                               💡 {item.logic_hook}
                             </p>
                           )}

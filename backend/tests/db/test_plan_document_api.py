@@ -3,6 +3,7 @@ Tests for the PlanDocument-based API.
 Tests document creation, retrieval, patching, and session deletion.
 """
 
+import asyncio
 import os
 import sys
 import threading
@@ -442,7 +443,7 @@ def test_fill_day_queues_behind_active_stream():
 
     session_key = f"session:{seed['session_token']}"
     ip_key = "ip:test-fill-day-queue"
-    acquired = main_module._try_acquire_sse_slot(session_key, ip_key)
+    acquired = asyncio.run(main_module._try_acquire_sse_slot(session_key, ip_key))
     assert acquired is None
 
     result: dict[str, object] = {}
@@ -469,7 +470,7 @@ def test_fill_day_queues_behind_active_stream():
     time.sleep(0.15)
     assert worker.is_alive()
 
-    main_module._release_sse_slot(session_key, ip_key)
+    asyncio.run(main_module._release_sse_slot(session_key, ip_key))
 
     worker.join(timeout=3)
     assert not worker.is_alive(), "fill-day did not resume after stream release"

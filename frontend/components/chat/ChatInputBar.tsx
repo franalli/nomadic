@@ -4,6 +4,7 @@
 import { ArrowUp } from 'lucide-react';
 
 import { isBootstrap } from '@/components/plan/planStateHelpers';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { PlanViewState } from '@/types/plan-envelope';
 
@@ -53,12 +54,12 @@ export function ChatInputBar({
           isLoading && nodeStatus?.node
             ? [
                 'border border-emerald-500/50 dark:border-emerald-500/40',
-                'shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)] dark:shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]',
+                `${DS.glowClass.sm} dark:${DS.glowClass.md}`,
                 'animate-pulse',
               ]
             // Priority 2: Ready to Generate highlight
             : readyToGenerate && !input.trim() && isBootstrap(planViewState) && !isGenerating && !hasBranches
-              ? 'border border-emerald-500/50 ring-1 ring-emerald-500/30 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]'
+              ? `border border-emerald-500/50 ring-1 ring-emerald-500/30 dark:${DS.glowClass.sm}`
               // Default state
               : [
                   'shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]',
@@ -128,7 +129,7 @@ export function ChatInputBar({
               className={cn(
                 'flex items-center justify-center h-11 w-11 rounded-[22px] transition-all duration-300',
                 input.trim() && !isLoading
-                  ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)] dark:hover:bg-emerald-500 hover:scale-105 active:scale-95'
+                  ? `bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:${DS.glowClass.lg} dark:hover:bg-emerald-500 hover:scale-105 active:scale-95`
                   : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600',
               )}
               title="Send message (Enter)"

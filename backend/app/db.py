@@ -22,7 +22,7 @@ if not DATABASE_URL:
 # =============================================================================
 # Sync Engine (for Alembic migrations and legacy code)
 # =============================================================================
-engine = create_engine(DATABASE_URL, future=True)
+engine = create_engine(DATABASE_URL, future=True, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(
     autocommit=False,

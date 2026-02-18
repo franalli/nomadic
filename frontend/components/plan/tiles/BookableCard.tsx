@@ -14,6 +14,7 @@ import { Check, ExternalLink, Star } from 'lucide-react';
 import Image from 'next/image';
 import { useCallback, useState } from 'react';
 
+import { DS } from '@/lib/design-system';
 import { formatPrice } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn } from '@/lib/utils';
@@ -146,7 +147,7 @@ export function BookableCard({
           <div className="absolute top-3 left-3">
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/30 backdrop-blur-sm border border-emerald-500/50">
               <Check className="w-3 h-3 text-emerald-400" />
-              <span className="text-[10px] font-semibold text-emerald-300 uppercase tracking-wide">
+              <span className={`${DS.textSize.micro} font-semibold text-emerald-300 uppercase tracking-wide`}>
                 Booked
               </span>
             </div>
@@ -154,7 +155,7 @@ export function BookableCard({
         ) : isInCart ? (
           <div className="absolute top-3 left-3">
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-500/20 backdrop-blur-sm border border-zinc-400/40">
-              <span className="text-[10px] font-semibold text-zinc-200 uppercase tracking-wide">
+              <span className={`${DS.textSize.micro} font-semibold text-zinc-200 uppercase tracking-wide`}>
                 In Cart
               </span>
             </div>
@@ -227,7 +228,7 @@ export function BookableCard({
                   <div className="flex items-center gap-2">
                     <div
                       className={cn(
-                        'w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold text-white',
+                        `w-6 h-6 rounded flex items-center justify-center ${DS.textSize.micro} font-bold text-white`,
                         partnerInfo.bgColor
                       )}
                     >
@@ -235,7 +236,7 @@ export function BookableCard({
                     </div>
                     <span className="text-sm text-zinc-700 dark:text-zinc-300">{partnerInfo.name}</span>
                     {isBest && (
-                      <span className="text-[10px] font-medium text-emerald-400 uppercase">
+                      <span className={`${DS.textSize.micro} font-medium text-emerald-400 uppercase`}>
                         Best Price
                       </span>
                     )}

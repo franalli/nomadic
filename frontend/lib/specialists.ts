@@ -1,8 +1,10 @@
 /**
- * Specialist Registry — Single Source of Truth
+ * Specialist Registry — Single Source of Truth (Frontend)
  *
  * All frontend specialist data lives here. Adding a specialist = adding one entry.
  * Components import colors, icons, keywords, and helpers from this file.
+ *
+ * Must mirror backend specialist_registry.py — sync manually until API endpoint exists.
  */
 
 // ---------------------------------------------------------------------------

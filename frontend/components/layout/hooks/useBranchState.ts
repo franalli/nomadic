@@ -18,7 +18,7 @@ import { EMPTY_TILE_SELECTION, selectionsToTileSelection } from './useTileSelect
  * Override options when selecting a branch.
  * Used during session hydration to provide additional context.
  */
-export type BranchSelectionOverrides = {
+type BranchSelectionOverrides = {
   /** Pre-resolved branch object (avoids lookup in branches array) */
   branch?: DocumentBranch;
   /** Trip context ID for the session */
@@ -30,7 +30,7 @@ export type BranchSelectionOverrides = {
 /**
  * Options for the useBranchState hook.
  */
-export interface UseBranchStateOptions {
+interface UseBranchStateOptions {
   /**
    * Toast notification callback for error messages.
    */
@@ -40,7 +40,7 @@ export interface UseBranchStateOptions {
 /**
  * Return type for the useBranchState hook.
  */
-export interface UseBranchStateReturn {
+interface UseBranchStateReturn {
   // ─────────────────────────────────────────────────────────────────────────
   // State
   // ─────────────────────────────────────────────────────────────────────────

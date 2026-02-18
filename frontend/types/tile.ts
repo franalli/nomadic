@@ -5,7 +5,7 @@
  * This manual definition uses a looser `type: string` for flexibility in tile classification.
  */
 
-export type TileProvider = 'expedia' | 'booking' | 'unknown';
+type TileProvider = 'expedia' | 'booking' | 'unknown';
 
 export type Tile = {
   id: string;
@@ -25,7 +25,7 @@ export type Tile = {
   rating?: number;
   review_count?: number;
   location_label?: string;
-  geo?: { lat: number; lon: number };
+  geo?: { lat: number; lng: number };
   tags?: string[];
   availability_status?: 'available' | 'low' | 'unknown' | 'not_available';
   meta?: Record<string, unknown>;

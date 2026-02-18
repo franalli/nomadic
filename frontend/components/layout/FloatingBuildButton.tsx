@@ -5,6 +5,7 @@ import { ArrowRight, Loader2, Sparkles } from 'lucide-react';
 import { memo } from 'react';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,9 +108,9 @@ function FloatingBuildButtonInner({
               // Gradient background
               'bg-gradient-to-r from-emerald-500 to-emerald-600',
               'text-white',
-              'shadow-[0_4px_20px_rgba(16,185,129,0.35)]',
+              DS.glowClass.elevated,
               // Hover/active states
-              'hover:shadow-[0_6px_24px_rgba(16,185,129,0.45)]',
+              `hover:${DS.glowClass.elevatedHover}`,
               'hover:brightness-105',
               'active:scale-[0.98]',
               // Disabled state

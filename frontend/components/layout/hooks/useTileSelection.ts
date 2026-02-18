@@ -3,6 +3,7 @@
 
 import { useCallback, useMemo } from 'react';
 
+import { debugLog } from '@/lib/debug';
 import { isActivityType, isFlightType } from '@/lib/utils';
 import type { Tile, TileSelection } from '@/types/tile';
 
@@ -27,12 +28,12 @@ export const EMPTY_TILE_SELECTION: TileSelection = { activities: [] };
  * - 'flight': Flights, transportation
  * - 'activity': Tours, experiences, attractions
  */
-export type SelectionCategory = 'stay' | 'flight' | 'activity';
+type SelectionCategory = 'stay' | 'flight' | 'activity';
 
 /**
  * Options for the useTileSelection hook.
  */
-export interface UseTileSelectionOptions {
+interface UseTileSelectionOptions {
   /**
    * Current tile selections indexed by branch ID.
    * Each branch maintains its own independent selection state.
@@ -87,7 +88,7 @@ export interface UseTileSelectionOptions {
 /**
  * Return type for the useTileSelection hook.
  */
-export interface UseTileSelectionReturn {
+interface UseTileSelectionReturn {
   /**
    * The current tile selection for the active branch.
    * Returns EMPTY_TILE_SELECTION if no branch is selected.
@@ -224,21 +225,21 @@ export const selectionsToTileSelection = (
       if (stayTile) {
         result.stay = stayTile;
       } else if (process.env.NODE_ENV !== 'production') {
-        console.warn(`selectionsToTileSelection: stay tile "${selections.stay}" not found in tilesMap`);
+        debugLog(`selectionsToTileSelection: stay tile "${selections.stay}" not found in tilesMap`);
       }
     }    if (selections.flight) {
       const flightTile = tilesMap[selections.flight];
       if (flightTile) {
         result.flight = flightTile;
       } else if (process.env.NODE_ENV !== 'production') {
-        console.warn(`selectionsToTileSelection: flight tile "${selections.flight}" not found in tilesMap`);
+        debugLog(`selectionsToTileSelection: flight tile "${selections.flight}" not found in tilesMap`);
       }
     }    for (const activityId of selections.activities) {
       const activityTile = tilesMap[activityId];
       if (activityTile) {
         result.activities.push(activityTile);
       } else if (process.env.NODE_ENV !== 'production') {
-        console.warn(`selectionsToTileSelection: activity tile "${activityId}" not found in tilesMap`);
+        debugLog(`selectionsToTileSelection: activity tile "${activityId}" not found in tilesMap`);
       }
     }  return result;
 };

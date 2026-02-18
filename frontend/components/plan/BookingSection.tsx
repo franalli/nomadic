@@ -36,6 +36,7 @@ interface TileFilters {
 }
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
 import { debugLog } from '@/lib/debug';
+import { DS } from '@/lib/design-system';
 import { getActiveSpecialists } from '@/lib/specialist-utils';
 import { activityMatchesSpecialist as registryMatch } from '@/lib/specialists';
 import { getTotalTileCount, isBookableActivityTile, normalizeTileType, selectTilesByType } from '@/lib/tileSelectors';
@@ -382,7 +383,7 @@ export function BookingSection({
         <div id="booking-section">
           <div className="px-4 pt-2 pb-1">
             {savedTileIds.size > 0 && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 mt-2">
+              <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full ${DS.textSize.micro} font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 mt-2`}>
                 {savedTileIds.size} in trip
               </span>
             )}

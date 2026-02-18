@@ -5,6 +5,7 @@
  * Keeps backend simple (Record<string, Tile>), groups for UI.
  */
 
+import { debugLog } from '@/lib/debug';
 import type { Tile } from '@/types/tile';
 
 export interface TilesByType {
@@ -60,7 +61,7 @@ export function getTotalTileCount(tilesByType: TilesByType): number {
 /**
  * Normalized tile category for consistent filtering.
  */
-export type NormalizedTileCategory = 'hotel' | 'flight' | 'activity' | 'unknown';
+type NormalizedTileCategory = 'hotel' | 'flight' | 'activity' | 'unknown';
 
 /**
  * Normalization mappings for tile types.
@@ -149,7 +150,7 @@ export function isBookableActivityTile(tile: Tile): boolean {
   if (normalizeTileType(tile.type) !== 'activity') return true;
   if (!tile.source_agent) {
     if (process.env.NODE_ENV === 'development') {
-      console.warn(`[isBookableActivityTile] Untagged activity tile: ${tile.id} "${tile.title}"`);
+      debugLog(`[isBookableActivityTile] Untagged activity tile: ${tile.id} "${tile.title}"`);
     }
     return true;
   }

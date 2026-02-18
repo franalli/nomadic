@@ -17,14 +17,14 @@ import {
  * @deprecated Legacy type kept for components not yet migrated.
  * Maps: setup/plan → 'planning', book → 'booking'
  */
-export type ViewName = 'setup' | 'plan' | 'book';
+type ViewName = 'setup' | 'plan' | 'book';
 
-export interface ViewUnlockState {
+interface ViewUnlockState {
   planning: { unlocked: boolean; reason: string | null };
   booking: { unlocked: boolean; reason: string | null };
 }
 
-export interface UseViewNavigationReturn {
+interface UseViewNavigationReturn {
   // === Two-Mode System (New) ===
   /** Current active mode: 'planning' or 'booking' */
   activeMode: ViewMode;

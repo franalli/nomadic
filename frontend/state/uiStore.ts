@@ -65,7 +65,7 @@ const UI_STORAGE_KEY = 'nomadic-ui-state';
 // Store
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const useUIStore = create<UIState>()(
+const useUIStore = create<UIState>()(
   persist(
     (set, get) => ({
       ...initialUIState,

@@ -244,7 +244,7 @@ def route_after_router(
 
 def route_after_specialist(
     state: GraphState,
-) -> Literal["specialist", "local_expert", "logistics", "architect", "synthesizer"]:
+) -> Literal["specialist", "local_expert", "logistics", "architect", "guard", "synthesizer"]:
     """
     Route after specialist completes - check for more pending specialists.
 
@@ -568,6 +568,7 @@ def create_optimized_graph() -> StateGraph:
             "local_expert": "local_expert",
             "logistics": "logistics",
             "architect": "architect",  # General intent - extract fields, skip tiles
+            "guard": "guard",  # Architect already ran - skip to guard
             "synthesizer": "synthesizer",  # Speculative intent - preload only
         },
     )
@@ -582,6 +583,7 @@ def create_optimized_graph() -> StateGraph:
             "local_expert": "local_expert",
             "logistics": "logistics",
             "architect": "architect",  # General intent - extract fields, skip tiles
+            "guard": "guard",  # Architect already ran - skip to guard
             "synthesizer": "synthesizer",  # Speculative intent - preload only
         },
     )
@@ -1056,5 +1058,6 @@ async def clear_all_caches() -> None:
     from app.planner.services.admin_utils import clear_response_caches
 
     global _graph
-    _graph = None
+    with _graph_lock:
+        _graph = None
     await clear_response_caches()

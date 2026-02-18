@@ -18,14 +18,15 @@ import asyncio
 import json
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from cachetools import TTLCache
 from pydantic import BaseModel
 
 from app.config import settings
 from app.placeholders import get_activity_image
-from app.planner.hashing import make_cache_key
+from app.planner.services.feasibility_service import (
+    check_feasibility,
+)
 from app.planner.services.section_builder import (
     build_specialist_section,
     mark_topic_executed,
@@ -43,7 +44,7 @@ from app.planner.state import (
     GraphState,
     ItineraryBlock,
     SpecialistConstraint,
-    SpecialistOutput,
+    SpecialistStateOutput,
     get_trip_settings,
 )
 from app.services.task_tracker import track as _track_task
@@ -188,7 +189,7 @@ async def generate_all_specialists_parallel(
                         status = output[topic].feasibility_status
                         _debug_log(f"[LLM_SPECIALIST] CACHE HIT: {topic} ({status})")
                         continue
-                    except Exception as e:
+                    except (ValueError, TypeError) as e:
                         _debug_log(f"[LLM_SPECIALIST] Cache deserialize failed for {topic}: {e}")
             except Exception as e:
                 _debug_log(f"[LLM_SPECIALIST] Cache lookup failed for {topic}: {e}")
@@ -321,7 +322,7 @@ async def generate_specialist_output_llm(
                         f"(status={output.feasibility_status})"
                     )
                     return output
-                except Exception as e:
+                except (ValueError, TypeError) as e:
                     _debug_log(f"[LLM_SPECIALIST] Cache deserialize failed: {e}")
         except Exception as e:
             _debug_log(f"[LLM_SPECIALIST] Cache lookup error: {e}")
@@ -535,9 +536,9 @@ def convert_llm_output_to_specialist_output(
     llm_output: LLMSpecialistOutput,
     topic: str,
     destination: str,
-) -> SpecialistOutput:
+) -> SpecialistStateOutput:
     """
-    Convert LLM output to SpecialistOutput format for the graph.
+    Convert LLM output to SpecialistStateOutput format for the graph.
 
     Maps LLMActivity -> ItineraryBlock and LLMConstraint -> SpecialistConstraint.
     Images are fetched from Unsplash (activity-aware) with Unsplash placeholder fallback.
@@ -593,145 +594,12 @@ def convert_llm_output_to_specialist_output(
             )
         )
 
-    return SpecialistOutput(
+    return SpecialistStateOutput(
         feasibility_status=llm_output.feasibility_status,
         feasibility_reason=llm_output.feasibility_reason,
         constraints=constraints,
         content_blocks=content_blocks,
     )
-
-
-# =============================================================================
-# LLM Feasibility Check (for unknown destinations)
-# =============================================================================
-
-
-class FeasibilityCheck(BaseModel):
-    """LLM response for feasibility check."""
-
-    possible: bool
-    reason: str
-
-
-async def _check_feasibility_llm(topic: str, destination: str) -> FeasibilityCheck:
-    """
-    LLM determines if activity is geographically possible.
-
-    Uses GPT-4o-mini for fast, cheap checks (~$0.0001, ~200ms).
-    Falls open on error (assumes possible) to avoid false negatives.
-    """
-    from app.debug_utils import _debug_log
-
-    try:
-        from app.planner.llm_factory import get_llm_by_model
-
-        llm = get_llm_by_model(
-            settings.router_model,  # Quick feasibility check
-            temperature=0,
-            max_tokens=100,
-        )
-
-        prompt = f"""Is {topic} activity possible in {destination}?
-
-Rules:
-- Diving requires coastline, large lakes, or dedicated dive facilities
-- Skiing requires mountains with reliable snow or indoor ski facilities
-- Hiking requires terrain suitable for walking trails
-- Surfing requires ocean waves
-
-Be strict. Landlocked cities cannot have diving. Alpine towns without coast cannot have diving.
-
-Respond JSON only: {{"possible": true/false, "reason": "brief"}}"""
-
-        response = await llm.ainvoke(prompt)
-        content = response.content.strip()
-
-        # Parse JSON response
-        # Handle potential markdown code blocks
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-            content = content.strip()
-
-        result = FeasibilityCheck(**json.loads(content))
-        _debug_log(
-            f"[FEASIBILITY_LLM] {topic} in {destination}: "
-            f"possible={result.possible}, reason={result.reason}"
-        )
-        return result
-
-    except Exception as e:
-        _debug_log(f"[FEASIBILITY_LLM] Error checking {topic} in {destination}: {e}")
-        # Fail open - assume possible if LLM fails
-        return FeasibilityCheck(possible=True, reason="Unknown, proceeding")
-
-
-# Bounded async cache for feasibility checks (24h TTL, 256 entries max)
-_feasibility_cache: TTLCache = TTLCache(maxsize=256, ttl=86400)
-_feasibility_cache_lock = asyncio.Lock()
-
-
-async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
-    """
-    Cached LLM feasibility check.
-
-    Cache key: f"{topic}:{destination}"
-    Returns: (possible, reason)
-    """
-    cache_key = make_cache_key("feasibility", topic, destination)
-
-    async with _feasibility_cache_lock:
-        if cache_key in _feasibility_cache:
-            return _feasibility_cache[cache_key]
-
-    # Expensive LLM call happens outside the lock
-    result = await _check_feasibility_llm(topic, destination)
-    cached_result = (result.possible, result.reason)
-
-    async with _feasibility_cache_lock:
-        _feasibility_cache[cache_key] = cached_result
-
-    return cached_result
-
-
-async def check_feasibility(
-    topic: str,
-    destination: str,
-) -> tuple:
-    """
-    LLM-only feasibility check, gated by registry has_geographic_constraint flag.
-
-    Returns:
-        (status, reason, alternative_suggestion) tuple where:
-        - status: "feasible" | "caveat" | "infeasible"
-        - reason: Human-readable explanation (or None)
-        - alternative_suggestion: Suggested alternative (or None)
-    """
-    from app.debug_utils import _debug_log
-
-    if not (destination or "").strip():
-        return ("feasible", None, None)
-
-    config = get_specialist_config(topic)
-    if not config or not config.has_geographic_constraint:
-        return ("feasible", None, None)
-
-    # All feasibility decisions delegated to LLM
-    _debug_log(f"[FEASIBILITY] LLM check for {topic} in {destination}")
-    possible, reason = await get_feasibility_llm(topic, destination)
-
-    if not possible:
-        return (
-            "infeasible",
-            f"{topic.title()} is not available in {destination}. {reason}",
-            reason,  # LLM provides alternatives in reason text
-        )
-
-    if "limited" in reason.lower():
-        return ("caveat", reason, None)
-
-    return ("feasible", None, None)
 
 
 # =============================================================================
@@ -1102,7 +970,7 @@ class VerticalSpecialist:
 
         return blocks
 
-    async def generate_output(self, state: GraphState) -> SpecialistOutput:
+    async def generate_output(self, state: GraphState) -> SpecialistStateOutput:
         """
         Generate the complete specialist output.
 
@@ -1157,7 +1025,7 @@ class VerticalSpecialist:
 
             _debug_log(f"[SPECIALIST] INFEASIBLE: Trip too short for {self.topic}")
             _record_latency("rule_short_trip", "insufficient_days")
-            return SpecialistOutput(
+            return SpecialistStateOutput(
                 feasibility_status="infeasible",
                 feasibility_reason=reason,
                 alternative_suggestion=(
@@ -1187,7 +1055,7 @@ class VerticalSpecialist:
                     f"status={llm_output.feasibility_status}, "
                     f"activities={len(llm_output.activities)}"
                 )
-            except Exception as e:
+            except (ValueError, TypeError) as e:
                 _debug_log(f"[SPECIALIST] Failed to deserialize cached result: {e}")
                 latency_reason = "parallel_cache_deserialize_error"
                 llm_output = None
@@ -1232,7 +1100,7 @@ class VerticalSpecialist:
             # Handle infeasible from LLM
             if llm_output.feasibility_status == "infeasible":
                 _record_latency(latency_source, "llm_infeasible")
-                return SpecialistOutput(
+                return SpecialistStateOutput(
                     feasibility_status="infeasible",
                     feasibility_reason=llm_output.feasibility_reason,
                     alternative_suggestion=llm_output.feasibility_reason,
@@ -1258,7 +1126,7 @@ class VerticalSpecialist:
             except Exception as e:
                 _debug_log(f"[SPECIALIST] Unsplash prefetch error (non-fatal): {e}")
 
-            # Convert LLM output to SpecialistOutput format
+            # Convert LLM output to SpecialistStateOutput format
             converted = convert_llm_output_to_specialist_output(llm_output, self.topic, destination)
 
             # Add bookends (arrival/departure) - always deterministic
@@ -1284,7 +1152,7 @@ class VerticalSpecialist:
                 )
 
             _record_latency(latency_source)
-            return SpecialistOutput(
+            return SpecialistStateOutput(
                 feasibility_status=llm_output.feasibility_status,
                 feasibility_reason=llm_output.feasibility_reason,
                 constraints=constraints,
@@ -1306,7 +1174,7 @@ class VerticalSpecialist:
 
         if status == "infeasible":
             _record_latency("hardcoded_fallback", latency_reason)
-            return SpecialistOutput(
+            return SpecialistStateOutput(
                 feasibility_status="infeasible",
                 feasibility_reason=reason,
                 alternative_suggestion=alternative,
@@ -1351,7 +1219,7 @@ class VerticalSpecialist:
             )
 
         _record_latency("hardcoded_fallback", latency_reason)
-        return SpecialistOutput(
+        return SpecialistStateOutput(
             feasibility_status=status,
             feasibility_reason=reason if status == "caveat" else None,
             alternative_suggestion=alternative,
@@ -2112,7 +1980,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
                 )
                 _track_task(bg)
             except Exception:
-                pass  # non-fatal
+                _debug_log(f"[SPECIALIST] Unsplash prefetch scheduling failed for {t} (non-fatal)")
         _debug_log(
             f"[SPECIALIST] Unsplash prefetch fired (non-blocking): "
             f"{len(topics_to_prefetch)} topics ({topics_to_prefetch})"

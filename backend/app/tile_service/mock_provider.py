@@ -179,7 +179,7 @@ class MockHotelProvider(Provider):
                     rating=self._get_hotel_rating(i),
                     review_count=100 * i,
                     location_label=f"Central {dest}",
-                    geo=Geo(lat=38.72 + 0.01 * i, lon=-9.13),
+                    geo=Geo(lat=38.72 + 0.01 * i, lng=-9.13),
                     tags=(
                         ["central", "mock", f"{hotel_stars}-star", "within-budget"]
                         if budget_limit

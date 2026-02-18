@@ -14,6 +14,7 @@
 
 import { memo, useEffect, useState } from 'react';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 interface TypewriterProps {
@@ -79,7 +80,7 @@ export const Typewriter = memo(function Typewriter({
           // Light Mode: Solid Black Ink (per Section 17)
           'bg-zinc-950',
           // Dark Mode: Emerald with glow (per Section 17)
-          'dark:bg-emerald-500 dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]',
+          `dark:bg-emerald-500 dark:${DS.glowClass.cursor}`,
           showCursor ? 'opacity-100' : 'opacity-0',
           'transition-opacity duration-100'
         )}

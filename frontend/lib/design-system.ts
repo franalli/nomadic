@@ -269,10 +269,86 @@ export const DS = {
   },
 
   // ---------------------------------------------------------------------------
+  // 7b. GLOW CLASSES (Ready-to-use Tailwind arbitrary shadow/drop-shadow tokens)
+  //
+  // @tw-safelist — Tailwind JIT needs to see prefixed variants as literal strings.
+  // These classes are used via template literals (e.g. `dark:${DS.glowClass.lg}`)
+  // so the scanner cannot discover them automatically. DO NOT DELETE this block.
+  //
+  // dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.1)]
+  // dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.15)]
+  // dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]
+  // dark:shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]
+  // dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]
+  // dark:shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]
+  // dark:shadow-[0_0_12px_rgba(16,185,129,0.12)]
+  // dark:shadow-[0_0_10px_rgba(16,185,129,0.5)]
+  // dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]
+  // dark:shadow-[0_0_12px_-4px_rgba(16,185,129,0.15)]
+  // dark:shadow-[0_0_16px_-4px_rgba(16,185,129,0.2)]
+  // dark:shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)]
+  // dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]
+  // dark:drop-shadow-[0_0_6px_rgba(16,185,129,0.6)]
+  // dark:focus:shadow-[0_0_20px_-5px_rgba(16,185,129,0.15)]
+  // hover:shadow-[0_6px_24px_rgba(16,185,129,0.45)]
+  // hover:shadow-[0_4px_20px_rgba(16,185,129,0.35)]
+  // ---------------------------------------------------------------------------
+  glowClass: {
+    /** Very subtle focus — opacity 0.1 (input focus in dark mode) */
+    focusXs: 'shadow-[0_0_20px_-5px_rgba(16,185,129,0.1)]',
+    /** Subtle focus — opacity 0.15 (input/card focus in dark mode) */
+    focusSm: 'shadow-[0_0_20px_-5px_rgba(16,185,129,0.15)]',
+    /** Soft ambient — opacity 0.2 (card/container glow) */
+    sm: 'shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]',
+    /** Medium ambient — opacity 0.3 (toast, emphasized cards) */
+    md: 'shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]',
+    /** Button / action glow — opacity 0.4 */
+    lg: 'shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]',
+    /** Chip / small element glow — opacity 0.2, tighter spread */
+    chip: 'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
+    /** Badge / inline glow — opacity 0.12, tight */
+    badge: 'shadow-[0_0_12px_rgba(16,185,129,0.12)]',
+    /** Floating build button — elevated, opacity 0.35 */
+    elevated: 'shadow-[0_4px_20px_rgba(16,185,129,0.35)]',
+    /** Floating build button hover — opacity 0.45 */
+    elevatedHover: 'shadow-[0_6px_24px_rgba(16,185,129,0.45)]',
+    /** Next step bar — action emphasis, opacity 0.4 */
+    action: 'shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)]',
+    /** Animation indicator — opacity 0.5, no spread */
+    animPulse: 'shadow-[0_0_10px_rgba(16,185,129,0.5)]',
+    /** Cursor blink — opacity 0.6, tight */
+    cursor: 'shadow-[0_0_6px_rgba(16,185,129,0.6)]',
+    /** Text/icon drop-shadow — matches glow.dropText */
+    dropText: 'drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]',
+    /** Cursor drop-shadow — matches glow.dropCursor */
+    dropCursor: 'drop-shadow-[0_0_6px_rgba(16,185,129,0.6)]',
+    /** Map marker drop-shadow — offset + opacity 0.6 */
+    dropMarker: 'drop-shadow-[0_2px_8px_rgba(16,185,129,0.6)]',
+    /** Mobile input subtle — opacity 0.15, tighter spread */
+    mobileInputSm: 'shadow-[0_0_12px_-4px_rgba(16,185,129,0.15)]',
+    /** Mobile input medium — opacity 0.2, tighter spread */
+    mobileInputMd: 'shadow-[0_0_16px_-4px_rgba(16,185,129,0.2)]',
+  },
+
+  // ---------------------------------------------------------------------------
   // 8. TEXT SIZES (Micro sizes below Tailwind defaults)
   // ---------------------------------------------------------------------------
   textSize: {
+    /** 9px — ultra-compact labels (terminal status, error badges) */
+    nano: 'text-[9px]',
     /** 10px — labels, badges, technical metadata */
     micro: 'text-[10px]',
+    /** 11px — secondary info, tooltips, compact body text */
+    mini: 'text-[11px]',
+  },
+
+  // ---------------------------------------------------------------------------
+  // 9. BRAND COLORS (SVG strokes, Mapbox, speciality accents)
+  // ---------------------------------------------------------------------------
+  brand: {
+    /** Emerald primary — SVG stroke, map lines */
+    emerald: '#10b981',
+    /** Emerald subdued — SVG background strokes */
+    emeraldMuted: 'rgba(16, 185, 129, 0.3)',
   },
 } as const;

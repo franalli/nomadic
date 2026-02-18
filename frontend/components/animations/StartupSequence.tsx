@@ -19,6 +19,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 import { Typewriter } from './Typewriter';
@@ -141,12 +142,12 @@ export const StartupSequence = memo(function StartupSequence({
             className={cn(
               'z-10 mb-8',
               // Typography: DS.text.label pattern (per Section 17)
-              'font-mono text-[10px] font-bold uppercase tracking-[0.2em]',
+              `font-mono ${DS.textSize.micro} font-bold uppercase tracking-[0.2em]`,
               isDesktop && 'text-xs',
               // Light: "Typewriter Ink" - Solid Black (per Section 17)
               'text-zinc-950',
               // Dark: "System Pulse" - Emerald with glow (per Section 17)
-              'dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+              `dark:text-emerald-500 dark:${DS.glowClass.dropText}`
             )}
           >
             <Typewriter
@@ -200,7 +201,7 @@ export const StartupSequence = memo(function StartupSequence({
                     // Light: Fill with Black
                     'bg-zinc-900',
                     // Dark: Fill with Emerald + glow (per design system Section 8)
-                    'dark:bg-emerald-500 dark:shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                    `dark:bg-emerald-500 dark:${DS.glowClass.animPulse}`
                   )}
                 />
               </motion.div>

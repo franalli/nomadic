@@ -233,7 +233,7 @@ function DatesSheetInner({
                       type="button"
                       onClick={() => handlePreset(preset)}
                       className={cn(
-                        'px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wide',
+                        `px-3 py-1.5 rounded-lg ${DS.textSize.micro} font-bold uppercase tracking-wide`,
                         'transition-all duration-200',
                         activePreset === preset.label
                           // Selected: Solid Black (Light) / Solid White (Dark)

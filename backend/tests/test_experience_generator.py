@@ -191,12 +191,12 @@ class TestTileConversion:
     """Test ExperienceTile → tile dict conversion."""
 
     @pytest.fixture(autouse=True)
-    def _clear_unsplash_memory(self):
+    async def _clear_unsplash_memory(self):
         from app.services.unsplash import clear_memory_cache
 
-        clear_memory_cache()
+        await clear_memory_cache()
         yield
-        clear_memory_cache()
+        await clear_memory_cache()
 
     @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
     def test_basic_conversion(self, _mock_unsplash):

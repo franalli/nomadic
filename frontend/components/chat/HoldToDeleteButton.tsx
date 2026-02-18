@@ -3,6 +3,7 @@
 import { Trash2 } from 'lucide-react';
 import { memo, useEffect, useRef, useState } from 'react';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 const HOLD_DURATION_MS = 1000;
@@ -118,7 +119,7 @@ export const HoldToDeleteButton = memo(function HoldToDeleteButton({
           cx="12"
           cy="12"
           r={CIRCLE_RADIUS}
-          stroke="rgba(16, 185, 129, 0.3)"
+          stroke={DS.brand.emeraldMuted}
           strokeWidth="2.5"
           fill="none"
           opacity={isHolding ? 1 : 0}
@@ -128,14 +129,14 @@ export const HoldToDeleteButton = memo(function HoldToDeleteButton({
           cx="12"
           cy="12"
           r={CIRCLE_RADIUS}
-          stroke="#10b981"
+          stroke={DS.brand.emerald}
           strokeWidth="2.5"
           fill="none"
           strokeLinecap="round"
           strokeDasharray={CIRCLE_CIRCUMFERENCE}
           strokeDashoffset={strokeDashoffset}
           opacity={isHolding ? 1 : 0}
-          className={progress >= 1 ? 'drop-shadow-[0_0_6px_#10b981]' : undefined}
+          className={progress >= 1 ? DS.glowClass.dropCursor : undefined}
         />
       </svg>
 

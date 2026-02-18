@@ -33,7 +33,7 @@ const GENERATING_MIN_DURATION_MS = 5000;
 /**
  * Options for the useBranchManager hook.
  */
-export interface BranchManagerOptions {
+interface BranchManagerOptions {
   /**
    * Ref to the chat panel container element.
    * Used to scroll and focus after starting a new session.
@@ -83,7 +83,7 @@ export interface PlanResultPayload {
 /**
  * State values from the branch manager.
  */
-export interface BranchManagerState {
+interface BranchManagerState {
   branches: DocumentBranch[];
   selectedBranchId: string | null;
   tilesBranchId: string | null;
@@ -99,7 +99,7 @@ export interface BranchManagerState {
 /**
  * Computed values derived from state.
  */
-export interface BranchManagerComputed {
+interface BranchManagerComputed {
   selectedBranch: DocumentBranch | null;
   activeBranchSelection: TileSelection;
   tiles: Tile[];
@@ -110,7 +110,7 @@ export interface BranchManagerComputed {
 /**
  * Actions available from the branch manager.
  */
-export interface BranchManagerActions {
+interface BranchManagerActions {
   setBranches: React.Dispatch<React.SetStateAction<DocumentBranch[]>>;
   setSelectedBranchId: React.Dispatch<React.SetStateAction<string | null>>;
   handleBranchSelect: (branchId: string) => Promise<void>;
@@ -124,7 +124,7 @@ export interface BranchManagerActions {
 /**
  * Complete return type combining state, computed values, and actions.
  */
-export type UseBranchManagerReturn = BranchManagerState &
+type UseBranchManagerReturn = BranchManagerState &
   BranchManagerComputed &
   BranchManagerActions;
 
@@ -593,11 +593,12 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * This ensures tiles always reflect the current user preferences.
    */
   useEffect(() => {
+    let cancelled = false;
     const selectedBranchId = branchState.selectedBranchId;
 
     // Skip if no settings, no branch selected, or currently generating
     if ((!tripInputsHotelSettings && !tripInputsFlightSettings && !tripInputsActivitySettings) || !selectedBranchId || isGenerating) {
-      return;
+      return () => { cancelled = true; };
     }
 
     const currentSettings = {
@@ -611,7 +612,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     // Initialize on first run
     if (!prevSettings) {
       prevSettingsRef.current = currentSettings;
-      return;
+      return () => { cancelled = true; };
     }
 
     // Detect which verticals have changed settings
@@ -653,7 +654,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
     // If no changes or already refreshing, skip
     if (changedVerticals.length === 0 || isRefreshingRef.current) {
-      return;
+      return () => { cancelled = true; };
     }
 
     // Trigger tile refresh for changed verticals
@@ -661,6 +662,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
     refreshTiles(selectedBranchId, changedVerticals)
       .then((response) => {
+        if (cancelled) return;
         // Update tiles map with refreshed tiles
         const newTilesMap: Record<string, Tile> = {};
         for (const tile of response.tiles) {
@@ -669,11 +671,14 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         branchState.setTilesMap((prev) => ({ ...prev, ...newTilesMap }));
       })
       .catch((error) => {
+        if (cancelled) return;
         console.error('Failed to refresh tiles after settings change:', error);
       })
       .finally(() => {
         isRefreshingRef.current = false;
       });
+
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- branchState object recreated each render; individual properties listed instead
   }, [
     tripInputsHotelSettings,
@@ -700,42 +705,43 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * but live flights need to be fetched from Amadeus.
    */
   useEffect(() => {
+    let cancelled = false;
     const selectedBranchId = branchState.selectedBranchId;
     const tilesBranchId = branchState.tilesBranchId;
     const selectedBranch = branchState.selectedBranch;
 
     // Skip if no branch selected or tiles not loaded for this branch
     if (!selectedBranchId || !selectedBranch) {
-      return;
+      return () => { cancelled = true; };
     }
 
     // Skip if tiles aren't loaded yet for this branch
     if (tilesBranchId !== selectedBranchId) {
-      return;
+      return () => { cancelled = true; };
     }
 
     // Skip if currently generating or refreshing
     if (isGenerating || isRefreshingRef.current) {
-      return;
+      return () => { cancelled = true; };
     }
 
     // Skip if we already attempted to fetch flights for this branch
     if (fetchedMissingFlightsRef.current.has(selectedBranchId)) {
-      return;
+      return () => { cancelled = true; };
     }
 
     // Check if flights are missing (with null safety)
     const flightIds = selectedBranch.tiles?.flights ?? [];
     const hasFlights = flightIds.length > 0;
     if (hasFlights) {
-      return;
+      return () => { cancelled = true; };
     }
 
     // Check if we have origin (required for flight search)
     const origin = selectedBranch.origin || tripInputsOrigin;
     if (!origin) {
       debugLog('[useBranchManager] No origin available for flight fetch');
-      return;
+      return () => { cancelled = true; };
     }
 
     // Mark this branch as attempted
@@ -747,6 +753,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
     refreshTiles(selectedBranchId, ['flight'])
       .then((response) => {
+        if (cancelled) return;
         if (response.tiles.length > 0) {
           // Update tiles map with fetched flights
           const newTilesMap: Record<string, Tile> = {};
@@ -773,11 +780,14 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         }
       })
       .catch((error) => {
+        if (cancelled) return;
         console.error('[useBranchManager] Failed to fetch missing flights:', error);
       })
       .finally(() => {
         isRefreshingRef.current = false;
       });
+
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- branchState object recreated each render; individual properties listed instead
   }, [
     branchState.selectedBranchId,

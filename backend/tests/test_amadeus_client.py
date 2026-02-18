@@ -21,11 +21,13 @@ import pytest
 
 from app.tools.amadeus_client import (
     AmadeusClient,
+    FlightOffer,
+    HotelOffer,
+)
+from app.tools.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerOpenError,
     CircuitState,
-    FlightOffer,
-    HotelOffer,
     RateLimiter,
 )
 
@@ -45,9 +47,10 @@ class TestCircuitBreakerInit:
         cb = CircuitBreaker()
         assert cb.failure_count == 0
 
-    def test_can_execute_when_closed(self):
+    @pytest.mark.asyncio
+    async def test_can_execute_when_closed(self):
         cb = CircuitBreaker()
-        assert cb.can_execute() is True
+        assert await cb.can_execute() is True
 
     def test_custom_threshold(self):
         cb = CircuitBreaker(failure_threshold=3)
@@ -61,21 +64,24 @@ class TestCircuitBreakerInit:
 class TestCircuitBreakerSuccessPath:
     """Tests for success recording behavior."""
 
-    def test_success_stays_closed(self):
+    @pytest.mark.asyncio
+    async def test_success_stays_closed(self):
         cb = CircuitBreaker()
-        cb.record_success()
+        await cb.record_success()
         assert cb.state == CircuitState.CLOSED
 
-    def test_success_resets_failure_count(self):
+    @pytest.mark.asyncio
+    async def test_success_resets_failure_count(self):
         cb = CircuitBreaker()
         cb.failure_count = 3
-        cb.record_success()
+        await cb.record_success()
         assert cb.failure_count == 0
 
-    def test_success_after_half_open_closes(self):
+    @pytest.mark.asyncio
+    async def test_success_after_half_open_closes(self):
         cb = CircuitBreaker()
         cb.state = CircuitState.HALF_OPEN
-        cb.record_success()
+        await cb.record_success()
         assert cb.state == CircuitState.CLOSED
         assert cb.failure_count == 0
 
@@ -83,35 +89,40 @@ class TestCircuitBreakerSuccessPath:
 class TestCircuitBreakerFailurePath:
     """Tests for failure recording and OPEN transition."""
 
-    def test_single_failure_increments_count(self):
+    @pytest.mark.asyncio
+    async def test_single_failure_increments_count(self):
         cb = CircuitBreaker(failure_threshold=5)
-        cb.record_failure()
+        await cb.record_failure()
         assert cb.failure_count == 1
         assert cb.state == CircuitState.CLOSED
 
-    def test_below_threshold_stays_closed(self):
+    @pytest.mark.asyncio
+    async def test_below_threshold_stays_closed(self):
         cb = CircuitBreaker(failure_threshold=5)
         for _ in range(4):
-            cb.record_failure()
+            await cb.record_failure()
         assert cb.state == CircuitState.CLOSED
 
-    def test_at_threshold_opens(self):
+    @pytest.mark.asyncio
+    async def test_at_threshold_opens(self):
         cb = CircuitBreaker(failure_threshold=5)
         for _ in range(5):
-            cb.record_failure()
+            await cb.record_failure()
         assert cb.state == CircuitState.OPEN
 
-    def test_open_rejects_requests(self):
+    @pytest.mark.asyncio
+    async def test_open_rejects_requests(self):
         cb = CircuitBreaker(failure_threshold=2)
-        cb.record_failure()
-        cb.record_failure()
+        await cb.record_failure()
+        await cb.record_failure()
         assert cb.state == CircuitState.OPEN
-        assert cb.can_execute() is False
+        assert await cb.can_execute() is False
 
-    def test_failure_records_timestamp(self):
+    @pytest.mark.asyncio
+    async def test_failure_records_timestamp(self):
         cb = CircuitBreaker()
         before = time.time()
-        cb.record_failure()
+        await cb.record_failure()
         after = time.time()
         assert cb.last_failure_time is not None
         assert before <= cb.last_failure_time <= after
@@ -120,32 +131,36 @@ class TestCircuitBreakerFailurePath:
 class TestCircuitBreakerHalfOpen:
     """Tests for OPEN -> HALF_OPEN transition after reset_timeout."""
 
-    def test_transitions_to_half_open_after_timeout(self):
+    @pytest.mark.asyncio
+    async def test_transitions_to_half_open_after_timeout(self):
         cb = CircuitBreaker(failure_threshold=1, reset_timeout=0)
-        cb.record_failure()
+        await cb.record_failure()
         assert cb.state == CircuitState.OPEN
         # With reset_timeout=0, immediately eligible for half-open
         time.sleep(0.01)
-        assert cb.can_execute() is True
+        assert await cb.can_execute() is True
         assert cb.state == CircuitState.HALF_OPEN
 
-    def test_half_open_allows_one_request(self):
+    @pytest.mark.asyncio
+    async def test_half_open_allows_one_request(self):
         cb = CircuitBreaker()
         cb.state = CircuitState.HALF_OPEN
-        assert cb.can_execute() is True
+        assert await cb.can_execute() is True
 
-    def test_half_open_failure_reopens(self):
+    @pytest.mark.asyncio
+    async def test_half_open_failure_reopens(self):
         cb = CircuitBreaker(failure_threshold=1)
         cb.state = CircuitState.HALF_OPEN
         cb.failure_count = 0
-        cb.record_failure()
+        await cb.record_failure()
         assert cb.state == CircuitState.OPEN
 
-    def test_stays_open_before_timeout(self):
+    @pytest.mark.asyncio
+    async def test_stays_open_before_timeout(self):
         cb = CircuitBreaker(failure_threshold=1, reset_timeout=9999)
-        cb.record_failure()
+        await cb.record_failure()
         assert cb.state == CircuitState.OPEN
-        assert cb.can_execute() is False
+        assert await cb.can_execute() is False
 
 
 # =============================================================================

@@ -6,7 +6,7 @@
 
 - **Focus:** Code health audit fixes (T3 tier)
 - **Secondary:** DS token adoption
-- **Active work:** Staged cleanup plan (Stages 1-8 complete): dead code removal, hard-coded data cleanup, console.warn→debugLog, DS token adoption, component size extractions (streaming.py, validation_cache.py, ChatMessageRenderer.tsx, expert_constraints.py), destination-coords refactor (removed 90-city lookup, POI-driven maps)
+- **Active work:** Stage 13: dead export cleanup (unexport unused interfaces/types across frontend), DS glowClass + textSize + brand tokens added, circuit breaker + rate limiter extracted (amadeus_client→circuit_breaker.py), feasibility service extracted (vertical_specialist→feasibility_service.py), SSE state extracted (main→sse_state.py), geo field `lon→lng` rename, pool_pre_ping + Unsplash HTTP shutdown, console.error→debugLog in streamParser/tileSelectors, 13 new backend test files
 - **Known broken:** Pre-existing test failures: `test_facade_exports_meta_helpers` (missing init_turn_metadata export), `test_full_graph_execution` (KeyError)
 - **DO NOT touch this sprint:** [frozen files/features]
 

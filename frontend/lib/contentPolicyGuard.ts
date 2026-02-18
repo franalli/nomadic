@@ -280,8 +280,8 @@ export function guardedEnforcePolicy(
       // Re-throw in development to fail fast
       throw error;
     } else {
-      // Log warning in production but don't break the app
-      console.warn('[ContentPolicyGuard]', error);
+      // Silent in production — guard is for development enforcement only
+      debugLog('[ContentPolicyGuard]', error);
     }
   }
 }

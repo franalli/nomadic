@@ -5,7 +5,7 @@ These tests verify that the geographic feasibility layer correctly gates
 on has_geographic_constraint from the specialist registry.
 """
 
-from app.planner.nodes.vertical_specialist import check_feasibility
+from app.planner.services.feasibility_service import check_feasibility
 from app.planner.specialist_registry import get as get_specialist_config
 
 

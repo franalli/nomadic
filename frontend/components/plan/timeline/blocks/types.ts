@@ -15,7 +15,7 @@ export interface DisplayTime {
 /**
  * Time slot labels for fallback display
  */
-export type TimeSlot = 'MORNING' | 'AFTERNOON' | 'EVENING';
+type TimeSlot = 'MORNING' | 'AFTERNOON' | 'EVENING';
 
 /**
  * Get display time for a block with graceful fallback

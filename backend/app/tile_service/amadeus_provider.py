@@ -389,7 +389,7 @@ class AmadeusHotelProvider(Provider):
             deeplink_url="#",
             rating=float(hotel.rating) if hotel.rating else None,
             location_label=hotel.address,
-            geo={"lat": hotel.latitude, "lon": hotel.longitude} if hotel.latitude else None,
+            geo={"lat": hotel.latitude, "lng": hotel.longitude} if hotel.latitude else None,
             tags=[rating_text] if rating_text else [],
             availability_status="unknown",  # Need separate API call for availability
             meta={

@@ -20,6 +20,7 @@ import {
   Star, // specialist
 } from 'lucide-react';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 // Map backend 'icon_key' to Lucide components
@@ -58,7 +59,7 @@ export function SmartLoader({ status }: SmartLoaderProps) {
       <span
         key={displayText}
         className={cn(
-          'font-mono text-[10px] uppercase tracking-widest font-bold',
+          `font-mono ${DS.textSize.micro} uppercase tracking-widest font-bold`,
           'text-zinc-600 dark:text-emerald-500/80',
           'animate-in fade-in slide-in-from-left-1 duration-300'
         )}

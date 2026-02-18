@@ -463,7 +463,7 @@ class TestFeasibilityChecks:
     @pytest.mark.asyncio
     async def test_cycling_no_geographic_constraint(self):
         """Cycling should skip feasibility (no geographic constraint)."""
-        from app.planner.nodes.vertical_specialist import check_feasibility
+        from app.planner.services.feasibility_service import check_feasibility
 
         status, reason, alternative = await check_feasibility("cycling", "Switzerland")
         assert status == "feasible", f"Expected 'feasible', got '{status}'"
@@ -471,7 +471,7 @@ class TestFeasibilityChecks:
     @pytest.mark.asyncio
     async def test_bali_diving_feasible(self):
         """Bali should return FEASIBLE for diving (prime destination)."""
-        from app.planner.nodes.vertical_specialist import check_feasibility
+        from app.planner.services.feasibility_service import check_feasibility
 
         status, reason, alternative = await check_feasibility("diving", "Bali")
 
@@ -480,7 +480,7 @@ class TestFeasibilityChecks:
     @pytest.mark.asyncio
     async def test_miami_skiing_infeasible(self):
         """Miami should return INFEASIBLE for skiing."""
-        from app.planner.nodes.vertical_specialist import check_feasibility
+        from app.planner.services.feasibility_service import check_feasibility
 
         status, reason, alternative = await check_feasibility("skiing", "Miami")
 

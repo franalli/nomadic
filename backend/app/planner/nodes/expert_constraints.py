@@ -351,6 +351,14 @@ class LocalExpertOutput(BaseModel):
 # =============================================================================
 # Static Local Expert Knowledge (Fallback when LLM unavailable)
 # =============================================================================
+# This dict provides STABLE constraints (cultural norms, safety, seasonality)
+# as fallback data when the LLM is unavailable. Volatile venue-specific data
+# (prices, opening hours, transport costs) is NOT included — the LLM path
+# generates those dynamically.
+#
+# Adding cities here is optional — the LLM handles any destination.
+# Only add entries when specific safety/cultural constraints are critical
+# and must survive LLM failures.
 
 LOCAL_EXPERT_KNOWLEDGE = {
     "dubai": {

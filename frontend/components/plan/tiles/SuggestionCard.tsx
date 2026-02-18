@@ -188,12 +188,12 @@ export function SuggestionCard({
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+            <span className={`${DS.textSize.micro} font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide`}>
               Suggested
             </span>
             {/* Star rating for hotels */}
             {isHotel && tile.rating != null && (
-              <span className="text-[10px] text-zinc-500 dark:text-zinc-300">{renderStarRating(tile.rating)}</span>
+              <span className={`${DS.textSize.micro} text-zinc-500 dark:text-zinc-300`}>{renderStarRating(tile.rating)}</span>
             )}
           </div>
           <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">{tile.title}</p>
@@ -284,7 +284,7 @@ export function SuggestionCard({
         <div className="absolute top-3 left-3">
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/20 backdrop-blur-sm border border-emerald-500/30">
             <Sparkles className="w-3 h-3 text-emerald-400" />
-            <span className="text-[10px] font-semibold text-emerald-300 uppercase tracking-wide">
+            <span className={`${DS.textSize.micro} font-semibold text-emerald-300 uppercase tracking-wide`}>
               Suggested
             </span>
           </div>

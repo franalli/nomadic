@@ -5,7 +5,7 @@ This package contains state management for the planner.
 
 Exports:
     TripPlan, TripSegment, ItineraryBlock, SpecialistConstraint
-    GraphState, SpecialistOutput, UIEvent, MissingFieldsResponse
+    GraphState, SpecialistStateOutput, UIEvent, MissingFieldsResponse
     SynthesizerOutput
 
 Usage:
@@ -27,7 +27,7 @@ from app.planner.state.graph_state import (
     MissingFieldsResponse,
     SpecialistConstraint,
     # Output models
-    SpecialistOutput,
+    SpecialistStateOutput,
     SynthesizerOutput,
     TripPlan,
     TripSegment,
@@ -64,7 +64,7 @@ __all__ = [
     # State
     "GraphState",
     # Output Models
-    "SpecialistOutput",
+    "SpecialistStateOutput",
     "UIEvent",
     "MissingFieldsResponse",
     "SynthesizerOutput",

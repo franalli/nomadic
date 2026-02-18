@@ -19,18 +19,3 @@ export const chipInactive =
 /** Active/selected chip - Solid black/white for maximum contrast (Tactile Rule) */
 export const chipActive =
   'bg-zinc-900 text-white border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white';
-
-/** Dropdown container styles */
-export const dropdown =
-  'bg-popover text-popover-foreground border-border rounded-lg shadow-lg';
-
-/** Dropdown item - default state */
-export const dropdownItem = 'text-popover-foreground hover:bg-muted';
-
-/** Dropdown item - active/selected state */
-export const dropdownItemActive =
-  'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400';
-
-/** Emerald active state (for free cancellation, etc.) */
-export const chipActiveEmerald =
-  'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400';

@@ -317,7 +317,7 @@ async def logistics_node(state: GraphState) -> GraphState:
     Logistics Node:
     1. Fetches raw flights from Amadeus (or backup).
     2. Sanitizes carrier names for a pro look.
-    3. Applies 24h safety logic if diving constraints exist.
+    3. Applies 24h safety logic if no-fly constraints exist.
     """
     plan = state.trip_plan
     node_start_time = time.time()
@@ -557,10 +557,10 @@ async def logistics_node(state: GraphState) -> GraphState:
         _debug_log(f"Mock provider returned {len(raw_flights)} flights")
 
     # 2. DETECT CONSTRAINTS
-    # Check if diving specialist added a "no fly" or "24h" rule
-    has_diving_safety_rule = _has_diving_constraints(state)
-    if has_diving_safety_rule:
-        log("LOGISTICS", "Diving safety constraints detected", data="applying 24h no-fly rule")
+    # Check if any specialist has a no-fly buffer constraint (e.g., diving 24h rule)
+    has_nofly_safety_rule = _has_nofly_constraints(state)
+    if has_nofly_safety_rule:
+        log("LOGISTICS", "No-fly safety constraints detected", data="applying no-fly buffer rule")
         _debug_log("Will calculate surface interval for each flight")
 
     # 3. PROCESS & SANITIZE
@@ -596,8 +596,8 @@ async def logistics_node(state: GraphState) -> GraphState:
 
             # B. Apply Safety Math (The "Constraint Engine")
             logic_hook = None
-            is_safe = True  # Default to safe if no diving constraints
-            if has_diving_safety_rule:
+            is_safe = True  # Default to safe if no no-fly constraints
+            if has_nofly_safety_rule:
                 logic_hook, is_safe = _calculate_diving_safety(dep_time_str)
 
             # C. Format Duration
@@ -673,7 +673,7 @@ async def logistics_node(state: GraphState) -> GraphState:
     log(
         "LOGISTICS",
         f"Found {len(processed_options)} flight options",
-        data=f"safe={safe_count}, unsafe={unsafe_count}" if has_diving_safety_rule else None,
+        data=f"safe={safe_count}, unsafe={unsafe_count}" if has_nofly_safety_rule else None,
     )
     logger.info(f"[Logistics] Found {len(processed_options)} flight options")
 
@@ -1682,15 +1682,19 @@ def _tile_matches_categories(tile: dict, categories: set) -> bool:
     return any(cat.lower() in text for cat in categories)
 
 
-def _has_diving_constraints(state: GraphState) -> bool:
-    """Check if diving specialist added safety constraints."""
+def _has_nofly_constraints(state: GraphState) -> bool:
+    """Check if any active specialist has a no-fly buffer constraint (registry-driven)."""
+    from app.planner.specialist_registry import SPECIALIST_REGISTRY
+
+    nofly_specialists = {name for name, cfg in SPECIALIST_REGISTRY.items() if cfg.has_nofly_buffer}
+
     # Check active specialist
-    if state.active_specialist == "diving":
+    if state.active_specialist in nofly_specialists:
         return True
 
-    # Check strategy sections for diving-related constraints
+    # Check strategy sections for specialists with no-fly buffer
     for section in state.metadata.get("strategy_sections", []):
-        if section.get("specialist_type") == "diving":
+        if section.get("specialist_type") in nofly_specialists:
             return True
         # Also check constraints list if present
         constraints = section.get("constraints_applied", [])

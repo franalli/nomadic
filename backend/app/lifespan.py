@@ -85,12 +85,18 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     if cancelled:
         logger.info("[Shutdown] Cancelled %d background tasks", cancelled)
 
-    # 2. Dispose async DB engine
+    # 2a. Dispose async DB engine
     from app.db import _async_engine
 
     if _async_engine is not None:
         await _async_engine.dispose()
         logger.info("[Shutdown] Disposed async DB engine")
+
+    # 2b. Dispose sync DB engine (used by Alembic/legacy)
+    from app.db import engine as _sync_engine
+
+    _sync_engine.dispose()
+    logger.info("[Shutdown] Disposed sync DB engine")
 
     # 3. Close Amadeus HTTP client
     from app.tools.amadeus_client import AmadeusClient
@@ -99,10 +105,16 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         await AmadeusClient._instance.close()
         logger.info("[Shutdown] Closed Amadeus HTTP client")
 
-    # 4. Clear SSE connections dict (import here to avoid circular dep)
-    from app.main import _sse_connections, _sse_state_lock
+    # 4. Close Unsplash HTTP client
+    from app.services.unsplash import close_http_client as close_unsplash_http_client
 
-    with _sse_state_lock:
+    await close_unsplash_http_client()
+    logger.info("[Shutdown] Closed Unsplash HTTP client")
+
+    # 5. Clear SSE connections dict
+    from app.sse_state import _sse_connections, _sse_state_lock
+
+    async with _sse_state_lock:
         _sse_connections.clear()
 
     logger.info("[Shutdown] Cleanup complete")

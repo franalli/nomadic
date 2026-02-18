@@ -40,6 +40,7 @@ import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { apiFetch, fetchDestinationImage } from '@/lib/api';
 import { parseISODateLocal } from '@/lib/date-utils';
 import { debugLog } from '@/lib/debug';
+import { DS } from '@/lib/design-system';
 import type { SpecialistType } from '@/lib/specialistLinkParser';
 import { consumeNdjsonEnvelopeStream } from '@/lib/streamParser';
 import { formatDateForDisplay } from '@/lib/utils';
@@ -1417,7 +1418,7 @@ export function NomadicLanding() {
                 size="sm"
                 onClick={handleStartNewSession}
                 disabled={isResettingSession}
-                className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-500 dark:hover:bg-white/5 dark:hover:text-white disabled:opacity-60 disabled:pointer-events-none"
+                className={`${DS.textSize.micro} font-bold uppercase tracking-widest text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-500 dark:hover:bg-white/5 dark:hover:text-white disabled:opacity-60 disabled:pointer-events-none`}
               >
                 {isResettingSession ? (
                   <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />

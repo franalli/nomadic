@@ -156,7 +156,7 @@ backend/app/planner/
 │     → CuratedProvider for hotels/activities                                 │
 │  2. Fallback to MockProviders for non-curated destinations                  │
 │  3. Curated/Demo flights with carrier sanitization (XX → Emirates)          │
-│  4. Apply 24h no-fly safety logic if diving constraints exist               │
+│  4. Apply no-fly safety logic if specialist has_nofly_buffer (registry-driven)│
 │                                                                             │
 │  Outputs to: state.tiles["flights"], ["hotels"], ["activities"]             │
 └──────────────────────────────────┬──────────────────────────────────────────┘
@@ -633,7 +633,7 @@ possible, reason = get_feasibility_llm("diving", "Chamonix")
 # LLM determines: landlocked alpine town → diving impossible
 ```
 
-**Caching:** `_feasibility_cache` dict with `asyncio.Lock` for thread safety. Cache key is generated via `make_cache_key("feasibility", topic, destination)`. Lookups and writes are protected by `_feasibility_cache_lock` (async lock). The LLM call runs outside the lock to avoid blocking concurrent checks.
+**Extraction:** Feasibility logic lives in `backend/app/planner/services/feasibility_service.py` (extracted from `vertical_specialist.py`). Uses `MemoryCache` (thread-safe, 256 entries, 24h TTL) instead of raw `TTLCache`. Cache key: `make_cache_key("feasibility", "v2", topic, destination)`.
 
 **Cost:** ~$0.0001 per check, ~200ms latency (first call only)
 
@@ -830,10 +830,10 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 - Fallback: `resolve_iata_codes()` reads `state.trip_plan.origin_iata`/`destination_iata` first (instant), fires `settings.iata_resolver_model` via `get_llm_by_model(...)` only if missing (~50 tokens)
 - No hardcoded airport mappings — all IATA codes are LLM-resolved
 
-**Safety Logic (Diving Integration):**
+**Safety Logic (No-Fly Buffer — Registry-Driven):**
 
-- Detects diving constraints from VerticalSpecialist
-- Applies 24h no-fly surface interval calculation
+- Detects no-fly buffer constraints from any specialist with `has_nofly_buffer=True` in registry (e.g., diving)
+- Applies no-fly surface interval calculation (currently 24h for diving)
 - Tags flights as safe/unsafe with `logic_hook` explanation
 
 **Carrier Sanitization:**
@@ -3389,7 +3389,7 @@ class Resolution(BaseModel):
 | Module              | Exports                                                                                                                                                        |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `planner`           | `run_turn`, `run_turn_streaming`, `GraphState`                                                                                                                 |
-| `planner.state`     | `GraphState`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistOutput`, `UIEvent`, `MissingFieldsResponse`, `SynthesizerOutput` |
+| `planner.state`     | `GraphState`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistStateOutput`, `UIEvent`, `MissingFieldsResponse`, `SynthesizerOutput` |
 | `planner.hashing`   | `stable_hash`, `stable_hash_short`, `canonicalize_destinations`, `make_cache_key`                                                                              |
 | `planner.nodes`     | `intent_router`, `trip_architect`, `vertical_specialist`, `local_expert`, `logistics_node`, `constraint_guard`, `synthesizer`                                  |
 

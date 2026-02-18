@@ -57,6 +57,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { DS } from '@/lib/design-system';
 import { formatTilePrice } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { getDeepLinkParams } from '@/lib/tileUtils';
@@ -398,18 +399,18 @@ export const MiniCard = memo(function MiniCard({
           {activityMeta && (
             <div className="flex flex-wrap items-center gap-1.5">
               {activityMeta.category && (
-                <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+                <span className={`rounded px-1.5 py-0.5 ${DS.textSize.micro} font-medium uppercase tracking-wide bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400`}>
                   {activityMeta.category}
                 </span>
               )}
               {activityMeta.durationHours != null && (
-                <span className="text-[10px] text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-0.5">
+                <span className={`${DS.textSize.micro} text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-0.5`}>
                   <Clock className="h-2.5 w-2.5" />
                   {activityMeta.durationHours}h
                 </span>
               )}
               {activityMeta.timeOfDay && (
-                <span className="text-[10px] text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-0.5">
+                <span className={`${DS.textSize.micro} text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-0.5`}>
                   {activityMeta.timeOfDay === 'morning' && <Sun className="h-2.5 w-2.5" />}
                   {activityMeta.timeOfDay === 'afternoon' && <Sunset className="h-2.5 w-2.5" />}
                   {activityMeta.timeOfDay === 'evening' && <Moon className="h-2.5 w-2.5" />}
@@ -421,7 +422,7 @@ export const MiniCard = memo(function MiniCard({
 
           {/* Activity description (compact) */}
           {activityMeta?.description && (
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+            <p className={`${DS.textSize.mini} text-zinc-500 dark:text-zinc-400 line-clamp-1`}>
               {activityMeta.description}
             </p>
           )}
@@ -433,7 +434,7 @@ export const MiniCard = memo(function MiniCard({
                 <span
                   key={perk}
                   className={cn(
-                    'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                    `rounded px-1.5 py-0.5 ${DS.textSize.micro} font-medium`,
                     perk === 'Free cancel'
                       ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
                       : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
@@ -457,7 +458,7 @@ export const MiniCard = memo(function MiniCard({
             <div className="mt-2">
               <span
                 className={cn(
-                  'rounded px-1.5 py-0.5 text-[10px] font-medium inline-flex items-center gap-1',
+                  `rounded px-1.5 py-0.5 ${DS.textSize.micro} font-medium inline-flex items-center gap-1`,
                   meta?.is_safe === false
                     ? 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/20'
                     : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
@@ -523,13 +524,13 @@ export const MiniCard = memo(function MiniCard({
                 {amenities.slice(0, 4).map((amenity) => (
                   <span
                     key={amenity}
-                    className="rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-600 dark:text-zinc-400"
+                    className={`rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 ${DS.textSize.micro} text-zinc-600 dark:text-zinc-400`}
                   >
                     {amenity}
                   </span>
                 ))}
                 {amenities.length > 4 && (
-                  <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500/70 dark:text-zinc-500">
+                  <span className={`rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 ${DS.textSize.micro} text-zinc-500/70 dark:text-zinc-500`}>
                     +{amenities.length - 4} more
                   </span>
                 )}
@@ -551,17 +552,17 @@ export const MiniCard = memo(function MiniCard({
                   <button
                     type="button"
                     onClick={(e) => e.stopPropagation()}
-                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
+                    className={`flex items-center gap-1 rounded px-1.5 py-0.5 ${DS.textSize.micro} text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors`}
                   >
                     <Code2 className="h-3 w-3" />
                     <span>API</span>
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-xs">
-                  <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mb-1 font-medium">
+                  <p className={`${DS.textSize.micro} text-zinc-500 dark:text-zinc-400 mb-1 font-medium`}>
                     Booking API Payload
                   </p>
-                  <pre className="text-[10px] font-mono bg-zinc-100/50 dark:bg-zinc-800/50 rounded p-2 overflow-auto max-h-40">
+                  <pre className={`${DS.textSize.micro} font-mono bg-zinc-100/50 dark:bg-zinc-800/50 rounded p-2 overflow-auto max-h-40`}>
                     {JSON.stringify(getDeepLinkParams(tile), null, 2)}
                   </pre>
                 </TooltipContent>

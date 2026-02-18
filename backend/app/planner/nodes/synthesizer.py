@@ -1945,10 +1945,6 @@ class Synthesizer:
         """Generate planning response."""
         return FALLBACK_MESSAGE
 
-    def synthesize_constraint_warning(self, _state: GraphState) -> str:
-        """Generate response highlighting constraint violations."""
-        return FALLBACK_MESSAGE
-
     def generate_response(self, state: GraphState) -> SynthesizerOutput:
         """
         Generate the complete synthesized response.

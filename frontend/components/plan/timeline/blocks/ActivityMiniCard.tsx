@@ -146,7 +146,7 @@ export function ActivityMiniCard({
                 {displayTime.value}
               </span>
             ) : (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wide">
+              <span className={`${DS.textSize.micro} px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wide`}>
                 {displayTime.value}
               </span>
             )
@@ -171,7 +171,7 @@ export function ActivityMiniCard({
             if (isFreeDay) return null;
             return (
               <span className={cn(
-                'text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide border',
+                `${DS.textSize.micro} px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide border`,
                 block.intensity === 'light' && 'bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/30',
                 block.intensity === 'moderate' && 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/30',
                 block.intensity === 'challenging' && 'bg-red-500/20 text-red-600 dark:text-red-400 border-red-500/30'

@@ -35,18 +35,18 @@ const toTripInputsDraft = (inputs: DocumentTripInputs): TripInputsDraft => ({
   currency: inputs.currency ?? 'USD',
 });
 
-export interface TripInputsEditorOptions {
+interface TripInputsEditorOptions {
   tripInputs: DocumentTripInputs;
   storeTripInputs: DocumentTripInputs | null | undefined;
   onToast: (message: string, type?: ToastType) => void;
 }
 
-export interface ValidationError {
+interface ValidationError {
   field: 'origin' | 'destination';
   message: string;
 }
 
-export interface TripInputsEditorState {
+interface TripInputsEditorState {
   tripInputsDraft: TripInputsDraft;
   editingField: keyof TripInputsDraft | null;
   selectedLocationBadge: 'origin' | number | null;
@@ -63,7 +63,7 @@ export interface TripInputsEditorState {
   validationError: ValidationError | null;
 }
 
-export interface TripInputsEditorActions {
+interface TripInputsEditorActions {
   setTripInputsDraft: React.Dispatch<React.SetStateAction<TripInputsDraft>>;
   setEditingField: React.Dispatch<React.SetStateAction<keyof TripInputsDraft | null>>;
   setSelectedLocationBadge: React.Dispatch<React.SetStateAction<'origin' | number | null>>;
@@ -90,7 +90,7 @@ export interface TripInputsEditorActions {
   resetDraft: () => void;
 }
 
-export type UseTripInputsEditorReturn = TripInputsEditorState & TripInputsEditorActions;
+type UseTripInputsEditorReturn = TripInputsEditorState & TripInputsEditorActions;
 
 export function useTripInputsEditor(
   options: TripInputsEditorOptions

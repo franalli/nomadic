@@ -130,6 +130,45 @@ const buttonEnabled = cn(
 | `DS.text.muted` | xs, zinc-500 | Hint text |
 | `DS.text.accent` | zinc-900 / emerald-400 | Highlighted text, icons |
 
+### Text Sizes (Micro Sizes)
+
+| Token | Size | Use For |
+|-------|------|---------|
+| `DS.textSize.nano` | 9px | Ultra-compact labels (terminal status, error badges) |
+| `DS.textSize.micro` | 10px | Labels, badges, technical metadata |
+| `DS.textSize.mini` | 11px | Secondary info, tooltips, compact body text |
+
+### Glow Classes (Dark Mode)
+
+Ready-to-use Tailwind shadow classes for emerald glow effects. Apply with `dark:${DS.glowClass.*}` pattern. Safelist comment in `design-system.ts` ensures JIT discovery.
+
+| Token | Opacity | Use For |
+|-------|---------|---------|
+| `DS.glowClass.focusXs` | 0.1 | Input focus (subtle) |
+| `DS.glowClass.focusSm` | 0.15 | Input/card focus |
+| `DS.glowClass.sm` | 0.2 | Card/container ambient glow |
+| `DS.glowClass.md` | 0.3 | Toast, emphasized cards |
+| `DS.glowClass.lg` | 0.4 | Button/action glow |
+| `DS.glowClass.chip` | 0.2 | Chip/small element glow (tighter spread) |
+| `DS.glowClass.badge` | 0.12 | Badge/inline glow |
+| `DS.glowClass.elevated` | 0.35 | Floating build button |
+| `DS.glowClass.elevatedHover` | 0.45 | Floating build button hover |
+| `DS.glowClass.action` | 0.4 | Next step bar action emphasis |
+| `DS.glowClass.animPulse` | 0.5 | Animation indicator pulse |
+| `DS.glowClass.cursor` | 0.6 | Cursor blink glow |
+| `DS.glowClass.dropText` | 0.5 | Text/icon drop-shadow |
+| `DS.glowClass.dropCursor` | 0.6 | Cursor drop-shadow |
+| `DS.glowClass.dropMarker` | 0.6 | Map marker drop-shadow |
+| `DS.glowClass.mobileInputSm` | 0.15 | Mobile input (subtle, tighter) |
+| `DS.glowClass.mobileInputMd` | 0.2 | Mobile input (medium, tighter) |
+
+### Brand Colors
+
+| Token | Value | Use For |
+|-------|-------|---------|
+| `DS.brand.emerald` | `#10b981` | SVG stroke, Mapbox route lines |
+| `DS.brand.emeraldMuted` | `rgba(16, 185, 129, 0.3)` | SVG background strokes |
+
 ### Stepper (Traveler Counts)
 
 | Token | Description |

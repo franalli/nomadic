@@ -43,6 +43,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
+import { DS } from '@/lib/design-system';
 import { getSpecialistColorRgb,SPECIALIST_IDS } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
@@ -240,7 +241,7 @@ function IntelBadge({ type, label }: { type: BadgeType; label: string }) {
   };
 
   return (
-    <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide', styles[type])}>
+    <span className={cn(`${DS.textSize.micro} font-bold px-2 py-0.5 rounded uppercase tracking-wide`, styles[type])}>
       {label}
     </span>
   );
@@ -557,14 +558,14 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
 
             {/* Infeasible badge */}
             {isInfeasible && (
-              <span className="text-[10px] px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded font-medium uppercase tracking-wider">
+              <span className={`${DS.textSize.micro} px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded font-medium uppercase tracking-wider`}>
                 Unavailable
               </span>
             )}
 
             {/* Caveat badge */}
             {hasCaveat && (
-              <span className="text-[10px] px-1.5 py-0.5 bg-zinc-500/20 text-zinc-400 rounded font-medium">
+              <span className={`${DS.textSize.micro} px-1.5 py-0.5 bg-zinc-500/20 text-zinc-400 rounded font-medium`}>
                 Limited
               </span>
             )}
@@ -572,7 +573,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
             {/* Status chip - only show when updating or needs input (presence of content implies ready) */}
             {!isInfeasible && status !== 'ready' && (
               <span className={cn(
-                "text-[10px] px-2 py-1 rounded-full font-bold uppercase tracking-wide",
+                `${DS.textSize.micro} px-2 py-1 rounded-full font-bold uppercase tracking-wide`,
                 // Updating: Emerald pulse (per design system)
                 status === 'updating' && "bg-emerald-50 text-emerald-700 border border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-transparent animate-pulse",
                 // Needs input: Subtle muted
@@ -635,7 +636,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
 
         {/* Alternative suggestion for infeasible */}
         {isInfeasible && section.alternative_suggestion && (
-          <div className="mt-1 text-[10px] text-muted-foreground">
+          <div className={`mt-1 ${DS.textSize.micro} text-muted-foreground`}>
             💡 <RichText>{section.alternative_suggestion}</RichText>
           </div>
         )}
@@ -650,7 +651,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
 
         {/* Mini-log: Last action performed by this specialist (not for infeasible) */}
         {!isInfeasible && status !== 'needs_input' && (
-          <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          <div className={`mt-1.5 flex items-center gap-1.5 ${DS.textSize.micro} text-muted-foreground`}>
             <span className={cn(
               status === 'ready' ? 'text-green-600 dark:text-green-400' : 'text-emerald-600 dark:text-emerald-400'
             )}>
@@ -664,7 +665,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
 
         {/* Hint: Add dates to unlock full recommendations (when specialist ran without dates) */}
         {!isInfeasible && status === 'ready' && !hasDates && (
-          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-zinc-500">
+          <div className={`mt-1 flex items-center gap-1.5 ${DS.textSize.micro} text-zinc-500`}>
             <span>📅</span>
             <span>Add dates to unlock day-by-day scheduling</span>
           </div>
@@ -672,7 +673,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
 
         {/* Expand hint - shows when collapsed to signal interactivity */}
         {!isExpanded && !isInfeasible && (
-          <p className="mt-2 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity">
+          <p className={`mt-2 ${DS.textSize.micro} font-medium text-emerald-600 dark:text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity`}>
             Tap to see expert details →
           </p>
         )}
@@ -821,7 +822,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
                       <div className="flex justify-between items-start mb-1">
                         <span className="text-sm font-bold text-zinc-900 dark:text-white">{c.title}</span>
                         {c.type && (
-                          <span className="text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded uppercase">
+                          <span className={`${DS.textSize.micro} font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded uppercase`}>
                             {c.type}
                           </span>
                         )}
@@ -834,18 +835,18 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
                       {/* Logic Hook - The "Pro Tip" that proves deep knowledge */}
                       {c.logic_hook && (
                         <div className={cn(
-                          "text-[11px] mt-2.5 inline-flex items-center gap-2 px-2.5 py-1.5 rounded-md border",
+                          `${DS.textSize.mini} mt-2.5 inline-flex items-center gap-2 px-2.5 py-1.5 rounded-md border`,
                           // Light: Subtle emerald tint
                           "text-emerald-700 bg-emerald-50 border-emerald-200",
                           // Dark: Deep emerald glow
-                          "dark:text-emerald-300 dark:bg-emerald-950 dark:border-emerald-700/60 dark:shadow-[0_0_12px_rgba(16,185,129,0.12)]"
+                          `dark:text-emerald-300 dark:bg-emerald-950 dark:border-emerald-700/60 dark:${DS.glowClass.badge}`
                         )}>
                           <Sparkles size={12} className="text-emerald-600 dark:text-emerald-400 flex-shrink-0 animate-pulse" />
                           <span className="font-medium tracking-wide">{c.logic_hook}</span>
                         </div>
                       )}
                       {c.day && (
-                        <div className="text-[10px] text-muted-foreground mt-1.5">
+                        <div className={`${DS.textSize.micro} text-muted-foreground mt-1.5`}>
                           Day {c.day}
                         </div>
                       )}
@@ -941,7 +942,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
 
           {/* Provenance (debug info) */}
           {(section.strategy_node_id || section.strategy_version) && (
-            <details className="text-[10px] text-muted-foreground/70">
+            <details className={`${DS.textSize.micro} text-muted-foreground/70`}>
               <summary className="cursor-pointer">ⓘ Provenance</summary>
               <p className="mt-1 pl-2">
                 Generated by: <span className="topic-bullet">{section.strategy_node_id}</span>
@@ -1054,7 +1055,7 @@ function StrategyStack({
                 <TopicIcon className="w-3 h-3" />
                 {config.label} Specialist
               </span>
-              <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded font-medium animate-pulse">
+              <span className={`${DS.textSize.micro} px-1.5 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded font-medium animate-pulse`}>
                 Updating...
               </span>
             </div>
@@ -1095,7 +1096,7 @@ function StrategyStack({
         !hasPending && showTripHealth && (
           <div className="text-center py-6 opacity-40">
             <p className="text-xs uppercase tracking-widest text-zinc-500 dark:text-zinc-400">System Ready</p>
-            <p className="text-[10px] text-muted-foreground mt-1">
+            <p className={`${DS.textSize.micro} text-muted-foreground mt-1`}>
               Add activities like diving or hiking to see specialist logic
             </p>
           </div>
@@ -1338,7 +1339,7 @@ export function S2StrategyView({
                 onClick={handleCollapseAll}
                 className={cn(
                   'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md',
-                  'text-[10px] font-bold uppercase tracking-wider',
+                  `${DS.textSize.micro} font-bold uppercase tracking-wider`,
                   'text-zinc-500 hover:text-zinc-900',
                   'dark:text-zinc-400 dark:hover:text-white',
                   'bg-zinc-100 hover:bg-zinc-200',
@@ -1380,7 +1381,7 @@ export function S2StrategyView({
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-zinc-500">{config.label}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-medium">
+                    <span className={`${DS.textSize.micro} px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-medium`}>
                       Loading...
                     </span>
                   </div>

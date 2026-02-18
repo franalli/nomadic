@@ -65,6 +65,7 @@ backend/
 │   ├── rate_limit.py           # Rate limiting configuration (extracted from main.py)
 │   ├── safety_snippets.json    # Safety-related content
 │   ├── schemas.py              # Pydantic request/response schemas
+│   ├── sse_state.py            # SSE connection tracking state (extracted from main.py)
 │   ├── validation.py           # Input validation
 │   │
 │   ├── data/
@@ -102,6 +103,7 @@ backend/
 │   │   ├── services/
 │   │   │   ├── __init__.py
 │   │   │   ├── admin_utils.py       # Admin utility functions
+│   │   │   ├── feasibility_service.py # LLM-backed geographic feasibility checks (extracted from vertical_specialist.py)
 │   │   │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed)
 │   │   │   ├── itinerary_adapter.py # Thin bridge: GraphState → ItineraryBuilder
 │   │   │   ├── response_envelope.py # Response envelope builder for plan state
@@ -155,6 +157,7 @@ backend/
 │   └── tools/                  # LangGraph tools
 │       ├── __init__.py
 │       ├── amadeus_client.py   # Amadeus API client
+│       ├── circuit_breaker.py  # Circuit breaker + rate limiter for external APIs (extracted from amadeus_client.py)
 │       ├── constraint_engine.py # Constraint processing
 │       └── tile_service.py     # Tile service tool
 │
@@ -228,6 +231,17 @@ backend/
 │   ├── test_section_builder.py          # Section builder tests
 │   ├── test_state_serde.py              # State serde tests
 │   ├── test_unsplash_service.py          # Unsplash service fallback + retry tests
+│   ├── test_constraint_guard.py         # Constraint guard tests
+│   ├── test_debug_utils.py              # Debug utilities tests
+│   ├── test_hashing_behavior.py         # Hashing behavior tests
+│   ├── test_local_expert.py             # Local expert node tests
+│   ├── test_logistics_helpers.py        # Logistics helper tests
+│   ├── test_streaming_helpers.py        # Streaming helper tests
+│   ├── test_synthesizer_grounding.py    # Synthesizer grounding tests
+│   ├── test_test_mode.py                # Test mode tests
+│   ├── test_tile_service.py             # Tile service tests
+│   ├── test_trip_architect.py           # Trip architect tests
+│   ├── test_vertical_specialist_node.py # Vertical specialist node tests
 │   └── db/
 │       ├── test_expand_itinerary_api.py
 │       └── test_plan_document_api.py

@@ -15,6 +15,7 @@
 import { ArrowUp } from 'lucide-react';
 import { memo, useCallback, useRef, useState } from 'react';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 interface MobileChatInputProps {
@@ -90,7 +91,7 @@ function MobileChatInputInner({
           'border border-zinc-200 dark:border-white/10',
           isProcessing && [
             'border-emerald-500/40 dark:border-emerald-500/30',
-            'shadow-[0_0_12px_-4px_rgba(16,185,129,0.15)] dark:shadow-[0_0_16px_-4px_rgba(16,185,129,0.2)]',
+            `${DS.glowClass.mobileInputSm} dark:${DS.glowClass.mobileInputMd}`,
             'animate-pulse',
           ]
         )}
@@ -131,7 +132,7 @@ function MobileChatInputInner({
               className={cn(
                 'flex items-center justify-center h-10 w-10 rounded-[20px] transition-all duration-300',
                 canSend
-                  ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)] dark:hover:bg-emerald-500 hover:scale-105 active:scale-95'
+                  ? `bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:${DS.glowClass.lg} dark:hover:bg-emerald-500 hover:scale-105 active:scale-95`
                   : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600',
               )}
               title="Send message"

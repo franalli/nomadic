@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import * as React from 'react';
 import { type DayButtonProps,DayPicker } from 'react-day-picker';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 export type CalendarProps = React.ComponentProps<typeof DayPicker>;
@@ -118,7 +119,7 @@ function Calendar({
         month_grid: 'w-full border-collapse',
         weekdays: 'flex',
         // Day headers: 10px, bold, uppercase, tracking-widest (per design-system.md)
-        weekday: 'text-zinc-500 dark:text-zinc-400 w-9 font-bold text-[10px] tracking-widest pb-2 uppercase',
+        weekday: `text-zinc-500 dark:text-zinc-400 w-9 font-bold ${DS.textSize.micro} tracking-widest pb-2 uppercase`,
         week: 'flex w-full mt-0.5',
         day: 'h-9 w-9 text-center text-sm p-0 relative',
         // Minimal classNames - actual styling handled by CustomDayButton

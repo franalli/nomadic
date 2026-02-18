@@ -1,10 +1,13 @@
 # backend/app/services/unsplash_queries.py
 """
-Deterministic query mapping for Unsplash image searches.
+Curated Unsplash Queries — Optimization Layer
+==============================================
 
-Maps destination names to curated search queries that return high-quality,
-representative images. Fallback to generic "{destination} travel landmark"
-for unknown destinations.
+These mappings produce higher-quality hero images for known destinations.
+Unknown destinations fall through to: ``f"{destination} travel landmark"``
+
+This is a CURATED OPTIMIZATION — the system works without any entries.
+Add entries only when the generic fallback produces poor image results.
 
 Activity-specific queries override destination queries when specialist
 activities are specified (e.g., diving, hiking, skiing) to ensure

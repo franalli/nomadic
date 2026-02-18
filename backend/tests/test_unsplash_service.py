@@ -11,10 +11,10 @@ from app.services import unsplash
 
 
 @pytest.fixture(autouse=True)
-def _clear_unsplash_cache() -> None:
-    unsplash.clear_memory_cache()
+async def _clear_unsplash_cache() -> None:
+    await unsplash.clear_memory_cache()
     yield
-    unsplash.clear_memory_cache()
+    await unsplash.clear_memory_cache()
 
 
 @pytest.mark.asyncio
@@ -211,20 +211,17 @@ async def test_interactive_retry_and_timeout_budget_are_config_driven(
     observed_timeouts: list[float] = []
 
     class _TimeoutClient:
-        def __init__(self, timeout: float):
-            observed_timeouts.append(timeout)
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
+        is_closed = False
 
         async def get(self, *args, **kwargs):
             raise httpx.TimeoutException("timeout")
 
+    def _fake_get_http_client(timeout: float = 0.0) -> _TimeoutClient:
+        observed_timeouts.append(timeout)
+        return _TimeoutClient()
+
     sleep_mock = AsyncMock(return_value=None)
-    monkeypatch.setattr(unsplash.httpx, "AsyncClient", _TimeoutClient)
+    monkeypatch.setattr(unsplash, "_get_http_client", _fake_get_http_client)
     monkeypatch.setattr(asyncio, "sleep", sleep_mock)
     monkeypatch.setattr(unsplash.settings, "unsplash_access_key", "test-key", raising=False)
     monkeypatch.setattr(unsplash, "UNSPLASH_REQUEST_TIMEOUT_SECONDS", 0.123)

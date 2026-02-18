@@ -65,7 +65,7 @@ def test_first_trip_anchor_coordinates_falls_back_to_tiles() -> None:
                 deeplink_url="",
                 title="Hotel",
                 currency="USD",
-                geo={"lat": 25.2048, "lon": 55.2708},
+                geo={"lat": 25.2048, "lng": 55.2708},
             )
         }
     )
@@ -99,7 +99,7 @@ def test_first_trip_anchor_coordinates_skips_invalid_day_block_coords() -> None:
                 deeplink_url="",
                 title="Hotel",
                 currency="USD",
-                geo={"lat": 25.2048, "lon": 55.2708},
+                geo={"lat": 25.2048, "lng": 55.2708},
             )
         },
     )

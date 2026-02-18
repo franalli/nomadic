@@ -146,7 +146,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Options for fetchWithRetry.
  */
-export interface FetchWithRetryOptions {
+interface FetchWithRetryOptions {
   /** Maximum number of retry attempts (default: 3) */
   maxRetries?: number;
   /** Base delay in ms before first retry (default: 1000) */
@@ -289,7 +289,7 @@ export function clearSessionLocalStorage(): void {
  * @param value - The raw input value to validate
  * @returns Validation result with corrected values and validity flag
  */
-export interface ValidationResponse {
+interface ValidationResponse {
   corrected_values: string[];
   is_valid: boolean;
   reason?: string;
@@ -315,7 +315,7 @@ export async function validateTripInput(
  * Fetch the destination image URL from Unsplash.
  * Called when user selects a destination to show the correct banner image.
  */
-export interface DestinationImageResponse {
+interface DestinationImageResponse {
   image_url: string;
   destination: string;
 }
@@ -383,7 +383,7 @@ interface ApiTile {
 /**
  * Response from the tile refresh endpoint.
  */
-export interface TileRefreshResponse {
+interface TileRefreshResponse {
   tiles: ApiTile[];
   refreshed_at: string;
   verticals_refreshed: string[];
@@ -481,12 +481,12 @@ export async function fillDay(
 /**
  * SSE Event types for streaming graph plan responses.
  */
-export interface SSETokenEvent {
+interface SSETokenEvent {
   type: 'token';
   data: string;
 }
 
-export interface SSECompleteEvent {
+interface SSECompleteEvent {
   type: 'complete';
   data: {
     document: unknown;
@@ -500,7 +500,7 @@ export interface SSECompleteEvent {
   };
 }
 
-export interface SSEErrorEvent {
+interface SSEErrorEvent {
   type: 'error';
   message: string;
 }
@@ -521,12 +521,12 @@ export interface SSENodeStatusEvent {
   };
 }
 
-export type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent | SSENodeStatusEvent;
+type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent | SSENodeStatusEvent;
 
 /**
  * Callbacks for streaming graph plan responses.
  */
-export interface StreamGraphPlanCallbacks {
+interface StreamGraphPlanCallbacks {
   /** Called for each token received from the stream */
   onToken: (token: string) => void;
   /** Called when the stream completes with the full response */

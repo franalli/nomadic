@@ -27,6 +27,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { ModalErrorBoundary } from '@/components/ui/ModalErrorBoundary';
+import { DS } from '@/lib/design-system';
 import { formatTilePriceDetailed } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
@@ -456,7 +457,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
                     Why this suggestion?
                   </h3>
                   {aiPick && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400">
+                    <span className={`px-1.5 py-0.5 rounded ${DS.textSize.micro} font-medium bg-emerald-500/20 text-emerald-400`}>
                       AI Pick
                     </span>
                   )}
@@ -499,7 +500,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
                           </span>
                         )}
                         {pp.isBestPrice && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400">
+                          <span className={`px-1.5 py-0.5 rounded ${DS.textSize.micro} font-medium bg-emerald-500/20 text-emerald-400`}>
                             Best Price
                           </span>
                         )}

@@ -9,6 +9,7 @@ import MapboxMap, { type ErrorEvent, Layer, type MapRef, Marker, NavigationContr
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { debugLog } from '@/lib/debug';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 import { isMapboxTimingError } from './mapbox-error-handler';
@@ -23,7 +24,7 @@ function handleMapError(event: ErrorEvent) {
   if (isMapboxTimingError(message)) {
     return; // Silent ignore
   }
-  console.warn('[InteractiveMap] Map error:', event.error);
+  debugLog('[InteractiveMap] Map error:', event.error);
 }
 
 // =============================================================================
@@ -123,7 +124,7 @@ const routeLayerStyle: Omit<mapboxgl.LineLayer, 'source'> = {
   id: 'route-line',
   type: 'line',
   paint: {
-    'line-color': '#10b981',
+    'line-color': DS.brand.emerald,
     'line-width': 3,
     'line-opacity': 0.7,
     'line-dasharray': [2, 1],
@@ -343,7 +344,7 @@ export function InteractiveMap({
                 <div className="w-10 h-10 rounded-full bg-emerald-400 animate-ping opacity-20" />
               </div>
               <MapPin
-                className="relative w-10 h-10 text-emerald-400 drop-shadow-[0_2px_8px_rgba(16,185,129,0.6)]"
+                className={`relative w-10 h-10 text-emerald-400 ${DS.glowClass.dropMarker}`}
               />
             </div>
           </Marker>
@@ -411,7 +412,7 @@ export function InteractiveMap({
                 )}
 
                 {showTooltip && (
-                  <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-[9999] bg-black/90 backdrop-blur-sm px-2.5 py-1.5 rounded-md text-[11px] text-white whitespace-nowrap pointer-events-none shadow-lg border border-white/10">
+                  <div className={`absolute top-full mt-2 left-1/2 -translate-x-1/2 z-[9999] bg-black/90 backdrop-blur-sm px-2.5 py-1.5 rounded-md ${DS.textSize.mini} text-white whitespace-nowrap pointer-events-none shadow-lg border border-white/10`}>
                     {item.dayNumber && <span className="text-emerald-400">Day {item.dayNumber} • </span>}
                     <span className="font-medium">{item.title}</span>
                     {!item.dayNumber && <span className="text-zinc-400 ml-1">· {item.type}</span>}

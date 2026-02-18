@@ -5,9 +5,7 @@ import math
 import os
 import secrets
 import warnings
-from collections import defaultdict
 from datetime import datetime
-from threading import RLock
 from typing import Any, Dict, List
 
 # =============================================================================
@@ -106,6 +104,12 @@ from app.services.unsplash import (  # noqa: E402
 )
 from app.services.unsplash import (  # noqa: E402
     get_memory_cache_stats as get_unsplash_memory_stats,
+)
+from app.sse_state import (  # noqa: E402
+    MAX_SSE_PER_IP,
+    MAX_SSE_PER_SESSION,
+    _sse_connections,
+    _sse_state_lock,
 )
 from app.streaming import (  # noqa: E402
     generate_ndjson,
@@ -492,16 +496,10 @@ async def require_admin(request: Request) -> None:
 # SSE Concurrent Connection Limiter
 # =============================================================================
 
-_sse_connections: dict[str, int] = defaultdict(int)
-_sse_state_lock = RLock()
 
-MAX_SSE_PER_SESSION = 2
-MAX_SSE_PER_IP = 5
-
-
-def _try_acquire_sse_slot(session_key: str, ip_key: str) -> str | None:
+async def _try_acquire_sse_slot(session_key: str, ip_key: str) -> str | None:
     """Reserve one SSE slot if capacity allows, otherwise return limiter scope."""
-    with _sse_state_lock:
+    async with _sse_state_lock:
         if _sse_connections[session_key] >= MAX_SSE_PER_SESSION:
             return "session"
         if _sse_connections[ip_key] >= MAX_SSE_PER_IP:
@@ -512,9 +510,9 @@ def _try_acquire_sse_slot(session_key: str, ip_key: str) -> str | None:
         return None
 
 
-def _release_sse_slot(session_key: str, ip_key: str) -> None:
+async def _release_sse_slot(session_key: str, ip_key: str) -> None:
     """Release one SSE slot and prune zero-value entries."""
-    with _sse_state_lock:
+    async with _sse_state_lock:
         for key in (session_key, ip_key):
             val = max(0, _sse_connections[key] - 1)
             if val == 0:
@@ -527,7 +525,7 @@ async def _wait_for_session_stream_idle(session_key: str) -> None:
     """Queue until this session has no active graph SSE streams."""
     logged_wait = False
     while True:
-        with _sse_state_lock:
+        async with _sse_state_lock:
             active_streams = _sse_connections.get(session_key, 0)
         if active_streams <= 0:
             return
@@ -870,12 +868,12 @@ async def admin_clear_all_caches(  # noqa: ARG001
     before_unsplash = get_unsplash_memory_stats()
 
     # 2. Clear planner caches + validation + checkpointer + prompts
-    planner_cleared = clear_all_caches()
+    planner_cleared = await clear_all_caches()
     results["caches_cleared"]["planner_and_validation"] = planner_cleared
 
     # 3. Clear Unsplash memory cache
     unsplash_memory_count = before_unsplash["entries"]
-    clear_unsplash_memory_cache()
+    await clear_unsplash_memory_cache()
     results["caches_cleared"]["unsplash_memory"] = unsplash_memory_count
 
     # 4. Clear Unsplash database cache
@@ -1226,7 +1224,7 @@ async def graph_plan_stream_endpoint(
     session_key = f"session:{session_id}"
     ip_key = f"ip:{client_ip}"
 
-    limit_scope = _try_acquire_sse_slot(session_key, ip_key)
+    limit_scope = await _try_acquire_sse_slot(session_key, ip_key)
     if limit_scope == "session":
         return JSONResponse(429, {"detail": "Too many concurrent streams for this session"})
     if limit_scope == "ip":

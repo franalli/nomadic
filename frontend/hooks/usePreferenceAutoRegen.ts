@@ -16,7 +16,7 @@ import { debugLog } from '@/lib/debug';
 import { consumeNdjsonEnvelopeStream } from '@/lib/streamParser';
 import { useDocumentStore } from '@/state/documentStore';
 
-export interface UsePreferenceAutoRegenReturn {
+interface UsePreferenceAutoRegenReturn {
   /** Whether auto-regen is currently in progress */
   isRegenerating: boolean;
   /** ID of the tile that was just hearted (for inline spinner feedback) */
