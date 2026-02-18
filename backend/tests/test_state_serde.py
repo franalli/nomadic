@@ -179,7 +179,9 @@ class TestStateToSessionState:
         session = state_to_session_state(state)
 
         hashes = session["field_hashes"]
-        assert set(hashes.keys()) == {"destination", "dates", "travelers", "budget", "origin"}
+        # Core keys always present; compute_field_hashes (regen_strategy) may add extras
+        required_keys = {"destination", "dates", "travelers", "budget", "origin"}
+        assert required_keys.issubset(set(hashes.keys()))
         # Each hash is a non-empty string
         for key in hashes:
             assert isinstance(hashes[key], str)

@@ -31,7 +31,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 | Category            | Count | Description                                                                                                                 |
 | ------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------- |
 | LLM-Powered Nodes   | 4     | IntentRouter, TripArchitect, VerticalSpecialist, Synthesizer                                                                |
-| Domain Specialists  | 1     | LocalExpert (Static Dict + Optional LLM, gated by `LOCAL_EXPERT_USE_LLM`, default off, uses `settings.extraction_model` via `llm_factory` when enabled) |
+| Domain Specialists  | 1     | LocalExpert (LLM-Primary + Constraint Grounding, gated by `LOCAL_EXPERT_USE_LLM`, default on, uses `settings.extraction_model` via `llm_factory`) |
 | Data Fetchers       | 1     | LogisticsNode (flight fetching + safety logic)                                                                              |
 | Deterministic Nodes | 1     | ConstraintGuard (mostly deterministic + one LLM-backed validation: `validate_place_exists()` via gpt-4o-mini)               |
 | **Total Nodes**     | **7** | Core graph nodes                                                                                                            |
@@ -267,12 +267,12 @@ on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 | `router` (IntentRouter)           | LLM (Fast)                 | Intent classification             | `settings.router_model` (default `gpt-4o-mini`, via `llm_factory`) | 150        | None                  |
 | `architect` (TripArchitect)       | LLM (Smart)                | Core planning, SSoT management    | `settings.extraction_model` (default `gpt-4o-mini`, via `llm_factory`) | Variable   | Simulated             |
 | `specialist` (VerticalSpecialist) | LLM (Expert)               | Domain constraints + content      | `settings.specialist_model` (default `gpt-4o`, via `llm_factory`) | Variable   | Simulated             |
-| `local_expert` (LocalExpert)      | Static Dict + Optional LLM | City logistics concierge          | `settings.extraction_model` (when `LOCAL_EXPERT_USE_LLM=true`, default off) | N/A        | None                  |
+| `local_expert` (LocalExpert)      | LLM-Primary + Constraint Grounding | City logistics concierge          | `settings.extraction_model` (default on, gated by `LOCAL_EXPERT_USE_LLM`) | N/A        | None                  |
 | `logistics` (LogisticsNode)       | Data Fetcher               | Flight fetching + safety          | N/A                                                                | N/A        | None                  |
 | `guard` (ConstraintGuard)         | Python                     | Validation (mostly deterministic) | gpt-4o-mini (place validation only, via `validate_place_exists()`) | N/A        | None                  |
 | `synthesizer` (Synthesizer)       | LLM (Writer)               | Response generation               | `settings.synthesizer_exploration_model` (exploration/specialist_update) or `settings.synthesizer_planning_model` (planning), via `llm_factory` | Variable   | True (astream_events) |
 
-\*LocalExpert uses static knowledge from `LOCAL_EXPERT_KNOWLEDGE` dictionary. Optional LLM generation is gated by `LOCAL_EXPERT_USE_LLM` (default off) and uses `settings.extraction_model` via `get_llm_by_model(...)`.
+\*LocalExpert uses LLM-primary architecture (gated by `LOCAL_EXPERT_USE_LLM`, default on). Static constraints from `LOCAL_EXPERT_CONSTRAINTS` are injected into the LLM system prompt as grounding context. Uses `settings.extraction_model` via `get_llm_by_model(...)`.
 
 ### NODE_STATUS_CONFIG (UI Progress Labels)
 
@@ -730,62 +730,48 @@ for current_topic in all_topics:
 
 ### LocalExpert
 
-The "Concierge" node for city trips - ensures the Agent Feed is never empty. Uses **Static Dict + Optional LLM** (gated by `LOCAL_EXPERT_USE_LLM`, default off, uses `settings.extraction_model` via `llm_factory` when enabled).
+The "Concierge" node for city trips - ensures the Agent Feed is never empty. Uses **LLM-Primary + Constraint Grounding** (gated by `LOCAL_EXPERT_USE_LLM`, default on, uses `settings.extraction_model` via `llm_factory`).
 
 **Activation:** Default when no niche specialist (diving/hiking/skiing) is detected. Also runs first in multi-specialist flows (Trip DNA anchor).
 
-**Implementation:** Pure dictionary lookup from `LOCAL_EXPERT_KNOWLEDGE`:
+**Implementation:** LLM call with static constraints injected as grounding context:
 
 ```python
-LOCAL_EXPERT_KNOWLEDGE = {
-    "dubai": {...},
-    "paris": {...},
-    "rome": {...},
-    "london": {...},
-    "amsterdam": {...},
-    "tokyo": {...},
-    "new york": {...},
-    "bali": {...},
-    # 8 destinations with comprehensive data
+LOCAL_EXPERT_CONSTRAINTS = {
+    "dubai": [{"type": "cultural", "desc": "...", "severity": "warning"}, ...],
+    "paris": [...],
+    # 8 destinations with constraint facts (not venue data)
 }
 
+def _get_constraint_context(destination: str) -> str:
+    """Format constraints as LLM prompt injection."""
+    # Returns formatted string or "" for unknown destinations
+
 def local_expert(state):
-    knowledge = LOCAL_EXPERT_KNOWLEDGE.get(destination.lower())
-    # Static dict lookup; optional LLM gated by LOCAL_EXPERT_USE_LLM env var
+    constraint_context = _get_constraint_context(destination)
+    system_prompt += constraint_context  # Grounding for LLM
+    response = await structured_llm.ainvoke(...)  # Primary path
 ```
 
 **Provides:**
 
 - Opening hours and closed days (e.g., "Louvre closed on Tuesdays")
 - Booking lead times for popular attractions
-- Transit passes and efficiency tips (e.g., "Paris Museum Pass saves €40+")
+- Transit passes and efficiency tips
 - Cultural considerations (dining hours, tipping, dress codes)
 - Seasonality information
 - Safety and health tips
 
-**Static Knowledge Destinations:**
+**Constraint Grounding Destinations (optional — LLM handles any destination without these):**
 
 - Bali, Dubai, Paris, Rome, London, Amsterdam, Tokyo, New York
 
-**Output Format (Pydantic Schema — used for both data storage and optional LLM extraction):**
+**Output Format (Pydantic Schema — LLM structured output):**
 
 ```python
-class LocalConstraint(BaseModel):
-    type: str = "general"
-    description: str
-    severity: str = "info"
-
-class LocalRecommendation(BaseModel):
-    title: str
-    description: str
-    category: str = "logistics"
-    logic_hook: str = ""
-
 class LocalExpertOutput(BaseModel):
-    """Comprehensive structured output with 12 categories + legacy fields."""
-    # Overview
+    """Comprehensive structured output with 12 categories."""
     destination_overview: DestinationOverview
-    # The 12 Categories
     visa_entry: VisaEntry
     safety_health: SafetyHealth
     money_costs: MoneyCosts
@@ -798,15 +784,14 @@ class LocalExpertOutput(BaseModel):
     accommodation: Accommodation
     scams_traps: ScamsTraps
     packing: Packing
-    # Legacy fields for backward compatibility
     constraints: List[LocalConstraint]
     recommendations: List[LocalRecommendation]
     quick_tips: List[str]
 ```
 
-**Note:** `LocalExpertOutput` is used for both static `LOCAL_EXPERT_KNOWLEDGE` data storage and optional LLM extraction (when `LOCAL_EXPERT_USE_LLM=true`). Each of the 12 categories is a nested Pydantic model with detailed sub-fields (e.g., `MoneyCosts` contains `currency`, `tipping: TippingInfo`, `typical_costs: TypicalCosts`, `daily_budget: DailyBudget`).
+**Note:** `LocalExpertOutput` is populated by the LLM via structured output. Static `LOCAL_EXPERT_CONSTRAINTS` are injected into the system prompt as grounding facts to prevent hallucination — they are NOT used as output data. Each of the 12 categories is a nested Pydantic model.
 
-**LLM Fallback (Exploration Mode):** When answering generic Q&A about unknown destinations, the IntentRouter may use an LLM fallback (`_llm_fallback_answer`) - but this is NOT part of LocalExpert itself.
+**Exploration Mode Q&A:** When answering generic Q&A, the IntentRouter uses `_llm_fallback_answer` directly (not LocalExpert).
 
 ### LogisticsNode
 
@@ -1429,7 +1414,7 @@ Pydantic structured output is used for LLM nodes that need **guaranteed schema e
 | ---------------------- | ----------------------- | ---------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------- |
 | **IntentRouter**       | ✅ Yes                  | `settings.router_model` (via `llm_factory`) | `RouterOutput`, `IntentClassification`             | Intent + field extraction in one call                         |
 | **TripArchitect**      | ✅ Yes                  | `settings.extraction_model` (via `llm_factory`) | `ExtractedTripFields`, `ExtractedSettingsFields` | Trip field & settings extraction                              |
-| **LocalExpert**        | ❌ No                   | ❌ Static                                | N/A                                                   | Uses `LOCAL_EXPERT_KNOWLEDGE` dict                            |
+| **LocalExpert**        | ✅ Yes                  | `settings.extraction_model` (default on, via `llm_factory`) | `LocalExpertOutput`                                   | LLM-primary with constraint grounding from `LOCAL_EXPERT_CONSTRAINTS` |
 | **VerticalSpecialist** | ✅ Yes                  | `settings.specialist_model` (via `llm_factory`) | `LLMSpecialistOutput`, `LLMActivity`, `LLMConstraint` | LLM-first with fallback                                   |
 | **LogisticsNode**      | ❌ No                   | ❌ N/A                                   | N/A                                                   | API calls only (Amadeus, curated data)                        |
 | **ConstraintGuard**    | ❌ No                   | gpt-4o-mini (place validation only)      | N/A                                                   | Mostly deterministic; `validate_place_exists()` is LLM-backed |
@@ -1823,8 +1808,8 @@ the POST-PLAN FAST PATH gate, the exploration post-plan branch, and `_build_plan
 
 **Question routing:**
 
-- **Recognized question** (e.g., accommodation, weather): `generate_comprehensive_answer` produces a
-  section-specific answer from `LOCAL_EXPERT_KNOWLEDGE`. Sets `short_circuit_type = "question_answer"`.
+- **Recognized question** (e.g., accommodation, weather): `generate_comprehensive_answer` produces an
+  LLM-generated answer via `_llm_fallback_answer`. Sets `short_circuit_type = "question_answer"`.
   No exploration ending is appended. Synthesizer uses the pre-computed answer and generates fresh
   state-aware suggestion chips.
 - **Unrecognized question** (`qtype == "general"`): Falls through to LLM (exploration_mode disabled).
@@ -1865,7 +1850,7 @@ state.metadata["short_circuit_type"] = "exploration"  # or "soft_transition" or 
 ```
 User: "Is Bali fun for couples?"
 → Intent: exploring, destination: Bali, qtype: couples
-→ Returns comprehensive answer from LOCAL_EXPERT_KNOWLEDGE["bali"]["destination_overview"]
+→ Returns LLM-generated answer about Bali for couples
 → Ending: "What else would you like to know?"
 
 User: "What's the weather like?"
@@ -3017,6 +3002,10 @@ Uses LangGraph's `astream_events` for real-time token streaming from the Synthes
 | `token`        | `string`                          | Response text (from Synthesizer LLM)                           |
 | `complete`     | `{...result}`                     | Full result object                                             |
 | `error`        | `{message}`                       | Error information                                              |
+
+### DB Session Ownership
+
+`generate_sse()` in `streaming.py` creates and owns its own DB session via `_get_async_session_factory()` (not injected by caller). The `graph_plan_stream_endpoint` in `main.py` no longer passes `db: AsyncSession` — the streaming generator is fully self-contained. This eliminates coupling between the FastAPI dependency injection and the SSE lifetime.
 
 ### Streaming Implementation
 

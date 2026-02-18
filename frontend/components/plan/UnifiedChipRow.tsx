@@ -41,7 +41,7 @@ import type { ViewMode } from '@/types/plan-envelope';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface UnifiedChipRowProps {
+interface UnifiedChipRowProps {
   // Core values (Row A)
   destination?: string | null;
   origin?: string | null;

@@ -2,7 +2,7 @@
 Unit tests for ConstraintGuard validation functions.
 
 Tests the individual pure functions in constraint_guard.py:
-- ConstraintViolation.to_dict()
+- GuardViolation.to_dict()
 - _get_budget_allocation()
 - check_budget_constraint()
 - check_temporal_constraints()
@@ -23,7 +23,7 @@ import pytest
 
 from app.planner.nodes.constraint_guard import (
     BUDGET_ALLOCATIONS,
-    ConstraintViolation,
+    GuardViolation,
     _check_cross_domain_from_sections,
     _check_departure_buffer_conflict,
     _get_budget_allocation,
@@ -69,16 +69,16 @@ def _make_buffer_block(day: int, specialist: str) -> ItineraryBlock:
 
 
 # =============================================================================
-# 1. ConstraintViolation.to_dict()
+# 1. GuardViolation.to_dict()
 # =============================================================================
 
 
-class TestConstraintViolationToDict:
-    """Tests for ConstraintViolation serialization."""
+class TestGuardViolationToDict:
+    """Tests for GuardViolation serialization."""
 
     def test_to_dict_all_fields_populated(self):
         """to_dict includes optional fields when they are set."""
-        v = ConstraintViolation(
+        v = GuardViolation(
             code="TEST_CODE",
             message="Something went wrong",
             severity="blocking",
@@ -99,7 +99,7 @@ class TestConstraintViolationToDict:
 
     def test_to_dict_optional_fields_none(self):
         """to_dict omits optional fields when they are None/empty."""
-        v = ConstraintViolation(
+        v = GuardViolation(
             code="MINIMAL",
             message="Bare violation",
         )
@@ -115,7 +115,7 @@ class TestConstraintViolationToDict:
 
     def test_to_dict_empty_conflicting_specialists_omitted(self):
         """Empty conflicting_specialists list is treated as falsy and omitted."""
-        v = ConstraintViolation(
+        v = GuardViolation(
             code="X",
             message="Y",
             conflicting_specialists=[],

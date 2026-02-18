@@ -65,14 +65,18 @@ UNSPLASH_PREFETCH_STREAK_THRESHOLD = settings.unsplash_prefetch_streak_threshold
 _MAX_COOLDOWN_ENTRIES = 500  # Safety valve — way beyond realistic traffic
 
 _http_client: httpx.AsyncClient | None = None
+_http_init_lock = asyncio.Lock()
 
 
-def _get_http_client(timeout: float = UNSPLASH_REQUEST_TIMEOUT_SECONDS) -> httpx.AsyncClient:
+async def _get_http_client(timeout: float = UNSPLASH_REQUEST_TIMEOUT_SECONDS) -> httpx.AsyncClient:
     """Get or create shared HTTP client for connection reuse."""
     global _http_client
-    if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(timeout=timeout)
-    return _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        return _http_client
+    async with _http_init_lock:
+        if _http_client is None or _http_client.is_closed:
+            _http_client = httpx.AsyncClient(timeout=timeout)
+        return _http_client
 
 
 async def close_http_client() -> None:
@@ -316,7 +320,7 @@ async def _fetch_variants_from_unsplash_once(
 
     for attempt in range(max_retries + 1):
         try:
-            client = _get_http_client(timeout=timeout_seconds)
+            client = await _get_http_client(timeout=timeout_seconds)
             response = await client.get(
                 "https://api.unsplash.com/search/photos",
                 params={
@@ -897,11 +901,13 @@ async def clear_memory_cache() -> None:
     """Clear the in-memory cache (useful for testing)."""
     _memory_cache.clear()  # MemoryCache has internal RLock — safe from any context
 
+    async with _inflight_fetches_lock:
+        _inflight_fetches.clear()
+
     async with _prefetch_cooldown_lock:
         for task in _prefetch_destination_inflight.values():
             if not task.done():
                 task.cancel()
-        _inflight_fetches.clear()
         _prefetch_destination_inflight.clear()
         _prefetch_failure_until.clear()
         _prefetch_timeout_streak.clear()

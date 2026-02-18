@@ -23,7 +23,7 @@ from app.planner.llm_factory import get_llm_by_model
 from app.planner.nodes.expert_constraints import (
     LocalExpertOutput,
     LocalRecommendation,
-    _get_static_local_knowledge,
+    _get_constraint_context,
 )
 from app.planner.services.section_builder import (
     build_local_expert_section,
@@ -108,19 +108,17 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     """Inner implementation with the actual logic."""
 
     # ==========================================================================
-    # Step 1: Get static knowledge first (guaranteed content)
+    # Step 1: Get constraint context for prompt injection
     # ==========================================================================
-    static_knowledge = _get_static_local_knowledge(plan.destination)
-    has_static = bool(static_knowledge.constraints)
-
-    if has_static:
-        log("LOCAL_EXPERT", f"Found static knowledge for {plan.destination}")
+    constraint_context = _get_constraint_context(plan.destination)
+    if constraint_context:
+        log("LOCAL_EXPERT", f"Injecting constraint context for {plan.destination}")
 
     # ==========================================================================
-    # Step 2: Try LLM for additional/dynamic content
+    # Step 2: LLM is the primary path (constraints injected as grounding)
     # ==========================================================================
     response = None
-    use_llm = os.getenv("LOCAL_EXPERT_USE_LLM", "false").lower() == "true"
+    use_llm = os.getenv("LOCAL_EXPERT_USE_LLM", "true").lower() != "false"
 
     if use_llm:
         prompts_dir = Path(__file__).parent.parent.parent / "prompts" / "specialists"
@@ -133,6 +131,10 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
 1. Constraints: Opening hours, booking requirements, seasonal considerations
 2. Recommendations: Transit passes, efficiency tips, cultural notes
 Output as JSON with "constraints" and "recommendations" arrays."""
+
+        # Inject known constraints as grounding context
+        if constraint_context:
+            system_prompt += constraint_context
 
         user_context = f"""
 Destination: {plan.destination}
@@ -159,31 +161,14 @@ Travelers: {plan.adults} adults{f", {plan.children} children" if plan.children e
             from app.debug_utils import _debug_error
 
             _debug_error(f"LOCAL_EXPERT LLM Error: {e}")
-            log("LOCAL_EXPERT", f"LLM error, using static knowledge: {type(e).__name__}")
+            log("LOCAL_EXPERT", f"LLM error, falling back to empty: {type(e).__name__}")
             response = None
     else:
-        log("LOCAL_EXPERT", "Using static knowledge only (LLM disabled)")
+        log("LOCAL_EXPERT", "LLM disabled — generating minimal fallback")
 
-    # ==========================================================================
-    # Step 3: Merge static and LLM content (prefer static for consistency)
-    # ==========================================================================
+    # If LLM failed or was disabled, use empty output
     if response is None:
-        response = static_knowledge
-    elif has_static:
-        # Merge: static constraints first, then LLM additions
-        merged_constraints = list(static_knowledge.constraints)
-
-        # Add LLM constraints that don't duplicate static
-        static_constraint_descs = {c.description for c in static_knowledge.constraints}
-
-        for c in response.constraints:
-            if c.description not in static_constraint_descs:
-                merged_constraints.append(c)
-
-        response = LocalExpertOutput(
-            constraints=merged_constraints[:5],  # Limit to prevent clutter
-            recommendations=response.recommendations[:5],  # LLM recommendations only
-        )
+        response = LocalExpertOutput()
 
     # CRITICAL: Always generate a Trip Overview, even without specific knowledge
     # This ensures the UI has an anchor card (Trip DNA) for the destination

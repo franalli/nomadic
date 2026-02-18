@@ -25,7 +25,7 @@ import { GatingBlocker } from './GatingBlocker';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface FlightsSheetProps {
+interface FlightsSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   // Module state

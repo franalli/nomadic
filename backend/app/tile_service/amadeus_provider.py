@@ -93,9 +93,14 @@ class AmadeusFlightProvider(Provider):
     def _get_client(self) -> AmadeusClient:
         """Get or create the Amadeus client (uses singleton)."""
         if self._client is None:
-            if AmadeusClient._instance is None:
-                AmadeusClient._instance = AmadeusClient()
-            self._client = AmadeusClient._instance
+            # AmadeusClient._instance is set by get_instance() during startup.
+            # Access it directly here since we're in a sync context (thread pool).
+            # We never write _instance — that's get_instance()'s job.
+            instance = AmadeusClient._instance
+            if instance is None:
+                # Fallback: create a new client (singleton may not be initialized yet)
+                instance = AmadeusClient()
+            self._client = instance
         return self._client
 
     def search(self, ctx: SearchContext) -> List[Tile]:
@@ -271,9 +276,14 @@ class AmadeusHotelProvider(Provider):
     def _get_client(self) -> AmadeusClient:
         """Get or create the Amadeus client (uses singleton)."""
         if self._client is None:
-            if AmadeusClient._instance is None:
-                AmadeusClient._instance = AmadeusClient()
-            self._client = AmadeusClient._instance
+            # AmadeusClient._instance is set by get_instance() during startup.
+            # Access it directly here since we're in a sync context (thread pool).
+            # We never write _instance — that's get_instance()'s job.
+            instance = AmadeusClient._instance
+            if instance is None:
+                # Fallback: create a new client (singleton may not be initialized yet)
+                instance = AmadeusClient()
+            self._client = instance
         return self._client
 
     def search(self, ctx: SearchContext) -> List[Tile]:

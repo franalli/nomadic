@@ -64,7 +64,7 @@ import { getDeepLinkParams } from '@/lib/tileUtils';
 import { cn, isFlightType, isHotelType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
-export interface MiniCardProps {
+interface MiniCardProps {
   tile: Tile;
   isSaved?: boolean;
   /** Callback when card is clicked (opens modal) */

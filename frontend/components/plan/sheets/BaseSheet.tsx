@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface BaseSheetProps {
+interface BaseSheetProps {
   /** Whether the sheet is open */
   open: boolean;
   /** Callback when open state changes */

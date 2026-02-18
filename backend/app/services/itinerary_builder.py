@@ -142,7 +142,7 @@ class ItineraryOverviewOutput(BaseModel):
     activity_density: str
 
 
-class Conflict(BaseModel):
+class BuilderConflict(BaseModel):
     """Detected conflict that needs resolution."""
 
     type: Literal["temporal_capacity", "constraint_clash", "insufficient_days"]
@@ -169,7 +169,7 @@ class ItineraryResult(BaseModel):
     success: bool
     day_cards: List[DayCardOutput] = Field(default_factory=list)
     overview: Optional[ItineraryOverviewOutput] = None
-    conflicts: List[Conflict] = Field(default_factory=list)
+    conflicts: List[BuilderConflict] = Field(default_factory=list)
     resolutions: List[Resolution] = Field(default_factory=list)
     error: Optional[str] = None
     dropped_preferred_count: int = 0  # Activities that couldn't fit in available days
@@ -423,7 +423,8 @@ class ItineraryBuilder:
             if early_conflicts:
                 resolutions = self._generate_resolutions(early_conflicts, len(days))
                 _debug(
-                    f"[ItineraryBuilder] ⚠️ Conflict detected: {len(early_conflicts)} conflicts, "
+                    f"[ItineraryBuilder] ⚠️ BuilderConflict detected: "
+                    f"{len(early_conflicts)} conflicts, "
                     f"returning partial schedule with {len(partial_days)} day cards"
                 )
                 # Detailed conflict trace for debugging
@@ -706,7 +707,7 @@ class ItineraryBuilder:
         return merged
 
     # =========================================================================
-    # Phase 2b: Early Conflict Detection + Partial Schedule
+    # Phase 2b: Early BuilderConflict Detection + Partial Schedule
     # =========================================================================
 
     def _detect_early_conflicts(
@@ -716,7 +717,7 @@ class ItineraryBuilder:
         constraints: List[MergedConstraint],
         tiles: Dict[str, Any],
         origin: Optional[str],
-    ) -> Tuple[List[Conflict], List[DayCardOutput]]:
+    ) -> Tuple[List[BuilderConflict], List[DayCardOutput]]:
         """
         Detect conflicts before placement that are irreconcilable.
 
@@ -794,7 +795,7 @@ class ItineraryBuilder:
                         cross_domain_conflict = True
                         days_shortfall = required_for_combo - usable_days
                         conflicts.append(
-                            Conflict(
+                            BuilderConflict(
                                 type="constraint_clash",
                                 severity=ConstraintSeverity.BLOCKING,
                                 specialists=["diving"] + altitude_specialists_present,
@@ -2748,10 +2749,10 @@ class ItineraryBuilder:
         return days
 
     # =========================================================================
-    # Phase 7: Temporal Conflict Detection
+    # Phase 7: Temporal BuilderConflict Detection
     # =========================================================================
 
-    def _detect_temporal_conflicts(self, days: List[DayCardOutput]) -> List[Conflict]:
+    def _detect_temporal_conflicts(self, days: List[DayCardOutput]) -> List[BuilderConflict]:
         """Detect temporal capacity conflicts after placement."""
         conflicts = []
 
@@ -2778,7 +2779,7 @@ class ItineraryBuilder:
 
             if total_hours > DAY_CAPACITY_HOURS:
                 conflicts.append(
-                    Conflict(
+                    BuilderConflict(
                         type="temporal_capacity",
                         severity=ConstraintSeverity.STRONG,
                         day=day.day_number,
@@ -2798,7 +2799,7 @@ class ItineraryBuilder:
     # =========================================================================
 
     def _generate_resolutions(
-        self, conflicts: List[Conflict], current_days: int
+        self, conflicts: List[BuilderConflict], current_days: int
     ) -> List[Resolution]:
         """Generate resolution options for conflicts."""
         resolutions = []

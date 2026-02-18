@@ -18,19 +18,7 @@ import { DS } from '@/lib/design-system';
 import { formatPrice } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn } from '@/lib/utils';
-import type { Tile } from '@/types/tile';
-
-// =============================================================================
-// Types
-// =============================================================================
-
-export interface PartnerPrice {
-  partner: string;
-  price: number;
-  currency: string;
-  url?: string;
-  isBestPrice?: boolean;
-}
+import type { PartnerPrice, Tile } from '@/types/tile';
 
 interface BookableCardProps {
   tile: Tile;

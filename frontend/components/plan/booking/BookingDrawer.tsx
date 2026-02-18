@@ -19,7 +19,7 @@ import { isBookableActivityTile, normalizeTileType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
-export interface BookingDrawerProps {
+interface BookingDrawerProps {
   /** Category to filter tiles by */
   category: 'hotel' | 'flight' | 'activity' | null;
   /** All available tiles */

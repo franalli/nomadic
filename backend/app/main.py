@@ -1178,7 +1178,6 @@ async def admin_all_cache_stats(  # noqa: ARG001
 async def graph_plan_stream_endpoint(
     request: Request,
     req: GraphPlanRequest,
-    db: AsyncSession = async_db_dependency,
 ):
     """
     Streaming version of the graph plan endpoint using Server-Sent Events (SSE).
@@ -1232,7 +1231,6 @@ async def graph_plan_stream_endpoint(
 
     return StreamingResponse(
         generate_sse(
-            db=db,
             session_id=session_id,
             req=req,
             session_state=session_state,
@@ -2283,38 +2281,7 @@ async def fill_day_endpoint(
 # Expand Itinerary Endpoint (Stage 2 -> Stage 3)
 # =============================================================================
 
-# Simple in-memory idempotency cache (TTL: 5 minutes)
-# In production, use Redis with TTL
-_idempotency_cache: dict[str, float] = {}
-_idempotency_lock = asyncio.Lock()
-_IDEMPOTENCY_TTL_SECONDS = 300
-_IDEMPOTENCY_MAX_ENTRIES = 1000
-
-
-async def _check_idempotency(key: str) -> bool:
-    """Check if idempotency key was recently used. Returns True if duplicate."""
-    import time
-
-    now = time.time()
-
-    async with _idempotency_lock:
-        # Evict oldest 50% if cache exceeds max entries
-        if len(_idempotency_cache) > _IDEMPOTENCY_MAX_ENTRIES:
-            sorted_keys = sorted(_idempotency_cache, key=_idempotency_cache.get)  # type: ignore[arg-type]
-            evict_count = len(sorted_keys) // 2
-            for k in sorted_keys[:evict_count]:
-                del _idempotency_cache[k]
-
-        # Clean up expired entries
-        expired = [k for k, v in _idempotency_cache.items() if now - v > _IDEMPOTENCY_TTL_SECONDS]
-        for k in expired:
-            del _idempotency_cache[k]
-
-        if key in _idempotency_cache:
-            return True  # Duplicate
-
-        _idempotency_cache[key] = now
-        return False
+from app.request_dedup import check_idempotency as _check_idempotency  # noqa: E402
 
 
 @app.post("/api/expand-itinerary")

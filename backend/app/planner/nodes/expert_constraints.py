@@ -1,10 +1,10 @@
 """
-Expert Constraints — Pydantic models and static knowledge data for Local Expert.
+Expert Constraints — Pydantic models and constraint data for Local Expert.
 
 This module holds:
 - All Pydantic schema classes used by the Local Expert LLM structured output
-- The LOCAL_EXPERT_KNOWLEDGE static fallback dict
-- The _get_static_local_knowledge() lookup function
+- LOCAL_EXPERT_CONSTRAINTS: stable constraint facts injected into LLM prompt
+- _get_constraint_context(): formats constraints as prompt text for LLM grounding
 
 Separated from local_expert.py to keep node logic focused (~200 lines).
 """
@@ -349,381 +349,197 @@ class LocalExpertOutput(BaseModel):
 
 
 # =============================================================================
-# Static Local Expert Knowledge (Fallback when LLM unavailable)
+# Static Local Expert Constraints (Injected into LLM prompt as grounding)
 # =============================================================================
-# This dict provides STABLE constraints (cultural norms, safety, seasonality)
-# as fallback data when the LLM is unavailable. Volatile venue-specific data
-# (prices, opening hours, transport costs) is NOT included — the LLM path
-# generates those dynamically.
+# Stable constraint facts (cultural norms, safety, seasonality, booking windows)
+# that rarely change. Injected into the Local Expert LLM system prompt so it
+# doesn't hallucinate them.
 #
-# Adding cities here is optional — the LLM handles any destination.
-# Only add entries when specific safety/cultural constraints are critical
-# and must survive LLM failures.
+# NOT included: venue names, prices, hours, transport costs, visa specifics,
+# packing lists, or any data that drifts. The LLM generates those dynamically.
+#
+# Adding cities is optional — the LLM handles any destination without hints.
+# Only add entries when specific safety/cultural constraints are critical.
 
-LOCAL_EXPERT_KNOWLEDGE = {
-    "dubai": {
-        "constraints": [
-            {
-                "type": "cultural",
-                "description": (
-                    "Dress modestly in malls and public areas - shoulders and knees covered"
-                ),
-                "severity": "warning",
-            },
-            {
-                "type": "seasonal",
-                "description": "Summer (Jun-Aug) can exceed 45°C - plan indoor activities",
-                "severity": "warning",
-            },
-            {
-                "type": "cultural",
-                "description": "Alcohol only in licensed venues (hotels, restaurants)",
-                "severity": "info",
-            },
-        ],
-    },
-    "paris": {
-        "constraints": [
-            {
-                "type": "opening_hours",
-                "description": "Louvre closed on Tuesdays",
-                "severity": "warning",
-            },
-            {
-                "type": "opening_hours",
-                "description": "Most museums closed Mondays or Tuesdays - check before visiting",
-                "severity": "warning",
-            },
-            {
-                "type": "booking_window",
-                "description": "Eiffel Tower requires booking 2-3 weeks ahead for summit access",
-                "severity": "warning",
-            },
-        ],
-    },
-    "rome": {
-        "constraints": [
-            {
-                "type": "booking_window",
-                "description": "Vatican Museums require advance tickets - same-day often sold out",
-                "severity": "warning",
-            },
-            {
-                "type": "booking_window",
-                "description": "Colosseum timed entry tickets sell out days in advance",
-                "severity": "warning",
-            },
-            {
-                "type": "cultural",
-                "description": "Dress code for churches: covered shoulders and knees required",
-                "severity": "info",
-            },
-        ],
-    },
-    "london": {
-        "constraints": [
-            {
-                "type": "booking_window",
-                "description": "West End shows sell out weeks ahead for popular productions",
-                "severity": "info",
-            },
-            {
-                "type": "opening_hours",
-                "description": "Tube runs until ~midnight (24h on weekends on some lines)",
-                "severity": "info",
-            },
-            {
-                "type": "seasonal",
-                "description": "Rain likely year-round - pack layers and waterproof jacket",
-                "severity": "info",
-            },
-        ],
-    },
-    "amsterdam": {
-        "constraints": [
-            {
-                "type": "booking_window",
-                "description": "Anne Frank House requires booking 6+ weeks ahead",
-                "severity": "warning",
-            },
-            {
-                "type": "booking_window",
-                "description": "Van Gogh Museum timed tickets sell out - book 2 weeks ahead",
-                "severity": "warning",
-            },
-            {
-                "type": "cultural",
-                "description": "Cycling rules: stay in bike lanes, signal turns",
-                "severity": "info",
-            },
-        ],
-    },
-    "tokyo": {
-        "constraints": [
-            {
-                "type": "cultural",
-                "description": "Many restaurants don't accept credit cards - carry cash",
-                "severity": "warning",
-            },
-            {
-                "type": "cultural",
-                "description": "No tipping in Japan - considered rude",
-                "severity": "info",
-            },
-            {
-                "type": "booking_window",
-                "description": "teamLab exhibitions require advance booking",
-                "severity": "warning",
-            },
-        ],
-    },
-    "new york": {
-        "constraints": [
-            {
-                "type": "booking_window",
-                "description": "Statue of Liberty crown access books out 3+ months ahead",
-                "severity": "warning",
-            },
-            {
-                "type": "booking_window",
-                "description": (
-                    "Broadway shows: book 2+ weeks for popular shows, or try TKTS day-of"
-                ),
-                "severity": "info",
-            },
-            {
-                "type": "cultural",
-                "description": "Tipping expected: 18-20% at restaurants",
-                "severity": "info",
-            },
-        ],
-    },
-    "bali": {
-        # Comprehensive 12-category knowledge for Bali
-        "destination_overview": {
-            "tagline": "Island of the Gods where ancient traditions meet surf culture",
-            "best_for": [
-                "Beach lovers",
-                "Divers",
-                "Culture seekers",
-                "Digital nomads",
-                "Honeymooners",
-            ],
-            "vibe": "Relaxed",
+LOCAL_EXPERT_CONSTRAINTS: dict[str, list[dict[str, str]]] = {
+    "dubai": [
+        {
+            "type": "cultural",
+            "desc": "Dress modestly in malls/public areas - shoulders and knees covered",
+            "severity": "warning",
         },
-        "visa_entry": {
-            "visa_free_for": ["US", "UK", "EU", "AU", "CA", "NZ", "JP", "KR", "SG"],
-            "visa_on_arrival": True,
-            "max_stay_days": 30,
-            "passport_validity_months": 6,
-            "key_requirements": ["Return ticket", "Proof of accommodation"],
-            "immigration_tip": (
-                "Have your hotel address ready - they always ask. "
-                "E-VOA available online to skip queues."
-            ),
+        {
+            "type": "seasonal",
+            "desc": "Summer (Jun-Aug) can exceed 45°C - plan indoor activities",
+            "severity": "warning",
         },
-        "safety_health": {
-            "overall_safety": "Safe",
-            "tap_water_safe": False,
-            "street_food_safe": True,
-            "common_concerns": [
-                "Mosquitoes - bring DEET repellent",
-                "Strong sun - SPF 50+ essential",
-                "Bali belly - stick to busy warungs, avoid ice in small places",
-                "Monkeys at temples - hide shiny items, they snatch glasses",
-            ],
-            "emergency_number": "112 (general), 118 (ambulance)",
-            "nearest_hospital": (
-                "BIMC Hospital Kuta - 24/7 English-speaking staff, accepts travel insurance"
-            ),
-            "vaccinations": ["Hepatitis A recommended", "Typhoid for adventurous eaters"],
-            "areas_to_avoid": ["Kuta after midnight if solo - drunk tourists attract trouble"],
+        {
+            "type": "cultural",
+            "desc": "Alcohol only in licensed venues (hotels, restaurants)",
+            "severity": "info",
         },
-        "cultural_norms": {
-            "dress_code": {
-                "temples": (
-                    "Cover shoulders and knees - sarongs provided at entrance "
-                    "(free or small donation)"
-                ),
-                "beaches": "Swimwear OK at beach clubs",
-                "restaurants": "Smart casual for upscale places in Seminyak",
-            },
-            "religious_notes": (
-                "Bali is Hindu in Muslim Indonesia. Daily offerings (canang sari) "
-                "everywhere - step over, not on them."
-            ),
-            "greetings": "Namaste-style hands together greeting. Right hand for giving/receiving.",
-            "photo_etiquette": (
-                "Ask before photographing ceremonies. Never climb sacred trees or statues."
-            ),
-            "dining_etiquette": [
-                "Remove shoes if entering someone's home",
-                "Don't point with your finger - use your thumb",
-                "Left hand considered unclean - use right for eating",
-            ],
-            "lgbtq_friendly": "Legal but discreet - PDA uncommon even for straight couples",
-            "important_taboos": [
-                "Never touch someone's head (sacred)",
-                "Don't point feet at shrines or people",
-                "Don't step on offerings",
-            ],
+    ],
+    "paris": [
+        {
+            "type": "opening_hours",
+            "desc": "Louvre closed on Tuesdays",
+            "severity": "warning",
         },
-        "seasonality": {
-            "best_months": ["Apr", "May", "Jun", "Jul", "Aug", "Sep"],
-            "avoid_months": ["Dec-Feb if you hate rain, Jan for extreme crowds"],
-            "high_season": (
-                "Jul-Aug and Dec-Jan - book hotels 2-3 months ahead, prices 30-50% higher"
-            ),
-            "rainy_season": (
-                "Nov-Mar - afternoon thunderstorms, mornings usually clear. "
-                "Best time for rice terrace greenery."
-            ),
-            "major_festivals": [
-                {
-                    "name": "Nyepi (Day of Silence)",
-                    "when": "March (varies)",
-                    "impact": (
-                        "Everything closes 24h - no flights, no leaving hotel. "
-                        "Unique experience if you plan for it."
-                    ),
-                },
-                {
-                    "name": "Galungan",
-                    "when": "Every 210 days",
-                    "impact": (
-                        "Temples decorated, ceremonies everywhere. Beautiful but some closures."
-                    ),
-                },
-            ],
-            "current_season_tip": "",  # Filled dynamically based on travel dates
+        {
+            "type": "opening_hours",
+            "desc": "Most museums closed Mondays or Tuesdays - check before visiting",
+            "severity": "warning",
         },
-        "packing": {
-            "must_pack": [
-                "Reef-safe sunscreen (protect the coral!)",
-                "Mosquito repellent with DEET",
-                "Light rain jacket or poncho",
-                "Quick-dry clothing",
-                "Sarong (or buy one - $5-10)",
-                "Water shoes for rocky beaches",
-                "Power bank (long days out)",
-            ],
-            "dont_bring": [
-                "Formal clothes (hardly needed)",
-                "Heavy jackets (only for Kintamani highlands)",
-                "Too many toiletries (everything available cheap)",
-            ],
-            "buy_locally": [
-                "Sarongs - $5-10, better quality and patterns",
-                "Bintang tank tops - the Bali souvenir",
-                "Mosquito coils - 50 cents at any Indomaret",
-                "Snorkel gear - rent for $5/day vs buying",
-            ],
-            "electrical": {
-                "plug_type": "Type C and F (European 2-pin)",
-                "voltage": "230V",
-                "adapter_needed": True,
-            },
-            "clothing_tips": [
-                "Light, breathable fabrics - it's humid",
-                "Cover-ups for temple visits",
-                "One nice outfit for upscale Seminyak restaurants",
-                "Flip flops for beach, closed shoes for volcano trek",
-            ],
+        {
+            "type": "booking_window",
+            "desc": "Eiffel Tower requires booking 2-3 weeks ahead for summit access",
+            "severity": "warning",
         },
-        # Legacy format for backward compatibility
-        "constraints": [
-            {
-                "type": "cultural",
-                "description": (
-                    "Cover shoulders and knees when visiting temples - "
-                    "sarongs available at entrances"
-                ),
-                "severity": "warning",
-            },
-            {
-                "type": "seasonal",
-                "description": (
-                    "Rainy season (Nov-Mar) brings afternoon showers - mornings are best for diving"
-                ),
-                "severity": "info",
-            },
-            {
-                "type": "safety",
-                "description": "Strong currents at some beaches - swim only at patrolled areas",
-                "severity": "warning",
-            },
-            {
-                "type": "safety",
-                "description": "Tap water not safe - drink bottled water only",
-                "severity": "warning",
-            },
-            {
-                "type": "transport",
-                "description": (
-                    "International Driving Permit required for scooter rental - "
-                    "police checkpoints common"
-                ),
-                "severity": "warning",
-            },
-        ],
-    },
+    ],
+    "rome": [
+        {
+            "type": "booking_window",
+            "desc": "Vatican Museums require advance tickets - same-day often sold out",
+            "severity": "warning",
+        },
+        {
+            "type": "booking_window",
+            "desc": "Colosseum timed entry tickets sell out days in advance",
+            "severity": "warning",
+        },
+        {
+            "type": "cultural",
+            "desc": "Dress code for churches: covered shoulders and knees required",
+            "severity": "info",
+        },
+    ],
+    "london": [
+        {
+            "type": "booking_window",
+            "desc": "West End shows sell out weeks ahead for popular productions",
+            "severity": "info",
+        },
+        {
+            "type": "opening_hours",
+            "desc": "Tube runs until ~midnight (24h on weekends on some lines)",
+            "severity": "info",
+        },
+        {
+            "type": "seasonal",
+            "desc": "Rain likely year-round - pack layers and waterproof jacket",
+            "severity": "info",
+        },
+    ],
+    "amsterdam": [
+        {
+            "type": "booking_window",
+            "desc": "Anne Frank House requires booking 6+ weeks ahead",
+            "severity": "warning",
+        },
+        {
+            "type": "booking_window",
+            "desc": "Van Gogh Museum timed tickets sell out - book 2 weeks ahead",
+            "severity": "warning",
+        },
+        {
+            "type": "cultural",
+            "desc": "Cycling rules: stay in bike lanes, signal turns",
+            "severity": "info",
+        },
+    ],
+    "tokyo": [
+        {
+            "type": "cultural",
+            "desc": "Many restaurants don't accept credit cards - carry cash",
+            "severity": "warning",
+        },
+        {
+            "type": "cultural",
+            "desc": "No tipping in Japan - considered rude",
+            "severity": "info",
+        },
+        {
+            "type": "booking_window",
+            "desc": "teamLab exhibitions require advance booking",
+            "severity": "warning",
+        },
+    ],
+    "new york": [
+        {
+            "type": "booking_window",
+            "desc": "Statue of Liberty crown access books out 3+ months ahead",
+            "severity": "warning",
+        },
+        {
+            "type": "booking_window",
+            "desc": "Broadway: book 2+ weeks for popular shows, or try TKTS day-of",
+            "severity": "info",
+        },
+        {
+            "type": "cultural",
+            "desc": "Tipping expected: 18-20% at restaurants",
+            "severity": "info",
+        },
+    ],
+    "bali": [
+        {
+            "type": "cultural",
+            "desc": "Cover shoulders and knees when visiting temples - sarongs at entrances",
+            "severity": "warning",
+        },
+        {
+            "type": "cultural",
+            "desc": "Hindu island - daily offerings (canang sari) everywhere, step over not on",
+            "severity": "info",
+        },
+        {
+            "type": "cultural",
+            "desc": "Never touch someone's head (sacred); don't point feet at shrines",
+            "severity": "info",
+        },
+        {
+            "type": "seasonal",
+            "desc": "Rainy season Nov-Mar brings afternoon showers - mornings best for diving",
+            "severity": "info",
+        },
+        {
+            "type": "safety",
+            "desc": "Strong currents at some beaches - swim only at patrolled areas",
+            "severity": "warning",
+        },
+        {
+            "type": "safety",
+            "desc": "Tap water not safe - drink bottled water only",
+            "severity": "warning",
+        },
+        {
+            "type": "transport",
+            "desc": "International Driving Permit required for scooter - police checkpoints",
+            "severity": "warning",
+        },
+    ],
 }
 
 
-def _get_static_local_knowledge(destination: str) -> LocalExpertOutput:
-    """Get static local expert knowledge for common destinations."""
+def _get_constraint_context(destination: str) -> str:
+    """Format static constraints as LLM prompt context for a destination.
+
+    Returns a string block to inject into the system prompt, or empty string
+    if no constraints are known for this destination.
+    """
     dest_lower = destination.lower().strip()
 
-    # Check for exact match or partial match
-    knowledge = None
-    for key in LOCAL_EXPERT_KNOWLEDGE:
+    constraints = None
+    for key in LOCAL_EXPERT_CONSTRAINTS:
         if key in dest_lower or dest_lower in key:
-            knowledge = LOCAL_EXPERT_KNOWLEDGE[key]
+            constraints = LOCAL_EXPERT_CONSTRAINTS[key]
             break
 
-    if not knowledge:
-        return LocalExpertOutput()
+    if not constraints:
+        return ""
 
-    # Check if this is the new comprehensive format (has destination_overview)
-    if "destination_overview" in knowledge:
-        # Comprehensive format — only parse stable categories
-        # Volatile venue/price data (money_costs, transportation, connectivity,
-        # things_to_do, neighborhoods, accommodation, scams_traps, recommendations)
-        # has been removed from static data; the LLM path supplies those.
-        return LocalExpertOutput(
-            destination_overview=DestinationOverview(**knowledge.get("destination_overview", {})),
-            visa_entry=VisaEntry(**knowledge.get("visa_entry", {})),
-            safety_health=SafetyHealth(**knowledge.get("safety_health", {})),
-            cultural_norms=CulturalNorms(
-                dress_code=DressCode(**knowledge.get("cultural_norms", {}).get("dress_code", {})),
-                religious_notes=knowledge.get("cultural_norms", {}).get("religious_notes", ""),
-                greetings=knowledge.get("cultural_norms", {}).get("greetings", ""),
-                photo_etiquette=knowledge.get("cultural_norms", {}).get("photo_etiquette", ""),
-                dining_etiquette=knowledge.get("cultural_norms", {}).get("dining_etiquette", []),
-                lgbtq_friendly=knowledge.get("cultural_norms", {}).get("lgbtq_friendly", ""),
-                important_taboos=knowledge.get("cultural_norms", {}).get("important_taboos", []),
-            ),
-            seasonality=Seasonality(
-                best_months=knowledge.get("seasonality", {}).get("best_months", []),
-                avoid_months=knowledge.get("seasonality", {}).get("avoid_months", []),
-                high_season=knowledge.get("seasonality", {}).get("high_season", ""),
-                rainy_season=knowledge.get("seasonality", {}).get("rainy_season", ""),
-                major_festivals=[
-                    Festival(**f)
-                    for f in knowledge.get("seasonality", {}).get("major_festivals", [])
-                ],
-                current_season_tip=knowledge.get("seasonality", {}).get("current_season_tip", ""),
-            ),
-            packing=Packing(
-                must_pack=knowledge.get("packing", {}).get("must_pack", []),
-                dont_bring=knowledge.get("packing", {}).get("dont_bring", []),
-                buy_locally=knowledge.get("packing", {}).get("buy_locally", []),
-                electrical=ElectricalInfo(**knowledge.get("packing", {}).get("electrical", {})),
-                clothing_tips=knowledge.get("packing", {}).get("clothing_tips", []),
-            ),
-            constraints=[LocalConstraint(**c) for c in knowledge.get("constraints", [])],
-        )
-    else:
-        # Legacy format - constraints only (recommendations removed as volatile)
-        constraints = [LocalConstraint(**c) for c in knowledge.get("constraints", [])]
-        return LocalExpertOutput(constraints=constraints)
+    lines = [f"\n## Known constraints for {destination} (verified facts — do not contradict):"]
+    for c in constraints:
+        severity_tag = "[WARNING]" if c["severity"] == "warning" else "[INFO]"
+        lines.append(f"- {severity_tag} ({c['type']}) {c['desc']}")
+    return "\n".join(lines)

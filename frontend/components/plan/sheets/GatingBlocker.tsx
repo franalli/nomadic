@@ -27,7 +27,7 @@ interface Gate {
   onOpen?: () => void;
 }
 
-export interface GatingBlockerProps {
+interface GatingBlockerProps {
   /** Feature name shown in the message, e.g. "flights", "stays", "activities" */
   featureLabel: string;
   /** Ordered list of prerequisite gates */

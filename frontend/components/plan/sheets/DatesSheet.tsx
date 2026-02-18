@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface DatesSheetProps {
+interface DatesSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   startDate?: Date | null;

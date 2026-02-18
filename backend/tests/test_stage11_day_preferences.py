@@ -290,10 +290,10 @@ class TestDayPreferenceCapacityViolation:
         assert settings.day_preferences == {}
 
     def test_constraint_violation_model(self):
-        """ConstraintViolation accepts all required fields for day preference check."""
-        from app.planner.nodes.constraint_guard import ConstraintViolation
+        """GuardViolation accepts all required fields for day preference check."""
+        from app.planner.nodes.constraint_guard import GuardViolation
 
-        v = ConstraintViolation(
+        v = GuardViolation(
             code="DAY_PREFERENCE_EXCEEDS_CAPACITY",
             message="Requested 8 activity days but only 5 available (1 buffer day(s) required)",
             severity="blocking",

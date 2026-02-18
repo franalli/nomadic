@@ -21,7 +21,7 @@ import { BaseSheet } from './BaseSheet';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface DestinationSheetProps {
+interface DestinationSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   value?: string | null;

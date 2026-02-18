@@ -8,7 +8,7 @@ import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { PlanViewState } from '@/types/plan-envelope';
 
-export interface ChatInputBarProps {
+interface ChatInputBarProps {
   input: string;
   onInputChange: (value: string) => void;
   onSubmit: (e: React.FormEvent) => void;

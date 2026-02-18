@@ -61,7 +61,7 @@ async def validate_place_exists(place: str) -> tuple[bool, str | None]:
 # =============================================================================
 
 
-class ConstraintViolation:
+class GuardViolation:
     """A constraint violation detected by the guard."""
 
     def __init__(
@@ -130,7 +130,7 @@ def _get_budget_allocation(budget: float, category: str) -> float:
 def check_budget_constraint(
     plan: TripPlan,
     tiles: Dict[str, List[Dict[str, Any]]],
-) -> List[ConstraintViolation]:
+) -> List[GuardViolation]:
     """
     Check if total tile costs exceed budget.
 
@@ -154,7 +154,7 @@ def check_budget_constraint(
         # Check if category exceeds allocation
         if category_cost > allocation:
             violations.append(
-                ConstraintViolation(
+                GuardViolation(
                     code=f"BUDGET_{category.upper()}_EXCEEDED",
                     message=(
                         f"{category.title()} cost (${category_cost:.0f}) "
@@ -171,7 +171,7 @@ def check_budget_constraint(
     # Check total budget
     if total_cost > plan.budget:
         violations.append(
-            ConstraintViolation(
+            GuardViolation(
                 code="BUDGET_TOTAL_EXCEEDED",
                 message=f"Total cost (${total_cost:.0f}) exceeds budget (${plan.budget:.0f})",
                 severity="blocking",
@@ -188,7 +188,7 @@ def check_budget_constraint(
 def check_temporal_constraints(
     plan: TripPlan,
     _tiles: Dict[str, List[Dict[str, Any]]],
-) -> List[ConstraintViolation]:
+) -> List[GuardViolation]:
     """
     Check temporal constraints:
     - Flight arrival < hotel check-in
@@ -206,7 +206,7 @@ def check_temporal_constraints(
             today = datetime.now().date()
             if start.date() < today:
                 violations.append(
-                    ConstraintViolation(
+                    GuardViolation(
                         code="DATE_IN_PAST",
                         message=f"Trip starts on {plan.start_date} which is in the past",
                         severity="blocking",
@@ -217,7 +217,7 @@ def check_temporal_constraints(
 
             if end < start:
                 violations.append(
-                    ConstraintViolation(
+                    GuardViolation(
                         code="DATE_ORDER_INVALID",
                         message="End date is before start date",
                         severity="blocking",
@@ -228,7 +228,7 @@ def check_temporal_constraints(
             duration = (end - start).days
             if duration > 30:
                 violations.append(
-                    ConstraintViolation(
+                    GuardViolation(
                         code="TRIP_TOO_LONG",
                         message=f"Trip duration ({duration} days) is unusually long",
                         severity="info",
@@ -238,7 +238,7 @@ def check_temporal_constraints(
 
             if duration < 1:
                 violations.append(
-                    ConstraintViolation(
+                    GuardViolation(
                         code="TRIP_TOO_SHORT",
                         message="Trip duration is less than 1 day",
                         severity="warning",
@@ -293,7 +293,7 @@ def _check_departure_buffer_conflict(
 def check_specialist_constraints(
     plan: TripPlan,
     tiles: Dict[str, List[Dict[str, Any]]],
-) -> List[ConstraintViolation]:
+) -> List[GuardViolation]:
     """Registry-driven specialist constraint checks.
 
     Two checks per specialist:
@@ -309,7 +309,7 @@ def check_specialist_constraints(
         get_nofly_buffer_hours,
     )
 
-    violations: List[ConstraintViolation] = []
+    violations: List[GuardViolation] = []
 
     # Group itinerary blocks by source specialist (activity blocks only —
     # buffer/arrival/departure blocks must not trigger constraint violations)
@@ -329,7 +329,7 @@ def check_specialist_constraints(
             buffer_days = buffer_hours // 24
             if _check_departure_buffer_conflict(plan, tiles, topic, blocks, buffer_days):
                 violations.append(
-                    ConstraintViolation(
+                    GuardViolation(
                         code=f"{topic.upper()}_SURFACE_INTERVAL",
                         message=(
                             f"{topic.title()} scheduled too close to departure "
@@ -368,7 +368,7 @@ def check_specialist_constraints(
                 for tb in target_blocks:
                     if tb.day and tb.day <= last_source_day:
                         violations.append(
-                            ConstraintViolation(
+                            GuardViolation(
                                 code=xd.violation_code,
                                 message=xd.reason,
                                 severity=xd.severity,
@@ -389,7 +389,7 @@ def _check_cross_domain_from_sections(
     strategy_sections: List[Dict[str, Any]],
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-) -> List[ConstraintViolation]:
+) -> List[GuardViolation]:
     """Stateless cross-domain check using persisted strategy sections.
 
     Unlike check_specialist_constraints() which reads itinerary_blocks
@@ -412,7 +412,7 @@ def _check_cross_domain_from_sections(
     if len(active_specialists) < 2:
         return []
 
-    violations: List[ConstraintViolation] = []
+    violations: List[GuardViolation] = []
     for topic in active_specialists:
         config = get_config(topic)
         if not config:
@@ -448,7 +448,7 @@ def _check_cross_domain_from_sections(
                 )
 
             violations.append(
-                ConstraintViolation(
+                GuardViolation(
                     code=xd.violation_code,
                     message=xd.reason,
                     severity=xd.severity,
@@ -463,7 +463,7 @@ def _check_cross_domain_from_sections(
     return violations
 
 
-async def check_route_constraint(plan: TripPlan) -> List[ConstraintViolation]:
+async def check_route_constraint(plan: TripPlan) -> List[GuardViolation]:
     """
     Check route validity (Logic Guards).
 
@@ -482,7 +482,7 @@ async def check_route_constraint(plan: TripPlan) -> List[ConstraintViolation]:
     # 1. Same City Check
     if origin and destination and origin == destination:
         violations.append(
-            ConstraintViolation(
+            GuardViolation(
                 code="SAME_CITY_ERROR",
                 message=f"Origin and destination cannot be the same ({plan.destination})",
                 severity="blocking",
@@ -496,7 +496,7 @@ async def check_route_constraint(plan: TripPlan) -> List[ConstraintViolation]:
         is_valid, reason = await validate_place_exists(plan.destination)
         if not is_valid:
             violations.append(
-                ConstraintViolation(
+                GuardViolation(
                     code="UNKNOWN_DESTINATION_ERROR",
                     message=reason or f"'{plan.destination}' is not a valid destination",
                     severity="blocking",
@@ -523,7 +523,7 @@ class ConstraintGuard:
     async def check_all(
         self,
         state: GraphState,
-    ) -> Tuple[List[ConstraintViolation], bool]:
+    ) -> Tuple[List[GuardViolation], bool]:
         """
         Run all constraint checks.
 
@@ -717,7 +717,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
 
                 if len(activity_blocks) > available:
                     violations.append(
-                        ConstraintViolation(
+                        GuardViolation(
                             code=violation_code,
                             severity="blocking",
                             category="capacity",
@@ -764,7 +764,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
 
             if total_requested > effective:
                 violations.append(
-                    ConstraintViolation(
+                    GuardViolation(
                         code="DAY_PREFERENCE_EXCEEDS_CAPACITY",
                         message=(
                             f"Requested {total_requested} activity days but only "
@@ -831,7 +831,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
                 shortage = total_activities - max_capacity
                 extend_by = (shortage + 1) // 2
                 violations.append(
-                    ConstraintViolation(
+                    GuardViolation(
                         code="MULTI_SPECIALIST_CAPACITY_EXCEEDED",
                         message=(
                             f"{total_activities} activities across "

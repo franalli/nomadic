@@ -6,7 +6,7 @@
 
 - **Focus:** Code health audit fixes (T3 tier)
 - **Secondary:** DS token adoption
-- **Active work:** Stage 13: dead export cleanup (unexport unused interfaces/types across frontend), DS glowClass + textSize + brand tokens added, circuit breaker + rate limiter extracted (amadeus_client→circuit_breaker.py), feasibility service extracted (vertical_specialist→feasibility_service.py), SSE state extracted (main→sse_state.py), geo field `lon→lng` rename, pool_pre_ping + Unsplash HTTP shutdown, console.error→debugLog in streamParser/tileSelectors, 13 new backend test files
+- **Active work:** Stage 13: dead export cleanup (unexport unused interfaces/types across frontend), DS glowClass + textSize + brand tokens added, circuit breaker + rate limiter extracted (amadeus_client→circuit_breaker.py), feasibility service extracted (vertical_specialist→feasibility_service.py), SSE state extracted (main→sse_state.py), geo field `lon→lng` rename, pool_pre_ping + Unsplash HTTP shutdown, console.error→debugLog in streamParser/tileSelectors, 13 new backend test files; `ConstraintViolation` renamed → `GuardViolation` (constraint_guard.py), `request_dedup.py` extracted from main.py (TTLCache idempotency), `generate_sse()` owns its own DB session (no caller injection), `is_curated_destination`/`get_curated_provider` removed from curated_provider.py, `LOCAL_EXPERT_KNOWLEDGE` refactored → `LOCAL_EXPERT_CONSTRAINTS` (prompt grounding only), `PartnerPrice` interface added to frontend/types/tile.ts, `GraphPlanObservability` extended with 5 new optional fields
 - **Known broken:** Pre-existing test failures: `test_facade_exports_meta_helpers` (missing init_turn_metadata export), `test_full_graph_execution` (KeyError)
 - **DO NOT touch this sprint:** [frozen files/features]
 

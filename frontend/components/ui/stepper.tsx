@@ -4,7 +4,7 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 
-export interface StepperProps {
+interface StepperProps {
   value: number;
   min?: number; // default 0
   max?: number; // default 10

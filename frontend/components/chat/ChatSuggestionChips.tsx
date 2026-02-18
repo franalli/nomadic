@@ -18,7 +18,7 @@ import type { SheetType } from '@/types/sheets';
 
 import { handleSuggestionTriggerAction } from './suggestion-actions';
 
-export interface ChatSuggestionChipsProps {
+interface ChatSuggestionChipsProps {
   effectiveSuggestions: string[];
   suggestionChips: SuggestionChip[];
   suggestedResponseMeta: SuggestionChipMeta[];

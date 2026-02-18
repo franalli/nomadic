@@ -302,6 +302,11 @@ type GraphPlanObservability = {
   today_iso?: string | null;
   ready_to_generate_prev?: boolean;
   ready_to_generate_now?: boolean;
+  extraction_confidence?: number | null;
+  short_circuit_type?: string | null;
+  llm_calls_made?: number;
+  cache_hits?: number;
+  confidence_routing?: string | null;
 };
 
 export type GraphPlanResponse = PlanDocumentResponse & {

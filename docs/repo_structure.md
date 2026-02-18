@@ -59,6 +59,7 @@ backend/
 │   ├── lifespan.py             # Application lifespan hooks (startup + shutdown)
 │   ├── main.py                 # FastAPI application entry
 │   ├── placeholders.py         # Placeholder data
+│   ├── request_dedup.py        # Idempotency key cache for expand-itinerary (TTLCache, extracted from main.py)
 │   ├── streaming.py            # SSE + NDJSON streaming generators (extracted from main.py)
 │   ├── validation_cache.py     # Validation cache infrastructure (6 TTL caches, extracted from validation.py)
 │   ├── plan_graph.py           # LangGraph workflow definition
@@ -92,7 +93,7 @@ backend/
 │   │   │   │   ├── router_extraction.py        # LLM extraction & field validation (Stage 9A)
 │   │   │   ├── router_category_sync.py     # Tier 2 detection & actionable input (Stage 9B)
 │   │   │   ├── router_utils.py             # Shared router utilities (greetings, origin detection, destination context)
-│   │   │   ├── expert_constraints.py      # Local expert Pydantic schemas + static knowledge data (extracted from local_expert.py)
+│   │   │   ├── expert_constraints.py      # Local expert Pydantic schemas + LOCAL_EXPERT_CONSTRAINTS (constraint grounding injected into LLM prompt)
 │   │   │   ├── local_expert.py             # Local knowledge node
 │   │   │   ├── logistics_node.py           # Flights/hotels data fetcher
 │   │   │   ├── specialist_schemas.py  # Specialist Pydantic schemas

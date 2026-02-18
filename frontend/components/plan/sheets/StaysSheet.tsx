@@ -27,7 +27,7 @@ import { GatingBlocker } from './GatingBlocker';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface StaysSheetProps {
+interface StaysSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   // Module state

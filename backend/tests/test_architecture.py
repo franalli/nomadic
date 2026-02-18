@@ -505,79 +505,45 @@ class TestConstraintFormatting:
 
 
 class TestLocalExpert:
-    """Test Local Expert static knowledge and fallback behavior."""
+    """Test Local Expert constraint context (LLM prompt injection)."""
 
-    def test_dubai_local_expert_knowledge(self):
-        """Dubai should have static local expert constraints."""
-        from app.planner.nodes.local_expert import _get_static_local_knowledge
+    def test_dubai_constraint_context(self):
+        """Dubai should have constraint context for LLM prompt injection."""
+        from app.planner.nodes.expert_constraints import _get_constraint_context
 
-        knowledge = _get_static_local_knowledge("Dubai")
+        context = _get_constraint_context("Dubai")
 
-        assert len(knowledge.constraints) > 0, "Dubai should have constraints"
-        # Static knowledge contains only stable constraints, not volatile recommendations
-        assert len(knowledge.recommendations) == 0, (
-            "Static knowledge should not have recommendations"
+        assert context, "Dubai should have constraint context"
+        assert "modestly" in context.lower(), "Should include dress code constraint"
+        assert "[WARNING]" in context or "[INFO]" in context, "Should have severity tags"
+
+    def test_paris_constraint_context(self):
+        """Paris should have constraint context for LLM prompt injection."""
+        from app.planner.nodes.expert_constraints import _get_constraint_context
+
+        context = _get_constraint_context("Paris")
+
+        assert context, "Paris should have constraint context"
+        assert "Louvre" in context and "Tuesday" in context, (
+            f"Should mention Louvre closed Tuesday: {context}"
         )
 
-        # Check for specific Dubai constraint content
-        constraint_descs = [c.description for c in knowledge.constraints]
-        assert any("modestly" in d for d in constraint_descs), (
-            f"Should include dress code constraint: {constraint_descs}"
-        )
+    def test_unknown_destination_empty_context(self):
+        """Unknown destinations should return empty constraint context."""
+        from app.planner.nodes.expert_constraints import _get_constraint_context
 
-    def test_paris_local_expert_knowledge(self):
-        """Paris should have static local expert constraints."""
-        from app.planner.nodes.local_expert import _get_static_local_knowledge
+        context = _get_constraint_context("Random Unknown Place XYZ")
 
-        knowledge = _get_static_local_knowledge("Paris")
+        assert context == "", "Unknown place should have no constraint context"
 
-        assert len(knowledge.constraints) > 0, "Paris should have constraints"
-        # Static knowledge contains only stable constraints, not volatile recommendations
-        assert len(knowledge.recommendations) == 0, (
-            "Static knowledge should not have recommendations"
-        )
+    def test_bali_constraint_context(self):
+        """Bali should have constraint context with cultural/safety facts."""
+        from app.planner.nodes.expert_constraints import _get_constraint_context
 
-        # Check for Louvre closed Tuesday constraint
-        constraint_descs = [c.description for c in knowledge.constraints]
-        assert any("Louvre" in d and "Tuesday" in d for d in constraint_descs), (
-            f"Should mention Louvre closed Tuesday: {constraint_descs}"
-        )
+        context = _get_constraint_context("Bali")
 
-    def test_unknown_destination_empty_knowledge(self):
-        """Unknown destinations should return empty knowledge."""
-        from app.planner.nodes.local_expert import _get_static_local_knowledge
-
-        knowledge = _get_static_local_knowledge("Random Unknown Place XYZ")
-
-        assert len(knowledge.constraints) == 0, "Unknown place should have no constraints"
-        assert len(knowledge.recommendations) == 0, "Unknown place should have no recommendations"
-
-    def test_bali_comprehensive_stable_categories(self):
-        """Bali comprehensive format should include stable categories only."""
-        from app.planner.nodes.local_expert import _get_static_local_knowledge
-
-        knowledge = _get_static_local_knowledge("Bali")
-
-        # Stable categories should be present
-        assert knowledge.destination_overview is not None, "Should have destination_overview"
-        assert knowledge.visa_entry is not None, "Should have visa_entry"
-        assert knowledge.safety_health is not None, "Should have safety_health"
-        assert knowledge.cultural_norms is not None, "Should have cultural_norms"
-        assert knowledge.seasonality is not None, "Should have seasonality"
-        assert knowledge.packing is not None, "Should have packing"
-        assert len(knowledge.constraints) > 0, "Should have constraints"
-
-        # Volatile categories should be empty defaults (not populated from static data)
-        assert not knowledge.money_costs.currency, "money_costs should be empty default"
-        assert not knowledge.transportation.ride_apps, "transportation should be empty default"
-        assert not knowledge.connectivity.best_sim_provider, "connectivity should be empty default"
-        assert not knowledge.things_to_do.must_do, "things_to_do should be empty default"
-        assert not knowledge.neighborhoods.where_to_stay, "neighborhoods should be empty default"
-        assert not knowledge.accommodation.types_available, "accommodation should be empty default"
-        assert not knowledge.scams_traps.common_scams, "scams_traps should be empty default"
-        assert len(knowledge.recommendations) == 0, (
-            "Static knowledge should not have recommendations"
-        )
+        assert context, "Bali should have constraint context"
+        assert "Bali" in context, "Should reference destination name"
 
 
 # =============================================================================

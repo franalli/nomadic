@@ -16,7 +16,7 @@ import { useState } from 'react';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
-export interface FreeDayCardProps {
+interface FreeDayCardProps {
   dayNumber: number;
   dayDate?: string | null;
   destination?: string | null;

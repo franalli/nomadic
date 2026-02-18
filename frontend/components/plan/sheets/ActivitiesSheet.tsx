@@ -26,7 +26,7 @@ import { GatingBlocker } from './GatingBlocker';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface ActivitiesSheetProps {
+interface ActivitiesSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   // Module state

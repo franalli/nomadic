@@ -44,13 +44,13 @@ import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { GenerationState, PlanViewState, StrategySection, ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
-import type { Tile } from '@/types/tile';
+import type { PartnerPrice,Tile  } from '@/types/tile';
 
 import { CategorySection } from './booking/CategorySection';
 import { CheckoutSidebar } from './booking/CheckoutSidebar';
 import { AlternativesModal } from './modals/AlternativesModal';
 import { isGenerating } from './planStateHelpers';
-import { BookableCard, type PartnerPrice } from './tiles/BookableCard';
+import { BookableCard } from './tiles/BookableCard';
 import { SuggestionCard } from './tiles/SuggestionCard';
 
 /** Check if an activity tile matches active specialist types (with experience pass-through) */
@@ -69,7 +69,7 @@ const CATEGORY_CONFIG = [
   { key: 'activities', emoji: '🤿', label: 'Activities', types: ['activity', 'experience', 'tour', 'attraction'] },
 ] as const;
 
-export interface BookingSectionProps {
+interface BookingSectionProps {
   state: PlanViewState;
   tiles: Record<string, Tile> | Tile[];
   generation?: GenerationState | null;

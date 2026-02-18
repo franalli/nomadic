@@ -6,6 +6,7 @@ Determines if an activity (diving, skiing, etc.) is possible at a destination.
 Extracted from vertical_specialist.py to reduce node file size.
 """
 
+import asyncio
 import json
 from typing import Tuple
 
@@ -80,11 +81,12 @@ Respond JSON only: {{"possible": true/false, "reason": "brief"}}"""
 
 # Thread-safe feasibility cache (24h TTL, 256 entries max)
 _feasibility_cache: MemoryCache = MemoryCache(maxsize=256, ttl=86400)
+_feasibility_inflight: dict[str, asyncio.Future] = {}
 
 
 async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
     """
-    Cached LLM feasibility check.
+    Cached LLM feasibility check with singleflight deduplication.
 
     Cache key: f"feasibility:v2:{topic}:{destination}"
     Returns: (possible, reason)
@@ -95,13 +97,26 @@ async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
     if cached is not None:
         return cached
 
-    # Expensive LLM call happens outside the lock
-    result = await _check_feasibility_llm(topic, destination)
-    cached_result = (result.possible, result.reason)
+    if cache_key in _feasibility_inflight:
+        return await _feasibility_inflight[cache_key]
 
-    _feasibility_cache.set(cache_key, cached_result)
-
-    return cached_result
+    # No await between here and registering the future — asyncio's cooperative
+    # scheduling makes this check-and-set atomic. If you add an await here,
+    # two coroutines can both pass the check above and fire duplicate LLM calls.
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future = loop.create_future()
+    _feasibility_inflight[cache_key] = future
+    try:
+        result = await _check_feasibility_llm(topic, destination)
+        cached_result = (result.possible, result.reason)
+        _feasibility_cache.set(cache_key, cached_result)
+        future.set_result(cached_result)
+        return cached_result
+    except Exception as e:
+        future.set_exception(e)
+        raise
+    finally:
+        _feasibility_inflight.pop(cache_key, None)
 
 
 async def check_feasibility(

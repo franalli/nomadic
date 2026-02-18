@@ -17,7 +17,7 @@ import { memo } from 'react';
 
 import { cn } from '@/lib/utils';
 
-export interface CoreChipProps {
+interface CoreChipProps {
   icon: LucideIcon;
   label: string;              // "Dates"
   value?: string | null;      // "Dec 15-22" (pre-formatted)

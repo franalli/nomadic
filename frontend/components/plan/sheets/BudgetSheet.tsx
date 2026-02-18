@@ -22,7 +22,7 @@ import { BaseSheet } from './BaseSheet';
 
 export type BudgetType = 'total' | 'per_night' | 'per_person';
 
-export interface BudgetSheetProps {
+interface BudgetSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   amount?: number | null;

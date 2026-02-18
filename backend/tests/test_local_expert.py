@@ -20,11 +20,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.planner.nodes.expert_constraints import (
-    LocalConstraint,
-    LocalExpertOutput,
-    LocalRecommendation,
-)
 from app.planner.state.graph_state import GraphState, TripPlan
 
 # Import the MODULE object (not the function) so monkeypatch.setattr works
@@ -63,7 +58,7 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch) -> Dict[str, MagicMock]:
     name collision between the module and its public function.
 
     Patches:
-    - _get_static_local_knowledge (returns empty by default)
+    - _get_constraint_context (returns empty string by default)
     - build_local_expert_section (returns stub section)
     - upsert_section (no-op)
     - mark_topic_executed (no-op)
@@ -72,10 +67,10 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch) -> Dict[str, MagicMock]:
     """
     mocks: Dict[str, MagicMock] = {}
 
-    # Static knowledge -- default empty
-    mock_static = MagicMock(return_value=LocalExpertOutput())
-    monkeypatch.setattr(_le_mod, "_get_static_local_knowledge", mock_static)
-    mocks["static_knowledge"] = mock_static
+    # Constraint context -- default empty (no known constraints)
+    mock_constraint_ctx = MagicMock(return_value="")
+    monkeypatch.setattr(_le_mod, "_get_constraint_context", mock_constraint_ctx)
+    mocks["constraint_context"] = mock_constraint_ctx
 
     # Section builder
     mock_build = MagicMock(
@@ -168,8 +163,8 @@ class TestCacheHit:
 
         assert result.active_specialist is None
         assert result.metadata.get("last_executed_specialist") == "local_expert"
-        # Should NOT call static knowledge or build
-        mocks["static_knowledge"].assert_not_called()
+        # Should NOT call constraint context or build
+        mocks["constraint_context"].assert_not_called()
         mocks["build_section"].assert_not_called()
 
     @pytest.mark.asyncio
@@ -191,7 +186,7 @@ class TestCacheHit:
 
         await _le_mod.local_expert(state)
 
-        mocks["static_knowledge"].assert_not_called()
+        mocks["constraint_context"].assert_not_called()
 
 
 # =============================================================================
@@ -222,8 +217,8 @@ class TestCacheMiss:
 
         result = await _le_mod.local_expert(state)
 
-        # Full pipeline executed
-        mocks["static_knowledge"].assert_called_once_with("Paris")
+        # Full pipeline executed (LLM disabled → fallback path)
+        mocks["constraint_context"].assert_called_once_with("Paris")
         mocks["build_section"].assert_called_once()
         mocks["upsert_section"].assert_called_once()
         mocks["mark_topic"].assert_called_once()
@@ -242,68 +237,37 @@ class TestCacheMiss:
 
         await _le_mod.local_expert(state)
 
-        mocks["static_knowledge"].assert_called_once_with("Rome")
+        mocks["constraint_context"].assert_called_once_with("Rome")
         mocks["build_section"].assert_called_once()
 
 
 # =============================================================================
-# 4. Static knowledge path -> constraints built via build_local_expert_section
+# 4. LLM-disabled path -> fallback generates "Explore {dest}" section
 # =============================================================================
 
 
-class TestStaticKnowledgePath:
-    """When _get_static_local_knowledge returns constraints, verify section
-    is built with those constraints via build_local_expert_section."""
+class TestLlmDisabledFallback:
+    """When LLM is disabled, node still builds a section with fallback content.
+    Constraint context is injected but LLM is skipped, producing empty output
+    that triggers the 'Explore {dest}' fallback."""
 
     @pytest.mark.asyncio
-    async def test_static_constraints_flow_to_section(
+    async def test_fallback_section_built_with_llm_disabled(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
         mocks = _patch_common(monkeypatch)
 
-        static_output = LocalExpertOutput(
-            constraints=[
-                LocalConstraint(
-                    type="cultural",
-                    description="Cover shoulders in temples",
-                    severity="warning",
-                ),
-                LocalConstraint(
-                    type="safety",
-                    description="Tap water not safe",
-                    severity="warning",
-                ),
-            ],
-            recommendations=[
-                LocalRecommendation(
-                    title="Visit Ubud",
-                    description="Rice terraces and monkey forest",
-                    category="attraction",
-                    logic_hook="Morning visit beats crowds",
-                ),
-            ],
-        )
-        mocks["static_knowledge"].return_value = static_output
-
         state = _make_state(destination="Bali", active_specialist="local_expert")
 
         result = await _le_mod.local_expert(state)
 
-        # build_local_expert_section called with constraint data
+        # build_local_expert_section called with fallback data
         mocks["build_section"].assert_called_once()
         call_kwargs = mocks["build_section"].call_args
         assert call_kwargs.kwargs["destination"] == "Bali"
-        # Bullets come from constraint descriptions (up to 3)
-        assert "Cover shoulders in temples" in call_kwargs.kwargs["bullets"]
-        # must_dos come from recommendation titles (up to 5)
-        assert "Visit Ubud" in call_kwargs.kwargs["must_dos"]
-        # constraints_applied has the mapped constraint dicts
-        assert len(call_kwargs.kwargs["constraints_applied"]) == 2
-        assert call_kwargs.kwargs["constraints_applied"][0]["rule"] == "Cover shoulders in temples"
-        # content_added has mapped recommendation dicts
-        assert len(call_kwargs.kwargs["content_added"]) == 1
-        assert call_kwargs.kwargs["content_added"][0]["title"] == "Visit Ubud"
+        # Fallback "Explore Bali" recommendation
+        assert "Explore Bali" in call_kwargs.kwargs["must_dos"]
 
         # State tracking
         assert result.metadata.get("local_expert_ran") is True
@@ -314,15 +278,6 @@ class TestStaticKnowledgePath:
     async def test_upsert_and_mark_called(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
         mocks = _patch_common(monkeypatch)
-        mocks["static_knowledge"].return_value = LocalExpertOutput(
-            constraints=[
-                LocalConstraint(
-                    type="booking_window",
-                    description="Book Eiffel Tower in advance",
-                    severity="warning",
-                )
-            ],
-        )
 
         state = _make_state(destination="Paris", active_specialist="local_expert")
 
@@ -342,8 +297,8 @@ class TestStaticKnowledgePath:
 
 
 class TestEmptyKnowledgeFallback:
-    """When _get_static_local_knowledge returns empty output (no constraints,
-    no recommendations), node creates a fallback 'Explore {dest}' recommendation."""
+    """When LLM is disabled and no constraints/recommendations exist,
+    node creates a fallback 'Explore {dest}' recommendation."""
 
     @pytest.mark.asyncio
     async def test_fallback_recommendation_created(self, monkeypatch: pytest.MonkeyPatch) -> None:

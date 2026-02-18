@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { PlanViewState } from '@/types/plan-envelope';
 
-export interface NextStepBarProps {
+interface NextStepBarProps {
   state: PlanViewState;
   /** Pre-computed next action from getNextAction() - avoids flicker */
   nextAction: 'expand_itinerary' | 'finalize_plan' | null;

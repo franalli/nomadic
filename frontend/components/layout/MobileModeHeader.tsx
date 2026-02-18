@@ -6,6 +6,7 @@ import { memo, useEffect, useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { PlanState } from '@/types/plan-envelope';
 
@@ -135,7 +136,7 @@ function MobileModeHeaderInner({
                         setMenuOpen(false);
                         onReset();
                       }}
-                      className="flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left text-[10px] font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-60"
+                      className={cn('flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-60', DS.textSize.micro)}
                     >
                       {isResetting ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />

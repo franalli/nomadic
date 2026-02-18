@@ -14,7 +14,7 @@ import type { PlanState } from '@/types/plan-envelope';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface SplitLayoutViewProps {
+interface SplitLayoutViewProps {
   /** Content for the left panel (Planner: chat + controls) */
   plannerContent: React.ReactNode;
   /** Content for the right panel (Plan View: StrategyStageRenderer) */

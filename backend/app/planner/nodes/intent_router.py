@@ -1228,7 +1228,7 @@ async def _llm_fallback_answer(
     count: int,
 ) -> str:
     """
-    LLM fallback for destinations not in LOCAL_EXPERT_KNOWLEDGE.
+    LLM answer for exploration questions.
     Uses GPT-4o-mini with ~300 token limit for cost efficiency.
     """
     ending = _get_conversation_ending(count, qtype, destination)
@@ -1298,18 +1298,12 @@ async def generate_comprehensive_answer(
     Generate comprehensive answer for exploration questions.
 
     Returns (answer_body, ending_prompt).
-    Uses Local Expert knowledge for comprehensive answers.
-    Falls back to LLM for unknown destinations or missing sections.
+    Uses LLM for all exploration answers (static knowledge was removed in Stage 4).
     """
-    from app.planner.nodes.local_expert import _get_static_local_knowledge
-
-    knowledge = _get_static_local_knowledge(destination)
     question_count = state.metadata.get("generic_question_count", 0) + 1
 
-    # Get answer with error handling and LLM fallback
-    answer = await _safe_format_section_answer(
-        question_type, section, knowledge, destination, question, question_count
-    )
+    # LLM-primary path: go straight to LLM for all exploration answers
+    answer = await _llm_fallback_answer(question, destination, question_type, question_count)
 
     # Get appropriate ending based on question count
     ending = _get_conversation_ending(question_count, question_type, destination)

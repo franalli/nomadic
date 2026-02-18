@@ -16,7 +16,6 @@ from typing import Any, Dict, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.planner.hashing import field_hash as _field_hash
 from app.planner.state import GraphState, TripPlan, TripSettings
 from app.schemas import (
     ActivitySettings,
@@ -25,6 +24,7 @@ from app.schemas import (
     HotelSettings,
     TransportSettings,
 )
+from app.services.regen_strategy import compute_field_hashes
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def state_to_session_state(state: GraphState) -> Dict[str, Any]:
             "last_constraint_hash": state.last_constraint_hash,
         },
         # NEW: Field hashes for selective regeneration strategy
-        "field_hashes": _compute_field_hashes(state.trip_plan),
+        "field_hashes": compute_field_hashes(_trip_plan_to_inputs_dict(state.trip_plan)),
     }
 
 
@@ -184,19 +184,14 @@ def restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
 # =============================================================================
 
 
-def _compute_field_hashes(trip_plan: TripPlan) -> Dict[str, str]:
-    """
-    Compute field hashes for selective regeneration strategy.
-
-    These hashes allow the expand-itinerary endpoint to detect which
-    fields changed and compute the minimum regeneration strategy.
-
-    @see docs/plan_graph_analysis.md - Selective Regeneration
-    """
+def _trip_plan_to_inputs_dict(trip_plan: TripPlan) -> Dict[str, Any]:
+    """Convert TripPlan fields to the dict format expected by compute_field_hashes."""
     return {
-        "destination": _field_hash(trip_plan.destination or ""),
-        "dates": _field_hash(f"{trip_plan.start_date or ''}|{trip_plan.end_date or ''}"),
-        "travelers": _field_hash(f"{trip_plan.adults or 1}|{trip_plan.children or 0}"),
-        "budget": _field_hash(str(trip_plan.budget or "")),
-        "origin": _field_hash(trip_plan.origin or ""),
+        "destination": trip_plan.destination or "",
+        "start_date": str(trip_plan.start_date) if trip_plan.start_date else "",
+        "end_date": str(trip_plan.end_date) if trip_plan.end_date else "",
+        "adults": trip_plan.adults,
+        "children": trip_plan.children,
+        "budget": trip_plan.budget,
+        "origin": trip_plan.origin or "",
     }

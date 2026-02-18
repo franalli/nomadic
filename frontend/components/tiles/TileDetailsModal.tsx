@@ -33,19 +33,9 @@ import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
 import type { ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
-import type { Tile } from '@/types/tile';
+import type { PartnerPrice, Tile } from '@/types/tile';
 
-// Partner price type for BOOKING mode
-interface PartnerPrice {
-  partner: string;
-  price: number;
-  currency: string;
-  url?: string;
-  logo?: string;
-  isBestPrice?: boolean;
-}
-
-export interface TileDetailsModalProps {
+interface TileDetailsModalProps {
   tile: Tile | null;
   isOpen: boolean;
   isSaved?: boolean;

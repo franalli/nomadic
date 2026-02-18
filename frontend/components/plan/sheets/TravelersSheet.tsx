@@ -21,7 +21,7 @@ import { BaseSheet } from './BaseSheet';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface TravelersSheetProps {
+interface TravelersSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   adults?: number | null;

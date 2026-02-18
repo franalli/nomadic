@@ -29,7 +29,7 @@ import type { DocumentTripInputs } from '@/types/document';
 import type { DestinationCard, PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 
-export interface PlanHeaderProps {
+interface PlanHeaderProps {
   destinationCard?: DestinationCard;
   isGenerating?: boolean;
   /** Fallback title from tripInputs if destinationCard not available */

@@ -261,21 +261,3 @@ class CuratedProvider(Provider):
     def get_logistics(self) -> Dict[str, Any]:
         """Get logistics tips for this destination."""
         return self.manifest.get("logistics", {})
-
-
-def is_curated_destination(destination: str) -> bool:
-    """Check if a destination has curated content available."""
-    return destination.lower().strip() in DEMO_MANIFEST
-
-
-def get_curated_provider(destination: str) -> Optional[CuratedProvider]:
-    """
-    Get a curated provider for a destination if available.
-
-    Returns:
-        CuratedProvider instance or None if not a hero destination
-    """
-    dest_key = destination.lower().strip()
-    if dest_key in DEMO_MANIFEST:
-        return CuratedProvider(dest_key)
-    return None

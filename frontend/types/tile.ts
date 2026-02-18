@@ -48,6 +48,15 @@ export type Tile = {
   provider?: TileProvider;
 };
 
+export interface PartnerPrice {
+  partner: string;
+  price: number;
+  currency: string;
+  url?: string;
+  logo?: string;
+  isBestPrice?: boolean;
+}
+
 export type TileSelection = {
   stay?: Tile;
   flight?: Tile;
