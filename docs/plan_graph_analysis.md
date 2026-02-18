@@ -406,11 +406,13 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
 
 **Date Auto-Adjustment Tracking:** `_validate_extraction()` now returns a `date_auto_adjustments` list on the `RouterOutput`, recording each past-date bump (`{field, from, to, reason}`). When start bumps to the next year but end doesn't, end is also bumped to preserve the intended date range. IntentRouter syncs these adjustments to `state.metadata["date_auto_adjustments"]` (cleared each turn). The Synthesizer's `_build_synthesis_context()` injects the adjustment details into the LLM context so the response can acknowledge exact corrected dates.
 
-The LLM prompt also instructs canonical extraction:
+The LLM prompt also instructs canonical extraction and handles abbreviation expansion:
 
 - Destinations: "Paris, France" → "Paris"
-- Abbreviations: "NYC" → "New York", "LA" → "Los Angeles"
+- Abbreviations: "NYC" → "New York", "LA" → "Los Angeles" (LLM-handled, not hard-coded in `_normalize_city_name`)
 - Edge cases kept: "Mexico City", "Kansas City", "Washington DC"
+
+**Note:** `_normalize_city_name()` only removes country/state suffixes (e.g., ", Indonesia"). Abbreviation expansion was removed from the Python function and delegated entirely to the LLM prompt, eliminating the hard-coded abbreviation table.
 
 **Date Indicator Detection:**
 
@@ -913,6 +915,8 @@ Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured outp
 
 **Parallel category generation:** `_parallel_category_generate()` runs all category LLM calls concurrently via `asyncio.gather()`, reusing L1/L2 cache per category. Used by `generate_experiences()` for multi-category requests.
 
+**Graceful shutdown:** `cancel_inflight()` cancels all tracked in-flight experience generation `asyncio.Task`s and clears `_inflight_generation_tasks`. Called by `lifespan.py` during shutdown (step 1b, before engine disposal) to prevent dangling coroutines from racing against DB connection teardown.
+
 | Trip Type                         | Categories                      | `executed_strategy_topics`   | Activities                                              |
 | --------------------------------- | ------------------------------- | ---------------------------- | ------------------------------------------------------- |
 | "diving in Bali" (short trip)     | `["diving"]`                    | `["local_expert", "diving"]` | **Suppressed** (specialist fills trip)                  |
@@ -1040,6 +1044,8 @@ When synthesis fails (provider error or unusable response payload), all response
 `generate_suggestions()` derives all chips from router capability registries × current state.
 Zero hardcoded specialist names — adding a specialist to `specialist_registry.py` or question type
 to `QUESTION_TYPE_MAPPING` automatically makes it available as a suggestion.
+
+**`QUESTION_TYPE_TO_SECTION` is derived, not hardcoded:** `intent_router.py` builds this mapping dynamically from `QUESTION_TYPE_MAPPING` (`{qtype: section for _, (qtype, section) in QUESTION_TYPE_MAPPING.items()}`). The standalone duplicate dict was removed; `QUESTION_TYPE_MAPPING` is the single source of truth for question type → knowledge section mappings.
 
 **Structured Chips (`suggestion_chips`):** In addition to `suggestion_chip_meta`, the synthesizer now emits `state.metadata["suggestion_chips"]` — a list of `SuggestionChip` dicts with `{message, action_type, action_target, chip_type, category, icon}`. `PILL_ACTION_MAP` maps chip categories to frontend actions: date chips → `("open_pill", "dates")`, booking chips → respective sheets, budget/travelers → their sheets, and direct-flight preference chips (`plan_flight_pref`, legacy `plan_flight_direct`) → `("trigger_action", "set_direct_flights_only")`. Categories not in the map default to `("send_message", None)`. Passed through `response_envelope.py` as `suggestion_chips`.
 

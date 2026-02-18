@@ -78,7 +78,7 @@ class TestDetectOriginFromMessage:
         assert _detect_origin_from_message("flying from london") == "London"
 
     def test_leaving_from(self) -> None:
-        assert _detect_origin_from_message("leaving from NYC") == "New York"
+        assert _detect_origin_from_message("leaving from NYC") == "Nyc"
 
     def test_departing_from(self) -> None:
         assert _detect_origin_from_message("departing from paris") == "Paris"
@@ -109,11 +109,11 @@ class TestDetectOriginFromMessage:
 
     def test_nyc_abbreviation(self) -> None:
         result = _detect_origin_from_message("from NYC")
-        assert result == "New York"
+        assert result == "Nyc"
 
     def test_la_abbreviation(self) -> None:
         result = _detect_origin_from_message("from LA")
-        assert result == "Los Angeles"
+        assert result == "La"
 
 
 # =============================================================================
@@ -167,14 +167,15 @@ class TestNormalizeCityName:
     def test_removes_state_suffix(self) -> None:
         assert _normalize_city_name("Miami, FL") == "Miami"
 
-    def test_expands_nyc(self) -> None:
-        assert _normalize_city_name("NYC") == "New York"
+    def test_abbreviation_nyc_passes_through(self) -> None:
+        # _normalize_city_name only strips suffixes; abbreviation expansion is the LLM's job
+        assert _normalize_city_name("NYC") == "NYC"
 
-    def test_expands_la(self) -> None:
-        assert _normalize_city_name("LA") == "Los Angeles"
+    def test_abbreviation_la_passes_through(self) -> None:
+        assert _normalize_city_name("LA") == "LA"
 
-    def test_expands_sf(self) -> None:
-        assert _normalize_city_name("SF") == "San Francisco"
+    def test_abbreviation_sf_passes_through(self) -> None:
+        assert _normalize_city_name("SF") == "SF"
 
     def test_passthrough_clean_name(self) -> None:
         assert _normalize_city_name("Tokyo") == "Tokyo"
@@ -280,7 +281,7 @@ class TestValidateExtraction:
     def test_origin_normalized(self) -> None:
         extracted = {"origin": "NYC"}
         result = _validate_extraction(extracted, self._today())
-        assert result["origin"] == "New York"
+        assert result["origin"] == "NYC"
 
     def test_future_dates_not_bumped(self) -> None:
         future = date.today() + timedelta(days=60)

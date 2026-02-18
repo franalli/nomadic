@@ -522,10 +522,9 @@ def _normalize_city_name(city: str) -> str:
 
     Ensures consistent cache keys by:
     - Removing country/state suffixes (", USA", ", Indonesia", etc.)
-    - Expanding common abbreviations (NYC → New York)
 
-    The LLM prompt also instructs extraction without qualifiers,
-    but this provides a safety net for edge cases.
+    The LLM prompt instructs extraction without qualifiers and handles
+    abbreviation expansion (NYC → New York, etc.).
     """
     if not city:
         return city
@@ -574,16 +573,7 @@ def _normalize_city_name(city: str) -> str:
             city = city[: -len(suffix)].strip()
             break
 
-    # Handle known abbreviations
-    abbreviations = {
-        "NYC": "New York",
-        "LA": "Los Angeles",
-        "SF": "San Francisco",
-        "DC": "Washington DC",  # Disambiguate from Washington state
-        "PHILLY": "Philadelphia",
-    }
-
-    return abbreviations.get(city.upper(), city)
+    return city
 
 
 def _validate_extraction(extracted: dict, today_date: str) -> dict:

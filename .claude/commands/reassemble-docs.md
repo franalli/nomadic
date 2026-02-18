@@ -29,22 +29,22 @@ files and corrects any drift between docs and code. Run this weekly or after maj
 
 For each node, read the ACTUAL source and verify the doc:
 
-| Doc Section           | Read These Files                                                                         | Verify                                                                                                                          |
-| --------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Architecture Overview | `backend/app/planner/plan_graph.py`                                                      | Node count, node names in `create_optimized_graph()`, edge definitions                                                          |
-| IntentRouter          | `backend/app/planner/nodes/intent_router.py`, `backend/app/planner/router_extraction.py` | Classification flow, `RouterOutput` fields, static responses, specialist detection                                              |
-| TripArchitect         | `backend/app/planner/nodes/trip_architect.py`                                            | Settings extraction, field handling, mode determination                                                                         |
-| VerticalSpecialist    | `backend/app/planner/nodes/vertical_specialist.py`                                       | Execution flow, parallel batching, `SpecialistOutput` fields                                                                    |
-| LocalExpert           | `backend/app/planner/nodes/local_expert.py`                                              | LLM gating, fallback behavior                                                                                                   |
-| LogisticsNode         | `backend/app/planner/nodes/logistics_node.py`                                            | Tile fetching, provider routing, experience generation trigger                                                                  |
-| ConstraintGuard       | `backend/app/planner/nodes/constraint_guard.py`                                          | Validation functions, violation types, auto-fix loop, `route_after_guard()` logic                                               |
-| Synthesizer           | `backend/app/planner/nodes/synthesizer.py`                                               | Model routing (`_MODEL_BY_COMPLEXITY` or equivalent), response types, `generate_suggestions()` priority cascade, prompt caching |
+| Doc Section           | Read These Files                                                                               | Verify                                                                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Architecture Overview | `backend/app/plan_graph.py`                                                                    | Node count, node names in `create_optimized_graph()`, edge definitions                                                          |
+| IntentRouter          | `backend/app/planner/nodes/intent_router.py`, `backend/app/planner/nodes/router_extraction.py` | Classification flow, `RouterOutput` fields, static responses, specialist detection                                              |
+| TripArchitect         | `backend/app/planner/nodes/trip_architect.py`                                                  | Settings extraction, field handling, mode determination                                                                         |
+| VerticalSpecialist    | `backend/app/planner/nodes/vertical_specialist.py`                                             | Execution flow, parallel batching, `SpecialistOutput` fields                                                                    |
+| LocalExpert           | `backend/app/planner/nodes/local_expert.py`                                                    | LLM gating, fallback behavior                                                                                                   |
+| LogisticsNode         | `backend/app/planner/nodes/logistics_node.py`                                                  | Tile fetching, provider routing, experience generation trigger                                                                  |
+| ConstraintGuard       | `backend/app/planner/nodes/constraint_guard.py`                                                | Validation functions, violation types, auto-fix loop, `route_after_guard()` logic                                               |
+| Synthesizer           | `backend/app/planner/nodes/synthesizer.py`                                                     | Model routing (`_MODEL_BY_COMPLEXITY` or equivalent), response types, `generate_suggestions()` priority cascade, prompt caching |
 
 For each: if the doc describes behavior that doesn't match the code, FIX THE DOC.
 
 ### 2B: Routing Logic
 
-Read `plan_graph.py` functions: `route_after_router()`, `route_after_specialist()`, `route_after_guard()`, `route_after_architect()`. Verify the routing diagram and conditional edge descriptions match.
+Read `plan_graph.py` functions: `route_after_router()`, `route_after_specialist()`, `route_after_guard()`, `route_after_architect()`, `route_after_logistics()`. Verify the routing diagram and conditional edge descriptions match.
 
 ### 2C: Specialist Domain Knowledge
 
@@ -66,14 +66,14 @@ Read `backend/app/services/itinerary_builder.py` — focus on the `build()` meth
 
 ### 2E: Caching Architecture
 
-Read: `specialist_cache.py`, `router_cache.py`, `tile_cache.py`, `experience_generator.py` (cache sections), `base_cache.py`.
+Read: `specialist_cache.py`, `router_cache.py`, `tile_cache.py`, `experience_generator.py` (cache sections), `base_cache.py`, `cache_access.py`.
 
 - Verify cache table: class, max size, TTL, key format, purpose
 - Verify L1/L2 architecture description
 
 ### 2F: Selective Regeneration
 
-Read `backend/app/planner/regen_strategy.py`.
+Read `backend/app/services/regen_strategy.py`.
 
 - Verify `FIELD_IMPACT` mapping matches doc
 - Verify strategy tiers and priority order
@@ -91,6 +91,15 @@ Read `plan_graph.py` streaming functions (`run_turn_streaming` or equivalent).
 
 - Verify SSE event types and data shapes
 - Verify NDJSON event types for expand-itinerary
+
+### 2I: LLM Factory & Structured Output
+
+Read `backend/app/planner/llm_factory.py` and `backend/app/planner/llm_structured.py`.
+
+- Verify supported providers (model prefix detection logic)
+- Verify provider-specific param handling (Gemini: `max_output_tokens`, `thinking_budget`; OpenAI: `max_tokens`, `streaming`)
+- Verify structured output retry pattern documented
+- Verify model routing description doesn't hardcode specific model names — should reference `settings.*_model`
 
 Write all corrections to `docs/plan_graph_analysis.md`.
 
@@ -112,7 +121,7 @@ Read `backend/app/main.py` — scan all `@app.get`, `@app.post`, `@app.patch`, `
 
 ### 3B: Core Schemas
 
-Read `backend/app/schemas.py` and `backend/app/planner/state/schemas.py`.
+Read `backend/app/schemas.py` and `backend/app/planner/state/graph_state.py`.
 
 - Verify `PlanDocumentData` tree structure matches actual fields
 - Verify all Pydantic models referenced in endpoint signatures are documented
@@ -251,7 +260,7 @@ Re-verify each numbered invariant against the codebase:
 1. Right Panel never empty — check StrategyStageRenderer fallback
 2. No view swapping — check no alternate renderer mounts
 3. No UI chrome removal — check status header transforms
-4. Backend SSoT for plan_view_state — check store doesn't fabricate (except S0_EMPTY, S3_PARTIAL_CONFLICT)
+4. Backend SSoT for plan_view_state — check store doesn't fabricate (except S1_DESTINATION_SET)
 5. Coordinate format [lng, lat] — grep for coordinate handling
 6. Dates gate Plan tab — check tab lock logic
 
@@ -295,27 +304,84 @@ For each factual claim in the agent spec (function names, phase lists, constant 
 
 Key areas to verify per agent:
 
-**backend-specialist**: Node names + count in `create_optimized_graph()`, routing function signatures, itinerary builder phase method names, constraint guard validation function names, cache class names + key formats, derived constants from specialist registry, state serialization function signatures
+**backend-specialist**: Node names + count in `create_optimized_graph()`, routing function signatures, halt condition file references, constraint guard validation function names, cache class names, derived constants from specialist registry, state serialization function signatures, LLM factory provider detection logic, structured output retry pattern
 
-**frontend-specialist**: DS token categories + names in the `DS` object, Tailwind config overrides, store action names + guard logic, streaming protocol details in api.ts, renderer component name + conditional logic, component file names in ownership list
+**frontend-specialist**: DS token categories + names in the `DS` object, Tailwind config overrides, store action names + guard logic, streaming protocol details in api.ts, renderer component name + conditional logic, component file names in ownership list, halt condition file references
 
-**code-reviewer**: Every function name referenced in the review checklist, every anti-pattern example, every invariant check description, rate limiting tier values, restricted color list
+**code-reviewer**: Every function name referenced in the review checklist, every anti-pattern example, every invariant check description, rate limiting tier values, restricted color list, LLM factory compliance checks
 
-### Step 6.3: Cross-Check Agents Against Each Other
+### Step 6.3: Verify YAML Description Triggers
+
+For each agent, compare the `description:` field trigger keywords against the actual files in the agent's domain:
+
+- If a significant file/concept exists in the agent's domain but has no trigger keyword → add it
+- If a trigger keyword references something deleted → remove it
+- Trigger keywords determine when Claude Code delegates to the agent — missing keywords means missed delegations
+
+### Step 6.4: Cross-Check Agents Against Each Other
 
 Verify no contradictions between agents:
 
 - File ownership boundaries don't overlap (except documented shared files)
 - Invariant descriptions are consistent (e.g., node count, coordinate format, renderer pattern)
 - Anti-patterns in code-reviewer align with rules in backend/frontend specialists
+- Reinforced CLAUDE.md rules are consistent across all agents
 
-### Step 6.4: Write Corrections
+### Step 6.5: Write Corrections
 
 For each agent: if the spec describes behavior that doesn't match the source code, FIX THE AGENT SPEC. If new files/patterns/functions exist that the agent should know about, ADD THEM.
 
 ---
 
-## Phase 7: Validate & Report
+## Phase 7: CLAUDE.md Reconciliation
+
+Audit `CLAUDE.md` against the live codebase. CLAUDE.md drifts just like other docs.
+
+### 7A: Structural Integrity
+
+- Verify no duplicate titles
+- Verify no orphaned code fences (every `has a matching`)
+- Verify no "Updated section:" or other edit artifacts from previous sessions
+- Verify no placeholder brackets like `[frozen files/features]` — fill them or remove them
+- Verify the entire file parses as instructions, not as a string literal inside a code block
+
+### 7B: Hard Rules
+
+Read each hard rule. For each:
+
+- Verify the invariant is still enforced in code (e.g., rule about node count: count nodes in `create_optimized_graph()`)
+- Verify referenced function/file names still exist
+- Verify no rules reference specific model names or versions (should reference `settings.*_model`)
+- Flag rules that may be obsolete with `<!-- REVIEW: is this rule still needed? -->`
+
+### 7C: Architecture
+
+- Verify Stack section matches actual dependencies (`frontend/package.json`, `backend/requirements.txt`)
+- Verify Design Principles match current code behavior
+- Verify LLM Providers line matches providers supported in `llm_factory.py`
+
+### 7D: Commands
+
+- Verify each command path and syntax is still correct
+- Verify env var list matches what's actually required (check `backend/app/config.py` and `frontend/.env.local`)
+
+### 7E: Performance Notes
+
+- Verify model routing description matches `_MODEL_BY_COMPLEXITY` in synthesizer.py
+- Verify description does NOT contain hardcoded model names — should reference `settings.*_model` env vars
+
+### 7F: Sprint Section
+
+- Verify "Active files" reflects actual current work (not stale from weeks ago)
+- Verify "Known broken" tests are still broken (run them if possible)
+- Verify "Frozen" files are still intentionally frozen
+- Clear any changelog content from the sprint section — sprint is current state only, not history
+
+Write all corrections to `CLAUDE.md`.
+
+---
+
+## Phase 8: Validate & Report
 
 Finally, output a summary:
 
@@ -329,12 +395,14 @@ Finally, output a summary:
 - docs/design-system.md: [sections changed]
 - docs/ux_unified_architecture.md: [sections changed]
 - .claude/agents/*: [which agents updated, why]
+- CLAUDE.md: [sections changed]
 
 ### Drift Found
 - [List each factual discrepancy found between doc and code]
 
 ### No Drift
 - [List doc sections verified as accurate]
+```
 
 ---
 
@@ -347,4 +415,3 @@ Finally, output a summary:
 - If you're unsure whether something drifted or is intentional, add `<!-- REVIEW: [description] -->` instead of guessing.
 - **Strip sprint-level and development-timeline content.** Docs must reflect current state, not development history. Remove changelog sections, "shipped in sprint X" notes, "TODO" items that are done, migration/upgrade notes for completed migrations, and any other time-bound content that no longer serves a reader trying to understand the system as it exists today. If a section's only purpose was tracking a past transition, delete it entirely.
 - This command will read many files. Take it phase by phase. Do not rush.
-```

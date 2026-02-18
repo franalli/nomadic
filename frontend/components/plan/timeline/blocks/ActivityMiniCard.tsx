@@ -114,7 +114,7 @@ export function ActivityMiniCard({
         'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-l-4 transition-shadow',
         isUnschedulable
           ? 'bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/40'
-          : 'bg-white dark:bg-zinc-800/50 hover:shadow-md',
+          : 'bg-white dark:bg-zinc-800/50 hover:shadow-soft',
         activityBorderClass,
       )}
     >

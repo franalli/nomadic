@@ -186,7 +186,7 @@ function FlightsSheetInner({
         <div
           className={cn(
             'space-y-6 transition-opacity',
-            !localEnabled && 'opacity-40 pointer-events-none'
+            !localEnabled && 'opacity-50 pointer-events-none'
           )}
         >
           {/* Trip type */}

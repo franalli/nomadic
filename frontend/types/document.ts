@@ -294,6 +294,24 @@ type GraphPlanTokens = {
   total: number;
 };
 
+type EntityConfidenceInfo = {
+  value: string;
+  confidence: number;
+  needs_confirmation: boolean;
+  fuzzy_suggestion?: string | null;
+  ambiguity_type?: string | null;
+};
+
+type ExtractionConfidenceInfo = {
+  overall: number;
+  level: string;
+  destinations?: EntityConfidenceInfo[];
+  origin?: EntityConfidenceInfo | null;
+  detected_language?: string | null;
+  is_english?: boolean;
+  typo_suggestions?: string[];
+};
+
 type GraphPlanObservability = {
   tokens: GraphPlanTokens;
   model_used?: string | null;
@@ -302,7 +320,7 @@ type GraphPlanObservability = {
   today_iso?: string | null;
   ready_to_generate_prev?: boolean;
   ready_to_generate_now?: boolean;
-  extraction_confidence?: number | null;
+  extraction_confidence?: ExtractionConfidenceInfo | null;
   short_circuit_type?: string | null;
   llm_calls_made?: number;
   cache_hits?: number;

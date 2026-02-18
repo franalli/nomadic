@@ -245,7 +245,7 @@ function BudgetSheetInner({
                     'transition-all duration-150',
                     isSelected
                       // Selected: Solid Black / White
-                      ? 'bg-zinc-900 text-white border-2 border-transparent shadow-sm dark:bg-white dark:text-black dark:border-transparent'
+                      ? 'bg-zinc-900 text-white border-2 border-transparent shadow-md dark:bg-white dark:text-black dark:border-transparent'
                       // Inactive: Glass Fill
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-500',

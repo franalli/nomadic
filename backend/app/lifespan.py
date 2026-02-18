@@ -85,6 +85,15 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     if cancelled:
         logger.info("[Shutdown] Cancelled %d background tasks", cancelled)
 
+    # 1b. Cancel in-flight experience generation tasks
+    from app.services.experience_generator import cancel_inflight as _cancel_inflight
+
+    cancelled_inflight = await _cancel_inflight()
+    if cancelled_inflight:
+        logger.info(
+            "[Shutdown] Cancelled %d inflight experience generation tasks", cancelled_inflight
+        )
+
     # 2a. Dispose async DB engine
     from app.db import _async_engine
 

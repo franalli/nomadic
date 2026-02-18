@@ -524,14 +524,14 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
       className={cn(
         "rounded-2xl border overflow-hidden topic-border-left transition-all duration-200",
         // Light: Pure white card with premium soft shadow
-        "bg-white shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)]",
+        "bg-white shadow-card",
         // Dark: Solid panel with clear boundary
         "dark:bg-zinc-900 dark:shadow-none",
         // State-based borders
         isInfeasible && "border-red-500/50 bg-red-950/10",
         hasCaveat && "border-zinc-400/30",
         // Default: Crisp border with hover enhancement
-        !isInfeasible && !hasCaveat && "border-zinc-200 hover:border-emerald-500/30 hover:shadow-[0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:border-zinc-800"
+        !isInfeasible && !hasCaveat && "border-zinc-200 hover:border-emerald-500/30 hover:shadow-soft dark:border-zinc-800"
       )}
     >
       {/* 3. Header with subtle tint - group for hover effects */}
@@ -653,7 +653,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
         {!isInfeasible && status !== 'needs_input' && (
           <div className={`mt-1.5 flex items-center gap-1.5 ${DS.textSize.micro} text-muted-foreground`}>
             <span className={cn(
-              status === 'ready' ? 'text-green-600 dark:text-green-400' : 'text-emerald-600 dark:text-emerald-400'
+              status === 'ready' ? 'text-emerald-600 dark:text-emerald-400' : 'text-emerald-600 dark:text-emerald-400'
             )}>
               {status === 'ready' ? '✓' : '○'}
             </span>
@@ -722,7 +722,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
                 {section.destination_gallery.map((img, idx) => (
                   <div
                     key={idx}
-                    className="shrink-0 snap-center relative w-64 h-40 rounded-xl overflow-hidden shadow-sm border border-zinc-200 dark:border-zinc-700/50"
+                    className="shrink-0 snap-center relative w-64 h-40 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-200 dark:border-zinc-700/50"
                   >
                     <Image
                       src={img.image_url}
@@ -737,7 +737,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
               {/* DESKTOP: 3-column grid */}
               <div className="hidden md:grid grid-cols-3 gap-4">
                 {section.destination_gallery.map((img, idx) => (
-                  <div key={idx} className="relative h-48 md:h-64 rounded-xl overflow-hidden shadow-sm border border-zinc-100 dark:border-zinc-700/50 group">
+                  <div key={idx} className="relative h-48 md:h-64 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-100 dark:border-zinc-700/50 group">
                     <Image
                       src={img.image_url}
                       alt={img.label}
@@ -799,7 +799,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onO
                     className={cn(
                       "rounded-xl border transition-colors p-4 flex gap-3",
                       // Light: Clean white card with subtle shadow
-                      "bg-white border-zinc-200 hover:border-emerald-500/30 shadow-sm",
+                      "bg-white border-zinc-200 hover:border-emerald-500/30 shadow-card",
                       // Dark: Glass panel
                       "dark:bg-zinc-900 dark:border-zinc-700 dark:hover:border-zinc-600 dark:shadow-none"
                     )}

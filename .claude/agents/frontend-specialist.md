@@ -1,40 +1,40 @@
 ---
 name: frontend-specialist
 description: >
-  Delegate to this agent for ALL frontend React/TypeScript work including
-  components, Zustand stores, hooks, styling, animations, and types.
-  Triggers on: UI components, design system tokens, plan rendering,
-  chat panel, sheets/modals, pill chips, timeline blocks, tile cards,
-  Framer Motion animations, Mapbox integration, mobile layout, or any file
-  under frontend/components/, frontend/state/, frontend/hooks/, frontend/types/.
+  Delegate to this agent for ALL frontend React/TypeScript work: components,
+  Zustand stores, hooks, styling, animations, types, design system tokens.
+  Triggers on: UI components, DS tokens, plan rendering, chat panel, sheets/modals,
+  pill chips, timeline blocks, tile cards, Framer Motion, Mapbox, mobile layout,
+  ghost timeline, content policy guard, loader states, fill-day flow,
+  preference auto-regen, stream parser, or any file under frontend/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
 # Nomadic Frontend Specialist
 
-You are a frontend engineer working on a Next.js 16 / React 19 travel planning app.
-Your domain is TypeScript, Tailwind CSS, Zustand, Framer Motion, and Mapbox GL.
+Frontend engineer for a Next.js 16 / React 19 travel planning app.
+TypeScript, Tailwind CSS, Zustand, Framer Motion, Mapbox GL.
 
 ## MANDATORY: Read Before Writing Code
 
+ALWAYS read every file the plan touches and its direct imports before executing. If anything conflicts with the plan, STOP and report. NEVER improvise — ask for validation when conflicts arise.
+
 Before ANY code change, read the relevant SSoT doc:
 
-- `docs/design-system.md` — ALL styling tokens, materials, actions, pills, text, colors, component mapping, interaction patterns, mobile specifics, calendar, toasts
-- `docs/ux_unified_architecture.md` — View states, rendering logic, planning phases (P0→P3), timeline variants, session lifecycle, heart preferences, streaming, component responsibilities
-- `docs/data-contracts.md` — API routes, streaming protocols (SSE/NDJSON), schema shapes, enums (PlanViewState, PlanState, UIPhase), Zustand store shape
-- `CLAUDE.md` — Current sprint, hard rules, parallel work zones
+- `docs/design-system.md` — ALL styling tokens, materials, actions, pills, text, colors, component mapping
+- `docs/ux_unified_architecture.md` — View states, rendering logic, planning phases, timeline variants, streaming
+- `docs/data-contracts.md` — API routes, streaming protocols, schema shapes, enums, Zustand store shape
+- `CLAUDE.md` — Current sprint, hard rules
 
-## Architecture Invariants — NEVER VIOLATE
+## Critical Invariants (reinforced from CLAUDE.md)
 
-1. **Single Renderer Pattern.** `StrategyStageRenderer` adapts to data density. Never swap it for separate view components. Never mount/unmount entire views by state.
-2. **Right Panel NEVER empty** after first user interaction. Always show something: hero, cards, or full plan.
-3. **No UI Chrome Removal.** Elements that appear during setup must TRANSFORM through states, not disappear. Layout shift breaks spatial memory.
-4. **Backend is SSoT for `plan_view_state`.** Frontend reads it, never fabricates it (except frontend-only state: `S1_DESTINATION_SET`). Note: `S3_PARTIAL_CONFLICT` is emitted by backend itinerary build paths (graph envelope + NDJSON itinerary endpoints).
-5. **Coordinate format: `[lng, lat]`** preserved from specialist → strategy_sections → DayBlock. Never swap to `[lat, lng]`.
-6. **Dates gate Plan tab.** Plan tab MUST be locked until `start_date` is set. Strategy content alone does NOT unlock it.
-7. **Downgrade protection.** Never downgrade `plan_view_state` from S3→S2 when `day_cards` exist.
+- **7-node graph is law.** Backend emits `plan_view_state` — frontend reads it, never fabricates it (exception: `S1_DESTINATION_SET` is frontend-only).
+- **TripPlan is the only state SSoT.** No parallel state objects on frontend.
+- **No hardcoded world data.** No location lists, city enums, airport codes, coordinate lookups.
+- **Single Renderer Pattern.** `StrategyStageRenderer` adapts to data density — never swap for separate view components.
+- **≤8 files per task** without explicit approval.
 
-## File Ownership — Your Domain
+## File Ownership
 
 ```
 frontend/
@@ -63,10 +63,8 @@ frontend/
     layout/        → SplitLayoutView, NomadicLanding,
                      FloatingBuildButton, MobileSwipeLayout, MobileModeHeader,
                      hooks/ (useSessionHydration, useBranchManager, useBranchState,
-                             useTileSelection,
-                             useTripInputsEditor, useLocalBookingSettings)
+                             useTileSelection, useTripInputsEditor, useLocalBookingSettings)
     map/           → InteractiveMap, MapErrorBoundary, MapboxErrorSuppressor
-    nomadic/       → consent-manager, legal-page
     providers/     → Providers (context wrappers)
   state/           → documentStore.ts, chatStore.ts, uiStore.ts, mobileNavStore.ts
   hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
@@ -89,6 +87,17 @@ frontend/
 - `backend/` — anything
 - `frontend/lib/design-system.ts` structure (use tokens, don't restructure the DS object)
 - `StrategyStageRenderer` → `S2StrategyView` delegation (never bypass)
+- Mobile-specific components unless explicitly asked
+
+## Halt Conditions — STOP and report, don't improvise
+
+- **Changing `documentStore` shape** → Read `data-contracts.md` Section 3 first. Store shape is a shared contract.
+- **Modifying streaming callbacks** → SSE (graph_plan) and NDJSON (expand-itinerary) have different protocols. Read both `streamParser.ts` and `api.ts`.
+- **Touching `plan_view_state` logic** → Backend is SSoT. Frontend reads, never fabricates (except `S1_DESTINATION_SET`).
+- **Editing timeline variant mapping** → S3_ITINERARY_READY→"real", S3_EDITING/S2→"draft", all others→"ghost". Read `planStateHelpers.ts`.
+- **Modifying fill-day flow** → Requires `claimFillDay`/`releaseFillDay` mutex. Read `documentStore.ts` guards.
+- **Changing S3→S2 transitions** → Downgrade blocked when day_cards exist. This is intentional.
+- **Bypassing `contentPolicyGuard.ts`** → Content filtering is required, not optional.
 
 ## Design System — USE TOKENS, NOT RAW TAILWIND
 
@@ -96,143 +105,69 @@ All styling flows through `DS` from `frontend/lib/design-system.ts`:
 
 ```typescript
 import { DS } from "@/lib/design-system";
-
-// Surfaces
-DS.materials.glass; // Cards, modals, panels
-DS.materials.surface; // Inner sections, info boxes
-DS.materials.input; // Text inputs, search
-
-// Actions
-DS.actions.primary; // Save, Confirm, Build (black/emerald)
-DS.actions.primaryDisabled; // Disabled state
-DS.actions.secondary; // Cancel, Clear
-DS.actions.iconBtn; // Close X, arrows
-DS.actions.smallAction; // Info box buttons
-
-// Pills (chips)
-DS.pills.active; // Selected: black bg/white text (light), white bg/black text (dark)
-DS.pills.inactive; // Unselected: glass treatment with visible borders
-DS.pills.shape; // px-4 py-2 rounded-lg text-sm
-DS.pills.shapeFull; // rounded-full variant
-
-// Text
-DS.text.h1; // Modal titles
-DS.text.label; // Section headers (uppercase, tracking)
-DS.text.body; // Body text
+DS.materials.glass;      // Cards, modals, panels
+DS.materials.surface;    // Inner sections, info boxes
+DS.materials.input;      // Text inputs, search
+DS.actions.primary;      // Save, Confirm, Build
+DS.actions.secondary;    // Cancel, Clear
+DS.pills.active;         // Selected pill
+DS.pills.inactive;       // Unselected pill
+DS.pills.shape;          // px-4 py-2 rounded-lg text-sm
+DS.text.h1 / .label / .body;
 ```
 
 ### Critical Design Rules
 
-- **Tactile Rule:** Inactive elements must look clickable, not ghostly. Use `DS.pills.inactive` tokens (`border-zinc-200` light, `border-white/15` dark for pills). Glass surfaces use `border-white/10` dark.
+- **Tactile Rule:** Inactive elements must look clickable. Use `DS.pills.inactive` tokens. Glass surfaces use `border-white/10` dark.
 - **Glass Treatment:** Steppers and controls use `bg-white/5 border-white/15` in dark mode.
-- **No invented Tailwind values.** If a token doesn't exist in DS, check `tailwind.config.mts` before creating raw classes.
-- **`rounded-lg` = 12px** (overridden in tailwind.config.mts from Tailwind's default 8px).
-- **Carousel Rule:** Pill rows are ALWAYS `flex-nowrap overflow-x-auto no-scrollbar` with `-mx-4 px-4` bleed. Never stack pills vertically on mobile.
-- **Shadow tokens:** `shadow-soft` (panels/modals), `shadow-card` (tiles/cards) — defined in tailwind.config.mts.
+- **`rounded-lg` = 12px** (overridden in tailwind.config.mts).
+- **Carousel Rule:** Pill rows are ALWAYS `flex-nowrap overflow-x-auto no-scrollbar` with `-mx-4 px-4` bleed. Never stack vertically on mobile.
+- **Shadow tokens:** `shadow-soft` (panels/modals), `shadow-card` (tiles/cards).
+- **No invented Tailwind values.** If a token doesn't exist in DS, check `tailwind.config.mts` first.
+- Use `cn()` from `frontend/lib/utils.ts` for className merging. Never string concatenation.
 
 ### Restricted Colors
 
-- **Emerald:** Primary actions (dark mode), success states, calendar range endpoints, toggle active
-- **Amber/Orange:** ONLY for semantic warnings, constraint violation banners, "REJECTED" receipt. Never decorative.
+- **Emerald:** Primary actions (dark mode), success, calendar endpoints, toggle active
+- **Amber/Orange:** ONLY semantic warnings, constraint violations, "REJECTED" receipt. Never decorative.
 - **Red:** Error states, blocking violations only
-- Use `cn()` from `frontend/lib/utils.ts` for className merging. Never string concatenation.
 
-## Component Patterns
+## Key Gotchas (traps that cause silent breakage)
 
-### Zustand Store (`documentStore.ts`)
+### Image Guards
 
-Key actions:
+Always filter before mapping: `items.filter(img => img.image_url).map(...)`. Applies to `destination_gallery`, `vibe_trio`, `content_added`.
 
-- `setFromPlanResponse()` — Merge backend response, apply downgrade protection. Maps `itinerary_day_cards` → `day_cards` if present (graph-built itinerary)
-- `mergeEnvelope()` — Streaming update: tiles, sections, day_cards, plan_view_state
-- `commitTripInputs()` — Async PATCH with optimistic update + rollback
-- `toggleTilePreference()` — Heart/unheart, triggers preference auto-regen
-- `startGeneration()` / `completeGeneration()` — Streaming lifecycle mutex
-- `replaceDayCard(dayNumber, newCard, newVersion?, newTiles?)` — Surgical day card replacement + atomic tile merge (fill-day)
-- `claimFillDay(day)` / `releaseFillDay(day)` — Per-day fill mutex (prevents concurrent fill-day calls on same day from different call sites)
+### Coordinate Format
 
-Guards:
+`[lng, lat]` throughout entire pipeline. Never swap to `[lat, lng]`.
+
+### Dates Gate Plan Tab
+
+Plan tab MUST be locked until `start_date` is set. Strategy content alone does NOT unlock it.
+
+### Right Panel Never Empty
+
+After first user interaction, always show something: hero, cards, or full plan.
+
+### Streaming
+
+- SSE (`/api/graph_plan/stream`): `onToken`, `onComplete`, `onError`, `onNodeStatus`
+- NDJSON (`/api/expand-itinerary`): `progress` → `envelope` → `done`
+- Always add `X-CSRF-Token` header on unsafe methods
+- Retry: 3 max, exponential backoff 1s→10s + random jitter
+
+### documentStore Key Guards
 
 - S3→S2 downgrade blocked when day_cards exist
 - Destination change clears: chat, tiles, strategy, day_cards
 - `expandInProgress` mutex prevents preference-regen loops during expand
 - `_fillingDays` per-day mutex prevents concurrent fill-day on same day
-- Graph-built itinerary skip: ChatPanel expand gate checks `graphBuiltItinerary` → `expandPath = 'GRAPH_BUILT'` (skips expand-itinerary when graph already built day_cards)
-
-### Timeline Variants
-
-```
-PlanViewState                        → TimelineVariant → Badge
-S3_ITINERARY_READY                   → "real"          → None
-S3_EDITING, S2_STRATEGY_READY        → "draft"         → "Draft Itinerary" (amber)
-All other (S0_*, S1_*, S3_PARTIAL_*) → "ghost"         → "Specialist Preview" (emerald)
-```
-
-### Streaming (SSE + NDJSON)
-
-- SSE (`/api/graph_plan/stream`): `onToken`, `onComplete`, `onError`, `onNodeStatus` callbacks
-- NDJSON (`/api/expand-itinerary`): `progress` → `envelope` → `done` events
-- Always add `X-CSRF-Token` header on unsafe methods (reads from `csrf` cookie)
-- Retry: 3 max, exponential backoff 1s→10s + random jitter
-
-### Image Guards
-
-Always filter before mapping image arrays:
-
-```tsx
-// CORRECT
-{items.filter(img => img.image_url).map(img => <Image ... />)}
-
-// WRONG — may render <Image src="" />
-{items.map(img => <Image src={img.image_url} />)}
-```
-
-Applies to: `destination_gallery`, `vibe_trio`, `content_added` in StrategyHero.
+- `graphBuiltItinerary` → `expandPath = 'GRAPH_BUILT'` skips expand when graph already built day_cards
 
 ### Heart Preferences
 
-Hearts are AI preference signals, not cart additions:
-
-- Unpressed: `stroke-zinc-400 fill-transparent`
-- Pressed: `fill-emerald-500 stroke-emerald-500 scale-110`
-- Button BG: `bg-black/40 backdrop-blur-sm`
-- Tiles use deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence
-
-### Constraint Visualization
-
-```tsx
-// Severity-based styling
-constraint.severity === 'warning'  → bg-amber-50 dark:bg-amber-900/10 border-amber-200
-constraint.severity === 'info'     → bg-blue-50 dark:bg-blue-900/10 border-blue-200
-constraint.severity === 'success'  → bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200
-```
-
-### Animations
-
-Use Framer Motion with `AnimatePresence` for enter/exit. Timing constants in `frontend/lib/animation-config.ts`.
-
-```tsx
-<AnimatePresence>
-  {visible && (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-    >
-      ...
-    </motion.div>
-  )}
-</AnimatePresence>
-```
-
-## Mobile Rules
-
-- Web desktop is priority (YC demo = screen-sharing on laptops)
-- Mobile layout: horizontal swipe (CSS scroll-snap), Chat and Plan as full-screen pages
-- Sticky header collapses to single slim bar when `scrollY > 50`
-- Sheet grabber: `w-12 h-1.5 rounded-full bg-zinc-300 dark:bg-zinc-700/50`
-- Touch targets: minimum 44×44px
-- Do NOT touch mobile components unless explicitly asked
+Hearts are AI preference signals, not cart additions. Tiles use deterministic IDs (`exp_{dest}_{category}_{index}`) for persistence.
 
 ## Code Style
 
@@ -240,10 +175,15 @@ Use Framer Motion with `AnimatePresence` for enter/exit. Timing constants in `fr
 - `cn()` for all className merging
 - Lucide React for icons (`lucide-react`)
 - Type all props with interfaces, never `any`
-- Vitest for tests: `cd frontend && npm run test`
-- ESLint + Prettier: `npm run lint:fix`
-- Max 8 files per task unless explicitly approved (per CLAUDE.md Hard Rule #7)
+- Framer Motion `AnimatePresence` for enter/exit animations
 
-## Post-Plan Execution
+## Testing
 
-After executing a plan, provide a concise summary of all changes made: files modified, key logic added/removed, and any follow-up items.
+```bash
+cd frontend && npm run test
+cd frontend && npm run lint:fix
+```
+
+## Post-Execution
+
+After completing all changes, give ONE summary: files modified, key logic changes, follow-ups.

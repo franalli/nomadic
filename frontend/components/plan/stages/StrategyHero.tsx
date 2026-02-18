@@ -74,7 +74,7 @@ const GENERIC_FALLBACK_IMAGE =
 // Accordion icon Tailwind classes keyed by specialist type (component-local UI)
 const SPECIALIST_STYLE_CLASSES: Record<string, { light: string; icon: string }> = {
   diving: { light: 'bg-blue-50', icon: 'text-blue-600 dark:text-blue-400' },
-  hiking: { light: 'bg-green-50', icon: 'text-green-600 dark:text-green-400' },
+  hiking: { light: 'bg-emerald-50', icon: 'text-emerald-600 dark:text-emerald-400' },
   skiing: { light: 'bg-blue-50', icon: 'text-blue-600 dark:text-blue-400' },
   sailing: { light: 'bg-cyan-50', icon: 'text-cyan-600 dark:text-cyan-400' },
   boating: { light: 'bg-cyan-50', icon: 'text-cyan-600 dark:text-cyan-400' },
@@ -786,7 +786,7 @@ export function StrategyHero({
           // Dark: Glass Fill Rule (bg-white/5, not transparent)
           'dark:bg-white/[0.03] dark:border-white/5',
           // Shadow
-          isAccordionExpanded ? 'shadow-md' : 'shadow-sm',
+          isAccordionExpanded ? 'shadow-soft' : 'shadow-card',
           // Infeasible state
           isInfeasible && 'opacity-60'
         )}
@@ -1015,7 +1015,7 @@ export function StrategyHero({
             'cursor-pointer',
             'hover:border-zinc-300 dark:hover:border-white/20',
             'hover:bg-zinc-100 dark:hover:bg-white/10',
-            'hover:shadow-sm',
+            'hover:shadow-card',
             'active:scale-[0.995]',
             isInfeasible && 'opacity-60'
           )}
@@ -1215,7 +1215,7 @@ export function StrategyHero({
                       .map((img, idx) => (
                         <div
                           key={idx}
-                          className="shrink-0 snap-center relative w-56 h-36 rounded-xl overflow-hidden shadow-sm border border-zinc-200 dark:border-zinc-700/50"
+                          className="shrink-0 snap-center relative w-56 h-36 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-200 dark:border-zinc-700/50"
                         >
                           <Image
                             src={img.image_url}
@@ -1458,9 +1458,9 @@ export function StrategyHero({
       type="button"
       onClick={handleExpand}
       className={cn(
-        'relative w-full rounded-2xl overflow-hidden shadow-lg group mb-6 text-left',
+        'relative w-full rounded-2xl overflow-hidden shadow-card group mb-6 text-left',
         'cursor-pointer transition-all',
-        'hover:shadow-xl hover:scale-[1.01]',
+        'hover:shadow-soft hover:scale-[1.01]',
         'active:scale-[0.995]',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2',
         isInfeasible && 'opacity-70'

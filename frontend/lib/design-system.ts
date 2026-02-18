@@ -331,15 +331,21 @@ export const DS = {
   },
 
   // ---------------------------------------------------------------------------
-  // 8. TEXT SIZES (Micro sizes below Tailwind defaults)
+  // 8. TEXT SIZES (Sizes below or outside standard Tailwind defaults)
   // ---------------------------------------------------------------------------
   textSize: {
+    /** 8px — day number inside a 16px map marker dot */
+    mapMarkerLabel: 'text-[8px]',
     /** 9px — ultra-compact labels (terminal status, error badges) */
     nano: 'text-[9px]',
     /** 10px — labels, badges, technical metadata */
     micro: 'text-[10px]',
     /** 11px — secondary info, tooltips, compact body text */
     mini: 'text-[11px]',
+    /** 13px — attribute chip labels next to icons (relevance badges) */
+    badgeLabel: 'text-[13px]',
+    /** 18px — tile price prominence ("From $1,200") */
+    priceDisplay: 'text-[18px]',
   },
 
   // ---------------------------------------------------------------------------

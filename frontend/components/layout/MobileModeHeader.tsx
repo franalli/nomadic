@@ -136,7 +136,7 @@ function MobileModeHeaderInner({
                         setMenuOpen(false);
                         onReset();
                       }}
-                      className={cn('flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-60', DS.textSize.micro)}
+                      className={cn('flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-50', DS.textSize.micro)}
                     >
                       {isResetting ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -204,7 +204,7 @@ function MobileModeHeaderInner({
           'text-xs font-medium',
           'bg-background/80 backdrop-blur-md',
           'border border-border/40',
-          'shadow-sm',
+          'shadow-card',
           'lg:hidden',
           status.className
         )}

@@ -175,6 +175,7 @@ class TestThreadSafety:
 # =============================================================================
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 class TestL2DatabaseCache:
     """Tests for L2 database cache operations."""

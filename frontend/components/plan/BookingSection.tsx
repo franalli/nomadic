@@ -640,7 +640,7 @@ export function BookingSection({
               className={cn(
                 'px-6 py-3 rounded-lg font-semibold text-sm transition-colors',
                 savedTiles.length > 0
-                  ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/20'
+                  ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-soft'
                   : 'bg-muted text-muted-foreground cursor-not-allowed'
               )}
             >

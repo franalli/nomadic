@@ -286,7 +286,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
       />
 
       {/* Modal */}
-      <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-hidden rounded-xl bg-white dark:bg-zinc-900 shadow-2xl">
+      <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-hidden rounded-xl bg-white dark:bg-zinc-900 shadow-card">
         {/* Header with close button */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3">
           <h2 className="line-clamp-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">

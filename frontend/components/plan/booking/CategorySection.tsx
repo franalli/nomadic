@@ -124,7 +124,7 @@ export function CategorySection({
   if (!items || items.length === 0) return null;
 
   return (
-    <div className="bg-card border rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-md">
+    <div className="bg-card border rounded-xl overflow-hidden shadow-card transition-all hover:shadow-soft">
       {/* Header */}
       <button
         type="button"

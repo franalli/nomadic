@@ -369,6 +369,11 @@ class DocumentTripInputsPatch(BaseModel):
     flight_settings: Optional["FlightSettings"] = None
     hotel_settings: Optional["HotelSettings"] = None
     activity_settings: Optional["ActivitySettings"] = None
+    transport_settings: Optional["TransportSettings"] = None
+    date_flex: Optional[bool] = None
+    trip_duration: Optional[int] = None
+    date_window_start: Optional[str] = None
+    date_window_end: Optional[str] = None
 
 
 # Tri-state booking type: off (user disabled), suggested (default/auto), on (user enabled)

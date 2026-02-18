@@ -210,22 +210,9 @@ def classify_question_type(text: str) -> Tuple[str, str]:
     return "general", "destination_overview"
 
 
-# Question type → Local Expert knowledge section (structural, not parsing)
-QUESTION_TYPE_TO_SECTION = {
-    "weather": "seasonality",
-    "safety": "safety_health",
-    "costs": "money_costs",
-    "visa": "visa_entry",
-    "transport": "transportation",
-    "cultural": "cultural_norms",
-    "activities": "things_to_do",
-    "accommodation": "neighborhoods",
-    "scams": "scams_traps",
-    "packing": "packing",
-    "connectivity": "connectivity",
-    "money": "money_costs",
-    "couples": "destination_overview",
-    "family": "destination_overview",
+# Derived from QUESTION_TYPE_MAPPING — single source of truth
+QUESTION_TYPE_TO_SECTION: dict[str, str] = {
+    qtype: section for _, (qtype, section) in QUESTION_TYPE_MAPPING.items()
 }
 
 
@@ -755,16 +742,6 @@ def _detect_settings_from_message(user_text: str, state: "GraphState") -> Option
         detected["flight_settings"] = flight_settings
 
     return detected if detected else None
-
-    # _detect_actionable_input now imported from router_category_sync.py
-
-    # get_new_specialists_from_text now imported from router_utils.py
-
-    # detect_planning_intent now imported from router_category_sync.py
-
-    # _extract_destination_context now imported from router_utils.py
-    # _check_exact_match_greeting now imported from router_utils.py
-    # _detect_origin_from_message now imported from router_utils.py
 
 
 def _message_has_hotel_signal(user_text: str) -> bool:

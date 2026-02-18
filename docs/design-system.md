@@ -2296,3 +2296,128 @@ SPRING_CONFIG = {
 - Animation Config: `frontend/lib/animation-config.ts`
 - Progressive Disclosure: `frontend/components/plan/StrategyStageRenderer.tsx`
 - UX Architecture: `docs/ux_unified_architecture.md`
+
+---
+
+## 23. Disabled & Loading State Standards
+
+### Disabled State Pattern
+
+All disabled interactive elements (buttons, inputs, toggles, sections) use this consistent pattern:
+
+| Property | Value | Notes |
+|----------|-------|-------|
+| **Opacity** | `opacity-50` | Never `opacity-40` or `opacity-60` |
+| **Cursor** | `cursor-not-allowed` | Communicates non-interactability |
+| **Pointer events** | `pointer-events-none` | Prevents click-through on disabled sections |
+
+```tsx
+// Correct disabled state
+<button
+  disabled
+  className="... disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none"
+/>
+
+// Correct section disabled overlay
+<div className={cn(
+  'space-y-6 transition-opacity',
+  !enabled && 'opacity-50 pointer-events-none'
+)}>
+```
+
+**Exception:** Text-only disabled labels (no interaction) may use `text-zinc-400` without opacity reduction (see Section 17.7 rule 6).
+
+### Skeleton Loading Pattern
+
+| Property | Value |
+|----------|-------|
+| **Light background** | `bg-zinc-200/50` |
+| **Dark background** | `bg-zinc-700/50` |
+| **Animation** | `animate-pulse` |
+| **Shape** | Matches the content element it replaces |
+
+---
+
+## 24. Shadow Elevation Tiers
+
+All elevated surfaces use the custom shadow tokens from `tailwind.config.mts`. Raw Tailwind shadow classes (`shadow-sm`, `shadow-md`, `shadow-lg`, `shadow-xl`, `shadow-2xl`) are reserved for specific documented cases only.
+
+### Primary Token Usage
+
+| Token | Tailwind | Value | Use For |
+|-------|----------|-------|---------|
+| `shadow-card` | `shadow-card` | `0 15px 35px rgba(10,14,18,0.08)` | Cards, tile containers, MiniCard, TileCard, CategorySection, small elevated elements |
+| `shadow-soft` | `shadow-soft` | `0 20px 45px rgba(10,14,18,0.08)` | Hover elevation, glass panels, modals, drawers, command island |
+
+### Hover Elevation Pattern
+
+```tsx
+// Card with hover elevation
+<div className="shadow-card transition-all hover:shadow-soft" />
+```
+
+### Approved Raw Shadow Usage (Exceptions)
+
+| Class | Approved Context |
+|-------|-----------------|
+| `shadow-sm` | Active/selected pill lifted state, icon circles (timeline node, airline logo), small inline buttons |
+| `shadow-md` | Active/selected pill per DS.pills.active spec; user bubble hover in chat (`shadow-md hover:shadow-lg` is documented for commander bubble) |
+| `shadow-2xl` | Toast notifications (Section 13), glass modals/sheets matching `DS.materials.glass` |
+| `shadow-lg` | Primary action button light-mode shadow (`shadow-lg shadow-zinc-900/10` per DS.actions.primary), input focus state (`focus:shadow-lg focus:shadow-zinc-200/50`) |
+| `shadow-xl` | Mapbox map markers only (third-party context) |
+| `dark:shadow-none` | Gallery image wrappers in dark mode (images provide their own visual separation) |
+
+---
+
+## 25. Z-Index Layering
+
+Components must use this z-index tier system to prevent collisions:
+
+| Layer | Z-Range | Components |
+|-------|---------|------------|
+| Base / map | `z-0` | `InteractiveMap`, content panels |
+| Sticky headers | `z-10` | `TimelineThread` sticky day nodes, inline elements |
+| Floating buttons | `z-20` | `FloatingBuildButton` |
+| Mobile header | `z-[1100]` | `MobileModeHeader` |
+| Floating status pill | `z-[1099]` | Status pill below mobile header |
+| Sheets / drawers | `z-[1200]` backdrop, `z-[1201]` panel | `BaseSheet`, `DatesSheet`, drawer overlays |
+| Toasts | `z-[9999]` | Toast container |
+| Mapbox marker tooltips | `z-[9999]` | Map marker tooltips |
+
+**Rule:** Never use arbitrary z-values like `z-[999]` or `z-[9999]` outside of toasts/tooltips. Normalize to the tier table.
+
+---
+
+## 26. Icon Sizing Tiers
+
+All Lucide React icons must use one of these standard sizes:
+
+| Context | Size | Tailwind |
+|---------|------|----------|
+| Inline with body text (labels, list items) | 16px | `w-4 h-4` |
+| Buttons (with text label) | 16–18px | `w-4 h-4` |
+| Icon-only buttons, header controls | 18–20px | `w-5 h-5` |
+| Mobile touch-target icons | 20–24px | `w-5 h-5` or `w-6 h-6` |
+| Feature / hero / empty-state icons | 24px+ | `w-6 h-6` or larger |
+| Micro labels (status dots, badge icons) | 10–12px | `w-2.5 h-2.5` or `w-3 h-3` |
+
+**Rule:** Icons in the same row/context must use the same size. Mixed sizes (e.g., `w-3 h-3` next to `w-5 h-5` in the same button row) are a violation.
+
+---
+
+## 27. Component Mapping Additions
+
+Updates to Section 6 — new components discovered in audit:
+
+| Component | File | DS Tokens Used | Notes |
+|-----------|------|----------------|-------|
+| `MiniCard` | `tiles/MiniCard.tsx` | `DS.textSize.*`, `DS.glowClass.*`, `DS.infoBox` | `shadow-card hover:shadow-soft` for card elevation |
+| `MiniCardSkeleton` | `tiles/MiniCard.tsx` | Custom skeleton colors | `bg-zinc-200/50 dark:bg-zinc-700/50` |
+| `TileDetailsModal` | `tiles/TileDetailsModal.tsx` | `DS.actions.primary`, `DS.text.*` | `shadow-card` for modal container |
+| `SuggestionCard` | `plan/tiles/SuggestionCard.tsx` | `DS.textSize.*` | `shadow-card hover:shadow-soft` |
+| `CategorySection` | `plan/booking/CategorySection.tsx` | None | `shadow-card hover:shadow-soft` for accordion card |
+| `CheckoutSidebar` | `plan/booking/CheckoutSidebar.tsx` | None | `shadow-card` for summary card |
+| `StrategyHero` | `plan/stages/StrategyHero.tsx` | `DS.text.*`, `DS.infoBox` | Specialist colors from `SPECIALIST_STYLE_CLASSES` map |
+| `ActivityMiniCard` | `plan/timeline/blocks/ActivityMiniCard.tsx` | `DS.textSize.*` | `hover:shadow-soft` for card hover |
+| `UnifiedChipRow` | `plan/UnifiedChipRow.tsx` | `DS.textSize.*` | Constraint chips; disabled: `opacity-50 cursor-not-allowed` |
+| `MobileModeHeader` | `layout/MobileModeHeader.tsx` | `DS.textSize.*` | `shadow-card` for status pill |

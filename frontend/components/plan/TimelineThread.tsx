@@ -674,8 +674,8 @@ export function TimelineThread({
                           : isBlockSafety
                             ? 'bg-zinc-500/5 border-zinc-500/20'
                             : isActiveBlock
-                              ? 'scale-[1.02] border-emerald-500/50 shadow-lg bg-card'
-                              : 'bg-card border-border hover:border-primary/50 hover:shadow-md'
+                              ? 'scale-[1.02] border-emerald-500/50 shadow-soft bg-card'
+                              : 'bg-card border-border hover:border-primary/50 hover:shadow-soft'
                       )}
                     >
                       {/* Unschedulable warning banner */}

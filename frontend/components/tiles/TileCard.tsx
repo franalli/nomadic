@@ -309,7 +309,7 @@ export const TileCard = memo(function TileCard({
       data-tile-id={tile.id}
       onClick={handleToggleSelect}
       className={cn(
-        'bg-card group relative flex h-full flex-col overflow-hidden rounded-2xl border shadow-sm transition-all hover:shadow-md',
+        'bg-card group relative flex h-full flex-col overflow-hidden rounded-2xl border shadow-card transition-all hover:shadow-soft',
         isSelected ? 'ring-primary border-primary ring-2' : 'border-border',
         // Scale animation on selection for visual feedback (Tier 10.19)
         justSelected && 'scale-[1.02]',
@@ -521,7 +521,7 @@ export const TileCard = memo(function TileCard({
             {relevanceBadges.map((badge) => (
               <span
                 key={badge}
-                className="inline-flex items-center gap-1 text-[13px] text-zinc-400"
+                className={`inline-flex items-center gap-1 ${DS.textSize.badgeLabel} text-zinc-400`}
               >
                 <Check className="h-3 w-3 text-emerald-500" />
                 {badge}
@@ -547,7 +547,7 @@ export const TileCard = memo(function TileCard({
               {tile.total_inclusive != null ? 'Total from' : 'From'}
             </span>
             <div className="flex items-baseline gap-1">
-              <span className="text-zinc-900 dark:text-zinc-100 text-[18px] font-semibold">
+              <span className={`text-zinc-900 dark:text-zinc-100 ${DS.textSize.priceDisplay} font-semibold`}>
                 {(tile.total_inclusive ?? tile.price_estimate) != null
                   ? Math.round(tile.total_inclusive ?? tile.price_estimate!).toLocaleString()
                   : ''}

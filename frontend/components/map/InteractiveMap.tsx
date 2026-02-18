@@ -96,7 +96,7 @@ function getMarkerColor(type: string): string {
   const lowerType = type.toLowerCase();
 
   if (lowerType === 'diving' || lowerType.includes('dive')) return 'bg-cyan-500';
-  if (lowerType === 'hiking' || lowerType.includes('hike')) return 'bg-green-500';
+  if (lowerType === 'hiking' || lowerType.includes('hike')) return 'bg-emerald-500';
   if (lowerType.includes('hotel') || lowerType.includes('stay')) return 'bg-purple-500';
   if (lowerType.includes('flight')) return 'bg-blue-500';
   if (lowerType.includes('temple')) return 'bg-rose-500';
@@ -407,7 +407,7 @@ export function InteractiveMap({
 
                 {item.dayNumber && !isActive && !isHovered && (
                   <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-zinc-800 border border-white/30 flex items-center justify-center">
-                    <span className="text-[8px] font-bold text-white">{item.dayNumber}</span>
+                    <span className={`${DS.textSize.mapMarkerLabel} font-bold text-white`}>{item.dayNumber}</span>
                   </div>
                 )}
 

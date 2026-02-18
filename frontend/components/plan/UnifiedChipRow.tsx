@@ -374,7 +374,7 @@ const ModuleChip = memo(function ModuleChip({
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20 dark:focus-visible:ring-emerald-500/30',
 
         // --- STATE: DISABLED (BOOKING mode) ---
-        disabled && 'opacity-60 cursor-not-allowed hover:shadow-sm'
+        disabled && 'opacity-50 cursor-not-allowed'
       )}
     >
       {/* Checkmark for active state (replaces icon position) */}

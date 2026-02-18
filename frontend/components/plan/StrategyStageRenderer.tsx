@@ -1021,7 +1021,7 @@ export function StrategyStageRenderer({
             {/* Regeneration overlay - unified for plan AND itinerary regeneration */}
             {isAnyRegenerating && (
               <div className="absolute inset-0 z-10 flex items-start justify-center pt-20 bg-background/60 backdrop-blur-[1px]">
-                <div className="flex flex-col items-center gap-4 rounded-lg bg-card/90 px-6 py-4 shadow-lg border border-border">
+                <div className="flex flex-col items-center gap-4 rounded-lg bg-card/90 px-6 py-4 shadow-card border border-border">
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                   <p className="text-sm font-medium text-muted-foreground">
                     {isRegenUpdating ? 'Updating itinerary...' : 'Updating plan...'}

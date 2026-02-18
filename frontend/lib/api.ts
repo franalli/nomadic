@@ -60,7 +60,7 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
 
   // CRITICAL: Check signal state before fetch to fail fast
   if (options?.signal?.aborted) {
-    console.error('[apiFetch] ⛔ Signal already aborted before fetch');
+    debugLog('[apiFetch] ⛔ Signal already aborted before fetch');
     throw new DOMException('Signal already aborted', 'AbortError');
   }
 

@@ -60,6 +60,18 @@ _inflight_generation_lock = asyncio.Lock()
 _inflight_generation_tasks: dict[str, asyncio.Task[list[dict]]] = {}
 
 
+async def cancel_inflight() -> int:
+    """Cancel all in-flight experience generation tasks. Called during shutdown."""
+    async with _inflight_generation_lock:
+        tasks = list(_inflight_generation_tasks.values())
+        _inflight_generation_tasks.clear()
+    for t in tasks:
+        t.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return len(tasks)
+
+
 def _set_tier2_generation_source(state, source: str) -> None:
     if state is not None and hasattr(state, "metadata"):
         state.metadata["tier2_generation_source_internal"] = source

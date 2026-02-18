@@ -11,6 +11,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -435,6 +436,7 @@ def test_fill_day_uses_effective_total_days_from_cards_and_trip_inputs():
     assert payload.get("rejected") is not True
 
 
+@pytest.mark.slow
 def test_fill_day_queues_behind_active_stream():
     """fill-day should wait for active graph stream work instead of rejecting."""
     seed = seed_session_with_document(session_token="session-fill-day-queue")

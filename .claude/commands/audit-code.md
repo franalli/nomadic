@@ -21,6 +21,7 @@ cd backend && ruff check . --select F841 2>&1
 ```
 
 Then manually scan for unused functions. For each Python file under `backend/app/planner/` and `backend/app/services/`:
+
 - Grep for each function name across the entire backend to find callers
 - If a function has ZERO callers and is NOT a LangGraph node function, NOT an endpoint handler, NOT an `__init__.py` export, and NOT a Pydantic validator — it's dead code. Report it.
 - Do NOT flag: node functions registered in `plan_graph.py`, FastAPI route handlers, Alembic migration functions, pytest fixtures, `__all__` exports.
@@ -66,6 +67,7 @@ grep -rn "^_[a-z_]* = {}\|^_[a-z_]* = \[\]\|^_[a-z_]*: dict\|^_[a-z_]*: list" ba
 ```
 
 For each shared mutable state, report:
+
 - If it's a cache with concurrent access and missing a lock → **Critical**
 - If it's mutated during request handling without a lock → **Critical**
 - Skip module-level config that's only written at import time → OK
@@ -81,6 +83,7 @@ grep -rn "with.*_lock\|async with.*_lock" backend/app/ --include="*.py" | grep -
 ```
 
 Report:
+
 - Locks declared but never acquired → **Medium** (dead code, or state is unprotected)
 - Shared state modified without its designated lock → **Critical**
 
@@ -95,6 +98,7 @@ grep -rn "asyncio\.Lock" backend/app/ --include="*.py" | grep -v __pycache__ | g
 ```
 
 Cross-reference:
+
 - `threading.Lock` used inside an `async def` function → **High** (blocks the event loop if contended; should use `asyncio.Lock` or `run_in_executor`)
 - `asyncio.Lock` used inside a sync `def` function → **Critical** (cannot `await` in sync context; lock is never actually acquired)
 - `asyncio.Lock` used across different event loops → **Critical** (lock is loop-bound)
@@ -108,6 +112,7 @@ grep -rn "_inflight\|_pending\|_in_progress\|dedup" backend/app/ --include="*.py
 ```
 
 For each in-flight tracking mechanism:
+
 - Verify it has a lock protecting the check-and-set operation → if not, **Critical** (TOCTOU race)
 - Verify it cleans up on failure/exception → if not, **High** (leaked entries block future requests)
 - Verify the lock scope is narrow (don't hold lock during I/O) → if held during LLM calls, **High** (serializes all concurrent requests)
@@ -123,6 +128,7 @@ grep -rn "def.*init\|def.*setup\|def.*register" backend/app/ --include="*.py" | 
 ```
 
 Report:
+
 - Lazy init without lock → **High** (double initialization under concurrent startup)
 - Module-level `_initialized` flag checked without lock → **Medium** (usually benign if idempotent, but flag it)
 
@@ -137,6 +143,7 @@ grep -rn "lru_cache\|@cache\|functools\.cache" backend/app/ --include="*.py" | g
 ```
 
 Report:
+
 - `TTLCache` accessed without a surrounding lock → **Critical** (cachetools explicitly documents this is unsafe)
 - `TTLCache` used directly instead of `MemoryCache` wrapper from `cache_core.py` → **High** (bypasses built-in thread safety)
 - `lru_cache` on a function with side effects or mutable return values → **Medium**
@@ -169,6 +176,7 @@ grep -rn "^def \|^async def " backend/app/ --include="*.py" | grep -v __pycache_
 ```
 
 For SSoT violations, check if logic is duplicated or if it properly delegates to the canonical module:
+
 - Multiple implementations of constraint checking logic (should only be in `constraint_guard.py`)
 - Duplicate specialist keyword lists (should only be in `specialist_registry.py`)
 - Multiple session state serialization paths (should only be in `state_serde.py`)
@@ -177,6 +185,7 @@ For SSoT violations, check if logic is duplicated or if it properly delegates to
 For duplicate Pydantic models, check if the same field names/types appear in multiple schema classes that should share a base.
 
 Report any duplicates found with locations. Severity:
+
 - SSoT violations → **High**
 - Duplicate function names across files → **Medium**
 - Similar error handling blocks → **Low** (flag only if 3+ identical patterns)
@@ -200,6 +209,7 @@ cd backend && detect-secrets scan --baseline ../.secrets.baseline 2>&1 || echo "
 ```
 
 For each finding, assess:
+
 - Hardcoded secrets → **Critical** if actual values, **Low** if just variable names referencing env
 - Raw SQL → **Critical** if user input can reach it, **High** otherwise
 - eval/exec/subprocess → **Critical** unless input is fully controlled
@@ -219,6 +229,7 @@ grep -rn "^from backend\.app\.\|^from app\.\|^from \.\|^from \.\." backend/app/p
 ```
 
 For each pair of files, check if A imports B AND B imports A. Report any circular chains found.
+
 - Skip: `__init__.py` re-exports (these are expected)
 - Flag: Any circular chain involving node files or service files
 
@@ -235,6 +246,7 @@ ls backend/tests/test_*.py 2>/dev/null
 ```
 
 For each source module, check if a corresponding test file exists. Report:
+
 - Modules with ZERO test coverage (no test file references the module at all)
 - Cross-reference by grepping test files for imports of each module
 - Do NOT flag: `__init__.py`, config files, migration files, `debug_utils.py`
@@ -250,6 +262,7 @@ grep -rn "^\s*print(" backend/app/ --include="*.py" | grep -v __pycache__ | grep
 ```
 
 Report each finding. Exclude:
+
 - `print()` inside `if __name__ == "__main__"` blocks
 - `print()` inside explicitly named debug/logging functions
 - Severity: **Low** (cosmetic, but pollutes server logs)
@@ -268,6 +281,7 @@ grep -rn "TTL\|ttl\|_TTL_" backend/app/services/*cache*.py backend/app/planner/c
 ```
 
 Report:
+
 - L2 TTL shorter than L1 TTL for the same cache domain → **High** (L1 evicts, L2 promotes stale data back)
 - Inconsistent TTL values between related caches → **Medium**
 - Missing TTL on any cache instantiation → **Critical**
@@ -283,6 +297,7 @@ grep -rn 'make_cache_key(' backend/app/services/ backend/app/planner/ --include=
 ```
 
 Report:
+
 - Cache key functions that DON'T use `make_cache_key` from `hashing.py` → **Medium** (inconsistent key format)
 - Two different cache domains using the same namespace prefix → **Critical** (key collision across domains)
 - Cache keys missing version token (e.g., "v2") → **Medium** (no safe cache invalidation on format change)
@@ -295,6 +310,7 @@ grep -rn "def set_cached\|async def set_cached" backend/app/services/*cache*.py 
 ```
 
 For each `set_cached_*` function in L1+L2 caches (`specialist_cache.py`, `tile_cache.py`, `experience_generator.py`), verify:
+
 - L1 write (`_mem.set`) AND L2 write (`pg_insert` / db write) both happen → if only one, report as **High**
 - L2 write failure is caught and doesn't crash the request → if uncaught, report as **High**
 - L2 write failure doesn't leave L1 with data that L2 doesn't have (acceptable short-term, but document) → **Low**
@@ -310,6 +326,7 @@ grep -rn "def clear\|async def clear" backend/app/services/*cache*.py --include=
 ```
 
 Report:
+
 - Invalidation clears L1 but not L2 (or vice versa) → **High** (stale data survives in the other tier)
 - No invalidation path exists for a cache domain → **Medium** (can only wait for TTL expiry)
 - Invalidation called without proper lock → **High** (race condition)
@@ -325,6 +342,7 @@ grep -rn "^_cache\s*=\s*{}\|^_cache\s*:\s*dict\|^CACHE\s*=" backend/app/ --inclu
 ```
 
 Report:
+
 - `TTLCache` or `MemoryCache` without `maxsize` → **Critical** (unbounded memory growth)
 - Raw `dict` used as cache without size limit or TTL → **High** (memory leak under load)
 - `maxsize` set unreasonably high (>10000 for in-memory) → **Medium**
@@ -340,6 +358,7 @@ grep -rn "from app.services.*cache import\|from app.planner.cache_access import"
 ```
 
 Report:
+
 - Node code directly accessing `TTLCache` internals (bypassing lock-protected accessors) → **Critical** (race condition)
 - Inconsistent import patterns (some nodes using `cache_access`, others importing cache services directly) → **Medium**
 
@@ -364,6 +383,7 @@ grep -rn "pool_size\|max_overflow\|pool_recycle\|pool_pre_ping" backend/app/db.p
 ```
 
 Report:
+
 - Async engine not disposed in lifespan shutdown (after `yield`) → **High** (connection pool leaked on graceful restart)
 - DB session created without context manager or try/finally close → **Critical** (connection leak)
 - Sessions created outside FastAPI `Depends()` without proper cleanup → **High**
@@ -383,6 +403,7 @@ grep -rn "AsyncClient\|ClientSession" backend/app/ --include="*.py" | grep -v __
 ```
 
 Report:
+
 - HTTP client created without `async with` or explicit `.aclose()` → **High** (connection pool leak)
 - HTTP client created per-request with no connection reuse → **Medium** (performance: TCP/TLS handshake per call; consider a module-level shared client with lifespan cleanup)
 - Missing timeout on HTTP client → **High** (hangs indefinitely on unresponsive external API)
@@ -401,6 +422,7 @@ grep -n "def.*stream\|async def.*stream\|def.*generate\|async def.*generate" bac
 ```
 
 For each StreamingResponse generator, verify:
+
 - DB session obtained inside the generator is closed in a `finally` block → if not, **Critical** (client disconnect leaks connection)
 - Generator handles `GeneratorExit` or `asyncio.CancelledError` → if not, **High** (cleanup code after yield is skipped)
 - Generator doesn't hold locks across `yield` points → if it does, **Critical** (client disconnect leaves lock held forever)
@@ -416,6 +438,7 @@ grep -rn "tempfile\|NamedTemporaryFile\|mkstemp\|mkdtemp" backend/app/ --include
 ```
 
 Report:
+
 - `open()` without `with` statement → **High** (file descriptor leak on exception)
 - Temp files created without cleanup or context manager → **Medium**
 - Skip: no findings expected (this project doesn't appear to use file I/O), but flag if any appear
@@ -428,10 +451,42 @@ grep -n "async def lifespan" backend/app/main.py -A 60
 ```
 
 The lifespan function should clean up ALL long-lived resources after `yield`. Check for:
+
 - Async engine disposal (`await engine.dispose()`) → if missing, **High**
 - Shared HTTP client closure → if a shared client exists but isn't closed, **High**
 - Background task cancellation → if background tasks exist but aren't cancelled, **Medium**
 - Cache clearing (optional, but good practice) → **Low** if missing
+
+### 1L: LLM Output Validation
+
+Verify that all LLM calls validate their output before feeding it into graph state. Malformed or truncated LLM responses (especially from Gemini with `max_output_tokens` limits) can silently corrupt the plan.
+
+```bash
+# 1. All structured output calls
+grep -rn "with_structured_output\|\.invoke(\|\.ainvoke(" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 2. Raw .content access without type checking (may be None or unexpected type)
+grep -rn "\.content\b" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__ | grep -v test_ | grep -v "# "
+
+# 3. Check if llm_structured retry wrapper is used where appropriate
+grep -rn "llm_structured\|invoke_with_retry\|structured_invoke" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 4. JSON parsing without validation
+grep -rn "json\.loads\|json\.load" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__ | grep -v test_
+```
+
+For each `.invoke()` or `.ainvoke()` call in a node:
+
+- Verify the result is validated (Pydantic model parse, `llm_structured` wrapper, or explicit field presence checks)
+- Verify truncated output is handled (Gemini `finish_reason: "MAX_TOKENS"` or missing required fields)
+- Verify `None` / empty response is handled gracefully
+
+Report:
+
+- Unvalidated LLM output fed directly into graph state → **Critical** (corrupts downstream nodes)
+- Raw `.content` access without None check → **High** (NoneType crash)
+- `json.loads` without try/except → **High** (malformed JSON from LLM crashes node)
+- Missing retry/fallback on structured output failure → **Medium**
 
 ---
 
@@ -454,6 +509,7 @@ cd frontend && npx tsc --noEmit 2>&1 | head -80
 ```
 
 Report ALL type errors found, grouped by file. This is separate from 2A — type errors are broken contracts, not just hygiene.
+
 - Severity: **High** for errors in components, hooks, or state stores. **Medium** for type-only files.
 
 ### 2C: Dead Components and Functions
@@ -471,6 +527,7 @@ grep -rn "^export " frontend/components/ frontend/hooks/ frontend/lib/ --include
 Dead exports with zero importers → report them.
 
 **Do NOT flag:**
+
 - Page components in `frontend/app/` (Next.js auto-routes)
 - Components referenced in dynamic imports or lazy loading
 - Type exports used in other type files
@@ -495,6 +552,7 @@ grep -rn "useMemo\|useCallback" frontend/components/ --include="*.tsx" -l
 ```
 
 Report findings with severity assessment:
+
 - Fat selectors → report all
 - Inline styles → report all
 - Inline handlers in mapped lists → only flag if list is >20 items or handler triggers expensive re-renders
@@ -533,6 +591,7 @@ grep -rn "bg-\[#\|text-\[#\|border-\[#" frontend/components/ --include="*.tsx" |
 ```
 
 Report findings with locations. SSoT-specific checks:
+
 - Multiple implementations of streaming/SSE handling (should be in `api.ts` only) → **High**
 - Multiple implementations of plan state checking (should be in `planStateHelpers.ts` only) → **High**
 - Duplicate type definitions (same name in multiple files) → **Medium**
@@ -554,6 +613,7 @@ grep -rn "setTimeout\|setInterval" frontend/components/ --include="*.tsx" | grep
 ```
 
 Report:
+
 - `useEffect` with async/fetch operations but no abort controller cleanup → **High**
 - `setTimeout`/`setInterval` without `clearTimeout`/`clearInterval` in the cleanup return → **High** (memory leak + state update after unmount)
 
@@ -570,6 +630,7 @@ grep -rn "new WebSocket\|WebSocket(" frontend/ --include="*.ts" --include="*.tsx
 ```
 
 Report:
+
 - `EventSource` created without `.close()` in cleanup → **Critical** (holds open HTTP connection, server keeps streaming)
 - `WebSocket` created without `.close()` in cleanup → **Critical** (holds open connection)
 
@@ -584,6 +645,7 @@ grep -rn "new AbortController" frontend/ --include="*.ts" --include="*.tsx" | gr
 ```
 
 For each `new AbortController()`:
+
 - Verify `controller.abort()` is called in the useEffect cleanup → if not, **High** (fetch continues after unmount)
 - Verify `controller.signal` is actually passed to the fetch call → if not, **Medium** (abort controller exists but does nothing)
 
@@ -598,6 +660,7 @@ grep -rn "await.*useDocumentStore\|await.*useChatStore\|\.then.*getState()" fron
 ```
 
 Report:
+
 - Local `setState` after `await` without mount check or abort signal → **Medium** (React 18+ handles most cases, but can still cause stale updates)
 - Zustand `getState().mutate()` after await is generally safe (store persists), note but don't flag
 
@@ -612,6 +675,7 @@ grep -rn "\.then(" frontend/components/ --include="*.tsx" | grep -v __tests__ | 
 ```
 
 Report:
+
 - `await` in component without surrounding try/catch → **Medium** (unhandled rejection crashes the component)
 - `.then()` without `.catch()` → **Medium** (silent failure)
 
@@ -625,6 +689,7 @@ grep -rn "console\.\(log\|warn\|error\|debug\|info\)" frontend/components/ front
 ```
 
 Report each finding. Exclude:
+
 - `console.error` inside error boundaries or catch blocks (intentional)
 - `console.warn` in development-only conditional blocks
 - Anything inside `debug.ts` (that's the designated debug utility)
@@ -636,10 +701,11 @@ CLAUDE.md mandates "Components under 200 lines." Check for violations:
 
 ```bash
 # Count lines in each .tsx component file
-wc -l frontend/components/**/*.tsx frontend/components/**/**/*.tsx 2>/dev/null | sort -rn | head -30
+find frontend/components -name "*.tsx" -exec wc -l {} + | sort -rn | head -30
 ```
 
 Report every `.tsx` file exceeding 200 lines with its line count.
+
 - Severity: **Medium** for 200–300 lines, **High** for 300+ lines
 - Do NOT flag: test files, type-only files, `design-system.ts`
 
@@ -659,6 +725,7 @@ grep -rn "import \* as.*from\|import {[^}]*,[^}]*,[^}]*,[^}]*,[^}]*,[^}]*" front
 ```
 
 Report findings:
+
 - `from 'lodash'` instead of `from 'lodash/specificFunction'` → **Medium**
 - `import *` from large libraries → **Medium**
 - `from 'lucide-react'` is fine (it supports tree-shaking), skip unless importing `*`
@@ -676,6 +743,7 @@ grep -rn "ErrorBoundary\|error-boundary" frontend/components/ --include="*.tsx" 
 ```
 
 Cross-reference: components with async operations that are NOT wrapped in any error boundary → report them.
+
 - Severity: **Medium** for leaf components, **High** for route-level components
 - Do NOT flag: components that only read from Zustand (no external data)
 
@@ -698,9 +766,64 @@ grep -rn "font-size:\|fontSize:" frontend/components/ --include="*.tsx" | grep -
 ```
 
 Report findings:
+
 - Hardcoded hex colors in component files → **Medium** (should reference DS tokens)
 - Arbitrary Tailwind pixel values → **Low** (some are acceptable for one-off spacing)
 - Skip: `globals.css` (may define CSS variables), `design-system.ts` itself, SVG fill/stroke values
+
+### 2L: Client/Server Component Boundary
+
+Next.js requires `'use client'` directive for components that use React hooks. Missing this causes runtime crashes in production.
+
+```bash
+# Find all .tsx files using hooks
+HOOK_FILES=$(grep -rl "useState\|useEffect\|useRef\|useCallback\|useMemo\|useContext\|useReducer\|useDocumentStore\|useChatStore\|useUIStore\|useMobileNavStore\|useIsDesktop\|useMediaQuery" frontend/components/ --include="*.tsx" | grep -v node_modules | grep -v __tests__)
+
+# Check which of those are missing 'use client'
+for f in $HOOK_FILES; do
+  head -3 "$f" | grep -q "'use client'\|\"use client\"" || echo "MISSING 'use client': $f"
+done
+
+# Also check hooks/ and lib/ files that export hooks
+HOOK_EXPORTS=$(grep -rl "^export.*function use[A-Z]\|^export.*const use[A-Z]" frontend/hooks/ frontend/lib/ --include="*.ts" --include="*.tsx" 2>/dev/null | grep -v node_modules)
+
+for f in $HOOK_EXPORTS; do
+  head -3 "$f" | grep -q "'use client'\|\"use client\"" || echo "MISSING 'use client': $f"
+done
+```
+
+Report:
+
+- Component using hooks without `'use client'` → **Critical** (runtime crash: "useState is not a function")
+- Hook file without `'use client'` that's imported by server components → **Critical**
+- Skip: files in `app/` directory that are explicitly server components, type-only files
+
+### 2M: Accessibility Baseline
+
+Basic a11y scan for interactive elements. Not a full WCAG audit — just the most common blockers.
+
+```bash
+# 1. Icon-only buttons without accessible labels
+grep -rn "<button" frontend/components/ --include="*.tsx" | grep -v "aria-label\|aria-labelledby\|title=" | grep -v __tests__ | head -20
+# Cross-reference: which of those contain only an icon (no text children)?
+
+# 2. Images without alt text
+grep -rn "<img\|<Image" frontend/components/ --include="*.tsx" | grep -v "alt=" | grep -v __tests__ | head -10
+
+# 3. Form inputs without labels or aria-label
+grep -rn "<input\|<select\|<textarea" frontend/components/ --include="*.tsx" | grep -v "aria-label\|aria-labelledby\|id=.*htmlFor\|placeholder" | grep -v __tests__ | head -10
+
+# 4. Click handlers on non-interactive elements (div, span)
+grep -rn "<div.*onClick\|<span.*onClick" frontend/components/ --include="*.tsx" | grep -v "role=\|tabIndex\|button\|link" | grep -v __tests__ | head -10
+```
+
+Report:
+
+- Icon-only buttons without aria-label → **Medium** (screen readers announce nothing)
+- Images without alt text → **Low** (decorative images can use `alt=""`)
+- Click handlers on `<div>`/`<span>` without `role` and `tabIndex` → **Medium** (keyboard users can't activate)
+- Form inputs without labels → **Medium**
+- Do NOT flag: decorative elements, Mapbox internal elements, shadcn/ui primitives (they handle a11y internally)
 
 ---
 
@@ -755,6 +878,7 @@ grep -rn 'os\.getenv(' backend/app/ --include="*.py" | grep -v __pycache__ | gre
 ```
 
 Cross-reference and report:
+
 - **Defined in .env but never read in code** → **Medium** (dead config, cleanup candidate)
 - **Read in code but not defined in .env/.env.local** → **High** (will be `None`/`undefined` at runtime; new devs will hit errors)
 - **Read with `os.environ[]` (hard crash if missing) but not in .env** → **Critical** (KeyError on startup)
@@ -777,6 +901,7 @@ grep -rn "down_revision" backend/migrations/versions/*.py 2>/dev/null
 ```
 
 Report:
+
 - Multiple heads → **Critical** (migrations will fail on deploy)
 - Broken down_revision chain → **Critical**
 - If `alembic heads` returns more than one hash, flag immediately
@@ -805,10 +930,36 @@ grep -v "^#\|^$\|^-" backend/requirements.txt | awk -F'[=><]' '{print $1}' | sor
 ```
 
 For each dependency:
+
 - Grep the codebase for its import. If zero matches → report as potentially unused.
 - Do NOT flag: transitive dependencies (e.g., `types/*` packages), build tools (`typescript`, `eslint`), runtime-only deps (`dotenv`), or framework peers (`react-dom`).
 - npm audit critical/high vulnerabilities → **High**
 - Unused dependencies → **Medium**
+
+### 3F: CORS & Security Headers
+
+Verify that CORS configuration and security headers are production-safe.
+
+```bash
+# 1. CORS configuration
+grep -rn "CORSMiddleware\|allow_origins\|allow_methods\|allow_credentials\|allow_headers" backend/app/main.py
+
+# 2. Security headers middleware
+grep -rn "X-Content-Type-Options\|X-Frame-Options\|Strict-Transport-Security\|X-XSS-Protection\|Content-Security-Policy\|Referrer-Policy" backend/app/main.py
+
+# 3. Check if CORS origins are env-driven or hardcoded
+grep -rn "allow_origins" backend/app/main.py | grep -v "settings\.\|os\.environ\|os\.getenv"
+```
+
+Report:
+
+- `allow_origins=["*"]` in production config (not gated by debug/dev flag) → **Critical** (any domain can call your API)
+- `allow_credentials=True` combined with wildcard origins → **Critical** (browsers reject this, but it signals misconfiguration)
+- Missing `X-Content-Type-Options: nosniff` → **High**
+- Missing `X-Frame-Options` → **Medium** (clickjacking protection)
+- Missing `Strict-Transport-Security` → **Medium** (HTTPS downgrade protection)
+- Hardcoded origin list instead of env-driven → **Medium** (can't change without redeploy)
+- Skip: development-only CORS settings gated by `DEBUG` or `settings.debug`
 
 ---
 
@@ -842,6 +993,7 @@ grep -rn "\[.*lat.*,.*lng\|LatLng\|latLng" backend/app/ frontend/ --include="*.p
 ```
 
 Report any instances where coordinates appear in `[lat, lng]` order instead of `[lng, lat]`.
+
 - Severity: **Critical** (will cause map pins and routing to be wrong)
 - Skip: third-party library type definitions, Mapbox API calls (Mapbox uses `[lng, lat]` natively)
 
@@ -866,6 +1018,7 @@ grep -rn "\"Paris\"\|\"Tokyo\"\|\"London\"\|\"New York\"\|\"Dubai\"\|\"Bali\"" f
 ```
 
 Report:
+
 - `CITY_TO_AIRPORT` dict in `amadeus_client.py` → **High** (hardcoded city→airport map; should use `iata_resolver.py` which is LLM-backed)
 - Hardcoded IATA codes in planner/service logic → **High**
 - Hardcoded city names in conditionals or mappings → **High** (won't scale, will miss destinations)
@@ -886,6 +1039,7 @@ grep -rn "FLIGHT_TYPE_KEYWORDS\|ACTIVITY_TYPE_KEYWORDS\|HOTEL_TYPE_KEYWORDS\|ALL
 ```
 
 For each hardcoded list, assess:
+
 - **Is this the SSoT?** If the list lives in `specialist_registry.py` (backend SSoT) or `specialists.ts` (frontend SSoT), it's the canonical source — note it but **Low** severity
 - **Is this a duplicate of the SSoT?** If the same keywords/aliases appear in another file, it's a duplication → **High** (will drift from SSoT)
 - **Should this be LLM-driven instead?** If the list maps user input to internal categories (e.g., "scuba" → "diving"), an LLM classifier is more robust → **Medium** (flag as candidate for LLM migration)
@@ -905,6 +1059,7 @@ grep -rn "_PATTERNS\s*=\s*\[" frontend/ --include="*.ts" --include="*.tsx" | gre
 ```
 
 Report:
+
 - Regex lists used for intent classification that duplicate what the LLM router already does → **Medium** (redundant with `router_extraction.py` LLM extraction; will miss edge cases the LLM handles)
 - Regex lists used as pre-filters or fast-path shortcuts before LLM → **Low** (acceptable optimization, but document)
 - Pattern lists that parse user-facing natural language (e.g., budget amounts, traveler counts) → **Medium** (fragile; "2 adults and a kid" may not match `TRAVELER_PATTERNS`)
@@ -917,6 +1072,7 @@ grep -rn "GREETINGS\|FAREWELL\|greeting_patterns\|EXACT_MATCH" backend/app/ --in
 ```
 
 Report:
+
 - Greeting lists used for exact-match fast-path → **Low** (acceptable: these are finite and rarely change)
 - Greeting lists that duplicate across files → **High** (should be single SSoT)
 - Note: these are the one category of hardcoded list that's generally acceptable — greetings are a closed set
@@ -934,6 +1090,7 @@ grep -rn "^const [A-Z_][A-Z_0-9]*\s*=\s*[\[\{]\|^const [A-Z_][A-Z_0-9]*\s*:" fro
 ```
 
 For each list, categorize:
+
 - **Configuration** (e.g., TTL values, feature flags) → OK, skip
 - **UI constants** (e.g., DS tokens, animation timings) → OK, skip
 - **Real-world data** (e.g., cities, airports, cuisines) → **High** (will be incomplete)
@@ -944,6 +1101,58 @@ For each list, categorize:
 ### 4D: Component Size Invariant Cross-Check
 
 This is a cross-check for 2H at the project-rule level. If any `.tsx` component exceeds 200 lines (per CLAUDE.md), flag it as an invariant violation here as well.
+
+### 4E: LLM Factory Compliance
+
+CLAUDE.md mandates all LLM usage goes through `llm_factory.py` with model strings from `settings.*_model`. Check for violations.
+
+```bash
+# 1. Direct LLM constructors (should use llm_factory.get_llm_by_model or equivalent)
+grep -rn "ChatOpenAI(\|ChatGoogleGenerativeAI(\|ChatAnthropic(\|AsyncOpenAI(" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_ | grep -v llm_factory
+
+# 2. Hardcoded model strings (should reference settings.*_model)
+grep -rn '"gpt-4o"\|"gpt-4o-mini"\|"gpt-4-turbo"\|"gemini-2.5-flash"\|"gemini-2.5-pro"\|"claude-3"\|"claude-sonnet"\|"claude-haiku"' backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_ | grep -v config\.py | grep -v debug_utils
+
+# 3. Provider-specific params leaked outside factory (should be encapsulated in llm_factory)
+grep -rn "max_output_tokens\|thinking_budget\|model_kwargs\|include_thoughts" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__
+
+# 4. Direct langchain provider imports in node code (should import from llm_factory)
+grep -rn "from langchain_openai\|from langchain_google_genai\|from langchain_anthropic" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__ | grep -v test_
+```
+
+Report:
+
+- Direct LLM constructor in node/service code (bypassing factory) → **Critical** (breaks provider portability, ignores config)
+- Hardcoded model string outside `config.py` → **High** (can't change model without code change)
+- Provider-specific params in node code → **Medium** (couples node to specific provider; should be in factory)
+- Direct langchain provider imports in nodes → **High** (tight coupling; factory should be the only import)
+- Skip: `llm_factory.py` itself, `config.py` (where settings are defined), `debug_utils.py` (pricing tables), test files
+
+### 4F: State Machine Transition Integrity
+
+PlanViewState transitions are a core invariant. The backend is SSoT for plan_view_state — the frontend should never fabricate states.
+
+```bash
+# 1. Backend: verify _compute_plan_view_state covers all enum values
+grep -rn "PlanViewState\." backend/app/planner/services/response_envelope.py | grep -v __pycache__
+
+# 2. All PlanViewState enum values
+grep -rn "class PlanViewState\|S0_\|S1_\|S2_\|S3_\|S4_\|S5_" backend/app/schemas.py | grep -v __pycache__
+
+# 3. Frontend: check for plan_view_state being SET (not just read) outside of API response handling
+grep -rn "plan_view_state\s*[:=]\|setPlanViewState\|plan_view_state:" frontend/state/ frontend/lib/ frontend/components/ --include="*.ts" --include="*.tsx" | grep -v __tests__ | grep -v "// \|type \|interface " | head -20
+
+# 4. Frontend: raw string comparisons instead of typed constants
+grep -rn "'S0_EMPTY'\|'S1_DESTINATION_SET'\|'S2_STRATEGY_READY'\|'S3_PARTIAL'\|'S4_ITINERARY'\|'S5_BOOKABLE'" frontend/ --include="*.ts" --include="*.tsx" | grep -v node_modules | grep -v __tests__ | grep -v types/ | head -20
+```
+
+Report:
+
+- Frontend code that sets/fabricates plan_view_state (outside of hydrating from API response) → **Critical** (violates backend SSoT invariant)
+- Exception: `S1_DESTINATION_SET` may be set client-side as an allowed special case — verify against UX spec
+- PlanViewState enum value in backend not handled by `_compute_plan_view_state` → **High** (unreachable state)
+- Raw string comparisons instead of typed enum/constant → **Medium** (typo-prone, refactor candidate)
+- Frontend logic that infers plan_view_state from other fields instead of reading the backend-computed value → **High**
 
 ---
 
@@ -966,6 +1175,7 @@ Produce the final report in this format:
 | Schema drift                  |       |          |       |
 | Dead endpoints                |       |          |       |
 | Security vulnerabilities      |       |          |       |
+| CORS & security headers       |       |          |       |
 | Circular imports              |       |          |       |
 | Test coverage gaps            |       |          |       |
 | Debug print/console pollution |       |          |       |
@@ -979,9 +1189,14 @@ Produce the final report in this format:
 | Dependency health             |       |          |       |
 | Cache health                  |       |          |       |
 | Resource lifecycle & leaks    |       |          |       |
+| LLM output validation         |       |          |       |
 | LangGraph node count          |       |          |       |
 | Coordinate format violations  |       |          |       |
 | Hardcoded lists & world data  |       |          |       |
+| LLM factory compliance        |       |          |       |
+| State machine transitions     |       |          |       |
+| Client/server boundary        |       |          |       |
+| Accessibility baseline        |       |          |       |
 
 ### Detailed Findings
 

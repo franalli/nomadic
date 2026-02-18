@@ -157,8 +157,8 @@ export function SuggestionCard({
         className={cn(
           'flex items-center gap-3 p-3 rounded-xl',
           // Light: White glass with visible border (Tactile Rule)
-          'bg-white/90 border border-zinc-200 shadow-sm',
-          'hover:border-zinc-300 hover:shadow-md',
+          'bg-white/90 border border-zinc-200 shadow-card',
+          'hover:border-zinc-300 hover:shadow-soft',
           // Dark: Glass fill with subtle border
           'dark:bg-white/5 dark:border-white/10',
           'dark:hover:bg-white/10 dark:hover:border-white/20',

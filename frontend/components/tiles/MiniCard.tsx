@@ -82,7 +82,7 @@ interface MiniCardProps {
  */
 export const MiniCardSkeleton = memo(function MiniCardSkeleton() {
   return (
-    <div className="relative rounded-lg border border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-white/5 shadow-sm p-3">
+    <div className="relative rounded-lg border border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-white/5 shadow-card p-3">
       <div className="flex items-start gap-4">
         <Skeleton className="h-16 w-16 flex-shrink-0 rounded-md bg-zinc-200/50 dark:bg-zinc-700/50" />
         <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -284,8 +284,8 @@ export const MiniCard = memo(function MiniCard({
           ? 'border-zinc-500/50 bg-zinc-950/10'
           : [
               // Light: Tactile Rule - white glass with visible border and shadow
-              'bg-white/95 border-zinc-200 shadow-sm',
-              'hover:border-zinc-300 hover:shadow-md hover:translate-y-[-1px]',
+              'bg-white/95 border-zinc-200 shadow-card',
+              'hover:border-zinc-300 hover:shadow-soft hover:translate-y-[-1px]',
               // Dark: Glass fill with subtle border
               'dark:bg-white/5 dark:border-white/10',
               'dark:hover:bg-white/8 dark:hover:border-white/20',

@@ -79,7 +79,7 @@ export function CheckoutSidebar({
   return (
     <div className="sticky top-4 space-y-4">
       {/* Main card */}
-      <div className="bg-card border rounded-xl p-6 shadow-sm">
+      <div className="bg-card border rounded-xl p-6 shadow-card">
         <h3 className="font-semibold text-lg mb-4">Trip Summary</h3>
 
         {/* Selected items list (if any) */}
@@ -135,7 +135,7 @@ export function CheckoutSidebar({
           disabled={checkoutDisabled || total === 0}
           className={cn(
             'w-full h-12 text-base font-semibold gap-2',
-            !checkoutDisabled && total > 0 && 'shadow-lg shadow-primary/20'
+            !checkoutDisabled && total > 0 && 'shadow-soft'
           )}
         >
           Continue to Booking
