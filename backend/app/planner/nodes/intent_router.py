@@ -14,7 +14,9 @@ like "No, I want Paris instead."
 import hashlib
 import json
 import logging
+import random
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
@@ -56,6 +58,25 @@ from app.planner.state.typed_meta import get_trip_settings
 logger = logging.getLogger(__name__)
 
 _gate_registry = GateRegistry()
+
+_SEASONAL_SUGGESTIONS: dict[str, list[str]] = {
+    "winter": ["Tokyo", "Dubai", "Bali", "Marrakech", "Buenos Aires"],
+    "spring": ["Paris", "Barcelona", "Kyoto", "Amsterdam", "Lisbon"],
+    "summer": ["Santorini", "Dubrovnik", "Reykjavik", "Amalfi Coast", "Bali"],
+    "fall": ["New York", "Seoul", "Rome", "Prague", "Patagonia"],
+}
+
+
+def _get_season() -> str:
+    month = datetime.now().month
+    if month in (12, 1, 2):
+        return "winter"
+    if month in (3, 4, 5):
+        return "spring"
+    if month in (6, 7, 8):
+        return "summer"
+    return "fall"
+
 
 # Derived constant for suggestion prompts
 _SPECIALIST_NAMES_CSV = ", ".join(sorted(TIER1_SPECIALIST_NAMES))
@@ -878,7 +899,9 @@ async def _classify_intent_with_llm(
         llm = _get_router_llm()
 
         # Use structured output for reliable JSON parsing
-        structured_llm = llm.with_structured_output(IntentClassification, include_raw=True)
+        structured_llm = llm.with_structured_output(
+            IntentClassification, include_raw=True, method="function_calling"
+        )
 
         prompt = CLASSIFICATION_PROMPT.format(user_message=user_text)
 
@@ -886,10 +909,12 @@ async def _classify_intent_with_llm(
 
         # Extract parsed result and token usage
         parsed = result["parsed"]
+        if parsed is None:
+            raise ValueError("Structured output returned parsed=None")
         raw = result["raw"]
-        token_usage = {}
-        if hasattr(raw, "response_metadata"):
-            token_usage = raw.response_metadata.get("token_usage", {})
+        from app.planner.llm_factory import extract_token_usage
+
+        token_usage = extract_token_usage(raw, model=settings.router_model)
 
         logger.debug(f"Intent classification: {parsed.intent} (confidence={parsed.confidence})")
         return parsed, token_usage
@@ -1455,7 +1480,8 @@ async def _apply_origin_to_state(state: GraphState, detected_origin: str, _clog)
             f"Got it - I've set your departure city to **{detected_origin}**. "
             f"Where would you like to go?"
         )
-        state.suggested_replies = ["Paris", "Tokyo", "New York"]
+        pool = _SEASONAL_SUGGESTIONS[_get_season()]
+        state.suggested_replies = random.sample(pool, min(3, len(pool)))
 
         _debug_node_end("router", "🧭", intent="ORIGIN_ONLY_PLANNING", origin=detected_origin)
         return False  # Fall through
@@ -2032,6 +2058,14 @@ async def intent_router(state: GraphState) -> GraphState:
             if state.trip_plan.start_date != old_start or state.trip_plan.end_date != old_end:
                 state.metadata["_post_plan_date_change"] = True
 
+            # Set classification from extraction result — avoids second LLM call at line 2787.
+            classification = IntentClassification(
+                intent=router_output.intent,
+                confidence=router_output.confidence,
+                reasoning="From post-plan extraction",
+                specialist_hints=router_output.specialist_hints,
+            )
+
             # Fall through to planning_intent / exploration
         except Exception as e:
             logger.warning(f"[POST-PLAN] LLM extraction failed: {e}")
@@ -2221,6 +2255,16 @@ async def intent_router(state: GraphState) -> GraphState:
                 # the Architect should NOT re-extract the same message.
                 state.metadata["router_output"] = extracted_router_output
                 state.metadata["router_extracted_fields"] = True
+
+                # Set classification from extraction result — RouterOutput already
+                # classifies intent. Avoids a second _classify_intent_with_llm call
+                # at the bottom of the function (~900ms / 637 tokens saved).
+                classification = IntentClassification(
+                    intent=router_output.intent,
+                    confidence=router_output.confidence,
+                    reasoning="From opportunistic extraction",
+                    specialist_hints=router_output.specialist_hints,
+                )
 
                 # === INPUT GATE VALIDATION ===
                 if _run_input_gates(state):

@@ -508,7 +508,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
       const branch = branchState.branches.find((b) => b.id === branchId);
       if (!branch) {
-        console.error('[handleBookTrip] Branch not found! branchId:', branchId, 'available IDs:', branchState.branches.map(b => b.id));
+        debugLog('[handleBookTrip] Branch not found! branchId:', branchId, 'available IDs:', branchState.branches.map(b => b.id));
         return;
       }
 

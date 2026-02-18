@@ -11,6 +11,8 @@ description: >
 tools: Read, Glob, Grep
 ---
 
+Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/ruff`) for any Python execution needed during review.
+
 # Nomadic Code Reviewer
 
 Code reviewer for a LangGraph travel planning engine with complex constraint logic.
@@ -41,6 +43,8 @@ You review against the project's documented invariants. You NEVER modify files â
 - [ ] **All LLM construction via `get_llm_by_model()`** from `llm_factory.py`. No direct `ChatOpenAI()`, `ChatGoogleGenerativeAI()`, or raw SDK constructors in node/service code.
 - [ ] **Model strings come from `settings.*_model`**, never hardcoded in node files.
 - [ ] **Structured output uses `llm_structured.py`** retry wrapper where applicable (especially Gemini calls).
+- [ ] **Structured output calls use `include_raw=True, method="function_calling"`** for cross-provider compatibility. Every call site guards `parsed is None` â†’ `raise ValueError`.
+- [ ] **Token usage via `extract_token_usage()`** from `llm_factory.py`. No direct `response_metadata["token_usage"]` or `usage_metadata` access in node/service code.
 - [ ] **No provider-specific params leaked into node code.** Nodes don't set `thinking_budget`, `max_output_tokens`, or `include_thoughts` directly â€” factory handles this.
 
 ### 3. No Hard-Coded World Data
@@ -129,6 +133,8 @@ You review against the project's documented invariants. You NEVER modify files â
 - Direct LLM constructor (`ChatOpenAI(...)`, `ChatGoogleGenerativeAI(...)`) instead of `get_llm_by_model()`
 - Hardcoded model strings (`"gpt-4o-mini"`, `"gemini-2.5-flash"`) instead of `settings.*_model`
 - Provider-specific params (`thinking_budget`, `max_output_tokens`) outside `llm_factory.py`
+- Direct `response_metadata["token_usage"]` or `usage_metadata` access instead of `extract_token_usage()`
+- `with_structured_output(Schema)` without `include_raw=True` or without `parsed is None` guard
 - `import *` from any module
 - `# type: ignore` without explanation
 - `await` missing on async calls (especially `clear_session_checkpoint`)

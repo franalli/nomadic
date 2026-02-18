@@ -11,6 +11,8 @@ description: >
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
+Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/pytest`, `backend/.venv/bin/ruff`) for all Python execution in this project.
+
 # Nomadic Backend Specialist
 
 Backend engineer for a LangGraph travel planning engine.
@@ -101,6 +103,8 @@ All keywords, constraints, cross-domain blocks, aliases, feasibility flags come 
 ### LLM Factory
 
 `llm_factory.py` auto-detects provider from model string prefix. Gemini models get `thinking_budget=0`, `include_thoughts=False`, and 30% `max_output_tokens` headroom automatically. For structured output with retry, use `llm_structured.py`.
+
+**Structured output pattern (all nodes):** Always use `llm.with_structured_output(Schema, include_raw=True, method="function_calling")`. Check `parsed is None` → raise `ValueError`. Use `extract_token_usage(raw, model=...)` from `llm_factory.py` for provider-agnostic token tracking (handles both OpenAI `response_metadata["token_usage"]` and Gemini `usage_metadata`).
 
 ## Code Style
 

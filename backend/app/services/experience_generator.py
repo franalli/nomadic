@@ -387,24 +387,37 @@ async def generate_single_category(
         max_tokens = min(600 + extra_tiles * 100, 1200)
 
         llm = get_llm_by_model(settings.experience_model, temperature=0.3, max_tokens=max_tokens)
-        # Use compressed schema without include_raw (token logging via usage_metadata when fixed)
-        structured_llm = llm.with_structured_output(ExperienceOutput)
+        structured_llm = llm.with_structured_output(ExperienceOutput, include_raw=True)
 
         user_prompt = _build_user_prompt(
             destination, [category], month, budget, tier1_specialists, tiles_per_category
         )
 
-        parsed: ExperienceOutput = await structured_llm.ainvoke(
+        result = await structured_llm.ainvoke(
             [
                 SystemMessage(content=SYSTEM_PROMPT),
                 HumanMessage(content=user_prompt),
             ]
         )
 
+        if isinstance(result, dict) and "parsed" in result:
+            parsed: ExperienceOutput = result["parsed"]
+            raw = result.get("raw")
+            if parsed is None:
+                raise ValueError("Structured output returned parsed=None")
+        elif hasattr(result, "model_fields"):
+            parsed = result
+            raw = None
+        else:
+            raise ValueError(f"Unexpected structured output type: {type(result).__name__}")
+
+        from app.planner.llm_factory import extract_token_usage
+
+        token_usage = extract_token_usage(raw, model=settings.experience_model)
         duration_ms = int((time.time() - start_t) * 1000)
         logger.info(
             f"[EXPERIENCE] Generated {len(parsed.activities)} tiles in {duration_ms}ms"
-            f" for {category}"
+            f" for {category}" + (f" tokens={token_usage}" if token_usage else "")
         )
 
     except Exception as e:
@@ -683,18 +696,35 @@ async def _generate_experiences_impl(
                 llm = get_llm_by_model(
                     settings.experience_model, temperature=0.3, max_tokens=max_tokens
                 )
-                structured_llm = llm.with_structured_output(ExperienceOutput)
+                structured_llm = llm.with_structured_output(ExperienceOutput, include_raw=True)
 
                 user_prompt = _build_user_prompt(
                     destination, new_cats, month, budget, tier1_specialists, tiles_per_category
                 )
 
-                parsed: ExperienceOutput = await structured_llm.ainvoke(
+                result = await structured_llm.ainvoke(
                     [
                         SystemMessage(content=SYSTEM_PROMPT),
                         HumanMessage(content=user_prompt),
                     ]
                 )
+
+                if isinstance(result, dict) and "parsed" in result:
+                    parsed: ExperienceOutput = result["parsed"]
+                    raw = result.get("raw")
+                    if parsed is None:
+                        raise ValueError("Structured output returned parsed=None")
+                elif hasattr(result, "model_fields"):
+                    parsed = result
+                    raw = None
+                else:
+                    raise ValueError(f"Unexpected structured output type: {type(result).__name__}")
+
+                from app.planner.llm_factory import extract_token_usage
+
+                token_usage = extract_token_usage(raw, model=settings.experience_model)
+                if token_usage:
+                    logger.info(f"[EXPERIENCE] Batch tokens={token_usage}")
 
                 for tile in parsed.activities:
                     if tile.duration_hours > 4:

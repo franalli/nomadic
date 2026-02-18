@@ -46,24 +46,9 @@ class LocalRecommendation(BaseModel):
 
 
 # --- Comprehensive Category Models ---
-
-
-class TippingInfo(BaseModel):
-    """Tipping culture details."""
-
-    restaurants: str = Field(default="", description="Restaurant tipping norm")
-    taxis: str = Field(default="", description="Taxi tipping norm")
-    hotels: str = Field(default="", description="Hotel tipping norm")
-
-
-class TypicalCosts(BaseModel):
-    """Typical costs for common items."""
-
-    budget_meal: str = Field(default="", description="Budget meal cost")
-    mid_range_meal: str = Field(default="", description="Mid-range meal cost")
-    beer: str = Field(default="", description="Beer cost")
-    taxi_per_km: str = Field(default="", description="Taxi cost per km")
-    attraction_entry: str = Field(default="", description="Typical attraction entry")
+# Tier 2 slim: removed unused sub-models (TippingInfo, TypicalCosts, PublicTransit,
+# ScooterRental, DayTrip, HiddenGem) and unused fields within kept models.
+# Frontend field-access audit confirmed these are never rendered.
 
 
 class DailyBudget(BaseModel):
@@ -80,8 +65,6 @@ class MoneyCosts(BaseModel):
     currency: str = Field(default="", description="Currency name and code")
     exchange_tip: str = Field(default="", description="Where/how to exchange")
     atm_note: str = Field(default="", description="ATM fees and card acceptance")
-    tipping: TippingInfo = Field(default_factory=TippingInfo)
-    typical_costs: TypicalCosts = Field(default_factory=TypicalCosts)
     daily_budget: DailyBudget = Field(default_factory=DailyBudget)
     haggling: str = Field(default="", description="Haggling norm (Expected/Acceptable/Not done)")
 
@@ -92,34 +75,13 @@ class AirportTransfer(BaseModel):
     method: str = Field(description="Transfer method (Taxi, Bus, Train, etc.)")
     price: str = Field(default="", description="Price estimate")
     time: str = Field(default="", description="Duration")
-    tip: str = Field(default="", description="Booking/usage tip")
-
-
-class PublicTransit(BaseModel):
-    """Public transit information."""
-
-    has_metro: bool = Field(default=False)
-    has_bus: bool = Field(default=True)
-    transit_card: str = Field(default="", description="Name of transit card if exists")
-    cost_per_ride: str = Field(default="", description="Cost per ride")
-
-
-class ScooterRental(BaseModel):
-    """Scooter/bike rental info."""
-
-    available: bool = Field(default=False)
-    daily_rate: str = Field(default="", description="Daily rental rate")
-    license_required: bool = Field(default=True, description="International license required?")
-    recommendation: str = Field(default="", description="Safety recommendation")
 
 
 class Transportation(BaseModel):
     """Transportation information."""
 
     airport_to_city: List[AirportTransfer] = Field(default_factory=list)
-    public_transit: PublicTransit = Field(default_factory=PublicTransit)
     ride_apps: List[str] = Field(default_factory=list, description="Available ride-hailing apps")
-    scooter_rental: ScooterRental = Field(default_factory=ScooterRental)
     traffic_note: str = Field(default="", description="Traffic considerations")
 
 
@@ -127,7 +89,6 @@ class DressCode(BaseModel):
     """Dress code requirements."""
 
     temples: str = Field(default="", description="Temple dress requirements")
-    beaches: str = Field(default="", description="Beach dress norms")
     restaurants: str = Field(default="", description="Restaurant dress expectations")
 
 
@@ -135,10 +96,7 @@ class CulturalNorms(BaseModel):
     """Cultural norms and etiquette."""
 
     dress_code: DressCode = Field(default_factory=DressCode)
-    religious_notes: str = Field(default="", description="Key religious considerations")
     greetings: str = Field(default="", description="How locals greet")
-    photo_etiquette: str = Field(default="", description="Photography rules")
-    dining_etiquette: List[str] = Field(default_factory=list)
     lgbtq_friendly: str = Field(default="", description="LGBTQ+ friendliness")
     important_taboos: List[str] = Field(default_factory=list)
 
@@ -148,20 +106,14 @@ class SafetyHealth(BaseModel):
 
     overall_safety: str = Field(default="Safe", description="Overall safety rating")
     tap_water_safe: bool = Field(default=False)
-    street_food_safe: bool = Field(default=True)
     common_concerns: List[str] = Field(default_factory=list)
     emergency_number: str = Field(default="", description="Emergency contact")
     nearest_hospital: str = Field(default="", description="Tourist-friendly hospital")
-    vaccinations: List[str] = Field(default_factory=list)
-    areas_to_avoid: List[str] = Field(default_factory=list)
 
 
 class VisaEntry(BaseModel):
     """Visa and entry requirements."""
 
-    visa_free_for: List[str] = Field(
-        default_factory=list, description="Countries with visa-free entry"
-    )
     visa_on_arrival: bool = Field(default=False)
     max_stay_days: int = Field(default=30)
     passport_validity_months: int = Field(default=6)
@@ -176,9 +128,7 @@ class Connectivity(BaseModel):
     sim_cost: str = Field(default="")
     where_to_buy: str = Field(default="")
     esim_works: bool = Field(default=True)
-    wifi_quality: str = Field(default="Good")
     essential_apps: List[str] = Field(default_factory=list)
-    vpn_needed: bool = Field(default=False)
 
 
 class Festival(BaseModel):
@@ -193,7 +143,6 @@ class Seasonality(BaseModel):
     """Seasonal information."""
 
     best_months: List[str] = Field(default_factory=list)
-    avoid_months: List[str] = Field(default_factory=list)
     high_season: str = Field(default="", description="High season period and implications")
     rainy_season: str = Field(default="", description="Rainy season details")
     major_festivals: List[Festival] = Field(default_factory=list)
@@ -206,32 +155,13 @@ class MustDoExperience(BaseModel):
     name: str = Field(description="Experience name")
     why: str = Field(default="", description="Why it's special")
     booking: str = Field(default="", description="Booking requirement")
-    best_time: str = Field(default="", description="Best time to visit")
     cost: str = Field(default="", description="Cost estimate")
-
-
-class DayTrip(BaseModel):
-    """Day trip destination."""
-
-    destination: str = Field(description="Destination name")
-    distance: str = Field(default="", description="Distance/travel time")
-    highlight: str = Field(default="", description="Main highlight")
-
-
-class HiddenGem(BaseModel):
-    """Local hidden gem."""
-
-    name: str = Field(description="Place name")
-    why: str = Field(default="", description="Why tourists miss it")
-    tip: str = Field(default="", description="How to experience it")
 
 
 class ThingsToDo(BaseModel):
     """Things to do information."""
 
     must_do: List[MustDoExperience] = Field(default_factory=list)
-    day_trips: List[DayTrip] = Field(default_factory=list)
-    hidden_gems: List[HiddenGem] = Field(default_factory=list)
     skip_these: List[str] = Field(default_factory=list, description="Overrated tourist traps")
 
 
@@ -242,7 +172,6 @@ class Neighborhood(BaseModel):
     vibe: str = Field(default="", description="Area vibe/description")
     best_for: List[str] = Field(default_factory=list)
     price_range: str = Field(default="", description="Price range (Budget/Mid-range/Luxury)")
-    walkability: str = Field(default="", description="Walkability (High/Medium/Need transport)")
 
 
 class Neighborhoods(BaseModel):
@@ -264,7 +193,6 @@ class AccommodationPrices(BaseModel):
 class Accommodation(BaseModel):
     """Accommodation information."""
 
-    types_available: List[str] = Field(default_factory=list)
     booking_platforms: List[str] = Field(default_factory=list)
     price_ranges: AccommodationPrices = Field(default_factory=AccommodationPrices)
     book_ahead: str = Field(default="", description="Booking lead time advice")
@@ -282,7 +210,6 @@ class ScamsTraps(BaseModel):
     """Scams and tourist traps information."""
 
     common_scams: List[Scam] = Field(default_factory=list)
-    tourist_traps: List[str] = Field(default_factory=list)
     taxi_scam_tip: str = Field(default="", description="How to avoid taxi scams")
     general_advice: str = Field(default="", description="Overall safety advice")
 
@@ -300,9 +227,7 @@ class Packing(BaseModel):
 
     must_pack: List[str] = Field(default_factory=list)
     dont_bring: List[str] = Field(default_factory=list)
-    buy_locally: List[str] = Field(default_factory=list)
     electrical: ElectricalInfo = Field(default_factory=ElectricalInfo)
-    clothing_tips: List[str] = Field(default_factory=list)
 
 
 class DestinationOverview(BaseModel):
@@ -543,3 +468,16 @@ def _get_constraint_context(destination: str) -> str:
         severity_tag = "[WARNING]" if c["severity"] == "warning" else "[INFO]"
         lines.append(f"- {severity_tag} ({c['type']}) {c['desc']}")
     return "\n".join(lines)
+
+
+def _get_constraints_as_list(destination: str) -> list[dict]:
+    """Return raw constraint dicts for a destination (no formatting).
+
+    Used by Phase A skeleton to build constraints_applied instantly,
+    without any LLM call.
+    """
+    dest_lower = destination.lower().strip()
+    for key in LOCAL_EXPERT_CONSTRAINTS:
+        if key in dest_lower or dest_lower in key:
+            return LOCAL_EXPERT_CONSTRAINTS[key]
+    return []

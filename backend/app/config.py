@@ -84,16 +84,22 @@ class Settings(BaseSettings):
     # =============================================================================
     # intent_router, router_extraction, specialist feasibility
     router_model: str = os.getenv("ROUTER_MODEL", "gpt-4o-mini")
-    # trip_architect, local_expert LLM
+    # trip_architect LLM
     extraction_model: str = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")
+    # local_expert LLM — uses prompt-based JSON parsing (not function_calling)
+    # to avoid Gemini $defs limitation
+    local_expert_model: str = os.getenv("LOCAL_EXPERT_MODEL", "gpt-4o-mini")
+    local_expert_use_llm: bool = True  # Set LOCAL_EXPERT_USE_LLM=false to disable LLM (tests/debug)
     # vertical_specialist domain reasoning
     specialist_model: str = os.getenv("SPECIALIST_MODEL", "gpt-4o")
     # constraint_guard place validation
     guard_model: str = os.getenv("GUARD_MODEL", "gpt-4o-mini")
     # synthesizer planning responses
-    synthesizer_planning_model: str = os.getenv("SYNTHESIZER_PLANNING_MODEL", "gpt-4o")
+    synthesizer_planning_model: str = os.getenv("SYNTHESIZER_PLANNING_MODEL", "gemini-2.5-flash")
     # synthesizer exploration/specialist_update
-    synthesizer_exploration_model: str = os.getenv("SYNTHESIZER_EXPLORATION_MODEL", "gpt-4o-mini")
+    synthesizer_exploration_model: str = os.getenv(
+        "SYNTHESIZER_EXPLORATION_MODEL", "gemini-2.5-flash"
+    )
     # Tier 2 activity generation (experience_generator.py)
     experience_model: str = os.getenv("EXPERIENCE_MODEL", "gpt-4o-mini")
     # airport code extraction (iata_resolver.py)
@@ -154,7 +160,7 @@ class Settings(BaseSettings):
     fuzzy_match_score_cutoff: int = 76  # rapidfuzz typo resolution threshold
     confidence_threshold_skip_router: float = 0.92  # Confidence to skip LLM router
     tier2_prefetch_wait_budget_ms: int = int(os.getenv("TIER2_PREFETCH_WAIT_BUDGET_MS", "350"))
-    tier2_generation_wait_budget_ms: int = int(os.getenv("TIER2_GENERATION_WAIT_BUDGET_MS", "2500"))
+    tier2_generation_wait_budget_ms: int = int(os.getenv("TIER2_GENERATION_WAIT_BUDGET_MS", "4000"))
 
     # =============================================================================
     # Security: Rate Limiting & Admin Access

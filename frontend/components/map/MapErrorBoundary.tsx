@@ -3,6 +3,7 @@
 import { MapPin } from 'lucide-react';
 import { Component, type ReactNode } from 'react';
 
+import { debugLog } from '@/lib/debug';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -39,7 +40,7 @@ export class MapErrorBoundary extends Component<Props, State> {
       message.includes('Map container is already removed') ||
       message.includes('Cannot read properties of undefined')
     ) {
-      console.warn('[MapErrorBoundary] Suppressed Mapbox timing error:', message);
+      debugLog('[MapErrorBoundary] Suppressed Mapbox timing error:', message);
       return;
     }
     console.error('[MapErrorBoundary] Map error:', error, errorInfo);
@@ -94,13 +95,13 @@ export class MapErrorBoundary extends Component<Props, State> {
       return (
         <div
           className={cn(
-            'w-full h-full rounded-xl overflow-hidden border border-white/10 bg-zinc-900 flex items-center justify-center',
+            'w-full h-full rounded-xl overflow-hidden border border-zinc-200 dark:border-white/10 bg-zinc-100 dark:bg-zinc-900 flex items-center justify-center',
             this.props.className
           )}
         >
           <div className="text-center p-6">
-            <MapPin className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">Map loading...</p>
+            <MapPin className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
+            <p className="text-sm text-zinc-500">Map loading...</p>
           </div>
         </div>
       );

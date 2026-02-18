@@ -1,3 +1,4 @@
+'use client';
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * BaseSheet
@@ -167,6 +168,7 @@ function DesktopDialog({
                 <button
                   type="button"
                   onClick={() => onOpenChange(false)}
+                  aria-label="Close"
                   className={cn(
                     'p-2 -mr-2 rounded-full',
                     'text-zinc-400 dark:text-zinc-500',
@@ -322,6 +324,7 @@ function MobileSheet({
               <button
                 type="button"
                 onClick={() => onOpenChange(false)}
+                aria-label="Close"
                 className={cn(
                   'p-3 -mr-3 rounded-full',
                   'text-zinc-400 dark:text-zinc-500',

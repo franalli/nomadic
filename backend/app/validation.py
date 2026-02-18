@@ -139,9 +139,17 @@ async def _call_llm_validation_async(
                 temperature=0,
                 max_tokens=settings.validation_max_tokens,
             )
-            structured_llm = llm.with_structured_output(ValidationResponse)
+            structured_llm = llm.with_structured_output(ValidationResponse, include_raw=True)
             result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
-            return result.model_dump()
+            if isinstance(result, dict) and "parsed" in result:
+                parsed = result["parsed"]
+                if parsed is None:
+                    raise ValueError("Structured output returned parsed=None")
+            elif hasattr(result, "model_fields"):
+                parsed = result
+            else:
+                raise ValueError(f"Unexpected structured output type: {type(result).__name__}")
+            return parsed.model_dump()
 
         except Exception as exc:
             last_error = exc

@@ -2135,7 +2135,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             set({ version: responseData.version });
             debugLog('[documentStore] 💜 PATCH success, new version:', responseData.version);
           } else {
-            console.error('[documentStore] 💜 PATCH failed:', res.status);
+            debugLog('[documentStore] 💜 PATCH failed:', res.status);
           }
         } catch (err) {
           console.error('[documentStore] 💜 PATCH error:', err);

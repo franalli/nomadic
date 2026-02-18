@@ -142,11 +142,11 @@ export function ActivityMiniCard({
           {/* Time display */}
           {displayTime && (
             displayTime.type === 'exact' ? (
-              <span className="text-xs font-mono text-muted-foreground">
+              <span className="text-xs font-mono text-zinc-500 dark:text-zinc-400">
                 {displayTime.value}
               </span>
             ) : (
-              <span className={`${DS.textSize.micro} px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wide`}>
+              <span className={`${DS.textSize.micro} px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 uppercase tracking-wide`}>
                 {displayTime.value}
               </span>
             )
@@ -183,20 +183,20 @@ export function ActivityMiniCard({
 
           {/* Duration */}
           {block.duration && (
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
               <Clock className="w-3 h-3" />
               {block.duration}
             </span>
           )}
         </div>
 
-        <h4 className="font-semibold text-sm mt-1.5 line-clamp-2">
+        <h4 className="font-semibold text-sm mt-1.5 line-clamp-2 text-zinc-900 dark:text-white">
           {isUnschedulable ? block.summary : normalizeTitle(block.activity_type || block.summary)}
         </h4>
 
         {/* Description - show summary if different from title (skip for unschedulable, summary IS title) */}
         {!isUnschedulable && block.summary && block.summary !== normalizeTitle(block.activity_type || block.summary) && (
-          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 line-clamp-1">
             {block.summary}
           </p>
         )}
@@ -219,7 +219,7 @@ export function ActivityMiniCard({
         )}
 
         {block.price_estimate && !isUnschedulable && (
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
             ~${block.price_estimate.toLocaleString()}
           </p>
         )}
@@ -294,8 +294,8 @@ export function ActivityMiniCard({
       {isBooked && onUnassign && (
         <Popover open={menuOpen} onOpenChange={setMenuOpen}>
           <PopoverTrigger asChild>
-            <button className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-muted transition-opacity">
-              <MoreVertical className="w-4 h-4 text-muted-foreground" />
+            <button aria-label="More options" className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-zinc-100 dark:hover:bg-white/10 transition-opacity">
+              <MoreVertical className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
             </button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-48 p-1">
@@ -305,7 +305,7 @@ export function ActivityMiniCard({
                   setMenuOpen(false);
                   onBook();
                 }}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted transition-colors"
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
               >
                 <RefreshCw className="w-4 h-4" />
                 Change Selection

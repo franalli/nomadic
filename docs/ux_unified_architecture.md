@@ -2617,10 +2617,10 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 |------|-----------|--------|---------|
 | Arrival/Departure | `LogisticsBlock` | Border-l-4, icon, time | Hard times (flights) |
 | Check-in/out | `LogisticsBlock` | Key icon, hotel name, inline constraints | Accommodation logistics |
-| Safety Buffer | `SafetyBlock` | Red zone, "No Flights until" | Constraint visualization |
+| Safety Buffer | `SafetyBlock` | Red zone, "No Flights until". **Excludes** arrival/departure anchors (those are `LogisticsBlock`, not `SafetyBlock`) | Constraint visualization |
 | Activity | `ActivityMiniCard` | Thumbnail, category badge, duration, time of day, description, constraints, book button | Rich activity display with metadata |
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
-| Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker. Buffer blocks (SafetyBlock) render above FreeDayCard when present | Quick-fill with generated activities or browse |
+| Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker. Buffer blocks (SafetyBlock) render above FreeDayCard when present. **Suppressed on arrival and departure days** (no activity placement on travel days) | Quick-fill with generated activities or browse |
 
 **Fill-Day Flow:** FreeDayCard → `fillDay()` API call → backend generates 1 tile via `generate_experience_tiles_for_day(tiles_per_day=1)` → response includes `day_card` + `tiles` map → frontend calls `replaceDayCard()` for surgical day card update + merges tiles into document store (enables hearting/referencing). Generated tiles are tagged with `meta.pinned_day` so the builder won't redistribute them on rebuild. Backend applies adjacent-day constraint filtering (e.g., no altitude activities next to diving days). Categories are optional — when omitted, the generator picks destination-appropriate activities. **Concurrency:** Per-day mutex (`claimFillDay`/`releaseFillDay` in documentStore) prevents concurrent fill-day calls on the same day, frontend stream/regeneration gates (`currentRunId`/generation flags) block fill-day while itinerary updates are in flight, and burst guards throttle repeat calls (1.5s cooldown via `fillDayGuards.ts`) in both timeline and browse-to-pin paths. `fillDay()` in api.ts syncs the document version from the response (`useDocumentStore.setState({ version })`) to prevent 409 cascades and preserves backend `detail` text for surfaced 429/rejection toasts.
 

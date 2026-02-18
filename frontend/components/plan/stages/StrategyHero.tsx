@@ -1,3 +1,4 @@
+'use client';
 // TODO: DS spacing audit — requires visual QA pass
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
@@ -82,7 +83,7 @@ const SPECIALIST_STYLE_CLASSES: Record<string, { light: string; icon: string }> 
   surfing: { light: 'bg-indigo-50', icon: 'text-indigo-600 dark:text-indigo-400' },
   climbing: { light: 'bg-orange-50', icon: 'text-orange-600 dark:text-orange-400' },
   wildlife_safari: { light: 'bg-amber-50', icon: 'text-amber-600 dark:text-amber-400' },
-  local_expert: { light: 'bg-purple-50', icon: 'text-purple-600 dark:text-purple-400' },
+  local_expert: { light: 'bg-zinc-100', icon: 'text-zinc-600 dark:text-zinc-400' },
   general: { light: 'bg-emerald-50', icon: 'text-emerald-600 dark:text-emerald-400' },
 };
 const DEFAULT_STYLE = { light: 'bg-zinc-50', icon: 'text-zinc-600 dark:text-zinc-400' };
@@ -1622,7 +1623,7 @@ export function StrategyHero({
 
             {/* One-liner */}
             {section.one_liner && (
-              <p className="text-sm italic text-muted-foreground">{section.one_liner}</p>
+              <p className="text-sm italic text-zinc-500 dark:text-zinc-400">{section.one_liner}</p>
             )}
 
             {/* Principles */}
@@ -1655,7 +1656,7 @@ export function StrategyHero({
                         )}
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{item.title}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{item.description}</p>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 line-clamp-2">{item.description}</p>
                           {item.logic_hook && (
                             <p className={`${DS.textSize.micro} text-emerald-600 dark:text-emerald-400 mt-1 font-medium`}>
                               💡 {item.logic_hook}
@@ -1716,7 +1717,7 @@ export function StrategyHero({
                             {formatConstraintRule(c.rule)}
                           </p>
                           {c.reason && (
-                            <p className="text-xs text-muted-foreground mt-0.5">{c.reason}</p>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{c.reason}</p>
                           )}
                         </div>
                       </div>
@@ -1756,7 +1757,7 @@ export function StrategyHero({
                         )}
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{item.title}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{item.description}</p>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 line-clamp-2">{item.description}</p>
                           {item.logic_hook && (
                             <p className={`${DS.textSize.micro} text-emerald-600 dark:text-emerald-400 mt-1 font-medium`}>
                               💡 {item.logic_hook}

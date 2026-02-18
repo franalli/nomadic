@@ -1,3 +1,4 @@
+'use client';
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * PlanHeader
@@ -115,14 +116,14 @@ export function PlanHeader({
   if (isCollapsed) {
     return (
       <div className="relative flex-shrink-0">
-        <div className="border-b border-border bg-secondary dark:bg-card dark:border-border/60">
+        <div className="border-b border-zinc-200 dark:border-white/5 bg-white dark:bg-zinc-950/80 backdrop-blur-xl">
           <div className="flex items-center justify-between px-4 py-2">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-foreground">
+              <span className="text-sm font-medium text-zinc-900 dark:text-white">
                 {title || 'Plan your trip'}
               </span>
               {dateRangeText && (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
                   ({dateRangeText})
                 </span>
               )}

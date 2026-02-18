@@ -558,16 +558,21 @@ export function TimelineThread({
                 const blocksToRender = useRichBlocks ? filterBlocks(card.blocks) : card.blocks;
 
                 // Separate buffer blocks (safety constraints) from content blocks
-                const bufferBlocks = blocksToRender.filter(b => b.is_buffer);
+                // Exclude arrival/departure anchors from the SafetyBlock rendering path —
+                // those are logistics blocks handled by LogisticsBlock, not SafetyBlock.
+                const bufferBlocks = blocksToRender.filter(
+                  b => b.is_buffer && b.buffer_type !== 'arrival' && b.buffer_type !== 'departure'
+                );
                 const contentBlocks = blocksToRender.filter(b => !b.is_buffer);
 
                 // Empty day or only free_day placeholder → interactive FreeDayCard
                 // Buffer blocks render as SafetyBlock above the FreeDayCard
-                // Never show FreeDayCard on departure day (no activity placement)
+                // Never show FreeDayCard on arrival or departure days
+                const isArrival = card.blocks.some(b => b.buffer_type === 'arrival');
                 const isDeparture = card.blocks.some(b => b.buffer_type === 'departure');
                 const hasOnlyFreeDay = contentBlocks.length === 1
                   && contentBlocks[0].activity_type === 'free_day';
-                if (useRichBlocks && !isDeparture && (contentBlocks.length === 0 || hasOnlyFreeDay)) {
+                if (useRichBlocks && !isArrival && !isDeparture && (contentBlocks.length === 0 || hasOnlyFreeDay)) {
                   return (
                     <>
                       {bufferBlocks.map((block, i) => {

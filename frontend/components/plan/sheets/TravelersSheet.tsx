@@ -1,3 +1,4 @@
+'use client';
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * TravelersSheet
@@ -79,6 +80,7 @@ function Stepper({ label, value, min, max, onChange }: StepperProps) {
           type="button"
           onClick={() => canDecrement && onChange(value - 1)}
           disabled={!canDecrement}
+          aria-label={`Decrease ${label}`}
           className={canDecrement ? buttonEnabled : buttonDisabled}
         >
           <Minus className="h-5 w-5" />
@@ -90,6 +92,7 @@ function Stepper({ label, value, min, max, onChange }: StepperProps) {
           type="button"
           onClick={() => canIncrement && onChange(value + 1)}
           disabled={!canIncrement}
+          aria-label={`Increase ${label}`}
           className={canIncrement ? buttonEnabled : buttonDisabled}
         >
           <Plus className="h-5 w-5" />

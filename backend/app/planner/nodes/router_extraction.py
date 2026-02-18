@@ -800,7 +800,9 @@ async def _classify_and_extract_with_llm(
             llm = _get_router_extraction_llm()
 
             # Use structured output for reliable JSON parsing
-            structured_llm = llm.with_structured_output(RouterOutput, include_raw=True)
+            structured_llm = llm.with_structured_output(
+                RouterOutput, include_raw=True, method="function_calling"
+            )
 
             # Build current trip context for relative date expressions
             current_trip_context = ""
@@ -833,9 +835,9 @@ async def _classify_and_extract_with_llm(
             if parsed is None:
                 raise ValueError("Structured output returned None (likely ambiguous short input)")
             raw = result["raw"]
-            token_usage = {}
-            if hasattr(raw, "response_metadata"):
-                token_usage = raw.response_metadata.get("token_usage", {})
+            from app.planner.llm_factory import extract_token_usage
+
+            token_usage = extract_token_usage(raw, model=settings.extraction_model)
 
             # =================================================================
             # VALIDATE & NORMALIZE EXTRACTED FIELDS

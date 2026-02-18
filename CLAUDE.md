@@ -2,10 +2,10 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** Gemini 2.5 Flash migration via llm_factory
-- **Active files:** llm_factory.py, node files (router_extraction, intent_router, trip_architect, local_expert, vertical_specialist, synthesizer, experience_generator, iata_resolver, validation)
-- **Known broken:** `test_facade_exports_meta_helpers` (missing init_turn_metadata export), `test_full_graph_execution` (KeyError)
-- **Frozen:** itinerary_builder.py, specialist_registry.py structure
+- **Focus:** Streaming progressive rendering + LLM factory consolidation + Synthesizer template bypass + LocalExpert skeleton-first (Phase A/B)
+- **Active files:** plan_graph.py, llm_factory.py, synthesizer.py, vertical_specialist.py, local_expert.py, intent_router.py, trip_architect.py, router_extraction.py, experience_generator.py, config.py, streaming.py, frontend/lib/api.ts, frontend/components/chat/ChatPanel.tsx
+- **Known broken:** `test_full_graph_execution` (KeyError)
+- **Frozen:** itinerary_builder.py, specialist_registry.py structure, synthesizer model routing (`_MODEL_BY_COMPLEXITY`)
 
 ---
 

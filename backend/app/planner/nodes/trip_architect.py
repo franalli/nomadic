@@ -50,7 +50,9 @@ async def _extract_fields_with_llm(
     Returns tuple of (ExtractedTripFields, token_usage_dict).
     """
     llm = get_llm_by_model(settings.extraction_model, temperature=0)
-    structured_llm = llm.with_structured_output(ExtractedTripFields, include_raw=True)
+    structured_llm = llm.with_structured_output(
+        ExtractedTripFields, include_raw=True, method="function_calling"
+    )
 
     # Inject current date for relative date resolution
     today = datetime.now()
@@ -101,10 +103,12 @@ USER MESSAGE: {user_text}
         result = await structured_llm.ainvoke(prompt)
         # Extract parsed result and token usage
         parsed = result["parsed"]
+        if parsed is None:
+            raise ValueError("Structured output returned parsed=None")
         raw = result["raw"]
-        token_usage = {}
-        if hasattr(raw, "response_metadata"):
-            token_usage = raw.response_metadata.get("token_usage", {})
+        from app.planner.llm_factory import extract_token_usage
+
+        token_usage = extract_token_usage(raw, model=settings.extraction_model)
         logger.debug(f"LLM extracted fields: {parsed}")
         return parsed, token_usage
     except Exception as e:
@@ -197,17 +201,21 @@ async def _extract_settings_with_llm(user_text: str) -> tuple[ExtractedSettingsF
     Returns tuple of (ExtractedSettingsFields, token_usage_dict).
     """
     llm = get_llm_by_model(settings.extraction_model, temperature=0)
-    structured_llm = llm.with_structured_output(ExtractedSettingsFields, include_raw=True)
+    structured_llm = llm.with_structured_output(
+        ExtractedSettingsFields, include_raw=True, method="function_calling"
+    )
 
     prompt = SETTINGS_EXTRACTION_PROMPT.format(user_text=user_text)
 
     try:
         result = await structured_llm.ainvoke(prompt)
         parsed = result["parsed"]
+        if parsed is None:
+            raise ValueError("Structured output returned parsed=None")
         raw = result["raw"]
-        token_usage = {}
-        if hasattr(raw, "response_metadata"):
-            token_usage = raw.response_metadata.get("token_usage", {})
+        from app.planner.llm_factory import extract_token_usage
+
+        token_usage = extract_token_usage(raw, model=settings.extraction_model)
         logger.debug(f"LLM extracted settings: {parsed}")
         return parsed, token_usage
     except Exception as e:

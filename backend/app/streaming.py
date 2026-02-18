@@ -61,6 +61,10 @@ from app.services.unsplash import get_image_url_sync
 
 logger = logging.getLogger(__name__)
 
+# Module-level set to hold strong references to background tasks, preventing GC
+# before they complete (asyncio only keeps weak refs to tasks).
+_background_tasks: set = set()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers (moved from main.py — only used by generators)
@@ -439,6 +443,12 @@ async def generate_sse(
             # --- Log user input for DEBUG=full mode ---
             log_user_input(req.message, request_id)
 
+            # Inject session_id into metadata so Phase B (local_expert background
+            # LLM enrichment) can write travel_intelligence back to the DB document.
+            if session_state.get("metadata") is None:
+                session_state["metadata"] = {}
+            session_state["metadata"]["session_id"] = session_id
+
             # Stream tokens from run_turn_streaming with per-event timeout
             # Use route timeout for total stream duration protection
             route_timeout_seconds = settings.graph_plan_route_timeout_ms / 1000.0
@@ -611,9 +621,26 @@ async def generate_sse(
                     )
 
                     await db.commit()
+
+                    # Phase B: fire local_expert LLM enrichment AFTER db.commit() so it
+                    # can't be stomped by apply_planner_update, and runs outside the
+                    # graph's asyncio.timeout() context so it isn't cancelled.
+                    from app.planner.nodes.local_expert import _pending_enrichments
+
+                    _enrich_fn = _pending_enrichments.pop(session_id, None)
+                    if _enrich_fn is not None:
+                        _enrich_task = asyncio.create_task(_enrich_fn())
+                        _background_tasks.add(_enrich_task)
+                        _enrich_task.add_done_callback(_background_tasks.discard)
+                        logger.debug("[SSE] Phase B: local_expert enrichment task fired")
                 except (SQLAlchemyError, ValueError) as e:
                     logger.error(f"[{request_id}] Failed to persist document: {e}")
                     await db.rollback()
+                    # Clean up pending Phase B enrichment so the dict doesn't leak.
+                    # Don't fire enrichment — the Phase A skeleton was not committed.
+                    from app.planner.nodes.local_expert import _pending_enrichments
+
+                    _pending_enrichments.pop(session_id, None)
 
             # Build response document
             response_document = document_data if document_data else PlanDocumentData()

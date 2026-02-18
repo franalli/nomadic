@@ -1,3 +1,5 @@
+Use `backend/.venv` for all Python execution (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/ruff`).
+
 Audit every UI component for visual consistency against `docs/design-system.md`.
 **Full component scan. Not diff-driven.** Read every `.tsx` component file and verify its styling.
 **This command FIXES code to match the spec, and EXTENDS the spec for undocumented elements.**

@@ -1,3 +1,5 @@
+Use `backend/.venv` for all Python execution (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/ruff`, `backend/.venv/bin/alembic`, `backend/.venv/bin/pre-commit`).
+
 Run all build checks matching the actual Render deploy pipeline and pre-commit hooks.
 Auto-fix what you can, report what you can't.
 

@@ -58,6 +58,8 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch) -> Dict[str, MagicMock]:
     name collision between the module and its public function.
 
     Patches:
+    - settings.local_expert_use_llm = False (no real LLM calls in unit tests)
+    - _get_constraints_as_list (returns [] by default — no static constraints)
     - _get_constraint_context (returns empty string by default)
     - build_local_expert_section (returns stub section)
     - upsert_section (no-op)
@@ -67,7 +69,15 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch) -> Dict[str, MagicMock]:
     """
     mocks: Dict[str, MagicMock] = {}
 
-    # Constraint context -- default empty (no known constraints)
+    # Disable LLM for all unit tests — no real API calls
+    monkeypatch.setattr(_le_mod.settings, "local_expert_use_llm", False)
+
+    # Static constraints list (Phase A) -- default empty
+    mock_constraints_list = MagicMock(return_value=[])
+    monkeypatch.setattr(_le_mod, "_get_constraints_as_list", mock_constraints_list)
+    mocks["constraints_list"] = mock_constraints_list
+
+    # Constraint context (Phase B prompt injection) -- default empty
     mock_constraint_ctx = MagicMock(return_value="")
     monkeypatch.setattr(_le_mod, "_get_constraint_context", mock_constraint_ctx)
     mocks["constraint_context"] = mock_constraint_ctx
@@ -196,11 +206,15 @@ class TestCacheHit:
 
 class TestCacheMiss:
     """When cached section title does not contain current destination,
-    the node runs the full pipeline."""
+    the node runs the full pipeline (Phase A skeleton)."""
 
     @pytest.mark.asyncio
     async def test_cache_miss_runs_pipeline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
+        """Cache miss triggers Phase A skeleton build.
+
+        Phase A uses _get_constraints_as_list (not _get_constraint_context).
+        _get_constraint_context is only called in Phase B (LLM disabled here).
+        """
         mocks = _patch_common(monkeypatch)
         state = _make_state(
             destination="Paris",
@@ -217,8 +231,9 @@ class TestCacheMiss:
 
         result = await _le_mod.local_expert(state)
 
-        # Full pipeline executed (LLM disabled → fallback path)
-        mocks["constraint_context"].assert_called_once_with("Paris")
+        # Phase A: static constraint list called with destination
+        mocks["constraints_list"].assert_called_once_with("Paris")
+        # Section built and upserted
         mocks["build_section"].assert_called_once()
         mocks["upsert_section"].assert_called_once()
         mocks["mark_topic"].assert_called_once()
@@ -226,8 +241,7 @@ class TestCacheMiss:
 
     @pytest.mark.asyncio
     async def test_no_cached_section_runs_pipeline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When no cached section exists at all, runs full pipeline."""
-        monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
+        """When no cached section exists at all, Phase A runs full skeleton pipeline."""
         mocks = _patch_common(monkeypatch)
         state = _make_state(
             destination="Rome",
@@ -237,7 +251,8 @@ class TestCacheMiss:
 
         await _le_mod.local_expert(state)
 
-        mocks["constraint_context"].assert_called_once_with("Rome")
+        # Phase A: static constraint list called with destination
+        mocks["constraints_list"].assert_called_once_with("Rome")
         mocks["build_section"].assert_called_once()
 
 
@@ -247,27 +262,33 @@ class TestCacheMiss:
 
 
 class TestLlmDisabledFallback:
-    """When LLM is disabled, node still builds a section with fallback content.
-    Constraint context is injected but LLM is skipped, producing empty output
-    that triggers the 'Explore {dest}' fallback."""
+    """When LLM is disabled, Phase A skeleton is built instantly from static data.
+
+    In the skeleton-first architecture:
+    - Phase A always runs (builds skeleton with static constraints, empty must_dos/content_added)
+    - Phase B (LLM enrichment) is skipped when local_expert_use_llm=False
+    - travel_intelligence starts as {} and is populated asynchronously by Phase B
+    """
 
     @pytest.mark.asyncio
     async def test_fallback_section_built_with_llm_disabled(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
         mocks = _patch_common(monkeypatch)
 
         state = _make_state(destination="Bali", active_specialist="local_expert")
 
         result = await _le_mod.local_expert(state)
 
-        # build_local_expert_section called with fallback data
+        # Phase A skeleton built
         mocks["build_section"].assert_called_once()
         call_kwargs = mocks["build_section"].call_args
         assert call_kwargs.kwargs["destination"] == "Bali"
-        # Fallback "Explore Bali" recommendation
-        assert "Explore Bali" in call_kwargs.kwargs["must_dos"]
+        # Skeleton has empty must_dos and content_added (Phase B populates them)
+        assert call_kwargs.kwargs["must_dos"] == []
+        assert call_kwargs.kwargs["content_added"] == []
+        # travel_intelligence is empty dict in skeleton
+        assert call_kwargs.kwargs["travel_intelligence"] == {}
 
         # State tracking
         assert result.metadata.get("local_expert_ran") is True
@@ -276,7 +297,6 @@ class TestLlmDisabledFallback:
 
     @pytest.mark.asyncio
     async def test_upsert_and_mark_called(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
         mocks = _patch_common(monkeypatch)
 
         state = _make_state(destination="Paris", active_specialist="local_expert")
@@ -297,14 +317,21 @@ class TestLlmDisabledFallback:
 
 
 class TestEmptyKnowledgeFallback:
-    """When LLM is disabled and no constraints/recommendations exist,
-    node creates a fallback 'Explore {dest}' recommendation."""
+    """Phase A skeleton for destinations with no static constraint data.
+
+    In the skeleton-first architecture, Phase A always produces an instant section
+    with empty must_dos/content_added/travel_intelligence. Phase B (LLM) enriches
+    asynchronously. There is no synchronous "Explore {dest}" fallback anymore.
+    """
 
     @pytest.mark.asyncio
     async def test_fallback_recommendation_created(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
+        """Phase A builds skeleton with empty content for unknown destination.
+
+        No static constraints → constraints_applied=[], must_dos=[], content_added=[].
+        Phase B (disabled in tests) would add enriched content later.
+        """
         mocks = _patch_common(monkeypatch)
-        # Default mock already returns empty LocalExpertOutput
 
         state = _make_state(destination="Timbuktu", active_specialist="local_expert")
 
@@ -313,23 +340,18 @@ class TestEmptyKnowledgeFallback:
         mocks["build_section"].assert_called_once()
         call_kwargs = mocks["build_section"].call_args
 
-        # must_dos should contain the fallback "Explore Timbuktu"
-        assert "Explore Timbuktu" in call_kwargs.kwargs["must_dos"]
-
-        # content_added should have the fallback recommendation
-        content = call_kwargs.kwargs["content_added"]
-        assert len(content) == 1
-        assert content[0]["title"] == "Explore Timbuktu"
-        assert content[0]["type"] == "general"
-
-        # constraints_applied should be empty (no constraints)
+        # Skeleton: empty lists (Phase B populates async)
+        assert call_kwargs.kwargs["must_dos"] == []
+        assert call_kwargs.kwargs["content_added"] == []
         assert call_kwargs.kwargs["constraints_applied"] == []
+        # one_liner uses destination name
+        assert "Timbuktu" in call_kwargs.kwargs["one_liner"]
 
     @pytest.mark.asyncio
     async def test_fallback_description_includes_destination(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
+        """Phase A one_liner always includes the destination name."""
         mocks = _patch_common(monkeypatch)
 
         state = _make_state(destination="Reykjavik", active_specialist="local_expert")
@@ -337,8 +359,8 @@ class TestEmptyKnowledgeFallback:
         await _le_mod.local_expert(state)
 
         call_kwargs = mocks["build_section"].call_args
-        content = call_kwargs.kwargs["content_added"]
-        assert "Reykjavik" in content[0]["description"]
+        # one_liner format: "Your adventure in {destination}"
+        assert "Reykjavik" in call_kwargs.kwargs["one_liner"]
 
 
 # =============================================================================
@@ -405,7 +427,6 @@ class TestMultiSpecialistQueuePop:
 
     @pytest.mark.asyncio
     async def test_pops_local_expert_from_queue(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
         _patch_common(monkeypatch)
         state = _make_state(
             destination="Rome",
@@ -423,7 +444,6 @@ class TestMultiSpecialistQueuePop:
 
     @pytest.mark.asyncio
     async def test_pops_only_first_from_queue(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
         _patch_common(monkeypatch)
         state = _make_state(
             destination="Amsterdam",
@@ -439,7 +459,6 @@ class TestMultiSpecialistQueuePop:
 
     @pytest.mark.asyncio
     async def test_queue_pop_sets_ui_event(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
         _patch_common(monkeypatch)
         state = _make_state(
             destination="Tokyo",
@@ -454,7 +473,6 @@ class TestMultiSpecialistQueuePop:
     @pytest.mark.asyncio
     async def test_no_pop_when_active_specialist_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """If active_specialist is already set, do not pop from queue."""
-        monkeypatch.setenv("LOCAL_EXPERT_USE_LLM", "false")
         _patch_common(monkeypatch)
         state = _make_state(
             destination="Berlin",

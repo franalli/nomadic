@@ -731,6 +731,46 @@ async def run_turn(
     return format_result(result_state, session_state)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Partial event helpers — safe extraction for dict or GraphState outputs
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _extract_sections(output: Any) -> list | None:
+    """Extract strategy_sections from a node output (dict or GraphState)."""
+    if isinstance(output, dict):
+        meta = output.get("metadata") or {}
+        sections = meta.get("strategy_sections", []) if isinstance(meta, dict) else []
+    elif hasattr(output, "metadata"):
+        meta = output.metadata or {}
+        sections = meta.get("strategy_sections", []) if isinstance(meta, dict) else []
+    else:
+        return None
+    return sections if sections else None
+
+
+def _extract_tiles(output: Any) -> dict | None:
+    """Extract tiles from a node output (dict or GraphState)."""
+    if isinstance(output, dict):
+        tiles = output.get("tiles") or {}
+    elif hasattr(output, "tiles"):
+        tiles = output.tiles or {}
+    else:
+        return None
+    return tiles if tiles else None
+
+
+def _extract_trip_inputs(output: Any) -> dict | None:
+    """Extract trip_inputs from a node output (dict or GraphState)."""
+    if isinstance(output, dict):
+        meta = output.get("metadata") or {}
+    elif hasattr(output, "metadata"):
+        meta = output.metadata or {}
+    else:
+        return None
+    return meta.get("trip_inputs") if isinstance(meta, dict) else None
+
+
 async def run_turn_streaming(
     user_message: str,
     session_state: Optional[Dict[str, Any]] = None,
@@ -768,6 +808,9 @@ async def run_turn_streaming(
         yield {"type": "token", "data": reset_response["assistant_message"]}
         yield {"type": "complete", "data": reset_response}
         return
+
+    # Wall-clock timer — measures TRUE end-to-end latency including all LLM awaits
+    _wall_start = time.monotonic()
 
     # Initialize request metrics for token tracking (compact logging mode)
     metrics = RequestMetrics(start_time=time.time())
@@ -867,6 +910,32 @@ async def run_turn_streaming(
                                     },
                                 }
 
+                            # Partial: emit trip_inputs so setup bar updates early
+                            trip_inputs = _extract_trip_inputs(output)
+                            if trip_inputs:
+                                yield {
+                                    "type": "partial",
+                                    "data": {"kind": "trip_inputs", "payload": trip_inputs},
+                                }
+
+                        # Partial: emit strategy sections after specialist or local_expert completes
+                        elif node in ("specialist", "local_expert"):
+                            sections = _extract_sections(output)
+                            if sections:
+                                yield {
+                                    "type": "partial",
+                                    "data": {"kind": "strategy_sections", "payload": sections},
+                                }
+
+                        # Partial: emit tiles after logistics completes
+                        elif node == "logistics":
+                            tiles = _extract_tiles(output)
+                            if tiles:
+                                yield {
+                                    "type": "partial",
+                                    "data": {"kind": "tiles", "payload": tiles},
+                                }
+
         # Emit final node completion
         if current_node:
             yield {
@@ -954,6 +1023,9 @@ async def run_turn_streaming(
             f"day_cards={len(_doc.get('itinerary_day_cards') or [])} "
             f"view_state={_doc.get('plan_view_state')}"
         )
+
+        _wall_ms = int((time.monotonic() - _wall_start) * 1000)
+        logger.info(f"[WALL_CLOCK] Total request: {_wall_ms}ms")
 
         yield {
             "type": "complete",

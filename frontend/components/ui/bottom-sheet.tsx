@@ -123,6 +123,7 @@ function BottomSheetInner({
               <button
                 type="button"
                 onClick={() => onOpenChange(false)}
+                aria-label="Close"
                 className={cn(
                   'p-2 -mr-2 rounded-full',
                   'text-[var(--theme-text-muted)]',

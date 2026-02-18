@@ -24,7 +24,7 @@ import { useToast } from '@/components/ui/toast';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
-import { type SSENodeStatusEvent, streamGraphPlan } from '@/lib/api';
+import { type SSENodeStatusEvent, type SSEPartialEvent, streamGraphPlan } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { DS } from '@/lib/design-system';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
@@ -924,6 +924,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 setNodeStatus(null);
                 delayedLoader.reset();
                 actionLoader.reset();
+              }
+            },
+            onPartial: (data: SSEPartialEvent['data']) => {
+              // Optimistic preview: render data as nodes complete, before the
+              // complete event. The complete event will reconcile any differences.
+              // Errors here must not crash the stream — wrap defensively.
+              try {
+                const store = useDocumentStore.getState();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const p = data.payload as any;
+                if (data.kind === 'strategy_sections') {
+                  store.mergeEnvelope({ strategy_sections: p });
+                } else if (data.kind === 'tiles') {
+                  store.mergeEnvelope({ tiles: p });
+                } else if (data.kind === 'trip_inputs') {
+                  store.mergeEnvelope({ trip_inputs: p });
+                }
+              } catch (partialError) {
+                console.warn('[SSE] Partial merge failed (will reconcile on complete):', partialError);
               }
             },
             onComplete: (response) => {

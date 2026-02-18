@@ -1,3 +1,4 @@
+'use client';
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * SuggestionCard
@@ -241,6 +242,7 @@ export function SuggestionCard({
         {/* Save button */}
         <button
           onClick={() => onSave?.(tile)}
+          aria-label={isSaved ? 'Remove from trip' : 'Save to trip'}
           className={cn(
             'p-2 rounded-full transition-colors',
             isSaved
@@ -260,7 +262,7 @@ export function SuggestionCard({
       className={cn(
         'rounded-xl overflow-hidden',
         // Light: White glass with visible border and shadow
-        'bg-white/95 border border-zinc-200 shadow-md',
+        'bg-white/95 border border-zinc-200 shadow-card',
         // Dark: Glass fill with subtle border
         'dark:bg-white/5 dark:border-white/10',
         'transition-all duration-150',
@@ -309,6 +311,7 @@ export function SuggestionCard({
           {/* Save button */}
           <button
             onClick={() => onSave?.(tile)}
+            aria-label={isSaved ? 'Remove from trip' : 'Save to trip'}
             className={cn(
               'p-2 rounded-full backdrop-blur-sm transition-colors',
               isSaved

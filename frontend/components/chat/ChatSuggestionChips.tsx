@@ -3,7 +3,6 @@
 
 import { SlidersHorizontal, Sparkles } from 'lucide-react';
 
-import { trackSuggestionClick } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
@@ -75,8 +74,6 @@ export function ChatSuggestionChips({
 
         // Action routing: open_pill -> sheet, send_message -> chat
         const handleChipClick = () => {
-          trackSuggestionClick(chip.message, idx);
-
           if (chip.action_type === 'open_pill' && chip.action_target) {
             const sheetMap: Record<string, () => void> = {
               'dates': () => onOpenSheet?.('dates'),
@@ -129,7 +126,7 @@ export function ChatSuggestionChips({
                 'border-2 border-emerald-500/40 dark:border-emerald-500/30',
                 'text-emerald-700 dark:text-emerald-400',
                 DS.glowClass.chip,
-                'hover:bg-emerald-100 hover:border-emerald-500 hover:shadow-md',
+                'hover:bg-emerald-100 hover:border-emerald-500 dark:hover:shadow-soft',
                 'dark:hover:bg-emerald-900/40 dark:hover:border-emerald-400/50',
               ] : [
                 'bg-white dark:bg-white/5',

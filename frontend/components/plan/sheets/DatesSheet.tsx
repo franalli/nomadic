@@ -1,3 +1,4 @@
+'use client';
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * DatesSheet
@@ -206,6 +207,7 @@ function DatesSheetInner({
               <button
                 type="button"
                 onClick={() => onOpenChange(false)}
+                aria-label="Close"
                 className={cn(
                   'absolute right-4 top-4 z-50',
                   'p-2 rounded-full',
@@ -278,7 +280,7 @@ function DatesSheetInner({
               <div className={cn(
                 'p-4 px-6 flex items-center justify-between',
                 'border-t border-zinc-100 dark:border-white/5',
-                'bg-zinc-50/50 dark:bg-zinc-900/50'
+                'bg-zinc-50/50 dark:bg-zinc-950/50'
               )}>
                 {/* Selection Display */}
                 <div className="flex flex-col">
@@ -298,7 +300,7 @@ function DatesSheetInner({
                       onClick={handleClear}
                       className={cn(
                         'px-4 py-2 text-xs font-bold transition-colors',
-                        'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
+                        'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'
                       )}
                     >
                       Clear

@@ -1,3 +1,5 @@
+Use `backend/.venv` for all Python execution (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/ruff`).
+
 Perform a comprehensive code health audit across the entire frontend and backend codebase.
 **Full repo scan. Not diff-driven, not documentation-driven.** Scan ALL source code unconditionally regardless of what changed recently.
 **Report only. DO NOT modify, fix, or delete anything.** This is a read-only scan that produces a findings report.
@@ -1128,6 +1130,63 @@ Report:
 - Direct langchain provider imports in nodes → **High** (tight coupling; factory should be the only import)
 - Skip: `llm_factory.py` itself, `config.py` (where settings are defined), `debug_utils.py` (pricing tables), test files
 
+### 4G: OpenAI vs Gemini Structured Output Compatibility
+
+Both `ChatOpenAI` and `ChatGoogleGenerativeAI` are used via `llm_factory.py`. Each provider has different constraints for structured output and tool calling. Verify that every call site is compatible with **both** providers — i.e., the factory can swap providers without breaking the call.
+
+```bash
+# 1. Find all with_structured_output() calls across the codebase
+grep -rn "with_structured_output(" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 2. Check for method="json_mode" — NOT supported by Gemini (Gemini uses native function calling)
+grep -rn 'with_structured_output.*method.*=.*"json_mode"\|with_structured_output.*method.*=.*json_mode' backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 3. Check for method="function_calling" — supported by both, but verify it's not hardcoded to OpenAI-only params
+grep -rn 'with_structured_output.*method.*=.*"function_calling"' backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 4. Check for include_raw=True — behavior differs: OpenAI returns AIMessage, Gemini may not populate 'raw' consistently
+grep -rn 'with_structured_output.*include_raw.*=.*True' backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 5. Check for strict=True — OpenAI-only param, silently ignored or errors on Gemini
+grep -rn 'with_structured_output.*strict.*=.*True' backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 6. Check llm_factory.py for how it handles provider-specific structured output differences
+grep -n "with_structured_output\|json_mode\|function_calling\|structured_output\|provider" backend/app/planner/llm_factory.py
+
+# 7. Check for OpenAI response_format param (not supported by Gemini via LangChain)
+grep -rn "response_format" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_ | grep -v llm_factory
+
+# 8. Check for bind_tools() calls — tool schemas must be JSON-schema compatible for both providers
+grep -rn "bind_tools\|\.bind(" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 9. Check for Pydantic models used as structured output schemas — both providers support this, but verify no OpenAI-specific field metadata
+grep -rn "with_structured_output(.*Model\|with_structured_output(.*Schema\|with_structured_output(.*Output\|with_structured_output(.*Response" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 10. Check for any direct ChatOpenAI or ChatGoogleGenerativeAI calls that set provider-specific invoke params
+grep -rn "\.invoke(\|\.ainvoke(" backend/app/planner/nodes/ backend/app/services/ --include="*.py" | grep -v __pycache__ | grep -v test_ | grep -v "llm_factory\|#"
+
+# 11. Check for OpenAI-specific token_usage key in response_metadata (Gemini uses usage_metadata instead)
+# Sites that access result["raw"].response_metadata.get("token_usage") will silently return {} for Gemini
+grep -rn 'response_metadata.*token_usage\|token_usage.*response_metadata' backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# Cross-reference: sites using include_raw=True should use usage_metadata for Gemini compat
+# (Gemini: response.usage_metadata["input_tokens"/"output_tokens"], OpenAI: response_metadata["token_usage"])
+grep -rn "usage_metadata\|token_usage" backend/app/planner/nodes/ backend/app/services/ --include="*.py" | grep -v __pycache__ | grep -v test_
+```
+
+For each finding, assess:
+
+- `method="json_mode"` passed to `with_structured_output` → **Critical** (Gemini does not support `json_mode`; will fail at runtime when Gemini model is configured)
+- `strict=True` in `with_structured_output` → **High** (OpenAI-only param; harmless on Gemini today but may error on future LangChain versions)
+- `include_raw=True` without provider guard → **Medium** (raw message shape differs between OpenAI and Gemini; downstream parsing may fail)
+- `response_format` kwarg set outside `llm_factory.py` → **High** (OpenAI-only; Gemini ignores or errors)
+- `bind_tools()` with OpenAI-specific tool schema fields (e.g., `strict`, `additionalProperties: false`) → **Medium** (may silently be ignored by Gemini or cause validation errors)
+- Factory correctly dispatches provider-specific params internally → **OK** (this is the expected pattern)
+- Any `.invoke()` or `.ainvoke()` call passing provider-specific kwargs directly (not via factory) → **High** (bypasses factory abstraction)
+- `result["raw"].response_metadata.get("token_usage")` after `include_raw=True` → **High** (OpenAI-specific key; Gemini populates `usage_metadata` with `input_tokens`/`output_tokens` instead — token tracking silently returns `{}` for all Gemini calls)
+
+Skip: `llm_factory.py` itself (it owns provider dispatch), `config.py`, `debug_utils.py`, test files.
+
 ### 4F: State Machine Transition Integrity
 
 PlanViewState transitions are a core invariant. The backend is SSoT for plan_view_state — the frontend should never fabricate states.
@@ -1194,6 +1253,7 @@ Produce the final report in this format:
 | Coordinate format violations  |       |          |       |
 | Hardcoded lists & world data  |       |          |       |
 | LLM factory compliance        |       |          |       |
+| OpenAI/Gemini structured output compat |  |     |       |
 | State machine transitions     |       |          |       |
 | Client/server boundary        |       |          |       |
 | Accessibility baseline        |       |          |       |

@@ -91,6 +91,7 @@ export function CheckoutSidebar({
                 <button
                   type="button"
                   onClick={() => onRemoveTile?.(tile.id)}
+                  aria-label="Remove"
                   className="flex-shrink-0 p-1 hover:bg-muted rounded transition-colors"
                 >
                   <X className="w-3 h-3 text-muted-foreground" />

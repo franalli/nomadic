@@ -20,10 +20,12 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 from app.config import settings
 from app.placeholders import get_activity_image
+from app.planner.llm_factory import extract_token_usage, get_llm_by_model, resolve_schema_refs
 from app.planner.services.feasibility_service import (
     check_feasibility,
 )
@@ -93,6 +95,10 @@ class LLMSpecialistOutput(BaseModel):
     feasibility_reason: Optional[str] = None
     activities: List[LLMActivity] = []
     constraints: List[LLMConstraint] = []
+
+
+# Cache flat schema at module load — $defs inlined so Gemini function calling accepts it
+_SPECIALIST_FLAT_SCHEMA: dict = resolve_schema_refs(LLMSpecialistOutput.model_json_schema())
 
 
 def _record_specialist_latency_metric(
@@ -353,9 +359,8 @@ async def generate_specialist_output_llm(
         except ValueError:
             pass
 
-    # NOTE: JSON schema is NOT included here - it's handled by .with_structured_output()
-    # OpenAI's function calling API receives the Pydantic schema directly.
-    # Including redundant JSON instructions wastes ~200-500 tokens per call.
+    # Function calling uses _SPECIALIST_FLAT_SCHEMA (pre-flattened at module load,
+    # $defs inlined so Gemini's function calling API accepts the schema).
 
     # Calculate available activity days (excluding arrival/departure/buffers)
     available_days = max(1, duration_days - 2)
@@ -405,28 +410,45 @@ REQUIREMENTS:
 {activity_count_instruction}
 - Include topic-specific fields (depth_meters for diving, elevation_meters for hiking, etc.)
 - Include cross-domain constraints explicitly (e.g., diving affects hiking)
+- Keep constraint reasons under 15 words
+- Maximum 5 constraints (safety-critical only)
 - For infeasible destinations (e.g., diving in landlocked areas), \
 set feasibility_status to "infeasible" with reason"""
 
-    import time
-
     llm_start = time.time()
     try:
-        from app.planner.llm_factory import get_llm_by_model
+        llm = get_llm_by_model(settings.specialist_model, temperature=0.2, max_tokens=1000)
 
-        llm = get_llm_by_model(settings.specialist_model, temperature=0.2)
-        structured_llm = llm.with_structured_output(LLMSpecialistOutput)
+        # Use flattened schema for function calling — $defs inlined so Gemini accepts it.
+        # Passing a raw dict (not the Pydantic class) prevents LangChain from regenerating $defs.
+        # copy() guards against LangChain mutating the shared module-level constant in-place.
+        structured_llm = llm.with_structured_output(
+            dict(_SPECIALIST_FLAT_SCHEMA), include_raw=True, method="function_calling"
+        )
 
+        _debug_log(f"[LLM_SPECIALIST] system_prompt size: {len(system_prompt)} chars")
         _debug_log(f"[LLM_SPECIALIST] Calling LLM for {topic} in {destination}")
 
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        output = await structured_llm.ainvoke(
+        raw_result = await structured_llm.ainvoke(
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt),
             ]
         )
+
+        parsed_dict = raw_result.get("parsed") if isinstance(raw_result, dict) else None
+        if parsed_dict is None:
+            raise ValueError("Structured output returned parsed=None")
+        output = LLMSpecialistOutput.model_validate(parsed_dict)
+
+        # Guard against LLM returning an all-defaults empty dict (feasible + zero activities).
+        # model_validate({}) would succeed silently and poison the 7-day L2 cache.
+        if output.feasibility_status == "feasible" and not output.activities:
+            raise ValueError("LLM returned feasible status with zero activities")
+
+        token_usage = extract_token_usage(raw_result, model=settings.specialist_model)
+        if token_usage:
+            _debug_log(f"[LLM_SPECIALIST] Token usage: {token_usage}")
 
         elapsed = time.time() - llm_start
         _debug_log(
@@ -1853,6 +1875,45 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     # Determine which topics still need LLM generation
     existing_parallel = state.metadata.get("parallel_llm_results", {})
     topics_needing_gen = [t for t in all_specialists if t not in existing_parallel]
+
+    # Pre-filter: skip topics that _merge_specialist_into_state will continuity-reuse.
+    # This avoids firing expensive LLM calls only to discard the results.
+    _current_dates = f"{state.trip_plan.start_date}:{state.trip_plan.end_date}"
+    _continuity_skip = set()
+    for t in topics_needing_gen:
+        cached = next((s for s in existing_sections if s.get("specialist_type") == t), None)
+        _t_day_pref = _all_day_prefs.get(t) if _all_day_prefs else None
+        _debug_log(
+            f"[PRE-FILTER] topic={t} cached={cached is not None} "
+            f"_cache_dates={cached.get('_cache_dates') if cached else 'N/A'} "
+            f"_cache_day_pref={cached.get('_cache_day_pref') if cached else 'N/A'} "
+            f"current_dates={_current_dates} "
+            f"t_day_pref={_t_day_pref}"
+        )
+        if not cached:
+            continue
+        _c_dest = (cached.get("subtitle") or "").lower().strip()
+        _c_dates = cached.get("_cache_dates")
+        _c_day_pref = cached.get("_cache_day_pref")
+        # Exact cache hit (same dest + dates + day_pref)
+        if _c_dest == dest_norm and _c_dates == _current_dates and _c_day_pref == _t_day_pref:
+            _continuity_skip.add(t)
+        # Continuity reuse (same dest, dates changed, same day_pref, has content)
+        elif (
+            _c_dest == dest_norm
+            and _c_dates
+            and _c_dates != _current_dates
+            and _c_day_pref == _t_day_pref
+            and cached.get("content_added")
+            and cached.get("feasibility_status") != "infeasible"
+        ):
+            _continuity_skip.add(t)
+    if _continuity_skip:
+        topics_needing_gen = [t for t in topics_needing_gen if t not in _continuity_skip]
+        _debug_log(
+            f"[SPECIALIST] Skipped {_continuity_skip} from parallel batch "
+            f"(section cache/continuity reuse)"
+        )
 
     if topics_needing_gen:
         from app.db import _get_async_session_factory

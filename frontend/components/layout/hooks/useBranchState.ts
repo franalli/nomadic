@@ -331,7 +331,7 @@ export function useBranchState(options: UseBranchStateOptions): UseBranchStateRe
         );
 
         if (!res.ok) {
-          console.error('Failed to fetch tiles for branch', res.status);
+          debugLog('Failed to fetch tiles for branch', res.status);
           onToast(
             errorMessageOverride ??
               'Unable to refresh options for that suggestion. Please try again.'

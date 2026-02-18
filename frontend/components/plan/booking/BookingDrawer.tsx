@@ -94,6 +94,7 @@ export function BookingDrawer({
             <SheetTitle>{CATEGORY_LABELS[category]}</SheetTitle>
             <button
               onClick={onClose}
+              aria-label="Close"
               className="p-2 hover:bg-muted rounded-lg transition-colors"
             >
               <X className="w-5 h-5" />

@@ -337,27 +337,6 @@ export async function fetchDestinationImage(
   return res.json();
 }
 
-/**
- * Track a suggestion pill click for analytics.
- * Fire-and-forget - we don't wait for confirmation.
- */
-export function trackSuggestionClick(
-  suggestionText: string,
-  suggestionIndex: number,
-  requestId?: string
-): void {
-  apiFetch('/api/suggestions/click', {
-    method: 'POST',
-    body: JSON.stringify({
-      suggestion_text: suggestionText,
-      suggestion_index: suggestionIndex,
-      request_id: requestId,
-    }),
-  }).catch(() => {
-    // Silently ignore tracking failures
-  });
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Tile Refresh API
 // ─────────────────────────────────────────────────────────────────────────────
@@ -457,7 +436,7 @@ export async function fillDay(
     }),
   });
   if (!res.ok) {
-    console.error(`[fillDay] failed: status=${res.status} day=${dayNumber}`);
+    debugLog(`[fillDay] failed: status=${res.status} day=${dayNumber}`);
     const errorText = await res.text().catch(() => '');
     let detail = errorText;
     try {
@@ -521,7 +500,15 @@ export interface SSENodeStatusEvent {
   };
 }
 
-type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent | SSENodeStatusEvent;
+export interface SSEPartialEvent {
+  type: 'partial';
+  data: {
+    kind: 'strategy_sections' | 'tiles' | 'trip_inputs';
+    payload: unknown;
+  };
+}
+
+type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent | SSENodeStatusEvent | SSEPartialEvent;
 
 /**
  * Callbacks for streaming graph plan responses.
@@ -535,6 +522,8 @@ interface StreamGraphPlanCallbacks {
   onError: (error: Error) => void;
   /** Called when node status changes (e.g., strategy node starts) */
   onNodeStatus?: (status: SSENodeStatusEvent['data']) => void;
+  /** Called when partial data is available before completion (progressive rendering) */
+  onPartial?: (data: SSEPartialEvent['data']) => void;
 }
 
 /**
@@ -626,6 +615,8 @@ export function streamGraphPlan(
                     callbacks.onToken(parsed.data);
                   } else if (parsed.type === 'node_status') {
                     callbacks.onNodeStatus?.(parsed.data);
+                  } else if (parsed.type === 'partial') {
+                    callbacks.onPartial?.(parsed.data);
                   } else if (parsed.type === 'complete') {
                     callbacks.onComplete(parsed.data);
                   } else if (parsed.type === 'error') {

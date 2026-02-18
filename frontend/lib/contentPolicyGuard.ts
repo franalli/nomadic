@@ -40,15 +40,9 @@ const FORBIDDEN_STAGE_1_2 = [
   // NOTE: "Reserve" removed - too generic, appears in specialist tips
   // (e.g., "Reserve your spot early"). Keep "Book now" for actual CTAs.
   'Checkout',
-  'Top 10',
-  'Best places',
-  'Best hotels',
-  'Best restaurants',
-  'Best things',
-  'The Best',
-  'Iconic',
-  'Must-see',
-  'Must-do',
+  // NOTE: Editorial vocabulary ("Iconic", "Must-see", "Top 10", "Best X") removed —
+  // these appear legitimately in LLM-generated specialist and local expert content
+  // and are not booking/pricing leaks. Policy only blocks premature booking disclosure.
 ] as const;
 
 // =============================================================================

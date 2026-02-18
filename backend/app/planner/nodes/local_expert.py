@@ -9,21 +9,28 @@ is requested. It provides city-specific constraints and tips:
 - Cultural considerations (dining hours, tipping, dress codes)
 
 Goal: Ensure the Agent Feed is never empty for generic trips.
+
+Architecture — Tier 1 Decouple (skeleton-first):
+  Phase A: Instant skeleton from static constraint data (0ms, no LLM).
+  Phase B: Background LLM enrichment written to DB after graph completes.
 """
 
-import os
+import asyncio
+import json
+import logging
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import ValidationError
 
 from app.config import settings
 from app.data.demo_curation import DEMO_MANIFEST
 from app.placeholders import get_destination_gallery
-from app.planner.llm_factory import get_llm_by_model
+from app.planner.llm_factory import extract_json_content, extract_token_usage, get_llm_by_model
 from app.planner.nodes.expert_constraints import (
     LocalExpertOutput,
-    LocalRecommendation,
     _get_constraint_context,
+    _get_constraints_as_list,
 )
 from app.planner.services.section_builder import (
     build_local_expert_section,
@@ -31,6 +38,18 @@ from app.planner.services.section_builder import (
     upsert_section,
 )
 from app.planner.state import GraphState
+from app.planner.state.typed_meta import get_trip_settings
+
+logger = logging.getLogger(__name__)
+
+# Cache schema JSON at module load — generated once, reused on every call (~18KB, ~7K tokens)
+_LOCAL_EXPERT_SCHEMA_JSON: str = json.dumps(LocalExpertOutput.model_json_schema(), indent=2)
+
+# Module-level registry for pending Phase B enrichment coroutine-factories.
+# Keyed by session_id so streaming.py can retrieve and fire them after db.commit().
+# Function references cannot survive JSON serialization through state_to_session_state,
+# so they must live here rather than in state.metadata.
+_pending_enrichments: dict[str, object] = {}
 
 # =============================================================================
 # Local Expert Node
@@ -93,6 +112,8 @@ async def local_expert(state: GraphState) -> GraphState:
 
     try:
         return await _run_local_expert(state, plan, log)
+    except asyncio.CancelledError:
+        raise  # Propagate cooperative cancellation — never swallow
     except Exception as e:
         # Catch any unexpected errors to prevent graph crash
         from app.debug_utils import _debug_error
@@ -105,119 +126,23 @@ async def local_expert(state: GraphState) -> GraphState:
 
 
 async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
-    """Inner implementation with the actual logic."""
+    """Inner implementation — skeleton-first, background LLM enrichment."""
 
     # ==========================================================================
-    # Step 1: Get constraint context for prompt injection
-    # ==========================================================================
-    constraint_context = _get_constraint_context(plan.destination)
-    if constraint_context:
-        log("LOCAL_EXPERT", f"Injecting constraint context for {plan.destination}")
-
-    # ==========================================================================
-    # Step 2: LLM is the primary path (constraints injected as grounding)
-    # ==========================================================================
-    response = None
-    use_llm = os.getenv("LOCAL_EXPERT_USE_LLM", "true").lower() != "false"
-
-    if use_llm:
-        prompts_dir = Path(__file__).parent.parent.parent / "prompts" / "specialists"
-        prompt_file = prompts_dir / "local_expert.txt"
-
-        if prompt_file.exists():
-            system_prompt = prompt_file.read_text()
-        else:
-            system_prompt = """You are a local logistics expert. Provide:
-1. Constraints: Opening hours, booking requirements, seasonal considerations
-2. Recommendations: Transit passes, efficiency tips, cultural notes
-Output as JSON with "constraints" and "recommendations" arrays."""
-
-        # Inject known constraints as grounding context
-        if constraint_context:
-            system_prompt += constraint_context
-
-        user_context = f"""
-Destination: {plan.destination}
-Dates: {plan.start_date or "Not specified"} to {plan.end_date or "Not specified"}
-Travelers: {plan.adults} adults{f", {plan.children} children" if plan.children else ""}
-"""
-
-        llm = get_llm_by_model(
-            settings.extraction_model, temperature=0.3, timeout=30, max_retries=1
-        )
-        structured_llm = llm.with_structured_output(LocalExpertOutput)
-
-        log("LOCAL_EXPERT", f"Calling LLM ({settings.extraction_model})...")
-
-        try:
-            response = await structured_llm.ainvoke(
-                [
-                    SystemMessage(content=system_prompt),
-                    HumanMessage(content=user_context),
-                ]
-            )
-            log("LOCAL_EXPERT", "LLM call completed")
-        except Exception as e:
-            from app.debug_utils import _debug_error
-
-            _debug_error(f"LOCAL_EXPERT LLM Error: {e}")
-            log("LOCAL_EXPERT", f"LLM error, falling back to empty: {type(e).__name__}")
-            response = None
-    else:
-        log("LOCAL_EXPERT", "LLM disabled — generating minimal fallback")
-
-    # If LLM failed or was disabled, use empty output
-    if response is None:
-        response = LocalExpertOutput()
-
-    # CRITICAL: Always generate a Trip Overview, even without specific knowledge
-    # This ensures the UI has an anchor card (Trip DNA) for the destination
-    # @see docs/ux_unified_architecture.md Section III.A - "Local Expert Always First"
-    if not response.constraints and not response.recommendations:
-        log(
-            "LOCAL_EXPERT",
-            f"No specific knowledge for {plan.destination} - generating Trip Overview",
-        )
-        # Generate basic Trip Overview with Unsplash images
-        response = LocalExpertOutput(
-            constraints=[],
-            recommendations=[
-                LocalRecommendation(
-                    title=f"Explore {plan.destination}",
-                    description=f"Discover the highlights of {plan.destination}",
-                    category="general",
-                    logic_hook="Destination Overview",
-                ),
-            ],
-        )
-
-    # ==========================================================================
-    # Build Strategy Section
+    # PHASE A: Instant skeleton (0ms, no LLM)
     # ==========================================================================
 
-    # Map constraints to schema format
-    constraints_applied = []
-    for c in response.constraints:
-        constraints_applied.append(
-            {
-                "rule": c.description,
-                "type": c.type,
-                "severity": c.severity,
-                "reason": c.description,
-            }
-        )
-
-    # Map recommendations to content_added format
-    content_added = []
-    for r in response.recommendations:
-        content_added.append(
-            {
-                "title": r.title,
-                "description": r.description,
-                "type": r.category,
-                "logic_hook": r.logic_hook,
-            }
-        )
+    # Build constraints_applied from static data (no LLM)
+    constraint_list = _get_constraints_as_list(plan.destination)
+    constraints_applied = [
+        {
+            "rule": c["desc"],
+            "type": c["type"],
+            "severity": c["severity"],
+            "reason": c["desc"],
+        }
+        for c in constraint_list
+    ]
 
     # Fetch destination gallery ("Vibe Trio") if available
     dest_key = plan.destination.lower().strip()
@@ -230,7 +155,248 @@ Travelers: {plan.adults} adults{f", {plan.children} children" if plan.children e
     if not gallery_images:
         gallery_images = get_destination_gallery(plan.destination)
 
-    # Build comprehensive travel intelligence data from 12 categories
+    # Build skeleton section — travel_intelligence is empty (populated by Phase B)
+    section = build_local_expert_section(
+        destination=plan.destination,
+        one_liner=f"Your adventure in {plan.destination}",
+        bullets=[c["desc"] for c in constraint_list[:3]],
+        must_dos=[],
+        logistics_notes=[],
+        constraints_applied=constraints_applied,
+        content_added=[],
+        gallery_images=gallery_images,
+        travel_intelligence={},
+    )
+
+    # Emit skeleton to state immediately (before any background tasks fire)
+    from app.debug_utils import _debug_log
+
+    incoming_sections = state.metadata.get("strategy_sections", [])
+    _debug_log(
+        f"local_expert: BEFORE update - {len(incoming_sections)} sections, "
+        f"types={[s.get('specialist_type') for s in incoming_sections]}"
+    )
+
+    upsert_section(state.metadata, section, mode="appendable")
+
+    outgoing_sections = state.metadata.get("strategy_sections", [])
+    _debug_log(
+        f"local_expert: AFTER update - {len(outgoing_sections)} sections, "
+        f"types={[s.get('specialist_type') for s in outgoing_sections]}"
+    )
+
+    mark_topic_executed(state.metadata, "local_expert")
+    log("LOCAL_EXPERT", f"Skeleton built: {len(constraints_applied)} constraints from static data")
+
+    # ==========================================================================
+    # CONCURRENT SPECIALIST FIRE (unchanged from original)
+    # Fire niche specialist LLM calls in background while we (optionally) run
+    # our own enrichment. The specialist node checks
+    # state.metadata["parallel_llm_results"] and skips its own LLM calls
+    # if results are already cached there.
+    # ==========================================================================
+    specialist_task = None
+    niche_topics = [s for s in state.pending_specialists if s != "local_expert"]
+
+    if niche_topics and plan.destination:
+        trip_settings = get_trip_settings(state)
+        # Snapshot immutable plan values — avoid capturing live reference across await yield
+        _destination = plan.destination
+        _start_date = plan.start_date
+        _end_date = plan.end_date
+        _skill = trip_settings.activity_settings.skill_level
+        _day_prefs = trip_settings.activity_settings.day_preferences
+
+        async def _fire_specialist_llm() -> dict:
+            from app.db import _get_async_session_factory
+            from app.planner.nodes.vertical_specialist import (
+                generate_all_specialists_parallel,
+            )
+
+            async_session_factory = _get_async_session_factory()
+            async with async_session_factory() as db:
+                results = await generate_all_specialists_parallel(
+                    topics=niche_topics,
+                    destination=_destination,
+                    trip_plan=plan,
+                    db=db,
+                    skill_level=_skill,
+                    day_preferences=_day_prefs,
+                )
+            return {k: v.model_dump() if v else None for k, v in results.items()}
+
+        specialist_task = asyncio.create_task(_fire_specialist_llm())
+        log("LOCAL_EXPERT", f"Fired specialist LLM in background: {niche_topics}")
+
+    # ==========================================================================
+    # PHASE B: Background LLM enrichment (non-blocking)
+    # Runs asynchronously after skeleton is in state. Writes travel_intelligence
+    # back to DB once the LLM call resolves.
+    # ==========================================================================
+    if settings.local_expert_use_llm:
+        # Snapshot all values needed by the background closure — no live state capture
+        _session_id = state.metadata.get("session_id")
+        _b_destination = plan.destination
+        _b_start_date = plan.start_date
+        _b_end_date = plan.end_date
+        _b_adults = plan.adults
+        _b_children = plan.children
+
+        # Build the prompt for the background LLM call
+        prompts_dir = Path(__file__).parent.parent.parent / "prompts" / "specialists"
+        prompt_file = prompts_dir / "local_expert.txt"
+
+        if prompt_file.exists():
+            system_prompt = prompt_file.read_text()
+        else:
+            system_prompt = """You are a local logistics expert. Provide:
+1. Constraints: Opening hours, booking requirements, seasonal considerations
+2. Recommendations: Transit passes, efficiency tips, cultural notes
+Output as JSON with "constraints" and "recommendations" arrays."""
+
+        # Inject known constraints as grounding context
+        constraint_context = _get_constraint_context(_b_destination)
+        if constraint_context:
+            system_prompt += constraint_context
+
+        system_prompt += (
+            "\n\nRespond ONLY with valid JSON (no markdown fences, no commentary) "
+            f"matching this schema:\n{_LOCAL_EXPERT_SCHEMA_JSON}"
+        )
+
+        user_context = (
+            f"Destination: {_b_destination}\n"
+            f"Dates: {_b_start_date or 'Not specified'} to {_b_end_date or 'Not specified'}\n"
+            f"Travelers: {_b_adults} adults" + (f", {_b_children} children" if _b_children else "")
+        )
+
+        # Snapshot prompt strings so the closure is self-contained
+        _system_prompt = system_prompt
+        _user_context = user_context
+
+        async def _enrich() -> None:
+            """Background LLM enrichment — writes travel_intelligence to DB."""
+            try:
+                llm = get_llm_by_model(
+                    settings.local_expert_model,
+                    temperature=0.3,
+                    max_retries=0,
+                    max_tokens=2000,
+                )
+                log("LOCAL_EXPERT", f"Phase B: calling LLM ({settings.local_expert_model})...")
+
+                raw = await asyncio.wait_for(
+                    llm.ainvoke(
+                        [
+                            SystemMessage(content=_system_prompt),
+                            HumanMessage(content=_user_context),
+                        ]
+                    ),
+                    timeout=60,
+                )
+                log("LOCAL_EXPERT", "Phase B: LLM call completed")
+
+                content = extract_json_content(raw)
+                if not content:
+                    log("LOCAL_EXPERT", "Phase B: LLM returned empty content — skipping persist")
+                    return
+
+                response = LocalExpertOutput.model_validate_json(content)
+
+                token_usage = extract_token_usage(raw, model=settings.local_expert_model)
+                if token_usage:
+                    log("LOCAL_EXPERT", f"Phase B: token usage: {token_usage}")
+
+                if _session_id:
+                    await _persist_travel_intelligence(_session_id, response)
+                    log(
+                        "LOCAL_EXPERT",
+                        f"Phase B: travel_intelligence persisted for session {_session_id}",
+                    )
+                else:
+                    log(
+                        "LOCAL_EXPERT",
+                        "Phase B: no session_id in metadata — skipping DB persist",
+                    )
+
+            except asyncio.CancelledError:
+                # Background tasks may be cancelled on shutdown — log and exit cleanly
+                logger.debug("LOCAL_EXPERT Phase B: enrichment task cancelled")
+            except (ValidationError, json.JSONDecodeError, asyncio.TimeoutError, ValueError) as e:
+                import traceback
+
+                from app.debug_utils import _debug_error
+
+                _debug_error(
+                    f"LOCAL_EXPERT Phase B parse/timeout error: {e}\n{traceback.format_exc()}"
+                )
+                log("LOCAL_EXPERT", f"Phase B: non-fatal LLM error: {type(e).__name__}")
+            except Exception as e:
+                import traceback
+
+                from app.debug_utils import _debug_error
+
+                _debug_error(
+                    f"LOCAL_EXPERT Phase B unexpected error: {e}\n{traceback.format_exc()}"
+                )
+                log("LOCAL_EXPERT", f"Phase B: non-fatal unexpected error: {type(e).__name__}")
+
+        # Stash enrichment coroutine-factory in module-level dict so streaming.py can fire it
+        # after db.commit() — avoids cancellation by the graph's asyncio.timeout() context
+        # and avoids the SSE pipeline stomping enriched data with the Phase A skeleton.
+        # Function references cannot survive JSON serialization through state_to_session_state
+        # so we use a module-level dict keyed by session_id instead of state.metadata.
+        if _session_id:
+            _pending_enrichments[_session_id] = _enrich
+            log("LOCAL_EXPERT", "Phase B: enrichment stashed for post-commit firing")
+        else:
+            log("LOCAL_EXPERT", "Phase B: no session_id — enrichment skipped")
+    else:
+        log("LOCAL_EXPERT", "LLM disabled (local_expert_use_llm=False) — skeleton only")
+
+    # ==========================================================================
+    # Collect specialist results — runs even if Phase B is non-blocking;
+    # prefetch is independent and benefits downstream node.
+    # ==========================================================================
+    if specialist_task is not None:
+        try:
+            specialist_results = await specialist_task
+            existing = state.metadata.get("parallel_llm_results", {})
+            existing.update(specialist_results)
+            state.metadata["parallel_llm_results"] = existing
+            log(
+                "LOCAL_EXPERT",
+                f"Specialist pre-fetch done: {list(specialist_results.keys())} "
+                f"({sum(1 for v in specialist_results.values() if v)} succeeded)",
+            )
+        except Exception as e:
+            log("LOCAL_EXPERT", f"Specialist pre-fetch failed (non-fatal): {e}")
+            # Non-fatal — specialist node will fire its own LLM calls
+
+    state.metadata["local_expert_ran"] = True  # Persistent flag to prevent double execution
+    state.metadata["last_executed_specialist"] = "local_expert"  # Track for downstream
+    state.active_specialist = None  # Clear for multi-specialist support
+    return state
+
+
+# =============================================================================
+# Background Persistence Helper
+# =============================================================================
+
+
+async def _persist_travel_intelligence(session_id: str, response: LocalExpertOutput) -> None:
+    """Write enriched travel_intelligence to the local_expert section in the DB document.
+
+    Called from the Phase B background task after LLM enrichment completes.
+    Looks up the PlanDocument by session token, finds the local_expert section,
+    and updates travel_intelligence + constraints_applied + content_added in-place.
+
+    Silently returns (no-op) if the document or section is not found.
+    """
+    from app.crud_document import get_document, get_document_data, save_document_data
+    from app.crud_trip import get_session_by_token
+    from app.db import _get_async_session_factory
+
     travel_intelligence = {
         "destination_overview": (
             response.destination_overview.model_dump() if response.destination_overview else None
@@ -250,57 +416,57 @@ Travelers: {plan.adults} adults{f", {plan.children} children" if plan.children e
         "quick_tips": response.quick_tips or [],
     }
 
-    # Build the strategy section
-    # NOTE: Local Expert uses Magazine Layout (gallery + tips), NOT General Layout (stats grid)
-    # trip_summary is intentionally OMITTED - frontend renders different layout for local_expert
-    # @see docs/ux_unified_architecture.md Section XII - Magazine Layout for Local Expert
-    one_liner = (
-        response.destination_overview.tagline
-        if response.destination_overview and response.destination_overview.tagline
-        else f"Your adventure in {plan.destination}"
-    )
-    section = build_local_expert_section(
-        destination=plan.destination,
-        one_liner=one_liner,
-        bullets=[c.description for c in response.constraints[:3]],
-        must_dos=[r.title for r in response.recommendations[:5]],
-        logistics_notes=[r.description for r in response.recommendations],
-        constraints_applied=constraints_applied,
-        content_added=content_added,
-        gallery_images=gallery_images,
-        travel_intelligence=travel_intelligence,
-    )
+    async_session_factory = _get_async_session_factory()
+    async with async_session_factory() as db:
+        # Look up session by token to get the ORM Session object
+        db_session = await get_session_by_token(db, session_id)
+        if not db_session:
+            logger.debug(f"LOCAL_EXPERT _persist: session token not found in DB: {session_id!r}")
+            return
 
-    # ==========================================================================
-    # Update State
-    # ==========================================================================
+        doc = await get_document(db, session=db_session)
+        if not doc:
+            logger.debug(f"LOCAL_EXPERT _persist: no PlanDocument for session {db_session.id}")
+            return
 
-    # DEBUG: Log incoming strategy_sections
-    from app.debug_utils import _debug_log
+        # Parse, update local_expert section, save
+        data = get_document_data(doc)
+        sections = data.strategy_sections or []
+        updated = False
+        for section in sections:
+            # StrategySection objects from get_document_data() are always Pydantic models
+            if section.specialist_type != "local_expert":
+                continue
+            section.travel_intelligence = travel_intelligence
+            if response.constraints:
+                section.constraints_applied = [
+                    {
+                        "rule": c.description,
+                        "type": c.type,
+                        "severity": c.severity,
+                        "reason": c.description,
+                    }
+                    for c in response.constraints
+                ]
+            if response.recommendations:
+                section.content_added = [
+                    {
+                        "title": r.title,
+                        "description": r.description,
+                        "type": r.category,
+                        "logic_hook": r.logic_hook,
+                    }
+                    for r in response.recommendations
+                ]
+            if response.destination_overview and response.destination_overview.tagline:
+                section.one_liner = response.destination_overview.tagline
+            updated = True
+            break
 
-    incoming_sections = state.metadata.get("strategy_sections", [])
-    _debug_log(
-        f"local_expert: BEFORE update - {len(incoming_sections)} sections, "
-        f"types={[s.get('specialist_type') for s in incoming_sections]}"
-    )
+        if not updated:
+            logger.debug("LOCAL_EXPERT _persist: local_expert section not found in document")
+            return
 
-    upsert_section(state.metadata, section, mode="appendable")
-
-    # DEBUG: Log outgoing strategy_sections
-    outgoing_sections = state.metadata.get("strategy_sections", [])
-    _debug_log(
-        f"local_expert: AFTER update - {len(outgoing_sections)} sections, "
-        f"types={[s.get('specialist_type') for s in outgoing_sections]}"
-    )
-
-    mark_topic_executed(state.metadata, "local_expert")
-
-    log(
-        "LOCAL_EXPERT",
-        f"Added {len(constraints_applied)} constraints, {len(content_added)} tips",
-    )
-
-    state.metadata["local_expert_ran"] = True  # Persistent flag to prevent double execution
-    state.metadata["last_executed_specialist"] = "local_expert"  # Track for downstream
-    state.active_specialist = None  # Clear for multi-specialist support
-    return state
+        await save_document_data(db, doc=doc, data=data, updated_by="planner")
+        await db.commit()
+        logger.debug("LOCAL_EXPERT _persist: travel_intelligence written to DB")

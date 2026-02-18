@@ -230,7 +230,7 @@ const CoreChip = memo(function CoreChip({
           // Text: Near-black
           'text-zinc-900 font-semibold',
           // Shadow for "lifted" feel
-          'shadow-sm',
+          'shadow-card',
           // Dark mode: Glass Fill with emerald accent
           'dark:bg-white/10 dark:text-white dark:border-emerald-500/30',
           'dark:hover:bg-white/15',
@@ -362,9 +362,9 @@ const ModuleChip = memo(function ModuleChip({
           // Dark text
           'text-zinc-900 font-medium',
           // Subtle shadow
-          'shadow-sm',
+          'shadow-card',
           // Hover
-          'hover:bg-zinc-50 hover:shadow-md',
+          'hover:bg-zinc-50 hover:shadow-soft',
           // Dark mode: invert - solid white per DS pills.active
           'dark:bg-white dark:text-black dark:border-white',
           'dark:hover:bg-zinc-100',

@@ -1,3 +1,4 @@
+'use client';
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * Toast System - "System Signals"
@@ -137,6 +138,7 @@ const ToastItem = memo(function ToastItem({ toast, onDismiss }: ToastItemProps) 
       <button
         type="button"
         onClick={() => onDismiss(id)}
+        aria-label="Dismiss"
         className="flex-shrink-0 p-2 -m-1 rounded-full hover:bg-white/20 transition-colors"
       >
         <X className="h-3.5 w-3.5" />

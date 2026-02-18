@@ -31,7 +31,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 | Category            | Count | Description                                                                                                                 |
 | ------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------- |
 | LLM-Powered Nodes   | 4     | IntentRouter, TripArchitect, VerticalSpecialist, Synthesizer                                                                |
-| Domain Specialists  | 1     | LocalExpert (LLM-Primary + Constraint Grounding, gated by `LOCAL_EXPERT_USE_LLM`, default on, uses `settings.extraction_model` via `llm_factory`) |
+| Domain Specialists  | 1     | LocalExpert (LLM-Primary + Constraint Grounding, gated by `settings.local_expert_use_llm`, default on, uses `settings.local_expert_model` via `llm_factory`) |
 | Data Fetchers       | 1     | LogisticsNode (flight fetching + safety logic)                                                                              |
 | Deterministic Nodes | 1     | ConstraintGuard (mostly deterministic + one LLM-backed validation: `validate_place_exists()` via gpt-4o-mini)               |
 | **Total Nodes**     | **7** | Core graph nodes                                                                                                            |
@@ -61,7 +61,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 backend/app/planner/
 ├── __init__.py              # Facade exports (stable public API)
 ├── hashing.py               # Stable hashing utilities (make_cache_key, field_hash)
-├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
+├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing) + extract_token_usage(), resolve_schema_refs(), extract_json_content()
 ├── test_mode.py             # Test mode detection
 ├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
 #   Frontend mirror: frontend/lib/specialists.ts (colors, icons, keywords, display names)
@@ -267,12 +267,12 @@ on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 | `router` (IntentRouter)           | LLM (Fast)                 | Intent classification             | `settings.router_model` (default `gpt-4o-mini`, via `llm_factory`) | 150        | None                  |
 | `architect` (TripArchitect)       | LLM (Smart)                | Core planning, SSoT management    | `settings.extraction_model` (default `gpt-4o-mini`, via `llm_factory`) | Variable   | Simulated             |
 | `specialist` (VerticalSpecialist) | LLM (Expert)               | Domain constraints + content      | `settings.specialist_model` (default `gpt-4o`, via `llm_factory`) | Variable   | Simulated             |
-| `local_expert` (LocalExpert)      | LLM-Primary + Constraint Grounding | City logistics concierge          | `settings.extraction_model` (default on, gated by `LOCAL_EXPERT_USE_LLM`) | N/A        | None                  |
+| `local_expert` (LocalExpert)      | LLM-Primary + Constraint Grounding | City logistics concierge          | `settings.local_expert_model` (default `gpt-4o-mini`, gated by `settings.local_expert_use_llm`) | N/A        | None                  |
 | `logistics` (LogisticsNode)       | Data Fetcher               | Flight fetching + safety          | N/A                                                                | N/A        | None                  |
 | `guard` (ConstraintGuard)         | Python                     | Validation (mostly deterministic) | gpt-4o-mini (place validation only, via `validate_place_exists()`) | N/A        | None                  |
 | `synthesizer` (Synthesizer)       | LLM (Writer)               | Response generation               | `settings.synthesizer_exploration_model` (exploration/specialist_update) or `settings.synthesizer_planning_model` (planning), via `llm_factory` | Variable   | True (astream_events) |
 
-\*LocalExpert uses LLM-primary architecture (gated by `LOCAL_EXPERT_USE_LLM`, default on). Static constraints from `LOCAL_EXPERT_CONSTRAINTS` are injected into the LLM system prompt as grounding context. Uses `settings.extraction_model` via `get_llm_by_model(...)`.
+\*LocalExpert uses LLM-primary architecture (gated by `settings.local_expert_use_llm`, default on). Static constraints from `LOCAL_EXPERT_CONSTRAINTS` are injected into the LLM system prompt as grounding context. Uses `settings.local_expert_model` via `get_llm_by_model(...)`.
 
 ### NODE_STATUS_CONFIG (UI Progress Labels)
 
@@ -347,7 +347,7 @@ The Router uses two distinct execution paths depending on whether a plan is alre
 
 **Post-plan fast path:** When `plan_is_active`, the LLM extraction call (`_classify_and_extract_with_llm()`, `max_tokens=700`) runs unconditionally. The `RouterOutput` includes 10 additional fields for modification/settings extraction (see schema below). Three shared state-mutation helpers then apply the results:
 
-1. `_apply_origin_to_state(state, origin, ...)` — sets `trip_plan.origin`, resolves IATA code
+1. `_apply_origin_to_state(state, origin, ...)` — sets `trip_plan.origin`, resolves IATA code; on `ORIGIN_ONLY_PLANNING` (origin detected but no destination), sets `state.suggested_replies` to 3 seasonally-sampled destinations from `_SEASONAL_SUGGESTIONS` (winter/spring/summer/fall pools) instead of the old static `["Paris", "Tokyo", "New York"]` list
 2. `_apply_settings_to_state(state, settings_dict)` — writes hotel/flight settings to `TripSettings`, sets `tier2_prefetch_intent="settings"` so logistics skips waiting on activity-prefetch tasks during settings-only turns
 3. `_apply_modifications_to_state(state, mods_dict)` — processes removals, skill level changes, budget/hotel resets; when Tier 2 categories are present, sets `tier2_prefetch_intent="activity"` and starts prefetch
 
@@ -428,6 +428,8 @@ DATE_INDICATORS = [
 This fixes the bug where users said "I want to go diving March 1-8" but were asked for dates again.
 
 **Plan-Active Extraction Gate:** When a plan is active (`plan_view_state` in `S2_STRATEGY_READY`/`S3_ITINERARY_READY`), the LLM extractor fires on EVERY message (post-plan LLM-first path). This ensures date modifications from suggestion chips (e.g., "Extend to Feb 17" -- abbreviated months that regex misses) are always extracted. Cost: ~$0.0004/call x 5-8 planning turns.
+
+**Classification Deduplication Optimization:** When `RouterOutput` (from opportunistic extraction or post-plan extraction) already contains `intent` + `confidence` + `specialist_hints`, the router builds an `IntentClassification` from those values directly and stores it in the local `classification` variable. This skips the downstream `_classify_intent_with_llm()` call (~900ms / ~637 tokens saved per turn). The optimization fires on both the post-plan path and the pre-plan opportunistic extraction path.
 
 **Post-Extraction Intent Upgrade:** After opportunistic extraction, if dates changed (`start_date != old_start_date or end_date != old_end_date`), `planning_intent` is upgraded to `"soft_transition"` regardless of the initial classification. This routes to the soft_transition path that re-queues specialists with new dates, preventing the stale "exploring" classification from short-circuiting. Both the post-plan and pre-plan date-change paths now populate `turn_applied_fields` (e.g., `["start_date", "end_date"]`) and `prev_trip_values_snapshot` (old date values) immediately, since the architect won't detect the change (the router already applied new dates to `state.trip_plan`). These metadata keys drive the synthesizer's `has_significant_change` gate, ensuring date extensions route to `gpt-4o / planning` instead of falling through to `specialist_update`.
 
@@ -577,13 +579,16 @@ if skill_level:
 
 async def generate_specialist_output_llm(topic, destination, trip_plan, db=None, skill_level=None, target_activities=None):
     """Single LLM call generates feasibility + activities + constraints."""
-    llm = get_llm_by_model(settings.specialist_model, temperature=0.2)
-    return await llm.with_structured_output(LLMSpecialistOutput).ainvoke(...)
+    llm = get_llm_by_model(settings.specialist_model, temperature=0.2, max_tokens=1000)
+    # Flattened schema via function_calling — $defs inlined so Gemini accepts it
+    structured_llm = llm.with_structured_output(dict(_SPECIALIST_FLAT_SCHEMA), include_raw=True, method="function_calling")
+    raw_result = await structured_llm.ainvoke([SystemMessage(system_prompt), HumanMessage(user_prompt)])
+    output = LLMSpecialistOutput.model_validate(raw_result["parsed"])
 ```
 
-**Token Optimization:** The user prompt does NOT include a JSON schema example - OpenAI's
-function calling API receives the Pydantic schema from `.with_structured_output()` directly.
-This saves ~200-500 tokens per specialist call while maintaining schema enforcement at the API level.
+**Function Calling with Flattened Schema:** Uses `llm.with_structured_output(dict(_SPECIALIST_FLAT_SCHEMA), include_raw=True, method="function_calling")`. `_SPECIALIST_FLAT_SCHEMA` is built at module load via `resolve_schema_refs(LLMSpecialistOutput.model_json_schema())` — inlines all `$defs` pointers so Gemini's function calling API accepts the schema. Passing a raw `dict` (not the Pydantic class) prevents LangChain from regenerating `$defs`. Result is validated via `LLMSpecialistOutput.model_validate(parsed_dict)`. Guard: if `output.feasibility_status == "feasible"` and `output.activities` is empty, raises `ValueError` to prevent empty-dict cache poisoning. Constraints are capped at 5 (safety-critical only), with reason strings under 15 words.
+
+**Continuity Pre-Filter:** Before firing parallel LLM calls, `vertical_specialist` pre-filters `topics_needing_gen` to skip topics where the existing section cache would already be reused by `_merge_specialist_into_state`. Two skip conditions: (1) exact cache hit — same dest + dates + day_pref; (2) continuity reuse — same dest, dates changed, same day_pref, section has content and is not infeasible. Skipped topics are logged; downstream merge logic remains unchanged.
 
 **Activity Count Scaling:** The LLM prompt dynamically scales the requested activity count based on trip duration:
 
@@ -695,6 +700,7 @@ for current_topic in all_topics:
 - **Continuity reuse:** When only dates changed (same destination, same `day_pref`), reuses existing `content_added` to avoid silently swapping activity names when the duration bucket changes (e.g., `extended` → `twoweek`). Updates `_cache_dates` in-place so subsequent turns see an exact match. Logs `continuity_reuse` source in latency metrics. Note: ItineraryBuilder Phase 2b handles overflow if the trip shortened significantly.
 - **Destination-level infeasibility cache:** If a cached section has `feasibility_status == "infeasible"` and the destination hasn't changed, the specialist is skipped without re-querying the LLM (infeasibility is destination-dependent, not date-dependent — skiing in Bali stays infeasible regardless of trip duration). Returns early with `specialist_infeasible` metadata + `SPECIALIST_INFEASIBLE` UI event.
 - **Parallel batch filter:** Before parallel execution, specialists already marked infeasible at the current destination (via `strategy_sections`) are filtered from `all_specialists` to avoid redundant LLM calls.
+- **Continuity pre-filter:** Before firing parallel LLM calls, `vertical_specialist()` pre-filters `topics_needing_gen` against topics that `_merge_specialist_into_state` will continuity-reuse (exact cache hit: same dest + dates + day_pref, or continuity reuse: same dest, different dates, same day_pref, has content, not infeasible). Skipped topics are logged as `_continuity_skip`. This avoids expensive LLM calls whose results would be discarded during merge.
 - Assembles strategy section, injects constraints/content blocks, builds UI state
 
 **Cache Strategy:**
@@ -732,28 +738,32 @@ for current_topic in all_topics:
 
 ### LocalExpert
 
-The "Concierge" node for city trips - ensures the Agent Feed is never empty. Uses **LLM-Primary + Constraint Grounding** (gated by `LOCAL_EXPERT_USE_LLM`, default on, uses `settings.extraction_model` via `llm_factory`).
+The "Concierge" node for city trips - ensures the Agent Feed is never empty. Uses a **skeleton-first / Phase A + Phase B background enrichment** architecture (gated by `settings.local_expert_use_llm`, default on, uses `settings.local_expert_model` via `llm_factory`). Uses prompt-based JSON parsing (schema injected into system prompt) rather than function_calling to avoid Gemini `$defs` incompatibility. Schema JSON is cached at module load (`_LOCAL_EXPERT_SCHEMA_JSON`) and reused on every call.
 
 **Activation:** Default when no niche specialist (diving/hiking/skiing) is detected. Also runs first in multi-specialist flows (Trip DNA anchor).
 
-**Implementation:** LLM call with static constraints injected as grounding context:
+**Two-Phase Architecture:**
+
+**Phase A (Instant skeleton — 0ms, no LLM):** Runs synchronously inside the graph before any LLM call. Builds `constraints_applied` from static `_get_constraints_as_list()` data, fetches destination gallery (Vibe Trio), and emits a skeleton `StrategySection` with `travel_intelligence={}` via `build_local_expert_section()` + `upsert_section()`. The skeleton is in state immediately and triggers the `partial` SSE event downstream.
+
+**Phase B (Background LLM enrichment — non-blocking):** After Phase A completes, a closure capturing all required plan values (destination, dates, travelers) is registered in the module-level `_pending_enrichments` dict keyed by `session_id`. `streaming.py` fires this closure as an `asyncio.Task` **after** `db.commit()` (Phase B cannot be stomped by `apply_planner_update` and runs outside the graph's `asyncio.timeout()` context). The enrichment LLM call populates `travel_intelligence` and writes it back to the DB document.
 
 ```python
-LOCAL_EXPERT_CONSTRAINTS = {
-    "dubai": [{"type": "cultural", "desc": "...", "severity": "warning"}, ...],
-    "paris": [...],
-    # 8 destinations with constraint facts (not venue data)
-}
+# Phase A: instant skeleton
+constraint_list = _get_constraints_as_list(plan.destination)
+section = build_local_expert_section(destination=..., travel_intelligence={}, ...)
+upsert_section(state.metadata, section, mode="appendable")  # in state immediately
 
-def _get_constraint_context(destination: str) -> str:
-    """Format constraints as LLM prompt injection."""
-    # Returns formatted string or "" for unknown destinations
-
-def local_expert(state):
-    constraint_context = _get_constraint_context(destination)
-    system_prompt += constraint_context  # Grounding for LLM
-    response = await structured_llm.ainvoke(...)  # Primary path
+# Phase B: registered for post-commit fire
+_pending_enrichments[session_id] = async_closure  # streaming.py fires after db.commit()
 ```
+
+**Pending enrichment lifecycle:**
+- `_pending_enrichments` is a module-level dict (strong ref — not serialized through graph state, which cannot hold function references)
+- `streaming.py` pops and fires the enrichment task after a successful `db.commit()` (strong ref tracked in `_background_tasks` set to prevent GC before completion)
+- On `db.rollback()`, the pending entry is cleaned up without firing (Phase A skeleton was never committed)
+
+**Concurrent Optimization (unchanged):** When `state.pending_specialists` contains niche topics (e.g., diving, hiking), LocalExpert fires `generate_all_specialists_parallel()` as a background `asyncio.Task` **concurrently** with Phase A. Results are stored in `state.metadata["parallel_llm_results"]`. VerticalSpecialist reads this cache and skips its own LLM calls for topics already computed. Non-fatal: if the background task fails, VerticalSpecialist fires its own calls.
 
 **Provides:**
 
@@ -791,7 +801,7 @@ class LocalExpertOutput(BaseModel):
     quick_tips: List[str]
 ```
 
-**Note:** `LocalExpertOutput` is populated by the LLM via structured output. Static `LOCAL_EXPERT_CONSTRAINTS` are injected into the system prompt as grounding facts to prevent hallucination — they are NOT used as output data. Each of the 12 categories is a nested Pydantic model.
+**Note:** Phase B LLM call uses prompt-based JSON parsing — the full schema JSON (`_LOCAL_EXPERT_SCHEMA_JSON`, cached at module load) is injected into the system prompt; the LLM responds with raw JSON (no `with_structured_output` / function_calling). `extract_json_content()` strips markdown fences; `LocalExpertOutput.model_validate_json()` validates. On parse failure (`ValidationError`, `JSONDecodeError`, `TimeoutError`, empty content), `travel_intelligence` remains `{}` (Phase A skeleton is shown) — no exception propagation, no silent success. Static constraints from `_get_constraints_as_list()` (backed by `LOCAL_EXPERT_CONSTRAINTS`) are used directly in Phase A `constraints_applied` AND injected as grounding facts into the Phase B LLM prompt to prevent hallucination — they are NOT the sole output data. Each of the 12 categories is a nested Pydantic model. `asyncio.CancelledError` is always re-raised.
 
 **Exploration Mode Q&A:** When answering generic Q&A, the IntentRouter uses `_llm_fallback_answer` directly (not LocalExpert).
 
@@ -907,7 +917,7 @@ else:
 
 **Experience Generator Service:** `backend/app/services/experience_generator.py`
 
-Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output (`tiles_per_category` param, default 2). `LogisticsNode._compute_tiles_per_category()` scales the count based on placeable days (free days + co-schedulable specialist days): `clamp(total_placeable // num_categories, 2, 4)` where `free_days = trip_days − specialist_activity_days − 2` and `total_placeable = free_days + specialist_days`. Each tile includes title, subtitle, category, duration, price estimate, time of day, skill level, and description (one-sentence hook, e.g. "Traditional flow with rice paddy views"). Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
+Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output with `include_raw=True` (`tiles_per_category` param, default 2). Token usage logged via `extract_token_usage()`. `LogisticsNode._compute_tiles_per_category()` scales the count based on placeable days (free days + co-schedulable specialist days): `clamp(total_placeable // num_categories, 2, 4)` where `free_days = trip_days − specialist_activity_days − 2` and `total_placeable = free_days + specialist_days`. Each tile includes title, subtitle, category, duration, price estimate, time of day, skill level, and description (one-sentence hook, e.g. "Traditional flow with rice paddy views"). Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
 
 **Duration constraint:** System prompt enforces 1–4 hour single-session activities. Post-processing clamps `duration_hours > 4` to 4h to prevent multi-day retreats from being generated (e.g., "Bali Yoga Retreat" at 48h).
 
@@ -990,9 +1000,9 @@ Unified response generator - "One voice, regardless of which agents contributed.
 **Performance Optimizations:**
 
 - **Model Routing**: Intelligent model selection by response complexity
-  - `exploration` / `specialist_update` → `settings.synthesizer_exploration_model` (default `gpt-4o-mini`)
-  - `planning` → `settings.synthesizer_planning_model` (default `gpt-4o`)
-  - Provider auto-selected by `get_llm_by_model(...)` (OpenAI/Gemini)
+  - `exploration` / `specialist_update` → `settings.synthesizer_exploration_model` (default `gemini-2.5-flash`)
+  - `planning` → `settings.synthesizer_planning_model` (default `gemini-2.5-flash`)
+  - Provider auto-selected by `get_llm_by_model(...)` (OpenAI/Gemini); token usage tracked via `extract_token_usage(response, model=...)`
   - Greeting responses bypass LLM entirely (gated by `_should_use_llm_synthesis()`)
   - Gate-blocked responses use LLM (override short-circuit bypass) with pre-computed fallback
 - **Prompt Caching**: Template loading and Jinja2 rendering cached via `@lru_cache`
@@ -1018,6 +1028,7 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - Flight search grounding block (`## Flight Search`): includes `flights_requested`, `origin_present`, `flights_found`, `flight_search_status`, and `flight_skip_reason` so the model does not hallucinate flight inventory
 - Date auto-adjustments: When `state.metadata["date_auto_adjustments"]` is present, injects exact from→to corrections so the model mentions the adjusted dates
 - Day preference context: User-requested day allocations per activity category
+- Experience activity per-category breakdown: e.g., `Experience activities: 6 total (3 cooking, 3 yoga)` — prevents the LLM from hallucinating aggregate counts
 - Per-specialist generated counts from `strategy_sections[].content_added` (`## What Changed This Turn`), framed as context ("Specialist activities placed: diving: 3") not inventory. Instruction: "Mention what changed, not inventory. Counts are context, not copy."
 - Builder drop reporting: When `last_builder_drop_ratio > 0` and builder succeeded, includes "Activity placement: X of Y specialist activities placed (Z couldn't fit)" with natural-language framing guidance (e.g., "extending your trip by a couple days would fit them all"). Reads `builder_activities_input` and `builder_activities_placed` from `state.metadata`.
 - Builder scheduling conflicts: `state.metadata["builder_conflicts"]` (surfaced by `response_envelope.py` from builder results) — day, type, severity, message per conflict
@@ -1028,6 +1039,20 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - `change_type` signal (specialist_update only): Classifies the update trigger for prompt routing — `STEPPER_RERUN` (synthetic GENERATE_PLAN_NOW), `SETTINGS_CHANGE` (settings_just_updated flag), `NEW_CATEGORY` (added_categories present), `DATE_CHANGE` (start_date/end_date in turn_applied), `PLAN_UPDATE` (fallback). The prompt template uses `change_type` to select per-type response templates (terse ack for settings, delta + date for extensions, etc.)
 - Input gate violations: `## Input Validation Issue` section with each violation message + suggested action. Instructs LLM to explain naturally without using technical terms ("validation", "gate", "constraint").
 - Input gate warnings: `## Input Notes` section with each warning message, mentioned naturally in response.
+
+**Deterministic Template Bypass (`_try_template_response`):**
+Before invoking the LLM, `synthesize_with_llm()` calls `_try_template_response(state)`. If ALL blocking violations have a registered template, returns the pre-built string immediately (skips ~786ms LLM call). Returns `(response_str, {"template_bypass": True})` — caller gates observability metadata on `not token_usage.get("template_bypass")` to avoid counting it as an LLM call.
+
+Violation registry (`_VIOLATION_TEMPLATES`):
+
+| Code | Template function | Rendering |
+|------|-------------------|-----------|
+| `DAY_PREFERENCE_EXCEEDS_CAPACITY` | `_template_day_preference_exceeds` | Prefixed with `"For **{dest}** from **{start}** to **{end}**,"` |
+| `DATE_ORDER_INVALID` | `_template_date_order` | Standalone (no prefix) |
+| `SAME_CITY_ERROR` | `_template_same_city` | Standalone (no prefix) |
+| `UNKNOWN_DESTINATION_ERROR` | `_template_unknown_destination` | Standalone — reads from violation message (not live state, since guard rolls back destination) |
+
+`TRIP_TOO_SHORT` omitted — severity is `"warning"`, never reaches the blocking filter. Mixed known + unknown blocking violations always fall through to LLM.
 
 **LLM Failure Fallback:**
 When synthesis fails (provider error or unusable response payload), all response types return a static `FALLBACK_MESSAGE` ("I've updated your trip plan — check the itinerary on the right. Let me know if you'd like to adjust anything."). `GREETING_TEMPLATE` is preserved for the fast greeting path (no LLM).
@@ -1420,8 +1445,8 @@ Pydantic structured output is used for LLM nodes that need **guaranteed schema e
 | ---------------------- | ----------------------- | ---------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------- |
 | **IntentRouter**       | ✅ Yes                  | `settings.router_model` (via `llm_factory`) | `RouterOutput`, `IntentClassification`             | Intent + field extraction in one call                         |
 | **TripArchitect**      | ✅ Yes                  | `settings.extraction_model` (via `llm_factory`) | `ExtractedTripFields`, `ExtractedSettingsFields` | Trip field & settings extraction                              |
-| **LocalExpert**        | ✅ Yes                  | `settings.extraction_model` (default on, via `llm_factory`) | `LocalExpertOutput`                                   | LLM-primary with constraint grounding from `LOCAL_EXPERT_CONSTRAINTS` |
-| **VerticalSpecialist** | ✅ Yes                  | `settings.specialist_model` (via `llm_factory`) | `LLMSpecialistOutput`, `LLMActivity`, `LLMConstraint` | LLM-first with fallback                                   |
+| **LocalExpert**        | ✅ Yes (prompt-based)   | `settings.local_expert_model` (default `gpt-4o-mini`, via `llm_factory`) | `LocalExpertOutput`                                   | Prompt-based JSON (schema in system prompt); no function_calling |
+| **VerticalSpecialist** | ✅ Yes (function_calling, flattened schema) | `settings.specialist_model` (via `llm_factory`) | `LLMSpecialistOutput` via `_SPECIALIST_FLAT_SCHEMA` (inlined $defs) | LLM-first with fallback; guard against empty-dict cache poisoning |
 | **LogisticsNode**      | ❌ No                   | ❌ N/A                                   | N/A                                                   | API calls only (Amadeus, curated data)                        |
 | **ConstraintGuard**    | ❌ No                   | gpt-4o-mini (place validation only)      | N/A                                                   | Mostly deterministic; `validate_place_exists()` is LLM-backed |
 | **Synthesizer**        | ❌ No                   | `settings.synthesizer_*_model` (by response type, via `llm_factory`) | N/A                                      | Free-form natural language (correct)                          |
@@ -1432,9 +1457,18 @@ Pydantic structured output is used for LLM nodes that need **guaranteed schema e
 
 **Rule of thumb:**
 
-- **LLM extracts structured information** → Use `.with_structured_output(Schema)` ✅
+- **LLM extracts structured information** → Use `.with_structured_output(Schema, include_raw=True, method="function_calling")` ✅
 - **LLM generates natural language** → Don't use structured output ❌
 - **No LLM (static data, APIs, validation)** → N/A ❌
+
+**Structured output conventions (all nodes):**
+
+1. **`include_raw=True`** — All structured output calls pass `include_raw=True` to access the raw `AIMessage` for token tracking and error diagnostics. The result is a `{"parsed": T | None, "raw": AIMessage}` dict.
+2. **`method="function_calling"`** — Explicit `method="function_calling"` is used for all nodes that need cross-provider compatibility (OpenAI + Gemini). This avoids provider-default differences.
+3. **`parsed is None` guard** — Every call site checks `if parsed is None: raise ValueError(...)`. No silent fallback to empty data.
+4. **`extract_token_usage()`** — Centralized in `llm_factory.py`. Handles `include_raw=True` dict unwrapping, LangChain 0.2+ `usage_metadata` (works for both OpenAI and Gemini), and `response_metadata["token_usage"]` fallback (older LangChain/OpenAI). Returns `{prompt_tokens, completion_tokens, total_tokens, model?}` or `{}`.
+5. **`resolve_schema_refs(schema)`** — Inlines `$defs` pointers in a JSON Schema to produce a flat schema for Gemini function calling. Use for schemas with few `$defs` (e.g., `LLMSpecialistOutput`: 2). Do NOT use for deeply nested schemas with shared refs (e.g., `LocalExpertOutput`: 31 `$defs`) — inlining duplicates shared models and bloats the schema. Result cached at module load as `_SPECIALIST_FLAT_SCHEMA`.
+6. **`extract_json_content(response)`** — Extracts JSON string from a LangChain `AIMessage`. Handles OpenAI string content, Gemini multi-part list content, and markdown code fence stripping. Returns raw JSON string for `model_validate_json()`. Used by LocalExpert (prompt-based JSON path).
 
 ### RouterOutput Schema
 
@@ -1490,8 +1524,10 @@ class RouterOutput(BaseModel):
 
 # Usage
 llm = get_llm_by_model(settings.router_model)
-structured_llm = llm.with_structured_output(RouterOutput)
-result: RouterOutput = await structured_llm.ainvoke(messages)
+structured_llm = llm.with_structured_output(RouterOutput, include_raw=True, method="function_calling")
+result = await structured_llm.ainvoke(messages)
+parsed: RouterOutput = result["parsed"]  # raises ValueError if None
+token_usage = extract_token_usage(result["raw"], model=settings.router_model)
 ```
 
 **ROUTER_EXTRACTION_PROMPT Tasks:**
@@ -2431,7 +2467,7 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Uses shar
 - Prefetch metadata is cleared at end of logistics turn to prevent stale reuse
 - Router/logistics share the same deterministic generation key format: `tier2:{destination}:{month}:{sorted_categories}:n{tiles_per_category}`
 - Logistics reuses prior generated Tier 2 tiles when generation key matches and category snapshots exist in `metadata.generated_tier2_categories`
-- Direct generation is wrapped in wait budget `settings.tier2_generation_wait_budget_ms`; timeout/error falls back to existing matched tiles and schedules background prewarm
+- Direct generation is wrapped in wait budget `settings.tier2_generation_wait_budget_ms` (default 4000ms); timeout/error falls back to existing matched tiles and schedules background prewarm
 - Limitation: ~0s savings for pure Tier 2 flows (no specialist to overlap with)
 - Impact: Masks 2-4s of generation time via parallel execution in mixed Tier 1+2 flows
 
@@ -2993,7 +3029,10 @@ Uses LangGraph's `astream_events` for real-time token streaming from the Synthes
 │  3. Events emitted:                                                          │
 │     - on_chain_start: Node transitions → node_status events                  │
 │     - on_chat_model_stream: LLM tokens → token events (Synthesizer only)     │
-│     - on_chain_end: Capture final state                                      │
+│     - on_chain_end (router): partial trip_inputs if present                  │
+│     - on_chain_end (specialist/local_expert): partial strategy_sections      │
+│     - on_chain_end (logistics): partial tiles                                │
+│     - on_chain_end (final): Capture state for complete event                 │
 │  4. "complete" event with full result                          │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -3006,6 +3045,7 @@ Uses LangGraph's `astream_events` for real-time token streaming from the Synthes
 | `node_status`  | `{node, status, label, icon_key}` | Node progress tracking                                         |
 | `logic_reveal` | `{node, label, status}`           | Routing decisions for Logic Terminal (e.g., "ROUTING: DIVING") |
 | `token`        | `string`                          | Response text (from Synthesizer LLM)                           |
+| `partial`      | `{kind: "strategy_sections"\|"tiles"\|"trip_inputs", payload: any}` | Progressive render — emitted when a node completes with partial data before `complete`. `router` → `trip_inputs`; `specialist`/`local_expert` → `strategy_sections`; `logistics` → `tiles`. Frontend merges via `store.mergeEnvelope()` and reconciles on `complete`. |
 | `complete`     | `{...result}`                     | Full result object                                             |
 | `error`        | `{message}`                       | Error information                                              |
 

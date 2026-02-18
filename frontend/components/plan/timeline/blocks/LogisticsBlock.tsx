@@ -170,20 +170,20 @@ export function LogisticsBlock({
         <div className="flex items-center gap-2 flex-wrap">
           {time && (
             time.type === 'exact' ? (
-              <span className="font-mono font-bold text-sm">{time.value}</span>
+              <span className="font-mono font-bold text-sm text-zinc-900 dark:text-white">{time.value}</span>
             ) : (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-white/50 dark:bg-black/20 font-medium">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-white/50 dark:bg-black/20 font-medium text-zinc-700 dark:text-zinc-300">
                 {time.value}
               </span>
             )
           )}
-          <span className="font-medium text-sm">{config.label}</span>
+          <span className="font-medium text-sm text-zinc-900 dark:text-white">{config.label}</span>
         </div>
         {hotelName && (
-          <p className="text-xs text-muted-foreground mt-0.5 truncate">{normalizeTitle(hotelName)}</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 truncate">{normalizeTitle(hotelName)}</p>
         )}
         {details && (
-          <p className="text-xs text-muted-foreground mt-0.5">{details}</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{details}</p>
         )}
         {/* Preference attribution badge for check-in blocks */}
         {showPreferenceBadge && (

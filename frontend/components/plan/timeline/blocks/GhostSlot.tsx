@@ -39,7 +39,7 @@ export function GhostSlot({ category, context, onSelect }: GhostSlotProps) {
         'group'
       )}
     >
-      <div className="flex items-center justify-center gap-3 text-zinc-500 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
+      <div className="flex items-center justify-center gap-3 text-zinc-500 dark:text-zinc-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
         <Plus className="w-5 h-5" />
         <Icon className="w-5 h-5" />
         <span className="font-medium">{config.label}</span>

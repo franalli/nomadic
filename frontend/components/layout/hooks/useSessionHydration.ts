@@ -360,7 +360,7 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
             );
 
             if (!res.ok) {
-              console.error('Failed to fetch tiles during hydration', res.status);
+              debugLog('Failed to fetch tiles during hydration', res.status);
               onToast(
                 'We restored your suggestions but could not refresh options automatically. Select a suggestion to try again.'
               );

@@ -56,6 +56,7 @@ function Row({
           e.stopPropagation();
           onEdit();
         }}
+        aria-label="Edit"
         className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors shrink-0"
       >
         <Pencil className="w-3 h-3" />

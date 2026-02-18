@@ -24,13 +24,13 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from jinja2 import Template
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.config import settings
-from app.planner.llm_factory import get_llm_by_model
+from app.planner.llm_factory import extract_json_content, extract_token_usage, get_llm_by_model
 from app.planner.specialist_registry import (
     ALL_DISPLAY_ALIASES,
     TIER1_SPECIALIST_NAMES,
@@ -133,7 +133,7 @@ def _get_response_type(state) -> str:
     """
     meta = state.metadata or {}
 
-    # Gate-blocked: use gpt-4o for natural explanation
+    # Gate-blocked: use planning model (gemini-2.5-flash) for natural explanation
     if meta.get("short_circuit_type") == "gate_blocked":
         return "planning"
 
@@ -573,6 +573,7 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
         )
 
     # Experience tiles count (Tier 2 activities from experience_generator)
+    # Per-category breakdown prevents LLM from hallucinating counts
     if state.tiles:
         experience_tiles = [
             t
@@ -580,13 +581,13 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
             if isinstance(t, dict) and t.get("source_agent") == "experience_generator"
         ]
         if experience_tiles:
-            categories = set()
+            cat_counts: dict[str, int] = {}
             for t in experience_tiles:
                 cat = (t.get("meta") or {}).get("category", "")
                 if cat:
-                    categories.add(cat)
-            cat_str = f" for {', '.join(sorted(categories))}" if categories else ""
-            parts.append(f"- Experience activities: {len(experience_tiles)}{cat_str}")
+                    cat_counts[cat] = cat_counts.get(cat, 0) + 1
+            breakdown = ", ".join(f"{v} {k}" for k, v in sorted(cat_counts.items()))
+            parts.append(f"- Experience activities: {len(experience_tiles)} total ({breakdown})")
 
     # Constraints from specialist
     if plan.constraints:
@@ -1293,6 +1294,13 @@ async def synthesize_with_llm(
 
     Returns tuple of (response_content, token_usage_dict).
     """
+    # Template bypass for known violations — skips LLM entirely (~786ms saved).
+    # Returns {"template_bypass": True} so caller can correctly set used_llm=False.
+    templated = _try_template_response(state)
+    if templated is not None:
+        logger.info("[SYNTH] Template bypass — skipping LLM for known violation")
+        return templated, {"template_bypass": True}
+
     # Auto-detect response type if not provided
     if response_type is None:
         response_type = _get_response_type(state)
@@ -1314,201 +1322,9 @@ async def synthesize_with_llm(
 
         # Use non-streaming for the node (streaming handled by astream_events)
         response = await llm.ainvoke(messages)
-        token_usage = {}
-        if hasattr(response, "usage_metadata") and response.usage_metadata:
-            # LangChain 0.2+ provides usage_metadata
-            token_usage = {
-                "prompt_tokens": response.usage_metadata.get("input_tokens", 0),
-                "completion_tokens": response.usage_metadata.get("output_tokens", 0),
-                "total_tokens": response.usage_metadata.get("total_tokens", 0),
-                "model": _get_model_id(llm),
-            }
-            logger.info(f"[SYNTH_DEBUG] Token usage (usage_metadata): {token_usage}")
-        elif hasattr(response, "response_metadata"):
-            # Fallback for older LangChain versions
-            token_usage = response.response_metadata.get("token_usage", {})
-            if token_usage:
-                token_usage["model"] = _get_model_id(llm)  # Track model in usage
-                logger.info(f"[SYNTH_DEBUG] Token usage (response_metadata): {token_usage}")
-        # Extract content — handle both OpenAI (string) and Gemini (may need special handling)
-        # For Gemini specifically, try accessing the raw response parts to avoid truncation
-        model_id = _get_model_id(llm)
-        if model_id.startswith("gemini") and hasattr(response, "response_metadata"):
-            # Debug: log what's available
-            response_meta_keys = list(response.response_metadata.keys())
-            response_content_type = type(response.content).__name__
-            response_content_preview = repr(response.content)[:500]
-            logger.info(f"[SYNTH_DEBUG] Gemini response_metadata keys: {response_meta_keys}")
-            logger.info(f"[SYNTH_DEBUG] response.content type: {response_content_type}")
-            logger.info(
-                f"[SYNTH_DEBUG] response.content repr (first 500 chars): {response_content_preview}"
-            )
-            logger.info(f"[SYNTH_DEBUG] response.content str len: {len(str(response.content))}")
-
-            # Check if it's a list or has special attributes
-            if isinstance(response.content, list):
-                response_item_count = len(response.content)
-                logger.info(
-                    f"[SYNTH_DEBUG] response.content is list with {response_item_count} items"
-                )
-                for i, item in enumerate(response.content[:3]):  # First 3 items only
-                    item_public_attrs = [x for x in dir(item) if not x.startswith("_")][:10]
-                    logger.info(
-                        f"[SYNTH_DEBUG]   Item {i}: type={type(item).__name__}, "
-                        f"dir={item_public_attrs}"
-                    )
-            elif hasattr(response.content, "__dict__"):
-                logger.info(f"[SYNTH_DEBUG] response.content.__dict__: {response.content.__dict__}")
-
-            # Gemini-specific: try to get full content from response_metadata or raw response
-            raw_response = response.response_metadata.get("raw_response")
-            if raw_response and hasattr(raw_response, "candidates") and raw_response.candidates:
-                candidate = raw_response.candidates[0]
-                if hasattr(candidate, "content") and hasattr(candidate.content, "parts"):
-                    # Extract text from all parts
-                    parts_text = []
-                    for part in candidate.content.parts:
-                        if hasattr(part, "text") and part.text:
-                            parts_text.append(part.text)
-                    if parts_text:
-                        content = "".join(parts_text)
-                        logger.info(
-                            "[SYNTH] Gemini: extracted "
-                            f"{len(content)} chars from {len(parts_text)} parts (raw response)"
-                        )
-                    else:
-                        # Fallback to response.content
-                        content = (
-                            str(response.content)
-                            if not isinstance(response.content, str)
-                            else response.content
-                        )
-                        logger.warning(
-                            "[SYNTH] Gemini: no parts.text found, using response.content "
-                            f"({len(content)} chars)"
-                        )
-                else:
-                    content = (
-                        str(response.content)
-                        if not isinstance(response.content, str)
-                        else response.content
-                    )
-                    logger.warning(
-                        "[SYNTH] Gemini: no candidate.content.parts, using response.content "
-                        f"({len(content)} chars)"
-                    )
-            else:
-                # No raw_response found - try alternative extraction methods
-                logger.warning("[SYNTH] Gemini: no raw_response in metadata")
-
-                # Try to extract from response object directly (bypass .content property)
-                extracted = False
-
-                # Method 1: Check if response has 'additional_kwargs' with full content
-                if hasattr(response, "additional_kwargs") and response.additional_kwargs:
-                    additional_kwarg_keys = list(response.additional_kwargs.keys())
-                    logger.info(f"[SYNTH_DEBUG] additional_kwargs keys: {additional_kwarg_keys}")
-
-                # Method 2: Check response_metadata for candidates or parts
-                if "candidates" in response.response_metadata:
-                    candidates = response.response_metadata["candidates"]
-                    if candidates and len(candidates) > 0:
-                        candidate = candidates[0]
-                        if isinstance(candidate, dict) and "content" in candidate:
-                            parts = candidate["content"].get("parts", [])
-                            if parts:
-                                texts = [p.get("text", "") for p in parts if isinstance(p, dict)]
-                                if texts:
-                                    content = "".join(texts)
-                                    extracted = True
-                                    logger.info(
-                                        "[SYNTH] Gemini: extracted "
-                                        f"{len(content)} chars from metadata candidates"
-                                    )
-
-                if not extracted:
-                    # Try content_blocks attribute
-                    if hasattr(response, "content_blocks") and response.content_blocks:
-                        content_block_count = len(response.content_blocks)
-                        logger.info(
-                            f"[SYNTH_DEBUG] Found content_blocks: {content_block_count} blocks"
-                        )
-                        texts = []
-                        for i, block in enumerate(response.content_blocks):
-                            logger.info(f"[SYNTH_DEBUG]   Block {i}: type={type(block).__name__}")
-                            if hasattr(block, "text"):
-                                texts.append(block.text)
-                                logger.info(
-                                    "[SYNTH_DEBUG]     Extracted "
-                                    f"{len(block.text)} chars from block.text"
-                                )
-                            elif isinstance(block, dict) and "text" in block:
-                                texts.append(block["text"])
-                            elif isinstance(block, str):
-                                texts.append(block)
-                        if texts:
-                            content = "".join(texts)
-                            extracted = True
-                            logger.info(
-                                "[SYNTH] Gemini: extracted "
-                                f"{len(content)} chars from {len(texts)} content_blocks"
-                            )
-
-                if not extracted:
-                    # Log everything we can about the response before giving up
-                    logger.warning("[SYNTH] Gemini: extraction failed, dumping response structure:")
-                    logger.warning(f"[SYNTH]   response_metadata keys: {response_meta_keys}")
-                    logger.warning(f"[SYNTH]   response.content type: {response_content_type}")
-                    logger.warning(
-                        f"[SYNTH]   response.content is string: {isinstance(response.content, str)}"
-                    )
-                    if isinstance(response.content, str):
-                        logger.warning(f"[SYNTH]   response.content value: '{response.content}'")
-                    response_attrs = [x for x in dir(response) if not x.startswith("_")][:15]
-                    logger.warning(f"[SYNTH]   response attributes: {response_attrs}")
-
-                    content = (
-                        str(response.content)
-                        if not isinstance(response.content, str)
-                        else response.content
-                    )
-                    logger.warning(
-                        f"[SYNTH] Gemini: using response.content as-is ({len(content)} chars)"
-                    )
-        elif isinstance(response.content, str):
-            content = response.content
-        elif isinstance(response.content, list):
-            # Handle list of content parts (can happen with multimodal or structured responses)
-            parts = []
-            for part in response.content:
-                if isinstance(part, str):
-                    parts.append(part)
-                elif isinstance(part, dict):
-                    # Dict with "text" key
-                    parts.append(part.get("text", part.get("content", "")))
-                elif hasattr(part, "text"):
-                    # Object with .text attribute (Gemini ContentPart)
-                    parts.append(part.text)
-                elif hasattr(part, "content"):
-                    # Object with .content attribute
-                    parts.append(part.content)
-                else:
-                    # Last resort - but don't call str() as it might truncate
-                    logger.warning(
-                        f"[SYNTH] Unknown part type: {type(part).__name__}, attrs: {dir(part)}"
-                    )
-                    parts.append("")
-            content = "".join(parts)
-            if not content:
-                logger.warning(
-                    "[SYNTH] List content from "
-                    f"{_get_model_id(llm)} with {len(response.content)} parts "
-                    "resulted in empty string"
-                )
-        else:
-            # Unexpected type - try string conversion as last resort
-            logger.warning(f"[SYNTH] Unexpected content type: {type(response.content).__name__}")
-            content = str(response.content)
+        token_usage = extract_token_usage(response, model=_get_model_id(llm))
+        # Extract content — handles string (OpenAI) and list-of-parts (Gemini)
+        content = extract_json_content(response)
 
         # Strip wrapping quotes — LLM sometimes mirrors example formatting
         if content and len(content) > 2 and content[0] == '"' and content[-1] == '"':
@@ -1536,6 +1352,148 @@ FALLBACK_MESSAGE = (
     "I've updated your trip plan — check the itinerary on the right. "
     "Let me know if you'd like to adjust anything."
 )
+
+
+# =============================================================================
+# Templated Responses for Known Constraint Violations
+# =============================================================================
+
+# ── Builders ──────────────────────────────────────────────────────────────────
+
+
+def _template_day_preference_exceeds(v: dict, state: GraphState) -> str:
+    """DAY_PREFERENCE_EXCEEDS_CAPACITY — most common violation."""
+    settings = get_trip_settings(state)
+    day_prefs = settings.activity_settings.day_preferences or {}
+
+    # INFO-1 fix: guard empty day_prefs
+    if not day_prefs:
+        return "The planned activities need more days than available. Consider extending your trip."
+
+    cat_parts = []
+    for cat, days in day_prefs.items():
+        cat_parts.append(f"**{days} day{'s' if days != 1 else ''}** of {cat}")
+
+    if len(cat_parts) == 1:
+        activity_phrase = cat_parts[0]
+    elif len(cat_parts) == 2:
+        activity_phrase = f"{cat_parts[0]} and {cat_parts[1]}"
+    else:
+        activity_phrase = ", ".join(cat_parts[:-1]) + f", and {cat_parts[-1]}"
+
+    return (
+        f"the plan includes {activity_phrase}, but you'll need an extra day "
+        f"to allow for a safe buffer between activities. "
+        f"Extending your trip by a day or reducing one activity would resolve this."
+    )
+
+
+# WARNING-1: TRIP_TOO_SHORT has severity="warning" in constraint_guard.py,
+# so it never reaches the blocking filter in _try_template_response.
+# Omitted from registry. If guard severity is upgraded to blocking, add it here.
+
+
+def _template_date_order(v: dict, state: GraphState) -> str:
+    """DATE_ORDER_INVALID — standalone, no dest/date prefix (BLOCKING-2)."""
+    return "It looks like the end date is before the start date. Could you double-check your dates?"
+
+
+def _template_same_city(v: dict, state: GraphState) -> str:
+    """SAME_CITY_ERROR — standalone, no dest/date prefix (BLOCKING-2)."""
+    return "Your departure city and destination are the same. Where are you traveling from?"
+
+
+def _template_unknown_destination(v: dict, state: GraphState) -> str:
+    """UNKNOWN_DESTINATION_ERROR — standalone, no dest/date prefix (BLOCKING-2).
+
+    BLOCKING-1 fix: read invalid dest from violation message, not live state.
+    Guard rolls back state.trip_plan.destination before synthesizer runs.
+    """
+    msg = v.get("message", "That destination could not be verified.")
+    return f"{msg} Could you check the spelling or try a different destination?"
+
+
+# ── Registry ──────────────────────────────────────────────────────────────────
+# Add new codes here. Never touch dispatch logic in _try_template_response.
+
+_VIOLATION_TEMPLATES: dict[str, Callable[[dict, GraphState], str]] = {
+    "DAY_PREFERENCE_EXCEEDS_CAPACITY": _template_day_preference_exceeds,
+    # TRIP_TOO_SHORT omitted — severity="warning", never reaches blocking filter
+    "DATE_ORDER_INVALID": _template_date_order,
+    "SAME_CITY_ERROR": _template_same_city,
+    "UNKNOWN_DESTINATION_ERROR": _template_unknown_destination,
+}
+
+# Route-category codes that render standalone (no "For **dest**..." prefix).
+_ROUTE_CODES = {"SAME_CITY_ERROR", "UNKNOWN_DESTINATION_ERROR", "DATE_ORDER_INVALID"}
+
+
+def _try_template_response(state: GraphState) -> str | None:
+    """
+    Attempt deterministic response for known violation patterns.
+
+    Returns complete response string if every blocking violation is templateable,
+    or None to fall through to LLM synthesis.
+
+    Dispatch on GuardViolation.code (enumerated). No regex, no string parsing.
+    """
+    violations = state.metadata.get("constraint_violations", [])
+    blocking = [v for v in violations if v.get("severity") == "blocking"]
+
+    if not blocking:
+        return None
+
+    # Only bypass when ALL blocking violations have a template.
+    # Mixed known + unknown → LLM handles the nuance.
+    if not all(v.get("code") in _VIOLATION_TEMPLATES for v in blocking):
+        return None
+
+    parts = []
+    for v in blocking:
+        builder = _VIOLATION_TEMPLATES[v["code"]]
+        fragment = builder(v, state)
+        if fragment:
+            parts.append(fragment)
+
+    if not parts:
+        return None
+
+    # BLOCKING-2 fix: route/temporal violations render standalone — no dest/date prefix.
+    # Planning violations (capacity) get the "For **dest**..." prefix.
+    all_route = all(v.get("code") in _ROUTE_CODES for v in blocking)
+
+    if all_route:
+        # BLOCKING-4 fix: join with double newline; each builder returns a complete sentence.
+        return "\n\n".join(parts)
+
+    # Prefixed path for planning violations (e.g. DAY_PREFERENCE_EXCEEDS_CAPACITY)
+    plan = state.trip_plan
+    dest = plan.destination or "your destination"
+
+    # BLOCKING-3 fix: use f"{s.day}" — %-d is Linux/macOS-only and raises on Windows.
+    dates = ""
+    if plan.start_date and plan.end_date:
+        from datetime import datetime
+
+        try:
+            s = datetime.strptime(plan.start_date, "%Y-%m-%d")
+            e = datetime.strptime(plan.end_date, "%Y-%m-%d")
+            dates = f" from **{s.strftime('%B')} {s.day}** to **{e.strftime('%B')} {e.day}**"
+        except ValueError:
+            pass
+
+    # Each planning-violation fragment starts lowercase to flow after the prefix comma.
+    violation_text = "\n\n".join(parts)
+
+    tile_sentence = _build_authoritative_tile_count_sentence(
+        state, {"hotels", "flights", "activities"}
+    )
+
+    message = f"For **{dest}**{dates}, {violation_text}"
+    if tile_sentence:
+        message = f"{message} {tile_sentence}"
+
+    return message
 
 
 # =============================================================================
@@ -2094,11 +2052,13 @@ async def synthesizer(state: GraphState) -> GraphState:
             else:
                 log("SYNTH", "Settings update generated new content — routing to LLM")
             llm_attempted = True
-            llm_called = True
             llm_response, token_usage = await synthesize_with_llm(state, response_type)
+            # WARNING-2 fix: template bypass returns {"template_bypass": True}; don't
+            # count it as an LLM call in observability metadata.
+            llm_called = not token_usage.get("template_bypass", False)
             if llm_response:
                 message = llm_response
-                if token_usage:
+                if token_usage and not token_usage.get("template_bypass"):
                     model_used = token_usage.get("model", "unknown")
                     prompt_tokens = token_usage.get("prompt_tokens", 0)
                     completion_tokens = token_usage.get("completion_tokens", 0)
@@ -2124,11 +2084,13 @@ async def synthesizer(state: GraphState) -> GraphState:
             logger.debug("Using LLM synthesis for response generation")
             log("SYNTH", "Generating LLM response...")
             llm_attempted = True
-            llm_called = True
             llm_response, token_usage = await synthesize_with_llm(state, response_type)
+            # WARNING-2 fix: template bypass returns {"template_bypass": True}; don't
+            # count it as an LLM call in observability metadata.
+            llm_called = not token_usage.get("template_bypass", False)
             if llm_response:
                 message = llm_response
-                if token_usage:
+                if token_usage and not token_usage.get("template_bypass"):
                     model_used = token_usage.get("model", "unknown")
                     prompt_tokens = token_usage.get("prompt_tokens", 0)
                     completion_tokens = token_usage.get("completion_tokens", 0)
@@ -2188,8 +2150,11 @@ async def synthesizer(state: GraphState) -> GraphState:
             await image_task
 
     # Final grounding pass: avoid flight-count claims when logistics skipped flights.
-    message = _ground_flight_response(message, state)
-    message = _ground_specialist_update_response(message, response_type)
+    # Template-bypassed responses are grounded by construction (they read structured state
+    # directly) — skip the hallucination stripper so it doesn't eat activity-name mentions.
+    if llm_called:
+        message = _ground_flight_response(message, state)
+        message = _ground_specialist_update_response(message, response_type)
 
     # Generate suggestion chips (always template-based for consistency)
     # Always regenerate to ensure fresh suggestions on every turn

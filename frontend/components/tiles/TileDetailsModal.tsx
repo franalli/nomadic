@@ -183,6 +183,7 @@ function ImageCarousel({ images }: { images: string[] }) {
           <button
             type="button"
             onClick={goToPrevious}
+            aria-label="Previous image"
             className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white transition-colors hover:bg-black/70"
           >
             <ChevronLeft className="h-5 w-5" />
@@ -190,6 +191,7 @@ function ImageCarousel({ images }: { images: string[] }) {
           <button
             type="button"
             onClick={goToNext}
+            aria-label="Next image"
             className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white transition-colors hover:bg-black/70"
           >
             <ChevronRight className="h-5 w-5" />
@@ -202,6 +204,7 @@ function ImageCarousel({ images }: { images: string[] }) {
                 key={idx}
                 type="button"
                 onClick={() => setCurrentIndex(idx)}
+                aria-label={`Go to image ${idx + 1}`}
                 className={cn(
                   'h-2 w-2 rounded-full transition-colors',
                   idx === currentIndex ? 'bg-white' : 'bg-white/50'
@@ -295,6 +298,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close"
             className="rounded-full p-1.5 text-zinc-500 dark:text-zinc-400 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-200"
           >
             <X className="h-5 w-5" />

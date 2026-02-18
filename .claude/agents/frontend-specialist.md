@@ -10,6 +10,8 @@ description: >
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
+Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/ruff`) for any Python execution; use `cd frontend && npm run ...` for all frontend commands.
+
 # Nomadic Frontend Specialist
 
 Frontend engineer for a Next.js 16 / React 19 travel planning app.

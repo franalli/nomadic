@@ -650,6 +650,12 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | GatingBlocker | `plan/sheets/GatingBlocker.tsx` | Shared prerequisite-gating notice for module sheets (Flights/Stays/Activities). Raw infoBox pattern (`bg-zinc-50 dark:bg-white/[0.02]`), raw smallAction pattern buttons |
 | AlternativesModal | `plan/modals/AlternativesModal.tsx` | Sheet modal with neutral zinc rating stars and diff badges |
 | CategorySection | `plan/booking/CategorySection.tsx` | Booking status dots/text with dark-aware zinc/emerald states |
+| TripHealthBar | `plan/TripHealthBar.tsx` | Compact inventory stats bar; `dark:bg-zinc-950/80 dark:border-white/10` glass pattern |
+| TripStatusBar | `chat/TripStatusBar.tsx` | Mobile-only dark status bar; `bg-zinc-900 border-b border-white/10`; no light mode |
+| NextStepBar | `plan/NextStepBar.tsx` | Command Island sticky CTA; `DS.actions.primary`, `DS.glowClass.action`, glass `dark:bg-zinc-900/95` |
+| GhostSlot | `plan/timeline/blocks/GhostSlot.tsx` | Dashed-border CTA slot; `border-dashed border-zinc-300 dark:border-white/10` pattern |
+| LogisticsBlock | `plan/timeline/blocks/LogisticsBlock.tsx` | Flight/transfer timeline block; glass `dark:bg-zinc-900/50` pattern |
+| MapErrorBoundary | `map/MapErrorBoundary.tsx` | Map error fallback; raw zinc pattern (`bg-zinc-100 dark:bg-zinc-900`, `text-zinc-500`) |
 
 **Out of DS scope:** `consent-manager.tsx`, `legal-page.tsx` — follows shadcn/prose tokens.
 
@@ -2055,6 +2061,173 @@ The Reset button allows users to start over with a fresh planning session. It mu
 
 ---
 
+## 19. Z-Index Layering Tiers
+
+All z-index values must snap to one of the defined tiers. Do NOT use arbitrary z-index values outside this table.
+
+| Tier | z-index | Elements |
+|------|---------|----------|
+| **Map / Base** | `z-0` | Mapbox canvas, page background |
+| **Sticky headers** | `z-10` | Scroll-following panel headers, sticky section titles |
+| **Floating buttons** | `z-20` | FloatingBuildButton, FABs within content area |
+| **Overlay controls** | `z-30` | Chat status bar overlays, in-content overlays |
+| **Sheets / Drawers** | `z-40` to `z-50` | NextStepBar (`z-40`), bottom sheets backdrop (`z-[1200]`), sheet panel (`z-[1201]`) |
+| **Modals** | `z-50` | Desktop dialog overlays, full-screen modals |
+| **Toasts** | `z-[9999]` | System toast notifications (always on top) |
+
+**Rule:** Sheet/dialog portals use `z-[1200]`/`z-[1201]` pair (backdrop below, panel above) to avoid conflicts with DatesSheet and BaseSheet which also portal to `document.body`.
+
+**Collision check:** If two elements share the same z-tier and can overlap, the later DOM element wins. Use explicit `z-*` assignments to enforce intended stacking.
+
+---
+
+## 20. Icon Sizing Tiers
+
+Use consistent icon sizes based on context. Do NOT use arbitrary pixel sizes.
+
+| Context | Size Classes | When to Use |
+|---------|-------------|-------------|
+| **Inline with text** | `w-4 h-4` (16px) | Text-adjacent icons in body copy, list items |
+| **Buttons with label** | `w-4 h-4` or `w-[18px] h-[18px]` | Primary/secondary action buttons with text |
+| **Icon-only buttons** | `w-5 h-5` (20px) | Close X, arrow buttons, icon-only controls |
+| **Feature / hero** | `w-6 h-6` (24px) or larger | Section icons, specialist badges, card icons |
+| **Navigation** | `w-5 h-5` or `w-6 h-6` | Tab bar icons, nav controls |
+| **Micro / badge** | `w-3 h-3` or `w-3.5 h-3.5` | Inside compact chips, badge icons |
+| **Map markers** | `w-8 h-8` or `w-10 h-10` | Mapbox custom markers |
+
+**Code pattern:**
+```tsx
+// Inline with text
+<MapPin className="w-4 h-4 shrink-0" />
+// Icon-only button
+<X className="w-5 h-5" />
+// Feature icon
+<Sparkles className="w-6 h-6" />
+```
+
+---
+
+## 21. Disabled & Loading State Patterns
+
+### Disabled State
+
+Disabled interactive elements must be visually distinct and non-interactive.
+
+| Property | Value |
+|----------|-------|
+| **Opacity** | `opacity-50` |
+| **Cursor** | `cursor-not-allowed` |
+| **Pointer events** | `pointer-events-none` |
+
+```tsx
+// Standard disabled pattern
+<button
+  disabled={!canSave}
+  className={cn(
+    canSave ? DS.actions.primary : DS.actions.primaryDisabled,
+    !canSave && 'cursor-not-allowed'
+  )}
+>
+  Save
+</button>
+
+// Section disabled overlay (e.g. FlightsSheet when toggle is off)
+<div className={cn(
+  'transition-opacity',
+  !enabled && 'opacity-50 pointer-events-none'
+)}>
+  {/* preferences content */}
+</div>
+```
+
+**Note:** `DS.actions.primaryDisabled` already includes `cursor-not-allowed`. Disabled sections use `opacity-50 pointer-events-none` as a div-level overlay pattern — do NOT add `disabled` to individual child elements inside the overlay.
+
+### Loading / Skeleton State
+
+Skeleton placeholders use `animate-pulse` with zinc backgrounds.
+
+| Element | Light Mode | Dark Mode |
+|---------|------------|-----------|
+| **Skeleton bg** | `bg-zinc-200` | `bg-zinc-800` |
+| **Skeleton animation** | `animate-pulse` | Same |
+| **Spinner (action)** | `Loader2` Lucide icon, `animate-spin` | Same |
+| **Spinner color** | Inherits button text color | Same |
+
+```tsx
+// Skeleton block
+<div className="h-4 w-32 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+
+// Action spinner
+<Loader2 className="w-4 h-4 animate-spin" />
+```
+
+**Implementation:** `frontend/components/ui/skeleton.tsx` uses `bg-muted animate-pulse` — acceptable because `muted` resolves to zinc in both theme modes via CSS variables.
+
+---
+
+## 22. Metadata Badge Pattern
+
+Small inline metadata tags (activity categories, feature badges, status indicators) use this pattern throughout the app. These are NOT the same as selection pills (DS.pills).
+
+| Property | Light Mode | Dark Mode |
+|----------|------------|-----------|
+| **Background** | `bg-zinc-100` | `bg-zinc-800/50` |
+| **Text** | `text-zinc-500` | `text-zinc-400` |
+| **Shape** | `rounded-md` |  |
+| **Padding** | `px-2 py-0.5` |  |
+| **Font** | `text-xs font-medium uppercase tracking-wide` |  |
+
+```tsx
+// Metadata badge (category, feature, etc.)
+<span className="bg-zinc-100 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium uppercase tracking-wide">
+  {category}
+</span>
+```
+
+**Contrast note:** `text-zinc-500` on `bg-zinc-100` = ~5.7:1 in light mode (passes WCAG AA). `text-zinc-400` on `bg-zinc-800/50` = ~4.6:1 in dark mode (passes WCAG AA).
+
+**Do NOT use `bg-muted text-muted-foreground`** — these are shadcn CSS variable tokens that bypass DS zinc scale enforcement. Always use explicit zinc classes.
+
+---
+
+## 23. Shadcn Token Prohibition
+
+Several shadcn/Radix CSS variable tokens exist in the codebase (`bg-muted`, `text-muted-foreground`, `text-foreground`, `bg-card`, `text-card-foreground`, `bg-secondary`, etc.). These tokens are permitted ONLY in:
+
+- `frontend/components/ui/` (shadcn primitive components — button, card, sheet, etc.)
+- `frontend/components/nomadic/consent-manager.tsx` and `legal-page.tsx`
+
+**All other components MUST use explicit DS zinc tokens.**
+
+| Shadcn token | DS replacement |
+|--------------|----------------|
+| `text-muted-foreground` | `text-zinc-500 dark:text-zinc-400` |
+| `text-foreground` | `text-zinc-900 dark:text-white` |
+| `bg-muted` | `bg-zinc-100 dark:bg-zinc-800/50` |
+| `bg-card` | `bg-white dark:bg-zinc-900` |
+| `text-card-foreground` | `text-zinc-900 dark:text-white` |
+| `bg-secondary` | `bg-zinc-50 dark:bg-zinc-900` |
+| `border-border` | `border-zinc-200 dark:border-zinc-700` |
+
+**Rationale:** Shadcn tokens resolve via CSS variables that may not align with DS zinc values across all theme combinations. Explicit zinc classes guarantee correct rendering.
+
+---
+
+## 24. Specialist Icon Color Map (Local Expert Correction)
+
+The `local_expert` specialist type maps to Neutral Gray in the DS specialist palette (`#6B7280` = approximately `zinc-500`). It does NOT use purple tones.
+
+| Specialist | Tailwind Icon Color | Light BG | Dark BG |
+|------------|--------------------|---------| --------|
+| `local_expert` | `text-zinc-600 dark:text-zinc-400` | `bg-zinc-100` | `dark:bg-white/10` |
+| `general` | `text-emerald-600 dark:text-emerald-400` | `bg-emerald-50` | `dark:bg-white/10` |
+
+**BANNED:** `text-purple-600`, `bg-purple-50` for `local_expert`. Purple is not in the approved specialist palette.
+
+**Implementation:** `frontend/components/plan/stages/StrategyHero.tsx` `SPECIALIST_STYLE_CLASSES` map.
+
+---
+
 ## 19. Chat Interaction: Command & Receipt
 
 **Core Philosophy:** Never hide the user's intent. The chat is the **Audit Log** of the trip construction.
@@ -2421,3 +2594,88 @@ Updates to Section 6 — new components discovered in audit:
 | `ActivityMiniCard` | `plan/timeline/blocks/ActivityMiniCard.tsx` | `DS.textSize.*` | `hover:shadow-soft` for card hover |
 | `UnifiedChipRow` | `plan/UnifiedChipRow.tsx` | `DS.textSize.*` | Constraint chips; disabled: `opacity-50 cursor-not-allowed` |
 | `MobileModeHeader` | `layout/MobileModeHeader.tsx` | `DS.textSize.*` | `shadow-card` for status pill |
+| `TripHealthBar` | `plan/TripHealthBar.tsx` | None (raw pattern) | Compact inventory bar; `bg-white dark:bg-zinc-950/80 border-zinc-200 dark:border-white/10` |
+| `TripStatusBar` | `chat/TripStatusBar.tsx` | None (raw pattern) | Mobile-only dark status bar; no light mode; `bg-zinc-900 border-white/10` |
+| `NextStepBar` | `plan/NextStepBar.tsx` | `DS.actions.primary`, `DS.glowClass.action` | Command Island; `shadow-card` for status pill, `shadow-soft` for island |
+| `GhostSlot` | `plan/timeline/blocks/GhostSlot.tsx` | None (raw pattern) | Dashed CTA slot; `border-dashed border-zinc-300 dark:border-white/10` |
+| `LogisticsBlock` | `plan/timeline/blocks/LogisticsBlock.tsx` | None (raw pattern) | Flight/transfer block; `dark:bg-zinc-900/50 dark:border-white/[0.08]` glass pattern |
+| `MapErrorBoundary` | `map/MapErrorBoundary.tsx` | None (raw pattern) | Error fallback; `bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-white/10`, text: `text-zinc-500` |
+
+---
+
+## 28. Undocumented Component Surface Patterns
+
+Canonical styling for components not covered by the primary token tables (Sections 2–5). Use these as the reference when adding new components of the same type.
+
+### 28.1 Compact Inventory Bar (TripHealthBar)
+
+A horizontal stats bar shown at the top of the S2 strategy view.
+
+| Property | Light Mode | Dark Mode |
+|----------|-----------|-----------|
+| Background | `bg-white` | `dark:bg-zinc-950/80` |
+| Border | `border border-zinc-200` | `dark:border-white/10` |
+| Border radius | `rounded-lg` | Same |
+| Padding | `px-4 py-2.5` | Same |
+| Status text | `text-sm font-medium text-zinc-900` | `dark:text-white` |
+| Secondary text | `text-xs text-zinc-500` | `dark:text-zinc-400` |
+| Active status dot | `w-2 h-2 rounded-full bg-emerald-500` | Same |
+| Inactive status dot | `w-2 h-2 rounded-full bg-zinc-400` | `dark:bg-zinc-600` |
+| Count value | `font-medium text-zinc-900` | `dark:text-white` |
+
+**Rule:** This surface uses `bg-zinc-950/80` (not `bg-zinc-900`) in dark mode, matching the glass compact bar spec.
+
+### 28.2 Mobile-Only Dark Status Bar (TripStatusBar)
+
+A fixed-position status bar visible only on mobile. Renders exclusively in dark mode.
+
+| Property | Value |
+|----------|-------|
+| Background | `bg-zinc-900` |
+| Border | `border-b border-white/10` |
+| Backdrop | `backdrop-blur-md` |
+| Text | `text-white`, `text-zinc-400` |
+
+**Rule:** This component has no light mode. It is gated by mobile layout context. Do NOT add a `bg-white` light variant.
+
+### 28.3 Dashed-Border CTA Slot (GhostSlot)
+
+A placeholder slot in the timeline that invites the user to fill empty days.
+
+| Property | Light Mode | Dark Mode |
+|----------|-----------|-----------|
+| Border | `border-2 border-dashed border-zinc-300` | `dark:border-white/10` |
+| Background | `bg-transparent` or `bg-zinc-50/50` | `dark:bg-white/[0.02]` |
+| Text | `text-zinc-400` | `dark:text-zinc-500` |
+| CTA text | `text-zinc-600 font-medium` | `dark:text-zinc-400` |
+| Hover | `hover:border-zinc-400 hover:bg-zinc-50` | `dark:hover:border-white/20 dark:hover:bg-white/[0.04]` |
+| Border radius | `rounded-xl` | Same |
+
+### 28.4 Map Error Fallback (MapErrorBoundary)
+
+The fallback UI displayed when the Mapbox component throws an error.
+
+| Property | Light Mode | Dark Mode |
+|----------|-----------|-----------|
+| Background | `bg-zinc-100` | `dark:bg-zinc-900` |
+| Border | `border border-zinc-200` | `dark:border-white/10` |
+| Icon | `text-zinc-600` (`w-12 h-12`) | Same |
+| Status text | `text-sm text-zinc-500` | Same |
+| Border radius | `rounded-xl` | Same |
+
+**Rule:** `text-muted-foreground` and other shadcn semantic tokens are PROHIBITED here. Use explicit zinc classes.
+
+### 28.5 Flight/Transfer Timeline Block (LogisticsBlock)
+
+Inline timeline block for flight segments and transfers.
+
+| Property | Light Mode | Dark Mode |
+|----------|-----------|-----------|
+| Background | `bg-white/60` or `bg-transparent` | `dark:bg-zinc-900/50` |
+| Border | `border border-zinc-200/80` | `dark:border-white/[0.08]` |
+| Icon background | `bg-blue-50` | `dark:bg-blue-950/30` |
+| Icon color | `text-blue-600` | `dark:text-blue-400` |
+| Label text | `text-xs text-zinc-500` | `dark:text-zinc-400` |
+| Value text | `text-sm font-medium text-zinc-900` | `dark:text-white` |
+
+---

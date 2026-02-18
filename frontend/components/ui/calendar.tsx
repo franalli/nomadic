@@ -137,12 +137,12 @@ function Calendar({
       components={{
         DayButton: CustomDayButton,
         PreviousMonthButton: (props) => (
-          <button {...props} className={navButtonClass}>
+          <button {...props} aria-label="Previous month" className={navButtonClass}>
             <ChevronLeft className="h-5 w-5" />
           </button>
         ),
         NextMonthButton: (props) => (
-          <button {...props} className={navButtonClass}>
+          <button {...props} aria-label="Next month" className={navButtonClass}>
             <ChevronRight className="h-5 w-5" />
           </button>
         ),

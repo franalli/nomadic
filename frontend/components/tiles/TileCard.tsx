@@ -466,18 +466,18 @@ export const TileCard = memo(function TileCard({
         {activityMeta && (
           <div className="flex flex-wrap items-center gap-1.5">
             {activityMeta.category && (
-              <span className="bg-muted text-muted-foreground inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium uppercase tracking-wide">
+              <span className="bg-zinc-100 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium uppercase tracking-wide">
                 {activityMeta.category}
               </span>
             )}
             {activityMeta.durationHours != null && (
-              <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+              <span className="text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-1 text-xs">
                 <Clock className="h-3 w-3" />
                 {activityMeta.durationHours}h
               </span>
             )}
             {activityMeta.timeOfDay && (
-              <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+              <span className="text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-1 text-xs">
                 {activityMeta.timeOfDay === 'morning' && <Sun className="h-3 w-3" />}
                 {activityMeta.timeOfDay === 'afternoon' && <Sunset className="h-3 w-3" />}
                 {activityMeta.timeOfDay === 'evening' && <Moon className="h-3 w-3" />}
@@ -489,13 +489,13 @@ export const TileCard = memo(function TileCard({
 
         {/* Activity description */}
         {activityMeta?.description && (
-          <p className="text-muted-foreground line-clamp-1 text-sm">
+          <p className="text-zinc-500 dark:text-zinc-400 line-clamp-1 text-sm">
             {activityMeta.description}
           </p>
         )}
 
         {(tile.location_label || amenityIcons.length > 0) && (
-          <div className="text-muted-foreground -mt-1 flex items-center gap-1.5 text-sm">
+          <div className="text-zinc-500 dark:text-zinc-400 -mt-1 flex items-center gap-1.5 text-sm">
             {tile.location_label && (
               <>
                 <MapPin className="h-4 w-4 shrink-0" />
@@ -534,7 +534,7 @@ export const TileCard = memo(function TileCard({
           {features.map((feature) => (
             <span
               key={feature}
-              className="bg-muted text-muted-foreground inline-flex items-center rounded-md px-2.5 py-1 text-xs font-medium"
+              className="bg-zinc-100 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 inline-flex items-center rounded-md px-2.5 py-1 text-xs font-medium"
             >
               {feature}
             </span>
@@ -543,7 +543,7 @@ export const TileCard = memo(function TileCard({
 
         <div className="mt-auto flex items-end justify-between pt-2">
           <div className="flex flex-col gap-0.5">
-            <span className="text-muted-foreground text-xs">
+            <span className="text-zinc-500 dark:text-zinc-400 text-xs">
               {tile.total_inclusive != null ? 'Total from' : 'From'}
             </span>
             <div className="flex items-baseline gap-1">
@@ -554,7 +554,7 @@ export const TileCard = memo(function TileCard({
               </span>
               <span className="text-zinc-500 dark:text-zinc-400 text-sm font-medium">{tile.currency}</span>
               {tile.type?.toLowerCase().includes('stay') && !tile.total_inclusive && (
-                <span className="text-muted-foreground text-xs">/night</span>
+                <span className="text-zinc-500 dark:text-zinc-400 text-xs">/night</span>
               )}
             </div>
             {(tile.total_inclusive ?? tile.price_estimate) == null && (
@@ -575,7 +575,7 @@ export const TileCard = memo(function TileCard({
                     <Button
                       variant="outline"
                       size="sm"
-                      className="text-muted-foreground hover:text-foreground"
+                      className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
                       onClick={handleViewDetailsClick}
                     >
                       Details
@@ -603,7 +603,7 @@ export const TileCard = memo(function TileCard({
                 Book
               </Button>
             </div>
-            <span className={`${DS.textSize.micro} text-muted-foreground`}>
+            <span className={`${DS.textSize.micro} text-zinc-500 dark:text-zinc-400`}>
               Opens partner site
             </span>
           </div>
