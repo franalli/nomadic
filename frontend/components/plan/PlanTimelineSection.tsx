@@ -9,9 +9,12 @@
 
 import { LayoutGroup, motion } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useCallback } from 'react';
 
+import { useToast } from '@/components/ui/toast';
 import { REVEAL_TIMING } from '@/lib/animation-config';
+import { debugLog } from '@/lib/debug';
+import { useDocumentStore } from '@/state/documentStore';
 import type { DayCard } from '@/types/plan-envelope';
 
 import { DraggableBlock } from './timeline/DraggableBlock';
@@ -49,6 +52,20 @@ export function PlanTimelineSection({
   onOpenStaysSettings,
   onOpenFlightsSettings,
 }: PlanTimelineSectionProps): ReactNode {
+  const removeBlock = useDocumentStore(s => s.removeBlock);
+  const { toast } = useToast();
+
+  const handleRemoveBlock = useCallback(async (blockId: string, dayNumber: number) => {
+    try {
+      await removeBlock(blockId, dayNumber);
+      toast('Activity removed', { type: 'info', duration: 2000 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to remove block';
+      debugLog('[removeBlock] error:', msg);
+      toast(msg.includes('VERSION_CONFLICT') ? 'Version conflict — please retry' : msg, { type: 'error' });
+    }
+  }, [removeBlock, toast]);
+
   if (hasItineraryContent) {
     return (
       <motion.section
@@ -72,6 +89,7 @@ export function PlanTimelineSection({
                 onOpenBookingDrawer={handleOpenBookingDrawer}
                 onOpenStaysSettings={onOpenStaysSettings}
                 onOpenFlightsSettings={onOpenFlightsSettings}
+                onRemoveBlock={handleRemoveBlock}
                 dayWrapper={(dayNum, children) => (
                   <DroppableDay dayNumber={dayNum}>{children}</DroppableDay>
                 )}

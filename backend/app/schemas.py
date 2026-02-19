@@ -246,14 +246,6 @@ class TileClickEvent(BaseModel):
     branch_id: Optional[str] = None  # now a string since branches are in JSON document
 
 
-class SuggestionClickEvent(BaseModel):
-    """Track when a user clicks a suggested response pill."""
-
-    suggestion_text: str  # The text of the suggestion that was clicked
-    suggestion_index: int  # Position in the list (0, 1, 2)
-    request_id: Optional[str] = None
-
-
 class SuggestionChipMeta(BaseModel):
     """Metadata for frontend chip styling. Parallel array to suggested_responses."""
 
@@ -914,6 +906,23 @@ class ArrangementResult(BaseModel):
     violations: List[BlockViolation] = []
     day_cards: Optional[List[Dict[str, Any]]] = None
     version: Optional[int] = None
+
+
+class RemoveBlockRequest(BaseModel):
+    """Remove a single block from the itinerary."""
+
+    block_id: str
+    day_number: int
+    expected_version: int  # optimistic concurrency, same as apply-arrangement
+
+
+class RemoveBlockResponse(BaseModel):
+    """Response from remove-block."""
+
+    day_number: int
+    day_card: Dict[str, Any]
+    version: int
+    removed_block_id: str
 
 
 class TripInputValidationRequest(BaseModel):

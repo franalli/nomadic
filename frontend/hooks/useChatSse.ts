@@ -218,6 +218,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           onPartial: (data: SSEPartialEvent['data']) => {
             try {
               const store = useDocumentStore.getState();
+              // Payload shape is validated on the complete event; partial is best-effort
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const p = data.payload as any;
               if (data.kind === 'strategy_sections') {
@@ -228,7 +229,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                 store.mergeEnvelope({ trip_inputs: p });
               }
             } catch (partialError) {
-              console.warn('[SSE] Partial merge failed (will reconcile on complete):', partialError);
+              debugLog('[SSE] Partial merge failed (will reconcile on complete):', partialError);
             }
           },
 

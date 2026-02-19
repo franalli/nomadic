@@ -23,7 +23,6 @@
  * @see docs/ux_unified_architecture.md Section I.B - Booking Suggestions Pattern
  */
 
-'use client';
 
 import { ChevronDown, ChevronUp, Lock, Package } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

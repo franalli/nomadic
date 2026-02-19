@@ -57,13 +57,10 @@ from app.services.regen_strategy import (
     detect_changed_fields,
     get_strategy_description,
 )
+from app.services.task_tracker import track as _track_bg_task
 from app.services.unsplash import get_image_url_sync
 
 logger = logging.getLogger(__name__)
-
-# Module-level set to hold strong references to background tasks, preventing GC
-# before they complete (asyncio only keeps weak refs to tasks).
-_background_tasks: set = set()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -625,22 +622,41 @@ async def generate_sse(
                     # Phase B: fire local_expert LLM enrichment AFTER db.commit() so it
                     # can't be stomped by apply_planner_update, and runs outside the
                     # graph's asyncio.timeout() context so it isn't cancelled.
-                    from app.planner.nodes.local_expert import _pending_enrichments
+                    import time as _time
 
-                    _enrich_fn = _pending_enrichments.pop(session_id, None)
-                    if _enrich_fn is not None:
-                        _enrich_task = asyncio.create_task(_enrich_fn())
-                        _background_tasks.add(_enrich_task)
-                        _enrich_task.add_done_callback(_background_tasks.discard)
-                        logger.debug("[SSE] Phase B: local_expert enrichment task fired")
+                    from app.planner.nodes.local_expert import (
+                        _ENRICHMENT_TTL_SECONDS,
+                        _pending_enrichments,
+                        _pending_lock,
+                    )
+
+                    async with _pending_lock:
+                        _entry = _pending_enrichments.pop(session_id, None)
+                    if _entry is not None:
+                        _enrich_fn, _created_at = _entry
+                        if _time.monotonic() - _created_at < _ENRICHMENT_TTL_SECONDS:
+                            _enrich_task = asyncio.create_task(_enrich_fn())
+                            _track_bg_task(_enrich_task)
+                            logger.debug("[SSE] Phase B: enrichment task fired")
+                        else:
+                            logger.warning(
+                                "[SSE] Phase B: stale enrichment for %s",
+                                session_id,
+                            )
                 except (SQLAlchemyError, ValueError) as e:
                     logger.error(f"[{request_id}] Failed to persist document: {e}")
                     await db.rollback()
                     # Clean up pending Phase B enrichment so the dict doesn't leak.
                     # Don't fire enrichment — the Phase A skeleton was not committed.
-                    from app.planner.nodes.local_expert import _pending_enrichments
+                    from app.planner.nodes.local_expert import (
+                        _pending_enrichments as _pe_cleanup,
+                    )
+                    from app.planner.nodes.local_expert import (
+                        _pending_lock as _pe_lock,
+                    )
 
-                    _pending_enrichments.pop(session_id, None)
+                    async with _pe_lock:
+                        _pe_cleanup.pop(session_id, None)
 
             # Build response document
             response_document = document_data if document_data else PlanDocumentData()
@@ -1385,3 +1401,5 @@ async def generate_ndjson(
                 type="error", message=str(e) or "Failed to generate itinerary"
             )
             yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+        finally:
+            logger.debug("[NDJSON] Generator exiting for session=%s", session_id)

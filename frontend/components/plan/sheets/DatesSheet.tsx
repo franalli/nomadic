@@ -8,7 +8,6 @@
  * Pills as header, floating close button.
  */
 
-'use client';
 
 import { addDays, differenceInDays, format, isBefore, startOfDay } from 'date-fns';
 import { AnimatePresence, motion } from 'framer-motion';

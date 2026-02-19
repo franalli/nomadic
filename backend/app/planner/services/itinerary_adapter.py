@@ -39,18 +39,34 @@ def build_itinerary_from_state(state: GraphState) -> Optional[ItineraryResult]:
     pinned_tiles = state.metadata.get("user_pinned_tiles", {})
     preferences = None
     if pinned_tiles:
+        # Filter out pinned tiles whose category no longer matches active categories.
+        # Prevents stale fill-day tiles (e.g. diving) from surviving a category change to yoga.
+        active_cats = set(c.lower() for c in (settings.activity_settings.categories or []))
         day_map: Dict[str, int] = {}
         priority_map: Dict[str, str] = {}
+        filtered_ids: list[str] = []
         for tid, pinned in pinned_tiles.items():
+            tile_data = pinned.get("tile", pinned)
+            tile_cat = ((tile_data.get("meta") or {}).get("category", "") or "").lower()
+            # Keep tile if: no active categories (mixed mode), or tile matches an active category,
+            # or tile has no identifiable category (safety: don't drop unknowns)
+            if active_cats and tile_cat and tile_cat not in active_cats:
+                logger.info(
+                    f"[itinerary_adapter] Pruned stale pinned tile {tid} "
+                    f"(cat={tile_cat}, active={active_cats})"
+                )
+                continue
+            filtered_ids.append(tid)
             pday = pinned.get("preferred_day")
             if pday is not None:
                 day_map[tid] = pday
             priority_map[tid] = pinned.get("priority", "high")
-        preferences = PreferenceOverrideInput(
-            preferred_activity_ids=list(pinned_tiles.keys()),
-            pinned_day_map=day_map,
-            pinned_priority_map=priority_map,
-        )
+        if filtered_ids:
+            preferences = PreferenceOverrideInput(
+                preferred_activity_ids=filtered_ids,
+                pinned_day_map=day_map,
+                pinned_priority_map=priority_map,
+            )
 
     builder_input = ItineraryBuilderInput(
         start_date=plan.start_date,

@@ -29,14 +29,6 @@ from datetime import datetime
 from typing import Optional
 
 from app.config import settings
-from app.planner.nodes.router_utils import (  # noqa: F401 — re-exported
-    EXACT_MATCH_GREETINGS,
-    ORIGIN_PATTERNS,
-    _check_exact_match_greeting,
-    _detect_origin_from_message,
-    _extract_destination_context,
-    get_new_specialists_from_text,
-)
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,

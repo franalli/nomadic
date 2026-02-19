@@ -13,6 +13,7 @@
 import { DoorOpen, Key, type LucideIcon, PlaneLanding, PlaneTakeoff, Settings } from 'lucide-react';
 
 import { cn, normalizeTitle } from '@/lib/utils';
+import type { DayBlock } from '@/types/plan-envelope';
 
 import {
   PreferenceAttributionBadge,
@@ -20,14 +21,8 @@ import {
 } from './PreferenceAttributionBadge';
 import type { DisplayTime } from './types';
 
-/** Constraint object for inline display */
-interface ActiveConstraint {
-  id: string;
-  severity: 'warning' | 'info' | 'success';
-  icon: string;
-  title: string;
-  description: string;
-}
+/** Constraint object for inline display — derived from DayBlock SSoT */
+type ActiveConstraint = NonNullable<DayBlock['active_constraints']>[number];
 
 interface LogisticsBlockProps {
   type: 'arrival' | 'departure' | 'checkin' | 'checkout';
@@ -205,7 +200,8 @@ export function LogisticsBlock({
                   'flex items-start gap-2 p-3 rounded-lg text-xs',
                   constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40',
                   constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40',
-                  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40'
+                  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40',
+                  constraint.severity === 'blocking' && 'bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/40'
                 )}
               >
                 <span className="text-base flex-shrink-0">{constraint.icon}</span>
@@ -214,7 +210,8 @@ export function LogisticsBlock({
                     'font-semibold mb-0.5',
                     constraint.severity === 'warning' && 'text-amber-700 dark:text-amber-400',
                     constraint.severity === 'info' && 'text-blue-700 dark:text-blue-400',
-                    constraint.severity === 'success' && 'text-emerald-700 dark:text-emerald-400'
+                    constraint.severity === 'success' && 'text-emerald-700 dark:text-emerald-400',
+                    constraint.severity === 'blocking' && 'text-red-700 dark:text-red-400'
                   )}>
                     {constraint.title}
                   </div>

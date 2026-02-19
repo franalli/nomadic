@@ -91,6 +91,8 @@ from app.schemas import (  # noqa: E402
     PlanDocumentPatch,
     PlanDocumentResponse,
     PlanViewState,
+    RemoveBlockRequest,
+    RemoveBlockResponse,
     Tile,
     TileRefreshRequest,
     TileRefreshResponse,
@@ -466,10 +468,24 @@ def _rate_limit_exceeded_handler(  # noqa: ARG001
     request: Request, exc: RateLimitExceeded
 ) -> JSONResponse:
     _ = request
+    # slowapi exc.detail is like "60 per 1 minute" — not a valid Retry-After
+    # value per RFC 7231.  Parse the window into numeric seconds so the
+    # frontend can respect the header.
+    retry_after = 60  # sensible default
+    detail_str = str(exc.detail) if exc.detail else ""
+    if "per" in detail_str:
+        try:
+            parts = detail_str.split("per")[-1].strip().split()
+            amount = int(parts[0]) if len(parts) >= 2 else 1
+            unit = parts[1].rstrip("s") if len(parts) >= 2 else "minute"
+            multipliers = {"second": 1, "minute": 60, "hour": 3600}
+            retry_after = amount * multipliers.get(unit, 60)
+        except (ValueError, IndexError):
+            pass
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Please slow down."},
-        headers={"Retry-After": str(exc.detail)},
+        headers={"Retry-After": str(retry_after)},
     )
 
 
@@ -600,9 +616,13 @@ async def security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # unsafe-eval only in dev — required for Next.js HMR / Webpack eval source maps
+    script_src = "'self' 'unsafe-inline'"
+    if settings.env in ("local", "development", "test"):
+        script_src += " 'unsafe-eval'"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        f"script-src {script_src}; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https://images.unsplash.com https://*.mapbox.com blob:; "
         "connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:; "
@@ -618,6 +638,21 @@ async def limit_body_size(request: Request, call_next):
     cl = request.headers.get("content-length")
     if cl and int(cl) > MAX_BODY_BYTES:
         return JSONResponse(status_code=413, content={"detail": "Payload too large"})
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def exempt_options_from_rate_limit(request: Request, call_next):
+    """Mark OPTIONS preflight requests as rate-limit-complete.
+
+    CORSMiddleware handles preflight responses, but slowapi's @limiter.limit()
+    decorator fires inside the route wrapper. If the preflight somehow reaches
+    a route (e.g., non-standard OPTIONS without CORS headers), the decorator
+    would count it against the user's rate-limit bucket. Setting this flag
+    causes slowapi to skip the check entirely.
+    """
+    if request.method == "OPTIONS":
+        request.state._rate_limiting_complete = True
     return await call_next(request)
 
 
@@ -2040,6 +2075,24 @@ async def fill_day_endpoint(
 
     # Tier 2 exclusions from cross-domain blocks (registry-driven)
     excluded_categories: set[str] = set()
+
+    # Check A: Buffer blocks on THIS day exclude their source specialist's cross-domain targets.
+    # A rest_day buffer caused by diving should not generate hiking/climbing on the same day.
+    target_day_card = next(
+        (dc for dc in doc_data.day_cards if dc.day_number == body.day_number), None
+    )
+    if target_day_card:
+        for block in target_day_card.blocks:
+            if not block.is_buffer:
+                continue
+            buf_st = (block.specialist_type or "").lower()
+            if buf_st:
+                buf_cfg = SPECIALIST_REGISTRY.get(buf_st)
+                if buf_cfg:
+                    for xd in buf_cfg.cross_domain_blocks:
+                        excluded_categories.update(xd.target_specialists)
+
+    # Check B: Adjacent day cross-domain exclusions (original logic).
     adjacent_days = [dc for dc in doc_data.day_cards if abs(dc.day_number - body.day_number) == 1]
     for adj_day in adjacent_days:
         for block in adj_day.blocks:
@@ -2108,11 +2161,12 @@ async def fill_day_endpoint(
                 title = (item.get("title") or "").strip()
                 if not title or title in placed_titles:
                     continue
+                title_slug = title.lower().replace(" ", "_")[:20]
                 candidates.append(
                     (
                         s_type,
                         {
-                            "id": f"fill_{s_type}_{body.day_number}",
+                            "id": f"fill_{s_type}_{title_slug}_{body.day_number}",
                             "type": "activity",
                             "partner": "specialist",
                             "partner_product_id": f"specialist_{s_type}_{body.day_number}",
@@ -2182,11 +2236,21 @@ async def fill_day_endpoint(
             tile.setdefault("meta", {})["pinned_day"] = body.day_number
 
         if not tiles:
-            return {"day_number": body.day_number, "tiles_added": 0, "version": doc.version}
+            return {
+                "day_number": body.day_number,
+                "tiles_added": 0,
+                "version": doc.version,
+                "excluded_categories": sorted(excluded_categories),
+            }
     else:
         # Pure Tier 1 with all specialist tiles already placed — nothing to fill
         logger.info(f"[FILL-DAY] All specialist tiles for {tier1_requested} already placed")
-        return {"day_number": body.day_number, "tiles_added": 0, "version": doc.version}
+        return {
+            "day_number": body.day_number,
+            "tiles_added": 0,
+            "version": doc.version,
+            "excluded_categories": sorted(excluded_categories),
+        }
 
     # Convert tiles to rich DayBlocks
     _VALID_PERIODS = {"morning", "afternoon", "evening"}
@@ -2289,6 +2353,7 @@ async def fill_day_endpoint(
         "day_card": day_card.model_dump(),
         "tiles": {tile["id"]: tile for tile in tiles[:3]},
         "version": updated_doc.version,
+        "excluded_categories": sorted(excluded_categories),
     }
 
 
@@ -2378,18 +2443,136 @@ async def apply_arrangement(
             violations=[BlockViolation(**v) for v in violations],
         )
 
-    # Apply moves and persist
+    # Apply moves
     rearranged = _apply_moves_to_cards(day_cards, moves)
+
+    # Recompute position-dependent constraints and detect stale buffers
+    from app.services.itinerary_builder import recompute_constraints_after_arrangement
+
+    rearranged, buffer_violations = recompute_constraints_after_arrangement(
+        rearranged, doc_data.trip_inputs
+    )
+
+    # Persist
     doc_data.day_cards = [DayCard(**dc) for dc in rearranged]
     saved = await save_document_data(db, doc=doc, data=doc_data, updated_by="user")
     await db.commit()
 
-    warnings = [v for v in violations if v["severity"] != "blocking"]
+    warnings = [v for v in violations if v["severity"] != "blocking"] + buffer_violations
     return ArrangementResult(
         valid=True,
         violations=[BlockViolation(**v) for v in warnings],
         day_cards=[dc.model_dump() for dc in doc_data.day_cards],
         version=saved.version,
+    )
+
+
+# =============================================================================
+# Remove Block Endpoint (Stage 13)
+# =============================================================================
+
+
+@app.post("/api/document/remove-block")
+@limiter.limit("30/minute")
+async def remove_block(
+    request: Request,
+    body: RemoveBlockRequest,
+    db: AsyncSession = async_db_dependency,
+) -> RemoveBlockResponse:
+    """
+    Remove a single block from the itinerary. Pure Python, <10ms.
+    No LLM, no constraint validation (removal can only relax constraints).
+    """
+    from app.crud_document import save_document_data
+
+    session_id = get_session_from_request(request)
+    session_key = f"session:{session_id}"
+    await _wait_for_session_stream_idle(session_key)
+
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = await get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document")
+
+    if doc.version != body.expected_version:
+        raise HTTPException(status_code=409, detail="Version conflict — reload and retry")
+
+    doc_data = get_document_data(doc)
+
+    # Find the day card
+    day_card = None
+    day_idx = -1
+    for i, dc in enumerate(doc_data.day_cards):
+        if dc.day_number == body.day_number:
+            day_card = dc
+            day_idx = i
+            break
+    if day_card is None:
+        raise HTTPException(status_code=404, detail=f"Day {body.day_number} not found")
+
+    # Find the block
+    block_idx = -1
+    target_block = None
+    for j, blk in enumerate(day_card.blocks):
+        if blk.id == body.block_id:
+            block_idx = j
+            target_block = blk
+            break
+    if target_block is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Block {body.block_id} not found in day {body.day_number}",
+        )
+
+    # Check if block is removable
+    LOCKED_ACTIVITY_TYPES = {"arrival", "departure", "check-in", "check-out"}
+    if target_block.is_buffer:
+        raise HTTPException(status_code=400, detail="Buffer blocks cannot be removed")
+    if target_block.activity_type in LOCKED_ACTIVITY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{target_block.activity_type}' blocks cannot be removed",
+        )
+
+    # Remove block
+    day_card.blocks.pop(block_idx)
+
+    # If day now has no activity blocks, insert free_day placeholder
+    has_activities = any(
+        not b.is_buffer and b.activity_type not in LOCKED_ACTIVITY_TYPES for b in day_card.blocks
+    )
+    if not has_activities:
+        day_card.blocks = [
+            b for b in day_card.blocks if b.is_buffer or b.activity_type in LOCKED_ACTIVITY_TYPES
+        ] + [
+            DayBlock(
+                id=f"free_day_{body.day_number}",
+                period="morning",
+                activity_type="free_day",
+                summary="Free day — tap to fill",
+            )
+        ]
+        day_card.label = "Free Day"
+
+    # Clean user_pinned_tiles if the removed block had a pinned tile
+    if target_block.booked_tile and isinstance(target_block.booked_tile, dict):
+        tile_id = target_block.booked_tile.get("id")
+        if tile_id and tile_id in doc_data.user_pinned_tiles:
+            del doc_data.user_pinned_tiles[tile_id]
+
+    # Persist
+    doc_data.day_cards[day_idx] = day_card
+    saved = await save_document_data(db, doc=doc, data=doc_data, updated_by="user")
+    await db.commit()
+
+    return RemoveBlockResponse(
+        day_number=body.day_number,
+        day_card=day_card.model_dump(),
+        version=saved.version,
+        removed_block_id=body.block_id,
     )
 
 

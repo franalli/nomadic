@@ -120,6 +120,7 @@ class Settings(BaseSettings):
 
     # external APIs
     openai_api_key: str | None = None
+    google_api_key: str | None = None
     unsplash_access_key: str | None = os.getenv("UNSPLASH_ACCESS_KEY")
     unsplash_request_timeout_seconds: float = float(
         os.getenv("UNSPLASH_REQUEST_TIMEOUT_SECONDS", "2.5")

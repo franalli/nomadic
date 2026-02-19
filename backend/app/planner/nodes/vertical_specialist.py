@@ -16,7 +16,6 @@ The Specialist runs BEFORE the Architect calls tools.
 
 import asyncio
 import json
-import os
 import time
 from typing import Any, Dict, List, Optional
 
@@ -335,7 +334,9 @@ async def generate_specialist_output_llm(
 
     system_prompt = load_prompt(topic)
     if not system_prompt:
-        # Unknown specialist - return None to trigger fallback
+        # Try generic activity prompt as fallback for Tier 2 categories
+        system_prompt = load_prompt("generic_activity")
+    if not system_prompt:
         _debug_log(f"[LLM_SPECIALIST] No system prompt for topic '{topic}', using fallback")
         return None
 
@@ -643,7 +644,7 @@ class VerticalSpecialist:
 
     def __init__(self, topic: str):
         self.topic = topic
-        self.debug = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
+        self.debug = settings.debug_plan_messages
         self._cached_activity_days: int | None = None
 
     def get_constraints(self) -> List[SpecialistConstraint]:
@@ -1085,7 +1086,9 @@ class VerticalSpecialist:
             # =====================================================================
             # STEP 1: Try LLM-based generation (fallback if not parallel)
             # =====================================================================
-            use_llm = load_prompt(self.topic) is not None
+            use_llm = (
+                load_prompt(self.topic) is not None or load_prompt("generic_activity") is not None
+            )
 
             if use_llm and destination:
                 _debug_log(f"[SPECIALIST] Trying LLM generation for {self.topic} in {destination}")
@@ -1335,18 +1338,16 @@ async def _merge_specialist_into_state(
     existing_sections = state.metadata.get("strategy_sections", [])
     cached_section = next((s for s in existing_sections if s.get("specialist_type") == topic), None)
 
-    # Extract current day_preference for this topic
-    _current_day_pref = (
-        state.metadata.get("trip_inputs", {})
-        .get("activity_settings", {})
-        .get("day_preferences", {})
-        .get(topic)
-    )
+    # Extract current day_preference and skill_level for this topic
+    _activity_settings = state.metadata.get("trip_inputs", {}).get("activity_settings", {})
+    _current_day_pref = _activity_settings.get("day_preferences", {}).get(topic)
+    _current_skill_level = _activity_settings.get("skill_level")
 
     if cached_section:
         cached_destination = (cached_section.get("subtitle") or "").lower().strip()
         cached_dates = cached_section.get("_cache_dates")
         cached_day_pref = cached_section.get("_cache_day_pref")
+        cached_skill_level = cached_section.get("_cache_skill_level")
         current_destination = (state.trip_plan.destination or "").lower().strip()
         current_dates = f"{state.trip_plan.start_date}:{state.trip_plan.end_date}"
 
@@ -1356,6 +1357,7 @@ async def _merge_specialist_into_state(
             and cached_dates
             and cached_dates == current_dates
             and cached_day_pref == _current_day_pref
+            and cached_skill_level == _current_skill_level
         ):
             _debug_log(
                 f"🤿 SPECIALIST [{topic}] Cache HIT: Reusing cached output "
@@ -1391,6 +1393,7 @@ async def _merge_specialist_into_state(
             and cached_dates
             and cached_dates != current_dates
             and cached_day_pref == _current_day_pref
+            and cached_skill_level == _current_skill_level
             and cached_section.get("content_added")
             and cached_section.get("feasibility_status") != "infeasible"
         ):
@@ -1512,6 +1515,7 @@ async def _merge_specialist_into_state(
             enhancements=[],
             hero_image=None,
             day_pref=_current_day_pref,
+            skill_level=_current_skill_level,
         )
         upsert_section(state.metadata, infeasible_section, mode="appendable")
         mark_topic_executed(state.metadata, topic)
@@ -1632,6 +1636,7 @@ async def _merge_specialist_into_state(
         enhancements=output.enhancements,
         hero_image=hero_image,
         day_pref=_current_day_pref,
+        skill_level=_current_skill_level,
     )
 
     upsert_section(state.metadata, section, mode="appendable")
@@ -1879,6 +1884,9 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     # Pre-filter: skip topics that _merge_specialist_into_state will continuity-reuse.
     # This avoids firing expensive LLM calls only to discard the results.
     _current_dates = f"{state.trip_plan.start_date}:{state.trip_plan.end_date}"
+    _prefilter_skill = (
+        state.metadata.get("trip_inputs", {}).get("activity_settings", {}).get("skill_level")
+    )
     _continuity_skip = set()
     for t in topics_needing_gen:
         cached = next((s for s in existing_sections if s.get("specialist_type") == t), None)
@@ -1887,23 +1895,31 @@ async def vertical_specialist(state: GraphState) -> GraphState:
             f"[PRE-FILTER] topic={t} cached={cached is not None} "
             f"_cache_dates={cached.get('_cache_dates') if cached else 'N/A'} "
             f"_cache_day_pref={cached.get('_cache_day_pref') if cached else 'N/A'} "
+            f"_cache_skill_level={cached.get('_cache_skill_level') if cached else 'N/A'} "
             f"current_dates={_current_dates} "
-            f"t_day_pref={_t_day_pref}"
+            f"t_day_pref={_t_day_pref} skill={_prefilter_skill}"
         )
         if not cached:
             continue
         _c_dest = (cached.get("subtitle") or "").lower().strip()
         _c_dates = cached.get("_cache_dates")
         _c_day_pref = cached.get("_cache_day_pref")
-        # Exact cache hit (same dest + dates + day_pref)
-        if _c_dest == dest_norm and _c_dates == _current_dates and _c_day_pref == _t_day_pref:
+        _c_skill = cached.get("_cache_skill_level")
+        # Exact cache hit (same dest + dates + day_pref + skill_level)
+        if (
+            _c_dest == dest_norm
+            and _c_dates == _current_dates
+            and _c_day_pref == _t_day_pref
+            and _c_skill == _prefilter_skill
+        ):
             _continuity_skip.add(t)
-        # Continuity reuse (same dest, dates changed, same day_pref, has content)
+        # Continuity reuse (same dest, dates changed, same day_pref + skill_level, has content)
         elif (
             _c_dest == dest_norm
             and _c_dates
             and _c_dates != _current_dates
             and _c_day_pref == _t_day_pref
+            and _c_skill == _prefilter_skill
             and cached.get("content_added")
             and cached.get("feasibility_status") != "infeasible"
         ):

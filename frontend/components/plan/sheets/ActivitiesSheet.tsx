@@ -8,7 +8,6 @@
  * Includes toggle + category selection + pace.
  */
 
-'use client';
 
 import { Ticket } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
@@ -119,22 +118,34 @@ function ActivitiesSheetInner({
 
   // Handle save preferences
   const handleSave = useCallback(() => {
+    // Strip day_preferences keys for categories that were removed.
+    // Without this, removing "hiking" leaves day_preferences:{hiking:4} in the payload,
+    // which the backend sees as a request to schedule hiking days.
+    const activeCategorySet = new Set(localCategories);
+    const cleanedDayPreferences = Object.fromEntries(
+      Object.entries(localDayPreferences).filter(([cat]) => activeCategorySet.has(cat))
+    );
     onSaveSettings({
       categories: localCategories,
       skill_level: localSkillLevel,
-      day_preferences: localDayPreferences,
+      day_preferences: cleanedDayPreferences,
     });
     toast('Activity preferences saved');
     onOpenChange(false);
   }, [localCategories, localSkillLevel, localDayPreferences, onSaveSettings, toast, onOpenChange]);
 
-  // Toggle category
+  // Toggle category — when adding, seed day_preferences with a default of 1
   const toggleCategory = useCallback((category: string) => {
-    setLocalCategories((prev) =>
-      prev.includes(category)
-        ? prev.filter((c) => c !== category)
-        : [...prev, category]
-    );
+    setLocalCategories((prev) => {
+      if (prev.includes(category)) {
+        return prev.filter((c) => c !== category);
+      }
+      // Seed day_preferences so the stepper doesn't show a contradictory "0"
+      setLocalDayPreferences(dp =>
+        category in dp ? dp : { ...dp, [category]: 1 }
+      );
+      return [...prev, category];
+    });
   }, []);
 
   // Handle day preference changes

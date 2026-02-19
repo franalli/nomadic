@@ -35,7 +35,7 @@ You review against the project's documented invariants. You NEVER modify files �
 - [ ] **ItineraryBuilder remains a service**, not a LangGraph node.
 - [ ] **TripPlan is the only state SSoT.** No parallel state objects created.
 - [ ] **No state mutations in routing functions.** `route_after_router()`, `route_after_specialist()`, `route_after_guard()`, `route_after_architect()`, `route_after_logistics()` must be pure routing decisions.
-- [ ] **ConstraintGuard is mostly deterministic.** One known LLM exception: `check_route_constraint()` → `validate_place_exists()` via `settings.guard_model`. All other guard checks are pure Python.
+- [ ] **ConstraintGuard is mostly deterministic.** One known LLM exception: `check_route_constraint()` → `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL). All other guard checks are pure Python.
 - [ ] **ItineraryBuilder has zero LLM calls.** Pure Python scheduling only.
 - [ ] **Synthesizer model routing unchanged.** `_MODEL_BY_COMPLEXITY` not modified without approval.
 
@@ -43,8 +43,7 @@ You review against the project's documented invariants. You NEVER modify files �
 
 - [ ] **All LLM construction via `get_llm_by_model()`** from `llm_factory.py`. No direct `ChatOpenAI()`, `ChatGoogleGenerativeAI()`, or raw SDK constructors in node/service code.
 - [ ] **Model strings come from `settings.*_model`**, never hardcoded in node files.
-- [ ] **Structured output uses `llm_structured.py`** retry wrapper where applicable (especially Gemini calls).
-- [ ] **Structured output calls use `include_raw=True, method="function_calling"`** for cross-provider compatibility. Every call site guards `parsed is None` → `raise ValueError`.
+- [ ] **Structured output calls use `include_raw=True, method="function_calling"`** for cross-provider compatibility. Every call site guards `parsed is None` → `raise ValueError`. Retry is done inline with an explicit retry loop.
 - [ ] **Token usage via `extract_token_usage()`** from `llm_factory.py`. No direct `response_metadata["token_usage"]` or `usage_metadata` access in node/service code.
 - [ ] **No provider-specific params leaked into node code.** Nodes don't set `thinking_budget`, `max_output_tokens`, or `include_thoughts` directly — factory handles this.
 

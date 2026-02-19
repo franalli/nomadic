@@ -28,6 +28,7 @@ import type { Tile } from '@/types/tile';
 
 import { type ProgressStage } from './ItineraryProgressIndicator';
 import { type GenerationState, getNextAction, isGenerating, isMultiSpecialistTrip } from './planStateHelpers';
+import { getTopicLabel } from './stages/StrategyHeroUtils';
 import { useBookingDrawerState } from './useBookingDrawerState';
 
 export type DataDensity = 'empty' | 'ghost' | 'bridge' | 'full';
@@ -165,7 +166,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
     if (newInfeasible.length > 0) {
       const destination = effectiveTripInputs?.destination ?? destinationTitle ?? 'this destination';
       newInfeasible.forEach(section => {
-        const name = section.title || section.specialist_type || 'Activity';
+        const name = section.title || getTopicLabel(section.specialist_type ?? '') || 'Activity';
         const reason = section.feasibility_reason || 'Try a different destination.';
         toast(`${name} unavailable in ${destination}. ${reason}`, { type: 'warning', duration: 5000 });
       });

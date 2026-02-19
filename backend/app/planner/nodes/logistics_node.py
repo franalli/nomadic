@@ -37,55 +37,14 @@ from app.debug_utils import (
 )
 from app.planner.hashing import stable_hash
 from app.planner.services.iata_resolver import resolve_iata_codes
-from app.planner.specialist_registry import get as get_specialist_config
 from app.planner.state.graph_state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
-from app.services.experience_generator import generate_single_category
 from app.services.task_tracker import track as _track_task
 from app.tile_service.curated_provider import CuratedProvider
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
 from app.tile_service.models import SearchContext
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# Backfill category selection — maps specialist affinity → experience-gen cats
-# =============================================================================
-
-_BACKFILL_CATEGORIES_BY_AFFINITY: dict[str, list[str]] = {
-    "water": ["snorkeling", "kayaking", "boating"],
-    "outdoors": ["photography", "wildlife", "horseback_riding"],
-    "culture": ["cultural", "cooking", "shopping"],
-    "wellness": ["yoga", "wellness"],
-    "food": ["cooking", "food_tour"],
-}
-
-
-def _select_backfill_categories(
-    active_specialists: list[str],
-    max_categories: int = 3,
-) -> list[str]:
-    """Pick experience-generator categories that complement active specialists."""
-    seen: set[str] = set(active_specialists)
-    candidates: list[str] = []
-
-    for spec in active_specialists:
-        cfg = get_specialist_config(spec)
-        if not cfg or not cfg.backfill_affinity_tags:
-            continue
-        for tag in cfg.backfill_affinity_tags:
-            for cat in _BACKFILL_CATEGORIES_BY_AFFINITY.get(tag, []):
-                if cat not in seen:
-                    candidates.append(cat)
-                    seen.add(cat)
-
-    # Always include one culture category for variety — reserve a slot if needed
-    has_culture = any(c in ("cultural", "cooking", "shopping") for c in candidates)
-    if not has_culture:
-        # Insert before slicing so it's guaranteed to survive the cut
-        candidates.insert(min(len(candidates), max_categories - 1), "cultural")
-
-    return candidates[:max_categories]
 
 
 # =============================================================================
@@ -964,179 +923,10 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     start_date = str(plan.start_date) if plan.start_date else ""
     end_date = str(plan.end_date) if plan.end_date else ""
 
-    def _supplement_with_mock_backfill(
-        existing_tiles: list[dict],
-        needed: int,
-        *,
-        excluded_categories: set[str] | None = None,
-        affinity_tags: list[str] | None = None,
-    ) -> list[dict]:
-        """Generate extra generic activity options when free days exceed curated inventory."""
-        if needed <= 0:
-            return []
-
-        try:
-            # Ignore user-selected specialist categories for pure Tier 1 backfill.
-            # We want generic filler options, not more of the active specialist activity.
-            if isinstance(activity_settings, dict):
-                neutral_activity_settings = dict(activity_settings)
-            else:
-                neutral_activity_settings = {}
-            neutral_activity_settings["categories"] = []
-
-            ctx = SearchContext(
-                destination=plan.destination,
-                origin=plan.origin,
-                start_date=start_date or None,
-                end_date=end_date or None,
-                adults=plan.adults or 1,
-                children=plan.children or 0,
-                currency="USD",
-                verticals=["activity"],
-                max_results_per_vertical=min(max(needed, 5), 12),
-                origin_iata=plan.origin_iata or None,
-                destination_iata=plan.destination_iata or None,
-                hotel_settings=hotel_settings or None,
-                activity_settings=neutral_activity_settings or None,
-                flight_settings=flight_settings or None,
-            )
-            mock_provider = MockActivityProvider()
-            mock_tiles = mock_provider.search(ctx, affinity_tags=affinity_tags)
-        except Exception as e:
-            logger.warning(f"[LOGISTICS] Mock backfill generation failed: {e}")
-            return []
-
-        excluded = {c.strip().lower() for c in (excluded_categories or set()) if c}
-
-        def _tile_category(tile: dict) -> str:
-            meta = tile.get("meta")
-            if isinstance(meta, dict):
-                category = meta.get("category")
-                if isinstance(category, str) and category.strip():
-                    return category.strip().lower()
-            tags = tile.get("tags")
-            if isinstance(tags, list):
-                for tag in tags:
-                    if isinstance(tag, str) and tag.strip():
-                        return tag.strip().lower()
-            return ""
-
-        existing_ids = {
-            str(t.get("id"))
-            for t in existing_tiles
-            if isinstance(t, dict) and t.get("id") is not None
-        }
-        existing_titles = {
-            str(t.get("title", "")).strip().lower()
-            for t in existing_tiles
-            if isinstance(t, dict) and t.get("title")
-        }
-
-        supplemental: list[dict] = []
-        for tile in mock_tiles:
-            tile_dict = _tile_to_dict(tile)
-            tile_category = _tile_category(tile_dict)
-            if tile_category and tile_category in excluded:
-                continue
-            tile_id = str(tile_dict.get("id"))
-            tile_title = str(tile_dict.get("title", "")).strip().lower()
-            if tile_id in existing_ids:
-                continue
-            if tile_title and tile_title in existing_titles:
-                continue
-            supplemental.append(tile_dict)
-            existing_ids.add(tile_id)
-            if tile_title:
-                existing_titles.add(tile_title)
-            if len(supplemental) >= needed:
-                break
-
-        return supplemental
-
-    async def _supplement_backfill(
-        existing_tiles: list[dict],
-        needed: int,
-        *,
-        active_specialists: list[str],
-        excluded_categories: set[str] | None = None,
-    ) -> list[dict]:
-        """Generate backfill tiles: experience generator → mock fallback."""
-        if needed <= 0:
-            return []
-
-        tiles: list[dict] = []
-
-        # --- Primary: experience generator (destination-aware, cached) ---
-        try:
-            cats = _select_backfill_categories(active_specialists, max_categories=3)
-            month = start_date[:7] if start_date else ""
-            tiles_per_cat = max(2, math.ceil(needed / len(cats))) if cats else 0
-
-            if cats and plan.destination:
-                tasks = [
-                    generate_single_category(
-                        destination=str(plan.destination),
-                        category=cat,
-                        month=month,
-                        tiles_per_category=tiles_per_cat,
-                        base_index=i * tiles_per_cat,
-                    )
-                    for i, cat in enumerate(cats)
-                ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                for r in results:
-                    if not isinstance(r, Exception):
-                        tiles.extend(r)
-
-                if tiles:
-                    logger.info(
-                        f"[LOGISTICS] Experience backfill: {len(tiles)} tiles "
-                        f"for {plan.destination} (cats={cats})"
-                    )
-        except Exception as e:
-            logger.warning(f"[LOGISTICS] Experience backfill failed: {e}")
-
-        # --- Dedup experience tiles against existing ---
-        existing_titles = {
-            str(t.get("title", "")).strip().lower()
-            for t in existing_tiles
-            if isinstance(t, dict) and t.get("title")
-        }
-        deduped: list[dict] = []
-        for tile in tiles:
-            title = str(tile.get("title", "")).strip().lower()
-            if title and title in existing_titles:
-                continue
-            deduped.append(tile)
-            if title:
-                existing_titles.add(title)
-        tiles = deduped[:needed]
-
-        # --- Fallback: mock (offline-safe, deterministic) ---
-        if len(tiles) < needed:
-            shortfall = needed - len(tiles)
-            # Resolve affinity tags for mock sorting
-            _affinity_tags: list[str] = []
-            for niche in active_specialists:
-                cfg = get_specialist_config(niche)
-                if cfg and cfg.backfill_affinity_tags:
-                    _affinity_tags.extend(cfg.backfill_affinity_tags)
-            mock_tiles = _supplement_with_mock_backfill(
-                existing_tiles + tiles,
-                shortfall,
-                excluded_categories=excluded_categories,
-                affinity_tags=_affinity_tags or None,
-            )
-            tiles.extend(mock_tiles)
-            if mock_tiles:
-                logger.info(f"[LOGISTICS] Mock fallback: {len(mock_tiles)} tiles")
-
-        return tiles[:needed]
-
     # Get database session factory for caching
     async_session_factory = _get_async_session_factory()
 
-    # Scale activity fetch count by trip length (longer trips need more backfill tiles)
+    # Scale activity fetch count by trip length (longer trips need more base tiles)
     activity_max_results = 5  # default
     if start_date and end_date:
         try:
@@ -1369,95 +1159,18 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
         if not tier2_cats:
             # Pure Tier 1 — specialist provides curated activities.
-            # BUT: if specialist fills fewer days than the trip has,
-            # keep some logistics activities to backfill free days.
+            # All generic activity tiles are suppressed; free days render as
+            # "Free Day" blocks in the builder, fillable on-demand.
             active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
-
-            # Count specialist activities, then estimate days needed
-            # Builder co-schedules up to 2 activities/day (MAX_BLOCKS_PER_DAY=3 minus hotel)
-            specialist_activities = 0
-            for section in state.metadata.get("strategy_sections", []):
-                if section.get("specialist_type", "") in ("local_expert", "general"):
-                    continue
-                specialist_activities += len(section.get("content_added", []))
-            specialist_days_needed = math.ceil(specialist_activities / 2)
-
-            try:
-                start = datetime.strptime(plan.start_date, "%Y-%m-%d")
-                end = datetime.strptime(plan.end_date, "%Y-%m-%d")
-                trip_days = (end - start).days + 1
-            except (ValueError, TypeError, AttributeError):
-                trip_days = 5
-
-            # Buffer: cross-domain + arrival/departure
-            buffer_days = 2  # arrival + departure
-            for section in state.metadata.get("strategy_sections", []):
-                st = section.get("specialist_type", "")
-                cfg = get_specialist_config(st)
-                if cfg and cfg.has_nofly_buffer:
-                    buffer_days += 1
-                    break  # Only one buffer day regardless of specialist count
-
-            free_days = max(0, trip_days - specialist_days_needed - buffer_days)
-
-            if free_days <= 1:
-                # Specialist fills (nearly) the whole trip — full suppression
-                log(
-                    "LOGISTICS",
-                    "Suppressing logistics activities - pure Tier 1 (no free days)",
-                    data=f"specialists={active_niche}, trip={trip_days}d, "
-                    f"activities={specialist_activities}, "
-                    f"days_needed={specialist_days_needed}d, free={free_days}d",
-                )
-                state.tiles["activities"] = []
-                activity_dicts = []
-            else:
-                # Keep some logistics activities for free days
-                # Phase 5.6 will place them on the actual free days
-                existing = state.tiles.get("activities", [])
-                if isinstance(existing, list):
-                    # Keep up to free_days activities (one per free day)
-                    kept = existing[:free_days]
-                    base_kept_count = len(kept)
-                    supplemental_count = 0
-                    if len(kept) < free_days:
-                        needed = free_days - len(kept)
-                        supplemental = await _supplement_backfill(
-                            kept,
-                            needed,
-                            active_specialists=active_niche,
-                            excluded_categories=set(active_niche),
-                        )
-                        if supplemental:
-                            kept.extend(supplemental)
-                            supplemental_count = len(supplemental)
-                            log(
-                                "LOGISTICS",
-                                f"Supplemented backfill with {supplemental_count} activities",
-                                data=f"free_days={free_days}d, needed={needed}, now={len(kept)}",
-                            )
-                    state.tiles["activities"] = kept
-                    activity_dicts = kept
-                    if supplemental_count > 0:
-                        kept_summary = (
-                            f"kept {base_kept_count} base + {supplemental_count} supplemental "
-                            f"activities for {free_days} free days"
-                        )
-                    else:
-                        kept_summary = (
-                            f"kept {base_kept_count} of {len(existing)} activities "
-                            f"for {free_days} free days"
-                        )
-                    log(
-                        "LOGISTICS",
-                        f"Selective backfill: {kept_summary}",
-                        data=f"specialists={active_niche}, trip={trip_days}d, "
-                        f"activities={specialist_activities}, "
-                        f"days_needed={specialist_days_needed}d",
-                    )
-                else:
-                    state.tiles["activities"] = []
-                    activity_dicts = []
+            existing = state.tiles.get("activities", [])
+            state.tiles["activities"] = []
+            activity_dicts = []
+            log(
+                "LOGISTICS",
+                f"Suppressing {len(existing) if isinstance(existing, list) else 0} "
+                f"logistics activities — pure Tier 1",
+                data=f"specialists={active_niche}",
+            )
         else:
             # Mixed — generate Tier 2 experience tiles via LLM
             from app.services.unsplash import prefetch_destination_images
@@ -1638,7 +1351,7 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
 
     free_days = trip_days - specialist_activity_days - 2 (arrival/departure)
     total_placeable = free_days + specialist_days (co-scheduling capacity)
-    tiles_per_category = clamp(total_placeable // len(tier2_cats), 2, 4)
+    tiles_per_category = clamp(base, 2, cap) where cap adapts for pure Tier 2
     """
     plan = state.trip_plan
     if not plan.start_date or not plan.end_date or not tier2_cats:
@@ -1661,7 +1374,12 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     free_days = max(0, trip_days - specialist_days - 2)
     # Specialist days can hold ~1 co-scheduled experience tile each
     total_placeable = free_days + specialist_days
-    tiles_per_cat = min(max(2, total_placeable // len(tier2_cats)), 4)
+    base = max(2, total_placeable // len(tier2_cats))
+    # When no niche specialists ran, ensure enough tiles to cover free days.
+    # Otherwise, keep the conservative cap to avoid overwhelming specialist days.
+    has_niche = specialist_days > 0
+    cap = 4 if has_niche else min(8, max(4, math.ceil(free_days / len(tier2_cats))))
+    tiles_per_cat = min(base, cap)
     log(
         "LOGISTICS",
         f"Tile scaling: trip={trip_days}d, specialist={specialist_days}d, "

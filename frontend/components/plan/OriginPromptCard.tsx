@@ -10,7 +10,6 @@
  * @see docs/ux_unified_architecture.md - Origin Prompt Flow
  */
 
-'use client';
 
 import { Plane } from 'lucide-react';
 import { useState } from 'react';

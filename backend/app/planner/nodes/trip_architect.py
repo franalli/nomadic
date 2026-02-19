@@ -16,7 +16,6 @@ GPT-4o-mini resolves relative dates, budget, travelers with current date injecti
 """
 
 import logging
-import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
@@ -457,7 +456,7 @@ class TripArchitect:
     """
 
     def __init__(self):
-        self.debug = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
+        self.debug = settings.debug_plan_messages
 
     def determine_mode(self, state: GraphState) -> str:
         """

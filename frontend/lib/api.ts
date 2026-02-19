@@ -124,11 +124,15 @@ function isTransientError(error: unknown): boolean {
 /**
  * Check if a Response status indicates a transient error.
  *
+ * NOTE: 429 is intentionally excluded. Unlike 5xx errors (server hiccups),
+ * 429 means "you are sending too many requests" — retrying makes it worse.
+ * Callers should handle 429 via the Retry-After header, not blind retries.
+ *
  * @param status - HTTP status code
  * @returns true if status indicates a retryable error
  */
 function isTransientStatus(status: number): boolean {
-  return status === 502 || status === 503 || status === 504 || status === 429;
+  return status === 502 || status === 503 || status === 504;
 }
 
 /**
@@ -139,6 +143,17 @@ function isTransientStatus(status: number): boolean {
  */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Parse the Retry-After header from a 429 response into seconds.
+ * Returns null if the header is missing or unparseable.
+ */
+export function parseRetryAfter(response: Response): number | null {
+  const header = response.headers.get('Retry-After');
+  if (!header) return null;
+  const seconds = parseInt(header, 10);
+  return isNaN(seconds) || seconds <= 0 ? null : seconds;
 }
 
 /**
@@ -500,6 +515,35 @@ export async function applyArrangement(
     throw new Error('VERSION_CONFLICT');
   }
   if (!res.ok) throw new Error(`apply-arrangement failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Remove a single block from the itinerary.
+ * No constraint validation needed — removal can only relax constraints.
+ */
+export async function removeBlock(
+  blockId: string,
+  dayNumber: number,
+  expectedVersion: number
+): Promise<{
+  day_number: number;
+  day_card: import('@/types/plan-envelope').DayCard;
+  version: number;
+  removed_block_id: string;
+}> {
+  const res = await apiFetch('/api/document/remove-block', {
+    method: 'POST',
+    body: JSON.stringify({
+      block_id: blockId,
+      day_number: dayNumber,
+      expected_version: expectedVersion,
+    }),
+  });
+  if (res.status === 409) {
+    throw new Error('VERSION_CONFLICT');
+  }
+  if (!res.ok) throw new Error(`remove-block failed: ${res.status}`);
   return res.json();
 }
 

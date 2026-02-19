@@ -27,10 +27,10 @@
 | POST   | `/api/tiles/click`                | Track tile click (analytics)           | `TileClickEvent`                                            | `{status: "ok"}`                                                                                                              |
 | POST   | `/api/tiles/refresh`              | Refresh tiles for branch               | `TileRefreshRequest`                                        | `TileRefreshResponse`                                                                                                         |
 | POST   | `/api/document/tiles/{branch_id}` | Fetch tiles for branch                 | --                                                          | `PlanDocumentResponse`                                                                                                        |
-| POST   | `/api/suggestions/click`          | Track suggestion click                 | `SuggestionClickEvent`                                      | `{status: "ok"}`                                                                                                              |
-| POST   | `/api/document/fill-day`          | Generate activity tiles for a free day | `FillDayRequest{day_number, categories?, pinned_tile_ids?}` | `{day_number, tiles_added, day_card?, tiles?, version, rejected?, rejection_reason?, rejection_code?, rejection_suggestion?}` |
+| POST   | `/api/document/fill-day`          | Generate activity tiles for a free day | `FillDayRequest{day_number, categories?, pinned_tile_ids?}` | `{day_number, tiles_added, day_card?, tiles?, version, excluded_categories?: string[], rejected?, rejection_reason?, rejection_code?, rejection_suggestion?}` |
 | POST   | `/api/document/validate-arrangement` | Pure Python constraint check on proposed block moves (<50ms, no LLM) | `ArrangementValidateRequest{moves: BlockMove[]}` | `ArrangementResult{valid, violations: BlockViolation[]}` |
 | POST   | `/api/document/apply-arrangement` | Validate + persist block moves with optimistic concurrency | `ArrangementApplyRequest{moves: BlockMove[], expected_version: int}` | `ArrangementResult{valid, violations, day_cards?, version?}` |
+| POST   | `/api/document/remove-block` | Remove a single block from the itinerary (pure Python, <10ms, no LLM) | `RemoveBlockRequest{block_id, day_number, expected_version}` | `RemoveBlockResponse{day_number, day_card, version, removed_block_id}` |
 
 ### Documents (Plan State)
 
@@ -91,7 +91,7 @@ Media type: `application/x-ndjson`. Events:
 
 ### Rate Limiting (`slowapi`)
 
-Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests share a single `__preflight__` bucket so they never exhaust a real user's rate limit. Tiered:
+Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests are exempt via `exempt_options_from_rate_limit` middleware (sets `_rate_limiting_complete` flag before the route handler runs, so slowapi skips the check entirely). Rate-limit exceeded responses return a numeric `Retry-After` header (seconds, parsed from slowapi's human-readable detail). Tiered:
 
 | Tier                     | Endpoints                                                                                                                | Limit                                           |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
@@ -99,15 +99,15 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests sha
 | **Heavy (builder-only)** | `expand-itinerary`                                                                                                       | 20/min (no LLM — frontend mutex prevents abuse) |
 | **Medium**               | `validate-trip-input`, `destination-image`, `tiles/refresh`                                                              | 15/min                                          |
 | **Medium-Low**           | `document/fill-day`                                                                                                      | 30/min                                          |
-| **Light**                | `document` (GET+PATCH), `document/tiles/{branch_id}`, `chat`, `chat/last`, `session`, `tiles/click`, `suggestions/click`, `document/validate-arrangement` | 60/min                                          |
-| **Low-write**            | `document/apply-arrangement`                                                                                             | 30/min                                          |
+| **Light**                | `document` (GET+PATCH), `document/tiles/{branch_id}`, `chat`, `chat/last`, `session`, `tiles/click`, `document/validate-arrangement` | 60/min                                          |
+| **Low-write**            | `document/apply-arrangement`, `document/remove-block`                                                                    | 30/min                                          |
 | **Admin**                | `/api/admin/*`                                                                                                           | 10/min (+ `X-Admin-Key` required)               |
 
 ### Security Middleware
 
 - **Body size limit:** 512KB max (`Content-Length` check before Pydantic parsing)
 - **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security: max-age=63072000; includeSubDomains`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
-- **Backend CSP (added in main.py):** `Content-Security-Policy` header set on every response — `default-src 'self'`, `script-src 'self' 'unsafe-inline' 'unsafe-eval'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: https://images.unsplash.com https://*.mapbox.com blob:`, `connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:`, `font-src 'self' data:`, `frame-ancestors 'none'`
+- **Backend CSP:** `Content-Security-Policy` header set on every response — `default-src 'self'`, `script-src 'self' 'unsafe-inline'` (+ `'unsafe-eval'` in dev/local/test only for Next.js HMR), `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: https://images.unsplash.com https://*.mapbox.com blob:`, `connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:`, `font-src 'self' data:`, `frame-ancestors 'none'`
 - **Session middleware:** Skips `/health` (no session cookie overhead on health checks). Max 10 new sessions per IP per hour
 - **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP (thread-safe slot reserve/release). SSE state extracted to `backend/app/sse_state.py` to break circular import between `main.py` and `lifespan.py`
 - **Fill-day/session ordering:** `/api/document/fill-day` waits until no active graph SSE stream exists for that session
@@ -172,7 +172,7 @@ PlanDocumentData
   |           |-- intensity? (light|moderate|challenging)
   |           |-- is_buffer, buffer_type?, buffer_reason?
   |           |-- specialist_type?, constraints[]
-  |           |-- active_constraints: ActiveConstraint[] (rendered badge list; each: {id, severity, icon, title, description})
+  |           |-- active_constraints: ActiveConstraint[] (rendered badge list; each: {id, severity: 'warning'|'info'|'success'|'blocking', icon, title, description})
   |           |-- image_url?, duration?, coordinates: {lat, lng}?
   |           |-- scheduled_time?, logistics_details?, hotel_name?
   |           |-- booked_tile?, requires_booking, booking_category?
@@ -206,7 +206,7 @@ PlanDocumentData
   |-- assistant_message?, suggested_responses[]
   |-- suggested_response_meta?: SuggestionChipMeta[] (parallel to suggested_responses)
   |     {chip_type: "cta"|"follow_up"|"setting", category: string, icon?: string}
-  |-- suggestion_chips?: SuggestionChip[] (structured chips with action routing - Stage 11B)
+  |-- suggestion_chips?: SuggestionChip[] (structured chips with action routing)
   |     {message, action_type: "send_message"|"open_pill"|"trigger_action", action_target?, chip_type, category, icon?}
   '-- _debug?: {router_extraction_failed: boolean}  (backend-only observability, not consumed by frontend)
 ```
@@ -216,8 +216,8 @@ PlanDocumentData
 | Model                         | Purpose                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GraphPlanRequest`            | Plan generation: message, trip_inputs, session_state, document_id, ui_phase, expected_version, thread_id, reset, suggestion_clicked. Session state bootstrap/merge handled by shared `_prepare_graph_plan_session_state()` (used by `/graph_plan/stream`). User-owned settings (`activity_settings`, `hotel_settings`, `flight_settings`, `transport_settings`, `booking_types`) use deep merge via `_merge_user_owned_trip_settings()` to avoid clobbering omitted keys. |
-| `ExpandItineraryRequest`      | Stage 2->3: idempotency_key, strategy_sections, tiles, preferences, trip_inputs, force_full_rebuild. **Tile source selection:** `force_full_rebuild=true` (auto-expand after chat) uses DB tiles (authoritative — written by `apply_planner_update`); `force_full_rebuild=false` (preference regen / manual) uses frontend tiles (includes hearted tiles, filters); empty frontend tiles falls back to DB tiles. **Idempotency:** `idempotency_key` checked via `check_idempotency()` in `backend/app/request_dedup.py` (TTLCache, 30s TTL, 1000 max entries, extracted from main.py). |
-| `PlanDocumentPatch`           | CRDT update: version, branches?, tiles?, selections?, trip_inputs?, remove_branch_ids?, remove_tile_ids?, preferred_tile_ids? The nested `DocumentTripInputsPatch` (used for `trip_inputs?`) now supports partial updates for: `transport_settings`, `date_flex`, `trip_duration`, `date_window_start`, `date_window_end` — in addition to the existing `flight_settings`, `hotel_settings`, `activity_settings`. |
+| `ExpandItineraryRequest`      | Stage 2->3: idempotency_key, strategy_sections, tiles, preferences, trip_inputs, force_full_rebuild. **Tile source selection:** `force_full_rebuild=true` (auto-expand after chat) uses DB tiles (authoritative — written by `apply_planner_update`); `force_full_rebuild=false` (preference regen / manual) uses frontend tiles (includes hearted tiles, filters); empty frontend tiles falls back to DB tiles. **Idempotency:** `idempotency_key` checked via `check_idempotency()` in `backend/app/request_dedup.py` (TTLCache, 30s TTL, 1000 max entries). |
+| `PlanDocumentPatch`           | CRDT update: version, branches?, tiles?, selections?, trip_inputs?, remove_branch_ids?, remove_tile_ids?, preferred_tile_ids? The nested `DocumentTripInputsPatch` (used for `trip_inputs?`) supports partial updates for all user-owned settings: `flight_settings`, `hotel_settings`, `activity_settings`, `transport_settings`, `date_flex`, `trip_duration`, `date_window_start`, `date_window_end`. |
 | `PlanDocumentResponse`        | Document fetch: version, updated_by, document, updated_at, changes_made: bool                                                                                                                                                                                                                                                                                                                                    |
 | `TileRefreshRequest/Response` | Refresh tiles for branch with new settings                                                                                                                                                                                                                                                                                                                                                                       |
 | `SuggestionChip`              | Structured chip: message, action_type (`send_message`\|`open_pill`\|`trigger_action`), action_target?, chip_type (`cta`\|`follow_up`\|`setting`), category, icon?                                                                                                                                                                                                                                                |
@@ -227,6 +227,8 @@ PlanDocumentData
 | `ArrangementApplyRequest`     | Validate + persist moves with optimistic concurrency: `moves: BlockMove[], expected_version: int`. Returns 409 on version mismatch.                                                                                                                                                                                                                                                                               |
 | `BlockViolation`              | Constraint violation: `block_id`, `violation_code` (`LOCKED_BLOCK`\|`NO_FLY_BUFFER`\|`CROSS_DOMAIN_BUFFER_REQUIRED`\|`DAY_CAPACITY_EXCEEDED`), `severity` (`blocking`\|`warning`), `message`, `target_day`                                                                                                                                                                                                      |
 | `ArrangementResult`           | Response from validate or apply: `valid: bool`, `violations: BlockViolation[]`, `day_cards?: list` (only on successful apply), `version?: int` (only on successful apply)                                                                                                                                                                                                                                        |
+| `RemoveBlockRequest`          | Remove a single block: `block_id`, `day_number`, `expected_version` (optimistic concurrency). 409 on version conflict. Buffer blocks and locked activity types (`arrival`, `departure`, `check-in`, `check-out`) cannot be removed (400). If removal leaves no activities, a `free_day` placeholder block is inserted. |
+| `RemoveBlockResponse`         | Response from remove-block: `day_number`, `day_card` (updated day card dict), `version` (new version), `removed_block_id`                                                                                                                                                                                                                                                                                       |
 
 ---
 
@@ -310,6 +312,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | Regeneration   | `lastGeneratedPreferences`, `isRegenerating`, `isPending`, `expandInProgress`, `remainingSeconds` |
 | Fill-day mutex | `_fillingDays` (Set\<number\>) — per-day concurrency guard                                        |
 | Mutation mutex | `_pendingMutations` (number) — general mutation counter (fill-day, drag-drop)                     |
+| PATCH shadow   | `_lastPatchedTripInputs` (`DocumentTripInputs \| null`) — backend-confirmed snapshot of last successful trip_inputs PATCH; used by `commitTripInputs()` as the no-op dedup baseline (avoids false no-ops since `updateTripInputs()` mutates zustand before the PATCH fires) |
 | Streaming      | `currentRunId`, `abortController`                                                                 |
 | Generation     | `generation` (`GenerationState \| null`) — envelope-driven generation status stored at root store level (not persisted in `document`) |
 | Cart           | `cartTileIds` (Set)                                                                               |
@@ -322,7 +325,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | `setFromPlanResponse()`                                            | Merge backend GraphPlanResponse into store (destination lock, S3-safe view state guard including lateral S3 transitions, tile/section merge, image URL sanitization) |
 | `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization) plus root-level `generation` merge from envelope |
 | `updateTripInputs()`                                               | Sync local trip input update (no API call)                                                                                              |
-| `commitTripInputs()`                                               | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful). Filters no-op `trip_inputs` fields before PATCH; if empty after filtering, skips network write and returns success. Successful commits clear matching keys from `_userDirtySettings`. |
+| `commitTripInputs()`                                               | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful). Filters no-op `trip_inputs` fields before PATCH using `_lastPatchedTripInputs` as baseline (not live zustand state — `updateTripInputs()` already mutated it); if empty after filtering, skips network write and returns success. Successful commits update `_lastPatchedTripInputs` and clear matching keys from `_userDirtySettings`. |
 | `ensureSettingsFlushed()`                                          | Flush only **dirty** settings before graph run (prevents overwriting backend-derived values). Per-send-cycle payload hash dedupe skips duplicate flush PATCHes for the same request cycle. |
 | `fetchDocument()`                                                  | GET /api/document (with upward view state reconciliation: promotes to `S3_EDITING` when day_cards exist with constraint violations)    |
 | `patchDocument()`                                                  | PATCH /api/document (preserves frontend-only fields)                                                                                    |
@@ -339,6 +342,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | `setExpandInProgress()`                                            | Expand-itinerary mutex flag                                                                                                             |
 | `claimFillDay(day)`                                                | Per-day fill mutex: returns `false` if day already in flight (prevents concurrent fill-day on same day from different call sites)       |
 | `releaseFillDay(day)`                                              | Release per-day fill mutex after fill-day completes or fails                                                                            |
+| `removeBlock(blockId, dayNumber)`                                  | POST `/api/document/remove-block` with optimistic concurrency. Uses `claimMutation()`/`releaseMutation()` mutex. On success, replaces the affected `day_card` in store and bumps `version`. Throws `'VERSION_CONFLICT'` on 409. |
 | `claimMutation()` / `releaseMutation()`                            | Increment/decrement `_pendingMutations` counter for general mutation tracking                                                           |
 | `hasPendingMutations()`                                            | Returns true when `_pendingMutations > 0` — ChatPanel mutation gate polls this before sending graph requests to avoid version conflicts |
 | `markPreferencesAsApplied()`                                       | Sync lastGeneratedPreferences after expand completes                                                                                    |
@@ -391,15 +395,18 @@ Source: `frontend/lib/api.ts`
 | `fillDay()`                  | POST `/api/document/fill-day`   | Generate activity tiles for a free day. Returns `tiles` map for store merge. Response may include `rejected: true` with `rejection_reason`, `rejection_code`, `rejection_suggestion` when Tier 1 constraint validation fails. Non-2xx errors preserve backend `detail` text in thrown error messages (used for 429/rejection toasts). |
 | `validateArrangement()`      | POST `/api/document/validate-arrangement` | Check proposed block moves against constraints. Returns `{valid, violations[]}`. No LLM, target <50ms. |
 | `applyArrangement()`         | POST `/api/document/apply-arrangement` | Validate + persist block moves. Throws `'VERSION_CONFLICT'` on 409. On success, returns `{valid, violations, day_cards, version}` — caller must `mergeEnvelope({day_cards})` and `setState({version})` separately. |
+| `removeBlock()`              | POST `/api/document/remove-block` | Remove a single block. Throws `'VERSION_CONFLICT'` on 409. Returns `{day_number, day_card, version, removed_block_id}`. |
 | `resetSession()`             | DELETE `/api/session`           | Clear session                                                                                                                                                                                                                 |
 | `fetchWithRetry()`           | (wraps apiFetch)                | Exponential backoff retry on transient errors                                                                                                                                                                                 |
 | `clearSessionLocalStorage()` | --                              | Clear session-related localStorage (preserves GDPR consent)                                                                                                                                                                   |
 | `isTransientError()`         | --                              | (module-private) Check if an error is retryable (timeout, network, 502/503/504)                                                                                                                                               |
-| `isTransientStatus()`        | --                              | (module-private) Check if HTTP status is retryable (502, 503, 504, 429)                                                                                                                                                       |
+| `isTransientStatus()`        | --                              | (module-private) Check if HTTP status is retryable (502, 503, 504). 429 excluded — retrying amplifies rate limits.                                                                                                            |
+| `parseRetryAfter()`          | --                              | Parse `Retry-After` header from 429 response into numeric seconds (null if missing/unparseable)                                                                                                                               |
 
 ### Retry Logic
 
-- Transient errors: timeout, network, 502, 503, 504, 429
+- Transient errors: timeout, network, 502, 503, 504
+- 429 (rate limit) is NOT retried — returned to caller for user-facing handling
 - Exponential backoff: `delay = min(baseDelay * 2^attempt, maxDelay) + random(0-500ms)`
 - Default: 3 max retries, 1s base, 10s max
 - AbortError never retried

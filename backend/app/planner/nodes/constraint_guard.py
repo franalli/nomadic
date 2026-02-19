@@ -1247,9 +1247,17 @@ def validate_block_arrangement(
     if any(v["severity"] == "blocking" for v in violations):
         return violations
 
-    # Track which block_ids are being moved, and which days they're moving TO
+    # Track which block_ids are being moved, and which days they're moving TO/FROM
     moved_block_ids = {m["block_id"] for m in moves}
     destination_days = {m["to_day"] for m in moves}
+    source_days = {m["from_day"] for m in moves}
+
+    # Cross-domain adjacency checks are N vs N±1 (e.g. dive on Day 3 → buffer on Day 4,
+    # hiking on Day 5 = violation). A move to Day 4 can create a violation on Day 5's block.
+    # Expand to ±1 radius around all touched days so collateral violations are not silently dropped.
+    affected_days: set[int] = set()
+    for d in destination_days | source_days:
+        affected_days.update({d - 1, d, d + 1})
 
     # Apply moves to get rearranged state
     rearranged = _apply_moves_to_cards(day_cards, moves)
@@ -1260,12 +1268,13 @@ def validate_block_arrangement(
     all_violations += _arr_check_cross_domain_adjacency(rearranged)
     all_violations += _arr_check_day_capacity(rearranged)
 
-    # Filter: only keep violations that affect moved blocks or their destination days.
-    # This avoids surfacing pre-existing violations unrelated to the proposed move.
+    # Filter: only keep violations that affect moved blocks or days adjacent to the move.
+    # Using affected_days (±1 radius) rather than exact destination_days catches collateral
+    # violations on neighboring blocks (e.g. hiking on Day 5 when dive lands on Day 4).
     violations += [
         v
         for v in all_violations
-        if v.get("block_id") in moved_block_ids or v.get("target_day") in destination_days
+        if v.get("block_id") in moved_block_ids or v.get("target_day") in affected_days
     ]
 
     return violations

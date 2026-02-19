@@ -697,7 +697,44 @@ Report each finding. Exclude:
 - Anything inside `debug.ts` (that's the designated debug utility)
 - Severity: **Low** (cosmetic, but pollutes browser console)
 
-### 2H: Component Size Violations
+### 2H: Toast Message Quality
+
+Scan for toast messages that expose internal variable names, raw backend keys, or snake_case identifiers instead of user-friendly strings.
+
+```bash
+# Find all toast() call sites
+grep -rn "toast(" frontend/components/ frontend/hooks/ frontend/lib/ frontend/state/ --include="*.ts" --include="*.tsx" | grep -v __tests__ | grep -v "useToast\|import\|//.*toast"
+
+# Find toasts passing a raw variable directly (not a string literal)
+grep -rn "toast([a-zA-Z_][a-zA-Z0-9_]*)" frontend/components/ frontend/hooks/ --include="*.ts" --include="*.tsx" | grep -v __tests__ | grep -v "useToast\|import\|//"
+
+# Find toasts using template literals that embed specialist_type or other internal keys
+grep -rn "toast(\`.*specialist_type\|toast(\`.*activity_type\|toast(\`.*plan_view_state" frontend/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+
+# Find toasts using template literals with section.* or block.* fields that may be raw keys
+grep -rn 'toast(`\${' frontend/components/ frontend/hooks/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+
+# Find any direct .specialist_type / .activity_type usage inside a toast message
+grep -rn "toast.*specialist_type\|toast.*activity_type\|toast.*\.type\b" frontend/components/ frontend/hooks/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+```
+
+For each `toast()` call, assess:
+
+- **String literal**: always OK (e.g., `toast('Plan updated')`)
+- **Variable from `getSendBurstGuardReason` or similar guard functions**: OK if that function returns user-friendly strings — verify the function's return values
+- **Template literal embedding a `.specialist_type`, `.activity_type`, `.plan_view_state`, or other raw backend key field** without passing through a label-mapping function (e.g., `getTopicLabel`) → **High** (leaks internal identifiers to users)
+- **Variable that is a raw backend response field** (e.g., `section.specialist_type`, `block.activity_type`) not mapped through a display-name function → **High**
+- **Template literal using `.charAt(0).toUpperCase() + .slice(1)`** or similar naive capitalization of a snake_case key → **Medium** (produces ugly output like "Wildlife_safari")
+- **`getTopicLabel()` or equivalent display-name mapping applied** before passing to toast → OK
+
+Do NOT flag:
+- Toasts with hardcoded user-readable strings
+- Toasts where the variable is guaranteed to be a user-readable string (e.g., messages from the guard functions that only return English sentences)
+- `debugLog` calls (not visible to users)
+
+Report each finding with file path, line number, and the raw message expression.
+
+### 2I: Component Size Violations
 
 CLAUDE.md mandates "Components under 200 lines." Check for violations:
 
@@ -711,7 +748,7 @@ Report every `.tsx` file exceeding 200 lines with its line count.
 - Severity: **Medium** for 200–300 lines, **High** for 300+ lines
 - Do NOT flag: test files, type-only files, `design-system.ts`
 
-### 2I: Bundle-Hostile Imports
+### 2J: Bundle-Hostile Imports
 
 Check for imports that defeat tree-shaking and bloat the bundle:
 
@@ -732,7 +769,7 @@ Report findings:
 - `import *` from large libraries → **Medium**
 - `from 'lucide-react'` is fine (it supports tree-shaking), skip unless importing `*`
 
-### 2J: Missing Error Boundaries
+### 2K: Missing Error Boundaries
 
 Check that components with async operations or external data are wrapped in error boundaries:
 
@@ -749,7 +786,7 @@ Cross-reference: components with async operations that are NOT wrapped in any er
 - Severity: **Medium** for leaf components, **High** for route-level components
 - Do NOT flag: components that only read from Zustand (no external data)
 
-### 2K: Design System Token Compliance
+### 2L: Design System Token Compliance
 
 Check for hardcoded values that should use `DS.*` tokens from `design-system.ts`:
 
@@ -773,7 +810,7 @@ Report findings:
 - Arbitrary Tailwind pixel values → **Low** (some are acceptable for one-off spacing)
 - Skip: `globals.css` (may define CSS variables), `design-system.ts` itself, SVG fill/stroke values
 
-### 2L: Client/Server Component Boundary
+### 2M: Client/Server Component Boundary
 
 Next.js requires `'use client'` directive for components that use React hooks. Missing this causes runtime crashes in production.
 
@@ -800,7 +837,7 @@ Report:
 - Hook file without `'use client'` that's imported by server components → **Critical**
 - Skip: files in `app/` directory that are explicitly server components, type-only files
 
-### 2M: Accessibility Baseline
+### 2N: Accessibility Baseline
 
 Basic a11y scan for interactive elements. Not a full WCAG audit — just the most common blockers.
 
@@ -969,6 +1006,79 @@ Report:
 - Missing `Strict-Transport-Security` → **Medium** (HTTPS downgrade protection)
 - Hardcoded origin list instead of env-driven → **Medium** (can't change without redeploy)
 - Skip: development-only CORS settings gated by `DEBUG` or `settings.debug`
+
+### 3G: Middleware Ordering & Preflight Safety
+
+Starlette middleware executes in LIFO order (`app.add_middleware()` first → runs last). Incorrect ordering causes CORS preflight failures, rate limiter false-positives on OPTIONS, CSRF blocking of browser preflight, and security headers missing from error responses.
+
+#### 3G-1: Middleware Registration Order
+
+```bash
+# Catalog all middleware registrations in order (both app.add_middleware and @app.middleware)
+grep -n "app\.add_middleware\|@app\.middleware" backend/app/main.py
+```
+
+Verify the effective execution order (LIFO for `add_middleware`, top-down for `@app.middleware("http")`):
+
+- CORSMiddleware must execute **after** (i.e., be added **before**) any rate limiter or auth middleware → if not, **Critical** (preflight OPTIONS hits rate limiter/auth before CORS can short-circuit it)
+- Security headers middleware should execute last (added first) so headers appear on ALL responses including error responses → if not, **Medium**
+- SessionMiddleware must execute before any middleware that reads `request.cookies` or session state → if not, **High**
+
+#### 3G-2: OPTIONS Preflight Rate Limiting
+
+Rate limiters (slowapi, custom middleware) must exempt `OPTIONS` preflight requests. Browsers send `OPTIONS` before every cross-origin request — if these count against rate limits, legitimate users get 429 errors.
+
+```bash
+# 1. Check if rate limiter exempts OPTIONS
+grep -rn "OPTIONS\|preflight\|_rate_limiting_complete" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 2. Check slowapi/limiter configuration for preflight handling
+grep -rn "Limiter\|limiter\.\|@limiter" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 3. Check if a shared rate-limit bucket exists for OPTIONS (anti-pattern: all users share one bucket)
+grep -rn "preflight\|__preflight__\|shared.*bucket\|OPTIONS.*key" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+```
+
+Report:
+
+- No OPTIONS exemption in rate limiter → **Critical** (preflight requests consume user's rate budget; under CORS-heavy usage, legitimate requests get 429)
+- Shared rate-limit bucket for all OPTIONS requests (e.g., returning a fixed key for all preflights) → **High** (all users share one bucket; any user's preflight traffic exhausts the limit for everyone)
+- `request.state._rate_limiting_complete = True` set for OPTIONS before route handlers → OK (correct slowapi exemption pattern)
+- Rate limiter key function returns different keys for OPTIONS vs actual requests but still counts OPTIONS → **Medium** (separate budget but still unnecessary counting)
+
+#### 3G-3: CSRF & Auth on Preflight
+
+CSRF middleware and authentication checks must not block `OPTIONS` requests. Browsers do not send cookies, CSRF tokens, or auth headers on preflight.
+
+```bash
+# 1. Check CSRF middleware for OPTIONS exemption
+grep -rn "CSRF\|csrf\|X-CSRF\|_csrf" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# 2. Check auth/session middleware for OPTIONS handling
+grep -rn "authorization\|Authorization\|Bearer\|session_id\|authenticate" backend/app/main.py | grep -v __pycache__ | grep -v test_ | grep -v "# "
+```
+
+Report:
+
+- CSRF middleware blocks OPTIONS requests → **Critical** (all cross-origin POST/PATCH/DELETE preflight fails with 403)
+- Auth middleware rejects OPTIONS for missing credentials → **Critical** (preflight never carries auth headers)
+- CSRF/auth middleware explicitly skips OPTIONS → OK
+
+#### 3G-4: Middleware Error Response Headers
+
+When middleware raises an error (e.g., 429 from rate limiter, 403 from CSRF), the response must still include CORS headers. Otherwise, the browser cannot read the error and shows an opaque "CORS error" instead of the actual status code.
+
+```bash
+# Check if error responses from middleware include CORS headers
+# Look for PlainTextResponse, JSONResponse, or Response in middleware that might skip CORS
+grep -rn "PlainTextResponse\|JSONResponse\|Response(" backend/app/main.py | grep -v "StreamingResponse\|# "
+```
+
+Report:
+
+- Rate limiter 429 response missing `Access-Control-Allow-Origin` header → **High** (browser shows generic CORS error instead of rate limit message; frontend can't distinguish 429 from network failure)
+- CSRF 403 response missing CORS headers → **High** (same problem)
+- All middleware error responses include CORS headers (or CORSMiddleware wraps them) → OK
 
 ---
 
@@ -1222,7 +1332,65 @@ Report:
 
 ---
 
-## Phase 5: Report
+## Phase 5: TODO / Placeholder Comment Audit
+
+Scan source code for unresolved TODO, FIXME, HACK, XXX, and PLACEHOLDER comments. These are implementation debts left in code — not documentation — and should be inventoried and classified.
+
+### 5A: Backend Python
+
+```bash
+# All TODO/FIXME/HACK/XXX comments in backend source
+grep -rn "TODO\|FIXME\|HACK\|XXX\|PLACEHOLDER\|NOT IMPLEMENTED\|stub" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_ | grep -v migrations
+```
+
+For each finding:
+- Extract the file, line number, and full comment text
+- Classify:
+  - `TODO: implement X` with no surrounding implementation → likely an unfinished stub
+  - `FIXME: broken when Y` → known bug, flag as **High** if in a live code path
+  - `HACK:` / `XXX:` → acknowledged workaround; flag as **Medium** and note the reason given
+  - `# stub` / `raise NotImplementedError` in non-test code → **Critical** if reachable at runtime
+  - `PLACEHOLDER` → **High** (often means the real implementation was never done)
+
+### 5B: Frontend TypeScript
+
+```bash
+# All TODO/FIXME/HACK/XXX comments in frontend source
+grep -rn "TODO\|FIXME\|HACK\|XXX\|PLACEHOLDER" frontend/components/ frontend/hooks/ frontend/lib/ frontend/state/ --include="*.ts" --include="*.tsx" | grep -v node_modules | grep -v __tests__
+```
+
+Apply the same classification as 5A.
+
+### 5C: Unimplemented throw / NotImplementedError
+
+```bash
+# Python: raise NotImplementedError in non-test, non-abstract code
+grep -rn "raise NotImplementedError" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# TypeScript: throw new Error("not implemented") patterns
+grep -rn "not implemented\|TODO: implement\|throw.*Error.*implement" frontend/ --include="*.ts" --include="*.tsx" | grep -v node_modules | grep -v __tests__
+```
+
+Report:
+- `raise NotImplementedError` in a live code path (not abstract base class) → **Critical** (will crash at runtime if that path is reached)
+- `throw new Error("not implemented")` in a component or hook → **High**
+- In abstract base classes or explicitly optional method stubs → **Low** (document, don't flag as broken)
+
+### 5D: Report Format
+
+Include a dedicated section in the final report:
+
+```
+| TODO/Placeholder comments (backend) | X found | [severity range] | [count by type: TODO/FIXME/HACK/stub] |
+| TODO/Placeholder comments (frontend) | X found | [severity range] | [count by type] |
+| Unimplemented throws                 | X found | [severity]       | [files] |
+```
+
+List each finding with file path, line number, comment text, and severity.
+
+---
+
+## Phase 6: Report
 
 Produce the final report in this format:
 
@@ -1242,9 +1410,11 @@ Produce the final report in this format:
 | Dead endpoints                |       |          |       |
 | Security vulnerabilities      |       |          |       |
 | CORS & security headers       |       |          |       |
+| Middleware ordering & preflight |      |          |       |
 | Circular imports              |       |          |       |
 | Test coverage gaps            |       |          |       |
 | Debug print/console pollution |       |          |       |
+| Toast message quality         |       |          |       |
 | Type errors                   |       |          |       |
 | Component size violations     |       |          |       |
 | Bundle-hostile imports        |       |          |       |
@@ -1264,6 +1434,9 @@ Produce the final report in this format:
 | State machine transitions     |       |          |       |
 | Client/server boundary        |       |          |       |
 | Accessibility baseline        |       |          |       |
+| TODO/placeholder comments (backend)  |  |       |       |
+| TODO/placeholder comments (frontend) |  |       |       |
+| Unimplemented throws          |       |          |       |
 
 ### Detailed Findings
 

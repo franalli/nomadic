@@ -9,7 +9,6 @@
  * shown as a compact bar, while Specialists get full AgentCards in the feed below.
  */
 
-'use client';
 
 import { Hotel, MapPin, Plane } from 'lucide-react';
 import { useMemo } from 'react';

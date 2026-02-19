@@ -13,7 +13,6 @@
  * - Click Quick facts → toggles inline expansion (independent per tile)
  */
 
-'use client';
 
 import { ChevronDown, Clock, Code2, Heart, Moon, Settings, Sun, Sunset } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';

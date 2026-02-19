@@ -837,6 +837,11 @@ def format_result(
                 # Must happen AFTER logistics suppression — pinned tiles are user intent.
                 pinned_tiles = state.metadata.get("user_pinned_tiles", {})
                 if pinned_tiles:
+                    # Filter against active categories before re-injection
+                    active_cats = set(
+                        c.lower()
+                        for c in (get_trip_settings(state).activity_settings.categories or [])
+                    )
                     existing_ids: set = set()
                     for cat_tiles in state.tiles.values():
                         if isinstance(cat_tiles, list):
@@ -846,6 +851,12 @@ def format_result(
                     for tid, pinned in pinned_tiles.items():
                         if tid not in existing_ids:
                             tile_data = pinned.get("tile", pinned)
+                            tile_cat = (
+                                (tile_data.get("meta") or {}).get("category", "") or ""
+                            ).lower()
+                            # Skip tiles from removed categories
+                            if active_cats and tile_cat and tile_cat not in active_cats:
+                                continue
                             cat = pinned.get("category", "activities")
                             state.tiles.setdefault(cat, []).append(tile_data)
 

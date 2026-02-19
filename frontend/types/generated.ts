@@ -428,27 +428,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/suggestions/click": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Track Suggestion Click
-         * @description Persist a suggestion pill click for analytics.
-         *     Tracks which LLM-generated suggestions users find valuable.
-         */
-        post: operations["track_suggestion_click_api_suggestions_click_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/graph_plan/stream": {
         parameters: {
             query?: never;
@@ -681,6 +660,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/document/validate-arrangement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate Arrangement
+         * @description Validate proposed block moves without persisting.
+         */
+        post: operations["validate_arrangement_api_document_validate_arrangement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/document/apply-arrangement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Arrangement
+         * @description Validate AND persist block moves.
+         */
+        post: operations["apply_arrangement_api_document_apply_arrangement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/document/remove-block": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove Block
+         * @description Remove a single block from the itinerary.
+         */
+        post: operations["remove_block_api_document_remove_block_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -769,6 +808,101 @@ export interface components {
             activities: "off" | "suggested" | "on";
         };
         /**
+         * BlockMove
+         * @description A single block relocation within the itinerary.
+         */
+        BlockMove: {
+            /** Block Id */
+            block_id: string;
+            /** From Day */
+            from_day: number;
+            /** To Day */
+            to_day: number;
+            /**
+             * To Position
+             * @default 0
+             */
+            to_position: number;
+        };
+        /**
+         * BlockViolation
+         * @description A constraint violation caused by a specific move.
+         */
+        BlockViolation: {
+            /** Block Id */
+            block_id: string;
+            /** Violation Code */
+            violation_code: string;
+            /** Severity */
+            severity: string;
+            /** Message */
+            message: string;
+            /** Target Day */
+            target_day: number;
+        };
+        /**
+         * ArrangementValidateRequest
+         * @description Validate proposed block moves without persisting.
+         */
+        ArrangementValidateRequest: {
+            /** Moves */
+            moves: components["schemas"]["BlockMove"][];
+        };
+        /**
+         * ArrangementApplyRequest
+         * @description Validate AND persist block moves.
+         */
+        ArrangementApplyRequest: {
+            /** Moves */
+            moves: components["schemas"]["BlockMove"][];
+            /** Expected Version */
+            expected_version: number;
+        };
+        /**
+         * ArrangementResult
+         * @description Response from validate or apply.
+         */
+        ArrangementResult: {
+            /** Valid */
+            valid: boolean;
+            /** Violations */
+            violations: components["schemas"]["BlockViolation"][];
+            /** Day Cards */
+            day_cards?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Version */
+            version?: number | null;
+        };
+        /**
+         * RemoveBlockResponse
+         * @description Response from remove-block.
+         */
+        RemoveBlockResponse: {
+            /** Day Number */
+            day_number: number;
+            /** Day Card */
+            day_card: {
+                [key: string]: unknown;
+            };
+            /** Version */
+            version: number;
+            /** Removed Block Id */
+            removed_block_id: string;
+        };
+        /**
+         * RemoveBlockRequest
+         * @description Remove a single block from the itinerary.
+         */
+        RemoveBlockRequest: {
+            /** Block Id */
+            block_id: string;
+            /** Day Number */
+            day_number: number;
+            /** Expected Version */
+            expected_version: number;
+        };
+        /**
          * BranchSelections
          * @description User's selected tile IDs for booking within a branch.
          */
@@ -836,6 +970,34 @@ export interface components {
             code: "date_range_invalid" | "date_past" | "budget_exceeded" | "traveler_mismatch" | "destination_unreachable" | "duration_mismatch";
         };
         /**
+         * ActiveConstraint
+         * @description Rendered constraint badge attached to a day block.
+         */
+        ActiveConstraint: {
+            /** Id */
+            id: string;
+            /**
+             * Severity
+             * @default info
+             */
+            severity: string;
+            /**
+             * Icon
+             * @default
+             */
+            icon: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+        };
+        /**
          * DayBlock
          * @description A single activity block within a day (Stage 3).
          */
@@ -866,6 +1028,8 @@ export interface components {
             specialist_type?: string | null;
             /** Constraints */
             constraints?: string[];
+            /** Active Constraints */
+            active_constraints?: components["schemas"]["ActiveConstraint"][];
             /** Image Url */
             image_url?: string | null;
             /** Duration */
@@ -1084,6 +1248,18 @@ export interface components {
             flight_settings?: components["schemas"]["FlightSettings"] | null;
             hotel_settings?: components["schemas"]["HotelSettings"] | null;
             activity_settings?: components["schemas"]["ActivitySettings"] | null;
+            transport_settings?: components["schemas"]["TransportSettings"] | null;
+            /**
+             * Date Flex
+             * @default false
+             */
+            date_flex?: boolean | null;
+            /** Trip Duration */
+            trip_duration?: number | null;
+            /** Date Window Start */
+            date_window_start?: string | null;
+            /** Date Window End */
+            date_window_end?: string | null;
         };
         /**
          * EntityConfidenceInfo
@@ -1695,18 +1871,6 @@ export interface components {
             /** Icon */
             icon?: string | null;
         };
-        /**
-         * SuggestionClickEvent
-         * @description Track when a user clicks a suggested response pill.
-         */
-        SuggestionClickEvent: {
-            /** Suggestion Text */
-            suggestion_text: string;
-            /** Suggestion Index */
-            suggestion_index: number;
-            /** Request Id */
-            request_id?: string | null;
-        };
         /** Tile */
         Tile: {
             /** Id */
@@ -2266,39 +2430,6 @@ export interface operations {
             };
         };
     };
-    track_suggestion_click_api_suggestions_click_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SuggestionClickEvent"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     graph_plan_stream_endpoint_api_graph_plan_stream_post: {
         parameters: {
             query?: never;
@@ -2560,6 +2691,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_arrangement_api_document_validate_arrangement_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArrangementValidateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArrangementResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_arrangement_api_document_apply_arrangement_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArrangementApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArrangementResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_block_api_document_remove_block_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoveBlockRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoveBlockResponse"];
                 };
             };
             /** @description Validation Error */

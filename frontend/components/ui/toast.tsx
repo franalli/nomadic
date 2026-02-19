@@ -18,7 +18,6 @@
  * - Throttles rapid changes (collapse within ~2s)
  */
 
-'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';

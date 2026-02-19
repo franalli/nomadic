@@ -9,7 +9,6 @@
  * @see docs/ux_unified_architecture.md Section I.B - Booking Suggestions Pattern
  */
 
-'use client';
 
 import { ChevronDown, ChevronUp, Heart, RefreshCw, Sparkles, Star } from 'lucide-react';
 import Image from 'next/image';

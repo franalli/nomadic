@@ -15,11 +15,10 @@ from app.config import settings
 def _rate_key(request: Request) -> str:
     """Session cookie -> IP fallback for rate limit keying.
 
-    OPTIONS preflights share a single bucket so CORS preflight requests
-    never exhaust a real user's rate limit.
+    OPTIONS preflights are exempt via exempt_options_from_rate_limit
+    middleware in main.py (sets _rate_limiting_complete before the
+    route handler runs).
     """
-    if request.method == "OPTIONS":
-        return "__preflight__"
     return request.cookies.get("session_id") or get_remote_address(request)
 
 

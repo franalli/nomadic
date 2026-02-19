@@ -18,6 +18,7 @@ Architecture — Tier 1 Decouple (skeleton-first):
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -49,7 +50,10 @@ _LOCAL_EXPERT_SCHEMA_JSON: str = json.dumps(LocalExpertOutput.model_json_schema(
 # Keyed by session_id so streaming.py can retrieve and fire them after db.commit().
 # Function references cannot survive JSON serialization through state_to_session_state,
 # so they must live here rather than in state.metadata.
-_pending_enrichments: dict[str, object] = {}
+_MAX_PENDING_ENRICHMENTS = 50
+_ENRICHMENT_TTL_SECONDS = 120  # 2 minutes
+_pending_enrichments: dict[str, tuple[object, float]] = {}  # (factory, monotonic_ts)
+_pending_lock = asyncio.Lock()  # Protects _pending_enrichments against coroutine interleaving
 
 # =============================================================================
 # Local Expert Node
@@ -281,7 +285,7 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                     settings.local_expert_model,
                     temperature=0.3,
                     max_retries=0,
-                    max_tokens=4000,
+                    max_tokens=8000,
                 )
                 log("LOCAL_EXPERT", f"Phase B: calling LLM ({settings.local_expert_model})...")
 
@@ -347,7 +351,12 @@ Output as JSON with "constraints" and "recommendations" arrays."""
         # Function references cannot survive JSON serialization through state_to_session_state
         # so we use a module-level dict keyed by session_id instead of state.metadata.
         if _session_id:
-            _pending_enrichments[_session_id] = _enrich
+            async with _pending_lock:
+                if len(_pending_enrichments) >= _MAX_PENDING_ENRICHMENTS:
+                    oldest = next(iter(_pending_enrichments))
+                    _pending_enrichments.pop(oldest)
+                    logger.warning("[LOCAL_EXPERT] Evicting stale enrichment for %s", oldest)
+                _pending_enrichments[_session_id] = (_enrich, time.monotonic())
             log("LOCAL_EXPERT", "Phase B: enrichment stashed for post-commit firing")
         else:
             log("LOCAL_EXPERT", "Phase B: no session_id — enrichment skipped")

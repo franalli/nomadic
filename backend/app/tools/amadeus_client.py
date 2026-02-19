@@ -14,7 +14,6 @@ Usage:
 
 import asyncio
 import logging
-import os
 from dataclasses import field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional
@@ -37,14 +36,16 @@ logger = logging.getLogger(__name__)
 
 
 def _get_config():
-    """Get Amadeus configuration from environment."""
+    """Get Amadeus configuration from settings (env-backed via pydantic-settings)."""
+    from app.config import settings
+
     return {
-        "api_key": os.getenv("AMADEUS_API_KEY"),
-        "api_secret": os.getenv("AMADEUS_API_SECRET"),
-        "base_url": os.getenv("AMADEUS_BASE_URL", "https://test.api.amadeus.com"),
-        "requests_per_minute": int(os.getenv("AMADEUS_REQUESTS_PER_MINUTE", "30")),
-        "circuit_breaker_threshold": int(os.getenv("AMADEUS_CIRCUIT_BREAKER_THRESHOLD", "5")),
-        "circuit_breaker_timeout": int(os.getenv("AMADEUS_CIRCUIT_BREAKER_TIMEOUT", "60")),
+        "api_key": settings.amadeus_api_key,
+        "api_secret": settings.amadeus_api_secret,
+        "base_url": settings.amadeus_base_url,
+        "requests_per_minute": settings.amadeus_requests_per_minute,
+        "circuit_breaker_threshold": settings.amadeus_circuit_breaker_threshold,
+        "circuit_breaker_timeout": settings.amadeus_circuit_breaker_timeout,
     }
 
 

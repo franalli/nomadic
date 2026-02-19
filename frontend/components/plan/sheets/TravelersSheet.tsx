@@ -7,7 +7,6 @@
  * Adults stepper (default 1), Children stepper.
  */
 
-'use client';
 
 import { Minus, Plus, Users } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';

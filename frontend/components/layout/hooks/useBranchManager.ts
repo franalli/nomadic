@@ -353,54 +353,55 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * Shows a toast indicating whether server reset succeeded.
    */
   const handleStartNewSession = useCallback(async () => {
-    debugLog('[branchManager.startNewSession] 🔄 Starting server reset...');
+    debugLog('[branchManager.startNewSession] Starting server reset...');
     branchState.abortTilesFetch();
     let didResetServerState = false;
 
+    // Step 1: Best-effort server-side session deletion
     try {
       const res = await resetSession();
       didResetServerState = res.ok;
-      debugLog('[branchManager.startNewSession] Server DELETE /api/session →', res.status, res.ok ? '✅' : '❌');
-
-      // Re-establish session cookies after DELETE clears them.
-      // Without this, the CSRF cookie is gone and all subsequent
-      // POST/DELETE requests fail with 403 Forbidden.
-      await apiFetch('/api/document');
-      debugLog('[branchManager.startNewSession] ✅ Session re-established (fresh CSRF cookie)');
+      debugLog('[branchManager.startNewSession] Server DELETE /api/session ->', res.status);
     } catch (error) {
-      console.error('[branchManager.startNewSession] ❌ Server reset failed:', error);
-    } finally {
-      // Clear session-related localStorage (preserves consent preferences)
-      clearSessionLocalStorage();
-
-      // Clear session timestamp so next page load doesn't try to hydrate stale session
-      clearSessionTimestamp();
-
-      // Clear persisted UI state (selectedBranchId, comparison mode) from localStorage
-      clearPersistedUIState();
-
-      handleClearContext();
-
-      // Reset chat store to clear messages and session state
-      resetChat();
-
-      // Scroll to chat panel and focus input after reset
-      setTimeout(() => {
-        if (chatPanelContainerRef.current) {
-          chatPanelContainerRef.current.scrollIntoView({
-            behavior: 'smooth',
-            block: 'start',
-          });
-          // Focus the textarea input if it exists
-          const input = chatPanelContainerRef.current.querySelector(
-            'textarea'
-          ) as HTMLTextAreaElement;
-          if (input) {
-            input.focus();
-          }
-        }
-      }, 100);
+      debugLog('[branchManager.startNewSession] Server reset failed:', error);
     }
+
+    // Step 2: Best-effort CSRF re-establishment.
+    // If this 429s or fails, the CSRF cookie will be set on the next
+    // successful API call naturally (e.g., when the remounted chat hydrates).
+    try {
+      const csrfRes = await apiFetch('/api/document');
+      if (csrfRes.ok || csrfRes.status === 204) {
+        debugLog('[branchManager.startNewSession] Session re-established (fresh CSRF cookie)');
+      } else {
+        debugLog('[branchManager.startNewSession] CSRF re-establishment returned', csrfRes.status);
+      }
+    } catch (csrfError) {
+      debugLog('[branchManager.startNewSession] CSRF re-establishment failed, deferring:', csrfError);
+    }
+
+    // Step 3: Always clear local state (never fails)
+    clearSessionLocalStorage();
+    clearSessionTimestamp();
+    clearPersistedUIState();
+    handleClearContext();
+    resetChat();
+
+    // Step 4: Scroll to chat panel and focus input
+    setTimeout(() => {
+      if (chatPanelContainerRef.current) {
+        chatPanelContainerRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+        const input = chatPanelContainerRef.current.querySelector(
+          'textarea'
+        ) as HTMLTextAreaElement;
+        if (input) {
+          input.focus();
+        }
+      }
+    }, 100);
 
     onToast(
       didResetServerState

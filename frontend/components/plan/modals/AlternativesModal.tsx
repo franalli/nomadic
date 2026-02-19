@@ -9,7 +9,6 @@
  * @see docs/ux_unified_architecture.md Section I.B
  */
 
-'use client';
 
 import {
   ArrowDown,

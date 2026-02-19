@@ -4,6 +4,7 @@
 Extracted from main.py to keep the FastAPI app module focused on routes.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -114,13 +115,41 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         await AmadeusClient._instance.close()
         logger.info("[Shutdown] Closed Amadeus HTTP client")
 
-    # 4. Close Unsplash HTTP client
+    # 4. Cancel unsplash in-flight fetch tasks (before closing HTTP client)
+    from app.services.unsplash import (
+        _inflight_fetches,
+        _inflight_fetches_lock,
+        _prefetch_destination_inflight,
+    )
+
+    async with _inflight_fetches_lock:
+        _unsplash_tasks = list(_inflight_fetches.values()) + list(
+            _prefetch_destination_inflight.values()
+        )
+        _inflight_fetches.clear()
+        _prefetch_destination_inflight.clear()
+    for _t in _unsplash_tasks:
+        _t.cancel()
+    if _unsplash_tasks:
+        await asyncio.gather(*_unsplash_tasks, return_exceptions=True)
+        logger.info("[Shutdown] Cancelled %d unsplash inflight tasks", len(_unsplash_tasks))
+
+    # 5. Close Unsplash HTTP client
     from app.services.unsplash import close_http_client as close_unsplash_http_client
 
     await close_unsplash_http_client()
     logger.info("[Shutdown] Closed Unsplash HTTP client")
 
-    # 5. Clear SSE connections dict
+    # 6. Clear pending enrichments dict
+    from app.planner.nodes.local_expert import _pending_enrichments, _pending_lock
+
+    async with _pending_lock:
+        _n_enrichments = len(_pending_enrichments)
+        _pending_enrichments.clear()
+    if _n_enrichments:
+        logger.info("[Shutdown] Cleared %d pending enrichments", _n_enrichments)
+
+    # 7. Clear SSE connections dict
     from app.sse_state import _sse_connections, _sse_state_lock
 
     async with _sse_state_lock:

@@ -361,9 +361,13 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
 
             if (!res.ok) {
               debugLog('Failed to fetch tiles during hydration', res.status);
-              onToast(
-                'We restored your suggestions but could not refresh options automatically. Select a suggestion to try again.'
-              );
+              if (res.status === 429) {
+                onToast('Rate limit reached. Your session was restored but tiles will load on your next action.');
+              } else {
+                onToast(
+                  'We restored your suggestions but could not refresh options automatically. Select a suggestion to try again.'
+                );
+              }
               return;
             }
 

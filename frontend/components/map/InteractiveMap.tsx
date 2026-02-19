@@ -95,10 +95,22 @@ function getMarkerIcon(type: string) {
 function getMarkerColor(type: string): string {
   const lowerType = type.toLowerCase();
 
-  if (lowerType === 'diving' || lowerType.includes('dive')) return 'bg-cyan-500';
+  // Specialist activity types (mirrors frontend/lib/specialists.ts colors)
+  if (lowerType === 'diving' || lowerType.includes('dive')) return 'bg-sky-500';
   if (lowerType === 'hiking' || lowerType.includes('hike')) return 'bg-emerald-500';
+  if (lowerType === 'surfing' || lowerType.includes('surf')) return 'bg-indigo-500';
+  if (lowerType === 'skiing' || lowerType.includes('ski')) return 'bg-blue-500';
+  if (lowerType === 'cycling' || lowerType.includes('cycl') || lowerType.includes('bike')) return 'bg-lime-500';
+  if (lowerType === 'sailing' || lowerType === 'boating' || lowerType.includes('sail')) return 'bg-cyan-500';
+  if (lowerType === 'climbing' || lowerType.includes('climb')) return 'bg-orange-500';
+  if (lowerType === 'wildlife_safari' || lowerType.includes('safari')) return 'bg-amber-500';
+  // Tier 2 categories
+  if (lowerType === 'yoga' || lowerType === 'wellness') return 'bg-violet-500';
+  if (lowerType === 'cooking') return 'bg-pink-500';
+  if (lowerType === 'nightlife') return 'bg-fuchsia-500';
+  // Logistics / other
   if (lowerType.includes('hotel') || lowerType.includes('stay')) return 'bg-purple-500';
-  if (lowerType.includes('flight')) return 'bg-blue-500';
+  if (lowerType.includes('flight')) return 'bg-slate-500';
   if (lowerType.includes('temple')) return 'bg-rose-500';
   if (lowerType.includes('food')) return 'bg-pink-500';
 

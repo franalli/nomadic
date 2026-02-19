@@ -1396,6 +1396,7 @@ class ItineraryBuilder:
                         buffer_type="rest_day",
                         buffer_reason="No high-altitude activities within 24h of diving",
                         intensity="light",
+                        specialist_type="diving",
                     )
                     buffer_day.blocks.append(rest_block)
                     buffer_day.subtitle = rest_block.buffer_reason
@@ -1725,10 +1726,11 @@ class ItineraryBuilder:
             if i == 0 or i == len(days) - 1:
                 continue
 
-            # Check if day has any non-buffer, non-logistics activity blocks
+            # Check if day has any real activity blocks (not buffers, logistics, or placeholders)
             has_activity = any(
                 not b.is_buffer
-                and b.activity_type not in ("check-in", "check-out", "arrival", "departure")
+                and b.activity_type
+                not in ("check-in", "check-out", "arrival", "departure", "free_day")
                 for b in day.blocks
             )
 
@@ -2968,3 +2970,315 @@ class ItineraryBuilder:
             return datetime.fromisoformat(date_str.split("T")[0]).date()
         except (ValueError, AttributeError):
             return None
+
+
+# =============================================================================
+# Post-Arrangement Constraint Recomputation (Stage 14)
+# =============================================================================
+
+
+# Only this tag is position-dependent; all others are intrinsic to the block
+_POSITION_DEPENDENT_TAGS = frozenset({"no_fly_buffer"})
+
+
+def _recompute_nofly_tags(day_cards: list[dict]) -> list[dict]:
+    """Strip and reapply no_fly_buffer tags based on new block positions.
+
+    Only `no_fly_buffer` is position-dependent — it applies to the last
+    nofly-specialist block within 2 days of departure. `surface_interval`
+    is intrinsic (property of the activity type) and is never stripped.
+    """
+    from app.planner.specialist_registry import get as get_config
+
+    departure_day = max((dc["day_number"] for dc in day_cards), default=0)
+    if not departure_day:
+        return day_cards
+
+    # Build map: specialist -> max day_number for nofly-specialist blocks
+    last_day_for_specialist: dict[str, int] = {}
+    for dc in day_cards:
+        for block in dc.get("blocks", []):
+            if block.get("is_buffer"):
+                continue
+            specialist = (block.get("specialist_type") or "").lower()
+            cfg = get_config(specialist) if specialist else None
+            if cfg and cfg.has_nofly_buffer:
+                prev = last_day_for_specialist.get(specialist, 0)
+                if dc["day_number"] > prev:
+                    last_day_for_specialist[specialist] = dc["day_number"]
+
+    # Recompute tags on each nofly-specialist block
+    for dc in day_cards:
+        for block in dc.get("blocks", []):
+            if block.get("is_buffer"):
+                continue
+            specialist = (block.get("specialist_type") or "").lower()
+            cfg = get_config(specialist) if specialist else None
+            if not (cfg and cfg.has_nofly_buffer):
+                continue
+
+            # Strip only position-dependent tags
+            existing = block.get("active_constraints", [])
+            kept = [c for c in existing if c.get("id") not in _POSITION_DEPENDENT_TAGS]
+
+            # Reapply no_fly_buffer if this is the last block for its specialist
+            # and it's within 2 days of departure
+            is_last = dc["day_number"] == last_day_for_specialist.get(specialist, 0)
+            day_idx = dc["day_number"] - 1  # 0-indexed for comparison
+            if is_last and day_idx >= departure_day - 2:
+                kept.append(
+                    {
+                        "id": "no_fly_buffer",
+                        "severity": "warning",
+                        "icon": "\u26a0\ufe0f",
+                        "title": "24h No-Fly Buffer",
+                        "description": (
+                            f"Day {departure_day} departure requires "
+                            f"finishing {specialist} by 2pm today"
+                        ),
+                    }
+                )
+
+            # Ensure nofly-specialist blocks always have surface_interval.
+            # The builder makes no_fly_buffer and surface_interval mutually
+            # exclusive — if we stripped no_fly_buffer and the block never had
+            # surface_interval, add it back as the intrinsic fallback.
+            # Guard: skip if no_fly_buffer was just (re)applied — maintain
+            # mutual exclusivity matching the builder's Phase 6.5 behavior.
+            has_nofly = any(c.get("id") == "no_fly_buffer" for c in kept)
+            if not has_nofly and not any(c.get("id") == "surface_interval" for c in kept):
+                buffer_label = cfg.display_name or specialist.title()
+                kept.append(
+                    {
+                        "id": "surface_interval",
+                        "severity": "info",
+                        "icon": "\u2139\ufe0f",
+                        "title": f"{buffer_label}",
+                        "description": ("Scheduled with appropriate safety intervals"),
+                    }
+                )
+
+            block["active_constraints"] = kept
+
+    return day_cards
+
+
+def _get_cross_domain_specialists() -> tuple[set[str], set[str]]:
+    """Derive source and target specialist sets from registry cross_domain_blocks.
+
+    Returns (source_specialists, target_specialists) where source has
+    cross_domain_blocks targeting the targets.
+    """
+    from app.planner.specialist_registry import SPECIALIST_REGISTRY
+
+    sources: set[str] = set()
+    targets: set[str] = set()
+    for topic, cfg in SPECIALIST_REGISTRY.items():
+        for xd in cfg.cross_domain_blocks:
+            sources.add(topic)
+            targets.update(xd.target_specialists)
+    return sources, targets
+
+
+def _detect_stale_buffers(day_cards: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Detect orphaned or missing cross-domain buffers after rearrangement.
+
+    Mutates orphaned buffer blocks (updates summary, clears constraints).
+    Returns (updated_day_cards, violations).
+    """
+    source_specialists, target_specialists = _get_cross_domain_specialists()
+    violations: list[dict] = []
+
+    # Map day_number -> specialist types (non-buffer activity blocks)
+    day_specialists: dict[int, set[str]] = {}
+    # Map day_number -> list of buffer block references
+    day_buffers: dict[int, list[dict]] = {}
+
+    for dc in day_cards:
+        specs: set[str] = set()
+        buffers: list[dict] = []
+        for block in dc.get("blocks", []):
+            if block.get("is_buffer"):
+                buffers.append(block)
+            else:
+                st = (block.get("specialist_type") or "").lower()
+                if st:
+                    specs.add(st)
+        day_specialists[dc["day_number"]] = specs
+        day_buffers[dc["day_number"]] = buffers
+
+    sorted_days = sorted(day_specialists.keys())
+
+    def _mark_orphaned(buf: dict, day_num: int, reason: str) -> None:
+        """Mutate an orphaned buffer block and emit a violation."""
+        buf["summary"] = "Rest Day \u2014 buffer no longer required at this position"
+        buf["constraints"] = []
+        violations.append(
+            {
+                "block_id": buf.get("id", ""),
+                "violation_code": "ORPHANED_BUFFER",
+                "severity": "warning",
+                "message": reason,
+                "target_day": day_num,
+            }
+        )
+
+    # Check 1: Orphaned rest_day buffers
+    for day_num, buffers in day_buffers.items():
+        for buf in buffers:
+            if buf.get("buffer_type") != "rest_day":
+                continue
+            has_source_before = any(
+                day_specialists.get(d, set()) & source_specialists
+                for d in sorted_days
+                if d < day_num
+            )
+            has_target_after = any(
+                day_specialists.get(d, set()) & target_specialists
+                for d in sorted_days
+                if d > day_num
+            )
+            if not (has_source_before and has_target_after):
+                _mark_orphaned(
+                    buf,
+                    day_num,
+                    f"Rest day buffer on Day {day_num} may no longer be "
+                    f"needed \u2014 the activity phases have moved",
+                )
+
+    # Check 2: Missing cross-domain buffer
+    source_days = [d for d in sorted_days if day_specialists.get(d, set()) & source_specialists]
+    target_days = [d for d in sorted_days if day_specialists.get(d, set()) & target_specialists]
+
+    if source_days and target_days:
+        last_source = max(source_days)
+        first_target_after = next((d for d in target_days if d > last_source), None)
+        if first_target_after is not None and first_target_after - last_source <= 2:
+            # Check for rest_day buffer between them
+            has_buffer = any(
+                any(b.get("buffer_type") == "rest_day" for b in day_buffers.get(d, []))
+                for d in range(last_source + 1, first_target_after)
+            )
+            if not has_buffer:
+                # Find the first target block on that day for block_id
+                target_dc = next(
+                    (dc for dc in day_cards if dc["day_number"] == first_target_after),
+                    None,
+                )
+                target_block_id = ""
+                if target_dc:
+                    for b in target_dc.get("blocks", []):
+                        st = (b.get("specialist_type") or "").lower()
+                        if st in target_specialists:
+                            target_block_id = b.get("id", "")
+                            break
+                source_name = next(
+                    (
+                        s.title()
+                        for s in day_specialists.get(last_source, set()) & source_specialists
+                    ),
+                    "Activity",
+                )
+                target_name = next(
+                    (
+                        s.title()
+                        for s in day_specialists.get(first_target_after, set()) & target_specialists
+                    ),
+                    "altitude activity",
+                )
+                violations.append(
+                    {
+                        "block_id": target_block_id,
+                        "violation_code": "MISSING_CROSS_DOMAIN_BUFFER",
+                        "severity": "warning",
+                        "message": (
+                            f"{source_name} on Day {last_source} followed "
+                            f"by {target_name} on Day {first_target_after} "
+                            f"without a rest day buffer"
+                        ),
+                        "target_day": first_target_after,
+                    }
+                )
+
+    # Check 3: Orphaned acclimatization buffers
+    for day_num, buffers in day_buffers.items():
+        for buf in buffers:
+            if buf.get("buffer_type") != "acclimatization":
+                continue
+            has_altitude_soon = any(
+                day_specialists.get(d, set()) & target_specialists
+                for d in range(day_num + 1, day_num + 3)
+                if d in day_specialists
+            )
+            if not has_altitude_soon:
+                _mark_orphaned(
+                    buf,
+                    day_num,
+                    f"Acclimatization day on Day {day_num} is no longer "
+                    f"before any altitude activities",
+                )
+
+    # Check 4: Source specialist co-located with its own buffer block.
+    # A rest_day buffer hosting a source-specialist activity is compromised —
+    # the buffer cannot provide cross-domain separation when the trigger is on the same day.
+    for dc in day_cards:
+        day_num = dc["day_number"]
+        buffers_on_day = day_buffers.get(day_num, [])
+        if not buffers_on_day:
+            continue
+        specs_on_day = day_specialists.get(day_num, set())
+        conflicting = specs_on_day & source_specialists
+        if not conflicting:
+            continue
+        for buf in buffers_on_day:
+            if buf.get("buffer_type") != "rest_day":
+                continue
+            source_name = next(iter(conflicting)).title()
+            buf["summary"] = (
+                f"Rest Day \u2014 {source_name} activity present, "
+                f"buffer may not provide adequate recovery"
+            )
+            buf["constraints"] = []
+            violations.append(
+                {
+                    "block_id": buf.get("id", ""),
+                    "violation_code": "BUFFER_COMPROMISED",
+                    "severity": "warning",
+                    "message": (
+                        f"{source_name} activity on Day {day_num} compromises "
+                        f"the cross-domain buffer \u2014 consider moving it to another day"
+                    ),
+                    "target_day": day_num,
+                }
+            )
+
+    return day_cards, violations
+
+
+def recompute_constraints_after_arrangement(
+    day_cards: list[dict],
+    trip_inputs: object,
+) -> tuple[list[dict], list[dict]]:
+    """Recompute position-dependent constraint tags and detect stale buffers
+    after a block arrangement. Pure Python, no LLM, <50ms.
+
+    Called from apply_arrangement endpoint between _apply_moves_to_cards
+    and save_document_data.
+
+    Args:
+        day_cards: Rearranged day_cards (list of dicts from _apply_moves_to_cards)
+        trip_inputs: DocumentTripInputs (used for future extensions; currently
+                     departure_day is derived from day_cards)
+
+    Returns:
+        (updated_day_cards, new_violations) where:
+        - updated_day_cards has recomputed active_constraints on relevant blocks
+        - new_violations is a list of BlockViolation-compatible dicts
+    """
+    # Pass 1: Recompute position-dependent constraint tags
+    day_cards = _recompute_nofly_tags(day_cards)
+
+    # Pass 2: Detect stale/missing buffer blocks
+    day_cards, buffer_violations = _detect_stale_buffers(day_cards)
+
+    return day_cards, buffer_violations

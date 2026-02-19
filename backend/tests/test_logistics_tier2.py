@@ -261,9 +261,10 @@ async def test_tier2_new_content_flag_true_when_activity_set_changes(
 
 
 @pytest.mark.asyncio
-async def test_pure_tier1_backfill_avoids_active_specialist_mock_tiles(
+async def test_pure_tier1_multi_specialist_suppresses_activities(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Multiple Tier 1 specialists (diving+surfing) still suppresses generic activities."""
     state = GraphState(
         trip_plan=TripPlan(destination="Bali", start_date="2027-02-15", end_date="2027-02-25")
     )
@@ -302,30 +303,25 @@ async def test_pure_tier1_backfill_avoids_active_specialist_mock_tiles(
         }
     )
 
-    base_activities = [
-        {"id": "base_1", "title": "Balinese temple visit", "tags": ["culture"]},
-        {"id": "base_2", "title": "Rice terrace walk", "tags": ["nature"]},
-        {"id": "base_3", "title": "Beach sunset dinner", "tags": ["food"]},
-    ]
-
     async def _fake_fetch_hotels(*_args, **_kwargs):
         return [{"id": "hotel_1"}]
 
     async def _fake_fetch_activities(*_args, **_kwargs):
-        return list(base_activities)
+        return [
+            {"id": "base_1", "title": "Balinese temple visit", "tags": ["culture"]},
+            {"id": "base_2", "title": "Rice terrace walk", "tags": ["nature"]},
+        ]
 
     monkeypatch.setattr(logistics_node_module, "_fetch_hotels", _fake_fetch_hotels)
     monkeypatch.setattr(logistics_node_module, "_fetch_activities", _fake_fetch_activities)
 
     await _search_hotels_and_activities(state, state.trip_plan)
 
-    activity_titles = " ".join(
-        tile.get("title", "")
-        for tile in state.tiles.get("activities", [])
-        if isinstance(tile, dict)
-    ).lower()
-    assert len(state.tiles.get("activities", [])) >= len(base_activities) + 2
-    assert "scuba diving adventure" not in activity_titles
+    activities = state.tiles.get("activities", [])
+    assert len(activities) == 0, (
+        "Pure Tier 1 (diving+surfing) should suppress all generic activities, "
+        f"got {len(activities)}"
+    )
 
 
 @pytest.mark.asyncio
@@ -378,12 +374,13 @@ def test_mock_activity_provider_respects_requested_count():
 
 
 @pytest.mark.asyncio
-async def test_mock_backfill_fills_long_trip_free_days(
+async def test_pure_tier1_suppresses_all_activity_tiles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Integration: _supplement_with_mock_backfill with needed=12 returns >= 12.
+    """Pure Tier 1 selection (e.g. hiking only) suppresses all generic activity tiles.
 
-    Tests the full path: provider → exclusion filter → dedup → slice.
+    Free days should render as Free Day blocks in the builder, not be filled
+    with categories the user never selected.
     """
     state = GraphState(
         trip_plan=TripPlan(
@@ -430,8 +427,10 @@ async def test_mock_backfill_fills_long_trip_free_days(
         return [{"id": "hotel_1"}]
 
     async def _fake_fetch_activities(*_args, **_kwargs):
-        # Return no base activities — backfill must fill all free days
-        return []
+        return [
+            {"id": "act_1", "title": "Wildlife Safari", "tags": ["wildlife"]},
+            {"id": "act_2", "title": "Temple Tour", "tags": ["culture"]},
+        ]
 
     monkeypatch.setattr(logistics_node_module, "_fetch_hotels", _fake_fetch_hotels)
     monkeypatch.setattr(logistics_node_module, "_fetch_activities", _fake_fetch_activities)
@@ -439,19 +438,9 @@ async def test_mock_backfill_fills_long_trip_free_days(
     await _search_hotels_and_activities(state, state.trip_plan)
 
     activities = state.tiles.get("activities", [])
-    # 14-day trip, 3 hiking days, 1 buffer => ~10 free days.
-    # Backfill should fill all of them.
-    assert len(activities) >= 10, (
-        f"Expected >= 10 backfill activities for long trip, got {len(activities)}"
+    assert len(activities) == 0, (
+        f"Pure Tier 1 should suppress all generic activities, got {len(activities)}"
     )
-    # Hiking should be excluded from backfill
-    for tile in activities:
-        if isinstance(tile, dict):
-            meta = tile.get("meta", {})
-            if isinstance(meta, dict):
-                assert meta.get("category") != "hiking", (
-                    "Backfill should exclude the active specialist category"
-                )
 
 
 def test_mock_backfill_prefers_water_theme():
@@ -684,260 +673,3 @@ async def test_logistics_logs_l1_state_invalidation_label(
     await logistics_node_module.logistics_node(state)
 
     assert any("State invalidation (L1)" in msg for msg in log_messages)
-
-
-# =====================================================================
-# Experience generator backfill: routing, fallback, category selection, dedup
-# =====================================================================
-
-
-@pytest.mark.asyncio
-async def test_backfill_uses_experience_generator(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Experience generator tiles should appear before any mock fallback."""
-    state = GraphState(
-        trip_plan=TripPlan(
-            destination="Bali",
-            start_date="2027-02-10",
-            end_date="2027-02-24",
-        )
-    )
-    state.tiles = {"hotels": [], "activities": [], "flights": []}
-    state.metadata.update(
-        {
-            "trip_settings": {
-                "booking_types": {
-                    "hotels": "suggested",
-                    "flights": "off",
-                    "ground_transport": "off",
-                    "activities": "suggested",
-                },
-                "flight_settings": {
-                    "round_trip": True,
-                    "cabin_class": "economy",
-                    "direct_only": False,
-                },
-                "hotel_settings": {"min_stars": 0, "amenities": []},
-                "activity_settings": {
-                    "categories": ["diving"],
-                    "skill_level": None,
-                    "day_preferences": {"diving": 3},
-                },
-                "transport_settings": {"car": False, "train": False, "bus": False},
-                "date_flex": False,
-                "trip_duration": None,
-                "date_window_start": None,
-                "date_window_end": None,
-            },
-            "executed_strategy_topics": ["local_expert", "diving"],
-            "strategy_sections": [
-                {"specialist_type": "diving", "content_added": [{}, {}, {}]},
-            ],
-        }
-    )
-
-    experience_tiles = [
-        {"id": f"exp_{i}", "title": f"Experience tile {i}", "tags": ["water"]} for i in range(6)
-    ]
-
-    async def _fake_generate_single_category(**kwargs):
-        return experience_tiles[:2]
-
-    async def _fake_fetch_hotels(*_args, **_kwargs):
-        return [{"id": "hotel_1"}]
-
-    async def _fake_fetch_activities(*_args, **_kwargs):
-        return []
-
-    monkeypatch.setattr(logistics_node_module, "_fetch_hotels", _fake_fetch_hotels)
-    monkeypatch.setattr(logistics_node_module, "_fetch_activities", _fake_fetch_activities)
-    monkeypatch.setattr(
-        logistics_node_module,
-        "generate_single_category",
-        _fake_generate_single_category,
-    )
-
-    await _search_hotels_and_activities(state, state.trip_plan)
-
-    activities = state.tiles.get("activities", [])
-    # Should have experience generator tiles in results
-    exp_titles = {t.get("title", "") for t in activities}
-    assert any("Experience tile" in t for t in exp_titles), (
-        "Experience generator tiles should appear in backfill results"
-    )
-
-
-@pytest.mark.asyncio
-async def test_backfill_falls_back_to_mock_on_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When experience generator fails, mock should fill the gap."""
-    state = GraphState(
-        trip_plan=TripPlan(
-            destination="Bali",
-            start_date="2027-02-10",
-            end_date="2027-02-24",
-        )
-    )
-    state.tiles = {"hotels": [], "activities": [], "flights": []}
-    state.metadata.update(
-        {
-            "trip_settings": {
-                "booking_types": {
-                    "hotels": "suggested",
-                    "flights": "off",
-                    "ground_transport": "off",
-                    "activities": "suggested",
-                },
-                "flight_settings": {
-                    "round_trip": True,
-                    "cabin_class": "economy",
-                    "direct_only": False,
-                },
-                "hotel_settings": {"min_stars": 0, "amenities": []},
-                "activity_settings": {
-                    "categories": ["diving"],
-                    "skill_level": None,
-                    "day_preferences": {"diving": 3},
-                },
-                "transport_settings": {"car": False, "train": False, "bus": False},
-                "date_flex": False,
-                "trip_duration": None,
-                "date_window_start": None,
-                "date_window_end": None,
-            },
-            "executed_strategy_topics": ["local_expert", "diving"],
-            "strategy_sections": [
-                {"specialist_type": "diving", "content_added": [{}, {}, {}]},
-            ],
-        }
-    )
-
-    async def _failing_generate(**kwargs):
-        raise RuntimeError("LLM unavailable")
-
-    async def _fake_fetch_hotels(*_args, **_kwargs):
-        return [{"id": "hotel_1"}]
-
-    async def _fake_fetch_activities(*_args, **_kwargs):
-        return []
-
-    monkeypatch.setattr(logistics_node_module, "_fetch_hotels", _fake_fetch_hotels)
-    monkeypatch.setattr(logistics_node_module, "_fetch_activities", _fake_fetch_activities)
-    monkeypatch.setattr(
-        logistics_node_module,
-        "generate_single_category",
-        _failing_generate,
-    )
-
-    await _search_hotels_and_activities(state, state.trip_plan)
-
-    activities = state.tiles.get("activities", [])
-    # Mock fallback should still fill free days
-    assert len(activities) >= 5, (
-        f"Mock fallback should fill free days even when experience gen fails, got {len(activities)}"
-    )
-
-
-def test_select_backfill_categories_diving():
-    """Diving specialist should get water-affinity backfill categories."""
-    from app.planner.nodes.logistics_node import _select_backfill_categories
-
-    cats = _select_backfill_categories(["diving"], max_categories=3)
-    assert len(cats) <= 3
-    # Water specialists should get water-related categories
-    assert any(c in ("snorkeling", "kayaking", "boating") for c in cats), (
-        f"Diving backfill should include water categories, got {cats}"
-    )
-
-
-def test_select_backfill_categories_always_includes_culture():
-    """When no culture affinity exists, culture fallback should be added."""
-    from app.planner.nodes.logistics_node import _select_backfill_categories
-
-    # Diving only has water + outdoors affinity — no culture
-    cats = _select_backfill_categories(["diving"], max_categories=5)
-    all_culture = {"cultural", "cooking", "shopping"}
-    assert any(c in all_culture for c in cats), (
-        f"Backfill should always include at least one culture category, got {cats}"
-    )
-
-
-@pytest.mark.asyncio
-async def test_backfill_dedup_across_sources(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Experience tiles with same title as existing should be filtered out."""
-    state = GraphState(
-        trip_plan=TripPlan(
-            destination="Bali",
-            start_date="2027-02-10",
-            end_date="2027-02-24",
-        )
-    )
-    state.tiles = {"hotels": [], "activities": [], "flights": []}
-    state.metadata.update(
-        {
-            "trip_settings": {
-                "booking_types": {
-                    "hotels": "suggested",
-                    "flights": "off",
-                    "ground_transport": "off",
-                    "activities": "suggested",
-                },
-                "flight_settings": {
-                    "round_trip": True,
-                    "cabin_class": "economy",
-                    "direct_only": False,
-                },
-                "hotel_settings": {"min_stars": 0, "amenities": []},
-                "activity_settings": {
-                    "categories": ["diving"],
-                    "skill_level": None,
-                    "day_preferences": {"diving": 3},
-                },
-                "transport_settings": {"car": False, "train": False, "bus": False},
-                "date_flex": False,
-                "trip_duration": None,
-                "date_window_start": None,
-                "date_window_end": None,
-            },
-            "executed_strategy_topics": ["local_expert", "diving"],
-            "strategy_sections": [
-                {"specialist_type": "diving", "content_added": [{}, {}, {}]},
-            ],
-        }
-    )
-
-    # Experience gen returns tiles with duplicate titles
-    async def _dup_generate(**kwargs):
-        return [
-            {"id": "exp_dup", "title": "Duplicate Activity", "tags": ["water"]},
-            {"id": "exp_dup2", "title": "Duplicate Activity", "tags": ["water"]},
-            {"id": "exp_unique", "title": "Unique Activity", "tags": ["water"]},
-        ]
-
-    async def _fake_fetch_hotels(*_args, **_kwargs):
-        return [{"id": "hotel_1"}]
-
-    async def _fake_fetch_activities(*_args, **_kwargs):
-        return [{"id": "act_base", "title": "Duplicate Activity", "tags": ["culture"]}]
-
-    monkeypatch.setattr(logistics_node_module, "_fetch_hotels", _fake_fetch_hotels)
-    monkeypatch.setattr(logistics_node_module, "_fetch_activities", _fake_fetch_activities)
-    monkeypatch.setattr(
-        logistics_node_module,
-        "generate_single_category",
-        _dup_generate,
-    )
-
-    await _search_hotels_and_activities(state, state.trip_plan)
-
-    activities = state.tiles.get("activities", [])
-    titles = [t.get("title", "") for t in activities if isinstance(t, dict)]
-    dup_count = sum(1 for t in titles if t == "Duplicate Activity")
-    # Only one "Duplicate Activity" should survive (the base one)
-    assert dup_count <= 1, (
-        f"Dedup should prevent duplicate titles across sources, found {dup_count}"
-    )

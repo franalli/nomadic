@@ -7,7 +7,7 @@
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
-import { apiFetch } from '@/lib/api';
+import { apiFetch, parseRetryAfter } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import type {
   ActivitySettings,
@@ -547,6 +547,14 @@ type DocumentState = {
   releaseMutation: () => void;
   hasPendingMutations: () => boolean;
 
+  // Remove a single block from the itinerary (hold-to-delete)
+  removeBlock: (blockId: string, dayNumber: number) => Promise<void>;
+
+  // Shadow of the last trip_inputs successfully PATCH-ed to the backend.
+  // commitTripInputs compares against this instead of live zustand state,
+  // because updateTripInputs already mutates zustand before commitTripInputs runs.
+  _lastPatchedTripInputs: DocumentTripInputs | null;
+
   // Cart state (for BOOKING mode)
   cartTileIds: Set<string>;
   addToCart: (tileId: string) => void;
@@ -660,6 +668,8 @@ const initialState = {
   _fillingDays: new Set<number>(),
   // General mutation mutex
   _pendingMutations: 0,
+  // Shadow of last backend-confirmed trip_inputs (used by filterNoopTripInputPatch)
+  _lastPatchedTripInputs: null as DocumentTripInputs | null,
   // Cart state
   cartTileIds: new Set<string>(),
   // Envelope-driven generation status (not persisted in document payload)
@@ -973,14 +983,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       set({ document, version });
     }
 
-    const effectiveUpdates = filterNoopTripInputPatch(document.trip_inputs, updates);
+    // Compare against the last backend-confirmed snapshot, not live zustand state.
+    // updateTripInputs() already wrote the new values into zustand before this runs,
+    // so document.trip_inputs === the payload → always a false no-op.
+    const lastPatched = get()._lastPatchedTripInputs ?? document.trip_inputs;
+    const effectiveUpdates = filterNoopTripInputPatch(lastPatched, updates);
     if (Object.keys(effectiveUpdates).length === 0) {
       debugLog('[documentStore] ⏭️ commitTripInputs SKIP (no-op patch)', updates);
       debugLog('[VERIFY][PATCH_DEDUPE] no-op commit skipped', {
         attemptedFields: Object.keys(updates),
         version,
       });
-      clearDirtySettingsForUpdates(updates);
+      // NOTE: Do NOT clear dirty flags here. A no-op means the backend already has these
+      // values — but if the shadow is stale (e.g., after a session restore), we must NOT
+      // poison the dirty registry. The true commit path clears dirty flags on success.
       releaseCommitLock();
       return true;
     }
@@ -1056,6 +1072,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           error: null,
         });
 
+        // Record the backend-confirmed snapshot so future filterNoopTripInputPatch
+        // comparisons have an accurate baseline (not the already-mutated zustand state).
+        set({ _lastPatchedTripInputs: structuredClone(response.document.trip_inputs) });
+
         // Settings included in this successful PATCH no longer need pre-graph flush.
         clearDirtySettingsForUpdates(effectiveUpdates);
 
@@ -1098,6 +1118,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
               isCommitting: false,
               error: null,
             });
+
+            // Record the backend-confirmed snapshot (409-retry path).
+            set({ _lastPatchedTripInputs: structuredClone(retryResponse.document.trip_inputs) });
 
             // Settings included in this successful retry no longer need pre-graph flush.
             clearDirtySettingsForUpdates(effectiveUpdates);
@@ -1262,6 +1285,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           set({ isLoading: false, document: null });
           return null;
         }
+        if (res.status === 429) {
+          const retrySeconds = parseRetryAfter(res) ?? 60;
+          debugLog(`[documentStore.fetchDocument] ⚠️ 429 Rate limited, retry after ${retrySeconds}s`);
+          throw new Error(`Rate limit reached. Please wait ${retrySeconds} seconds and try again.`);
+        }
         throw new Error(`${res.status}`);
       }
       const response: PlanDocumentResponse = await res.json();
@@ -1337,6 +1365,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           null,
         // Hydrate preferences from DB (replaces sessionStorage)
         preferredTileIds: new Set(sanitizedResponseDocument.preferred_tile_ids ?? []),
+        // Initialize the backend-confirmed shadow so the first pill PATCH after page
+        // load has an accurate baseline (not the already-mutated zustand state).
+        _lastPatchedTripInputs: structuredClone(documentToStore.trip_inputs),
       });
       return sanitizedResponseDocument;
     } catch (err) {
@@ -1727,6 +1758,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         null,
       llmUpdatedFields: newLLMUpdatedFields,
       preferredTileIds: mergedPreferences,
+      // Keep shadow in sync so filterNoopTripInputPatch has an accurate baseline
+      // after graph runs that modify trip_inputs (e.g., backend adds categories).
+      _lastPatchedTripInputs: structuredClone(mergedTripInputs),
     });
   },
 
@@ -1943,6 +1977,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       },
       // Clear LLM updated fields since we're reverting
       llmUpdatedFields: new Set(),
+      // Sync shadow so the next commitTripInputs compares against the reverted
+      // state, not the (now-stale) pre-undo PATCH'd state.
+      _lastPatchedTripInputs: structuredClone(tripInputs),
     });
   },
 
@@ -2242,6 +2279,35 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set(s => ({ _pendingMutations: Math.max(0, s._pendingMutations - 1) }));
   },
   hasPendingMutations: () => get()._pendingMutations > 0,
+
+  removeBlock: async (blockId: string, dayNumber: number) => {
+    const store = get();
+    store.claimMutation();
+    try {
+      const res = await apiFetch('/api/document/remove-block', {
+        method: 'POST',
+        body: JSON.stringify({
+          block_id: blockId,
+          day_number: dayNumber,
+          expected_version: store.version,
+        }),
+      });
+      if (res.status === 409) throw new Error('VERSION_CONFLICT');
+      if (!res.ok) throw new Error(`remove-block failed: ${res.status}`);
+      const result = await res.json();
+      const doc = get().document;
+      if (!doc) return;
+      const dayCards = (doc.day_cards ?? []).map(dc =>
+        dc.day_number === dayNumber ? result.day_card : dc
+      );
+      set({
+        document: { ...doc, day_cards: dayCards },
+        version: result.version,
+      });
+    } finally {
+      store.releaseMutation();
+    }
+  },
 
   // Cart actions (for BOOKING mode)
   addToCart: (tileId: string) => {

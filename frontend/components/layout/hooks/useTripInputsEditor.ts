@@ -82,8 +82,6 @@ interface TripInputsEditorActions {
   handleToggleRequiresAssistance: () => Promise<void>;
   handleRemoveBudget: () => Promise<void>;
   handleUpdateCurrency: (currency: string) => Promise<void>;
-  /** @deprecated Multi-city feature removed */
-  handleToggleMultiCity: () => Promise<void>;
   handleAddDestination: (destination: string) => Promise<void>;
   handleRemoveDestination: () => Promise<void>;
   clearValidationError: () => void;
@@ -445,12 +443,6 @@ export function useTripInputsEditor(
     }
   }, [commitTripInputs, onToast]);
 
-  // TODO: multi_city_intent feature is not yet implemented in DocumentTripInputs type
-  const handleToggleMultiCity = useCallback(async () => {
-    // Stubbed - multi_city_intent not in type yet
-    onToast('Multi-city feature coming soon!', 'confirmation');
-  }, [onToast]);
-
   const handleAddDestination = useCallback(
     async (destination: string) => {
       const trimmedDestination = destination.trim();
@@ -586,7 +578,6 @@ export function useTripInputsEditor(
     handleToggleRequiresAssistance,
     handleRemoveBudget,
     handleUpdateCurrency,
-    handleToggleMultiCity,
     handleAddDestination,
     handleRemoveDestination,
     resetDraft,

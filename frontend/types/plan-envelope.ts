@@ -672,7 +672,7 @@ export interface DayBlock {
   // === NEW: Inline constraint badges (shows applied constraints) ===
   active_constraints?: Array<{
     id: string;
-    severity: 'warning' | 'info' | 'success';
+    severity: 'warning' | 'info' | 'success' | 'blocking';
     icon: string;
     title: string;
     description: string;

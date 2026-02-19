@@ -45,6 +45,7 @@ export function AgentCard({ section, isExpanded, onToggle, status, hasDates = tr
         hasCaveat && 'border-zinc-400/30',
         !isInfeasible && !hasCaveat && 'border-zinc-200 hover:border-emerald-500/30 hover:shadow-soft dark:border-zinc-800')}>
       <button onClick={onToggle}
+        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${section.title ?? 'strategy'} details`}
         className={cn('w-full px-5 py-4 text-left transition-all duration-200 group',
           isInfeasible ? 'bg-red-950/20 hover:bg-red-950/30' : 'topic-header-tint hover:bg-zinc-50 dark:hover:bg-muted/30',
           'active:scale-[0.995]')}>

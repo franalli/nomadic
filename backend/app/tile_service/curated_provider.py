@@ -120,11 +120,6 @@ class CuratedProvider(Provider):
                     tile = self._activity_to_tile(activity, ctx, "general")
                     tiles.append(tile)
 
-        # Flights - TODO: Integrate with AmadeusFlightProvider for live data
-        # For now, skip flights in curated provider - they'll come from Amadeus
-        # if "flight" in ctx.verticals or not ctx.verticals:
-        #     pass  # Live flights from Amadeus
-
         # =================================================================
         # Apply Filters from Trip Settings
         # =================================================================

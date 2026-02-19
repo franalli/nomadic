@@ -20,7 +20,6 @@ Architect, Specialist, and Guard outputs into a coherent narrative.
 """
 
 import logging
-import os
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -1889,7 +1888,7 @@ class Synthesizer:
     """
 
     def __init__(self):
-        self.debug = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
+        self.debug = settings.debug_plan_messages
 
     def synthesize_greeting(self, _state: GraphState) -> str:
         """Generate greeting response."""

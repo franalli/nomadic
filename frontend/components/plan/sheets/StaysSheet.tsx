@@ -10,7 +10,6 @@
  * Note: Uses "Stays" in UI copy per spec, but internal state uses "hotels".
  */
 
-'use client';
 
 import { Hotel } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';

@@ -2,12 +2,12 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** Stage 13B — price badge on tiles (only remaining item; DnD wiring COMPLETE)
-- **Active files:** `frontend/components/plan/tiles/` (price badge on tiles — `tile.price_estimate`)
+- **Focus:** Stage 14 planning (Stage 13 COMPLETE)
+- **Active files:** none (stage 13 complete, docs updated)
 - **DO NOT TOUCH:** any backend files, synthesizer.py, router_extraction.py, itinerary_builder.py, experience_generator.py, local_expert.py, plan_graph.py
-- **Frozen:** itinerary_builder.py, specialist_registry.py structure, synthesizer model routing (`_MODEL_BY_COMPLEXITY`), `backend/app/main.py` (13A endpoints live), `backend/app/schemas.py` (BlockMove/ArrangementResult frozen), `backend/app/planner/nodes/constraint_guard.py` (arrangement validation frozen)
+- **Frozen:** itinerary_builder.py, specialist_registry.py structure, synthesizer model routing (`_MODEL_BY_COMPLEXITY`), `backend/app/main.py` (13A endpoints + remove-block live), `backend/app/schemas.py` (BlockMove/ArrangementResult/RemoveBlock frozen), `backend/app/planner/nodes/constraint_guard.py` (arrangement validation frozen)
 - **Stage 13A:** COMPLETE (validate + apply endpoints live in main.py)
-- **Stage 13B DnD:** COMPLETE — `ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`, `DragPreviewCard`, `blockWrapper`+`dayWrapper` props on `TimelineThread`, `validateArrangement`/`applyArrangement` in `api.ts`, `StrategyStageRenderer` wired
+- **Stage 13B:** COMPLETE — DnD wiring + price badge (`block.booked_tile?.price_estimate` in `ActivityMiniCard` + `DragPreviewCard`), `getTopicLabel()` for specialist display in all toast/badge contexts, `_lastPatchedTripInputs` PATCH dedup fix in documentStore
 
 ### Stage 13B Architectural Decisions (LOCKED)
 
@@ -110,7 +110,7 @@ if (isNaN(toDay)) return;
 
 ## 🤖 Agents
 
-Three subagents in `.claude/agents/`. Agents inherit session model — do not override model in agent `.md` files.
+Three subagents in `.claude/agents/`. Most agents inherit session model. Exception: code-reviewer is explicitly set to opus for deeper review quality.
 
 - **backend-specialist** — Python/planner/services/FastAPI/LLM factory work
 - **frontend-specialist** — React/TypeScript/Zustand/styling/design system work
@@ -210,7 +210,7 @@ rm -f backend/test_plan_document_pytest.db*
 
 # Environment
 frontend/.env.local → NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN
-backend/.env → DATABASE_URL, OPENAI_KEY, GOOGLE_API_KEY
+backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY
 cd backend && alembic upgrade head      # DB migrations
 docker compose up db --build            # Docker DB
 ```

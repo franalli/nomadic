@@ -805,3 +805,51 @@ class TestCheckRouteConstraint:
         unknown = [v for v in violations if v.code == "UNKNOWN_DESTINATION_ERROR"]
         assert len(unknown) == 1
         assert "Zzzland" in unknown[0].message
+
+
+# =============================================================================
+# 9. Metadata-based constraint pruning — multi-specialist violations
+# =============================================================================
+
+
+class TestConstraintGuardMetadataPruning:
+    """Tests for multi-specialist constraint interactions."""
+
+    def test_multiple_specialists_independent_violations(self):
+        """Diving near departure gets SURFACE_INTERVAL; hiking on same day does not."""
+        # 10-day trip, diving on day 9 (within buffer), hiking also on day 4
+        plan = _make_plan(start_date="2026-06-01", end_date="2026-06-10")
+        plan.itinerary_blocks = [
+            _make_activity_block(day=4, specialist="hiking"),
+            _make_activity_block(day=9, specialist="diving"),
+        ]
+        tiles = {"flights": [{"carrier": "TestAir"}]}
+
+        violations = check_specialist_constraints(plan, tiles)
+
+        # Diving should trigger SURFACE_INTERVAL (day 9, trip_days=10, buffer=1 day)
+        surface_violations = [v for v in violations if "SURFACE_INTERVAL" in v.code]
+        assert len(surface_violations) >= 1
+        assert any("DIVING" in v.code for v in surface_violations)
+
+        # Hiking should NOT trigger SURFACE_INTERVAL (no nofly buffer)
+        hiking_surface = [v for v in violations if "HIKING_SURFACE_INTERVAL" in v.code]
+        assert len(hiking_surface) == 0
+
+    def test_cross_domain_with_buffer_day_between(self):
+        """Diving + hiking on 10-day trip: no cross-domain violation (trip long enough)."""
+        sections = [
+            {"specialist_type": "diving"},
+            {"specialist_type": "hiking"},
+        ]
+        # 10-day trip: usable = 8, available_after_buffer = 8 - 1 = 7 >= 2 -> no violation
+        violations = _check_cross_domain_from_sections(
+            sections,
+            start_date="2026-06-01",
+            end_date="2026-06-10",
+        )
+
+        codes = [v.code for v in violations]
+        assert "ALTITUDE_AFTER_DIVE" not in codes, (
+            "10-day trip should have enough capacity for both specialists"
+        )

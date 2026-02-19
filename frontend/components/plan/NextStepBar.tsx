@@ -10,7 +10,6 @@
  * This component only handles finalize_plan action.
  */
 
-'use client';
 
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';

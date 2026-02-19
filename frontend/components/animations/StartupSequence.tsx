@@ -15,7 +15,6 @@
  * - Session persistence (only runs once per session via sessionStorage)
  */
 
-'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';

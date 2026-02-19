@@ -125,7 +125,7 @@ const buttonEnabled = cn(
 | Token | Description | Use For |
 |-------|-------------|---------|
 | `DS.text.h1` | lg, semibold, zinc-900/white | Modal titles |
-| `DS.text.label` | 10px, bold, uppercase, tracking-wider, zinc-400 | Section headers |
+| `DS.text.label` | 10px, bold, uppercase, tracking-wider, zinc-400 / dark:zinc-500 | Section headers |
 | `DS.text.body` | sm, medium, zinc-600/zinc-400 | Body text, descriptions |
 | `DS.text.muted` | xs, zinc-500 | Hint text |
 | `DS.text.accent` | zinc-900 / emerald-400 | Highlighted text, icons |
@@ -134,9 +134,12 @@ const buttonEnabled = cn(
 
 | Token | Size | Use For |
 |-------|------|---------|
+| `DS.textSize.mapMarkerLabel` | 8px | Day number inside a 16px map marker dot |
 | `DS.textSize.nano` | 9px | Ultra-compact labels (terminal status, error badges) |
 | `DS.textSize.micro` | 10px | Labels, badges, technical metadata |
 | `DS.textSize.mini` | 11px | Secondary info, tooltips, compact body text |
+| `DS.textSize.badgeLabel` | 13px | Attribute chip labels next to icons (relevance badges) |
+| `DS.textSize.priceDisplay` | 18px | Tile price prominence ("From $1,200") |
 
 ### Glow Classes (Dark Mode)
 
@@ -237,9 +240,9 @@ Hearts indicate user preference for AI weighting, not cart additions.
 
 Map panels use sticky positioning during timeline scroll (P3+ only).
 
-Two map panels exist in `StrategyStageRenderer`:
-- **Bridge mode map** (S2, destination set): `w-[350px]`, `sticky top-4`, `h-[400px]`
-- **Full mode map** (S3, itinerary content): `w-[400px] max-w-[35vw]`, `sticky top-0 h-screen`
+Two map panel configurations exist, rendered from `PlanFullDensityView` and `PlanDensityViews`:
+- **Bridge mode map** (`PlanBridgeDensityView`, S2, destination set): `w-[350px]`, `sticky top-4`, `h-[400px]`
+- **Full mode map** (`PlanFullDensityView`, S3, itinerary content): `w-[400px] max-w-[35vw]`, `sticky top-0 h-screen`
 
 | Property | Bridge Mode (S2) | Full Mode (S3) | Mobile |
 |----------|-----------------|----------------|--------|
@@ -523,6 +526,8 @@ getSpecialistConfig('boating')   // returns sailing config (backward compat)
 SPECIALIST_IDS                   // ['diving', 'hiking', 'skiing', 'cycling', 'surfing', 'climbing', 'sailing', 'wildlife_safari']
 ```
 
+**Text Color Classes:** `frontend/lib/specialist-colors.ts` exports `SPECIALIST_TEXT_COLOR` — a `Record<string, string>` of Tailwind text color classes for specialist label badges (e.g., `text-cyan-600 dark:text-cyan-400` for diving). Used by `DragPreviewCard` and `ActivityMiniCard` for specialist name coloring.
+
 **CSS Topic Color System:** `--topic-color` is set inline via `getSpecialistColorRgb()`, consumed by `.topic-badge`, `.topic-border-left`, `.topic-header-tint` classes in `globals.css`.
 
 **Note:** S2StrategyView uses `getSpecialistColorRgb()` with inline `style` props and CSS custom properties (`--topic-color`). ActivityMiniCard timeline blocks use static Tailwind class maps instead (see Timeline Block Styling above).
@@ -588,7 +593,7 @@ When backend populates `constraints_validated` and `constraint_violations`:
 
 **Visibility:** Only shows when `engineConstraints.length > 0` (niche specialist constraints exist).
 
-**Implementation:** `frontend/components/plan/StrategyStageRenderer.tsx` (search for "Trip DNA")
+**Implementation:** `frontend/components/plan/StrategyConstraintBar.tsx` (rendered via `PlanSpecialistsSection`)
 
 ### Inline Constraint Badge Colors
 
@@ -599,6 +604,7 @@ Activity and logistics blocks display inline constraint badges to show constrain
 | `warning` | `bg-amber-50 dark:bg-amber-900/10` | `border-amber-200 dark:border-amber-800/40` | `text-amber-700 dark:text-amber-400` | Emoji |
 | `info` | `bg-blue-50 dark:bg-blue-900/10` | `border-blue-200 dark:border-blue-800/40` | `text-blue-700 dark:text-blue-400` | Emoji |
 | `success` | `bg-emerald-50 dark:bg-emerald-900/10` | `border-emerald-200 dark:border-emerald-800/40` | `text-emerald-700 dark:text-emerald-400` | Emoji |
+| `blocking` | `bg-red-50 dark:bg-red-900/10` | `border-red-200 dark:border-red-800/40` | `text-red-700 dark:text-red-400` | Emoji |
 
 **Amber here is an approved semantic usage** — constraint severity badges where "caution" connotation is correct (warnings, safety constraints). See Restricted Colors in Section 4.
 
@@ -608,7 +614,8 @@ Activity and logistics blocks display inline constraint badges to show constrain
   'flex items-start gap-2 p-3 rounded-lg text-xs',
   constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200',
   constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200',
-  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200'
+  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200',
+  constraint.severity === 'blocking' && 'bg-red-50 dark:bg-red-900/10 border border-red-200'
 )}>
   <span className="text-base">{constraint.icon}</span>
   <div>

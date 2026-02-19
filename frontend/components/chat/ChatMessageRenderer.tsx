@@ -26,13 +26,13 @@ const MESSAGE_DELAY_CLASS_BY_MS: Record<number, string> = {
   150: '[animation-delay:150ms]',
 };
 
-export function getMessageDelayClass(idx: number): string {
+function getMessageDelayClass(idx: number): string {
   const delayMs = Math.min(idx * 30, 150);
   return MESSAGE_DELAY_CLASS_BY_MS[delayMs] ?? MESSAGE_DELAY_CLASS_BY_MS[150];
 }
 
 // Tier 11.12: Check if an error message is retryable (transient network/server issues)
-export function isRetryableError(content: string): boolean {
+function isRetryableError(content: string): boolean {
   const retryablePatterns = [
     "couldn't connect",
     'check your internet',

@@ -20,25 +20,20 @@ import {
   Zap,
 } from 'lucide-react';
 import React, { type ReactNode } from 'react';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 
-import { useToast } from '@/components/ui/toast';
-import { fillDay } from '@/lib/api';
 import { getDayIntensity, INTENSITY_CONFIG } from '@/lib/dayIntensity';
-import { debugLog } from '@/lib/debug';
 import { DS } from '@/lib/design-system';
-import { isFillDayCooldownActive } from '@/lib/fillDayGuards';
 import { cn } from '@/lib/utils';
-import { useDocumentStore, useDocumentTripInputs } from '@/state/documentStore';
+import { useDocumentTripInputs } from '@/state/documentStore';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
-import { ActivityMiniCard } from './timeline/blocks/ActivityMiniCard';
+import { getTopicLabel } from './stages/StrategyHeroUtils';
 import { FreeDayCard } from './timeline/blocks/FreeDayCard';
-import { GhostSlot } from './timeline/blocks/GhostSlot';
-import { LogisticsBlock } from './timeline/blocks/LogisticsBlock';
 import { SafetyBlock } from './timeline/blocks/SafetyBlock';
-import { getDisplayTime } from './timeline/blocks/types';
 import { InlineDatePrompt } from './timeline/InlineDatePrompt';
+import { RichBlockRenderer } from './timeline/RichBlockRenderer';
+import { useTimelineFillDay } from './timeline/useTimelineFillDay';
 
 // =============================================================================
 // Category Icons (mirrors ActivitiesSheet.ALL_CATEGORIES for inline picker)
@@ -49,6 +44,15 @@ const CATEGORY_ICONS: Record<string, string> = {
   sailing: '\u26F5', surfing: '\u{1F3C4}', cooking: '\u{1F373}', yoga: '\u{1F9D8}',
   temples: '\u26E9\uFE0F', nightlife: '\u{1F389}', beach: '\u{1F3D6}\uFE0F', shopping: '\u{1F6CD}\uFE0F',
   photography: '\u{1F4F8}',
+};
+
+/**
+ * Source specialist → categories excluded when a buffer block from that specialist
+ * is present on the same day. Must mirror specialist_registry.py CrossDomainBlock
+ * target_specialists exactly (currently: diving → skiing/hiking/climbing).
+ */
+const BUFFER_EXCLUSIONS: Record<string, string[]> = {
+  diving: ['hiking', 'skiing', 'climbing'],
 };
 
 const INTENSITY_ICON_MAP: Record<string, LucideIcon> = { Leaf, Sun, Zap };
@@ -134,6 +138,8 @@ interface TimelineThreadProps {
   onOpenFlightsSettings?: () => void;
   /** Disable fill-day actions while streaming/regenerating */
   disableFillDayActions?: boolean;
+  /** Callback to remove a block from the itinerary */
+  onRemoveBlock?: (blockId: string, dayNumber: number) => void;
   /**
    * Optional wrapper applied to each block node.
    * Use this to inject DnD draggable/droppable wrappers without coupling TimelineThread to DnD.
@@ -266,6 +272,7 @@ export function TimelineThread({
   onOpenStaysSettings,
   onOpenFlightsSettings,
   disableFillDayActions = false,
+  onRemoveBlock,
   blockWrapper,
   dayWrapper,
   freeDayDropSlot,
@@ -278,213 +285,18 @@ export function TimelineThread({
   const effectiveVariant: TimelineVariant = variant ?? (isDraft ? 'draft' : 'real');
   const { badge, badgeClass } = variantConfig[effectiveVariant];
 
-  // Fill-day: Zustand selectors + local loading state
-  const [fillingDay, setFillingDay] = useState<number | null>(null);
-  const [fillDayRejection, setFillDayRejection] = useState<{
-    dayNumber: number;
-    reason: string;
-  } | null>(null);
-  const lastFillDayRequestAtRef = useRef(0);
-  const { toast } = useToast();
+  // Fill-day: delegated to extracted hook
   const tripInputs = useDocumentTripInputs();
   const destination = tripInputs?.destination ?? null;
   const categories = tripInputs?.activity_settings?.categories;
-  const handleFillDay = useCallback(async (dayNumber: number, _dayDate?: string | null, chipCategories?: string[]) => {
-    const store = useDocumentStore.getState();
-    const generationInFlight = disableFillDayActions || Boolean(store.currentRunId);
-    if (generationInFlight) {
-      const reason = 'Please wait until itinerary updates complete';
-      setFillDayRejection({ dayNumber, reason });
-      toast(reason);
-      return;
-    }
-    // Guard: skip if expand-itinerary is running (days may already be populated)
-    if (store.expandInProgress) return;
-    const now = Date.now();
-    if (isFillDayCooldownActive(now, lastFillDayRequestAtRef.current)) {
-      const reason = 'Please wait a moment before generating activities again';
-      setFillDayRejection({ dayNumber, reason });
-      toast(reason);
-      return;
-    }
-    // Per-day mutex: prevents concurrent calls from any path
-    if (!store.claimFillDay(dayNumber)) return;
-    // Guard: skip if day already has real activity blocks (race condition with graph SSE)
-    const currentDayCards = store.document?.day_cards ?? [];
-    const targetCard = currentDayCards.find(dc => dc.day_number === dayNumber);
-    if (targetCard) {
-      const realBlocks = targetCard.blocks.filter(
-        b => !b.is_buffer && b.activity_type !== 'free_day' && b.activity_type !== 'placeholder'
-      );
-      if (realBlocks.length > 0) {
-        debugLog(`[fillDay] SKIPPED day=${dayNumber} — already has ${realBlocks.length} real blocks`);
-        store.releaseFillDay(dayNumber);
-        return;
-      }
-    }
-    lastFillDayRequestAtRef.current = now;
-    store.claimMutation();
-    setFillingDay(dayNumber);
-    setFillDayRejection(null);
-    try {
-      // Use chip categories from FreeDayCard; fall back to trip_inputs categories
-      const effectiveCategories = chipCategories?.length ? chipCategories : (categories?.length ? categories : undefined);
-      const result = await fillDay(dayNumber, effectiveCategories);
-      if (result.rejected) {
-        setFillDayRejection({
-          dayNumber,
-          reason: result.rejection_reason || 'Activity cannot be placed on this day',
-        });
-        return;
-      }
-      if (result?.day_card) {
-        useDocumentStore.getState().replaceDayCard(
-          dayNumber, result.day_card, result.version, result.tiles
-        );
-      }
-    } catch (err) {
-      const is409 = err instanceof Error && err.message.includes('409');
-      const is429 = err instanceof Error && err.message.includes('429');
-      if (is409) {
-        debugLog(`[fillDay] day=${dayNumber} already filled (409), refreshing card`);
-        return;
-      }
-      if (is429) {
-        const reason = 'Too many requests. Please wait a moment and try again';
-        setFillDayRejection({ dayNumber, reason });
-        toast(reason);
-        return;
-      }
-      console.error('[TimelineThread] fill-day failed:', err);
-    } finally {
-      useDocumentStore.getState().releaseMutation();
-      useDocumentStore.getState().releaseFillDay(dayNumber);
-      setFillingDay(null);
-    }
-  }, [categories, disableFillDayActions, toast]);
+  const { fillingDay, fillDayRejection, handleFillDay } = useTimelineFillDay({
+    disableFillDayActions,
+    categories,
+  });
+
   const sortedDays = useMemo(() => {
     return [...dayCards].sort((a, b) => a.day_number - b.day_number);
   }, [dayCards]);
-
-  /**
-   * Smart block renderer for S3 Itinerary View.
-   * Routes to appropriate component based on block type and state.
-   */
-  const renderRichBlock = useCallback(
-    (block: DayBlock, blockIndex: number, blockId: string) => {
-      // 1. LOGISTICS LAYER - Hard times (arrival/departure/check-in/check-out)
-      if (block.buffer_type === 'arrival' || block.buffer_type === 'departure') {
-        return (
-          <LogisticsBlock
-            key={blockId}
-            type={block.buffer_type}
-            time={getDisplayTime(block, blockIndex)}
-            details={block.logistics_details}
-            hotelImage={block.booked_tile?.image_url || block.image_url}
-            onOpenFlightsSettings={onOpenFlightsSettings}
-          />
-        );
-      }
-
-      // Check-in/check-out blocks
-      const activityLower = (block.activity_type || '').toLowerCase();
-      if (activityLower.includes('check-in') || activityLower.includes('check in')) {
-        return (
-          <LogisticsBlock
-            key={blockId}
-            type="checkin"
-            time={getDisplayTime(block, blockIndex)}
-            hotelName={block.hotel_name}
-            hotelImage={block.booked_tile?.image_url}
-            details={block.logistics_details}
-            // Preference attribution for hotels
-            preferenceStatus={block.preference_status}
-            alternativeTileId={block.alternative_tile_id}
-            onOpenStaysSettings={onOpenStaysSettings}
-          />
-        );
-      }
-      if (activityLower.includes('check-out') || activityLower.includes('check out')) {
-        return (
-          <LogisticsBlock
-            key={blockId}
-            type="checkout"
-            time={getDisplayTime(block, blockIndex)}
-            hotelName={block.hotel_name}
-            hotelImage={block.booked_tile?.image_url || block.image_url}
-            details={block.logistics_details}
-          />
-        );
-      }
-
-      // 2. CONSTRAINT LAYER - Safety blocks (Red Zone)
-      if (block.is_buffer && block.buffer_type === 'no_fly') {
-        return (
-          <SafetyBlock
-            key={blockId}
-            reason={block.buffer_reason || 'Surface interval required'}
-            until={block.scheduled_time}
-            type="no_fly"
-          />
-        );
-      }
-
-      // Other safety buffers (rest day, acclimatization)
-      if (block.is_buffer || block.buffer_type === 'rest_day' || block.buffer_type === 'acclimatization') {
-        return (
-          <SafetyBlock
-            key={blockId}
-            reason={block.buffer_reason || 'Rest day recommended'}
-            type={block.buffer_type as 'rest_day' | 'acclimatization' | undefined}
-          />
-        );
-      }
-
-      // 3. BOOKING INTEGRATION - Ghost slots for unbooked items
-      if (block.requires_booking && !block.booked_tile) {
-        return (
-          <GhostSlot
-            key={blockId}
-            category={block.booking_category || 'activity'}
-            context={block.booking_category === 'hotel' ? '3 Nights' : undefined}
-            onSelect={() => onOpenBookingDrawer?.(block.booking_category || 'activity')}
-          />
-        );
-      }
-
-      // 4. ACTIVITY LAYER - Rich activity cards
-      const isBooked = mode === 'booking'
-        ? (!!block.booked_tile || !!(block.id && savedTileIds?.has(block.id)))
-        : (block.preference_status === 'user_preferred' || !!(block.id && savedTileIds?.has(block.id)));
-
-      // Compute preference status for attribution badge
-      // Priority: 1) Backend-computed status (includes AI override), 2) Local preference check
-      const tileId = block.booked_tile?.id;
-      const isUserPreferred = tileId && preferredTileIds?.has(tileId);
-      const preferenceStatus = block.preference_status
-        ?? (isUserPreferred ? 'user_preferred' as const : undefined);
-
-      return (
-        <ActivityMiniCard
-          key={blockId}
-          block={block}
-          displayTime={getDisplayTime(block, blockIndex)}
-          isBooked={isBooked}
-          // Only show Book button in booking mode
-          onBook={mode === 'booking' && onOpenBookingDrawer
-            ? () => onOpenBookingDrawer(block.booking_category || 'activity')
-            : undefined}
-          onUnassign={isBooked && block.id && onUnassignTile ? () => onUnassignTile(block.id!) : undefined}
-          mode={mode}
-          preferenceStatus={preferenceStatus}
-          alternativeTileId={block.alternative_tile_id}
-          // TODO: Wire up switch handler when we have tile replacement API
-          onSwitchToAlternative={undefined}
-        />
-      );
-    },
-    [onOpenBookingDrawer, onUnassignTile, savedTileIds, mode, preferredTileIds, onOpenStaysSettings, onOpenFlightsSettings]
-  );
 
   if (sortedDays.length === 0) {
     return (
@@ -601,12 +413,10 @@ export function TimelineThread({
               const isDeparture = card.blocks.some(b => b.buffer_type === 'departure');
               const hasOnlyFreeDay = contentBlocks.length === 1
                 && contentBlocks[0].activity_type === 'free_day';
-              // isSafetyDay: exclude no_fly/acclimatization/rest_day pure-buffer days —
-              // they must NOT render FreeDayCard or accept drops.
-              const hasSafetyBuffer = card.blocks.some(
-                b => b.is_buffer && ['no_fly', 'acclimatization', 'rest_day'].includes(b.buffer_type || '')
-              );
-              const isFreeDay = useRichBlocks && !isArrival && !isDeparture && !hasSafetyBuffer && (contentBlocks.length === 0 || hasOnlyFreeDay);
+              // Buffer days (rest_day, no_fly, acclimatization) ARE fillable —
+              // the constraint restricts which categories, not whether you can plan.
+              // SafetyBlock renders as an informational banner; FreeDayCard provides the CTA.
+              const isFreeDay = useRichBlocks && !isArrival && !isDeparture && (contentBlocks.length === 0 || hasOnlyFreeDay);
 
               // For free days: skip dayWrapper (it would highlight the entire FreeDayCard).
               // The drop zone is injected via freeDayDropSlot inside FreeDayCard instead.
@@ -632,15 +442,25 @@ export function TimelineThread({
                         dayNumber={card.day_number}
                         dayDate={card.date ?? null}
                         destination={destination}
-                        availableCategories={
-                          categories && categories.length > 1
-                            ? categories.map(c => ({
-                                value: c,
-                                label: c.charAt(0).toUpperCase() + c.slice(1),
-                                icon: CATEGORY_ICONS[c.toLowerCase()] ?? '\u{1F3AF}',
-                              }))
-                            : undefined
-                        }
+                        availableCategories={(() => {
+                          if (!categories || categories.length <= 1) return undefined;
+                          // Derive categories excluded by buffer blocks on this day.
+                          // A rest_day buffer from diving excludes hiking/climbing/skiing.
+                          const excludedByBuffer = new Set<string>();
+                          for (const buf of bufferBlocks) {
+                            const st = (buf.specialist_type || '').toLowerCase();
+                            if (st && BUFFER_EXCLUSIONS[st]) {
+                              BUFFER_EXCLUSIONS[st].forEach(cat => excludedByBuffer.add(cat));
+                            }
+                          }
+                          return categories
+                            .filter(c => !excludedByBuffer.has(c.toLowerCase()))
+                            .map(c => ({
+                              value: c,
+                              label: c.charAt(0).toUpperCase() + c.slice(1),
+                              icon: CATEGORY_ICONS[c.toLowerCase()] ?? '\u{1F3AF}',
+                            }));
+                        })()}
                         onBrowse={() => onOpenBookingDrawer?.('activity', card.day_number)}
                         onFillDay={handleFillDay}
                         isFilling={fillingDay === card.day_number}
@@ -698,7 +518,20 @@ export function TimelineThread({
                           isActiveBlock && 'ring-2 ring-emerald-500 ring-offset-2 ring-offset-background rounded-xl scale-[1.01]'
                         )}
                       >
-                        {renderRichBlock(block, blockIndex, blockId)}
+                        <RichBlockRenderer
+                          block={block}
+                          blockIndex={blockIndex}
+                          blockId={blockId}
+                          dayNumber={card.day_number}
+                          mode={mode}
+                          savedTileIds={savedTileIds}
+                          preferredTileIds={preferredTileIds}
+                          onOpenBookingDrawer={onOpenBookingDrawer}
+                          onUnassignTile={onUnassignTile}
+                          onOpenStaysSettings={onOpenStaysSettings}
+                          onOpenFlightsSettings={onOpenFlightsSettings}
+                          onRemoveBlock={onRemoveBlock}
+                        />
                       </div>
                     );
                     return (
@@ -780,7 +613,7 @@ export function TimelineThread({
                             {/* Specialist type badge for ghost timeline blocks */}
                             {block.specialist_type && (
                               <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
-                                {block.specialist_type}
+                                {getTopicLabel(block.specialist_type)}
                               </span>
                             )}
                           </div>

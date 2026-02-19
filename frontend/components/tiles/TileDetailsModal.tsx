@@ -14,7 +14,6 @@
  * Note: No "View deal" button in S2. Booking links unlock in S3.
  */
 
-'use client';
 
 import {
   ChevronLeft,

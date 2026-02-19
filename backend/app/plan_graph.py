@@ -24,12 +24,12 @@ Usage:
 
 import asyncio
 import logging
-import os
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, Literal, Optional
 
 from langgraph.graph import END, StateGraph
 
+from app.config import settings as _settings
 from app.planner.nodes.constraint_guard import constraint_guard
 from app.planner.nodes.intent_router import intent_router
 from app.planner.nodes.local_expert import local_expert
@@ -84,7 +84,7 @@ def _create_reset_response() -> Dict[str, Any]:
 # Graph Configuration
 # =============================================================================
 
-DEBUG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
+DEBUG = _settings.debug_plan_messages
 
 # Build identifiers for cache compatibility
 PLANNER_BUILD_ID = "1.0.0"

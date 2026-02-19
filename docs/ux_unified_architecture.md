@@ -179,9 +179,6 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 - **POI Pins:** Activity markers from `extractPOIsFromSections()` in `ghost-timeline-adapter.ts`
   - Extracts coordinates from strategy section tiles and activities
   - **Destination fallback chain:** `effectiveTripInputs?.destination ?? destinationCard?.title`
-  - **Demo Fallback:** Uses curated `DEMO_POIS` from `destination-coords.ts` when no POIs extracted
-    - Normalization: `destination.split(',')[0].trim().toLowerCase()` then capitalize
-    - Bali has 5 demo pins: 3 dive sites + 2 hiking trails
   - POI format: `{ lat, lng }` object (not array)
   - All POI coordinates validated via `_normalizeMapCoordinates()` (rejects non-finite or out-of-range values)
 
@@ -732,8 +729,8 @@ Activity and logistics blocks display inline constraint badges to show constrain
 ```typescript
 interface ActiveConstraint {
   id: string;                           // Unique ID (e.g., "no_fly_buffer")
-  severity: 'warning' | 'info' | 'success';
-  icon: string;                         // Emoji (⚠️, ℹ️, ✅)
+  severity: 'warning' | 'info' | 'success' | 'blocking';
+  icon: string;                         // Emoji (⚠️, ℹ️, ✅, 🚫)
   title: string;                        // Short label
   description: string;                  // Context-specific explanation
 }
@@ -745,6 +742,7 @@ interface ActiveConstraint {
 | `warning` | Safety constraints (24h no-fly) | `bg-amber-50` | `border-amber-200` |
 | `info` | Informational (surface interval) | `bg-blue-50` | `border-blue-200` |
 | `success` | Positive (constraint satisfied) | `bg-emerald-50` | `border-emerald-200` |
+| `blocking` | Hard constraint violation | `bg-red-50` | `border-red-200` |
 
 **Implementation:** `frontend/components/plan/timeline/blocks/ActivityMiniCard.tsx`, `LogisticsBlock.tsx`
 
@@ -828,7 +826,7 @@ const getShortLabel = (c) =>
 )}
 ```
 
-**File:** `frontend/components/plan/StrategyStageRenderer.tsx`
+**File:** `frontend/components/plan/StrategyConstraintBar.tsx`
 
 ### Architecture (Consolidated)
 ```
@@ -1675,8 +1673,12 @@ useSessionHydration() runs
 | `DraggableBlock` | Wraps each block with `useDraggable`. Locked blocks (`arrival`/`departure`/`check-in`/`check-out`/`is_buffer`) show a `Lock` icon and disable drag. When `block.id` is absent, renders a plain passthrough (no drag handle). Applies `opacity-30 scale-95` while dragging. |
 | `DroppableDay` | Wraps activity-day block lists with `useDroppable` (`id: "day-{dayNumber}"`). Two-div structure: outer div (`ref={setNodeRef}`, `min-h-[80px]`) owns the hit area; inner div owns ring + highlight styles. Highlights with `ring-1 ring-emerald-500/25 bg-emerald-500/[0.04]` when dragging over. Not used for free/empty days — those use `FreeDayDropSlot` instead. |
 | `FreeDayDropSlot` | Dedicated drop zone rendered inside `FreeDayCard` via the `freeDayDropSlot` render prop. Avoids highlighting the entire free-day card. Uses `useDroppable` with the same `day-{dayNumber}` id. |
-| `DragPreviewCard` | Ghost card shown in `DragOverlay` during drag. Renders `block.summary || block.activity_type` and `block.specialist_type`. |
-| `ChatPanel` | Chat orchestration for SSE runs and suggestion chips. Input area (chips + SmartLoader + text input) is pinned below the scroll container via `shrink-0` (not inside it), ensuring chips are always visible. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown) and handles `trigger_action` chips (e.g., direct flights only). Delegates SSE streaming to `useChatSse`, message rendering to `ChatMessageList`/`ChatMessageRenderer`, input to `ChatInputHandler`, chips to `ChatSuggestionBar`. |
+| `DragPreviewCard` | Ghost card shown in `DragOverlay` during drag. Renders `block.summary || block.activity_type`, specialist label via `getTopicLabel(block.specialist_type)`, and price from `block.booked_tile?.price_estimate`. |
+| `ChatPanel` | Chat orchestration — thin shell delegating to four extracted hooks: `useChatSend` (send + SSE lifecycle), `useChatEffects` (side effects), `useChatScrolling` (scroll + collapse). Module sheets (flights/stays/activities) are rendered by `ChatModuleSheets`. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown). |
+| `ChatModuleSheets` | Renders the three module sheets (FlightsSheet, StaysSheet, ActivitiesSheet) that live inside ChatPanel. Extracted to keep ChatPanel under 200 lines. |
+| `useChatSend` | Hook orchestrating message send, SSE streaming lifecycle (`useChatSse` internally), node status, suggestion state, and active-status updates. Extracted from ChatPanel. Returns `sendMessageCore`, `addAssistantMessage`, `handleStopStreaming`, plus state (`isLoading`, `nodeStatus`, etc.). |
+| `useChatEffects` | Hook centralising ChatPanel side effects: scroll-on-load, ready-to-generate detection, input focus, node-status → activeStatus mapping, history loading. Extracted from ChatPanel. |
+| `useChatScrolling` | Hook managing scroll container ref, auto-scroll-to-bottom, user-scrolled-up detection, and mobile setup header collapse. Extracted from ChatPanel. |
 | `useChatSse` | Hook owning the `streamGraphPlan` call and all SSE callbacks (`onToken`, `onNodeStatus`, `onPartial`, `onComplete`, `onError`). Extracted from ChatPanel. Returns `executeStream` function. No JSX. |
 | `ChatMessageList` | Scrollable message list renderer — owns scroll container div and all message rendering. Extracted from ChatPanel. |
 | `ChatInputHandler` | Thin wrapper around `ChatInputBar` converting ChatPanel-level callbacks to form-submit signatures. Extracted from ChatPanel. |
@@ -1690,6 +1692,10 @@ useSessionHydration() runs
 | `ItineraryProgressIndicator` | Progress indicator for multi-specialist auto-trigger itinerary generation |
 | `BookingDrawer` | Side sheet for tile browsing, triggered by FreeDayCard "Browse" or GhostSlot clicks. Supports `pinnedDayNumber` for per-day tile placement via fill-day API |
 | `TripHealthBar` | Compact inventory bar showing tile counts (hotels, flights, activities) for General/Local Expert sections in `S2StrategyView` |
+| `useItineraryGeneration` | Hook extracted from `NomadicLanding` encapsulating the full expand-itinerary flow: `proceedWithItineraryGeneration` (NDJSON streaming), auto-trigger logic for multi-specialist trips (Path A), `handleExpandToItinerary` (validation-gated expand), and `handleSelectNights`. Returns `{proceedWithItineraryGeneration, handleExpandToItinerary, handleSelectNights, hasItineraryContent}`. |
+| `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. Pure computation — no side effects. |
+| `useLandingEffects` | Hook extracted from `NomadicLanding` grouping side effects unrelated to itinerary generation: destination image fetching, `hasEverHadPlan` detection, topic tracking for mobile badges, specialist deep link handling. State is owned by the parent and passed in as params + setters. |
+| `specialist-colors.ts` | SSoT for specialist-to-color text class mappings (`SPECIALIST_TEXT_COLOR: Record<string, string>`). Used by `DragPreviewCard` and `ActivityMiniCard` for specialist label badges. Hue assignments match the DS constraint-priority palette. |
 
 **Deleted Components (no longer in codebase):**
 - `ConflictResolutionBanner` -- conflict resolution now chat-driven via suggestion chips
@@ -1707,6 +1713,8 @@ useSessionHydration() runs
 - `LocationBadge`, `TruncatedDestinationList` -- legacy pill components
 - `TileSectionHeader` -- tile section header
 - `features-section` -- marketing features section
+- `components/chat/HoldToDeleteButton.tsx` -- moved to `components/plan/timeline/blocks/HoldToDeleteButton.tsx`
+- `SuggestionClickEvent` (schema) / `/api/suggestions/click` (endpoint) -- suggestion-click analytics removed
 
 ### TimelineVariant Mapping
 
@@ -1724,10 +1732,14 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 
 | Function | Purpose | Status |
 | --- | --- | --- |
-| `getNextAction(state, generation, _hasTripContext?)` | Returns `'expand_itinerary'` for S2, `null` otherwise. Does NOT gate on dates. Third param `_hasTripContext` is deprecated (NextStepBar reads tripInputs from store). | Active |
+| `isBootstrap(state)` | Returns true when state is `P0_MINIMAL` (or any legacy S0/S1 alias via `normalizePlanViewState`). Returns true when state is null/undefined. | Active |
+| `isFraming(state)` | Returns true when state is exactly `S1_FRAMING`. | Active |
+| `isStrategyReady(state)` | Returns true when `normalizePlanViewState(state) === 'P1_ENRICHED'` AND state is not `S2_BLOCKED`. Used by `getNextAction()` and `shouldAutoTriggerItinerary()`. | Active |
+| `hasStrategy(state)` | Returns true when state normalizes to `P1_ENRICHED` or any `P3*` variant (strategy content exists). | Active |
 | `isGenerating(generation)` | Checks if any generation is in progress (`generation?.active === true`) | Active |
 | `shouldAutoTriggerItinerary(state, topics, hasDates, generation, hasItinerary)` | Path A: auto-trigger for multi-specialist trips (2+ topics, S2, has dates, no existing itinerary) | Active |
 | `isMultiSpecialistTrip(executedTopics)` | Returns true when 2+ topics executed | Active |
+| `getNextAction(state, generation, _hasTripContext?)` | Returns `'expand_itinerary'` when `isStrategyReady(state)`, `null` otherwise. Does NOT gate on dates. Third param `_hasTripContext` is deprecated (NextStepBar reads tripInputs from store). | Active |
 
 **Deleted functions (no longer in codebase):**
 - `isReady()` -- removed (was: checks if plan is in ready state)
@@ -1747,7 +1759,8 @@ export function getNextAction(
   _hasTripContext?: boolean // Deprecated - NextStepBar reads tripInputs from useDocumentStore
 ): 'expand_itinerary' | 'finalize_plan' | null {
   if (isGenerating(generation)) return null;
-  if (state === 'S2_STRATEGY_READY') return 'expand_itinerary';
+  // isStrategyReady() normalizes S2_STRATEGY_READY and P1_ENRICHED aliases
+  if (isStrategyReady(state)) return 'expand_itinerary';
   return null;
 }
 ```
@@ -1761,7 +1774,8 @@ export function getNextAction(
 3. **No UI Chrome Removal:** Elements that appear during setup (status header, chip rows) must **transform through states**, not disappear. Layout shift breaks spatial memory. See `getChatStatusConfig` in `ChatPanel.tsx`.
 4. **Backend is SSoT:** `plan_view_state` from backend determines rendering mode. Frontend does not fabricate it except for the frontend-only state `S0_EMPTY` (reset intent). `S3_PARTIAL_CONFLICT` is emitted by the backend `/api/expand-itinerary` endpoint when the builder produces partial results. `S1_DESTINATION_SET` exists only in the frontend `VIEW_STATE_ORDER` for downgrade protection ordering.
 5. **Coordinates Flow:** `[lng, lat]` format preserved from specialist → strategy_sections → DayBlock.
-6. **Plan Tab Unlock:** Mobile plan tab unlocks when `planTabEnabled = hasBranchesReady || planViewState !== 'S0_BOOTSTRAP'` (specialist content, tiles, or branches exist — no dates required). Desktop `canViewPlan` in `useViewNavigation` gates on dates (`hasDates || isGenerating`) but is marked `@deprecated` and only used by legacy API. Strategy content alone DOES unlock the plan tab on mobile.
+6. **Plan Tab Unlock:** Mobile plan tab unlocks when `planTabEnabled = hasBranchesReady || !isBootstrap(planViewState)` (specialist content, tiles, or branches exist — no dates required). `isBootstrap()` normalizes P0_MINIMAL and all S0/S1 legacy aliases. Desktop `canViewPlan` in `useViewNavigation` gates on dates (`hasDates || isGenerating`) but is marked `@deprecated` and only used by legacy API. Strategy content alone DOES unlock the plan tab on mobile.
+7. **Specialist Display Labels:** All user-facing specialist names (toasts, badges, drag previews) use `getTopicLabel()` from `StrategyHeroUtils.tsx` — never raw `specialist_type`/`activity_type` strings (which are snake_case internal keys like `wildlife_safari`).
 
 ---
 
@@ -2634,11 +2648,13 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Arrival/Departure | `LogisticsBlock` | Border-l-4, icon, time | Hard times (flights) |
 | Check-in/out | `LogisticsBlock` | Key icon, hotel name, inline constraints | Accommodation logistics |
 | Safety Buffer | `SafetyBlock` | Red zone, "No Flights until". **Excludes** arrival/departure anchors (those are `LogisticsBlock`, not `SafetyBlock`) | Constraint visualization |
-| Activity | `ActivityMiniCard` | Thumbnail, category badge, duration, time of day, description, constraints, book button | Rich activity display with metadata |
+| Activity | `ActivityMiniCard` | Thumbnail, category badge, duration, time of day, description, constraints, price badge (`block.booked_tile?.price_estimate`), book button, hold-to-delete | Rich activity display with metadata |
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
 | Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker. Buffer blocks (SafetyBlock) render above FreeDayCard when present. **Suppressed on arrival and departure days** (no activity placement on travel days) | Quick-fill with generated activities or browse |
 
 **Fill-Day Flow:** FreeDayCard → `fillDay()` API call → backend generates 1 tile via `generate_experience_tiles_for_day(tiles_per_day=1)` → response includes `day_card` + `tiles` map → frontend calls `replaceDayCard()` for surgical day card update + merges tiles into document store (enables hearting/referencing). Generated tiles are tagged with `meta.pinned_day` so the builder won't redistribute them on rebuild. Backend applies adjacent-day constraint filtering (e.g., no altitude activities next to diving days). Categories are optional — when omitted, the generator picks destination-appropriate activities. **Concurrency:** Per-day mutex (`claimFillDay`/`releaseFillDay` in documentStore) prevents concurrent fill-day calls on the same day, frontend stream/regeneration gates (`currentRunId`/generation flags) block fill-day while itinerary updates are in flight, and burst guards throttle repeat calls (1.5s cooldown via `fillDayGuards.ts`) in both timeline and browse-to-pin paths. `fillDay()` in api.ts syncs the document version from the response (`useDocumentStore.setState({ version })`) to prevent 409 cascades and preserves backend `detail` text for surfaced 429/rejection toasts.
+
+**Remove Block Flow:** ActivityMiniCard shows a `HoldToDeleteButton` (hover-reveal, top-right) for removable blocks (non-buffer, non-locked activity types). Press-and-hold 1s triggers `removeBlock(blockId, dayNumber)` in documentStore → POST `/api/document/remove-block`. Backend removes the block; if no activities remain in the day, inserts a `free_day` placeholder. Frontend replaces the affected `day_card` in store, bumps `version`, and shows an info toast. Buffer blocks (`arrival`, `departure`, `check-in`, `check-out`) and booked tiles with an active unassign handler are excluded from removal.
 
 **Browse → Pin Flow:** FreeDayCard "Browse" opens `BookingDrawer` with `pinnedDayNumber` set to the day number. When the user clicks "Add to Day N" on a tile, `handleSaveTile` in StrategyStageRenderer calls `fillDay(dayNumber, undefined, [tileId])` — the backend places the existing tile on the target day via `pinned_tile_ids` (no LLM generation). Pinned tiles are persisted to `document_data.user_pinned_tiles` for rebuild survival — the builder's Phase 5.6 Pass 0 places them on their target day, and `itinerary_adapter.py` re-injects them into the tile pool during graph-built itinerary. If `pinnedDayNumber` is null (drawer opened from elsewhere), the default path fires: `toggleTilePreference` (idempotent — only if not already preferred) which triggers `usePreferenceAutoRegen`.
 
@@ -2674,8 +2690,8 @@ Timeline blocks display contextual constraint badges directly within the card. T
 ```typescript
 interface ActiveConstraint {
   id: string;                    // 'no_fly_buffer', 'surface_interval'
-  severity: 'warning' | 'info' | 'success';
-  icon: string;                  // Emoji: '⚠️', 'ℹ️', '✅'
+  severity: 'warning' | 'info' | 'success' | 'blocking';
+  icon: string;                  // Emoji: '⚠️', 'ℹ️', '✅', '🚫'
   title: string;                 // '24h No-Fly Buffer'
   description: string;           // Contextual explanation
 }
@@ -2698,14 +2714,19 @@ The `no_altitude_after_dive` constraint is emitted by the diving specialist but 
 
 **Component Files:**
 ```
-frontend/components/plan/timeline/blocks/
-├── types.ts                        # DisplayTime, TimeSlot, getDisplayTime()
-├── LogisticsBlock.tsx              # Arrival/departure/check-in + gear icons
-├── SafetyBlock.tsx                 # No-fly/rest-day/acclimatization constraints (default: rest_day)
-├── ActivityMiniCard.tsx            # Rich activity with context menu
-├── GhostSlot.tsx                   # Unbooked placeholder
-├── FreeDayCard.tsx                 # Empty day state with fill-day CTA + inline category picker
-└── PreferenceAttributionBadge.tsx  # "You preferred this" / "AI selected" badge
+frontend/components/plan/timeline/
+├── RichBlockRenderer.tsx           # Smart block router: logistics → safety → ghost → activity (extracted from TimelineThread)
+├── useTimelineFillDay.ts           # Fill-day state + handler hook (per-day mutex, cooldown, generation guards; extracted from TimelineThread)
+├── ...                             # DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot, etc.
+└── blocks/
+    ├── types.ts                        # DisplayTime, TimeSlot, getDisplayTime()
+    ├── LogisticsBlock.tsx              # Arrival/departure/check-in + gear icons
+    ├── SafetyBlock.tsx                 # No-fly/rest-day/acclimatization constraints (default: rest_day)
+    ├── ActivityMiniCard.tsx            # Rich activity with context menu + hold-to-delete
+    ├── HoldToDeleteButton.tsx         # Press-and-hold circular progress delete button
+    ├── GhostSlot.tsx                   # Unbooked placeholder
+    ├── FreeDayCard.tsx                 # Empty day state with fill-day CTA + inline category picker
+    └── PreferenceAttributionBadge.tsx  # "You preferred this" / "AI selected" badge
 ```
 
 **Settings Gear Icons:**

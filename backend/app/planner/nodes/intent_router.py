@@ -50,6 +50,7 @@ from app.planner.specialist_registry import (
     ALL_CATEGORY_TO_SPECIALIST,
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
+    TIER2_COMMON_HINTS,
 )
 from app.planner.state import GraphState, TripPlan
 from app.planner.state.typed_meta import get_trip_settings
@@ -864,6 +865,11 @@ def _detect_specialists_from_activity_settings(state: GraphState) -> List[str]:
                 logger.debug(
                     f"Detected specialist '{specialist}' from activity category '{category}'"
                 )
+        elif category_lower in TIER2_COMMON_HINTS:
+            # Tier 2: use generic vertical specialist with the category as topic
+            if category_lower not in detected:
+                detected.append(category_lower)
+                logger.debug(f"Detected Tier 2 specialist '{category_lower}' (generic path)")
 
     return detected
 
@@ -2976,6 +2982,66 @@ async def intent_router(state: GraphState) -> GraphState:
         from app.debug_utils import log
 
         log("ROUTER", f"Specialists {ui_specialists} detected from activity settings")
+
+    # =========================================================================
+    # CATEGORY GATE: Prune specialists no longer in user's categories.
+    # The reactivity block above re-queues ALL previously executed specialists
+    # when constraints change. If the user removed hiking and added surfing,
+    # hiking must NOT run again — its content would be placed on the itinerary.
+    # =========================================================================
+    raw_categories = [
+        c.lower().strip() for c in get_trip_settings(state).activity_settings.categories
+    ]
+    # Resolve aliases (e.g., "scuba" → "diving") so the filter matches topic names
+    current_categories: set[str] = set()
+    for c in raw_categories:
+        current_categories.add(c)
+        resolved = ALL_CATEGORY_TO_SPECIALIST.get(c)
+        if resolved:
+            current_categories.add(resolved)
+    if current_categories:
+        before_prune = list(specialist_hints)
+        specialist_hints = [
+            s
+            for s in specialist_hints
+            if s in ("local_expert", "general") or s in current_categories
+        ]
+        pruned = set(before_prune) - set(specialist_hints)
+        if pruned:
+            from app.debug_utils import log as _log
+
+            _log("ROUTER", f"Pruned removed specialists from queue: {pruned}")
+            # Clear strategy sections for removed specialists so the builder
+            # doesn't inherit stale content_added from a previous run.
+            active_sections = state.metadata.get("strategy_sections", [])
+            if active_sections:
+                state.metadata["strategy_sections"] = [
+                    s
+                    for s in active_sections
+                    if s.get("specialist_type") in ("local_expert", "general")
+                    or s.get("specialist_type") in current_categories
+                ]
+            # Clean metadata so removed specialists aren't resurrected next run
+            state.metadata["executed_strategy_topics"] = [
+                t
+                for t in state.metadata.get("executed_strategy_topics", [])
+                if t in ("local_expert", "general") or t in current_categories
+            ]
+            state.metadata["requested_specialists"] = [
+                t
+                for t in state.metadata.get("requested_specialists", [])
+                if t in current_categories
+            ]
+            # Clear persisted specialist constraints for pruned specialists
+            # so constraint_guard doesn't merge stale constraints from removed categories.
+            persisted_constraints = state.metadata.get("specialist_constraints", {})
+            if persisted_constraints:
+                state.metadata["specialist_constraints"] = {
+                    k: v
+                    for k, v in persisted_constraints.items()
+                    if k in ("general", "local_expert") or k in current_categories
+                }
+    # =========================================================================
 
     # Store all specialists in the pending queue (multi-specialist support)
     # Pop the first one to activate, rest stay in queue for sequential processing

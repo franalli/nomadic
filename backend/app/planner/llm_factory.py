@@ -169,8 +169,15 @@ def extract_json_content(response: object) -> str:
     content = content.strip()
 
     # Strip markdown code fences (```json ... ``` or ``` ... ```)
-    fence_match = re.search(r"```(?:json)?\s*\n(.*?)\n```", content, re.DOTALL)
+    # Try closed fence first, then fall back to unclosed (LLM truncation)
+    fence_match = re.search(r"```(?:json)?\s*\r?\n(.*?)\r?\n\s*```", content, re.DOTALL)
     if fence_match:
         content = fence_match.group(1).strip()
+    else:
+        # Unclosed fence: extract everything after the opening fence marker
+        # Strip trailing backticks in case the closing ``` is on the same line as content
+        open_match = re.search(r"```(?:json)?\s*\r?\n(.*)", content, re.DOTALL)
+        if open_match:
+            content = open_match.group(1).strip().rstrip("`")
 
     return content

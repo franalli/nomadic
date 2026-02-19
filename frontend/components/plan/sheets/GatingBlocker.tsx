@@ -7,7 +7,6 @@
  * Returns null when all gates are met.
  */
 
-'use client';
 
 import { AlertCircle } from 'lucide-react';
 import { useEffect, useRef } from 'react';

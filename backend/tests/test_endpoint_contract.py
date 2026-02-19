@@ -22,7 +22,6 @@ EXPECTED_ROUTES: set[tuple[str, str]] = {
     ("POST", "/api/admin/clear-router-cache"),
     ("GET", "/api/admin/cache-stats"),
     ("POST", "/api/tiles/click"),
-    ("POST", "/api/suggestions/click"),
     ("POST", "/api/graph_plan/stream"),
     ("DELETE", "/api/session"),
     ("GET", "/api/chat"),

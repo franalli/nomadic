@@ -12,7 +12,6 @@
  * - Configurable typing speed
  */
 
-'use client';
 
 import { memo, useEffect, useState } from 'react';
 

@@ -7,7 +7,6 @@
  * Currency + amount, budget type selector (total/per-night/per-person).
  */
 
-'use client';
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 

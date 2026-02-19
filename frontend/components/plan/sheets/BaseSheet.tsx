@@ -12,7 +12,6 @@
  * - Footer: Save (primary), Cancel, optional Reset
  */
 
-'use client';
 
 import { AnimatePresence, motion, type PanInfo } from 'framer-motion';
 import { X } from 'lucide-react';

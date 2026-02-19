@@ -332,10 +332,14 @@ export function useBranchState(options: UseBranchStateOptions): UseBranchStateRe
 
         if (!res.ok) {
           debugLog('Failed to fetch tiles for branch', res.status);
-          onToast(
-            errorMessageOverride ??
-              'Unable to refresh options for that suggestion. Please try again.'
-          );
+          if (res.status === 429) {
+            onToast('Rate limit reached. Please wait a moment and try again.');
+          } else {
+            onToast(
+              errorMessageOverride ??
+                'Unable to refresh options for that suggestion. Please try again.'
+            );
+          }
           return;
         }
 

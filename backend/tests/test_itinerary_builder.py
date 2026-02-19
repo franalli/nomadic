@@ -1484,3 +1484,238 @@ class TestPhase525CoScheduling:
             b for dc in result for b in dc.blocks if b.summary == "Surfing at Uluwatu"
         ]
         assert len(uluwatu_blocks) == 1
+
+
+# =============================================================================
+# Test: Phase 5.5 Handle Empty Days
+# =============================================================================
+
+
+class TestHandleEmptyDays:
+    """Tests for Phase 5.5 _handle_empty_days() — free day placeholder injection."""
+
+    def test_buffer_day_gets_free_day_after_buffer(self, builder: ItineraryBuilder):
+        """Day with only a buffer block gets a free_day block appended after the buffer."""
+        days = [
+            DayCardOutput(day_number=1, label="Arrival Day", blocks=[]),
+            DayCardOutput(
+                day_number=2,
+                label="Day 2",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="no_fly_buffer",
+                        summary="No-fly buffer day",
+                        is_buffer=True,
+                        buffer_type="no_fly",
+                        specialist_type="diving",
+                    )
+                ],
+            ),
+            DayCardOutput(day_number=3, label="Departure Day", blocks=[]),
+        ]
+
+        result = builder._handle_empty_days(days, {}, tier2_categories=None)
+
+        day2 = result[1]
+        assert len(day2.blocks) == 2
+        # Buffer stays at index 0
+        assert day2.blocks[0].is_buffer is True
+        # Free day block inserted after buffer
+        free_block = day2.blocks[1]
+        assert free_block.id.startswith("free_day_")
+        assert free_block.activity_type == "free_day"
+
+    def test_day_with_buffer_plus_activity_no_free_day(self, builder: ItineraryBuilder):
+        """Day with buffer + real activity does NOT get a free_day block."""
+        days = [
+            DayCardOutput(day_number=1, label="Arrival Day", blocks=[]),
+            DayCardOutput(
+                day_number=2,
+                label="Day 2",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="no_fly_buffer",
+                        summary="No-fly buffer",
+                        is_buffer=True,
+                        buffer_type="no_fly",
+                    ),
+                    DayBlockOutput(
+                        period="afternoon",
+                        activity_type="hike",
+                        summary="Ridge walk",
+                        specialist_type="hiking",
+                    ),
+                ],
+            ),
+            DayCardOutput(day_number=3, label="Departure Day", blocks=[]),
+        ]
+
+        result = builder._handle_empty_days(days, {}, tier2_categories=None)
+
+        day2 = result[1]
+        assert len(day2.blocks) == 2
+        free_day_blocks = [b for b in day2.blocks if b.activity_type == "free_day"]
+        assert len(free_day_blocks) == 0
+
+    def test_arrival_departure_never_get_free_day(self, builder: ItineraryBuilder):
+        """Day 0 (arrival) and Day N-1 (departure) with no blocks should NOT get free_day."""
+        days = [
+            DayCardOutput(day_number=1, label="Arrival Day", blocks=[]),
+            DayCardOutput(
+                day_number=2,
+                label="Day 2",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="hike",
+                        summary="Trail hike",
+                        specialist_type="hiking",
+                    ),
+                ],
+            ),
+            DayCardOutput(day_number=3, label="Departure Day", blocks=[]),
+        ]
+
+        result = builder._handle_empty_days(days, {}, tier2_categories=None)
+
+        # Arrival day (index 0) should remain empty
+        assert len(result[0].blocks) == 0
+        # Departure day (last index) should remain empty
+        assert len(result[-1].blocks) == 0
+
+    def test_genuine_empty_day_gets_free_day(self, builder: ItineraryBuilder):
+        """A middle day with zero blocks gets a free_day block."""
+        days = [
+            DayCardOutput(day_number=1, label="Arrival Day", blocks=[]),
+            DayCardOutput(day_number=2, label="Day 2", blocks=[]),
+            DayCardOutput(day_number=3, label="Departure Day", blocks=[]),
+        ]
+
+        result = builder._handle_empty_days(days, {}, tier2_categories=None)
+
+        day2 = result[1]
+        assert len(day2.blocks) == 1
+        free_block = day2.blocks[0]
+        assert free_block.activity_type == "free_day"
+        assert free_block.id.startswith("free_day_")
+
+    def test_tier2_label_applied_to_free_day(self, builder: ItineraryBuilder):
+        """Free day block summary starts with the Tier 2 category label."""
+        days = [
+            DayCardOutput(day_number=1, label="Arrival Day", blocks=[]),
+            DayCardOutput(day_number=2, label="Day 2", blocks=[]),
+            DayCardOutput(day_number=3, label="Departure Day", blocks=[]),
+        ]
+
+        result = builder._handle_empty_days(days, {}, tier2_categories=["yoga"])
+
+        day2 = result[1]
+        free_block = day2.blocks[0]
+        assert free_block.summary.startswith("Yoga")
+
+
+# =============================================================================
+# Test: Cross-Domain Dive → Buffer → Altitude Ordering
+# =============================================================================
+
+
+class TestCrossDomainOrdering:
+    """Tests for cross-domain ordering: diving before hiking with buffer in between.
+
+    Cross-domain clustering requires the explicit `no_altitude_after_dive` constraint
+    in strategy_sections. The builder only activates clustering logic when that
+    specific constraint is present via _find_constraint().
+    """
+
+    @pytest.fixture
+    def cross_domain_input(self) -> ItineraryBuilderInput:
+        """8-day trip with diving + hiking AND cross-domain constraint."""
+        return ItineraryBuilderInput(
+            start_date="2024-03-15",
+            end_date="2024-03-22",  # 8 days
+            strategy_sections=[
+                {
+                    "specialist_type": "diving",
+                    "content_added": [
+                        {"title": "USAT Liberty Wreck", "duration_hours": 3.0},
+                        {"title": "Manta Point", "duration_hours": 3.0},
+                    ],
+                    "constraints_applied": [
+                        {"rule": "min_24h_buffer_after_dive", "reason": "PADI safety"},
+                        {"rule": "no_altitude_after_dive", "reason": "24h buffer before altitude"},
+                    ],
+                },
+                {
+                    "specialist_type": "hiking",
+                    "content_added": [
+                        {"title": "Mount Batur Sunrise", "duration_hours": 4.0},
+                        {"title": "Campuhan Ridge Walk", "duration_hours": 2.5},
+                    ],
+                    "constraints_applied": [],
+                },
+            ],
+            tiles={},
+            destination="Bali",
+        )
+
+    def test_cross_domain_dive_buffer_altitude_ordering(
+        self, builder: ItineraryBuilder, cross_domain_input: ItineraryBuilderInput
+    ):
+        """With no_altitude_after_dive: diving activities cluster before hiking."""
+        result = builder.build(cross_domain_input)
+
+        assert result.success
+
+        # Collect specialist days
+        diving_days = []
+        hiking_days = []
+        for day in result.day_cards:
+            for block in day.blocks:
+                if block.specialist_type == "diving" and not block.is_buffer:
+                    diving_days.append(day.day_number)
+                    break
+            for block in day.blocks:
+                if block.specialist_type == "hiking" and not block.is_buffer:
+                    hiking_days.append(day.day_number)
+                    break
+
+        assert len(diving_days) > 0, "Should have diving activity days"
+        assert len(hiking_days) > 0, "Should have hiking activity days"
+
+        # Diving should come before hiking (cross-domain clustering)
+        last_dive_day = max(diving_days)
+        first_hike_day = min(hiking_days)
+        assert last_dive_day < first_hike_day, (
+            f"Diving (last day {last_dive_day}) should come before "
+            f"hiking (first day {first_hike_day})"
+        )
+
+    def test_buffer_day_has_correct_metadata(
+        self, builder: ItineraryBuilder, cross_domain_input: ItineraryBuilderInput
+    ):
+        """Cross-domain buffer block has is_buffer=True and meaningful summary."""
+        result = builder.build(cross_domain_input)
+
+        assert result.success
+
+        # Find cross-domain buffer blocks (rest_day type, placed between dive and altitude)
+        buffer_blocks = []
+        for day in result.day_cards:
+            for block in day.blocks:
+                if block.is_buffer and block.buffer_type not in ("arrival", "departure"):
+                    buffer_blocks.append(block)
+
+        assert len(buffer_blocks) >= 1, "Should have at least one cross-domain buffer block"
+
+        buf = buffer_blocks[0]
+        assert buf.is_buffer is True
+        # Cross-domain buffer uses rest_day type
+        assert buf.buffer_type in ("rest_day", "no_fly")
+        # Summary should reference the buffer purpose (decompression/safety/altitude/buffer)
+        summary_lower = buf.summary.lower()
+        assert any(
+            kw in summary_lower
+            for kw in ("buffer", "24h", "no-fly", "no fly", "decompression", "safety", "altitude")
+        ), f"Buffer summary should reference its safety purpose, got: '{buf.summary}'"

@@ -11,7 +11,7 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import type { ReactNode } from 'react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
 import { applyArrangement, validateArrangement } from '@/lib/api';
@@ -36,7 +36,14 @@ export function ItineraryDndWrapper({ children }: ItineraryDndWrapperProps) {
   const [activeBlock, setActiveBlock] = useState<DayBlock | null>(null);
   // violations retained for future inline highlight usage (Stage 14)
   const [_violations, setViolations] = useState<BlockViolation[]>([]);
+  const violationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    return () => {
+      if (violationTimeoutRef.current) clearTimeout(violationTimeoutRef.current);
+    };
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -99,7 +106,8 @@ export function ItineraryDndWrapper({ children }: ItineraryDndWrapperProps) {
           blocking[0]?.message ?? 'Move not allowed',
           { type: 'error', duration: 4000 }
         );
-        setTimeout(() => setViolations([]), 3000);
+        if (violationTimeoutRef.current) clearTimeout(violationTimeoutRef.current);
+        violationTimeoutRef.current = setTimeout(() => setViolations([]), 3000);
         return;
       }
 

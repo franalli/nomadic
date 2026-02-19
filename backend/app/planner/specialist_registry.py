@@ -711,7 +711,16 @@ DOMAIN_DEFAULT_FALLBACK: list[str] = [
 
 
 def get(topic: str) -> Optional[SpecialistConfig]:
-    """Look up a specialist config by topic name."""
+    """Look up a specialist config by topic name.
+
+    Returns None for Tier 2 / novel categories (yoga, nightlife, cooking, etc.)
+    that have no dedicated specialist pipeline. None is the correct signal —
+    callers MUST None-guard before accessing config attributes:
+        if config and config.has_nofly_buffer: ...
+    Do NOT substitute a default SpecialistConfig — that would imply Tier 2
+    categories have specialist semantics (safety buffers, certifications, etc.)
+    that they don't have.
+    """
     return SPECIALIST_REGISTRY.get(topic)
 
 

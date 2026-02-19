@@ -115,6 +115,7 @@ backend/
 │   │       ├── climbing.txt
 │   │       ├── cycling.txt
 │   │       ├── diving.txt
+│   │       ├── generic_activity.txt  # Fallback prompt for Tier 2 categories without dedicated prompts
 │   │       ├── hiking.txt
 │   │       ├── local_expert.txt
 │   │       ├── sailing.txt
@@ -236,6 +237,9 @@ backend/
 │   ├── test_tile_service.py             # Tile service tests
 │   ├── test_trip_architect.py           # Trip architect tests
 │   ├── test_vertical_specialist_node.py # Vertical specialist node tests
+│   ├── test_intent_router_bugs.py     # IntentRouter edge case regression tests
+│   ├── test_logistics_tile_scaling.py # Logistics tile scaling tests
+│   ├── test_post_arrangement_constraints.py  # Post-arrangement constraint recomputation tests
 │   └── db/
 │       ├── test_expand_itinerary_api.py
 │       └── test_plan_document_api.py
@@ -281,11 +285,11 @@ frontend/
 │   │   ├── ChatInputHandler.tsx      # Thin wrapper around ChatInputBar for ChatPanel integration
 │   │   ├── ChatMessageList.tsx       # Scrollable message list renderer (extracted from ChatPanel)
 │   │   ├── ChatMessageRenderer.tsx  # Individual message rendering (extracted from ChatPanel)
+│   │   ├── ChatModuleSheets.tsx      # Module sheets (flights/stays/activities) extracted from ChatPanel
 │   │   ├── ChatPanel.tsx
 │   │   ├── ChatSkeleton.tsx
 │   │   ├── ChatSuggestionBar.tsx     # Thin wrapper around ChatSuggestionChips for ChatPanel integration
 │   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
-│   │   ├── HoldToDeleteButton.tsx
 │   │   ├── MobileChatInput.tsx
 │   │   ├── MobileSetupCollapsedHeader.tsx
 │   │   ├── SmartLoader.tsx
@@ -305,6 +309,9 @@ frontend/
 │   │   └── hooks/              # Layout-specific hooks
 │   │       ├── useBranchManager.ts
 │   │       ├── useBranchState.ts
+│   │       ├── useItineraryGeneration.ts  # Itinerary generation orchestration (extracted from NomadicLanding)
+│   │       ├── useLandingDerived.ts       # Derived state computations for NomadicLanding (extracted)
+│   │       ├── useLandingEffects.ts       # Side effects for NomadicLanding (extracted)
 │   │       ├── useLocalBookingSettings.ts
 │   │       ├── useSessionHydration.ts
 │   │       ├── useTileSelection.ts
@@ -390,11 +397,14 @@ frontend/
 │   │       ├── FreeDayDropSlot.tsx     # Drop zone inside FreeDayCard (via freeDayDropSlot render prop)
 │   │       ├── InlineDatePrompt.tsx
 │   │       ├── ItineraryDndWrapper.tsx # DndContext root; orchestrates validate/apply-arrangement flow
+│   │       ├── RichBlockRenderer.tsx   # Smart block router: logistics → safety → ghost → activity (extracted from TimelineThread)
 │   │       ├── TimelineSkeleton.tsx
+│   │       ├── useTimelineFillDay.ts   # Fill-day state + handler hook (extracted from TimelineThread)
 │   │       └── blocks/
 │   │           ├── ActivityMiniCard.tsx
 │   │           ├── FreeDayCard.tsx
 │   │           ├── GhostSlot.tsx
+│   │           ├── HoldToDeleteButton.tsx          # Press-and-hold circular progress delete button
 │   │           ├── LogisticsBlock.tsx
 │   │           ├── PreferenceAttributionBadge.tsx  # "You preferred this" badge
 │   │           ├── SafetyBlock.tsx
@@ -425,6 +435,9 @@ frontend/
 │
 ├── hooks/                      # Custom React hooks
 │   ├── useActionLoader.ts
+│   ├── useChatEffects.ts         # ChatPanel side effects (scroll, focus, ready-to-generate; extracted from ChatPanel)
+│   ├── useChatScrolling.ts       # Chat scroll container, auto-scroll, collapse header (extracted from ChatPanel)
+│   ├── useChatSend.ts            # Chat send orchestration + SSE lifecycle (extracted from ChatPanel)
 │   ├── useChatSse.ts             # SSE/streaming connection manager for ChatPanel (extracted from ChatPanel)
 │   ├── useDelayedLoader.ts
 │   ├── useIsDesktop.ts
@@ -444,7 +457,7 @@ frontend/
 │   ├── dayIntensity.ts         # Day intensity scoring (relaxed/balanced/packed) from DayBlock hours
 │   ├── debug.ts                # Debug/logging utilities
 │   ├── design-system.ts        # Design system tokens
-│   ├── destination-coords.ts   # Demo POI data for curated destinations (Bali dive/hike)
+│   ├── specialist-colors.ts    # Specialist-to-color text class mappings (SSoT for specialist badge text colors)
 │   ├── fillDayGuards.ts        # Fill-day client cooldown guard helpers
 │   ├── format-utils.ts         # Formatting utilities
 │   ├── ghost-timeline-adapter.ts

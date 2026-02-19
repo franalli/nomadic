@@ -40,28 +40,3 @@ async def track_tile_click(
     await db.commit()
 
     return {"status": "ok"}
-
-
-@router.post("/suggestions/click")
-@limiter.limit("60/minute")
-async def track_suggestion_click(
-    request: Request,
-    event: schemas.SuggestionClickEvent,
-    db: AsyncSession = async_db_dependency,
-):
-    """
-    Persist a suggestion pill click for analytics.
-    Tracks which LLM-generated suggestions users find valuable.
-    """
-    session_id = get_session_from_request(request)
-    click = db_models.SuggestionClick(
-        suggestion_text=event.suggestion_text[:128],  # Truncate to fit column
-        suggestion_index=event.suggestion_index,
-        session_id=session_id,
-        request_id=event.request_id,
-    )
-
-    db.add(click)
-    await db.commit()
-
-    return {"status": "ok"}

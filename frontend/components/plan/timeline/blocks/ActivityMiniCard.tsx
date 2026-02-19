@@ -10,19 +10,68 @@
  * @see docs/ux_unified_architecture.md Section 10.C
  */
 
-'use client';
-
 import { CheckCircle, Clock, MoreVertical, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import Image from 'next/image';
 import { useState } from 'react';
 
+import { getTopicLabel } from '@/components/plan/stages/StrategyHeroUtils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { DS } from '@/lib/design-system';
 import { cn, normalizeTitle } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
 
+import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { PreferenceAttributionBadge, type PreferenceStatus } from './PreferenceAttributionBadge';
 import type { DisplayTime } from './types';
+
+// Tailwind class lookups keyed by specialist type (Tailwind JIT needs static strings)
+const BG_COLOR_CLASS: Record<string, string> = {
+  diving: 'bg-cyan-100 dark:bg-cyan-900/30',
+  hiking: 'bg-emerald-100 dark:bg-emerald-900/30',
+  skiing: 'bg-blue-100 dark:bg-blue-900/30',
+  cycling: 'bg-lime-100 dark:bg-lime-900/30',
+  surfing: 'bg-indigo-100 dark:bg-indigo-900/30',
+  boating: 'bg-cyan-100 dark:bg-cyan-900/30',
+  sailing: 'bg-cyan-100 dark:bg-cyan-900/30',
+  climbing: 'bg-orange-100 dark:bg-orange-900/30',
+  wildlife_safari: 'bg-amber-100 dark:bg-amber-900/30',
+};
+
+const ICON_COLOR_CLASS: Record<string, string> = {
+  diving: 'text-cyan-500',
+  hiking: 'text-emerald-500',
+  skiing: 'text-blue-500',
+  cycling: 'text-lime-500',
+  surfing: 'text-indigo-500',
+  boating: 'text-cyan-500',
+  sailing: 'text-cyan-500',
+  climbing: 'text-orange-500',
+  wildlife_safari: 'text-amber-500',
+};
+
+const BADGE_BG_CLASS: Record<string, string> = {
+  diving: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400',
+  hiking: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400',
+  skiing: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
+  cycling: 'bg-lime-100 dark:bg-lime-900/30 text-lime-700 dark:text-lime-400',
+  surfing: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400',
+  boating: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400',
+  sailing: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400',
+  climbing: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
+  wildlife_safari: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
+};
+
+const borderAccentClass: Record<string, string> = {
+  diving: 'border-l-cyan-500',
+  hiking: 'border-l-emerald-500',
+  skiing: 'border-l-blue-500',
+  cycling: 'border-l-lime-500',
+  surfing: 'border-l-indigo-500',
+  boating: 'border-l-cyan-500',
+  sailing: 'border-l-cyan-500',
+  climbing: 'border-l-orange-500',
+  wildlife_safari: 'border-l-amber-500',
+};
 
 interface ActivityMiniCardProps {
   block: DayBlock;
@@ -38,6 +87,10 @@ interface ActivityMiniCardProps {
   alternativeTileId?: string;
   /** Callback to switch to alternative tile */
   onSwitchToAlternative?: (tileId: string) => void;
+  /** Callback when user completes hold-to-delete */
+  onRemove?: () => void;
+  /** Whether this block can be removed (not locked/buffer) */
+  isRemovable?: boolean;
 }
 
 export function ActivityMiniCard({
@@ -50,62 +103,16 @@ export function ActivityMiniCard({
   preferenceStatus,
   alternativeTileId,
   onSwitchToAlternative,
+  onRemove,
+  isRemovable,
 }: ActivityMiniCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const st = block.specialist_type || '';
   const isUnschedulable = block.unschedulable === true;
 
-  // Tailwind class lookups keyed by specialist type (Tailwind JIT needs static strings)
-  const bgColorClass: Record<string, string> = {
-    diving: 'bg-cyan-100 dark:bg-cyan-900/30',
-    hiking: 'bg-emerald-100 dark:bg-emerald-900/30',
-    skiing: 'bg-blue-100 dark:bg-blue-900/30',
-    cycling: 'bg-lime-100 dark:bg-lime-900/30',
-    surfing: 'bg-indigo-100 dark:bg-indigo-900/30',
-    boating: 'bg-indigo-100 dark:bg-indigo-900/30',
-    sailing: 'bg-cyan-100 dark:bg-cyan-900/30',
-    climbing: 'bg-orange-100 dark:bg-orange-900/30',
-    wildlife_safari: 'bg-amber-100 dark:bg-amber-900/30',
-  };
-
-  const iconColorClass: Record<string, string> = {
-    diving: 'text-cyan-500',
-    hiking: 'text-emerald-500',
-    skiing: 'text-blue-500',
-    cycling: 'text-lime-500',
-    surfing: 'text-indigo-500',
-    boating: 'text-indigo-500',
-    sailing: 'text-cyan-500',
-    climbing: 'text-orange-500',
-    wildlife_safari: 'text-amber-500',
-  };
-
-  const badgeBgClass: Record<string, string> = {
-    diving: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400',
-    hiking: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400',
-    skiing: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-    cycling: 'bg-lime-100 dark:bg-lime-900/30 text-lime-700 dark:text-lime-400',
-    surfing: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400',
-    boating: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400',
-    sailing: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400',
-    climbing: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
-    wildlife_safari: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
-  };
-
-  const bg = bgColorClass[st] || 'bg-zinc-100 dark:bg-zinc-800/50';
-  const iconColor = iconColorClass[st] || 'text-zinc-500';
-  const badgeBg = badgeBgClass[st] || 'bg-zinc-100 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-400';
-  const borderAccentClass: Record<string, string> = {
-    diving: 'border-l-cyan-500',
-    hiking: 'border-l-emerald-500',
-    skiing: 'border-l-blue-500',
-    cycling: 'border-l-lime-500',
-    surfing: 'border-l-indigo-500',
-    boating: 'border-l-indigo-500',
-    sailing: 'border-l-cyan-500',
-    climbing: 'border-l-orange-500',
-    wildlife_safari: 'border-l-amber-500',
-  };
+  const bg = BG_COLOR_CLASS[st] || 'bg-zinc-100 dark:bg-zinc-800/50';
+  const iconColor = ICON_COLOR_CLASS[st] || 'text-zinc-500';
+  const badgeBg = BADGE_BG_CLASS[st] || 'bg-zinc-100 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-400';
   const activityBorderClass = isUnschedulable
     ? 'border-l-amber-500'
     : borderAccentClass[st] || 'border-l-zinc-300 dark:border-l-zinc-600';
@@ -148,7 +155,7 @@ export function ActivityMiniCard({
                 {displayTime.value}
               </span>
             ) : (
-              <span className={`${DS.textSize.micro} px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 uppercase tracking-wide`}>
+              <span className={cn(DS.textSize.micro, 'px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 uppercase tracking-wide')}>
                 {displayTime.value}
               </span>
             )
@@ -157,7 +164,7 @@ export function ActivityMiniCard({
           {/* Specialist badge */}
           {block.specialist_type && (
             <span className={cn('text-xs px-2 py-0.5 rounded font-medium uppercase', badgeBg)}>
-              {block.specialist_type}
+              {getTopicLabel(block.specialist_type)}
             </span>
           )}
 
@@ -173,7 +180,7 @@ export function ActivityMiniCard({
             if (isFreeDay) return null;
             return (
               <span className={cn(
-                `${DS.textSize.micro} px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide border`,
+                DS.textSize.micro, 'px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide border',
                 block.intensity === 'light' && 'bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/30',
                 block.intensity === 'moderate' && 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/30',
                 block.intensity === 'challenging' && 'bg-red-500/20 text-red-600 dark:text-red-400 border-red-500/30'
@@ -220,29 +227,24 @@ export function ActivityMiniCard({
           </div>
         )}
 
-        {block.price_estimate && !isUnschedulable && (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            ~${block.price_estimate.toLocaleString()}
-          </p>
+        {block.booked_tile?.price_estimate != null && block.booked_tile.price_estimate > 0 && !isUnschedulable && (
+          <span className={cn('inline-flex items-center gap-0.5 mt-1.5 rounded px-1.5 py-0.5 font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400', DS.textSize.micro)}>
+            ~${block.booked_tile.price_estimate.toLocaleString()}
+          </span>
         )}
 
         {/* Inline Constraint Badges */}
         {block.active_constraints && block.active_constraints.length > 0 && (
           <div className="mt-4 space-y-2">
-            {block.active_constraints.map((constraint: {
-              id: string;
-              severity: 'warning' | 'info' | 'success';
-              icon: string;
-              title: string;
-              description: string;
-            }) => (
+            {block.active_constraints.map((constraint) => (
               <div
                 key={constraint.id}
                 className={cn(
                   'flex items-start gap-2 p-3 rounded-lg text-xs',
                   constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40',
                   constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40',
-                  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40'
+                  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40',
+                  constraint.severity === 'blocking' && 'bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/40'
                 )}
               >
                 <span className="text-base flex-shrink-0">{constraint.icon}</span>
@@ -251,7 +253,8 @@ export function ActivityMiniCard({
                     'font-semibold mb-0.5',
                     constraint.severity === 'warning' && 'text-amber-700 dark:text-amber-400',
                     constraint.severity === 'info' && 'text-blue-700 dark:text-blue-400',
-                    constraint.severity === 'success' && 'text-emerald-700 dark:text-emerald-400'
+                    constraint.severity === 'success' && 'text-emerald-700 dark:text-emerald-400',
+                    constraint.severity === 'blocking' && 'text-red-700 dark:text-red-400'
                   )}>
                     {constraint.title}
                   </div>
@@ -325,6 +328,13 @@ export function ActivityMiniCard({
             </button>
           </PopoverContent>
         </Popover>
+      )}
+
+      {/* Hold-to-delete — only for removable, non-booked blocks */}
+      {isRemovable && onRemove && !(isBooked && onUnassign) && (
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <HoldToDeleteButton onDelete={onRemove} />
+        </div>
       )}
     </div>
   );

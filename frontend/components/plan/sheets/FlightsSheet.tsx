@@ -8,7 +8,6 @@
  * Includes toggle + preferences.
  */
 
-'use client';
 
 import { Plane } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
