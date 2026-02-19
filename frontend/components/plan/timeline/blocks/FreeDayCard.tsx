@@ -1,3 +1,5 @@
+'use client';
+
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * FreeDayCard
@@ -8,10 +10,8 @@
  * @see docs/ux_unified_architecture.md Section 10.C
  */
 
-'use client';
-
 import { ShieldAlert, Sparkles } from 'lucide-react';
-import { useState } from 'react';
+import React, { useState } from 'react';
 
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
@@ -26,6 +26,8 @@ interface FreeDayCardProps {
   isFilling?: boolean;
   isDisabled?: boolean;
   rejectionMessage?: string;
+  /** Optional DnD drop zone slot rendered between subtitle and chips */
+  dropZoneSlot?: React.ReactNode;
 }
 
 export function FreeDayCard({
@@ -37,6 +39,7 @@ export function FreeDayCard({
   isFilling,
   isDisabled = false,
   rejectionMessage,
+  dropZoneSlot,
 }: FreeDayCardProps) {
   // Mutually exclusive: one chip selected at a time (radio behavior)
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
@@ -62,6 +65,9 @@ export function FreeDayCard({
         No activities planned
       </p>
 
+      {/* DnD drop zone — injected by parent when DnD is active */}
+      {dropZoneSlot}
+
       {/* Specialist chips — mutually exclusive (radio), none selected by default */}
       {availableCategories && availableCategories.length > 0 && (
         <div className="mb-4">
@@ -76,7 +82,7 @@ export function FreeDayCard({
                   selectedCat === cat.value
                     ? 'bg-zinc-900 text-white dark:bg-white dark:text-black'
                     : 'bg-white border border-zinc-200 text-zinc-600 dark:bg-white/5 dark:border-white/15 dark:text-zinc-400',
-                  isDisabled && 'opacity-60 cursor-not-allowed'
+                  isDisabled && 'opacity-50 cursor-not-allowed'
                 )}
               >
                 {cat.icon} {cat.label}

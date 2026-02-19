@@ -498,7 +498,7 @@ const borderAccentClass: Record<string, string> = {
 <div
   className={cn(
     'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-l-4 transition-shadow',
-    'bg-white dark:bg-zinc-800/50 hover:shadow-md',
+    'bg-white dark:bg-zinc-800/50 hover:shadow-soft',
     borderAccentClass[block.specialist_type] || 'border-l-zinc-300 dark:border-l-zinc-600'
   )}
 >
@@ -973,7 +973,7 @@ The assistant is the **Infrastructure**. It should feel like part of the dashboa
         'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all',
         // Light: Solid Black (The Commander)
         'bg-zinc-900 text-white border border-zinc-900',
-        'shadow-md hover:shadow-lg hover:-translate-y-0.5',
+        'shadow-card hover:shadow-soft hover:-translate-y-0.5',
         'hover:bg-zinc-800 hover:border-zinc-800',
         // Dark: Solid White (Maximum Contrast Signal)
         'dark:bg-white dark:text-zinc-950 dark:border-white',
@@ -984,7 +984,7 @@ The assistant is the **Infrastructure**. It should feel like part of the dashboa
         'rounded-2xl rounded-bl-sm px-4 py-2.5 transition-all',
         // Light: Glass effect
         'bg-white/80 backdrop-blur-sm border border-zinc-200',
-        'shadow-sm hover:shadow-md hover:-translate-y-0.5',
+        'shadow-card hover:shadow-soft hover:-translate-y-0.5',
         // Dark: Dark Glass (The System)
         'dark:bg-white/5 dark:backdrop-blur-sm',
         'dark:border-white/10 dark:shadow-none',
@@ -993,6 +993,8 @@ The assistant is the **Infrastructure**. It should feel like part of the dashboa
       )
 }>
 ```
+
+> **Exception — White glow on user bubble (dark mode):** `dark:shadow-[0_0_20px_-5px_rgba(255,255,255,0.3)]` is applied only to the user bubble in `ChatMessageRenderer.tsx`. It is **not tokenized** (single usage, no DS token). Do not apply this glow to any other component.
 
 ### Why This Works
 
@@ -2550,14 +2552,19 @@ Components must use this z-index tier system to prevent collisions:
 |-------|---------|------------|
 | Base / map | `z-0` | `InteractiveMap`, content panels |
 | Sticky headers | `z-10` | `TimelineThread` sticky day nodes, inline elements |
-| Floating buttons | `z-20` | `FloatingBuildButton` |
+| Floating buttons | `z-20` | Standard FABs |
+| Floating CTA | `z-[900]` | `FloatingBuildButton` — must float above timeline content but below sheets |
 | Mobile header | `z-[1100]` | `MobileModeHeader` |
-| Floating status pill | `z-[1099]` | Status pill below mobile header |
+| Floating status pill | `z-[1099]` | Status pill stacked just below mobile header (intentional 1-unit gap) |
 | Sheets / drawers | `z-[1200]` backdrop, `z-[1201]` panel | `BaseSheet`, `DatesSheet`, drawer overlays |
 | Toasts | `z-[9999]` | Toast container |
 | Mapbox marker tooltips | `z-[9999]` | Map marker tooltips |
 
 **Rule:** Never use arbitrary z-values like `z-[999]` or `z-[9999]` outside of toasts/tooltips. Normalize to the tier table.
+
+**Intentional exceptions:**
+- `FloatingBuildButton` uses `z-[900]` (not `z-20`) because it must clear sticky timeline headers (`z-10`) and plan section content, while still sitting below sheets (`z-[1200]`). `z-50` is insufficient.
+- `MobileModeHeader` at `z-[1100]` with sheets at `z-[1200]` is intentional — sheets slide over the header on open. The 100-unit buffer is deliberate headroom for any future intermediate layers.
 
 ---
 
@@ -2600,6 +2607,14 @@ Updates to Section 6 — new components discovered in audit:
 | `GhostSlot` | `plan/timeline/blocks/GhostSlot.tsx` | None (raw pattern) | Dashed CTA slot; `border-dashed border-zinc-300 dark:border-white/10` |
 | `LogisticsBlock` | `plan/timeline/blocks/LogisticsBlock.tsx` | None (raw pattern) | Flight/transfer block; `dark:bg-zinc-900/50 dark:border-white/[0.08]` glass pattern |
 | `MapErrorBoundary` | `map/MapErrorBoundary.tsx` | None (raw pattern) | Error fallback; `bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-white/10`, text: `text-zinc-500` |
+| `DragPreviewCard` | `plan/timeline/DragPreviewCard.tsx` | `SPRING_CONFIG.BOUNCE` | Custom elevated shadow; `ring-emerald-500/30` accent ring; see Section 28.6 |
+| `DroppableDay` | `plan/timeline/DroppableDay.tsx` | `SPRING_CONFIG.SLIDE` | Drop zone highlight; `ring-emerald-500/25` when `isOver`; see Section 28.7 |
+| `DraggableBlock` | `plan/timeline/DraggableBlock.tsx` | None | Wraps any `DayBlock`; `Lock` icon guard when block has no `id`; `z-10` for Lock badge |
+| `FreeDayCard` | `plan/timeline/blocks/FreeDayCard.tsx` | `DS.actions.primary` | Dashed-border empty day; specialist chip picker; see Section 28.8 |
+| `StrategyHeroAccordion` | `plan/stages/StrategyHeroAccordion.tsx` | `DS.textSize.*` | Collapsible accordion variant of StrategyHero; specialist colors via `SPECIALIST_STYLE_CLASSES` |
+| `StrategyConstraintBar` | `plan/StrategyConstraintBar.tsx` | None (raw pattern) | Trip DNA constraint pills; priority coloring (red/amber/zinc); `hover:text-zinc-900 dark:hover:text-zinc-200` on Details toggle |
+| `S2AgentCard` | `plan/stages/S2AgentCard.tsx` | `DS.textSize.*` | Legacy specialist card with topic CSS vars; `shadow-card` on card, `hover:shadow-soft` on hover |
+| `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Density switcher; `bg-emerald-500 rounded-full animate-pulse` for live indicator dot |
 
 ---
 
@@ -2677,5 +2692,57 @@ Inline timeline block for flight segments and transfers.
 | Icon color | `text-blue-600` | `dark:text-blue-400` |
 | Label text | `text-xs text-zinc-500` | `dark:text-zinc-400` |
 | Value text | `text-sm font-medium text-zinc-900` | `dark:text-white` |
+
+### 28.6 Drag Preview Card (DragPreviewCard)
+
+Floating ghost shown during drag-and-drop reorder in the itinerary. Uses elevated glass + emerald ring.
+
+| Property | Light Mode | Dark Mode |
+|----------|-----------|-----------|
+| Background | `bg-white/95` | `dark:bg-zinc-900/95` |
+| Backdrop | `backdrop-blur-xl` | Same |
+| Border | `border border-zinc-200/50` | `dark:border-white/10` |
+| Shadow | `shadow-[0_25px_50px_rgba(0,0,0,0.15)]` | `dark:shadow-[0_25px_50px_rgba(0,0,0,0.4)]` |
+| Accent ring | `ring-1 ring-emerald-500/30` | `dark:ring-emerald-500/20` |
+| Width | `w-64` (fixed; keeps preview compact) | Same |
+| Border radius | `rounded-xl` | Same |
+| Title text | `text-sm font-medium text-zinc-900` | `dark:text-white` |
+| Specialist label | `text-[10px] uppercase font-semibold tracking-wide text-emerald-600` | `dark:text-emerald-400` |
+| Thumbnail | `h-10 w-10 rounded-lg object-cover` | Same |
+
+**Rule:** Always `pointer-events-none`. Uses `SPRING_CONFIG.BOUNCE` for scale-in animation. Never use `shadow-card` or `shadow-soft` here — the custom elevated shadow is intentional for "lifted off canvas" effect.
+
+### 28.7 Droppable Day Zone (DroppableDay)
+
+Drop target highlight applied to a day container during drag-and-drop.
+
+| State | Classes |
+|-------|---------|
+| Inactive (drag not started) | No additional styling; transparent |
+| Drag active, not over | `ring-1 ring-zinc-300/50 dark:ring-white/10` + `bg-zinc-50/50 dark:bg-white/[0.01]` |
+| Drag over (drop target) | `ring-1 ring-emerald-500/25 dark:ring-emerald-500/20` + `bg-emerald-500/[0.04] dark:bg-emerald-500/[0.03]` + inset glow |
+| Drop indicator line | `h-0.5 bg-emerald-500 rounded-full mx-4 my-1` (animated `scaleX` spring) |
+
+**Rule:** Uses `closestCorners` collision detection. Minimum `min-h-[80px]` to ensure droppable hit area even on empty days. `transition-all duration-200` for smooth state transitions.
+
+### 28.8 Free Day Card (FreeDayCard)
+
+Empty day placeholder with specialist chip picker and "Generate Activities" CTA.
+
+| Property | Light Mode | Dark Mode |
+|----------|-----------|-----------|
+| Background | `bg-gradient-to-br from-zinc-50 to-zinc-100` | `dark:from-zinc-800/30 dark:to-zinc-900/30` |
+| Border | `border border-dashed border-zinc-300` | `dark:border-white/10` |
+| Border radius | `rounded-xl` | Same |
+| Padding | `p-6` | Same |
+| Icon container | `w-10 h-10 rounded-full bg-emerald-100` | `dark:bg-emerald-900/30` |
+| Icon color | `text-emerald-600` | `dark:text-emerald-400` |
+| Title text | `text-base font-semibold text-zinc-900` | `dark:text-white` |
+| Body text | `text-sm text-zinc-600` | `dark:text-zinc-400` |
+| Chip (selected) | `bg-zinc-900 text-white` | `dark:bg-white dark:text-black` |
+| Chip (unselected) | `bg-white border border-zinc-200 text-zinc-600` | `dark:bg-white/5 dark:border-white/15 dark:text-zinc-400` |
+| Rejection message | `bg-amber-50 border-amber-200 text-amber-700` | `dark:bg-amber-900/20 dark:border-amber-700/30 dark:text-amber-300` |
+
+**Rule:** Rejection message amber IS approved semantic usage (constraint-driven rejection). CTA uses `DS.actions.primary`. Disabled state: `opacity-50 cursor-not-allowed` (not `opacity-60`).
 
 ---

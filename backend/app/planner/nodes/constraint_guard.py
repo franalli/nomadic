@@ -14,7 +14,8 @@ Key Principle: "The math must work."
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.planner.specialist_registry import canonicalize_rule
+from app.planner.specialist_registry import canonicalize_rule, get_nofly_buffer_hours
+from app.planner.specialist_registry import get as get_config
 from app.planner.state import (
     GraphState,
     TripPlan,
@@ -1056,3 +1057,215 @@ async def constraint_guard(state: GraphState) -> GraphState:
     )
 
     return state
+
+
+# ── Arrangement validation (Stage 13A) ────────────────────────────────────────
+
+
+def _apply_moves_to_cards(day_cards: list[dict], moves: list[dict]) -> list[dict]:
+    """Clone day_cards and apply moves. Returns new list."""
+    import copy
+
+    cards = copy.deepcopy(day_cards)
+    card_map = {dc["day_number"]: dc for dc in cards}
+
+    for move in moves:
+        block_id = move["block_id"]
+        from_day = move["from_day"]
+        to_day = move["to_day"]
+
+        src = card_map.get(from_day)
+        if not src:
+            continue
+        block = None
+        for i, b in enumerate(src["blocks"]):
+            if b.get("id") == block_id:
+                block = src["blocks"].pop(i)
+                break
+        if not block:
+            continue
+
+        dst = card_map.get(to_day)
+        if not dst:
+            continue
+        pos = min(move.get("to_position", len(dst["blocks"])), len(dst["blocks"]))
+        dst["blocks"].insert(pos, block)
+
+    return cards
+
+
+def _arr_block_has_nofly(block: dict) -> bool:
+    """Return True if this block's specialist has a no-fly buffer constraint."""
+    cfg = get_config(block.get("specialist_type") or "")
+    return bool(cfg and cfg.has_nofly_buffer)
+
+
+def _arr_get_day(cards: list[dict], day_num: int) -> dict:
+    return next((dc for dc in cards if dc["day_number"] == day_num), {"blocks": []})
+
+
+def _arr_check_locked_blocks(day_cards: list[dict], moves: list[dict]) -> list[dict]:
+    """Locked blocks (buffer, arrival, departure) cannot be moved."""
+    violations = []
+    block_map: dict[str, dict] = {}
+    for dc in day_cards:
+        for b in dc.get("blocks", []):
+            if b.get("id"):
+                block_map[b["id"]] = b
+
+    locked_types = {"arrival", "departure", "check-in", "check-out"}
+    for move in moves:
+        block = block_map.get(move["block_id"])
+        if not block:
+            continue
+        if block.get("is_buffer") or block.get("activity_type") in locked_types:
+            violations.append(
+                {
+                    "block_id": move["block_id"],
+                    "violation_code": "LOCKED_BLOCK",
+                    "severity": "blocking",
+                    "message": (
+                        f"'{block.get('title') or block.get('activity_type', 'This block')}'"
+                        " cannot be moved"
+                    ),
+                    "target_day": move["to_day"],
+                }
+            )
+    return violations
+
+
+def _arr_check_no_fly_buffer(rearranged: list[dict], trip_inputs: object) -> list[dict]:
+    """Diving (or any no-fly specialist) blocks must not fall within buffer of departure."""
+    violations = []
+    end_date = getattr(trip_inputs, "end_date", None)
+    if not end_date:
+        return violations
+
+    departure_day = max(dc["day_number"] for dc in rearranged)
+
+    for dc in rearranged:
+        for block in dc.get("blocks", []):
+            if _arr_block_has_nofly(block):
+                st = block.get("specialist_type", "")
+                buffer_hours = get_nofly_buffer_hours(st) or 24
+                buffer_days = buffer_hours // 24
+                if dc["day_number"] >= departure_day - buffer_days + 1:
+                    violations.append(
+                        {
+                            "block_id": block.get("id", ""),
+                            "violation_code": "NO_FLY_BUFFER",
+                            "severity": "blocking",
+                            "message": (
+                                f"{st.title()} requires {buffer_hours}h before flying"
+                                " — move to an earlier day"
+                            ),
+                            "target_day": dc["day_number"],
+                        }
+                    )
+    return violations
+
+
+def _arr_check_cross_domain_adjacency(rearranged: list[dict]) -> list[dict]:
+    """Check cross-domain adjacency violations using specialist registry."""
+    violations = []
+    day_specialist_map: dict[int, set[str]] = {}
+    for dc in rearranged:
+        types = {b.get("specialist_type") for b in dc.get("blocks", []) if b.get("specialist_type")}
+        day_specialist_map[dc["day_number"]] = types
+
+    for day_num, types in day_specialist_map.items():
+        prev_types = day_specialist_map.get(day_num - 1, set())
+        for st in types:
+            for prev_st in prev_types:
+                cfg = get_config(prev_st)
+                if not cfg:
+                    continue
+                if any(st in xd.target_specialists for xd in cfg.cross_domain_blocks):
+                    target_blocks = [
+                        b
+                        for b in _arr_get_day(rearranged, day_num).get("blocks", [])
+                        if b.get("specialist_type") == st
+                    ]
+                    for b in target_blocks:
+                        violations.append(
+                            {
+                                "block_id": b.get("id", ""),
+                                "violation_code": "CROSS_DOMAIN_BUFFER_REQUIRED",
+                                "severity": "blocking",
+                                "message": (f"{st.title()} requires a buffer day after {prev_st}"),
+                                "target_day": day_num,
+                            }
+                        )
+    return violations
+
+
+def _arr_check_day_capacity(rearranged: list[dict], max_blocks: int = 3) -> list[dict]:
+    """Target day can't exceed max activity blocks."""
+    violations = []
+    skip_types = {"arrival", "departure", "free_day", "check-in", "check-out"}
+    for dc in rearranged:
+        real_blocks = [
+            b
+            for b in dc.get("blocks", [])
+            if not b.get("is_buffer") and b.get("activity_type") not in skip_types
+        ]
+        if len(real_blocks) > max_blocks:
+            violations.append(
+                {
+                    "block_id": real_blocks[-1].get("id", ""),
+                    "violation_code": "DAY_CAPACITY_EXCEEDED",
+                    "severity": "warning",
+                    "message": (
+                        f"Day {dc['day_number']} has {len(real_blocks)} activities"
+                        f" (max {max_blocks})"
+                    ),
+                    "target_day": dc["day_number"],
+                }
+            )
+    return violations
+
+
+def validate_block_arrangement(
+    day_cards: list[dict],
+    moves: list[dict],
+    trip_inputs: object,
+) -> list[dict]:
+    """
+    Validate proposed block moves against active constraints.
+    Pure Python, no LLM, target <50ms.
+
+    Only reports violations caused by the proposed moves — not pre-existing
+    violations in the original itinerary. This prevents the guard from
+    rejecting valid moves due to constraints already present before the drag.
+
+    Returns list of BlockViolation dicts.
+    """
+    # Check locked blocks on original cards (before applying moves)
+    violations = _arr_check_locked_blocks(day_cards, moves)
+
+    # If any locked-block violations, stop here — moves are invalid
+    if any(v["severity"] == "blocking" for v in violations):
+        return violations
+
+    # Track which block_ids are being moved, and which days they're moving TO
+    moved_block_ids = {m["block_id"] for m in moves}
+    destination_days = {m["to_day"] for m in moves}
+
+    # Apply moves to get rearranged state
+    rearranged = _apply_moves_to_cards(day_cards, moves)
+
+    # Collect all violations on the rearranged state
+    all_violations = []
+    all_violations += _arr_check_no_fly_buffer(rearranged, trip_inputs)
+    all_violations += _arr_check_cross_domain_adjacency(rearranged)
+    all_violations += _arr_check_day_capacity(rearranged)
+
+    # Filter: only keep violations that affect moved blocks or their destination days.
+    # This avoids surfacing pre-existing violations unrelated to the proposed move.
+    violations += [
+        v
+        for v in all_violations
+        if v.get("block_id") in moved_block_ids or v.get("target_day") in destination_days
+    ]
+
+    return violations

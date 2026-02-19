@@ -1,6 +1,7 @@
+'use client';
+
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 // frontend/components/ChatPanel.tsx
-'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, Loader2 } from 'lucide-react';
@@ -22,12 +23,12 @@ import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
 import { UnifiedChipRow } from '@/components/plan/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
 import { useActionLoader } from '@/hooks/useActionLoader';
+import { useChatSse } from '@/hooks/useChatSse';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
-import { type SSENodeStatusEvent, type SSEPartialEvent, streamGraphPlan } from '@/lib/api';
+import { type streamGraphPlan } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { DS } from '@/lib/design-system';
-import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
@@ -49,16 +50,16 @@ import type { PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
-import { ChatInputBar } from './ChatInputBar';
-import { ChatMessageRenderer, type VisibleMessage } from './ChatMessageRenderer';
-import { ChatSkeleton } from './ChatSkeleton';
-import { ChatSuggestionChips } from './ChatSuggestionChips';
+import { ChatInputHandler } from './ChatInputHandler';
+import { ChatMessageList } from './ChatMessageList';
+import { type VisibleMessage } from './ChatMessageRenderer';
+import { ChatSuggestionBar } from './ChatSuggestionBar';
 // HoldToDeleteButton removed for demo - re-enable post-launch
 // import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { MobileSetupCollapsedHeader } from './MobileSetupCollapsedHeader';
 // TripStatusBar is mobile-only (rendered in SplitLayoutView shared slot)
 // NodeProgress removed - replaced by Live Logic Status Pill above input
-import { type ActiveStatus,SmartLoader } from './SmartLoader';
+import { type ActiveStatus, SmartLoader } from './SmartLoader';
 
 // Helper to fix escaped characters from backend
 // Converts literal escape sequences to actual characters for proper markdown rendering
@@ -133,44 +134,6 @@ function getChatStatusConfig(
 
   // Plan ready, refinement phase (S2, P0, P1, P2, and fallback)
   return { text: 'Your trip is taking shape', label: 'Refine Plan', indicator: 'pulse' };
-}
-
-// Helper to generate specific error messages based on error type
-function getErrorMessage(error: Error): string {
-  const message = error.message?.toLowerCase() ?? '';
-
-  // Network/connection errors
-  if (message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) {
-    return "Couldn't connect to the server. Please check your internet connection and try again.";
-  }
-
-  // Timeout errors
-  if (message.includes('timeout') || message.includes('timed out')) {
-    return "The request took too long. Try a simpler query or check your connection.";
-  }
-
-  // Rate limiting
-  if (message.includes('rate limit') || message.includes('too many requests') || message.includes('429')) {
-    return "You're sending requests too quickly. Please wait a moment before trying again.";
-  }
-
-  // Authentication errors
-  if (message.includes('unauthorized') || message.includes('401') || message.includes('authentication')) {
-    return "Session expired. Please refresh the page and try again.";
-  }
-
-  // Server errors
-  if (message.includes('500') || message.includes('internal server') || message.includes('server error')) {
-    return "Something went wrong on our end. Please try again in a few moments.";
-  }
-
-  // Validation errors (from backend)
-  if (message.includes('invalid') || message.includes('validation')) {
-    return "Invalid request. Try rephrasing or adjusting trip details.";
-  }
-
-  // Default fallback
-  return "An issue occurred. Try again or adjust the message.";
 }
 
 const MESSAGE_BURST_COOLDOWN_MS = 1000;
@@ -352,15 +315,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       sessionState: state.sessionState,
       setSessionState: state.setSessionState,
     })));
-    // Delete functionality removed for demo - re-enable post-launch
-    // const deleteLastMessageFromStore = useChatStore((state) => state.deleteLastMessage);
-    // const restoreTripInputs = useDocumentStore((state) => state.restoreTripInputs);
 
     // Get desktop mode to determine if right panel with "Build Plan" button is visible
     const isDesktop = useIsDesktop();
 
     const [input, setInput] = useState('');
-    // const [isDeleting, setIsDeleting] = useState(false); // Delete removed for demo
     const [isLoading, setIsLoading] = useState(false);
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [hasReceivedFirstToken, setHasReceivedFirstToken] = useState(false);
@@ -441,6 +400,36 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       budget: number | null;
       origin: string | null;
     } | null>(null);
+
+    // SSE streaming hook — owns the streamGraphPlan call and all callbacks
+    const { executeStream } = useChatSse(
+      {
+        abortStreamRef,
+        isSendingRef,
+        autoExpandTimeoutRef,
+        prevSpecialistTypesRef,
+        prevTileTypesRef,
+        prevTripInputsRef,
+        lastUserMsgIdRef,
+      },
+      {
+        setHasReceivedFirstToken,
+        setNodeStatus,
+        setStreamingMessageId,
+        setTriggerContext,
+        setSuggestedResponses,
+        setSuggestedResponseMeta,
+        setSuggestionChips,
+        setIsLoading,
+        setSessionState,
+        appendToMessage,
+        updateMessage,
+        updateMessageId,
+        filterMessages,
+        onPlanResult,
+        onAutoExpandItinerary,
+      }
+    );
 
     // Compute effective suggestions: use backend suggestions if available
     const effectiveSuggestions = useMemo(() => {
@@ -862,423 +851,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           });
         }
 
-        // Create a promise that resolves when streaming completes
-        await new Promise<void>((resolve) => {
-          abortStreamRef.current = streamGraphPlan(body, {
-            onToken: (token: string) => {
-              // Mark that we've received the first token (hides typing/progress indicator)
-              setHasReceivedFirstToken(true);
-              // Dismiss delayed loader on first tangible output
-              delayedLoader.onTangibleOutput();
-              actionLoader.onTangibleOutput();
-              // Append token to the streaming message (skip for plan generation - content goes to right panel)
-              if (!isSilentPlanGeneration) {
-                appendToMessage(streamingMsgId, token);
-              }
-            },
-            onNodeStatus: (status: SSENodeStatusEvent['data']) => {
-              if (status.status === 'started') {
-                // Classify the action type for action-specific loader copy
-                const classification = classifyNodeAction(status.node, triggerContext ?? undefined);
-
-                // Only show action loader for recognized action types
-                // This prevents loader from showing for pure chat, acknowledgment, validation, etc.
-                if (classification) {
-                  // Check if tiles exist for refresh_deals contextual copy
-                  const tiles = useDocumentStore.getState().document?.tiles;
-                  const hasTiles = tiles && Object.keys(tiles).length > 0;
-
-                  actionLoader.startLoading(
-                    classification.actionType,
-                    status.estimated_duration_ms,
-                    {
-                      verticalType: classification.verticalType,
-                      hasTiles,
-                    }
-                  );
-                }
-
-                // Also check legacy loader for backwards compatibility
-                const shouldShow = shouldShowLoaderForNode(
-                  status.node,
-                  status.estimated_duration_ms
-                );
-                if (shouldShow) {
-                  delayedLoader.startLoading(status.estimated_duration_ms);
-                }
-
-                // Always set nodeStatus for the progress component (when visible)
-                setNodeStatus({
-                  active: true,
-                  node: status.node,
-                  label: status.label,
-                  iconKey: status.icon_key,
-                  estimatedDurationMs: status.estimated_duration_ms,
-                  startTime: Date.now(),
-                  // Strategy-specific fields (optional)
-                  stage: status.stage,
-                  topic: status.topic,
-                });
-              } else if (status.status === 'completed') {
-                // Clear node status when completed
-                setNodeStatus(null);
-                delayedLoader.reset();
-                actionLoader.reset();
-              }
-            },
-            onPartial: (data: SSEPartialEvent['data']) => {
-              // Optimistic preview: render data as nodes complete, before the
-              // complete event. The complete event will reconcile any differences.
-              // Errors here must not crash the stream — wrap defensively.
-              try {
-                const store = useDocumentStore.getState();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const p = data.payload as any;
-                if (data.kind === 'strategy_sections') {
-                  store.mergeEnvelope({ strategy_sections: p });
-                } else if (data.kind === 'tiles') {
-                  store.mergeEnvelope({ tiles: p });
-                } else if (data.kind === 'trip_inputs') {
-                  store.mergeEnvelope({ trip_inputs: p });
-                }
-              } catch (partialError) {
-                console.warn('[SSE] Partial merge failed (will reconcile on complete):', partialError);
-              }
-            },
-            onComplete: (response) => {
-              setStreamingMessageId(null);
-              setNodeStatus(null); // Clear strategy progress on completion
-              abortStreamRef.current = null; // Clear abort ref
-              delayedLoader.reset(); // Ensure loader is hidden
-              actionLoader.reset(); // Reset action loader
-              setTriggerContext(null); // Clear trigger context
-
-              // Strip wrapping quotes from streamed message (LLM sometimes mirrors example formatting)
-              if (!isSilentPlanGeneration) {
-                const msgs = useChatStore.getState().messages;
-                const streamedMsg = msgs.find((m) => m.id === streamingMsgId);
-                if (streamedMsg?.content?.startsWith('"') && streamedMsg.content.endsWith('"') && streamedMsg.content.length > 2) {
-                  updateMessage(streamingMsgId, { content: streamedMsg.content.slice(1, -1) });
-                }
-              }
-
-              // Parse the response - it matches GraphPlanResponse structure
-              const data = response as unknown as GraphPlanResponse;
-
-              // Persist session state for next turn
-              setSessionState(data.session_state ?? null);
-
-              // Handle plan result
-              const doc = data.document;
-
-              // Capture previous state BEFORE onPlanResult updates the store
-              const prevSpecialistTypes = prevSpecialistTypesRef.current;
-              const prevTileTypes = prevTileTypesRef.current;
-
-              const primaryBranch =
-                doc.branches?.find((b) => b.is_primary) ?? doc.branches?.[0];
-              onPlanResult({
-                tripContextId: doc.trip_context_id ?? null,
-                branches: doc.branches ?? [],
-                tiles: doc.tiles ?? {},
-                primaryBranchId: primaryBranch?.id ?? selectedBranchId ?? null,
-                tripInputs: doc.trip_inputs ?? null,
-                readyToGenerate: doc.ready_to_generate ?? false,
-                response: data,
-              });
-
-              // B2: Auto-focus right panel when tiles arrive
-              const hasTiles = doc.tiles && Object.keys(doc.tiles).length > 0;
-
-              // DEBUG: Log response to understand tile/state issue
-              debugLog('[ChatPanel] Response received:', {
-                hasTiles,
-                tileCount: doc.tiles ? Object.keys(doc.tiles).length : 0,
-                tileIds: doc.tiles ? Object.keys(doc.tiles).slice(0, 5) : [],
-                plan_view_state: doc.plan_view_state,
-                hasDestination: Boolean(doc.trip_inputs?.destination),
-                destination: doc.trip_inputs?.destination,
-                // Strategy sections debug
-                strategy_sections_count: doc.strategy_sections?.length ?? 0,
-                strategy_sections: doc.strategy_sections,
-                executed_strategy_topics: doc.executed_strategy_topics,
-                pending_strategy_topics: doc.pending_strategy_topics,
-              });
-
-              if (hasTiles) {
-                // On mobile: scroll right panel into view
-                const rightPanel = document.getElementById('plan-panel');
-                if (rightPanel && window.innerWidth < 768) {
-                  rightPanel.scrollIntoView({ behavior: 'smooth' });
-                }
-              }
-
-              const isReadyToGenerate = doc.ready_to_generate === true;
-
-              // Update suggested responses from LLM (if provided)
-              debugLog(
-                `[ChatPanel] 🏷️ SSE complete:`,
-                `suggestions=${JSON.stringify(doc.suggested_responses?.slice(0, 3))}`,
-                `meta=${JSON.stringify(doc.suggested_response_meta?.slice(0, 2))}`,
-                `viewState=${doc.plan_view_state}`,
-                `dayCards=${doc.day_cards?.length ?? 'null'}`
-              );
-              setSuggestedResponses(doc.suggested_responses || []);
-              setSuggestedResponseMeta(doc.suggested_response_meta || []);
-              setSuggestionChips(doc.suggestion_chips || []);
-
-              // Origin update from chat (e.g., "from rome") is handled by backend
-              // Backend routes through LogisticsNode to fetch flights automatically
-              // Tiles (including flights) come back in the response
-              if (doc.origin_just_set && doc.trip_inputs?.origin) {
-                debugLog('[ChatPanel] Origin set via chat:', doc.trip_inputs.origin, '- flights fetched by backend');
-              }
-
-              // AUTO-EXPAND: Detect structural changes that require itinerary rebuild
-              // Check STORE for existing itinerary (response may not include day_cards if not rebuilt)
-              // IMPORTANT: Read from store.document (preserved by setFromPlanResponse), not from response
-              const freshState = useDocumentStore.getState();
-              const hasItinerary = (freshState.document?.day_cards?.length ?? 0) > 0;
-
-              // SKIP EXPAND: If graph response included day_cards (via builder in format_result),
-              // no need for a separate expand-itinerary call.
-              const graphBuiltItinerary = (doc.day_cards?.length ?? 0) > 0;
-              if (graphBuiltItinerary) {
-                debugLog(`[EXPAND] SKIPPED — graph response included ${doc.day_cards!.length} day_cards`);
-              }
-
-              // Read dates from FRESH store state — the hasDates prop is a stale closure
-              // captured when handleSend was called. If dates arrive in the same response,
-              // the prop won't reflect them but the store will.
-              const freshInputs = freshState.document?.trip_inputs;
-              const freshHasDates =
-                (Boolean(freshInputs?.start_date) && Boolean(freshInputs?.end_date)) ||
-                (freshInputs?.date_flex === true && freshInputs?.trip_duration != null);
-
-              // New state from response - MUST use specialist_type (not title) for consistent comparison
-              // Filter out undefined specialist_types (shouldn't happen, but TypeScript safety)
-              const newSpecialistTypes = (doc.strategy_sections?.map(s => s.specialist_type).filter((t): t is string => !!t)) ?? [];
-              // Use meta.category for activity tiles (yoga, nightlife, diving...)
-              // to detect new specialists. Fall back to type for non-activity tiles.
-              const getTileCategory = (t: { type: string; meta?: Record<string, unknown> }) =>
-                t.type === 'activity' && t.meta?.category ? String(t.meta.category) : t.type;
-              const newTileCategories = new Set(Object.values(doc.tiles ?? {}).map(getTileCategory));
-
-              // Detect new content
-              const hasNewSpecialist = newSpecialistTypes.some(t => !prevSpecialistTypes.has(t));
-              const hasNewTileType = [...newTileCategories].some(t => !prevTileTypes.has(t));
-              // Flights are additive data, not a constraint change - don't trigger structural rebuild
-              const hasStructuralNewTileType = [...newTileCategories].some(t => t !== 'flight' && !prevTileTypes.has(t));
-
-              // Update refs for next comparison (use specialist_type consistently)
-              prevSpecialistTypesRef.current = new Set(newSpecialistTypes);
-              prevTileTypesRef.current = newTileCategories;
-
-              // EXPAND gate check logging - shows why expand fires or skips
-              const tileCount = Object.keys(doc.tiles ?? {}).length;
-              const viewState = doc.plan_view_state ?? 'unknown';
-              const shouldExpandStructural = (hasItinerary || freshHasDates) && (hasNewSpecialist || hasStructuralNewTileType) && !isSilentPlanGeneration;
-              // Pre-compute date change for logging (actual handling below)
-              const _prevInputs = prevTripInputsRef.current;
-              const _newInputs = freshState.document?.trip_inputs;
-              const _datesChanged = _prevInputs && (
-                _prevInputs.start_date !== _newInputs?.start_date ||
-                _prevInputs.end_date !== _newInputs?.end_date
-              );
-              const _hasStrategy = (doc.strategy_sections?.length ?? 0) > 0;
-              const shouldExpandDates = _datesChanged && _hasStrategy && !isSilentPlanGeneration;
-              const shouldExpandCatchAll = _hasStrategy && !hasItinerary && freshHasDates && !isSilentPlanGeneration;
-              const expandPath = graphBuiltItinerary ? 'GRAPH_BUILT'
-                : shouldExpandStructural ? 'STRUCTURAL'
-                : shouldExpandDates ? 'DATE_CHANGE'
-                : shouldExpandCatchAll ? 'CATCH_ALL'
-                : 'SKIP';
-              debugLog(
-                `[EXPAND] gate check: strategy=${newSpecialistTypes.length} tiles=${tileCount} ` +
-                `viewState=${viewState} hasItinerary=${hasItinerary} freshHasDates=${freshHasDates} silent=${isSilentPlanGeneration} graphBuilt=${graphBuiltItinerary} ` +
-                `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!_datesChanged} ` +
-                `prevCategories=[${[...prevTileTypes]}] newCategories=[${[...newTileCategories]}] → ${expandPath}`
-              );
-
-              // BLOCK: Don't auto-expand when blocking constraint violations exist
-              // User should resolve violations first (via suggested replies)
-              const blockingViolations = freshState.document?.constraint_violations?.filter(
-                v => v.severity === 'blocking'
-              ) ?? [];
-              if (blockingViolations.length > 0) {
-                debugLog('[EXPAND] BLOCKED — blocking constraint violations exist:',
-                  blockingViolations.map(v => v.code));
-              }
-
-              // Auto-expand if structural change detected (existing itinerary OR dates available)
-              // Priority gate: structural wins over trip inputs (structural rebuild incorporates inputs anyway)
-              let structuralRebuildTriggered = blockingViolations.length > 0 || graphBuiltItinerary;
-              if (shouldExpandStructural && !graphBuiltItinerary) {
-                debugLog('[ChatPanel] Structural change detected - auto-expanding...', {
-                  hasNewSpecialist,
-                  hasNewTileType,
-                  prevSpecialists: [...prevSpecialistTypes],
-                  newSpecialists: newSpecialistTypes,
-                });
-                structuralRebuildTriggered = true;
-                if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
-                autoExpandTimeoutRef.current = setTimeout(() => {
-                  // RE-CHECK: Ensure generation isn't already complete from another path
-                  if (useDocumentStore.getState().expandInProgress) {
-                    debugLog('[ChatPanel] ⏭️ STRUCTURAL skipped - expand already in progress');
-                    return;
-                  }
-                  onAutoExpandItinerary?.({ forceFullRebuild: true });
-                }, 100);
-              } else if (hasItinerary && !hasNewSpecialist && !hasNewTileType) {
-                debugLog('[ChatPanel] Additive change only, itinerary preserved');
-              }
-
-              // AUTO-EXPAND: Detect trip_inputs changes that require itinerary adjustment
-              // Handles chat updates like "Feb 11-15" or "2 adults"
-              // IMPORTANT: Read from STORE (freshState.document), not response (doc) - response may not include trip_inputs
-              // SKIP if structural rebuild already triggered (structural includes inputs)
-              const newTripInputs = freshState.document?.trip_inputs;
-              const prevInputs = prevTripInputsRef.current;
-
-              // DATE CHANGE: Special handling - date changes clear day_cards, so hasItinerary becomes false
-              // Must detect date changes BEFORE the hasItinerary gate, since clearing is intentional
-              const datesChanged = prevInputs && (
-                prevInputs.start_date !== newTripInputs?.start_date ||
-                prevInputs.end_date !== newTripInputs?.end_date
-              );
-              const hasStrategyContent = (doc.strategy_sections?.length ?? 0) > 0;
-
-              if (datesChanged && hasStrategyContent && !isSilentPlanGeneration && !structuralRebuildTriggered) {
-                debugLog('[ChatPanel] Dates changed - triggering itinerary rebuild...', {
-                  prev: `${prevInputs.start_date} - ${prevInputs.end_date}`,
-                  new: `${newTripInputs?.start_date} - ${newTripInputs?.end_date}`,
-                  hasItinerary, // Will be false because date change cleared day_cards
-                });
-                structuralRebuildTriggered = true; // Prevent duplicate trigger from other checks
-                if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
-                autoExpandTimeoutRef.current = setTimeout(() => {
-                  // RE-CHECK: Ensure generation isn't already complete from another path
-                  if (useDocumentStore.getState().expandInProgress) {
-                    debugLog('[ChatPanel] ⏭️ DATE_CHANGE skipped - expand already in progress');
-                    return;
-                  }
-                  onAutoExpandItinerary?.({ forceFullRebuild: true });
-                }, 100);
-              }
-
-              // OTHER TRIP INPUT CHANGES: travelers, budget, origin (requires existing itinerary)
-              if (hasItinerary && prevInputs && !isSilentPlanGeneration && !structuralRebuildTriggered) {
-                const travelersChanged =
-                  prevInputs.adults !== newTripInputs?.adults ||
-                  prevInputs.children !== newTripInputs?.children;
-                const budgetChanged = prevInputs.budget !== newTripInputs?.budget;
-                const originChanged = prevInputs.origin !== newTripInputs?.origin;
-
-                const otherInputsChanged = travelersChanged || budgetChanged || originChanged;
-
-                if (otherInputsChanged) {
-                  debugLog('[ChatPanel] Trip inputs changed - auto-rebuilding itinerary...', {
-                    travelersChanged, budgetChanged, originChanged,
-                    prev: { adults: prevInputs.adults, budget: prevInputs.budget },
-                    new: { adults: newTripInputs?.adults, budget: newTripInputs?.budget },
-                  });
-                  structuralRebuildTriggered = true;
-                  if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
-                  autoExpandTimeoutRef.current = setTimeout(() => {
-                    // RE-CHECK: Ensure generation isn't already complete from another path
-                    if (useDocumentStore.getState().expandInProgress) {
-                      debugLog('[ChatPanel] ⏭️ TRIP_INPUTS skipped - expand already in progress');
-                      return;
-                    }
-                    onAutoExpandItinerary?.({ forceFullRebuild: true });
-                  }, 100);
-                }
-              }
-
-              // CATCH-ALL: Strategy exists but no itinerary (Guard violations, cleared day_cards)
-              // This ensures itinerary generation even when backend clears day_cards
-              // Example: Guard violation during session - strategy preserved, day_cards cleared
-              // Gate: Requires dates - without dates, ItineraryBuilder can't create DayCard[] scaffold
-              if (hasStrategyContent && !hasItinerary && freshHasDates && !isSilentPlanGeneration && !structuralRebuildTriggered && !isBootstrap(doc.plan_view_state)) {
-                debugLog('[ChatPanel] Strategy exists but no itinerary - triggering rebuild...', {
-                  strategyCount: doc.strategy_sections?.length,
-                  hasItinerary,
-                  viewState,
-                });
-                structuralRebuildTriggered = true;
-                if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
-                autoExpandTimeoutRef.current = setTimeout(() => {
-                  // RE-CHECK: If itinerary was generated by another path, skip
-                  const freshDayCards = useDocumentStore.getState().document?.day_cards;
-                  if (freshDayCards && freshDayCards.length > 0) {
-                    debugLog('[ChatPanel] ⏭️ CATCH-ALL skipped - itinerary already exists');
-                    return;
-                  }
-                  onAutoExpandItinerary?.({ forceFullRebuild: true });
-                }, 100);
-              }
-
-              // Only filter streaming message when Build Plan was clicked (silent mode)
-              // During Setup, chat should be conversational - show all messages
-              if (isSilentPlanGeneration) {
-                // Build Plan clicked - remove streaming message, plan goes to right panel
-                filterMessages((msg) => msg.id !== streamingMsgId);
-
-              } else {
-                // No plan content yet - handle as regular chat message
-                if (isReadyToGenerate) {
-                  // Update the streaming message ID to use the ready prefix
-                  // so it can be removed when generation starts
-                  updateMessageId(streamingMsgId, `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}`);
-                }
-
-                // --- Update user message with ack data for SystemReceipt display ---
-                // "Command & Receipt" pattern: user message stays visible, receipt shows below
-                if (lastUserMsgIdRef.current && doc.ack_updates && doc.ack_updates.length > 0) {
-                  const userMsgId = lastUserMsgIdRef.current;
-                  // Update the user message with ack data (no auto-collapse)
-                  updateMessage(userMsgId, {
-                    ackStatus: doc.ack_status || 'applied',
-                    ackUpdates: doc.ack_updates,
-                  });
-                } else if (lastUserMsgIdRef.current) {
-                  // No ack updates - mark as no_change
-                  updateMessage(lastUserMsgIdRef.current, {
-                    ackStatus: 'no_change',
-                  });
-                }
-              }
-
-              setIsLoading(false);
-              isSendingRef.current = false; // Clear send guard
-              resolve();
-            },
-            onError: (error: Error) => {
-              setStreamingMessageId(null);
-              setNodeStatus(null); // Clear strategy progress on error
-              abortStreamRef.current = null; // Clear abort ref
-              delayedLoader.reset(); // Ensure loader is hidden on error
-              actionLoader.reset(); // Reset action loader
-              setTriggerContext(null); // Clear trigger context
-              console.error('Failed to plan trip', error);
-
-              // Replace streaming message with specific error message (skip in silent mode)
-              if (!isSilentPlanGeneration) {
-                const errorMessage = getErrorMessage(error);
-                const errorMsgId = `a_err_${Date.now()}`;
-                updateMessageId(streamingMsgId, errorMsgId);
-                updateMessage(errorMsgId, { content: errorMessage });
-              }
-
-              setIsLoading(false);
-              isSendingRef.current = false; // Clear send guard
-              resolve(); // Resolve instead of reject to prevent unhandled promise rejection
-            },
-          });
+        // Delegate the SSE stream execution to the useChatSse hook
+        await executeStream({
+          body,
+          streamingMsgId,
+          isSilentPlanGeneration,
+          selectedBranchId,
+          triggerContext,
+          delayedLoader,
+          actionLoader,
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, onUserMessageSubmit, onAutoExpandItinerary, toast]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, onUserMessageSubmit, onAutoExpandItinerary, toast, executeStream]
     );
 
     const addAssistantMessage = useCallback((message: string) => {
@@ -1294,23 +878,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         inputRef.current?.focus();
       });
     }, [scrollPanelIntoView, addMessage]);
-
-    // Delete functionality removed for demo - re-enable post-launch
-    // const handleDeleteLastMessage = useCallback(async () => {
-    //   if (isDeleting || isLoading) return;
-    //   setIsDeleting(true);
-    //   try {
-    //     const result = await deleteLastMessageFromStore();
-    //     if (result.success && result.restoredTripInputs) {
-    //       restoreTripInputs(result.restoredTripInputs as DocumentTripInputs);
-    //     }
-    //   } catch (error) {
-    //     console.error('Failed to delete message:', error);
-    //   } finally {
-    //     setIsDeleting(false);
-    //   }
-    // }, [isDeleting, isLoading, deleteLastMessageFromStore, restoreTripInputs]);
-    // const lastUserMessageId = messages.filter((m) => m.role === 'user').at(-1)?.id ?? null;
 
     useImperativeHandle(
       ref,
@@ -1502,62 +1069,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           />
         )}
 
-        <div
-          ref={scrollContainerRef}
-          className={cn(
-            'min-h-0 flex-1 overflow-y-auto text-sm no-scrollbar relative z-50 pt-2 no-overflow-anchor',
-            !isDesktop && 'flex flex-col',
-          )}
-          role="log"
-          aria-label="Chat messages"
-          aria-busy={isLoadingHistory || isLoading}
+        {/* ── Scrollable message list ── */}
+        <ChatMessageList
+          scrollContainerRef={scrollContainerRef}
+          bottomSentinelRef={bottomSentinelRef}
           onScroll={handleScroll}
-        >
-          {/* Inner wrapper: messages flow top-down; on mobile, mt-auto anchors to bottom */}
-          <div className={cn("flex flex-col space-y-4", !isDesktop && visibleMessages.length > 0 && "mt-auto")}>
-          {isLoadingHistory ? (
-            /* Tier 9: Skeleton loading for better perceived performance */
-            <ChatSkeleton count={2} />
-          ) : (
-            <>
-              {/* Mobile empty-state placeholder — decorative prompt, not an input */}
-              {/* Positioned at ~55-60% of viewport via mt-[42vh] (header+tab offset
-                  pushes visual center to ~57% of total viewport) */}
-              {!isDesktop && visibleMessages.length === 0 && isBootstrap(planViewState) && (
-                <div className="flex flex-col items-center text-center px-6 mt-[42vh]">
-                  <span className="text-3xl mb-3" role="img" aria-label="Globe">🌍</span>
-                  <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
-                    Where to next?
-                  </h2>
-                  <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
-                    Try: &ldquo;Bali from Rome, Feb 11-14&rdquo;
-                  </p>
-                  <div className="mt-3 flex items-center gap-1.5">
-                    <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
-                      Awaiting Input
-                    </span>
-                    <div className={`w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:${DS.glowClass.cursor}`} />
-                  </div>
-                </div>
-              )}
-
-              {visibleMessages.map((m, idx) => (
-                <ChatMessageRenderer
-                  key={m.id}
-                  message={m}
-                  index={idx}
-                  streamingMessageId={streamingMessageId}
-                  isLoading={isLoading}
-                  lastUserMessage={lastUserMessage}
-                  onRetry={sendMessageCore}
-                />
-              ))}
-              {/* Invisible sentinel for smooth scroll-to-bottom */}
-              <div ref={bottomSentinelRef} aria-hidden="true" className="h-px -mt-2" />
-            </>
-          )}
-        </div>
-        </div>{/* close scroll container */}
+          isLoadingHistory={isLoadingHistory}
+          isLoading={isLoading}
+          visibleMessages={visibleMessages}
+          streamingMessageId={streamingMessageId}
+          lastUserMessage={lastUserMessage}
+          onRetry={sendMessageCore}
+          isDesktop={isDesktop}
+          planViewState={planViewState}
+        />
 
         {/* Input area with suggestions — pinned below scroll container */}
         <div className="shrink-0 space-y-4 pb-0">
@@ -1565,7 +1090,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           {isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
             <SmartLoader status={activeStatus} />
           )}
-          <ChatSuggestionChips
+          <ChatSuggestionBar
             effectiveSuggestions={effectiveSuggestions}
             suggestionChips={suggestionChips}
             suggestedResponseMeta={suggestedResponseMeta}
@@ -1583,10 +1108,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
           {/* Exploration Progress + Action Bar — desktop only (mobile uses MobileChatInput) */}
           {isDesktop && (
-            <ChatInputBar
+            <ChatInputHandler
               input={input}
               onInputChange={setInput}
               onSubmit={handleSubmit}
+              onStopStreaming={handleStopStreaming}
               isLoading={isLoading}
               isInputDisabledByPlanState={isInputDisabledByPlanState}
               hasReceivedFirstToken={hasReceivedFirstToken}
@@ -1596,7 +1122,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               hasBranches={hasBranches}
               hasDestination={hasDestination}
               planViewState={planViewState}
-              onStopStreaming={handleStopStreaming}
               inputRef={inputRef}
             />
           )}

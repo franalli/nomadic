@@ -9,6 +9,7 @@ description: >
   provider-specific param correctness, design system token usage.
   Read-only — never modifies files.
 tools: Read, Glob, Grep
+model: opus
 ---
 
 Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/ruff`) for any Python execution needed during review.

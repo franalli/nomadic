@@ -2,10 +2,92 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** Streaming progressive rendering + LLM factory consolidation + Synthesizer template bypass + LocalExpert skeleton-first (Phase A/B)
-- **Active files:** plan_graph.py, llm_factory.py, synthesizer.py, vertical_specialist.py, local_expert.py, intent_router.py, trip_architect.py, router_extraction.py, experience_generator.py, config.py, streaming.py, frontend/lib/api.ts, frontend/components/chat/ChatPanel.tsx
-- **Known broken:** `test_full_graph_execution` (KeyError)
-- **Frozen:** itinerary_builder.py, specialist_registry.py structure, synthesizer model routing (`_MODEL_BY_COMPLEXITY`)
+- **Focus:** Stage 13B — price badge on tiles (only remaining item; DnD wiring COMPLETE)
+- **Active files:** `frontend/components/plan/tiles/` (price badge on tiles — `tile.price_estimate`)
+- **DO NOT TOUCH:** any backend files, synthesizer.py, router_extraction.py, itinerary_builder.py, experience_generator.py, local_expert.py, plan_graph.py
+- **Frozen:** itinerary_builder.py, specialist_registry.py structure, synthesizer model routing (`_MODEL_BY_COMPLEXITY`), `backend/app/main.py` (13A endpoints live), `backend/app/schemas.py` (BlockMove/ArrangementResult frozen), `backend/app/planner/nodes/constraint_guard.py` (arrangement validation frozen)
+- **Stage 13A:** COMPLETE (validate + apply endpoints live in main.py)
+- **Stage 13B DnD:** COMPLETE — `ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`, `DragPreviewCard`, `blockWrapper`+`dayWrapper` props on `TimelineThread`, `validateArrangement`/`applyArrangement` in `api.ts`, `StrategyStageRenderer` wired
+
+### Stage 13B Architectural Decisions (LOCKED)
+
+**Decision 1 — DnD integration: `blockWrapper` + `dayWrapper` render props on `TimelineThread`.**
+TimelineThread stays DnD-agnostic. Two optional props were added:
+```tsx
+// TimelineThread.tsx — implemented
+blockWrapper?: (block: DayBlock, dayNumber: number, children: ReactNode) => ReactNode;
+dayWrapper?: (dayNumber: number, children: ReactNode) => ReactNode;
+```
+`ItineraryDndWrapper` provides both wrappers via `StrategyStageRenderer`. `dayWrapper` covers free/empty days where `blockWrapper` never fires.
+
+**Decision 2 — Budget: price badge on tiles ONLY. Progress bar deferred to Stage 14.**
+`tile.price_estimate` already exists on tiles. Just render it. Do not implement `totalSpent`, `budgetPerItem`, or any progress bar.
+
+### Stage 13B Mandatory Overrides (verified against codebase)
+
+**Blocker 1 — `version` is NOT on `PlanDocumentData`. Don't pass it to `mergeEnvelope`.**
+WRONG:
+```ts
+useDocumentStore.getState().mergeEnvelope({ day_cards: applied.day_cards, version: applied.version });
+```
+CORRECT — update separately:
+```ts
+useDocumentStore.getState().mergeEnvelope({ day_cards: applied.day_cards });
+useDocumentStore.setState({ version: applied.version });
+```
+(Same pattern as `fillDay()` in api.ts.)
+
+**Blocker 2 — `_fillDayPending`/`_arrangementPending`/`_patchPending` do NOT exist.**
+Store uses a single numeric counter. Use the existing mutex:
+```ts
+const store = useDocumentStore.getState();
+store.claimMutation();
+try {
+  // ... validate + apply calls ...
+} finally {
+  store.releaseMutation();
+}
+```
+`hasPendingMutations()` (already called in ChatPanel) covers this automatically.
+
+**Blocker 3 — `block.title` does NOT exist on `DayBlock`. `DragPreviewCard` will be blank.**
+WRONG: `{block.title}`
+CORRECT: `{block.summary || block.activity_type}`
+
+**Blocker 4 — `block.id` is `id?: string` (optional). Guard before `useDraggable`.**
+```tsx
+// In DraggableBlock — if no id, render non-draggable fallback
+if (!block.id) return <>{children}</>;
+```
+
+**Blocker 5 — Type is `DayBlock` (from `@/types/plan-envelope`), NOT `Block`.**
+Import: `import type { DayBlock } from '@/types/plan-envelope';`
+Use `DayBlock` everywhere — in component props, `active.data.current?.block as DayBlock`, etc.
+
+**Correctness fix 6 — Use `closestCorners` not `closestCenter` for vertical list layout.**
+```tsx
+import { DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+// collisionDetection={closestCorners}
+```
+
+**Correctness fix 7 — Guard `toDay` parsing against non-day drop targets.**
+```ts
+if (!(over.id as string).startsWith('day-')) return;
+const toDay = parseInt((over.id as string).replace('day-', ''));
+if (isNaN(toDay)) return;
+```
+
+### Key facts verified against codebase
+- Toast system: custom hook `useToast()` from `@/components/ui/toast` → `toast({ message, type: 'error'|'warning'|'info', duration })`
+- Store mutation gate: `claimMutation()` / `releaseMutation()` / `hasPendingMutations()` (counter-based, no per-op flags)
+- `day_cards` lives at `document.day_cards` inside store, NOT top-level
+- `version` IS top-level on store (`get().version`), initialized to `0`
+- New component files go in `frontend/components/plan/timeline/` (not flat `plan/`)
+- `DayBlock.constraints` is `string[]` — relevant for backend only, not touched in 13B
+- Lock icon: `import { Lock } from 'lucide-react'` (not react-icons)
+- `apiFetch` always adds `Content-Type: application/json` + CSRF + `credentials: 'include'`
+- `StrategyStageRenderer` passes `dayCards={viewModel.day_cards ?? []}` to `TimelineThread`
+- `TimelineThread` renders with `useRichBlocks=true` → `renderRichBlock()` per block
 
 ---
 

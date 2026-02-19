@@ -466,7 +466,7 @@ class ItineraryBuilder:
             days = self._place_anchors(days, input_data.tiles, input_data.origin)
 
             # Phase 4: Inject safety buffers
-            days = self._inject_safety_buffers(days, merged_constraints)
+            days = self._inject_safety_buffers(days, merged_constraints, activities)
 
             # Phase 5: Distribute activities across days (interleaved)
             total_activities_input = sum(len(acts) for acts in activities.values())
@@ -1109,7 +1109,10 @@ class ItineraryBuilder:
     # =========================================================================
 
     def _inject_safety_buffers(
-        self, days: List[DayCardOutput], constraints: List[MergedConstraint]
+        self,
+        days: List[DayCardOutput],
+        constraints: List[MergedConstraint],
+        activities_by_specialist: Optional[Dict[str, Any]] = None,
     ) -> List[DayCardOutput]:
         """Inject safety buffers based on constraints (sorted by priority)."""
         for constraint in constraints:
@@ -1123,8 +1126,54 @@ class ItineraryBuilder:
             elif constraint.rule == "altitude_acclimatization":
                 # Acclimatization before the first altitude-activity day.
                 # Find the first day with hiking/climbing/skiing blocks,
-                # then place the buffer on the day before it (or fallback to day 3).
+                # then place the buffer on the day before it (or fallback to first free day).
                 altitude_specialists = {"hiking", "trekking", "climbing", "skiing"}
+                diving_specialists = {"diving", "scuba", "freediving"}
+
+                # Only insert acclimatization when the specialist LLM explicitly flags
+                # it as required (i.e., the destination actually reaches altitude thresholds).
+                # The constraint fires from the hardcoded registry for ALL hiking/climbing,
+                # but Mount Batur (1717m) and similar sub-3000m destinations don't qualify.
+                #
+                # Signal: the specialist LLM sets requires_acclimatization=True in parameters.
+                # The hardcoded registry reason ("Max 500m elevation gain per day above 3000m")
+                # is a generic rule description, NOT a destination-specific elevation signal —
+                # do NOT use reason text as a trigger.
+                params = constraint.parameters or {}
+                if not params.get("requires_acclimatization", False):
+                    _debug(
+                        "[ItineraryBuilder] Skipping altitude_acclimatization: "
+                        "requires_acclimatization not set in constraint parameters"
+                    )
+                    continue
+
+                # Skip acclimatization entirely on cross-domain trips that include diving:
+                # the cross-domain rest day already provides the required buffer,
+                # and inserting a second buffer creates conflicting content on dive days.
+                # NOTE 1: check activities_by_specialist (Phase 3 input), not days[].blocks,
+                # because Phase 4 (this method) runs before Phase 5 places specialist blocks.
+                # NOTE 2: also check constraint sources — if diving has no content_added
+                # (e.g., tiles-only mode), it won't appear in activities_by_specialist
+                # but its constraints will still be in merged_constraints.
+                active_specialists = (
+                    set(activities_by_specialist.keys()) if activities_by_specialist else set()
+                )
+                constraint_sources = {c.source for c in constraints}
+                has_diving = bool((active_specialists | constraint_sources) & diving_specialists)
+                if has_diving:
+                    _debug(
+                        "[ItineraryBuilder] Skipping altitude_acclimatization: "
+                        "cross-domain trip with diving"
+                    )
+                    continue
+
+                # Derive the specialist_type from the triggering altitude activities
+                # so the buffer block reflects the actual domain (hiking, skiing, etc.)
+                triggering_specialist = next(
+                    (s for s in altitude_specialists if s in active_specialists),
+                    "hiking",  # safe fallback — this branch only runs for altitude-only trips
+                )
+
                 accl_day_idx = None
                 for i in range(1, len(days) - 1):  # skip arrival/departure
                     has_altitude = any(
@@ -1133,12 +1182,40 @@ class ItineraryBuilder:
                         if not getattr(b, "is_buffer", False)
                     )
                     if has_altitude:
-                        # Place acclimatization on the day before, minimum day 1
-                        accl_day_idx = max(1, i - 1)
+                        # Place acclimatization on the day before, minimum day 1.
+                        # If i == 1 (altitude is on first interior day), candidate == i and the
+                        # while-loop never executes — falls through to fallback below.
+                        candidate = max(1, i - 1)
+                        # Slide forward to avoid days that already have specialist blocks
+                        while candidate < i:
+                            day_specialist_types = {
+                                (getattr(b, "specialist_type", "") or "").lower()
+                                for b in days[candidate].blocks
+                                if not getattr(b, "is_buffer", False)
+                                and (getattr(b, "specialist_type", "") or "") != ""
+                            }
+                            if not day_specialist_types:
+                                break  # Day is free — safe to use
+                            candidate += 1
+                        if candidate < i:
+                            accl_day_idx = candidate
                         break
 
                 if accl_day_idx is None and len(days) >= 4:
-                    accl_day_idx = 2  # Fallback to day 3 (0-indexed)
+                    # Fallback: find first interior day with no specialist blocks.
+                    # Guard requires >= 4 days: on a 3-day trip the only interior day
+                    # already holds the altitude block — placing acclimatization there
+                    # would be incorrect, so we suppress it.
+                    for j in range(1, len(days) - 1):
+                        day_specialist_types = {
+                            (getattr(b, "specialist_type", "") or "").lower()
+                            for b in days[j].blocks
+                            if not getattr(b, "is_buffer", False)
+                            and (getattr(b, "specialist_type", "") or "") != ""
+                        }
+                        if not day_specialist_types:
+                            accl_day_idx = j
+                            break
 
                 if accl_day_idx is not None:
                     days[accl_day_idx].label = "Acclimatization Day"
@@ -1156,7 +1233,7 @@ class ItineraryBuilder:
                         is_buffer=True,
                         buffer_type="acclimatization",
                         buffer_reason="Max 500m elevation gain per day above 3000m",
-                        specialist_type="hiking",
+                        specialist_type=triggering_specialist,
                         intensity="light",
                     )
                     days[accl_day_idx].blocks.insert(0, buffer_block)

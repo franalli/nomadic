@@ -1,5 +1,6 @@
-/* eslint no-unused-vars: ["error", { "args": "none" }] */
 'use client';
+
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 
 import { ArrowUp } from 'lucide-react';
 
@@ -116,6 +117,7 @@ export function ChatInputBar({
                 'border border-zinc-300 dark:border-white/10'
               )}
               title="Stop"
+              aria-label="Stop streaming"
             >
               {/* Minimal square icon - matches theme */}
               <div className="w-3 h-3 bg-zinc-900 dark:bg-white rounded-[2px]" />
@@ -133,6 +135,7 @@ export function ChatInputBar({
                   : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600',
               )}
               title="Send message (Enter)"
+              aria-label="Send message"
             >
               <ArrowUp className="h-5 w-5" />
             </button>

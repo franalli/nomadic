@@ -1,4 +1,0 @@
-interface:
-  display_name: "Nomadic Update Docs"
-  short_description: "Patch SSoT docs based on current git diff"
-  default_prompt: "Analyze current diff and update only affected SSoT doc sections."

@@ -139,7 +139,9 @@ async def _call_llm_validation_async(
                 temperature=0,
                 max_tokens=settings.validation_max_tokens,
             )
-            structured_llm = llm.with_structured_output(ValidationResponse, include_raw=True)
+            structured_llm = llm.with_structured_output(
+                ValidationResponse, include_raw=True, method="function_calling"
+            )
             result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
             if isinstance(result, dict) and "parsed" in result:
                 parsed = result["parsed"]

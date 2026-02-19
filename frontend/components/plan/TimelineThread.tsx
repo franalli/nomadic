@@ -1,5 +1,6 @@
-/* eslint no-unused-vars: ["error", { "args": "none" }] */
 'use client';
+
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -18,6 +19,7 @@ import {
   Waves,
   Zap,
 } from 'lucide-react';
+import React, { type ReactNode } from 'react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
@@ -132,6 +134,27 @@ interface TimelineThreadProps {
   onOpenFlightsSettings?: () => void;
   /** Disable fill-day actions while streaming/regenerating */
   disableFillDayActions?: boolean;
+  /**
+   * Optional wrapper applied to each block node.
+   * Use this to inject DnD draggable/droppable wrappers without coupling TimelineThread to DnD.
+   */
+  blockWrapper?: (block: DayBlock, dayNumber: number, children: ReactNode) => ReactNode;
+  /**
+   * Optional wrapper applied to the entire block-list container for each day card.
+   * Use this to inject a DroppableDay zone that covers the full day — including
+   * free/empty days where blockWrapper never fires.
+   *
+   * Note: for free days, prefer `freeDayDropSlot` instead — it renders a dedicated
+   * slot inside FreeDayCard without wrapping the entire card.
+   */
+  dayWrapper?: (dayNumber: number, children: ReactNode) => ReactNode;
+  /**
+   * Optional render prop for a drop zone slot inside FreeDayCard.
+   * Called for days that render FreeDayCard (empty/free days only).
+   * This slot appears between the subtitle and specialist chips inside the card,
+   * avoiding the highlight-the-entire-card problem that dayWrapper causes on free days.
+   */
+  freeDayDropSlot?: (dayNumber: number) => ReactNode;
 }
 
 /**
@@ -243,7 +266,14 @@ export function TimelineThread({
   onOpenStaysSettings,
   onOpenFlightsSettings,
   disableFillDayActions = false,
+  blockWrapper,
+  dayWrapper,
+  freeDayDropSlot,
 }: TimelineThreadProps) {
+  // Default identity wrapper — no-op when blockWrapper is not provided
+  const applyBlockWrapper = blockWrapper ?? ((_b: DayBlock, _d: number, children: ReactNode) => children);
+  // Default identity wrapper — no-op when dayWrapper is not provided
+  const applyDayWrapper = dayWrapper ?? ((_d: number, children: ReactNode) => children);
   // Compute effective variant: prefer explicit variant, fall back to isDraft for backward compatibility
   const effectiveVariant: TimelineVariant = variant ?? (isDraft ? 'draft' : 'real');
   const { badge, badgeClass } = variantConfig[effectiveVariant];
@@ -499,14 +529,14 @@ export function TimelineThread({
             <button
               type="button"
               onClick={() => onDayClick?.(card.day_number)}
-              onMouseEnter={() => onDayHover?.(card.day_number)}
-              onMouseLeave={() => onDayHover?.(null)}
+              onMouseEnter={() => !document.body.hasAttribute('data-dnd-active') && onDayHover?.(card.day_number)}
+              onMouseLeave={() => !document.body.hasAttribute('data-dnd-active') && onDayHover?.(null)}
               className="flex items-center gap-4 mb-4 w-full text-left group"
             >
               {/* Icon node on thread */}
               <div
                 className={cn(
-                  'timeline-node flex-shrink-0 w-9 h-9 rounded-full border flex items-center justify-center transition-colors shadow-sm',
+                  'timeline-node flex-shrink-0 w-9 h-9 rounded-full border flex items-center justify-center transition-colors',
                   isSafety
                     ? 'bg-zinc-500/10 border-zinc-500/50 text-zinc-500'
                     : 'bg-background border-muted-foreground/30 text-muted-foreground group-hover:border-primary group-hover:text-primary'
@@ -551,28 +581,40 @@ export function TimelineThread({
               </div>
             </button>
 
-            {/* Blocks list */}
-            <div className="space-y-3 pl-[52px]">
-              {(() => {
-                // Filter blocks for rich rendering
-                const blocksToRender = useRichBlocks ? filterBlocks(card.blocks) : card.blocks;
+            {/* Blocks list — wrapped by dayWrapper (e.g. DroppableDay) when provided */}
+            {(() => {
+              // Filter blocks for rich rendering
+              const blocksToRender = useRichBlocks ? filterBlocks(card.blocks) : card.blocks;
 
-                // Separate buffer blocks (safety constraints) from content blocks
-                // Exclude arrival/departure anchors from the SafetyBlock rendering path —
-                // those are logistics blocks handled by LogisticsBlock, not SafetyBlock.
-                const bufferBlocks = blocksToRender.filter(
-                  b => b.is_buffer && b.buffer_type !== 'arrival' && b.buffer_type !== 'departure'
-                );
-                const contentBlocks = blocksToRender.filter(b => !b.is_buffer);
+              // Separate buffer blocks (safety constraints) from content blocks
+              // Exclude arrival/departure anchors from the SafetyBlock rendering path —
+              // those are logistics blocks handled by LogisticsBlock, not SafetyBlock.
+              const bufferBlocks = blocksToRender.filter(
+                b => b.is_buffer && b.buffer_type !== 'arrival' && b.buffer_type !== 'departure'
+              );
+              const contentBlocks = blocksToRender.filter(b => !b.is_buffer);
 
-                // Empty day or only free_day placeholder → interactive FreeDayCard
-                // Buffer blocks render as SafetyBlock above the FreeDayCard
-                // Never show FreeDayCard on arrival or departure days
-                const isArrival = card.blocks.some(b => b.buffer_type === 'arrival');
-                const isDeparture = card.blocks.some(b => b.buffer_type === 'departure');
-                const hasOnlyFreeDay = contentBlocks.length === 1
-                  && contentBlocks[0].activity_type === 'free_day';
-                if (useRichBlocks && !isArrival && !isDeparture && (contentBlocks.length === 0 || hasOnlyFreeDay)) {
+              // Empty day or only free_day placeholder → interactive FreeDayCard
+              // Buffer blocks render as SafetyBlock above the FreeDayCard
+              // Never show FreeDayCard on arrival or departure days
+              const isArrival = card.blocks.some(b => b.buffer_type === 'arrival');
+              const isDeparture = card.blocks.some(b => b.buffer_type === 'departure');
+              const hasOnlyFreeDay = contentBlocks.length === 1
+                && contentBlocks[0].activity_type === 'free_day';
+              // isSafetyDay: exclude no_fly/acclimatization/rest_day pure-buffer days —
+              // they must NOT render FreeDayCard or accept drops.
+              const hasSafetyBuffer = card.blocks.some(
+                b => b.is_buffer && ['no_fly', 'acclimatization', 'rest_day'].includes(b.buffer_type || '')
+              );
+              const isFreeDay = useRichBlocks && !isArrival && !isDeparture && !hasSafetyBuffer && (contentBlocks.length === 0 || hasOnlyFreeDay);
+
+              // For free days: skip dayWrapper (it would highlight the entire FreeDayCard).
+              // The drop zone is injected via freeDayDropSlot inside FreeDayCard instead.
+              // For activity days: apply dayWrapper (DroppableDay) around the blocks list.
+              const blocksContainer = (
+              <div className="space-y-3 pl-[52px]">
+                {(() => {
+                if (isFreeDay) {
                   return (
                     <>
                       {bufferBlocks.map((block, i) => {
@@ -608,6 +650,7 @@ export function TimelineThread({
                             ? fillDayRejection.reason
                             : undefined
                         }
+                        dropZoneSlot={freeDayDropSlot?.(card.day_number)}
                       />
                     </>
                   );
@@ -646,9 +689,8 @@ export function TimelineThread({
                   // === RICH BLOCK RENDERING (S3 Itinerary View) ===
                   if (useRichBlocks) {
                     const isActiveBlock = activeBlockId === blockId;
-                    return (
+                    const richBlockInner = (
                       <div
-                        key={blockId}
                         id={`timeline-item-${blockId}`}
                         data-map-id={blockId}
                         className={cn(
@@ -659,9 +701,16 @@ export function TimelineThread({
                         {renderRichBlock(block, blockIndex, blockId)}
                       </div>
                     );
+                    return (
+                      <React.Fragment key={blockId}>
+                        {applyBlockWrapper(block, card.day_number, richBlockInner)}
+                      </React.Fragment>
+                    );
                   }
 
                   // === LEGACY BLOCK RENDERING ===
+                  // Note: applyBlockWrapper is intentionally not called here.
+                  // blockWrapper only applies when useRichBlocks={true}.
                   const BlockIcon = getIconForBlock(block);
                   const isBlockSafety = block.is_buffer || !!block.buffer_type;
                   const isActiveBlock = activeBlockId === blockId;
@@ -791,7 +840,11 @@ export function TimelineThread({
                   );
                 });
               })()}
-            </div>
+              </div>
+              );
+
+              return isFreeDay ? blocksContainer : applyDayWrapper(card.day_number, blocksContainer);
+            })()}
           </div>
         );
       })}

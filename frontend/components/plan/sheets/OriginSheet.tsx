@@ -1,4 +1,5 @@
 'use client';
+
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * OriginSheet
@@ -7,13 +8,12 @@
  * Similar to DestinationSheet but for origin.
  */
 
-'use client';
-
 import { Plane, Search } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
 import { DS } from '@/lib/design-system';
+import { POPULAR_ORIGINS } from '@/lib/popular-places';
 import { cn } from '@/lib/utils';
 
 import { BaseSheet } from './BaseSheet';
@@ -29,18 +29,6 @@ interface OriginSheetProps {
   onSave: (origin: string) => void;
   recentOrigins?: string[];
 }
-
-// Popular origins (major hubs)
-const POPULAR_ORIGINS = [
-  'New York (JFK)',
-  'Los Angeles (LAX)',
-  'London (LHR)',
-  'Chicago (ORD)',
-  'San Francisco (SFO)',
-  'Miami (MIA)',
-  'Boston (BOS)',
-  'Seattle (SEA)',
-];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -211,9 +199,9 @@ function OriginSheetInner({
           <div className="flex flex-wrap gap-2">
             {POPULAR_ORIGINS.map((origin) => (
               <button
-                key={origin}
+                key={origin.iata}
                 type="button"
-                onClick={() => handleQuickSelect(origin)}
+                onClick={() => handleQuickSelect(origin.name)}
                 className={cn(
                   'inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg',
                   // Light: White card with border
@@ -228,7 +216,7 @@ function OriginSheetInner({
                 )}
               >
                 <Plane className="h-3.5 w-3.5" />
-                {origin}
+                {origin.name}
               </button>
             ))}
           </div>

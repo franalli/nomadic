@@ -44,25 +44,34 @@ frontend/
     animations/    → StartupSequence, Typewriter
     chat/          → ChatPanel, ChatSkeleton, SmartLoader,
                      SystemAckLine, SystemReceipt, TripStatusBar,
-                     HoldToDeleteButton, MobileChatInput, MobileSetupCollapsedHeader
+                     HoldToDeleteButton, MobileChatInput, MobileSetupCollapsedHeader,
+                     ChatInputHandler, ChatMessageList, ChatSuggestionBar
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
                      PlanHeader, NextStepBar, planStateHelpers,
                      CoreChip, UnifiedChipRow, TripHealthBar, TripSummaryPills,
                      ItineraryProgressIndicator, OriginPromptCard,
-                     DestinationMapPlaceholder
+                     DestinationMapPlaceholder, PlanDensityViews, PlanFullDensityView,
+                     PlanSpecialistsSection, PlanTimelineSection, StrategyConstraintBar,
+                     useBookingDrawerState, useStrategyStageOrchestration
       booking/     → BookingDrawer, CategorySection, CheckoutSidebar
       modals/      → AlternativesModal
-      stages/      → S2StrategyView, StrategyHero
+      stages/      → S2StrategyView, StrategyHero,
+                     S2AgentCard, S2AgentCardExpanded, S2LocalIntelSection,
+                     S2StrategyStack, S2TopicConfig,
+                     StrategyHeroAccordion, StrategyHeroCompactSheet, StrategyHeroHeroSheet,
+                     StrategyHeroTISectionsA, StrategyHeroTISectionsB,
+                     StrategyHeroTravelIntelligence, StrategyHeroUtils
       sheets/      → BaseSheet, DestinationSheet, OriginSheet, DatesSheet,
                      TravelersSheet, BudgetSheet, FlightsSheet, StaysSheet,
                      ActivitiesSheet, TripSettingsSheet, GatingBlocker
-      timeline/    → InlineDatePrompt, TimelineSkeleton
+      timeline/    → InlineDatePrompt, TimelineSkeleton,
+                     DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot, ItineraryDndWrapper
         blocks/    → ActivityMiniCard, LogisticsBlock, SafetyBlock, GhostSlot,
                      FreeDayCard, PreferenceAttributionBadge, types.ts
       tiles/       → BookableCard, SuggestionCard
     tiles/         → TileCard, MiniCard, TileDetailsModal, TaxesFeesTooltip
     ui/            → Shared UI primitives
-    layout/        → SplitLayoutView, NomadicLanding,
+    layout/        → SplitLayoutView, NomadicLanding, LandingHelpers, LandingSheets,
                      FloatingBuildButton, MobileSwipeLayout, MobileModeHeader,
                      hooks/ (useSessionHydration, useBranchManager, useBranchState,
                              useTileSelection, useTripInputsEditor, useLocalBookingSettings)
@@ -71,7 +80,8 @@ frontend/
   state/           → documentStore.ts, chatStore.ts, uiStore.ts, mobileNavStore.ts
   hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
                      usePreferenceAutoRegen, useScrollCollapse, useSheetManager,
-                     useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation
+                     useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation,
+                     useChatSse
   types/           → chat.ts, document.ts, generated.ts, hooks.ts, loader.ts,
                      plan-envelope.ts, sheets.ts, summary.ts, tile.ts
   lib/             → design-system.ts, api.ts, animation-config.ts, streamParser.ts,
@@ -80,7 +90,8 @@ frontend/
                      ghost-timeline-adapter.ts, destination-coords.ts, fillDayGuards.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
-                     summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts
+                     summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
+                     popular-places.ts
   __tests__/       → Vitest tests
 ```
 

@@ -1189,6 +1189,13 @@ input[type="number"]::-webkit-outer-spin-button {
   z-index: 1;
 }
 
+/* Prevent MobileSwipeLayout horizontal snap from firing during DnD drag.
+   Only disable snap-type — do NOT set overflow-x:hidden, which would clip
+   tile carousel rows inside StrategyHeroCompactSheet / S2StrategyView. */
+body[data-dnd-active] .snap-x {
+  scroll-snap-type: none;
+}
+
 /* Respect user's reduced motion preference for command bar */
 @media (prefers-reduced-motion: reduce) {
   .generating-pulse,

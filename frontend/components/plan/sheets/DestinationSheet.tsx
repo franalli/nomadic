@@ -1,4 +1,5 @@
 'use client';
+
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * DestinationSheet
@@ -7,13 +8,12 @@
  * Uses search/autocomplete input with recent destinations.
  */
 
-'use client';
-
 import { MapPin, Search } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
 import { DS } from '@/lib/design-system';
+import { POPULAR_DESTINATIONS } from '@/lib/popular-places';
 import { cn } from '@/lib/utils';
 
 import { BaseSheet } from './BaseSheet';
@@ -29,18 +29,6 @@ interface DestinationSheetProps {
   onSave: (destination: string) => void;
   recentDestinations?: string[];
 }
-
-// Popular destinations for quick selection
-const POPULAR_DESTINATIONS = [
-  'Paris, France',
-  'Tokyo, Japan',
-  'New York, USA',
-  'London, UK',
-  'Dubai, UAE',
-  'Barcelona, Spain',
-  'Rome, Italy',
-  'Bali, Indonesia',
-];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -212,9 +200,9 @@ function DestinationSheetInner({
           <div className="flex flex-wrap gap-2">
             {POPULAR_DESTINATIONS.map((dest) => (
               <button
-                key={dest}
+                key={dest.iata}
                 type="button"
-                onClick={() => handleQuickSelect(dest)}
+                onClick={() => handleQuickSelect(dest.name)}
                 className={cn(
                   'inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg',
                   // Tactile Rule: border-2 for visibility, snap-to-black on hover
@@ -229,7 +217,7 @@ function DestinationSheetInner({
                 )}
               >
                 <MapPin className="h-3.5 w-3.5" />
-                {dest}
+                {dest.name}
               </button>
             ))}
           </div>

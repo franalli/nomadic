@@ -1,3 +1,5 @@
+'use client';
+
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * TileDetailsModal
@@ -150,7 +152,7 @@ function isAIPick(tile: Tile): boolean {
 /**
  * Image Carousel component
  */
-function ImageCarousel({ images }: { images: string[] }) {
+function ImageCarousel({ images, title }: { images: string[]; title?: string }) {
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const goToPrevious = useCallback(() => {
@@ -173,7 +175,7 @@ function ImageCarousel({ images }: { images: string[] }) {
     <div className="relative h-64 overflow-hidden bg-zinc-100 dark:bg-zinc-800">
       <img
         src={images[currentIndex]}
-        alt=""
+        alt={title ?? ''}
         className="h-full w-full object-cover"
       />
 
@@ -308,7 +310,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
         {/* Scrollable content */}
         <div className="max-h-[calc(90vh-64px-80px)] overflow-y-auto">
           {/* Image carousel */}
-          <ImageCarousel images={images} />
+          <ImageCarousel images={images} title={tile.title} />
 
           {/* Content */}
           <div className="space-y-4 p-4">

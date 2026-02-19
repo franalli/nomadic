@@ -1,5 +1,6 @@
-/* eslint no-unused-vars: ["error", { "args": "none" }] */
 'use client';
+
+/* eslint no-unused-vars: ["error", { "args": "none" }] */
 
 /**
  * MobileChatInput - Detached chat input for mobile swipe layout.
@@ -121,6 +122,7 @@ function MobileChatInputInner({
                 'border border-zinc-300 dark:border-white/10'
               )}
               title="Stop"
+              aria-label="Stop streaming"
             >
               <div className="w-2.5 h-2.5 bg-zinc-900 dark:bg-white rounded-[2px]" />
             </button>
@@ -136,6 +138,7 @@ function MobileChatInputInner({
                   : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600',
               )}
               title="Send message"
+              aria-label="Send message"
             >
               <ArrowUp className="h-4 w-4" />
             </button>

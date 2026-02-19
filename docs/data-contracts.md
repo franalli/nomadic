@@ -29,6 +29,8 @@
 | POST   | `/api/document/tiles/{branch_id}` | Fetch tiles for branch                 | --                                                          | `PlanDocumentResponse`                                                                                                        |
 | POST   | `/api/suggestions/click`          | Track suggestion click                 | `SuggestionClickEvent`                                      | `{status: "ok"}`                                                                                                              |
 | POST   | `/api/document/fill-day`          | Generate activity tiles for a free day | `FillDayRequest{day_number, categories?, pinned_tile_ids?}` | `{day_number, tiles_added, day_card?, tiles?, version, rejected?, rejection_reason?, rejection_code?, rejection_suggestion?}` |
+| POST   | `/api/document/validate-arrangement` | Pure Python constraint check on proposed block moves (<50ms, no LLM) | `ArrangementValidateRequest{moves: BlockMove[]}` | `ArrangementResult{valid, violations: BlockViolation[]}` |
+| POST   | `/api/document/apply-arrangement` | Validate + persist block moves with optimistic concurrency | `ArrangementApplyRequest{moves: BlockMove[], expected_version: int}` | `ArrangementResult{valid, violations, day_cards?, version?}` |
 
 ### Documents (Plan State)
 
@@ -97,13 +99,15 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests sha
 | **Heavy (builder-only)** | `expand-itinerary`                                                                                                       | 20/min (no LLM — frontend mutex prevents abuse) |
 | **Medium**               | `validate-trip-input`, `destination-image`, `tiles/refresh`                                                              | 15/min                                          |
 | **Medium-Low**           | `document/fill-day`                                                                                                      | 30/min                                          |
-| **Light**                | `document` (GET+PATCH), `document/tiles/{branch_id}`, `chat`, `chat/last`, `session`, `tiles/click`, `suggestions/click` | 60/min                                          |
+| **Light**                | `document` (GET+PATCH), `document/tiles/{branch_id}`, `chat`, `chat/last`, `session`, `tiles/click`, `suggestions/click`, `document/validate-arrangement` | 60/min                                          |
+| **Low-write**            | `document/apply-arrangement`                                                                                             | 30/min                                          |
 | **Admin**                | `/api/admin/*`                                                                                                           | 10/min (+ `X-Admin-Key` required)               |
 
 ### Security Middleware
 
 - **Body size limit:** 512KB max (`Content-Length` check before Pydantic parsing)
 - **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security: max-age=63072000; includeSubDomains`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+- **Backend CSP (added in main.py):** `Content-Security-Policy` header set on every response — `default-src 'self'`, `script-src 'self' 'unsafe-inline' 'unsafe-eval'`, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: https://images.unsplash.com https://*.mapbox.com blob:`, `connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:`, `font-src 'self' data:`, `frame-ancestors 'none'`
 - **Session middleware:** Skips `/health` (no session cookie overhead on health checks). Max 10 new sessions per IP per hour
 - **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP (thread-safe slot reserve/release). SSE state extracted to `backend/app/sse_state.py` to break circular import between `main.py` and `lifespan.py`
 - **Fill-day/session ordering:** `/api/document/fill-day` waits until no active graph SSE stream exists for that session
@@ -168,6 +172,7 @@ PlanDocumentData
   |           |-- intensity? (light|moderate|challenging)
   |           |-- is_buffer, buffer_type?, buffer_reason?
   |           |-- specialist_type?, constraints[]
+  |           |-- active_constraints: ActiveConstraint[] (rendered badge list; each: {id, severity, icon, title, description})
   |           |-- image_url?, duration?, coordinates: {lat, lng}?
   |           |-- scheduled_time?, logistics_details?, hotel_name?
   |           |-- booked_tile?, requires_booking, booking_category?
@@ -217,6 +222,11 @@ PlanDocumentData
 | `TileRefreshRequest/Response` | Refresh tiles for branch with new settings                                                                                                                                                                                                                                                                                                                                                                       |
 | `SuggestionChip`              | Structured chip: message, action_type (`send_message`\|`open_pill`\|`trigger_action`), action_target?, chip_type (`cta`\|`follow_up`\|`setting`), category, icon?                                                                                                                                                                                                                                                |
 | `SuggestionChipMeta`          | Chip styling: chip_type, category, icon? (parallel to `suggested_responses`)                                                                                                                                                                                                                                                                                                                                     |
+| `BlockMove`                   | Single block relocation: `block_id`, `from_day`, `to_day`, `to_position` (default 0)                                                                                                                                                                                                                                                                                                                             |
+| `ArrangementValidateRequest`  | Validate proposed moves without persisting: `moves: BlockMove[]`                                                                                                                                                                                                                                                                                                                                                 |
+| `ArrangementApplyRequest`     | Validate + persist moves with optimistic concurrency: `moves: BlockMove[], expected_version: int`. Returns 409 on version mismatch.                                                                                                                                                                                                                                                                               |
+| `BlockViolation`              | Constraint violation: `block_id`, `violation_code` (`LOCKED_BLOCK`\|`NO_FLY_BUFFER`\|`CROSS_DOMAIN_BUFFER_REQUIRED`\|`DAY_CAPACITY_EXCEEDED`), `severity` (`blocking`\|`warning`), `message`, `target_day`                                                                                                                                                                                                      |
+| `ArrangementResult`           | Response from validate or apply: `valid: bool`, `violations: BlockViolation[]`, `day_cards?: list` (only on successful apply), `version?: int` (only on successful apply)                                                                                                                                                                                                                                        |
 
 ---
 
@@ -379,6 +389,8 @@ Source: `frontend/lib/api.ts`
 | `fetchDestinationImage()`    | POST `/api/destination-image`   | Unsplash image                                                                                                                                                                                                                |
 | `refreshTiles()`             | POST `/api/tiles/refresh`       | Refresh tiles for branch (uses `fetchWithRetry`, 2 retries, 500ms base delay)                                                                                                                                                 |
 | `fillDay()`                  | POST `/api/document/fill-day`   | Generate activity tiles for a free day. Returns `tiles` map for store merge. Response may include `rejected: true` with `rejection_reason`, `rejection_code`, `rejection_suggestion` when Tier 1 constraint validation fails. Non-2xx errors preserve backend `detail` text in thrown error messages (used for 429/rejection toasts). |
+| `validateArrangement()`      | POST `/api/document/validate-arrangement` | Check proposed block moves against constraints. Returns `{valid, violations[]}`. No LLM, target <50ms. |
+| `applyArrangement()`         | POST `/api/document/apply-arrangement` | Validate + persist block moves. Throws `'VERSION_CONFLICT'` on 409. On success, returns `{valid, violations, day_cards, version}` — caller must `mergeEnvelope({day_cards})` and `setState({version})` separately. |
 | `resetSession()`             | DELETE `/api/session`           | Clear session                                                                                                                                                                                                                 |
 | `fetchWithRetry()`           | (wraps apiFetch)                | Exponential backoff retry on transient errors                                                                                                                                                                                 |
 | `clearSessionLocalStorage()` | --                              | Clear session-related localStorage (preserves GDPR consent)                                                                                                                                                                   |

@@ -77,18 +77,16 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
   } catch (error) {
     // DEBUG: Log detailed error info (Error objects don't serialize well)
     const err = error as Error;
-    console.error('[apiFetch] ❌ Fetch FAILED:');
-    console.error('  URL:', url);
-    console.error('  Method:', options?.method || 'GET');
-    console.error('  Has CSRF:', !!csrfToken);
-    console.error('  Has Signal:', !!options?.signal);
-    console.error('  Signal Aborted:', options?.signal?.aborted);
-    console.error('  Error Name:', err?.name);
-    console.error('  Error Message:', err?.message);
-    console.error('  Error Stack:', err?.stack);
-    if (err?.name === 'AbortError') {
-      console.error('  ⚠️ REQUEST WAS ABORTED - Check AbortController');
-    }
+    console.error('[apiFetch] ❌ Fetch FAILED:', {
+      url,
+      method: options?.method || 'GET',
+      hasCsrf: !!csrfToken,
+      hasSignal: !!options?.signal,
+      signalAborted: options?.signal?.aborted,
+      errorName: err?.name,
+      errorMessage: err?.message,
+      wasAborted: err?.name === 'AbortError',
+    });
     throw error;
   }
 }
@@ -455,6 +453,54 @@ export async function fillDay(
     useDocumentStore.setState({ version: result.version });
   }
   return result;
+}
+
+/**
+ * Validate a proposed block arrangement before applying it.
+ * Returns whether the moves are valid and any violations.
+ */
+export async function validateArrangement(
+  moves: Array<{ block_id: string; from_day: number; to_day: number; to_position?: number }>
+): Promise<{
+  valid: boolean;
+  violations: Array<{
+    block_id: string;
+    violation_code: string;
+    severity: 'blocking' | 'warning';
+    message: string;
+    target_day: number;
+  }>;
+}> {
+  const res = await apiFetch('/api/document/validate-arrangement', {
+    method: 'POST',
+    body: JSON.stringify({ moves }),
+  });
+  if (!res.ok) throw new Error(`validate-arrangement failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Apply a validated block arrangement, persisting the new day order.
+ * Throws 'VERSION_CONFLICT' if the document was modified concurrently.
+ */
+export async function applyArrangement(
+  moves: Array<{ block_id: string; from_day: number; to_day: number; to_position?: number }>,
+  expectedVersion: number
+): Promise<{
+  valid: boolean;
+  violations: Array<{ block_id: string; violation_code: string; severity: string; message: string; target_day: number }>;
+  day_cards?: unknown[];
+  version?: number;
+}> {
+  const res = await apiFetch('/api/document/apply-arrangement', {
+    method: 'POST',
+    body: JSON.stringify({ moves, expected_version: expectedVersion }),
+  });
+  if (res.status === 409) {
+    throw new Error('VERSION_CONFLICT');
+  }
+  if (!res.ok) throw new Error(`apply-arrangement failed: ${res.status}`);
+  return res.json();
 }
 
 /**

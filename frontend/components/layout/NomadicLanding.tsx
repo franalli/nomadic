@@ -16,18 +16,16 @@ import {
 } from '@/components/layout/hooks/useBranchManager';
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
+import {
+  type ChangeReceiptData,
+  detectChangedFieldNames,
+  detectTopicsFromMessage,
+  RESET_BUTTON_COOLDOWN_MS,
+} from '@/components/layout/LandingHelpers';
+import { LandingSheets } from '@/components/layout/LandingSheets';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { isBootstrap, isFraming, isStrategyReady, shouldAutoTriggerItinerary } from '@/components/plan/planStateHelpers';
-import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
-import { BudgetSheet } from '@/components/plan/sheets/BudgetSheet';
-import { DatesSheet } from '@/components/plan/sheets/DatesSheet';
-import { DestinationSheet } from '@/components/plan/sheets/DestinationSheet';
-import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
-import { OriginSheet } from '@/components/plan/sheets/OriginSheet';
-import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
-import { TravelersSheet } from '@/components/plan/sheets/TravelersSheet';
-import { TripSettingsSheet } from '@/components/plan/sheets/TripSettingsSheet';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
@@ -51,73 +49,6 @@ import type { DocumentTripInputs, PlanDocumentData } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { PlanState, PlanViewModel, PlanViewState } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
-
-// Receipt data type for showing "Updated: X, Y · Undo" after freeform extraction
-interface ChangeReceiptData {
-  type: 'partial' | 'updated' | 'reverted';
-  fields: string[];
-  canUndo: boolean;
-}
-
-// Topic keywords for detecting specialist topics from user messages
-// Matches backend orchestrator.py TOPIC_KEYWORDS
-const TOPIC_KEYWORDS: Record<string, string[]> = {
-  diving: ['dive', 'diving', 'scuba', 'snorkel', 'reef'],
-  hiking: ['hike', 'hiking', 'trek', 'trail', 'mountain'],
-  skiing: ['ski', 'skiing', 'snowboard', 'piste'],
-  cycling: ['bike', 'cycling', 'bicycle'],
-  boating: ['sail', 'boat', 'yacht', 'kayak'],
-};
-
-const RESET_BUTTON_COOLDOWN_MS = 2500;
-
-/**
- * Detect specialist topics from user message text.
- * Used for optimistic UI - shows placeholder AgentCards before backend responds.
- */
-function detectTopicsFromMessage(message: string): string[] {
-  const lower = message.toLowerCase();
-  return Object.entries(TOPIC_KEYWORDS)
-    .filter(([, keywords]) => keywords.some((k) => lower.includes(k)))
-    .map(([topic]) => topic);
-}
-
-// Toast notification system
-
-// Helper to detect which trip input fields changed between two states
-function detectChangedFieldNames(
-  oldInputs: DocumentTripInputs | null,
-  newInputs: DocumentTripInputs | null
-): string[] {
-  if (!newInputs) return [];
-
-  const changed: string[] = [];
-
-  // Compare core fields
-  if (oldInputs?.origin !== newInputs.origin && newInputs.origin) {
-    changed.push('origin');
-  }
-  if (oldInputs?.destination !== newInputs.destination && newInputs.destination) {
-    changed.push('destination');
-  }
-  if (oldInputs?.start_date !== newInputs.start_date && newInputs.start_date) {
-    changed.push('start_date');
-  }
-  if (oldInputs?.end_date !== newInputs.end_date && newInputs.end_date) {
-    changed.push('end_date');
-  }
-  if (oldInputs?.budget !== newInputs.budget && newInputs.budget != null) {
-    changed.push('budget');
-  }
-  if (oldInputs?.adults !== newInputs.adults && newInputs.adults != null) {
-    changed.push('adults');
-  }
-  if (oldInputs?.children !== newInputs.children && newInputs.children != null) {
-    changed.push('children');
-  }
-
-  return changed;
-}
 
 export function NomadicLanding() {
   // Viewport detection
@@ -1282,6 +1213,11 @@ export function NomadicLanding() {
     chatPanelRef.current?.stopStreaming?.();
   }, []);
 
+  // Handler for sending a message via ChatPanel (used by LandingSheets)
+  const handleSendMessage = useCallback((msg: string) => {
+    chatPanelRef.current?.sendMessage?.(msg);
+  }, []);
+
   // Planner content (left panel): ChatPanel (primary funnel with refinements inside)
   const plannerContent = (
     <ErrorBoundary label="Chat">
@@ -1444,209 +1380,29 @@ export function NomadicLanding() {
         {/* RefreshOverlay REMOVED - inline button provides feedback */}
       </div>
 
-      {/* Trip input sheets - shared between header pills and chat panel */}
-      {/* In S1+, header pills are the ONLY interactive surface for trip inputs */}
-      {/* Destination sheet LOCKED once set - can only change via full trip reset */}
-      <DestinationSheet
-        open={activeSheet === 'destination' && !tripInputs.destination}
-        onOpenChange={(open) => !open && closeSheet()}
-        value={tripInputs.destination || ''}
-        onSave={async (value) => {
-          // SYNC: Update store immediately so RefreshButton sees new value
-          storeUpdateTripInputs({ destination: value });
-          // ASYNC: Persist to backend
-          try {
-            await storeCommitTripInputs({ destination: value });
-            closeSheet();
-            addToast(`Destination: ${value}`, 'confirmation');
-          } catch {
-            addToast('Failed to save — please try again', 'error');
-          }
-        }}
-      />
-
-      <OriginSheet
-        open={activeSheet === 'origin'}
-        onOpenChange={(open) => !open && closeSheet()}
-        value={tripInputs.origin || ''}
-        onSave={async (value) => {
-          // SYNC: Update store immediately so RefreshButton sees new value
-          storeUpdateTripInputs({ origin: value });
-          // ASYNC: Persist to backend
-          try {
-            await storeCommitTripInputs({ origin: value });
-            closeSheet();
-            addToast(`Origin: ${value}`, 'confirmation');
-          } catch {
-            addToast('Failed to save — please try again', 'error');
-          }
-        }}
-      />
-
-      <DatesSheet
-        open={activeSheet === 'dates'}
-        onOpenChange={(open) => !open && closeSheet()}
-        startDate={parseISODateLocal(tripInputs.start_date)}
-        endDate={parseISODateLocal(tripInputs.end_date)}
-        onSave={async (start, end) => {
-          // Use local date components to avoid timezone shifts
-          // toISOString() converts to UTC which can shift the date by a day
-          const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
-          const endStr = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
-          // SYNC: Update store immediately so RefreshButton sees new value
-          storeUpdateTripInputs({
-            start_date: startStr,
-            end_date: endStr,
-          });
-          // ASYNC: Persist to backend
-          try {
-            await storeCommitTripInputs({
-              start_date: startStr,
-              end_date: endStr,
-            });
-            closeSheet();
-
-            // Trigger itinerary rebuild if one exists
-            const hasItinerary =
-              (useDocumentStore.getState().document?.day_cards?.length ?? 0) > 0;
-            if (hasItinerary) {
-              proceedWithItineraryGeneration({ forceFullRebuild: true });
-            }
-          } catch {
-            addToast('Failed to save — please try again', 'error');
-          }
-        }}
-      />
-
-      <TravelersSheet
-        open={activeSheet === 'travelers'}
-        onOpenChange={(open) => !open && closeSheet()}
-        adults={tripInputs.adults ?? 1}
-        children={tripInputs.children ?? 0}
-        onSave={async (adults, children) => {
-          // SYNC: Update store immediately
-          storeUpdateTripInputs({ adults, children });
-          // ASYNC: Persist to backend
-          try {
-            await storeCommitTripInputs({ adults, children });
-            closeSheet();
-            const label = `${adults} adult${adults > 1 ? 's' : ''}${children > 0 ? `, ${children} child${children > 1 ? 'ren' : ''}` : ''}`;
-            addToast(`Travelers: ${label}`, 'confirmation');
-          } catch {
-            addToast('Failed to save — please try again', 'error');
-          }
-        }}
-      />
-
-      <BudgetSheet
-        open={activeSheet === 'budget'}
-        onOpenChange={(open) => !open && closeSheet()}
-        amount={tripInputs.budget ?? null}
-        currency={tripInputs.currency || 'USD'}
-        budgetType="total"
-        onSave={async (amount, currency) => {
-          // SYNC: Update store immediately
-          storeUpdateTripInputs({ budget: amount, currency });
-          // ASYNC: Persist to backend
-          try {
-            await storeCommitTripInputs({ budget: amount, currency });
-            closeSheet();
-            const formatted = new Intl.NumberFormat('en-US', {
-              style: 'currency',
-              currency,
-              maximumFractionDigits: 0,
-            }).format(amount);
-            addToast(`Budget: ${formatted}`, 'confirmation');
-          } catch {
-            addToast('Failed to save — please try again', 'error');
-          }
-        }}
-      />
-
-      {/* Activity settings sheet - opened from gear icons + Activities pill */}
-      <ActivitiesSheet
-        open={gearActivitiesSheetOpen || activeSheet === 'activities'}
-        onOpenChange={(open) => {
-          setGearActivitiesSheetOpen(open);
-          if (!open) closeSheet();
-        }}
-        enabled={true}
-        settings={tripInputs.activity_settings || { categories: [], skill_level: null }}
-        hasDestination={hasDestination}
-        onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
-        onSaveSettings={(settings) => {
-          handleUpdateActivitySettings(settings);
-          setGearActivitiesSheetOpen(false);
-          closeSheet();
-          addToast('Activity preferences saved', 'confirmation');
-          // Trigger plan regeneration if plan is active
-          const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
-            planViewState
-          );
-          if (isActive) {
-            chatPanelRef.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
-          }
-        }}
-      />
-
-      {/* Stays settings sheet - opened from gear icons on hotel/check-in blocks */}
-      <StaysSheet
-        open={gearStaysSheetOpen}
-        onOpenChange={setGearStaysSheetOpen}
-        enabled={true}
-        settings={tripInputs.hotel_settings || { min_stars: 0, amenities: [] }}
-        hasDestination={hasDestination}
-        hasDates={hasDates}
-        onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
-        onSaveSettings={async (settings) => {
-          try {
-            await storeCommitTripInputs({ hotel_settings: settings });
-            setGearStaysSheetOpen(false);
-            addToast('Hotel preferences saved', 'confirmation');
-          } catch {
-            addToast('Failed to save — please try again', 'error');
-          }
-        }}
-        onOpenDestination={() => openSheet('destination')}
-        onOpenDates={() => openSheet('dates')}
-      />
-
-      {/* Flights settings sheet - opened from gear icons on arrival/departure blocks */}
-      <FlightsSheet
-        open={gearFlightsSheetOpen}
-        onOpenChange={setGearFlightsSheetOpen}
-        enabled={true}
-        settings={
-          tripInputs.flight_settings || {
-            round_trip: true,
-            cabin_class: 'economy',
-            direct_only: false,
-          }
-        }
-        hasOrigin={hasOrigin}
-        hasDestination={hasDestination}
-        hasDates={hasDates}
-        onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
-        onSaveSettings={async (settings) => {
-          try {
-            await storeCommitTripInputs({ flight_settings: settings });
-            setGearFlightsSheetOpen(false);
-            addToast('Flight preferences saved', 'confirmation');
-          } catch {
-            addToast('Failed to save — please try again', 'error');
-          }
-        }}
-        onOpenOrigin={() => openSheet('origin')}
-        onOpenDestination={() => openSheet('destination')}
-        onOpenDates={() => openSheet('dates')}
-      />
-
-      {/* Trip settings relay sheet - opened from TripStatusBar pencil icon */}
-      <TripSettingsSheet
-        open={activeSheet === 'trip-settings'}
-        onOpenChange={(open) => !open && closeSheet()}
+      {/* Trip input sheets rendered as portals outside the main layout */}
+      <LandingSheets
         tripInputs={tripInputs}
-        onOpenSheet={openSheet}
+        hasDestination={hasDestination}
+        hasOrigin={hasOrigin}
+        hasDates={hasDates}
+        hasItinerary={hasItineraryContent}
+        planViewState={planViewState}
+        activeSheet={activeSheet}
+        gearActivitiesSheetOpen={gearActivitiesSheetOpen}
+        gearStaysSheetOpen={gearStaysSheetOpen}
+        gearFlightsSheetOpen={gearFlightsSheetOpen}
+        setGearActivitiesSheetOpen={setGearActivitiesSheetOpen}
+        setGearStaysSheetOpen={setGearStaysSheetOpen}
+        setGearFlightsSheetOpen={setGearFlightsSheetOpen}
+        closeSheet={closeSheet}
+        openSheet={openSheet}
+        addToast={addToast}
+        storeUpdateTripInputs={storeUpdateTripInputs}
+        storeCommitTripInputs={storeCommitTripInputs}
+        proceedWithItineraryGeneration={proceedWithItineraryGeneration}
+        handleUpdateActivitySettings={handleUpdateActivitySettings}
+        onSendMessage={handleSendMessage}
       />
     </>
   );

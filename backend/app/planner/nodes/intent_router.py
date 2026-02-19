@@ -16,7 +16,6 @@ import json
 import logging
 import random
 import re
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
@@ -59,23 +58,13 @@ logger = logging.getLogger(__name__)
 
 _gate_registry = GateRegistry()
 
-_SEASONAL_SUGGESTIONS: dict[str, list[str]] = {
-    "winter": ["Tokyo", "Dubai", "Bali", "Marrakech", "Buenos Aires"],
-    "spring": ["Paris", "Barcelona", "Kyoto", "Amsterdam", "Lisbon"],
-    "summer": ["Santorini", "Dubrovnik", "Reykjavik", "Amalfi Coast", "Bali"],
-    "fall": ["New York", "Seoul", "Rome", "Prague", "Patagonia"],
-}
-
-
-def _get_season() -> str:
-    month = datetime.now().month
-    if month in (12, 1, 2):
-        return "winter"
-    if month in (3, 4, 5):
-        return "spring"
-    if month in (6, 7, 8):
-        return "summer"
-    return "fall"
+_GREETING_SUGGESTIONS = [
+    "Where would you like to go?",
+    "Tell me about your dream trip",
+    "Beach, mountains, or city?",
+    "What kind of experience are you looking for?",
+    "Any destination on your bucket list?",
+]
 
 
 # Derived constant for suggestion prompts
@@ -1255,7 +1244,12 @@ End with: {ending}"""
 
     try:
         response = await llm.ainvoke([HumanMessage(content=prompt)])
-        return response.content
+        content = response.content
+        if isinstance(content, list):
+            return "".join(
+                c.get("text", str(c)) if isinstance(c, dict) else str(c) for c in content
+            )
+        return str(content)
     except Exception as e:
         logger.warning(f"LLM fallback failed for {destination}: {e}")
         # Generic safe response
@@ -1480,8 +1474,9 @@ async def _apply_origin_to_state(state: GraphState, detected_origin: str, _clog)
             f"Got it - I've set your departure city to **{detected_origin}**. "
             f"Where would you like to go?"
         )
-        pool = _SEASONAL_SUGGESTIONS[_get_season()]
-        state.suggested_replies = random.sample(pool, min(3, len(pool)))
+        state.suggested_replies = random.sample(
+            _GREETING_SUGGESTIONS, min(3, len(_GREETING_SUGGESTIONS))
+        )
 
         _debug_node_end("router", "🧭", intent="ORIGIN_ONLY_PLANNING", origin=detected_origin)
         return False  # Fall through

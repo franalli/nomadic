@@ -126,6 +126,8 @@ function TripStatusBarInner({
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
+        aria-label="Trip summary"
         className={cn(
           'w-full flex items-center gap-2 px-4 py-2',
           'text-left transition-colors',

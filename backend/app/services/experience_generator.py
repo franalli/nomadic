@@ -387,7 +387,9 @@ async def generate_single_category(
         max_tokens = min(600 + extra_tiles * 100, 1200)
 
         llm = get_llm_by_model(settings.experience_model, temperature=0.3, max_tokens=max_tokens)
-        structured_llm = llm.with_structured_output(ExperienceOutput, include_raw=True)
+        structured_llm = llm.with_structured_output(
+            ExperienceOutput, include_raw=True, method="function_calling"
+        )
 
         user_prompt = _build_user_prompt(
             destination, [category], month, budget, tier1_specialists, tiles_per_category
@@ -696,7 +698,9 @@ async def _generate_experiences_impl(
                 llm = get_llm_by_model(
                     settings.experience_model, temperature=0.3, max_tokens=max_tokens
                 )
-                structured_llm = llm.with_structured_output(ExperienceOutput, include_raw=True)
+                structured_llm = llm.with_structured_output(
+                    ExperienceOutput, include_raw=True, method="function_calling"
+                )
 
                 user_prompt = _build_user_prompt(
                     destination, new_cats, month, budget, tier1_specialists, tiles_per_category

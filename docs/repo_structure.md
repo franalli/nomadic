@@ -9,14 +9,7 @@ nomadic/
 ├── .claude/                    # Claude Code configuration
 │   ├── agents/                 # Specialist agent specs (backend, frontend, code-reviewer)
 │   └── commands/               # Custom slash commands (audit, verify-build, etc.)
-├── .codex/                     # Local Codex skills/config for project workflows
-│   └── skills/
-│       ├── nomadic-audit-code/
-│       ├── nomadic-clear-sprint/
-│       ├── nomadic-enforce-style/
-│       ├── nomadic-reassemble-docs/
-│       ├── nomadic-update-docs/
-│       └── nomadic-verify-build/
+├── .codex/                     # (deleted) Codex skills migrated to Claude Code `.claude/commands/`
 ├── .github/                    # GitHub workflows and instructions
 ├── .vscode/                    # VS Code settings
 ├── backend/                    # Python FastAPI backend
@@ -285,9 +278,12 @@ frontend/
 │   │
 │   ├── chat/                   # Chat interface components
 │   │   ├── ChatInputBar.tsx          # Desktop input capsule (extracted from ChatPanel)
+│   │   ├── ChatInputHandler.tsx      # Thin wrapper around ChatInputBar for ChatPanel integration
+│   │   ├── ChatMessageList.tsx       # Scrollable message list renderer (extracted from ChatPanel)
 │   │   ├── ChatMessageRenderer.tsx  # Individual message rendering (extracted from ChatPanel)
 │   │   ├── ChatPanel.tsx
 │   │   ├── ChatSkeleton.tsx
+│   │   ├── ChatSuggestionBar.tsx     # Thin wrapper around ChatSuggestionChips for ChatPanel integration
 │   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
 │   │   ├── HoldToDeleteButton.tsx
 │   │   ├── MobileChatInput.tsx
@@ -300,6 +296,8 @@ frontend/
 │   │
 │   ├── layout/                 # Layout components
 │   │   ├── FloatingBuildButton.tsx
+│   │   ├── LandingHelpers.ts         # Shared types and utilities for NomadicLanding (topic detection, field diffing)
+│   │   ├── LandingSheets.tsx         # Sheet rendering extracted from NomadicLanding
 │   │   ├── MobileModeHeader.tsx
 │   │   ├── MobileSwipeLayout.tsx
 │   │   ├── NomadicLanding.tsx
@@ -329,13 +327,20 @@ frontend/
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── NextStepBar.tsx
 │   │   ├── OriginPromptCard.tsx
+│   │   ├── PlanDensityViews.tsx            # Ghost, bridge, and mirror-loader density views
+│   │   ├── PlanFullDensityView.tsx         # Full-density view (map + specialists + timeline)
 │   │   ├── PlanHeader.tsx
+│   │   ├── PlanSpecialistsSection.tsx      # Specialists section for full-density view
+│   │   ├── PlanTimelineSection.tsx         # Timeline section with DnD wiring for full-density view
 │   │   ├── planStateHelpers.ts
+│   │   ├── StrategyConstraintBar.tsx       # Trip DNA constraint pill bar (validated/violated rules)
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
 │   │   ├── TimelineThread.tsx
 │   │   ├── TripHealthBar.tsx
 │   │   ├── TripSummaryPills.tsx
 │   │   ├── UnifiedChipRow.tsx
+│   │   ├── useBookingDrawerState.ts        # Booking drawer open/close + fill-day API hook
+│   │   ├── useStrategyStageOrchestration.ts # Heavy computation/state/effects for StrategyStageRenderer
 │   │   │
 │   │   ├── booking/
 │   │   │   ├── BookingDrawer.tsx
@@ -359,15 +364,32 @@ frontend/
 │   │   │   └── TripSettingsSheet.tsx
 │   │   │
 │   │   ├── stages/             # Stage-specific views
+│   │   │   ├── S2AgentCard.tsx           # Single agent card (collapsed strategy section card)
+│   │   │   ├── S2AgentCardExpanded.tsx   # Expanded agent card with travel intelligence
+│   │   │   ├── S2LocalIntelSection.tsx   # Local intel section within expanded agent card
+│   │   │   ├── S2StrategyStack.tsx       # Strategy card stack layout for S2 view
 │   │   │   ├── S2StrategyView.tsx
-│   │   │   └── StrategyHero.tsx
+│   │   │   ├── S2TopicConfig.tsx         # Topic configuration panel for S2 specialists
+│   │   │   ├── StrategyHero.tsx
+│   │   │   ├── StrategyHeroAccordion.tsx        # Accordion expansion for StrategyHero sections
+│   │   │   ├── StrategyHeroCompactSheet.tsx     # Compact sheet variant for StrategyHero
+│   │   │   ├── StrategyHeroHeroSheet.tsx        # Hero sheet variant for StrategyHero
+│   │   │   ├── StrategyHeroTISectionsA.tsx      # Travel intelligence sections (part A)
+│   │   │   ├── StrategyHeroTISectionsB.tsx      # Travel intelligence sections (part B)
+│   │   │   ├── StrategyHeroTravelIntelligence.tsx # Travel intelligence display component
+│   │   │   └── StrategyHeroUtils.tsx            # Shared utilities for StrategyHero components
 │   │   │
 │   │   ├── tiles/
 │   │   │   ├── BookableCard.tsx
 │   │   │   └── SuggestionCard.tsx
 │   │   │
 │   │   └── timeline/
+│   │       ├── DragPreviewCard.tsx     # Ghost card shown in DragOverlay during block drag
+│   │       ├── DraggableBlock.tsx      # useDraggable wrapper; locked blocks show Lock icon
+│   │       ├── DroppableDay.tsx        # useDroppable wrapper for activity days (two-div: hit area + highlight)
+│   │       ├── FreeDayDropSlot.tsx     # Drop zone inside FreeDayCard (via freeDayDropSlot render prop)
 │   │       ├── InlineDatePrompt.tsx
+│   │       ├── ItineraryDndWrapper.tsx # DndContext root; orchestrates validate/apply-arrangement flow
 │   │       ├── TimelineSkeleton.tsx
 │   │       └── blocks/
 │   │           ├── ActivityMiniCard.tsx
@@ -403,6 +425,7 @@ frontend/
 │
 ├── hooks/                      # Custom React hooks
 │   ├── useActionLoader.ts
+│   ├── useChatSse.ts             # SSE/streaming connection manager for ChatPanel (extracted from ChatPanel)
 │   ├── useDelayedLoader.ts
 │   ├── useIsDesktop.ts
 │   ├── usePreferenceAutoRegen.ts # Auto-triggers itinerary regen on heart changes
@@ -436,6 +459,7 @@ frontend/
 │   ├── summary.ts              # Summary utilities
 │   ├── tileSelectors.ts        # Tile selection logic
 │   ├── tileUtils.ts            # Tile utilities
+│   ├── popular-places.ts       # Static list of popular destination suggestions for landing input
 │   └── utils.ts                # General utilities (cn, etc.)
 │
 ├── public/
@@ -535,3 +559,4 @@ docs/
 2. **7-Node LangGraph** - Backend planner uses exactly 7 nodes (see `plan_graph_analysis.md`)
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
+5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. New deps: `@dnd-kit/core`, `@dnd-kit/utilities`.

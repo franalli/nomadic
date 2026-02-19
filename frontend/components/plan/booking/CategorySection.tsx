@@ -156,7 +156,7 @@ export function CategorySection({
             return (
               <div
                 key={tile.id}
-                className="relative group rounded-xl border bg-background p-4 hover:border-primary/50 hover:shadow-md transition-all cursor-pointer"
+                className="relative group rounded-xl border bg-background p-4 hover:border-primary/50 hover:shadow-soft transition-all cursor-pointer"
                 onClick={() => onTileClick?.(tile)}
               >
                 {/* Status badge - mode-aware */}

@@ -1,3 +1,5 @@
+'use client';
+
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 import { Check, Clock, Heart, MapPin, Moon, Settings, Sun, Sunset } from 'lucide-react';
 import {

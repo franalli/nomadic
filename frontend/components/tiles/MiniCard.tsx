@@ -1,3 +1,5 @@
+'use client';
+
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * MiniCard
@@ -291,7 +293,7 @@ export const MiniCard = memo(function MiniCard({
               'dark:hover:bg-white/8 dark:hover:border-white/20',
             ],
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-        isExpanded && 'ring-1 ring-primary/20'
+        isExpanded && 'ring-1 ring-emerald-500/20'
       )}
     >
       {/* Main content area */}

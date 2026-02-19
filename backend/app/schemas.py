@@ -584,6 +584,16 @@ class OpenDecision(BaseModel):
     is_blocking: bool = False  # If true, blocks Stage 3
 
 
+class ActiveConstraint(BaseModel):
+    """Rendered constraint badge attached to a day block."""
+
+    id: str
+    severity: str = "info"  # "info" | "warning" | "blocking"
+    icon: str = ""
+    title: str = ""
+    description: str = ""
+
+
 class DayBlock(BaseModel):
     """A single activity block within a day (Stage 3)."""
 
@@ -603,6 +613,7 @@ class DayBlock(BaseModel):
     # Specialist metadata
     specialist_type: Optional[str] = None  # "diving", "hiking", etc.
     constraints: List[str] = Field(default_factory=list)
+    active_constraints: List[ActiveConstraint] = Field(default_factory=list)
 
     # Rich content fields
     image_url: Optional[str] = None
@@ -862,6 +873,47 @@ class PlanDocumentPatch(BaseModel):
 # =============================================================================
 # Trip Input Validation
 # =============================================================================
+
+
+class BlockMove(BaseModel):
+    """A single block relocation within the itinerary."""
+
+    block_id: str
+    from_day: int
+    to_day: int
+    to_position: int = 0
+
+
+class ArrangementValidateRequest(BaseModel):
+    """Validate proposed block moves without persisting."""
+
+    moves: List[BlockMove]
+
+
+class ArrangementApplyRequest(BaseModel):
+    """Validate AND persist block moves."""
+
+    moves: List[BlockMove]
+    expected_version: int
+
+
+class BlockViolation(BaseModel):
+    """A constraint violation caused by a specific move."""
+
+    block_id: str
+    violation_code: str
+    severity: str  # "blocking" | "warning"
+    message: str
+    target_day: int
+
+
+class ArrangementResult(BaseModel):
+    """Response from validate or apply."""
+
+    valid: bool
+    violations: List[BlockViolation] = []
+    day_cards: Optional[List[Dict[str, Any]]] = None
+    version: Optional[int] = None
 
 
 class TripInputValidationRequest(BaseModel):

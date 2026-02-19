@@ -877,6 +877,11 @@ cat frontend/.env.example 2>/dev/null || cat frontend/.env.local.example 2>/dev/
 grep -rn 'os\.environ\[' backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
 grep -rn 'os\.getenv(' backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_ | grep -v ", "
 # (os.getenv without a second arg returns None — may cause downstream TypeError)
+
+# 6. Pydantic settings fields in config.py — each field maps to an env var that must be defined
+# Extract all field names from the Settings class (these are read automatically by pydantic-settings)
+grep -n "^\s\+[a-z_]\+\s*:" backend/app/config.py | grep -v __pycache__
+# Cross-reference: for each field, check if the corresponding env var (uppercased field name) is in .env
 ```
 
 Cross-reference and report:
@@ -887,6 +892,8 @@ Cross-reference and report:
 - **Read with `os.getenv()` without a default AND used without None-check** → **High** (silent `None` propagation)
 - **Frontend `process.env.NEXT_PUBLIC_*` used but not in `.env.local`** → **High** (will be `undefined`, may cause hydration mismatch or runtime error)
 - **Env vars in `.env.example` but not in actual `.env`/`.env.local`** → **Medium** (setup docs are stale)
+- **Pydantic `Settings` field in `config.py` with no default AND no matching entry in `.env`** → **Critical** (pydantic-settings raises `ValidationError` on startup if a required field has no env var and no default)
+- **Pydantic `Settings` field referencing a model name (e.g., `*_model`) with no `.env` entry** → **High** (LLM factory will receive `None` or the Pydantic default, silently using wrong model)
 - Do NOT read or report the actual VALUES of any env vars — only report variable names. Never print secrets.
 
 ### 3D: Alembic Migration Health

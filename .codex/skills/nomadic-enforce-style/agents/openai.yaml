@@ -1,4 +1,0 @@
-interface:
-  display_name: "Nomadic Enforce Style"
-  short_description: "Enforce design-system consistency across UI components"
-  default_prompt: "Audit and fix frontend components to match docs/design-system.md and DS tokens."

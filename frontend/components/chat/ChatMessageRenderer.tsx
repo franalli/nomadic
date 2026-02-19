@@ -241,7 +241,7 @@ export function ChatMessageRenderer({
                 'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all',
                 // Light Mode: Solid Black (The Commander)
                 'bg-zinc-900 text-white border border-zinc-900',
-                'shadow-md hover:shadow-lg hover:-translate-y-0.5',
+                'shadow-card hover:shadow-soft hover:-translate-y-0.5',
                 'hover:bg-zinc-800 hover:border-zinc-800',
                 // Dark Mode: Solid White (Maximum Contrast Signal)
                 'dark:bg-white dark:text-zinc-950 dark:border-white',
@@ -268,8 +268,8 @@ export function ChatMessageRenderer({
               // Light Mode: Glass effect
               'bg-white/80 backdrop-blur-sm',
               'border border-zinc-200',
-              'shadow-sm',
-              'hover:shadow-md hover:-translate-y-0.5',
+              'shadow-card',
+              'hover:shadow-soft hover:-translate-y-0.5',
               // Dark Mode: Dark Glass (The System/Infrastructure)
               'dark:bg-white/5 dark:backdrop-blur-sm',
               'dark:border-white/10',

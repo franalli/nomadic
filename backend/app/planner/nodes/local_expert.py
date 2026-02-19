@@ -281,7 +281,7 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                     settings.local_expert_model,
                     temperature=0.3,
                     max_retries=0,
-                    max_tokens=2000,
+                    max_tokens=4000,
                 )
                 log("LOCAL_EXPERT", f"Phase B: calling LLM ({settings.local_expert_model})...")
 

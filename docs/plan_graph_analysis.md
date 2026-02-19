@@ -347,7 +347,7 @@ The Router uses two distinct execution paths depending on whether a plan is alre
 
 **Post-plan fast path:** When `plan_is_active`, the LLM extraction call (`_classify_and_extract_with_llm()`, `max_tokens=700`) runs unconditionally. The `RouterOutput` includes 10 additional fields for modification/settings extraction (see schema below). Three shared state-mutation helpers then apply the results:
 
-1. `_apply_origin_to_state(state, origin, ...)` — sets `trip_plan.origin`, resolves IATA code; on `ORIGIN_ONLY_PLANNING` (origin detected but no destination), sets `state.suggested_replies` to 3 seasonally-sampled destinations from `_SEASONAL_SUGGESTIONS` (winter/spring/summer/fall pools) instead of the old static `["Paris", "Tokyo", "New York"]` list
+1. `_apply_origin_to_state(state, origin, ...)` — sets `trip_plan.origin`, resolves IATA code; on `ORIGIN_ONLY_PLANNING` (origin detected but no destination), sets `state.suggested_replies` to 3 randomly-sampled prompts from `_GREETING_SUGGESTIONS` (static list of generic open-ended travel prompts like "Where would you like to go?" — not seasonal or destination-specific)
 2. `_apply_settings_to_state(state, settings_dict)` — writes hotel/flight settings to `TripSettings`, sets `tier2_prefetch_intent="settings"` so logistics skips waiting on activity-prefetch tasks during settings-only turns
 3. `_apply_modifications_to_state(state, mods_dict)` — processes removals, skill level changes, budget/hotel resets; when Tier 2 categories are present, sets `tier2_prefetch_intent="activity"` and starts prefetch
 
@@ -917,7 +917,7 @@ else:
 
 **Experience Generator Service:** `backend/app/services/experience_generator.py`
 
-Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output with `include_raw=True` (`tiles_per_category` param, default 2). Token usage logged via `extract_token_usage()`. `LogisticsNode._compute_tiles_per_category()` scales the count based on placeable days (free days + co-schedulable specialist days): `clamp(total_placeable // num_categories, 2, 4)` where `free_days = trip_days − specialist_activity_days − 2` and `total_placeable = free_days + specialist_days`. Each tile includes title, subtitle, category, duration, price estimate, time of day, skill level, and description (one-sentence hook, e.g. "Traditional flow with rice paddy views"). Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
+Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output with `include_raw=True, method="function_calling"` (`tiles_per_category` param, default 2). Token usage logged via `extract_token_usage()`. `LogisticsNode._compute_tiles_per_category()` scales the count based on placeable days (free days + co-schedulable specialist days): `clamp(total_placeable // num_categories, 2, 4)` where `free_days = trip_days − specialist_activity_days − 2` and `total_placeable = free_days + specialist_days`. Each tile includes title, subtitle, category, duration, price estimate, time of day, skill level, and description (one-sentence hook, e.g. "Traditional flow with rice paddy views"). Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
 
 **Duration constraint:** System prompt enforces 1–4 hour single-session activities. Post-processing clamps `duration_hours > 4` to 4h to prevent multi-day retreats from being generated (e.g., "Bali Yoga Retreat" at 48h).
 
@@ -954,6 +954,21 @@ All other checks are registry-driven pure Python. Geographic and seasonal checks
 | Specialist      | Cross-domain blocks (declarative via registry)           | blocking |
 | Specialist      | Cross-domain from strategy sections (stateless fallback) | blocking |
 | Capacity        | Activity count > available days (registry-driven)        | blocking |
+
+**Arrangement Validation (Stage 13A — exported from constraint_guard.py):**
+
+Pure Python, no LLM, target <50ms. Used by `/api/document/validate-arrangement` and `/api/document/apply-arrangement`. Functions are not part of the graph node — they are standalone utilities called directly from `main.py`.
+
+| Function | Purpose |
+| --- | --- |
+| `validate_block_arrangement(day_cards, moves, trip_inputs)` | Entry point: checks locked blocks, then applies moves, then checks no-fly buffer, cross-domain adjacency, day capacity |
+| `_apply_moves_to_cards(day_cards, moves)` | Deep-copies cards and applies relocations; exported for use by apply endpoint |
+| `_arr_check_locked_blocks(day_cards, moves)` | `arrival`/`departure`/`check-in`/`check-out`/`is_buffer` blocks cannot be moved (blocking) |
+| `_arr_check_no_fly_buffer(rearranged, trip_inputs)` | No-fly specialist blocks must not fall within `buffer_hours // 24` days of departure (blocking) |
+| `_arr_check_cross_domain_adjacency(rearranged)` | Cross-domain adjacency violations from specialist registry (blocking) |
+| `_arr_check_day_capacity(rearranged, max_blocks=3)` | Target day exceeds 3 real activity blocks (warning) |
+
+Violation codes: `LOCKED_BLOCK`, `NO_FLY_BUFFER`, `CROSS_DOMAIN_BUFFER_REQUIRED`, `DAY_CAPACITY_EXCEEDED`.
 
 **Route After Guard (Auto-Fix DISABLED):**
 
@@ -1261,7 +1276,7 @@ Each specialist type has its own constraint generator:
 
 **Climbing Constraints:**
 
-- `altitude_acclimatization` (warning): Applied above 3000m elevation. Builder places the acclimatization buffer on the day before the first altitude-activity day (hiking/climbing/skiing blocks), not hardcoded to day 3. Fallback to day 3 if no altitude blocks are scheduled.
+- `altitude_acclimatization` (warning): Applied above 3000m elevation. Builder only inserts the buffer when the specialist LLM explicitly sets `requires_acclimatization=True` in constraint parameters (prevents false positives on sub-3000m destinations). Skipped entirely on cross-domain trips that include diving (the cross-domain rest day already provides the buffer). When triggered, places the buffer on the first free interior day before the first altitude-activity day (hiking/climbing/skiing blocks), sliding forward to avoid days already holding specialist blocks. Falls back to the first free interior day on the trip (≥4 days only — suppressed on 3-day trips).
 - `gear_inspection` (info): Applied to all climbing activities
 
 **Sailing Constraints:**
@@ -1286,7 +1301,7 @@ Each specialist type has its own constraint generator:
 | `avalanche_awareness` | warning | skiing | Off-piste/backcountry safety |
 | `advanced_terrain` | info | skiing | Black diamond skill level |
 | `tide_timing` | info | surfing | Check swell/tide forecast |
-| `altitude_acclimatization` | warning | climbing | Above 3000m elevation. Placed day before first altitude-activity (hiking/climbing/skiing), fallback to day 3 |
+| `altitude_acclimatization` | warning | climbing | Above 3000m elevation. Only fires when specialist sets `requires_acclimatization=True`. Skipped on cross-domain diving trips. Placed on first free interior day before first altitude-activity; fallback to first free interior day (≥4-day trips only) |
 | `gear_inspection` | info | climbing | Equipment safety check |
 | `weather_window` | info | sailing | Check weather conditions |
 | `guide_required` | info | wildlife_safari | Professional guide for game drives |

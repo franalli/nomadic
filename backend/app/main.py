@@ -75,9 +75,14 @@ from app.planner import (  # noqa: E402
 from app.planner.nodes.router_category_sync import has_explicit_category_intent  # noqa: E402
 from app.rate_limit import limiter as _shared_limiter  # noqa: E402
 from app.schemas import (  # noqa: E402
+    ArrangementApplyRequest,
+    ArrangementResult,
+    ArrangementValidateRequest,
+    BlockViolation,
     ChatHistoryResponse,
     ChatMessageResponse,
     DayBlock,
+    DayCard,
     DeleteLastMessageResponse,
     ExpandItineraryRequest,
     ExpandItineraryStreamEvent,
@@ -595,6 +600,15 @@ async def security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https://images.unsplash.com https://*.mapbox.com blob:; "
+        "connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:; "
+        "font-src 'self' data:; "
+        "frame-ancestors 'none'"
+    )
     return response
 
 
@@ -2276,6 +2290,107 @@ async def fill_day_endpoint(
         "tiles": {tile["id"]: tile for tile in tiles[:3]},
         "version": updated_doc.version,
     }
+
+
+# =============================================================================
+# Arrangement Validation / Apply Endpoints (Stage 13A)
+# =============================================================================
+
+
+@app.post("/api/document/validate-arrangement")
+@limiter.limit("60/minute")
+async def validate_arrangement(
+    request: Request,
+    body: ArrangementValidateRequest,
+    db: AsyncSession = async_db_dependency,
+) -> ArrangementResult:
+    """
+    Pure Python constraint check on proposed block moves.
+    Target: <50ms. No LLM, no graph execution.
+    """
+    from app.planner.nodes.constraint_guard import validate_block_arrangement
+
+    session_id = get_session_from_request(request)
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = await get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document")
+
+    doc_data = get_document_data(doc)
+    day_cards = [dc.model_dump() for dc in doc_data.day_cards]
+
+    if not day_cards:
+        raise HTTPException(status_code=400, detail="No itinerary to rearrange")
+
+    moves = [m.model_dump() for m in body.moves]
+    violations = validate_block_arrangement(day_cards, moves, doc_data.trip_inputs)
+
+    return ArrangementResult(
+        valid=len([v for v in violations if v["severity"] == "blocking"]) == 0,
+        violations=[BlockViolation(**v) for v in violations],
+    )
+
+
+@app.post("/api/document/apply-arrangement")
+@limiter.limit("30/minute")
+async def apply_arrangement(
+    request: Request,
+    body: ArrangementApplyRequest,
+    db: AsyncSession = async_db_dependency,
+) -> ArrangementResult:
+    """
+    Validate + persist block moves. Uses optimistic concurrency.
+    """
+    from app.crud_document import save_document_data
+    from app.planner.nodes.constraint_guard import (
+        _apply_moves_to_cards,
+        validate_block_arrangement,
+    )
+
+    session_id = get_session_from_request(request)
+    session_key = f"session:{session_id}"
+    await _wait_for_session_stream_idle(session_key)
+
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = await get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document")
+
+    if doc.version != body.expected_version:
+        raise HTTPException(status_code=409, detail="Version conflict — reload and retry")
+
+    doc_data = get_document_data(doc)
+    day_cards = [dc.model_dump() for dc in doc_data.day_cards]
+    moves = [m.model_dump() for m in body.moves]
+
+    # Validate first
+    violations = validate_block_arrangement(day_cards, moves, doc_data.trip_inputs)
+    blocking = [v for v in violations if v["severity"] == "blocking"]
+    if blocking:
+        return ArrangementResult(
+            valid=False,
+            violations=[BlockViolation(**v) for v in violations],
+        )
+
+    # Apply moves and persist
+    rearranged = _apply_moves_to_cards(day_cards, moves)
+    doc_data.day_cards = [DayCard(**dc) for dc in rearranged]
+    saved = await save_document_data(db, doc=doc, data=doc_data, updated_by="user")
+    await db.commit()
+
+    warnings = [v for v in violations if v["severity"] != "blocking"]
+    return ArrangementResult(
+        valid=True,
+        violations=[BlockViolation(**v) for v in warnings],
+        day_cards=[dc.model_dump() for dc in doc_data.day_cards],
+        version=saved.version,
+    )
 
 
 # =============================================================================
