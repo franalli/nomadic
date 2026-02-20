@@ -291,7 +291,7 @@ export const MiniCard = memo(function MiniCard({
               'dark:bg-white/5 dark:border-white/10',
               'dark:hover:bg-white/8 dark:hover:border-white/20',
             ],
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-offset-2',
         isExpanded && 'ring-1 ring-emerald-500/20'
       )}
     >
@@ -302,7 +302,7 @@ export const MiniCard = memo(function MiniCard({
           'relative flex-shrink-0 overflow-hidden',
           isFlight
             ? 'h-12 w-12 rounded-full bg-white flex items-center justify-center'
-            : 'h-16 w-16 rounded-md bg-muted'
+            : 'h-16 w-16 rounded-md bg-zinc-100 dark:bg-zinc-800'
         )}>
           <img
             src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}

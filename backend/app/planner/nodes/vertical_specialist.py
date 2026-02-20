@@ -1608,6 +1608,18 @@ async def _merge_specialist_into_state(
         content_added = content_added[:max_activities]
         log("SPECIALIST", f"Trimmed activities: {original_count} → {max_activities}")
 
+    # ENRICH: Ground activities with Google Places (real coords, photos, place_id)
+    if content_added and settings.use_google_places_provider:
+        try:
+            from app.tile_service.google_places_provider import enrich_activities_with_places
+
+            content_added = await enrich_activities_with_places(
+                content_added,
+                destination=state.trip_plan.destination or "",
+            )
+        except Exception as e:
+            _debug_log(f"[SPECIALIST] Places enrichment failed, using LLM data: {e}")
+
     # Determine hero_image
     hero_image = None
     if content_added:

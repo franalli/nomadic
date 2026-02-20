@@ -6,7 +6,7 @@ via a single gpt-4o-mini structured output call. Cached aggressively so cost is 
 after the first unique query.
 
 L1: In-memory TTLCache with RLock (1h TTL, 128 entries)
-L2: PostgreSQL response_cache (7d TTL) via ResponseCache table
+L2: PostgreSQL response_cache (72h TTL, env-configurable) via ResponseCache table
 
 Cache key format: experience::v2::{destination}::{sorted_categories}::{month}::n{count}
 
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 L1_TTL_SECONDS = 3600  # 1 hour
 L1_MAX_SIZE = 128
-L2_TTL_DAYS = 7
+L2_TTL_HOURS = settings.experience_cache_ttl_hours  # default 72h — env: EXPERIENCE_CACHE_TTL_HOURS
 
 # =============================================================================
 # L1: Thread-safe in-memory cache
@@ -191,10 +191,10 @@ async def _set_cached(db: AsyncSession, cache_key: str, output: list) -> None:
             cache_key=cache_key,
             cache_type="experience",
             response_json=output,
-            ttl=timedelta(days=L2_TTL_DAYS),
+            ttl=timedelta(hours=L2_TTL_HOURS),
         )
         _mem.increment_stat("writes")
-        exp = (datetime.now(UTC) + timedelta(days=L2_TTL_DAYS)).date()
+        exp = (datetime.now(UTC) + timedelta(hours=L2_TTL_HOURS)).date()
         logger.info(f"[EXPERIENCE_CACHE] Cached: {cache_key} (expires: {exp})")
     except Exception as e:
         logger.warning(f"[EXPERIENCE_CACHE] L2 write failed: {e}")
@@ -504,6 +504,19 @@ async def generate_experience_tiles_for_day(
         all_tiles.extend(result)
 
     all_tiles = all_tiles[:tiles_per_day]
+
+    # ENRICH: Ground fill-day tiles with Google Places
+    if all_tiles and settings.use_google_places_provider:
+        try:
+            from app.tile_service.google_places_provider import enrich_activities_with_places
+
+            all_tiles = await enrich_activities_with_places(
+                all_tiles,
+                destination=destination,
+            )
+        except Exception as e:
+            logger.warning("[EXPERIENCE] fill-day enrichment failed, using LLM data: %s", e)
+
     logger.info(f"[EXPERIENCE] fill-day: generated {len(all_tiles)} tiles for day {day_number}")
     return all_tiles
 
@@ -763,6 +776,18 @@ async def _generate_experiences_impl(
             logger.warning("[EXPERIENCE] Parallel generation returned 0 tiles")
             _set_tier2_generation_source(state, "llm")
             return []
+
+        # ENRICH: Ground tiles with Google Places (real coords, photos, place_id)
+        if settings.use_google_places_provider:
+            try:
+                from app.tile_service.google_places_provider import enrich_activities_with_places
+
+                new_tile_dicts = await enrich_activities_with_places(
+                    new_tile_dicts,
+                    destination=destination,
+                )
+            except Exception as e:
+                logger.warning("[EXPERIENCE] Places enrichment failed, using LLM data: %s", e)
 
         # Prefetch Unsplash images in background (non-blocking)
         async def _background_prefetch():

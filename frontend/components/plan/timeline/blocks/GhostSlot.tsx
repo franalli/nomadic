@@ -34,7 +34,7 @@ export function GhostSlot({ category, context, onSelect }: GhostSlotProps) {
       onClick={onSelect}
       className={cn(
         'w-full p-4 rounded-xl transition-all',
-        'border-2 border-dashed border-zinc-300 dark:border-zinc-700',
+        'border-2 border-dashed border-zinc-300 dark:border-white/10',
         'hover:border-emerald-500 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20',
         'group'
       )}

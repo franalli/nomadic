@@ -3,23 +3,43 @@
 # Usage: bash tests/run_curl_flows.sh
 
 set -euo pipefail
-API="http://localhost:8000/api/graph_plan"
+API="http://localhost:8000/api/graph_plan/stream"
 PASS=0
 FAIL=0
-TOTAL=5
+TOTAL=6
 COOKIE_JAR=$(mktemp)
 
-# Get session + CSRF cookies
-curl -s -c "$COOKIE_JAR" http://localhost:8000/health > /dev/null
+# Get session + CSRF cookies (must use /api/document — /health skips session middleware)
+curl -s -c "$COOKIE_JAR" http://localhost:8000/api/document > /dev/null
 CSRF=$(grep csrf "$COOKIE_JAR" | awk '{print $NF}')
 echo "Session established (csrf=${CSRF:0:8}...)"
 
 post() {
+  # SSE endpoint — capture full stream, extract the complete event's JSON payload
+  local tmpfile
+  tmpfile=$(mktemp)
   curl -s -X POST "$API" \
     -H "Content-Type: application/json" \
     -H "X-CSRF-Token: $CSRF" \
     -b "$COOKIE_JAR" \
-    -d "$1"
+    -c "$COOKIE_JAR" \
+    -d "$1" \
+    -o "$tmpfile"
+  # Extract the complete event data (SSE format: "data: {json}")
+  python3 -c "
+import json, sys
+with open('$tmpfile') as f:
+    for line in f:
+        if not line.startswith('data: '): continue
+        raw = line[6:].strip()
+        try:
+            obj = json.loads(raw)
+        except: continue
+        if obj.get('type') == 'complete':
+            print(json.dumps(obj.get('data', {})))
+            break
+" 2>/dev/null || echo '{}'
+  rm -f "$tmpfile"
 }
 
 check() {
@@ -240,6 +260,28 @@ assert ms >= 4, f'min_stars={ms}'
 " "$R5B" || F5_OK=false
 
 $F5_OK && PASS=$((PASS+1)) && echo "  ══ Flow 5 PASS ══" || echo "  ══ Flow 5 FAIL ══"
+
+# =============================================================================
+echo ""
+echo "═══ Flow 6: Bare destination — no errors ═══"
+R6=$(post '{"message":"Bali"}')
+
+echo "$R6" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print(f'  error={d.get(\"error\")}')
+print(f'  plan_view_state={d.get(\"document\",{}).get(\"plan_view_state\",\"?\")}')
+"
+F6_OK=true
+check "no error field" "
+assert d.get('error') is None, f'error={d.get(\"error\")}'
+" "$R6" || F6_OK=false
+
+check "valid JSON with document" "
+assert 'document' in d, 'missing document key'
+" "$R6" || F6_OK=false
+
+$F6_OK && PASS=$((PASS+1)) && echo "  ══ Flow 6 PASS ══" || echo "  ══ Flow 6 FAIL ══"
 
 # =============================================================================
 echo ""

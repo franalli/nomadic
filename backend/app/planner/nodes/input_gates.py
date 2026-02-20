@@ -234,12 +234,42 @@ class DestinationGate(InputGate):
         return None
 
 
+class MessageLengthGate(InputGate):
+    """Defense-in-depth gate for message length.
+
+    Currently a no-op placeholder: TripPlan has no `raw_user_message` field,
+    so `getattr` always returns None and this gate always passes.
+    The actual enforcement is the fast 422 check in main.py:graph_plan_stream_endpoint
+    (sourced from GATE_THRESHOLDS["max_user_message_chars"]).
+
+    If `raw_user_message` is ever plumbed onto TripPlan (e.g., set in intent_router.py
+    before _run_input_gates), this gate will activate automatically.
+    """
+
+    def evaluate(self, trip_plan, thresholds):
+        raw_msg = getattr(trip_plan, "raw_user_message", None)
+        if not raw_msg:
+            return None
+        max_len = thresholds.get("max_user_message_chars", 2000)
+        if len(raw_msg) > max_len:
+            return GateResult(
+                "MessageLengthGate",
+                "blocking",
+                "message_too_long",
+                f"Message too long ({len(raw_msg)} chars). Please keep it under {max_len} chars.",
+                suggested_action="Split your request into shorter messages.",
+                field="message",
+            )
+        return None
+
+
 _DEFAULT_GATES: List[InputGate] = [
     DateGate(),
     DurationGate(),
     TravelerGate(),
     BudgetGate(),
     DestinationGate(),
+    MessageLengthGate(),
 ]
 
 

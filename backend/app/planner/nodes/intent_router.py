@@ -16,6 +16,7 @@ import json
 import logging
 import random
 import re
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
@@ -369,25 +370,40 @@ class SuggestionPool:
     @staticmethod
     def get_pool() -> list[dict]:
         return [
-            # ── Missing destination (highest priority) ──
+            # ── Missing destination, trip_type IS set (needs destination, not type) ──
+            {
+                "template": "Help me choose a destination",
+                "source": "planning_signal",
+                "condition": lambda s: not s.trip_plan.destination and bool(s.trip_plan.trip_type),
+                "priority": 0,
+                "category": "destination_choice",
+            },
+            {
+                "template": "Surprise me!",
+                "source": "planning_signal",
+                "condition": lambda s: not s.trip_plan.destination and bool(s.trip_plan.trip_type),
+                "priority": 0,
+                "category": "destination_choice",
+            },
+            # ── Missing destination, NO trip_type yet (generic exploration) ──
             {
                 "template": "I want a beach vacation",
                 "source": "planning_signal",
-                "condition": lambda s: not s.trip_plan.destination,
+                "condition": lambda s: not s.trip_plan.destination and not s.trip_plan.trip_type,
                 "priority": 0,
                 "category": "destination_choice",
             },
             {
                 "template": "I want a mountain adventure",
                 "source": "planning_signal",
-                "condition": lambda s: not s.trip_plan.destination,
+                "condition": lambda s: not s.trip_plan.destination and not s.trip_plan.trip_type,
                 "priority": 0,
                 "category": "destination_choice",
             },
             {
                 "template": "I want a city break",
                 "source": "planning_signal",
-                "condition": lambda s: not s.trip_plan.destination,
+                "condition": lambda s: not s.trip_plan.destination and not s.trip_plan.trip_type,
                 "priority": 0,
                 "category": "destination_choice",
             },
@@ -1781,6 +1797,97 @@ def _run_input_gates(state: GraphState) -> bool:
 
 
 # =============================================================================
+# Relative Date Mutation — deterministic, no LLM
+# =============================================================================
+
+_RELATIVE_DATE_PATTERNS: list[tuple[str, str]] = [
+    # "extend by N days" / "add N more days" / "add N days"
+    (r"(?:extend|add)\s+(?:by\s+)?(\d+)\s+(?:more\s+)?days?", "extend_end"),
+    # "shorten by N days" / "cut N days" / "reduce by N days"
+    (r"(?:shorten|cut|reduce)\s+(?:by\s+)?(\d+)\s+days?", "shorten_end"),
+    # "make it N days longer"
+    (r"make\s+it\s+(\d+)\s+days?\s+longer", "extend_end"),
+    # "make it N days shorter"
+    (r"make\s+it\s+(\d+)\s+days?\s+shorter", "shorten_end"),
+    # "shorten to N days" / "make it N days" — set total duration from start_date
+    # Note: "shorten to N" does NOT match the shorten_end pattern above (no "by").
+    (r"(?:shorten\s+to|make\s+it)\s+(\d+)\s+days?(?:\s+(?:total|long))?", "set_duration"),
+]
+
+
+def _resolve_relative_date_mutation(state: "GraphState", user_text: str) -> bool:
+    """
+    Intercept relative date expressions and apply them via pure Python arithmetic.
+
+    Returns True if end_date was mutated (caller should set _post_plan_date_change).
+    Returns False if no pattern matched or required dates are missing.
+
+    Examples:
+        "extend by 10 days"  → end_date += 10 days
+        "shorten by 2 days"  → end_date -= 2 days
+        "make it 5 days"     → end_date = start_date + 4 days
+        "3 more days"        → end_date += 3 days
+    """
+    end_str = state.trip_plan.end_date
+    if not end_str:
+        return False
+
+    text_lower = user_text.lower().strip()
+
+    try:
+        end_dt = datetime.strptime(end_str, "%Y-%m-%d")
+    except ValueError:
+        return False
+
+    for pattern, action in _RELATIVE_DATE_PATTERNS:
+        m = re.search(pattern, text_lower)
+        if not m:
+            continue
+
+        n = int(m.group(1))
+
+        if action == "extend_end":
+            new_end = end_dt + timedelta(days=n)
+        elif action == "shorten_end":
+            new_end = end_dt - timedelta(days=n)
+            # Guard: don't shorten past start_date
+            start_str = state.trip_plan.start_date
+            if start_str:
+                try:
+                    start_dt = datetime.strptime(start_str, "%Y-%m-%d")
+                    if new_end < start_dt:
+                        return False
+                except ValueError:
+                    pass
+        elif action == "set_duration":
+            start_str = state.trip_plan.start_date
+            if not start_str:
+                return False
+            try:
+                start_dt = datetime.strptime(start_str, "%Y-%m-%d")
+            except ValueError:
+                return False
+            if n < 1:
+                return False
+            new_end = start_dt + timedelta(days=n - 1)
+        else:
+            continue
+
+        state.trip_plan.end_date = new_end.strftime("%Y-%m-%d")
+        # Recalculate duration
+        if state.trip_plan.start_date:
+            try:
+                start_dt = datetime.strptime(state.trip_plan.start_date, "%Y-%m-%d")
+                state.trip_plan.duration_days = (new_end - start_dt).days + 1
+            except ValueError:
+                pass
+        state.metadata.setdefault("turn_applied_fields", []).append("end_date")
+        return True
+
+    return False
+
+
+# =============================================================================
 # Node Function
 # =============================================================================
 
@@ -1834,6 +1941,7 @@ async def intent_router(state: GraphState) -> GraphState:
     state.metadata.pop("date_auto_adjustments", None)
     state.metadata.pop("turn_applied_fields", None)
     state.metadata.pop("prev_trip_values_snapshot", None)
+    state.metadata.pop("_post_plan_date_change", None)
 
     _debug_node_start(
         "router",
@@ -1887,6 +1995,20 @@ async def intent_router(state: GraphState) -> GraphState:
 
             log("ROUTER", f"🔮 Speculative Trigger Detected for {state.trip_plan.destination}")
 
+    # Snapshot dates before any mutation so _post_plan_date_change consumption
+    # at line ~2310 can compare old vs new regardless of plan_is_active state.
+    old_start = state.trip_plan.start_date
+    old_end = state.trip_plan.end_date
+
+    # ==========================================================================
+    # RELATIVE DATE MUTATION — deterministic, no LLM, works pre- and post-plan
+    # ==========================================================================
+    if _resolve_relative_date_mutation(state, user_text):
+        state.metadata["_post_plan_date_change"] = True
+        from app.debug_utils import log
+
+        log("ROUTER", f"[RELATIVE_DATE] end_date → {state.trip_plan.end_date}")
+
     # ==========================================================================
     # POST-PLAN FAST PATH: When plan is active (S2/S3), LLM extraction runs
     # first. Settings/modifications/origin are read from extraction output
@@ -1906,8 +2028,10 @@ async def intent_router(state: GraphState) -> GraphState:
             else:
                 state.metadata.pop("date_auto_adjustments", None)
 
-        old_start = state.trip_plan.start_date
-        old_end = state.trip_plan.end_date
+        # old_start / old_end defined above (pre-mutation snapshots for _post_plan_date_change).
+        # Capture post-mutation values here for LLM drift-guard below.
+        pre_llm_start = state.trip_plan.start_date
+        pre_llm_end = state.trip_plan.end_date
         old_origin = state.trip_plan.origin
 
         try:
@@ -1963,18 +2087,19 @@ async def intent_router(state: GraphState) -> GraphState:
             _sync_date_auto_adjustments()
 
             # Guard against LLM drifting a date the user didn't change.
-            # "Extend to Feb 22" should only change end_date, not start_date.
+            # Compare against pre_llm_* (post-deterministic-mutation) so that a
+            # deterministic "extend by N days" isn't reverted by this guard.
             text_lower = user_text.lower()
-            if old_start and state.trip_plan.start_date != old_start:
+            if pre_llm_start and state.trip_plan.start_date != pre_llm_start:
                 start_signals = ("start", "begin", "from ", "depart", "leave on", "move")
                 if not any(sig in text_lower for sig in start_signals):
-                    state.trip_plan.start_date = old_start
-                    log("ROUTER", f"[POST-PLAN] Reverted start date drift → {old_start}")
-            if old_end and state.trip_plan.end_date != old_end:
+                    state.trip_plan.start_date = pre_llm_start
+                    log("ROUTER", f"[POST-PLAN] Reverted start date drift → {pre_llm_start}")
+            if pre_llm_end and state.trip_plan.end_date != pre_llm_end:
                 end_signals = ("extend", "until", "end ", "through", "shorten", "move")
                 if not any(sig in text_lower for sig in end_signals):
-                    state.trip_plan.end_date = old_end
-                    log("ROUTER", f"[POST-PLAN] Reverted end date drift → {old_end}")
+                    state.trip_plan.end_date = pre_llm_end
+                    log("ROUTER", f"[POST-PLAN] Reverted end date drift → {pre_llm_end}")
 
             # Flag extraction BEFORE input gates — even if gates block,
             # the Architect should NOT re-extract the same message.
@@ -2169,6 +2294,23 @@ async def intent_router(state: GraphState) -> GraphState:
             log("ROUTER", f"[POST-PLAN] planning_intent from LLM: {llm_intent} → {planning_intent}")
         else:
             planning_intent = detect_planning_intent(user_text, state)
+
+        # ── Fix: Detect when user clicked a suggestion chip from the previous turn ──
+        # If user input matches a previous suggested_reply, they've confirmed a
+        # preference. Don't re-explore; escalate to soft_transition so we progress.
+        if planning_intent == "exploring":
+            prev_suggestions = state.metadata.get("last_suggested_replies", [])
+            user_lower = user_text.strip().lower()
+            matched_chip = any(
+                user_lower == s.strip().lower() for s in prev_suggestions if isinstance(s, str)
+            )
+            if matched_chip:
+                planning_intent = "soft_transition"
+                log(
+                    "ROUTER",
+                    f"[CHIP_CLICK] User clicked previous chip '{user_text}' "
+                    "— upgraded to soft_transition",
+                )
 
         # Pick up post-plan date change from fast path above
         if state.metadata.pop("_post_plan_date_change", False):
@@ -3032,15 +3174,38 @@ async def intent_router(state: GraphState) -> GraphState:
                 for t in state.metadata.get("requested_specialists", [])
                 if t in current_categories
             ]
-            # Clear persisted specialist constraints for pruned specialists
+            # D6: Clear persisted specialist constraints for pruned specialists
             # so constraint_guard doesn't merge stale constraints from removed categories.
             persisted_constraints = state.metadata.get("specialist_constraints", {})
             if persisted_constraints:
+                # Collect rules belonging to pruned specialists BEFORE filtering the dict,
+                # so we can also purge them from trip_plan.constraints below.
+                stale_rules: set[str] = set()
+                for removed_s in pruned:
+                    for cd in persisted_constraints.get(removed_s, []):
+                        rule = cd.get("rule", "")
+                        if rule:
+                            stale_rules.add(rule)
                 state.metadata["specialist_constraints"] = {
                     k: v
                     for k, v in persisted_constraints.items()
                     if k in ("general", "local_expert") or k in current_categories
                 }
+                # D6: Also purge already-merged constraints from trip_plan.constraints.
+                # Guards merge persisted constraints each turn; without this, removed
+                # specialists' constraints survive in trip_plan.constraints this turn.
+                if stale_rules and state.trip_plan.constraints:
+                    before_constraint_count = len(state.trip_plan.constraints)
+                    state.trip_plan.constraints = [
+                        c for c in state.trip_plan.constraints if c.rule not in stale_rules
+                    ]
+                    removed_count = before_constraint_count - len(state.trip_plan.constraints)
+                    if removed_count > 0:
+                        _log(
+                            "ROUTER",
+                            f"D6: Purged {removed_count} stale constraints"
+                            f" from trip_plan.constraints (rules: {stale_rules})",
+                        )
     # =========================================================================
 
     # Store all specialists in the pending queue (multi-specialist support)

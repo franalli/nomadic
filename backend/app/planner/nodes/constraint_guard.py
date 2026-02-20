@@ -1147,6 +1147,7 @@ def _arr_check_no_fly_buffer(rearranged: list[dict], trip_inputs: object) -> lis
         for block in dc.get("blocks", []):
             if _arr_block_has_nofly(block):
                 st = block.get("specialist_type", "")
+                activity_name = block.get("title") or block.get("activity_type") or st
                 buffer_hours = get_nofly_buffer_hours(st) or 24
                 buffer_days = buffer_hours // 24
                 if dc["day_number"] >= departure_day - buffer_days + 1:
@@ -1156,8 +1157,8 @@ def _arr_check_no_fly_buffer(rearranged: list[dict], trip_inputs: object) -> lis
                             "violation_code": "NO_FLY_BUFFER",
                             "severity": "blocking",
                             "message": (
-                                f"{st.title()} requires {buffer_hours}h before flying"
-                                " — move to an earlier day"
+                                f"'{activity_name}' on Day {dc['day_number']} is too close to"
+                                f" departure (Day {departure_day}) — needs {buffer_hours}h gap"
                             ),
                             "target_day": dc["day_number"],
                         }
@@ -1169,9 +1170,17 @@ def _arr_check_cross_domain_adjacency(rearranged: list[dict]) -> list[dict]:
     """Check cross-domain adjacency violations using specialist registry."""
     violations = []
     day_specialist_map: dict[int, set[str]] = {}
+    # Also track the actual block names per day for use in messages
+    day_block_names: dict[int, dict[str, str]] = {}  # day_num → {specialist_type → activity name}
     for dc in rearranged:
         types = {b.get("specialist_type") for b in dc.get("blocks", []) if b.get("specialist_type")}
         day_specialist_map[dc["day_number"]] = types
+        names: dict[str, str] = {}
+        for b in dc.get("blocks", []):
+            st = b.get("specialist_type")
+            if st and st not in names:
+                names[st] = b.get("title") or b.get("activity_type") or st
+        day_block_names[dc["day_number"]] = names
 
     for day_num, types in day_specialist_map.items():
         prev_types = day_specialist_map.get(day_num - 1, set())
@@ -1186,13 +1195,19 @@ def _arr_check_cross_domain_adjacency(rearranged: list[dict]) -> list[dict]:
                         for b in _arr_get_day(rearranged, day_num).get("blocks", [])
                         if b.get("specialist_type") == st
                     ]
+                    prev_activity = day_block_names.get(day_num - 1, {}).get(prev_st, prev_st)
                     for b in target_blocks:
+                        this_activity = b.get("title") or b.get("activity_type") or st
                         violations.append(
                             {
                                 "block_id": b.get("id", ""),
                                 "violation_code": "CROSS_DOMAIN_BUFFER_REQUIRED",
                                 "severity": "blocking",
-                                "message": (f"{st.title()} requires a buffer day after {prev_st}"),
+                                "message": (
+                                    f"'{prev_activity}' on Day {day_num - 1} needs a buffer day "
+                                    f"before {st.title()} on Day {day_num} — "
+                                    f"move '{this_activity}' to Day {day_num + 1} or later"
+                                ),
                                 "target_day": day_num,
                             }
                         )

@@ -45,7 +45,7 @@ export function InlineDatePrompt({
       <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-6 mb-6">
         <div className="flex items-center gap-2 mb-4">
           <CalendarDays className="h-5 w-5 text-emerald-500" />
-          <h3 className="font-medium text-foreground">When are you traveling?</h3>
+          <h3 className="font-medium text-zinc-900 dark:text-white">When are you traveling?</h3>
         </div>
         <button
           type="button"
@@ -64,12 +64,12 @@ export function InlineDatePrompt({
 
   // Has start date but no duration - show quick picks
   return (
-    <div className="bg-muted/30 border border-border rounded-xl p-6 mb-6">
+    <div className="bg-zinc-100/50 dark:bg-white/5 border border-zinc-200 dark:border-white/10 rounded-xl p-6 mb-6">
       <div className="flex items-center gap-2 mb-2">
-        <CalendarDays className="h-5 w-5 text-muted-foreground" />
-        <h3 className="font-medium text-foreground">How long is your trip?</h3>
+        <CalendarDays className="h-5 w-5 text-zinc-500 dark:text-zinc-400" />
+        <h3 className="font-medium text-zinc-900 dark:text-white">How long is your trip?</h3>
       </div>
-      <p className="text-sm text-muted-foreground mb-4">
+      <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
         Set trip length to generate your day-by-day itinerary
       </p>
 
@@ -82,8 +82,9 @@ export function InlineDatePrompt({
             onClick={() => onSelectNights(nights)}
             className={cn(
               'py-2 px-3 rounded-lg text-sm font-medium',
-              'bg-card border border-border',
+              'bg-white dark:bg-white/5 border-2 border-zinc-200 dark:border-white/15',
               'hover:border-emerald-500/50 hover:bg-emerald-500/5',
+              'text-zinc-700 dark:text-zinc-300',
               'transition-colors'
             )}
           >
@@ -96,7 +97,7 @@ export function InlineDatePrompt({
       <button
         type="button"
         onClick={onOpenDatePicker}
-        className="text-sm text-primary hover:underline"
+        className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
       >
         Or pick specific dates
       </button>

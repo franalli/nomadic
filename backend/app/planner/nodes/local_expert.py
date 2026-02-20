@@ -309,7 +309,16 @@ Output as JSON with "constraints" and "recommendations" arrays."""
 
                 token_usage = extract_token_usage(raw, model=settings.local_expert_model)
                 if token_usage:
-                    log("LOCAL_EXPERT", f"Phase B: token usage: {token_usage}")
+                    from app.debug_utils import calculate_llm_cost
+
+                    _p = token_usage.get("prompt_tokens", 0)
+                    _c = token_usage.get("completion_tokens", 0)
+                    _cost = calculate_llm_cost(settings.local_expert_model, _p, _c)
+                    log(
+                        "LOCAL_EXPERT",
+                        f"Phase B: p={_p} c={_c} tot={_p + _c} "
+                        f"${_cost:.4f} ({settings.local_expert_model})",
+                    )
 
                 if _session_id:
                     await _persist_travel_intelligence(_session_id, response)

@@ -28,6 +28,18 @@ import type { Tile } from '@/types/tile';
 
 type EnvelopeUpdate = Partial<PlanDocumentData> & { generation?: GenerationState };
 
+// =============================================================================
+// Undo Stack (Stage 18A)
+// =============================================================================
+
+export interface UndoEntry {
+  type: 'drag_move' | 'remove_block' | 'fill_day';
+  label: string;
+  previousDayCards: DayCard[];
+  previousVersion: number;
+  timestamp: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Default Settings
 // NOTE: These values MUST match backend/app/schemas.py defaults.
@@ -550,6 +562,11 @@ type DocumentState = {
   // Remove a single block from the itinerary (hold-to-delete)
   removeBlock: (blockId: string, dayNumber: number) => Promise<void>;
 
+  // Undo stack (depth-1 — single ephemeral entry)
+  undoEntry: UndoEntry | null;
+  setUndoEntry: (entry: UndoEntry | null) => void;
+  executeUndo: () => Promise<void>;
+
   // Shadow of the last trip_inputs successfully PATCH-ed to the backend.
   // commitTripInputs compares against this instead of live zustand state,
   // because updateTripInputs already mutates zustand before commitTripInputs runs.
@@ -668,6 +685,8 @@ const initialState = {
   _fillingDays: new Set<number>(),
   // General mutation mutex
   _pendingMutations: 0,
+  // Undo stack (ephemeral — depth 1)
+  undoEntry: null as UndoEntry | null,
   // Shadow of last backend-confirmed trip_inputs (used by filterNoopTripInputPatch)
   _lastPatchedTripInputs: null as DocumentTripInputs | null,
   // Cart state
@@ -1563,7 +1582,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const prevViewState = currentDoc?.plan_view_state;
     const newViewState = response.document.plan_view_state;
     const currentDayCards = currentDoc?.day_cards ?? [];
-    const hasDayCards = currentDayCards.length > 0;
+    const graphSentCards = response.document.day_cards;
+
+    // Detect backend staleness signal: explicit empty array sent while stale cards exist in store.
+    // Backend sends [] only when specialist coverage changed (streaming.py staleness check).
+    // A benign chat response carries the existing DB cards (non-empty), never fires spuriously.
+    const backendClearedCards =
+      Array.isArray(graphSentCards) && graphSentCards.length === 0 && currentDayCards.length > 0;
+
+    // When backend explicitly cleared cards, don't count stale cards for downgrade protection
+    const hasDayCards = backendClearedCards ? false : currentDayCards.length > 0;
 
     // GUARD: Never downgrade view state when itinerary exists
     // EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept
@@ -1674,14 +1702,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // The graph builds day_cards on every turn via ItineraryBuilder.
     // Graph is the authority — always use its cards when present.
     // Only preserve existing cards when graph sent nothing (lightweight routes).
-    const graphSentCards = response.document.day_cards;
-    const hasGraphSentCards = graphSentCards && graphSentCards.length > 0;
+    // backendClearedCards (declared above) detects explicit staleness signal from backend.
+    const hasGraphSentCards = Array.isArray(graphSentCards) && graphSentCards.length > 0;
     const finalDayCards = hasGraphSentCards
       ? graphSentCards
-      : (datesChanged ? [] : (currentDayCards ?? []));
+      : backendClearedCards
+        ? []  // Backend explicitly cleared — force empty to trigger expand-itinerary
+        : (datesChanged ? [] : (currentDayCards ?? []));
 
     if (hasGraphSentCards) {
       debugLog(`[documentStore.setFromPlanResponse] 📅 Day cards: FROM GRAPH (${graphSentCards.length} cards)`);
+    } else if (backendClearedCards) {
+      debugLog('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (backend staleness signal)');
     } else if (datesChanged) {
       debugLog('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (dates changed, no graph cards)');
     } else if (hasDayCards) {
@@ -2282,6 +2314,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   removeBlock: async (blockId: string, dayNumber: number) => {
     const store = get();
+    // Snapshot BEFORE mutation (for undo)
+    const snapshot = structuredClone(store.document?.day_cards ?? []) as DayCard[];
+    const prevVersion = store.version;
+    // Find block summary for undo label
+    const targetBlock = store.document?.day_cards
+      ?.find(dc => dc.day_number === dayNumber)
+      ?.blocks.find(b => b.id === blockId);
+    const blockLabel = targetBlock?.summary ?? 'block';
+
     store.claimMutation();
     try {
       const res = await apiFetch('/api/document/remove-block', {
@@ -2289,7 +2330,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         body: JSON.stringify({
           block_id: blockId,
           day_number: dayNumber,
-          expected_version: store.version,
+          expected_version: prevVersion,
         }),
       });
       if (res.status === 409) throw new Error('VERSION_CONFLICT');
@@ -2302,6 +2343,52 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       );
       set({
         document: { ...doc, day_cards: dayCards },
+        version: result.version,
+        undoEntry: {
+          type: 'remove_block',
+          label: `Removed ${blockLabel}`,
+          previousDayCards: snapshot,
+          previousVersion: prevVersion,
+          timestamp: Date.now(),
+        },
+      });
+    } finally {
+      store.releaseMutation();
+    }
+  },
+
+  setUndoEntry: (entry) => set({ undoEntry: entry }),
+
+  executeUndo: async () => {
+    const { undoEntry, document } = get();
+    if (!undoEntry || !document) return;
+
+    // Clear immediately to prevent double-undo
+    set({ undoEntry: null });
+
+    const store = get();
+    store.claimMutation();
+    try {
+      const res = await apiFetch('/api/document/restore-snapshot', {
+        method: 'POST',
+        body: JSON.stringify({
+          day_cards: undoEntry.previousDayCards,
+          expected_version: get().version,
+        }),
+      });
+
+      if (res.status === 409) {
+        // Version conflict — plan was modified by another operation; undo silently no-ops
+        return;
+      }
+
+      if (!res.ok) throw new Error(`restore-snapshot failed: ${res.status}`);
+
+      const result = await res.json();
+      const currentDoc = get().document;
+      if (!currentDoc) return;
+      set({
+        document: { ...currentDoc, day_cards: result.day_cards },
         version: result.version,
       });
     } finally {

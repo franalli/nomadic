@@ -266,7 +266,7 @@ export function S2StrategyView({
       {onRefineAssumptions && (
         <button
           onClick={onRefineAssumptions}
-          className="w-full py-2 px-4 rounded-lg text-sm text-muted-foreground hover:text-card-foreground hover:bg-muted transition-colors"
+          className="w-full py-2 px-4 rounded-lg text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/5 transition-colors"
         >
           Refine assumptions
         </button>

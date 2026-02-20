@@ -49,37 +49,30 @@ def _get_providers(ctx: SearchContext) -> List[Provider]:
     Decide which providers to call based on the context.
 
     Provider routing strategy (consistent with logistics_node):
-    1. Curated destinations (Dubai, Rome, Chamonix) → CuratedProvider (4K images, prices)
-    2. Non-curated + Amadeus enabled → AmadeusProvider for hotels (real names, placeholder images)
+    1. Google Places enabled → GooglePlacesProvider (real names + photos, overrides Amadeus)
+    2. Amadeus enabled → AmadeusProvider for hotels (real names, placeholder images)
     3. Fallback → MockProviders
 
     @see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
     """
     providers: List[Provider] = []
-    dest_key = (ctx.destination or "").lower().strip()
 
-    # 1. CURATED FIRST - Hero destinations with perfect demo content
-    if settings.use_demo_curation:
-        from app.data.demo_curation import DEMO_MANIFEST
+    # 1. GOOGLE PLACES FIRST - Real hotel and activity names with photos (overrides Amadeus)
+    if settings.use_google_places_provider:
+        _debug(f"[PROVIDER] Using GooglePlaces for hotels/activities: {ctx.destination}")
+        from .google_places_provider import GooglePlacesActivityProvider, GooglePlacesHotelProvider
 
-        if dest_key in DEMO_MANIFEST:
-            from .curated_provider import CuratedProvider
-
-            _debug(f"[PROVIDER] Using CuratedProvider for hero destination: {dest_key}")
-
-            # CuratedProvider handles hotels and activities
-            curated = CuratedProvider(dest_key)
-            providers.append(curated)
-
-            # Add mock flights (CuratedProvider doesn't handle flights)
-            if "flight" in ctx.verticals or not ctx.verticals:
-                providers.append(MockFlightProvider())
-
-            return providers
+        if "hotel" in ctx.verticals or not ctx.verticals:
+            providers.append(GooglePlacesHotelProvider())
+        if "flight" in ctx.verticals or not ctx.verticals:
+            providers.append(MockFlightProvider())
+        if "activity" in ctx.verticals or not ctx.verticals:
+            providers.append(GooglePlacesActivityProvider())
+        return providers
 
     # 2. AMADEUS SECOND - Real hotel names with placeholder images
     if settings.use_amadeus_provider:
-        _debug(f"[PROVIDER] Using Amadeus for hotels: {dest_key}")
+        _debug(f"[PROVIDER] Using Amadeus for hotels: {ctx.destination}")
 
         if "hotel" in ctx.verticals or not ctx.verticals:
             from .amadeus_provider import AmadeusHotelProvider
@@ -95,7 +88,7 @@ def _get_providers(ctx: SearchContext) -> List[Provider]:
         return providers
 
     # 3. MOCK FALLBACK - Development/offline mode
-    _debug(f"[PROVIDER] Using MockProviders for: {dest_key}")
+    _debug(f"[PROVIDER] Using MockProviders for: {ctx.destination}")
 
     if "hotel" in ctx.verticals or not ctx.verticals:
         providers.append(MockHotelProvider())
@@ -128,6 +121,17 @@ def search_tiles(req: TilesSearchRequest) -> TilesSearchResponse:
             continue
 
         all_tiles.extend(tiles)
+
+    # If Google Places was used but returned no hotels/activities, fall back to mock
+    if settings.use_google_places_provider:
+        hotel_tiles = [t for t in all_tiles if t.type == "hotel"]
+        activity_tiles = [t for t in all_tiles if t.type == "activity"]
+        if not hotel_tiles and ("hotel" in ctx.verticals or not ctx.verticals):
+            _debug("[PROVIDER] GooglePlaces returned 0 hotels — falling back to mock")
+            all_tiles.extend(MockHotelProvider().search(ctx))
+        if not activity_tiles and ("activity" in ctx.verticals or not ctx.verticals):
+            _debug("[PROVIDER] GooglePlaces returned 0 activities — falling back to mock")
+            all_tiles.extend(MockActivityProvider().search(ctx))
 
     request_id = uuid.uuid4().hex
 

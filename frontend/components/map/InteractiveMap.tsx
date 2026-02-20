@@ -3,7 +3,12 @@
 
 import 'mapbox-gl/dist/mapbox-gl.css';
 
-import { Bed, Camera, Landmark, MapPin, Mountain, Plane, Utensils, Waves } from 'lucide-react';
+import {
+  Anchor, Bed, Bike, Binoculars, Camera, Church, Compass, Dumbbell,
+  Flower2, Landmark,   type LucideIcon,
+MapPin, Mountain, Music, Palmtree, Plane, ShoppingBag,
+  Snowflake, Sunset, Utensils, Waves, Wind,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MapboxMap, { type ErrorEvent, Layer, type MapRef, Marker, NavigationControl, Source } from 'react-map-gl/mapbox';
 
@@ -61,60 +66,59 @@ interface InteractiveMapProps {
 }
 
 // =============================================================================
-// Icon Helpers
+// Pin Config — exact-key lookup (no fragile string matching)
 // =============================================================================
 
-function getMarkerIcon(type: string) {
-  const lowerType = type.toLowerCase();
-
-  if (lowerType.includes('flight') || lowerType.includes('arrival') || lowerType.includes('departure')) {
-    return Plane;
-  }
-  if (lowerType.includes('hotel') || lowerType.includes('stay') || lowerType.includes('accommodation')) {
-    return Bed;
-  }
-  if (lowerType === 'diving' || lowerType.includes('dive') || lowerType.includes('snorkel') || lowerType.includes('water')) {
-    return Waves;
-  }
-  if (lowerType === 'hiking' || lowerType.includes('hike') || lowerType.includes('trek') || lowerType.includes('mountain')) {
-    return Mountain;
-  }
-  if (lowerType.includes('temple') || lowerType.includes('shrine') || lowerType.includes('landmark')) {
-    return Landmark;
-  }
-  if (lowerType.includes('food') || lowerType.includes('restaurant') || lowerType.includes('dining')) {
-    return Utensils;
-  }
-  if (lowerType.includes('tour') || lowerType.includes('sightseeing')) {
-    return Camera;
-  }
-
-  return MapPin;
+interface PinConfig {
+  icon: LucideIcon;
+  color: string; // hex color — use style={{ backgroundColor }} to avoid Tailwind JIT purge
 }
 
-function getMarkerColor(type: string): string {
-  const lowerType = type.toLowerCase();
+/**
+ * Pin icon + color per activity/specialist type.
+ * Keys match backend `specialist_type` and `activity_type` values exactly.
+ * Tier 1 = specialist types (specialist_registry.py)
+ * Tier 2 = general activity categories (experience_generator)
+ * Colors are hex (not Tailwind classes) so they survive JIT tree-shaking.
+ */
+const PIN_CONFIG: Record<string, PinConfig> = {
+  // ── Tier 1: Specialist types ──
+  diving:          { icon: Waves,       color: '#0ea5e9' }, // sky-500
+  hiking:          { icon: Mountain,    color: '#10b981' }, // emerald-500
+  skiing:          { icon: Snowflake,   color: '#3b82f6' }, // blue-500
+  cycling:         { icon: Bike,        color: '#84cc16' }, // lime-500
+  surfing:         { icon: Wind,        color: '#6366f1' }, // indigo-500
+  sailing:         { icon: Anchor,      color: '#06b6d4' }, // cyan-500
+  climbing:        { icon: Compass,     color: '#f97316' }, // orange-500
+  wildlife_safari: { icon: Binoculars,  color: '#f59e0b' }, // amber-500
+  // ── Tier 2: General activity categories ──
+  yoga:            { icon: Flower2,     color: '#a855f7' }, // purple-500
+  wellness:        { icon: Dumbbell,    color: '#8b5cf6' }, // violet-500
+  nightlife:       { icon: Music,       color: '#d946ef' }, // fuchsia-500
+  cooking:         { icon: Utensils,    color: '#ec4899' }, // pink-500
+  culture:         { icon: Church,      color: '#f43f5e' }, // rose-500
+  temples:         { icon: Landmark,    color: '#fb7185' }, // rose-400
+  food:            { icon: Utensils,    color: '#ef4444' }, // red-500
+  beach:           { icon: Palmtree,    color: '#34d399' }, // emerald-400
+  shopping:        { icon: ShoppingBag, color: '#f472b6' }, // pink-400
+  sightseeing:     { icon: Camera,      color: '#38bdf8' }, // sky-400
+  photography:     { icon: Camera,      color: '#7dd3fc' }, // sky-300
+  relaxation:      { icon: Sunset,      color: '#fbbf24' }, // amber-400
+  // ── Logistics ──
+  flight:          { icon: Plane,       color: '#60a5fa' }, // blue-400
+  arrival:         { icon: Plane,       color: '#60a5fa' }, // blue-400
+  departure:       { icon: Plane,       color: '#60a5fa' }, // blue-400
+  hotel:           { icon: Bed,         color: '#71717a' }, // zinc-500
+  accommodation:   { icon: Bed,         color: '#71717a' }, // zinc-500
+  stay:            { icon: Bed,         color: '#71717a' }, // zinc-500
+  'check-in':      { icon: Bed,         color: '#71717a' }, // zinc-500
+  'check-out':     { icon: Bed,         color: '#71717a' }, // zinc-500
+};
 
-  // Specialist activity types (mirrors frontend/lib/specialists.ts colors)
-  if (lowerType === 'diving' || lowerType.includes('dive')) return 'bg-sky-500';
-  if (lowerType === 'hiking' || lowerType.includes('hike')) return 'bg-emerald-500';
-  if (lowerType === 'surfing' || lowerType.includes('surf')) return 'bg-indigo-500';
-  if (lowerType === 'skiing' || lowerType.includes('ski')) return 'bg-blue-500';
-  if (lowerType === 'cycling' || lowerType.includes('cycl') || lowerType.includes('bike')) return 'bg-lime-500';
-  if (lowerType === 'sailing' || lowerType === 'boating' || lowerType.includes('sail')) return 'bg-cyan-500';
-  if (lowerType === 'climbing' || lowerType.includes('climb')) return 'bg-orange-500';
-  if (lowerType === 'wildlife_safari' || lowerType.includes('safari')) return 'bg-amber-500';
-  // Tier 2 categories
-  if (lowerType === 'yoga' || lowerType === 'wellness') return 'bg-violet-500';
-  if (lowerType === 'cooking') return 'bg-pink-500';
-  if (lowerType === 'nightlife') return 'bg-fuchsia-500';
-  // Logistics / other
-  if (lowerType.includes('hotel') || lowerType.includes('stay')) return 'bg-purple-500';
-  if (lowerType.includes('flight')) return 'bg-slate-500';
-  if (lowerType.includes('temple')) return 'bg-rose-500';
-  if (lowerType.includes('food')) return 'bg-pink-500';
+const DEFAULT_PIN: PinConfig = { icon: MapPin, color: '#a1a1aa' }; // zinc-400
 
-  return 'bg-emerald-500';
+function getPinConfig(type: string): PinConfig {
+  return PIN_CONFIG[type] ?? PIN_CONFIG[type.toLowerCase()] ?? DEFAULT_PIN;
 }
 
 function normalizeMapCoordinates(
@@ -169,7 +173,9 @@ export function InteractiveMap({
 }: InteractiveMapProps) {
   const isDesktop = useIsDesktop();
   const mapRef = useRef<MapRef>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
   const isMountedRef = useRef(true);
+  const lastClickRef = useRef<number>(0);
   const [isMapReady, setIsMapReady] = useState(false);
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
 
@@ -256,10 +262,10 @@ export function InteractiveMap({
         ],
         {
           padding: isDesktop
-            ? { top: 40, bottom: 40, left: 40, right: 40 }
-            : { top: 20, bottom: 20, left: 20, right: 20 },
-          maxZoom: 12,
-          minZoom: 7,
+            ? { top: 60, bottom: 60, left: 60, right: 60 }
+            : { top: 30, bottom: 30, left: 30, right: 30 },
+          maxZoom: 8,
+          minZoom: 5,
           duration: 1000,
         }
       );
@@ -275,9 +281,9 @@ export function InteractiveMap({
     try {
       mapRef.current.flyTo({
         center: [item.coordinates.lng, item.coordinates.lat],
-        zoom: 13,
-        pitch: 45,
-        duration: 2000,
+        zoom: 9,
+        pitch: 30,
+        duration: 1500,
       });
     } catch {
       // Silently ignore flyTo errors during unmount
@@ -294,6 +300,45 @@ export function InteractiveMap({
     }
   }, [activeItemId, normalizedItems, flyToItem, isMapReady]);
 
+  // Track whether the user is currently panning/zooming the map
+  const isUserInteractingRef = useRef(false);
+
+  // Day-center fly-to: when highlighted day changes (from timeline scroll),
+  // fly to the geographic center of that day's pins.
+  // Skipped when the user is actively interacting with the map.
+  useEffect(() => {
+    if (highlightedDay == null || !mapRef.current || !isMapReady) return;
+    if (isUserInteractingRef.current) return;
+
+    const dayPins = normalizedItems.filter((i) => i.dayNumber === highlightedDay);
+    if (dayPins.length === 0) return;
+
+    const avgLat = dayPins.reduce((s, p) => s + p.coordinates.lat, 0) / dayPins.length;
+    const avgLng = dayPins.reduce((s, p) => s + p.coordinates.lng, 0) / dayPins.length;
+
+    try {
+      mapRef.current.flyTo({
+        center: [avgLng, avgLat],
+        zoom: dayPins.length === 1 ? 9 : 7,
+        duration: 1200,
+        essential: true,
+      });
+    } catch {
+      // Silently ignore flyTo errors during unmount
+    }
+  }, [highlightedDay, normalizedItems, isMapReady]);
+
+  // ResizeObserver: tell Mapbox to remeasure when the container changes size
+  // (e.g. layout column width changes, panel expand/collapse)
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+    const observer = new ResizeObserver(() => {
+      mapRef.current?.resize();
+    });
+    observer.observe(mapContainerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   // Check if Mapbox token is available
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
@@ -301,9 +346,9 @@ export function InteractiveMap({
     return (
       <div className={cn('w-full h-full rounded-xl overflow-hidden border border-white/10 bg-zinc-900 flex items-center justify-center', className)}>
         <div className="text-center p-6">
-          <MapPin className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">Interactive Map</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">
+          <MapPin className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
+          <p className="text-sm text-zinc-400">Interactive Map</p>
+          <p className="text-xs text-zinc-500 mt-1">
             Configure NEXT_PUBLIC_MAPBOX_TOKEN to enable
           </p>
         </div>
@@ -317,7 +362,7 @@ export function InteractiveMap({
     : normalizedItems;
 
   return (
-    <div className={cn('w-full h-full rounded-xl overflow-hidden border border-zinc-200 dark:border-white/10', className)}>
+    <div ref={mapContainerRef} className={cn('w-full h-full rounded-xl overflow-hidden border border-zinc-200 dark:border-white/10', className)}>
       <MapboxMap
         ref={mapRef}
         initialViewState={{
@@ -334,6 +379,11 @@ export function InteractiveMap({
         attributionControl={showAttribution}
         onError={handleMapError}
         onLoad={handleMapLoad}
+        onMoveStart={() => {
+          isUserInteractingRef.current = true;
+          setHoveredItemId(null); // clear stale tooltip when map pans
+        }}
+        onMoveEnd={() => { isUserInteractingRef.current = false; }}
         // Reuse maps to prevent recreation issues
         reuseMaps
       >
@@ -364,10 +414,11 @@ export function InteractiveMap({
 
         {filteredItems.map((item) => {
           const isActive = item.id === activeItemId;
-          const MarkerIcon = getMarkerIcon(item.type);
-          const markerColor = isActive ? 'bg-emerald-500' : getMarkerColor(item.type);
+          const pin = getPinConfig(item.type);
+          const MarkerIcon = pin.icon;
+          const markerBg = isActive ? '#10b981' : pin.color; // emerald-500 when active
           const isDimmed =
-            highlightedDay !== null &&
+            highlightedDay != null &&
             item.dayNumber !== undefined &&
             item.dayNumber !== highlightedDay;
           const isSpecialistPoi = item.source === 'specialist';
@@ -380,7 +431,12 @@ export function InteractiveMap({
               longitude={item.coordinates.lng}
               latitude={item.coordinates.lat}
               anchor="bottom"
-              onClick={() => onMarkerClick?.(item.id)}
+              onClick={() => {
+                const now = Date.now();
+                if (now - lastClickRef.current < 500) return;
+                lastClickRef.current = now;
+                onMarkerClick?.(item.id);
+              }}
               style={
                 isActive
                   ? MARKER_Z_INDEX_STYLE.active
@@ -405,11 +461,10 @@ export function InteractiveMap({
                 <div
                   className={cn(
                     'flex items-center justify-center rounded-full shadow-xl border-2 transition-all',
-                    isActive
-                      ? 'w-10 h-10 bg-emerald-500 border-white'
-                      : `w-8 h-8 ${markerColor} border-white/80`,
+                    isActive ? 'w-10 h-10 border-white' : 'w-8 h-8 border-white/80',
                     isDimmed && 'grayscale'
                   )}
+                  style={{ backgroundColor: markerBg }}
                 >
                   <MarkerIcon
                     className="text-white"

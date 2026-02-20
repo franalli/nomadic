@@ -72,7 +72,9 @@ class DeleteLastMessageResponse(BaseModel):
     messages: List[ChatMessageResponse]  # Remaining messages after deletion
 
 
-TileProvider = Literal["expedia", "booking", "unknown"]
+TileProvider = Literal[
+    "expedia", "booking", "google_places", "amadeus", "curated", "mock", "unknown"
+]
 
 
 class Tile(BaseModel):
@@ -923,6 +925,20 @@ class RemoveBlockResponse(BaseModel):
     day_card: Dict[str, Any]
     version: int
     removed_block_id: str
+
+
+class RestoreSnapshotRequest(BaseModel):
+    """Restore day_cards to a previous snapshot (undo stack)."""
+
+    day_cards: List[Dict[str, Any]]
+    expected_version: int  # optimistic concurrency
+
+
+class RestoreSnapshotResponse(BaseModel):
+    """Response from restore-snapshot."""
+
+    day_cards: List[Dict[str, Any]]
+    version: int
 
 
 class TripInputValidationRequest(BaseModel):

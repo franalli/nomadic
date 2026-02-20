@@ -10,7 +10,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -207,51 +207,57 @@ class TestResponseCacheStats:
 
 
 class TestClearResponseCaches:
-    """Tests for clear_response_caches() async cache clearing."""
+    """Tests for clear_response_caches() — clears L1 in-memory caches only.
+
+    L2 (PostgreSQL) is intentionally NOT cleared on session reset; entries
+    expire via TTL. Only L1 clear functions are called.
+    """
 
     @pytest.mark.asyncio
-    async def test_returns_sum_of_l1_and_l2(self):
-        """Mock both L1 experience cache and L2 DB deletion."""
-        mock_db_session = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.rowcount = 5
-        mock_db_session.execute = AsyncMock(return_value=mock_result)
-        mock_db_session.commit = AsyncMock()
-
-        mock_factory = MagicMock(return_value=mock_db_session)
-        # AsyncContextManager protocol
-        mock_db_session.__aenter__ = AsyncMock(return_value=mock_db_session)
-        mock_db_session.__aexit__ = AsyncMock(return_value=False)
+    async def test_returns_sum_of_all_l1_clears(self):
+        """All four L1 caches are cleared; their counts are summed."""
+        mock_feasibility = MagicMock()
+        mock_feasibility.clear = MagicMock(return_value=4)
 
         with (
             patch(
                 "app.services.experience_generator.clear_experience_cache",
                 return_value=3,
-            ) as mock_l1,
+            ) as mock_exp,
             patch(
-                "app.db._get_async_session_factory",
-                return_value=mock_factory,
+                "app.services.specialist_cache.clear_memory_cache",
+                return_value=2,
+            ) as mock_spec,
+            patch(
+                "app.services.tile_cache.clear_memory_cache",
+                return_value=1,
+            ) as mock_tile,
+            patch(
+                "app.planner.services.feasibility_service._feasibility_cache",
+                mock_feasibility,
             ),
         ):
             result = await clear_response_caches()
-            assert result == 8  # 3 (L1) + 5 (L2)
-            mock_l1.assert_called_once()
+            assert result == 10  # 3 + 2 + 1 + 4
+            mock_exp.assert_called_once()
+            mock_spec.assert_called_once()
+            mock_tile.assert_called_once()
+            mock_feasibility.clear.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_returns_l1_only_on_db_error(self):
-        """When DB fails, should still return L1 count."""
+    async def test_does_not_touch_l2_database(self):
+        """L2 (PostgreSQL) must not be accessed during session reset."""
         with (
-            patch(
-                "app.services.experience_generator.clear_experience_cache",
-                return_value=2,
-            ),
-            patch(
-                "app.db._get_async_session_factory",
-                side_effect=Exception("DB unavailable"),
-            ),
+            patch("app.services.experience_generator.clear_experience_cache", return_value=0),
+            patch("app.services.specialist_cache.clear_memory_cache", return_value=0),
+            patch("app.services.tile_cache.clear_memory_cache", return_value=0),
+            patch("app.planner.services.feasibility_service._feasibility_cache") as mock_feas,
+            patch("app.db._get_async_session_factory") as mock_factory,
         ):
+            mock_feas.clear.return_value = 0
             result = await clear_response_caches()
-            assert result == 2
+            assert result == 0
+            mock_factory.assert_not_called()
 
 
 class TestClearCheckpoints:

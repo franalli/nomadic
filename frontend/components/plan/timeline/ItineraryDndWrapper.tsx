@@ -14,7 +14,9 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
+import { useUndoStack } from '@/hooks/useUndoStack';
 import { applyArrangement, validateArrangement } from '@/lib/api';
+import { showMutationToast } from '@/lib/showMutationToast';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DayBlock } from '@/types/plan-envelope';
 
@@ -38,6 +40,8 @@ export function ItineraryDndWrapper({ children }: ItineraryDndWrapperProps) {
   const [_violations, setViolations] = useState<BlockViolation[]>([]);
   const violationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { toast } = useToast();
+  // Mount for auto-expire side-effect only (clears undoEntry after 8s)
+  useUndoStack();
 
   useEffect(() => {
     return () => {
@@ -94,6 +98,12 @@ export function ItineraryDndWrapper({ children }: ItineraryDndWrapperProps) {
     const move = { block_id: blockId, from_day: fromDay, to_day: toDay };
 
     const store = useDocumentStore.getState();
+    // Snapshot BEFORE apply (for undo)
+    const snapshot = structuredClone(store.document?.day_cards ?? []) as import('@/types/plan-envelope').DayCard[];
+    const prevVersion = store.version;
+    // active.data.current.block is set in handleDragStart before setActiveBlock(null)
+    const blockSummary = (active.data.current?.block as DayBlock | undefined)?.summary ?? 'block';
+
     store.claimMutation();
     try {
       // Step 1: Validate
@@ -122,7 +132,18 @@ export function ItineraryDndWrapper({ children }: ItineraryDndWrapperProps) {
         useDocumentStore.setState({ version: applied.version });
       }
 
-      // Show warnings as toast (non-blocking — move succeeded)
+      // Set undo entry and show toast with Undo CTA
+      const undoLabel = `Moved ${blockSummary} to Day ${toDay}`;
+      useDocumentStore.getState().setUndoEntry({
+        type: 'drag_move',
+        label: undoLabel,
+        previousDayCards: snapshot,
+        previousVersion: prevVersion,
+        timestamp: Date.now(),
+      });
+      showMutationToast(undoLabel, toast);
+
+      // Show warnings as additional toast (non-blocking — move succeeded)
       const warnings = applied.violations?.filter(v => v.severity === 'warning') ?? [];
       if (warnings.length > 0) {
         toast(warnings[0].message, { type: 'warning', duration: 4000 });

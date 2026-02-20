@@ -586,6 +586,34 @@ async def generate_sse(
                             DayCard(**dc) if isinstance(dc, dict) else dc
                             for dc in graph_day_cards_raw
                         ]
+                    elif (
+                        graph_doc.get("strategy_sections")
+                        and document_data
+                        and document_data.day_cards
+                    ):
+                        # Strategy changed but no new itinerary built — check for specialist coverage mismatch.
+                        # If the strategy_sections no longer match the day_cards (specialist added or removed),
+                        # clear stale cards by passing day_card_objs=[] (explicit empty vs None which is no-op).
+                        _graph_strat_topics: set[str] = set()
+                        for _s in graph_doc.get("strategy_sections", []):
+                            _st = (
+                                _s.get("specialist_type")
+                                if isinstance(_s, dict)
+                                else _s.specialist_type
+                            )
+                            if _st and _st not in ("local_expert", "general"):
+                                _graph_strat_topics.add(_st)
+                        _existing_dc_topics: set[str] = set()
+                        for _dc in document_data.day_cards:
+                            for _b in _dc.blocks:
+                                if _b.specialist_type:
+                                    _existing_dc_topics.add(_b.specialist_type)
+                        if _graph_strat_topics != _existing_dc_topics:
+                            _debug(
+                                f"[streaming] Stale day_cards in DB: strategy={_graph_strat_topics}, "
+                                f"day_cards={_existing_dc_topics} — clearing for DB persistence"
+                            )
+                            day_card_objs = []  # Explicit empty list clears DB; None would be a no-op
 
                     updated_doc = await apply_planner_update(
                         db,
@@ -635,7 +663,15 @@ async def generate_sse(
                     if _entry is not None:
                         _enrich_fn, _created_at = _entry
                         if _time.monotonic() - _created_at < _ENRICHMENT_TTL_SECONDS:
-                            _enrich_task = asyncio.create_task(_enrich_fn())
+                            # Wrap in tracing_context(enabled=False) so this post-graph
+                            # background LLM call doesn't create an orphan LangSmith trace.
+                            from langsmith.run_helpers import tracing_context
+
+                            async def _enrich_no_trace(fn=_enrich_fn):
+                                with tracing_context(enabled=False):
+                                    await fn()
+
+                            _enrich_task = asyncio.create_task(_enrich_no_trace())
                             _track_bg_task(_enrich_task)
                             logger.debug("[SSE] Phase B: enrichment task fired")
                         else:
@@ -833,6 +869,28 @@ async def generate_sse(
                     graph_day_cards,
                     graph_document.get("constraint_violations", []),
                 )
+            elif graph_strategy_sections and response_document.day_cards:
+                # Strategy changed but no new itinerary built — check specialist coverage mismatch.
+                # Covers both additive (cycling added) and subtractive (cycling removed) changes.
+                # Clearing stale cards forces the frontend expand gate to fire expand-itinerary.
+                _resp_strat_topics = {
+                    s.specialist_type
+                    for s in response_document.strategy_sections
+                    if s.specialist_type and s.specialist_type not in ("local_expert", "general")
+                }
+                _resp_dc_topics: set[str] = set()
+                for _dc in response_document.day_cards:
+                    for _b in _dc.blocks:
+                        if _b.specialist_type:
+                            _resp_dc_topics.add(_b.specialist_type)
+                if _resp_strat_topics != _resp_dc_topics:
+                    _debug(
+                        f"[streaming] Stale day_cards in SSE response: strategy={_resp_strat_topics}, "
+                        f"day_cards={_resp_dc_topics} — clearing to trigger expand-itinerary"
+                    )
+                    response_document.day_cards = []
+                    # Downgrade view state so frontend expand gate recognizes strategy-only state
+                    response_document.plan_view_state = "S2_STRATEGY_READY"
 
             # Copy suggestions from graph document (unfiltered by validator)
             # The validator strips question marks but synthesizer chips are curated
@@ -856,7 +914,7 @@ async def generate_sse(
             _debug(
                 f"[MAIN.PY] Graph output: plan_view_state={response_document.plan_view_state}, "
                 f"strategy_sections={len(response_document.strategy_sections or [])}, "
-                f"tiles={len(response_document.tiles or {{}})}, "
+                f"tiles={len(response_document.tiles or {})}, "
                 f"day_cards={len(response_document.day_cards or [])}"
             )
 

@@ -42,7 +42,6 @@ import { ChatMessageList } from './ChatMessageList';
 import { type VisibleMessage } from './ChatMessageRenderer';
 import { ChatModuleSheets } from './ChatModuleSheets';
 import { ChatSuggestionBar } from './ChatSuggestionBar';
-import { MobileSetupCollapsedHeader } from './MobileSetupCollapsedHeader';
 import { type ActiveStatus, SmartLoader } from './SmartLoader';
 
 // Helper to fix escaped characters from backend
@@ -374,119 +373,57 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       <div
         ref={panelRef}
         className={cn(
-          'text-foreground flex min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-transparent p-4',
+          'text-zinc-900 dark:text-white flex min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-transparent p-4',
           panelHeightClass,
           !isDesktop && 'pb-1',
         )}
       >
-        {/* ── DESKTOP: Persistent status header (all states) ── */}
-        {isDesktop && (() => {
+        {/* ── DESKTOP: Status bar — shrink-0 header for non-bootstrap states ── */}
+        {isDesktop && !isBootstrap(planViewState) && (() => {
           const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, dateRange);
           return (
             <AnimatePresence mode="wait">
-              {isBootstrap(planViewState) ? (
-                isSetupHeaderCollapsed ? (
-                  <MobileSetupCollapsedHeader
-                    key="collapsed-header"
-                    tripInputs={tripInputs}
-                    dateRange={dateRange}
-                    onExpand={() => {
-                      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                  />
-                ) : (
-                  <motion.div
-                    key="hero-banner"
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    transition={{ duration: 0.2, ease: 'easeOut' }}
-                    className="relative -mx-4 -mt-4 mb-0 w-[calc(100%+2rem)] overflow-hidden border-b border-border/30"
-                  >
-                    <div
-                      className="absolute inset-0 animate-topo-drift topo-contour-mask-350 opacity-[0.12] dark:opacity-[0.08]"
-                    >
-                      <div className="absolute inset-0 bg-black dark:bg-white" />
-                    </div>
-                    <div className="relative z-10 flex flex-col items-center justify-center text-center px-4 py-6">
-                      <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
-                        {status.text}
-                      </h1>
-                      <div className="mt-1.5 flex items-center gap-1.5">
-                        <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
-                          {status.label}
-                        </span>
-                        <div className={`w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:${DS.glowClass.cursor}`} />
-                      </div>
-                    </div>
-                  </motion.div>
-                )
-              ) : (
-                <motion.div
-                  key="status-bar"
-                  initial={{ opacity: 0, y: -20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 0.2, ease: 'easeOut' }}
-                  className={cn(
-                    'z-40 shrink-0',
-                    '-mx-4 -mt-4 mb-2',
-                    'w-[calc(100%+2rem)]',
-                    'h-14 px-4',
-                    'bg-white dark:bg-zinc-900',
-                    'border-b border-zinc-200 dark:border-white/5',
-                    'flex items-center',
+              <motion.div
+                key="status-bar"
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className={cn(
+                  'z-40 shrink-0',
+                  '-mx-4 -mt-4 mb-2',
+                  'w-[calc(100%+2rem)]',
+                  'h-14 px-4',
+                  'bg-white dark:bg-zinc-900',
+                  'border-b border-zinc-200 dark:border-white/5',
+                  'flex items-center',
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  {status.indicator === 'spin' ? (
+                    <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />
+                  ) : status.indicator === 'check' ? (
+                    <Check className="w-3 h-3 text-emerald-500" />
+                  ) : (
+                    <div className={cn(
+                      'w-2 h-2 rounded-full bg-emerald-500',
+                      status.indicator === 'pulse' && 'animate-pulse',
+                    )} />
                   )}
-                >
-                  <div className="flex items-center gap-2">
-                    {status.indicator === 'spin' ? (
-                      <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />
-                    ) : status.indicator === 'check' ? (
-                      <Check className="w-3 h-3 text-emerald-500" />
-                    ) : (
-                      <div className={cn(
-                        'w-2 h-2 rounded-full bg-emerald-500',
-                        status.indicator === 'pulse' && 'animate-pulse',
-                      )} />
-                    )}
-                    <span className="text-sm font-semibold text-zinc-900 dark:text-white">
-                      {status.text}
-                    </span>
-                    <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-500 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
-                      {status.label}
-                    </span>
-                  </div>
-                </motion.div>
-              )}
+                  <span className="text-sm font-semibold text-zinc-900 dark:text-white">
+                    {status.text}
+                  </span>
+                  <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-500 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
+                    {status.label}
+                  </span>
+                </div>
+              </motion.div>
             </AnimatePresence>
           );
         })()}
 
-        {/* ── DESKTOP: Unified Chip Row (S0 only) ── */}
-        {isDesktop && isBootstrap(planViewState) && !isSetupHeaderCollapsed && (
-          <UnifiedChipRow
-            destination={destination}
-            origin={origin}
-            dateRange={dateRange}
-            travelers={tripInputs?.adults ? `${tripInputs.adults} adult${tripInputs.adults > 1 ? 's' : ''}${tripInputs.children ? `, ${tripInputs.children} child${tripInputs.children > 1 ? 'ren' : ''}` : ''}` : undefined}
-            budget={budget}
-            bookingTypes={bookingTypes || DEFAULT_BOOKING_TYPES}
-            flightSettings={flightSettings}
-            hotelSettings={hotelSettings}
-            activitySettings={activitySettings}
-            onOpenDestination={() => onOpenSheet?.('destination')}
-            onOpenOrigin={() => onOpenSheet?.('origin')}
-            onOpenDates={() => onOpenSheet?.('dates')}
-            onOpenTravelers={() => onOpenSheet?.('travelers')}
-            onOpenBudget={() => onOpenSheet?.('budget')}
-            onOpenFlights={() => setFlightsSheetOpen(true)}
-            onOpenStays={() => setStaysSheetOpen(true)}
-            onOpenActivities={() => setActivitiesSheetOpen(true)}
-            destinationLocked={!!destination}
-          />
-        )}
-
         {/* ── Scrollable message list ── */}
+        {/* Bootstrap hero + chips are passed as scrollHeaderContent so they scroll with messages */}
         <ChatMessageList
           scrollContainerRef={scrollContainerRef}
           bottomSentinelRef={bottomSentinelRef}
@@ -499,10 +436,53 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onRetry={chatSend.sendMessageCore}
           isDesktop={isDesktop}
           planViewState={planViewState}
+          isLanding={isDesktop && (isBootstrap(planViewState) || isFraming(planViewState))}
+          scrollHeaderContent={isDesktop && isBootstrap(planViewState) && !isSetupHeaderCollapsed ? (() => {
+            const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, dateRange);
+            return (
+              <>
+                {/* Hero banner — scrolls up as messages arrive */}
+                <div className="flex flex-col items-center justify-center text-center px-4 pb-4">
+                  <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                    {status.text}
+                  </h1>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-emerald-600 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
+                      {status.label}
+                    </span>
+                    <div className={`w-1 h-1.5 bg-emerald-600 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:${DS.glowClass.cursor}`} />
+                  </div>
+                </div>
+                {/* Unified Chip Row — scrolls with hero */}
+                <UnifiedChipRow
+                  destination={destination}
+                  origin={origin}
+                  dateRange={dateRange}
+                  travelers={tripInputs?.adults ? `${tripInputs.adults} adult${tripInputs.adults > 1 ? 's' : ''}${tripInputs.children ? `, ${tripInputs.children} child${tripInputs.children > 1 ? 'ren' : ''}` : ''}` : undefined}
+                  budget={budget}
+                  bookingTypes={bookingTypes || DEFAULT_BOOKING_TYPES}
+                  flightSettings={flightSettings}
+                  hotelSettings={hotelSettings}
+                  activitySettings={activitySettings}
+                  onOpenDestination={() => onOpenSheet?.('destination')}
+                  onOpenOrigin={() => onOpenSheet?.('origin')}
+                  onOpenDates={() => onOpenSheet?.('dates')}
+                  onOpenTravelers={() => onOpenSheet?.('travelers')}
+                  onOpenBudget={() => onOpenSheet?.('budget')}
+                  onOpenFlights={() => setFlightsSheetOpen(true)}
+                  onOpenStays={() => setStaysSheetOpen(true)}
+                  onOpenActivities={() => setActivitiesSheetOpen(true)}
+                  destinationLocked={!!destination}
+                />
+                {/* Divider between setup controls and conversation */}
+                <div className="w-2/3 mx-auto border-t border-zinc-200/50 dark:border-white/10 mt-6 mb-4" />
+              </>
+            );
+          })() : undefined}
         />
 
         {/* Input area with suggestions — pinned below scroll container */}
-        <div className="shrink-0 space-y-4 pb-0">
+        <div className="shrink-0 space-y-4 pb-0 relative z-20">
           {/* Smart Loader: Status line above input - DS Section 19.C */}
           {chatSend.isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
             <SmartLoader status={activeStatus} />

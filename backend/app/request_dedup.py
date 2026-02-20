@@ -23,3 +23,26 @@ async def check_idempotency(key: str | None) -> bool:
             return True
         _idempotency_cache[key] = True
         return False
+
+
+# Per-session expand-itinerary mutex: 1 in-flight per session
+# TTLCache auto-expires after 120s so a crashed generator can't permanently lock a session.
+# Single-process only (same caveat as idempotency cache above).
+_expand_in_flight: TTLCache = TTLCache(maxsize=200, ttl=120)
+_expand_lock = asyncio.Lock()
+
+
+async def acquire_expand_slot(session_id: str) -> bool:
+    """Try to acquire the expand-itinerary slot for this session.
+    Returns True if acquired (proceed), False if already in-flight (reject)."""
+    async with _expand_lock:
+        if session_id in _expand_in_flight:
+            return False
+        _expand_in_flight[session_id] = True
+        return True
+
+
+async def release_expand_slot(session_id: str) -> None:
+    """Release the expand-itinerary slot for this session."""
+    async with _expand_lock:
+        _expand_in_flight.pop(session_id, None)

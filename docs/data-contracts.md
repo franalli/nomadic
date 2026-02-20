@@ -31,6 +31,7 @@
 | POST   | `/api/document/validate-arrangement` | Pure Python constraint check on proposed block moves (<50ms, no LLM) | `ArrangementValidateRequest{moves: BlockMove[]}` | `ArrangementResult{valid, violations: BlockViolation[]}` |
 | POST   | `/api/document/apply-arrangement` | Validate + persist block moves with optimistic concurrency | `ArrangementApplyRequest{moves: BlockMove[], expected_version: int}` | `ArrangementResult{valid, violations, day_cards?, version?}` |
 | POST   | `/api/document/remove-block` | Remove a single block from the itinerary (pure Python, <10ms, no LLM) | `RemoveBlockRequest{block_id, day_number, expected_version}` | `RemoveBlockResponse{day_number, day_card, version, removed_block_id}` |
+| POST   | `/api/document/restore-snapshot` | Restore day_cards to a previous snapshot (undo stack; pure Python, <10ms, no LLM) | `RestoreSnapshotRequest{day_cards, expected_version}` | `RestoreSnapshotResponse{day_cards, version}` |
 
 ### Documents (Plan State)
 
@@ -100,18 +101,47 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests are
 | **Medium**               | `validate-trip-input`, `destination-image`, `tiles/refresh`                                                              | 15/min                                          |
 | **Medium-Low**           | `document/fill-day`                                                                                                      | 30/min                                          |
 | **Light**                | `document` (GET+PATCH), `document/tiles/{branch_id}`, `chat`, `chat/last`, `session`, `tiles/click`, `document/validate-arrangement` | 60/min                                          |
-| **Low-write**            | `document/apply-arrangement`, `document/remove-block`                                                                    | 30/min                                          |
+| **Low-write**            | `document/apply-arrangement`, `document/remove-block`, `document/restore-snapshot`                                       | 30/min (restore-snapshot: 20/min)               |
 | **Admin**                | `/api/admin/*`                                                                                                           | 10/min (+ `X-Admin-Key` required)               |
+
+**Message-length fast 422:** `/api/graph_plan/stream` performs a message-length check BEFORE any DB work or rate-limit accounting. Messages exceeding `GATE_THRESHOLDS["max_user_message_chars"]` (2000 chars) receive an immediate HTTP 422 with a descriptive error. This short-circuits expensive downstream processing for oversized inputs.
 
 ### Security Middleware
 
 - **Body size limit:** 512KB max (`Content-Length` check before Pydantic parsing)
 - **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security: max-age=63072000; includeSubDomains`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
 - **Backend CSP:** `Content-Security-Policy` header set on every response — `default-src 'self'`, `script-src 'self' 'unsafe-inline'` (+ `'unsafe-eval'` in dev/local/test only for Next.js HMR), `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: https://images.unsplash.com https://*.mapbox.com blob:`, `connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:`, `font-src 'self' data:`, `frame-ancestors 'none'`
+- **Environment normalization:** `Settings.env` defaults to `"dev"`. Two computed properties: `is_dev` (True for `dev`, `local`, `development`, `test`) and `is_prod` (True for `prod`, `production`). All environment checks in `main.py` and `middleware/session.py` use these properties instead of hardcoded string comparisons.
 - **Session middleware:** Skips `/health` (no session cookie overhead on health checks). Max 10 new sessions per IP per hour
 - **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP (thread-safe slot reserve/release). SSE state extracted to `backend/app/sse_state.py` to break circular import between `main.py` and `lifespan.py`
 - **Fill-day/session ordering:** `/api/document/fill-day` waits until no active graph SSE stream exists for that session
 - **Frontend CSP:** Configured in `next.config.mjs` — `unsafe-eval` allowed in dev only
+
+### Config Settings (`backend/app/config.py`)
+
+Notable non-secret settings (beyond standard DB/API keys):
+
+| Setting                          | Default              | Env Var                        | Purpose                                                     |
+| -------------------------------- | -------------------- | ------------------------------ | ----------------------------------------------------------- |
+| `tile_cache_ttl_hours`           | 72                   | `TILE_CACHE_TTL_HOURS`         | L2 tile cache TTL                                           |
+| `specialist_cache_ttl_hours`     | 168                  | `SPECIALIST_CACHE_TTL_HOURS`   | L2 specialist cache TTL                                     |
+| `experience_cache_ttl_hours`     | 72                   | `EXPERIENCE_CACHE_TTL_HOURS`   | L2 experience cache TTL                                     |
+| `clear_l2_on_session_reset`      | false                | `CLEAR_L2_ON_RESET`            | Wipe L2 caches on session reset (dev only)                  |
+| `google_maps_api_key`            | --                   | `GOOGLE_MAPS_API_KEY`          | Google Places API key                                       |
+| `google_maps_api_secret`         | --                   | `GOOGLE_MAPS_API_SECRET`       | Google Places API secret                                    |
+| `use_google_places_provider`     | false                | `USE_GOOGLE_PLACES_PROVIDER`   | Feature flag for Google Places tile provider                |
+| `langsmith_dev_sample_rate`      | 1.0                  | `LANGSMITH_DEV_SAMPLE_RATE`    | LangSmith trace sampling rate for dev environments          |
+| `langsmith_prod_sample_rate`     | 0.15                 | `LANGSMITH_PROD_SAMPLE_RATE`   | LangSmith trace sampling rate for prod environments         |
+| `router_model`                   | `gemini-2.5-flash`   | `ROUTER_MODEL`                 | LLM for IntentRouter + field extraction                     |
+| `extraction_model`               | `gemini-2.5-flash`   | `EXTRACTION_MODEL`             | LLM for TripArchitect extraction                            |
+| `local_expert_model`             | `gemini-2.5-flash`   | `LOCAL_EXPERT_MODEL`           | LLM for LocalExpert (prompt-based JSON, no function_calling)|
+| `local_expert_use_llm`           | true                 | `LOCAL_EXPERT_USE_LLM`         | Feature flag — set false to disable LLM in LocalExpert      |
+| `specialist_model`               | `gpt-4o`             | `SPECIALIST_MODEL`             | LLM for VerticalSpecialist domain reasoning (keep gpt-4o)   |
+| `guard_model`                    | `gemini-2.5-flash`   | `GUARD_MODEL`                  | LLM for ConstraintGuard place validation only               |
+| `synthesizer_planning_model`     | `gemini-2.5-flash`   | `SYNTHESIZER_PLANNING_MODEL`   | LLM for Synthesizer planning responses                      |
+| `synthesizer_exploration_model`  | `gemini-2.5-flash`   | `SYNTHESIZER_EXPLORATION_MODEL`| LLM for Synthesizer exploration/specialist_update responses |
+| `experience_model`               | `gemini-2.5-flash`   | `EXPERIENCE_MODEL`             | LLM for Tier 2 activity tile generation (experience_generator)|
+| `iata_resolver_model`            | `gemini-2.5-flash`   | `IATA_RESOLVER_MODEL`          | LLM for airport IATA code resolution                        |
 
 ---
 
@@ -148,7 +178,7 @@ PlanDocumentData
   |     |-- price_display? (NOT on Pydantic model — injected at response time by response_envelope)
   |     |-- rating?, review_count?, location_label?, geo: {lat, lng}?
   |     |-- tags[], availability_status? (available|low|unknown|not_available), meta?, score?, source?, source_agent?
-  |     |-- provider (expedia|booking|unknown), cancel_policy_summary?
+  |     |-- provider (expedia|booking|google_places|amadeus|curated|mock|unknown), cancel_policy_summary?
   |     '-- total_inclusive?, tax_and_service_fee?, property_fee?, is_refundable?
   |
   |-- strategy_sections: StrategySection[]
@@ -229,6 +259,8 @@ PlanDocumentData
 | `ArrangementResult`           | Response from validate or apply: `valid: bool`, `violations: BlockViolation[]`, `day_cards?: list` (only on successful apply), `version?: int` (only on successful apply)                                                                                                                                                                                                                                        |
 | `RemoveBlockRequest`          | Remove a single block: `block_id`, `day_number`, `expected_version` (optimistic concurrency). 409 on version conflict. Buffer blocks and locked activity types (`arrival`, `departure`, `check-in`, `check-out`) cannot be removed (400). If removal leaves no activities, a `free_day` placeholder block is inserted. |
 | `RemoveBlockResponse`         | Response from remove-block: `day_number`, `day_card` (updated day card dict), `version` (new version), `removed_block_id`                                                                                                                                                                                                                                                                                       |
+| `RestoreSnapshotRequest`      | Restore day_cards to a previous snapshot (undo stack): `day_cards: List[Dict]`, `expected_version: int` (optimistic concurrency). 409 on version conflict. No constraint validation — snapshot was captured immediately before the mutation. Rate limited to 20/min. |
+| `RestoreSnapshotResponse`     | Response from restore-snapshot: `day_cards: List[Dict]`, `version: int`                                                                                                                                                                                               |
 
 ---
 
@@ -290,7 +322,7 @@ Hydration guards:
 | `ReadinessKey`     | origin, destination, start_date, end_date, travelers, budget       | Constraint completeness                                                                                                                                                                                                         |
 | `BookingState`     | idle, loading, ready, error                                        | Per-tab booking status                                                                                                                                                                                                          |
 | `TileType`         | flight, hotel, activity                                            | Tile category                                                                                                                                                                                                                   |
-| `TileProvider`     | expedia, booking, unknown                                          | Booking partner                                                                                                                                                                                                                 |
+| `TileProvider`     | expedia, booking, google_places, amadeus, curated, mock, unknown   | Booking/data partner (expanded to track all tile data sources)                                                                                                                                                                  |
 | `PartnerPrice`     | `{partner, price, currency, url?, logo?, isBestPrice?}`            | Frontend-only (`frontend/types/tile.ts`): partner pricing entry for multi-partner price comparison on BookableCard / TileDetailsModal. Not on Pydantic model. |
 | `AckStatus`        | applied, partial, no_change, needs_clarification, failed, rejected | Update acknowledgement status. `rejected` used for route violations (e.g., same-city error). Backend Literal does NOT include `pending`; frontend types (`chat.ts`, `plan-envelope.ts`) add `pending` as a frontend-only value. |
 
@@ -312,6 +344,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | Regeneration   | `lastGeneratedPreferences`, `isRegenerating`, `isPending`, `expandInProgress`, `remainingSeconds` |
 | Fill-day mutex | `_fillingDays` (Set\<number\>) — per-day concurrency guard                                        |
 | Mutation mutex | `_pendingMutations` (number) — general mutation counter (fill-day, drag-drop)                     |
+| Undo stack     | `undoEntry: UndoEntry \| null` — depth-1 ephemeral undo (drag_move, remove_block, fill_day types) |
 | PATCH shadow   | `_lastPatchedTripInputs` (`DocumentTripInputs \| null`) — backend-confirmed snapshot of last successful trip_inputs PATCH; used by `commitTripInputs()` as the no-op dedup baseline (avoids false no-ops since `updateTripInputs()` mutates zustand before the PATCH fires) |
 | Streaming      | `currentRunId`, `abortController`                                                                 |
 | Generation     | `generation` (`GenerationState \| null`) — envelope-driven generation status stored at root store level (not persisted in `document`) |
@@ -342,7 +375,9 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | `setExpandInProgress()`                                            | Expand-itinerary mutex flag                                                                                                             |
 | `claimFillDay(day)`                                                | Per-day fill mutex: returns `false` if day already in flight (prevents concurrent fill-day on same day from different call sites)       |
 | `releaseFillDay(day)`                                              | Release per-day fill mutex after fill-day completes or fails                                                                            |
-| `removeBlock(blockId, dayNumber)`                                  | POST `/api/document/remove-block` with optimistic concurrency. Uses `claimMutation()`/`releaseMutation()` mutex. On success, replaces the affected `day_card` in store and bumps `version`. Throws `'VERSION_CONFLICT'` on 409. |
+| `removeBlock(blockId, dayNumber)`                                  | POST `/api/document/remove-block` with optimistic concurrency. Uses `claimMutation()`/`releaseMutation()` mutex. On success, replaces the affected `day_card` in store, bumps `version`, and sets `undoEntry` (type: `remove_block`, label from block summary, snapshot of previous day_cards). Throws `'VERSION_CONFLICT'` on 409. |
+| `setUndoEntry(entry)`                                              | Set or clear the depth-1 undo entry (`UndoEntry \| null`)                                                                                                                                                                               |
+| `executeUndo()`                                                    | POST `/api/document/restore-snapshot` with `undoEntry.previousDayCards` + current `version`. Clears `undoEntry` immediately to prevent double-undo. Silently no-ops on 409 (plan was modified concurrently). On success, replaces `day_cards` and `version` in store. |
 | `claimMutation()` / `releaseMutation()`                            | Increment/decrement `_pendingMutations` counter for general mutation tracking                                                           |
 | `hasPendingMutations()`                                            | Returns true when `_pendingMutations > 0` — ChatPanel mutation gate polls this before sending graph requests to avoid version conflicts |
 | `markPreferencesAsApplied()`                                       | Sync lastGeneratedPreferences after expand completes                                                                                    |
@@ -352,6 +387,8 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | `addToCart()` / `removeFromCart()` / `clearCart()`                  | Cart operations for booking mode                                                                                                        |
 | `hasAllRequiredFields()`                                           | Computed selector: returns true when destination is set (only requirement)                                                              |
 | `reset()`                                                          | Full store reset (aborts in-flight generation)                                                                                          |
+
+**Per-session expand mutex (backend):** `request_dedup.py` exports `acquire_expand_slot(session_id)` / `release_expand_slot(session_id)`. If `acquire_expand_slot` returns `False` (expand already in-flight for this session), the `/api/expand-itinerary` endpoint returns HTTP 429 with `Retry-After: 5`. The mutex is backed by `TTLCache(maxsize=200, ttl=120)` — auto-expires after 120s to prevent permanent lock from crashed generators. Released via `finally` in the streaming response wrapper.
 
 **`usePreferenceAutoRegen` hook** (`frontend/hooks/usePreferenceAutoRegen.ts`): Watches `preferredTileIds` changes and triggers `expand-itinerary` regen. Debounced 1.5s to batch rapid heart toggles into a single expand call. Also gates on `isStreamingResponse` (defers during active plan generation). When `expandInProgress` or streaming mutex blocks, the hook queues the pending regen via `pendingRegenRef` and flushes it when both mutexes clear (500ms debounce, dedup check against `lastGeneratedPreferences`). Avoids silently dropping preference changes made during an active expand.
 
@@ -406,7 +443,7 @@ Source: `frontend/lib/api.ts`
 ### Retry Logic
 
 - Transient errors: timeout, network, 502, 503, 504
-- 429 (rate limit) is NOT retried — returned to caller for user-facing handling
+- **429 (rate limit):** Now retried within `fetchWithRetry` (D8 fix). Honours `Retry-After` header via `parseRetryAfter()` — if present, waits that many seconds; if absent, falls back to exponential backoff. `isTransientStatus()` still excludes 429 from its set, but `fetchWithRetry` handles 429 explicitly before the transient-status check.
 - Exponential backoff: `delay = min(baseDelay * 2^attempt, maxDelay) + random(0-500ms)`
 - Default: 3 max retries, 1s base, 10s max
 - AbortError never retried

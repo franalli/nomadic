@@ -47,7 +47,7 @@ export function AgentCard({ section, isExpanded, onToggle, status, hasDates = tr
       <button onClick={onToggle}
         aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${section.title ?? 'strategy'} details`}
         className={cn('w-full px-5 py-4 text-left transition-all duration-200 group',
-          isInfeasible ? 'bg-red-950/20 hover:bg-red-950/30' : 'topic-header-tint hover:bg-zinc-50 dark:hover:bg-muted/30',
+          isInfeasible ? 'bg-red-950/20 hover:bg-red-950/30' : 'topic-header-tint hover:bg-zinc-50 dark:hover:bg-white/5',
           'active:scale-[0.995]')}>
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-2">
@@ -59,7 +59,7 @@ export function AgentCard({ section, isExpanded, onToggle, status, hasDates = tr
             {!isInfeasible && status !== 'ready' && (
               <span className={cn(`${DS.textSize.micro} px-2 py-1 rounded-full font-bold uppercase tracking-wide`,
                 status === 'updating' && 'bg-emerald-50 text-emerald-700 border border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-transparent animate-pulse',
-                status === 'needs_input' && 'bg-zinc-100 text-zinc-500 dark:bg-muted dark:text-muted-foreground')}>
+                status === 'needs_input' && 'bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400')}>
                 {status === 'updating' ? 'Updating...' : 'Needs input'}
               </span>
             )}
@@ -83,13 +83,13 @@ export function AgentCard({ section, isExpanded, onToggle, status, hasDates = tr
         </div>
 
         {isInfeasible && section.feasibility_reason && <div className="mt-2 text-xs text-red-400"><RichText>{section.feasibility_reason}</RichText></div>}
-        {isInfeasible && section.alternative_suggestion && <div className={`mt-1 ${DS.textSize.micro} text-muted-foreground`}>💡 <RichText>{section.alternative_suggestion}</RichText></div>}
+        {isInfeasible && section.alternative_suggestion && <div className={`mt-1 ${DS.textSize.micro} text-zinc-500 dark:text-zinc-400`}>💡 <RichText>{section.alternative_suggestion}</RichText></div>}
         {hasCaveat && section.feasibility_reason && (
           <div className="mt-2 text-xs text-zinc-500 flex items-center gap-1"><span>⚠️</span><RichText>{section.feasibility_reason}</RichText></div>
         )}
 
         {!isInfeasible && status !== 'needs_input' && (
-          <div className={`mt-1.5 flex items-center gap-1.5 ${DS.textSize.micro} text-muted-foreground`}>
+          <div className={`mt-1.5 flex items-center gap-1.5 ${DS.textSize.micro} text-zinc-500 dark:text-zinc-400`}>
             <span className="text-emerald-600 dark:text-emerald-400">{status === 'ready' ? '✓' : '○'}</span>
             <span className="text-sm text-zinc-500 dark:text-zinc-400">{status === 'ready' ? config.readyAction : config.updatingAction}</span>
           </div>
@@ -105,7 +105,7 @@ export function AgentCard({ section, isExpanded, onToggle, status, hasDates = tr
 
         {!isExpanded && !isInfeasible && (
           <div className="mt-2 w-full">
-            {oneLiner && <p className="text-xs text-muted-foreground mb-2"><RichText>{oneLiner}</RichText></p>}
+            {oneLiner && <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2"><RichText>{oneLiner}</RichText></p>}
             {principles.length > 0 && (
               <div className="mt-3 space-y-2">
                 {principles.slice(0, 4).map((p, i) => (

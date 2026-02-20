@@ -386,7 +386,20 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
             parts.append(f"- Missing fields: {', '.join(missing)}")
             parts.append("- YOUR TASK: Ask the user for the missing information naturally")
     elif architect_mode == "pre_core":
-        parts.append("- YOUR TASK: Inspire the user and help them explore options")
+        trip_type = plan.trip_type
+        if trip_type and not plan.destination:
+            parts.append(f"- Trip preference detected: {trip_type}")
+            parts.append(
+                f"- YOUR TASK: The user wants a {trip_type} trip "
+                f"but hasn't picked a destination yet. "
+                f"Suggest 2-3 specific {trip_type} destinations "
+                f"with a brief reason for each. "
+                f"Keep it concise (2-3 sentences). "
+                f"Do NOT ask an open question like "
+                f"'where do you want to go?'"
+            )
+        else:
+            parts.append("- YOUR TASK: Inspire the user and help them explore options")
     elif architect_mode == "core_planning":
         parts.append("- YOUR TASK: Summarize progress and guide to next steps")
 

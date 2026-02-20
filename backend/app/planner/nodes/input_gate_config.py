@@ -14,4 +14,6 @@ GATE_THRESHOLDS = {
     "max_budget_usd": 500_000,
     "min_budget_usd": 50,
     "warn_budget_high_usd": 100_000,
+    # Message length
+    "max_user_message_chars": 2000,  # Hard cap on user message length
 }

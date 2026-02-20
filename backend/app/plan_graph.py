@@ -839,11 +839,33 @@ async def run_turn_streaming(
         streamed_tokens = []
         final_output = None
 
+        # Build LangSmith-compatible run config (session metadata + env tags).
+        # Sample rate is env-driven: LANGSMITH_DEV_SAMPLE_RATE / LANGSMITH_PROD_SAMPLE_RATE.
+        import random
+
+        from langchain_core.runnables import RunnableConfig
+
+        _should_trace = (
+            _settings.langsmith_tracing_enabled
+            and random.random() < _settings.langsmith_sample_rate
+        )
+        # session_id is injected into state.metadata by streaming.py before graph runs
+        run_config = RunnableConfig(
+            metadata={
+                "session_id": state.metadata.get("session_id", "unknown"),
+                "destination": (state.trip_plan.destination or "unknown")
+                if state.trip_plan
+                else "unknown",
+            },
+            tags=["production"] if _settings.is_prod else ["development"],
+            callbacks=None if _should_trace else [],
+        )
+
         # Use astream_events to tap into LLM streaming
         # This runs the full graph and captures token events from the Synthesizer
         # Wrap with asyncio.timeout to cancel if node hangs (no events = suspended loop)
         async with asyncio.timeout(GRAPH_TIMEOUT_SECONDS):
-            async for event in graph.astream_events(state, version="v2"):
+            async for event in graph.astream_events(state, config=run_config, version="v2"):
                 event_type = event.get("event")
 
                 # Track node transitions via chain events

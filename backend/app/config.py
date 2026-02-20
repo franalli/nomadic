@@ -18,8 +18,18 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # core
-    env: str = os.getenv("ENV", "local")
+    # core — accepts "dev"/"local"/"development" (→ dev) or "prod"/"production" (→ prod)
+    env: str = os.getenv("ENV", "dev")
+
+    @property
+    def is_dev(self) -> bool:
+        """True for any development-like ENV value (case-insensitive)."""
+        return self.env.lower() in ("dev", "local", "development", "test")
+
+    @property
+    def is_prod(self) -> bool:
+        """True for any production-like ENV value (case-insensitive)."""
+        return self.env.lower() in ("prod", "production")
 
     # =============================================================================
     # LangGraph Planning Route Configuration
@@ -83,17 +93,17 @@ class Settings(BaseSettings):
     # Node Model Assignments (env-driven, matches .env)
     # =============================================================================
     # intent_router, router_extraction, specialist feasibility
-    router_model: str = os.getenv("ROUTER_MODEL", "gpt-4o-mini")
+    router_model: str = os.getenv("ROUTER_MODEL", "gemini-2.5-flash")
     # trip_architect LLM
-    extraction_model: str = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")
+    extraction_model: str = os.getenv("EXTRACTION_MODEL", "gemini-2.5-flash")
     # local_expert LLM — uses prompt-based JSON parsing (not function_calling)
     # to avoid Gemini $defs limitation
-    local_expert_model: str = os.getenv("LOCAL_EXPERT_MODEL", "gpt-4o-mini")
+    local_expert_model: str = os.getenv("LOCAL_EXPERT_MODEL", "gemini-2.5-flash")
     local_expert_use_llm: bool = True  # Set LOCAL_EXPERT_USE_LLM=false to disable LLM (tests/debug)
-    # vertical_specialist domain reasoning
+    # vertical_specialist domain reasoning — KEEP gpt-4o (quality risk on Gemini Flash)
     specialist_model: str = os.getenv("SPECIALIST_MODEL", "gpt-4o")
     # constraint_guard place validation
-    guard_model: str = os.getenv("GUARD_MODEL", "gpt-4o-mini")
+    guard_model: str = os.getenv("GUARD_MODEL", "gemini-2.5-flash")
     # synthesizer planning responses
     synthesizer_planning_model: str = os.getenv("SYNTHESIZER_PLANNING_MODEL", "gemini-2.5-flash")
     # synthesizer exploration/specialist_update
@@ -101,9 +111,9 @@ class Settings(BaseSettings):
         "SYNTHESIZER_EXPLORATION_MODEL", "gemini-2.5-flash"
     )
     # Tier 2 activity generation (experience_generator.py)
-    experience_model: str = os.getenv("EXPERIENCE_MODEL", "gpt-4o-mini")
+    experience_model: str = os.getenv("EXPERIENCE_MODEL", "gemini-2.5-flash")
     # airport code extraction (iata_resolver.py)
-    iata_resolver_model: str = os.getenv("IATA_RESOLVER_MODEL", "gpt-4o-mini")
+    iata_resolver_model: str = os.getenv("IATA_RESOLVER_MODEL", "gemini-2.5-flash")
 
     # Debug flags
     debug_plan_messages: bool = False  # Enable verbose debug logging for planning
@@ -146,6 +156,17 @@ class Settings(BaseSettings):
     response_cache_ttl_seconds: int = 3600  # TTL for cached LLM responses (1 hour)
     response_cache_maxsize: int = 200  # Max entries in response cache
     checkpoint_ttl_hours: int = 24  # Hours before idle checkpoints are purged
+
+    # L2 TTL overrides (env-driven, tune without deploys)
+    # Google Places data changes slowly — 72h avoids redundant API calls
+    tile_cache_ttl_hours: int = 72
+    # Deterministic LLM output — same inputs always produce same output
+    specialist_cache_ttl_hours: int = 168
+    # Nondeterministic LLM — shorter TTL lets model improvements flow through
+    experience_cache_ttl_hours: int = 72
+    # Wipe L2 (PostgreSQL) on session reset — for local dev/testing only
+    # Set CLEAR_L2_ON_RESET=true in .env; leave unset in production
+    clear_l2_on_session_reset: bool = os.getenv("CLEAR_L2_ON_RESET", "false").lower() == "true"
 
     # =============================================================================
     # Strategy Output Limits (PR-C: Strategy Output Size Limits)
@@ -297,6 +318,15 @@ class Settings(BaseSettings):
     langsmith_endpoint: str = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
     langsmith_project: str = os.getenv("LANGSMITH_PROJECT", "default")
     langsmith_tracing_enabled: bool = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
+    # Fraction of sessions to trace (0.0 = none, 1.0 = all).
+    # Recommended: 1.0 during Gemini migration validation, 0.15 in steady-state prod.
+    langsmith_dev_sample_rate: float = float(os.getenv("LANGSMITH_DEV_SAMPLE_RATE", "1.0"))
+    langsmith_prod_sample_rate: float = float(os.getenv("LANGSMITH_PROD_SAMPLE_RATE", "0.15"))
+
+    @property
+    def langsmith_sample_rate(self) -> float:
+        """Return the env-appropriate LangSmith sample rate."""
+        return self.langsmith_prod_sample_rate if self.is_prod else self.langsmith_dev_sample_rate
 
     # =============================================================================
     # Amadeus API Configuration
@@ -315,6 +345,17 @@ class Settings(BaseSettings):
         os.getenv("AMADEUS_CIRCUIT_BREAKER_THRESHOLD", "5")
     )
     amadeus_circuit_breaker_timeout: int = int(os.getenv("AMADEUS_CIRCUIT_BREAKER_TIMEOUT", "60"))
+
+    # =============================================================================
+    # Google Places API Configuration
+    # =============================================================================
+    google_maps_api_key: str | None = os.getenv("GOOGLE_MAPS_API_KEY")
+    google_maps_api_secret: str | None = os.getenv("GOOGLE_MAPS_API_SECRET")
+
+    # Feature flag: enable Google Places for hotels and activities
+    use_google_places_provider: bool = (
+        os.getenv("USE_GOOGLE_PLACES_PROVIDER", "false").lower() == "true"
+    )
 
 
 settings = Settings()
@@ -341,10 +382,26 @@ def configure_langsmith_tracing(
     if not api_key:
         return
 
+    # Fully disable if tracing flag is off OR sample rate is 0
+    effective_enabled = (
+        enabled and settings.langsmith_tracing_enabled and settings.langsmith_sample_rate > 0
+    )
+
+    # Derive project name with env suffix: "nomadic" → "nomadic-dev" / "nomadic-prod"
+    base_project = project or settings.langsmith_project
+    suffix = "-prod" if settings.is_prod else "-dev"
+    if not base_project.endswith(suffix):
+        resolved_project = f"{base_project}{suffix}"
+    else:
+        resolved_project = base_project
+
     os.environ["LANGCHAIN_API_KEY"] = api_key
     os.environ["LANGCHAIN_ENDPOINT"] = settings.langsmith_endpoint
-    os.environ["LANGCHAIN_TRACING_V2"] = "true" if enabled else "false"
-    os.environ["LANGCHAIN_PROJECT"] = project or settings.langsmith_project
+    os.environ["LANGCHAIN_TRACING_V2"] = "true" if effective_enabled else "false"
+    os.environ["LANGSMITH_TRACING"] = "true" if effective_enabled else "false"
+    # Set both — newer SDK reads LANGSMITH_PROJECT, older reads LANGCHAIN_PROJECT
+    os.environ["LANGCHAIN_PROJECT"] = resolved_project
+    os.environ["LANGSMITH_PROJECT"] = resolved_project
 
 
 def generate_session_token() -> str:

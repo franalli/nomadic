@@ -79,27 +79,27 @@ export function CheckoutSidebar({
   return (
     <div className="sticky top-4 space-y-4">
       {/* Main card */}
-      <div className="bg-card border rounded-xl p-6 shadow-card">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl p-6 shadow-card">
         <h3 className="font-semibold text-lg mb-4">Trip Summary</h3>
 
         {/* Selected items list (if any) */}
         {selectedTiles.length > 0 && (
-          <div className="space-y-2 mb-4 pb-4 border-b">
+          <div className="space-y-2 mb-4 pb-4 border-b border-zinc-200 dark:border-zinc-700">
             {selectedTiles.slice(0, 4).map((tile) => (
               <div key={tile.id} className="flex items-center justify-between gap-2 text-sm">
-                <span className="truncate text-muted-foreground">{tile.title}</span>
+                <span className="truncate text-zinc-500 dark:text-zinc-400">{tile.title}</span>
                 <button
                   type="button"
                   onClick={() => onRemoveTile?.(tile.id)}
                   aria-label="Remove"
-                  className="flex-shrink-0 p-1 hover:bg-muted rounded transition-colors"
+                  className="flex-shrink-0 p-1 hover:bg-zinc-100 dark:hover:bg-white/10 rounded transition-colors"
                 >
-                  <X className="w-3 h-3 text-muted-foreground" />
+                  <X className="w-3 h-3 text-zinc-400 dark:text-zinc-500" />
                 </button>
               </div>
             ))}
             {selectedTiles.length > 4 && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
                 +{selectedTiles.length - 4} more items
               </p>
             )}
@@ -107,16 +107,16 @@ export function CheckoutSidebar({
         )}
 
         {/* Line items */}
-        <div className="space-y-3 mb-6 border-b pb-6">
+        <div className="space-y-3 mb-6 border-b border-zinc-200 dark:border-zinc-700 pb-6">
           {computedLineItems.length > 0 ? (
             computedLineItems.map((item, idx) => (
               <div key={idx} className="flex justify-between text-sm">
-                <span className="text-muted-foreground">{item.label}</span>
-                <span>{formatPrice(item.amount, currency)}</span>
+                <span className="text-zinc-500 dark:text-zinc-400">{item.label}</span>
+                <span className="text-zinc-900 dark:text-white">{formatPrice(item.amount, currency)}</span>
               </div>
             ))
           ) : (
-            <p className="text-sm text-muted-foreground text-center py-2">
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 text-center py-2">
               No items selected yet
             </p>
           )}
@@ -145,13 +145,13 @@ export function CheckoutSidebar({
 
         {/* Disabled reason */}
         {checkoutDisabled && checkoutDisabledReason && (
-          <p className="mt-2 text-xs text-muted-foreground text-center">
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">
             {checkoutDisabledReason}
           </p>
         )}
 
         {/* Security badge */}
-        <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+        <div className="mt-4 flex items-center justify-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
           <ShieldCheck className="w-3 h-3 text-emerald-500" />
           <span>Secure checkout via Stripe</span>
         </div>

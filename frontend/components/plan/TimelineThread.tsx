@@ -19,9 +19,9 @@ import {
   Waves,
   Zap,
 } from 'lucide-react';
-import React, { type ReactNode } from 'react';
-import { useMemo } from 'react';
+import React, { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { useMapSync } from '@/hooks/useMapSync';
 import { getDayIntensity, INTENSITY_CONFIG } from '@/lib/dayIntensity';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
@@ -298,9 +298,134 @@ export function TimelineThread({
     return [...dayCards].sort((a, b) => a.day_number - b.day_number);
   }, [dayCards]);
 
+  // ── Map sync: day header refs for IntersectionObserver ─────────────────
+  // Only active for variant="real" — ghost/draft have no stable block IDs.
+  const dayHeaderRefs = useRef<Map<number, HTMLElement>>(new Map());
+  const scrollContainerRef = useRef<HTMLElement | null>(null);
+
+  // Debounce helper: fire only after `ms` ms of quiet
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debouncedSetDay = useCallback((day: number) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      useMapSync.getState().setVisibleDayNumber(day);
+    }, 150);
+  }, []);
+
+  // IntersectionObserver: update visibleDayNumber when a day header scrolls into view
+  useEffect(() => {
+    if (effectiveVariant !== 'real') return;
+
+    // Walk up DOM to find scroll container (first scrollable ancestor)
+    let firstHeader: HTMLElement | undefined;
+    for (const v of dayHeaderRefs.current.values()) { firstHeader = v; break; }
+    if (firstHeader) {
+      let el: HTMLElement | null = firstHeader.parentElement;
+      while (el) {
+        const overflow = window.getComputedStyle(el).overflowY;
+        if (overflow === 'auto' || overflow === 'scroll') {
+          scrollContainerRef.current = el;
+          break;
+        }
+        el = el.parentElement;
+      }
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // Find the most visible intersecting day header
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+
+        if (visible.length > 0) {
+          const dayNumber = parseInt(
+            visible[0].target.getAttribute('data-day') ?? '0',
+            10,
+          );
+          if (dayNumber > 0) {
+            debouncedSetDay(dayNumber);
+          }
+        }
+      },
+      {
+        root: scrollContainerRef.current ?? null,
+        rootMargin: '-30% 0px -30% 0px',
+        threshold: [0, 0.25, 0.5, 0.75, 1],
+      },
+    );
+
+    dayHeaderRefs.current.forEach((el) => observer.observe(el));
+    return () => {
+      observer.disconnect();
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [sortedDays, effectiveVariant, debouncedSetDay]);
+
+  // ── Map sync: listen for pin-click scroll requests ─────────────────────
+  const scrollTarget = useMapSync((s) => s.scrollTargetDayNumber);
+  const clearScrollTarget = useMapSync((s) => s.clearScrollTarget);
+
+  useEffect(() => {
+    if (scrollTarget === null || effectiveVariant !== 'real') return;
+
+    const dayEl = dayHeaderRefs.current.get(scrollTarget);
+    if (dayEl) {
+      dayEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    clearScrollTarget();
+  }, [scrollTarget, effectiveVariant, clearScrollTarget]);
+
+
+  // ── Stage 17A: Constraint badge deduplication ──────────────────────────
+  // Plain Set (not useRef) — accumulates within a single render pass only.
+  // Resets naturally on every render (which is correct: plan changes = full re-render).
+  // Must be defined before the sortedDays.map call so it's in scope.
+  const _seenConstraintIds = new Set<string>();
+
+  /**
+   * Returns display mode for each constraint on a block.
+   * MUST be called in document order (top→bottom through the day card loop)
+   * so first-occurrence tracking works correctly.
+   * - 'blocking' severity → always 'full' (never collapse safety-critical info)
+   * - First occurrence of a constraint ID → 'full'
+   * - Subsequent occurrences → 'icon' (compact pill)
+   */
+  function getConstraintDisplayModes(block: DayBlock): Map<string, 'full' | 'icon'> {
+    const modes = new Map<string, 'full' | 'icon'>();
+    for (const c of block.active_constraints ?? []) {
+      if (c.severity === 'blocking') {
+        _seenConstraintIds.add(c.id);
+        modes.set(c.id, 'full');
+        continue;
+      }
+      if (!_seenConstraintIds.has(c.id)) {
+        _seenConstraintIds.add(c.id);
+        modes.set(c.id, 'full');
+      } else {
+        modes.set(c.id, 'icon');
+      }
+    }
+    return modes;
+  }
+
+  // ── Stage 17B: Compact single-activity day variant ─────────────────────
+  function getDayVariant(card: DayCard): 'default' | 'compact' {
+    const activityBlocks = card.blocks.filter(
+      (b) =>
+        !b.is_buffer &&
+        b.activity_type !== 'arrival' &&
+        b.activity_type !== 'departure' &&
+        b.activity_type !== 'check-in' &&
+        b.activity_type !== 'check-out' &&
+        b.activity_type !== 'free_day'
+    );
+    return activityBlocks.length <= 1 ? 'compact' : 'default';
+  }
+
   if (sortedDays.length === 0) {
     return (
-      <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-xl">
+      <div className="text-center py-12 text-zinc-500 dark:text-zinc-400 border-2 border-dashed border-zinc-200 dark:border-white/10 rounded-xl">
         Generating your itinerary...
       </div>
     );
@@ -312,7 +437,7 @@ export function TimelineThread({
       {badge && (
         <div className="absolute top-2 right-2 z-10">
           <span className={cn(
-            'text-xs px-2 py-1 rounded-full border border-border/50 font-medium',
+            'text-xs px-2 py-1 rounded-full border border-zinc-200/50 dark:border-white/10 font-medium',
             badgeClass
           )}>
             {badge}
@@ -334,16 +459,24 @@ export function TimelineThread({
         const isLast = index === sortedDays.length - 1;
         const DayIcon = getDayIcon(card, isFirst, isLast);
         const isSafety = isSafetyDay(card);
+        const dayVariant = useRichBlocks ? getDayVariant(card) : 'default';
 
         return (
-          <div key={card.day_number} className="relative z-10">
-            {/* Day header with icon */}
+          <div
+            key={card.day_number}
+            className="relative z-10"
+          >
+            {/* Day header with icon — observed for scroll→map sync */}
             <button
+              ref={(el) => {
+                if (el) dayHeaderRefs.current.set(card.day_number, el);
+              }}
+              data-day={card.day_number}
               type="button"
               onClick={() => onDayClick?.(card.day_number)}
               onMouseEnter={() => !document.body.hasAttribute('data-dnd-active') && onDayHover?.(card.day_number)}
               onMouseLeave={() => !document.body.hasAttribute('data-dnd-active') && onDayHover?.(null)}
-              className="flex items-center gap-4 mb-4 w-full text-left group"
+              className={cn('flex items-center gap-4 w-full text-left group', dayVariant === 'compact' ? 'mb-1.5' : 'mb-4')}
             >
               {/* Icon node on thread */}
               <div
@@ -351,7 +484,7 @@ export function TimelineThread({
                   'timeline-node flex-shrink-0 w-9 h-9 rounded-full border flex items-center justify-center transition-colors',
                   isSafety
                     ? 'bg-zinc-500/10 border-zinc-500/50 text-zinc-500'
-                    : 'bg-background border-muted-foreground/30 text-muted-foreground group-hover:border-primary group-hover:text-primary'
+                    : 'bg-white dark:bg-zinc-950 border-zinc-300/50 dark:border-white/20 text-zinc-500 dark:text-zinc-400 group-hover:border-emerald-500 group-hover:text-emerald-600 dark:group-hover:text-emerald-400'
                 )}
               >
                 <DayIcon className="w-4 h-4" />
@@ -361,13 +494,14 @@ export function TimelineThread({
               <div className="flex-1 min-w-0">
                 <h3
                   className={cn(
-                    'text-lg font-semibold tracking-tight',
-                    isSafety ? 'text-zinc-500' : 'text-foreground'
+                    'font-semibold tracking-tight',
+                    dayVariant === 'compact' ? 'text-base' : 'text-lg',
+                    isSafety ? 'text-zinc-500' : 'text-zinc-900 dark:text-white'
                   )}
                 >
                   Day {card.day_number}
                   {card.date && (
-                    <span className="text-sm font-normal text-muted-foreground ml-2">
+                    <span className="text-sm font-normal text-zinc-500 dark:text-zinc-400 ml-2">
                       · {new Date(card.date + 'T00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </span>
                   )}
@@ -385,10 +519,10 @@ export function TimelineThread({
                   })()}
                 </h3>
                 {card.label && !/^Day \d+$/i.test(card.label) && (
-                  <p className="text-sm text-muted-foreground truncate">{card.label}</p>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate">{card.label}</p>
                 )}
                 {card.subtitle && (
-                  <p className="text-xs text-muted-foreground/60 truncate">{card.subtitle}</p>
+                  <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{card.subtitle}</p>
                 )}
               </div>
             </button>
@@ -487,16 +621,16 @@ export function TimelineThread({
                     return (
                       <div
                         key={blockIndex}
-                        className="rounded-xl border border-dashed border-border/50 bg-muted/10 p-4 opacity-60"
+                        className="rounded-xl border border-dashed border-zinc-200/50 dark:border-white/10 bg-zinc-100/10 dark:bg-white/[0.03] p-4 opacity-60"
                       >
                         <div className="flex items-start gap-3">
-                          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-muted animate-pulse" />
+                          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-zinc-200 dark:bg-zinc-700 animate-pulse" />
                           <div className="flex-1 space-y-2">
-                            <div className="h-4 w-24 bg-muted rounded animate-pulse" />
-                            <div className="h-3 w-48 bg-muted/60 rounded animate-pulse" />
+                            <div className="h-4 w-24 bg-zinc-200 dark:bg-zinc-700 rounded animate-pulse" />
+                            <div className="h-3 w-48 bg-zinc-200/60 dark:bg-zinc-700/60 rounded animate-pulse" />
                           </div>
                         </div>
-                        <p className="mt-3 text-xs text-muted-foreground text-center">
+                        <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400 text-center">
                           Planning Day {card.day_number}...
                         </p>
                       </div>
@@ -509,6 +643,8 @@ export function TimelineThread({
                   // === RICH BLOCK RENDERING (S3 Itinerary View) ===
                   if (useRichBlocks) {
                     const isActiveBlock = activeBlockId === blockId;
+                    // Stage 17A: compute constraint display modes in document order
+                    const constraintModes = getConstraintDisplayModes(block);
                     const richBlockInner = (
                       <div
                         id={`timeline-item-${blockId}`}
@@ -531,6 +667,8 @@ export function TimelineThread({
                           onOpenStaysSettings={onOpenStaysSettings}
                           onOpenFlightsSettings={onOpenFlightsSettings}
                           onRemoveBlock={onRemoveBlock}
+                          constraintDisplayModes={constraintModes}
+                          variant={dayVariant}
                         />
                       </div>
                     );
@@ -561,8 +699,8 @@ export function TimelineThread({
                           : isBlockSafety
                             ? 'bg-zinc-500/5 border-zinc-500/20'
                             : isActiveBlock
-                              ? 'scale-[1.02] border-emerald-500/50 shadow-soft bg-card'
-                              : 'bg-card border-border hover:border-primary/50 hover:shadow-soft'
+                              ? 'scale-[1.02] border-emerald-500/50 shadow-soft bg-white dark:bg-zinc-900'
+                              : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 hover:border-emerald-500/50 hover:shadow-soft'
                       )}
                     >
                       {/* Unschedulable warning banner */}
@@ -581,7 +719,7 @@ export function TimelineThread({
                               ? 'bg-amber-500/10 text-amber-500'
                               : isBlockSafety
                                 ? 'bg-zinc-500/10 text-zinc-500'
-                                : 'bg-muted text-muted-foreground'
+                                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
                           )}
                         >
                           {isUnschedulable ? <AlertTriangle className="w-4 h-4" /> : <BlockIcon className="w-4 h-4" />}
@@ -591,7 +729,7 @@ export function TimelineThread({
                             <span
                               className={cn(
                                 'text-xs font-medium uppercase tracking-wide',
-                                isUnschedulable ? 'text-amber-500' : isBlockSafety ? 'text-zinc-500' : 'text-muted-foreground'
+                                isUnschedulable ? 'text-amber-500' : isBlockSafety ? 'text-zinc-500' : 'text-zinc-500 dark:text-zinc-400'
                               )}
                             >
                               {block.period}
@@ -605,14 +743,14 @@ export function TimelineThread({
                               );
                               if (isFreeDay) return null;
                               return (
-                                <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                                <span className="text-xs px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
                                   {block.intensity}
                                 </span>
                               );
                             })()}
                             {/* Specialist type badge for ghost timeline blocks */}
                             {block.specialist_type && (
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium">
                                 {getTopicLabel(block.specialist_type)}
                               </span>
                             )}
@@ -624,12 +762,12 @@ export function TimelineThread({
                                 ? 'line-through text-zinc-500'
                                 : isBlockSafety
                                   ? 'text-zinc-600 dark:text-zinc-400'
-                                  : 'text-foreground'
+                                  : 'text-zinc-900 dark:text-white'
                             )}
                           >
                             {block.activity_type || block.summary}
                           </p>
-                          <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
+                          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
                             {block.summary}
                           </p>
 
@@ -656,7 +794,7 @@ export function TimelineThread({
 
                           {/* Price estimate - Plan mode only */}
                           {showPriceEstimates && block.price_estimate && (
-                            <span className="mt-2 inline-block text-xs text-muted-foreground font-medium">
+                            <span className="mt-2 inline-block text-xs text-zinc-500 dark:text-zinc-400 font-medium">
                               ~${block.price_estimate.toLocaleString()}
                             </span>
                           )}

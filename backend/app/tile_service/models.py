@@ -36,6 +36,10 @@ class SearchContext(BaseModel):
     origin_iata: Optional[str] = None
     destination_iata: Optional[str] = None
 
+    # Destination geo coordinates for locationBias (populated by logistics_node geocoder)
+    destination_lat: Optional[float] = None
+    destination_lng: Optional[float] = None
+
     # Budget constraints for filtering tiles
     budget: Optional[float] = None  # Total trip budget
     budget_per_category: Optional[float] = None  # Suggested allocation per category

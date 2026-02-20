@@ -93,6 +93,8 @@ from app.schemas import (  # noqa: E402
     PlanViewState,
     RemoveBlockRequest,
     RemoveBlockResponse,
+    RestoreSnapshotRequest,
+    RestoreSnapshotResponse,
     Tile,
     TileRefreshRequest,
     TileRefreshResponse,
@@ -506,7 +508,7 @@ async def require_admin(request: Request) -> None:
     key = settings.admin_api_key
     if not key:
         # No key configured — allow in dev, block in prod
-        if settings.env not in ("local", "development", "test"):
+        if not settings.is_dev:
             raise HTTPException(403, "Admin API key not configured")
         return
     if not secrets.compare_digest(request.headers.get("X-Admin-Key", ""), key):
@@ -572,7 +574,7 @@ def _get_allowed_origins() -> List[str]:
         origins.append(settings.frontend_origin)
 
     # In local/development, also allow common local origins
-    if settings.env in ("local", "development", "test"):
+    if settings.is_dev:
         origins.extend(
             [
                 "http://localhost:3000",
@@ -618,7 +620,7 @@ async def security_headers(request: Request, call_next):
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     # unsafe-eval only in dev — required for Next.js HMR / Webpack eval source maps
     script_src = "'self' 'unsafe-inline'"
-    if settings.env in ("local", "development", "test"):
+    if settings.is_dev:
         script_src += " 'unsafe-eval'"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
@@ -1256,6 +1258,18 @@ async def graph_plan_stream_endpoint(
             error_stream(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # --- Fast message length check (before any DB work) ---
+    from app.planner.nodes.input_gate_config import (
+        GATE_THRESHOLDS as _GATE_THRESHOLDS,  # noqa: E402
+    )
+
+    _max_msg_chars = _GATE_THRESHOLDS["max_user_message_chars"]
+    if len(req.message) > _max_msg_chars:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": f"Message too long (max {_max_msg_chars} chars)."},
         )
 
     # --- Generate request ID and compute today_iso ---
@@ -2577,10 +2591,64 @@ async def remove_block(
 
 
 # =============================================================================
+# Restore Snapshot Endpoint (Stage 18 — Undo Stack)
+# =============================================================================
+
+
+@app.post("/api/document/restore-snapshot")
+@limiter.limit("20/minute")
+async def restore_snapshot(
+    request: Request,
+    body: RestoreSnapshotRequest,
+    db: AsyncSession = async_db_dependency,
+) -> RestoreSnapshotResponse:
+    """
+    Restore day_cards to a previous snapshot. Pure Python, <10ms.
+    Used by the frontend undo stack. No constraint validation — the snapshot
+    was captured from a valid state immediately before the mutation.
+    """
+    from app.crud_document import save_document_data
+
+    session_id = get_session_from_request(request)
+    session_key = f"session:{session_id}"
+    await _wait_for_session_stream_idle(session_key)
+
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = await get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document")
+
+    if doc.version != body.expected_version:
+        raise HTTPException(status_code=409, detail="Version conflict — plan was modified")
+
+    doc_data = get_document_data(doc)
+    doc_data.day_cards = [DayCard(**dc) for dc in body.day_cards]
+
+    saved = await save_document_data(db, doc=doc, data=doc_data, updated_by="user")
+    await db.commit()
+
+    return RestoreSnapshotResponse(
+        day_cards=[dc.model_dump() for dc in doc_data.day_cards],
+        version=saved.version,
+    )
+
+
+# =============================================================================
 # Expand Itinerary Endpoint (Stage 2 -> Stage 3)
 # =============================================================================
 
-from app.request_dedup import check_idempotency as _check_idempotency  # noqa: E402
+from app.request_dedup import (  # noqa: E402
+    acquire_expand_slot as _acquire_expand_slot,
+)
+from app.request_dedup import (  # noqa: E402
+    check_idempotency as _check_idempotency,
+)
+from app.request_dedup import (  # noqa: E402
+    release_expand_slot as _release_expand_slot,
+)
 
 
 @app.post("/api/expand-itinerary")
@@ -2622,15 +2690,30 @@ async def expand_itinerary_endpoint(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    # Get session from request
+    # Get session from request (must be before the mutex check)
     session_id = get_session_from_request(request)
 
+    # Per-session expand mutex: reject if another expand is in-flight for this session
+    if not await _acquire_expand_slot(session_id):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Itinerary expansion already in progress for this session"},
+            headers={"Retry-After": "5"},
+        )
+
+    async def _ndjson_with_release():
+        try:
+            async for chunk in generate_ndjson(
+                session_id=session_id,
+                req=req,
+                resolve_stage3_view_state=_resolve_stage3_view_state,
+            ):
+                yield chunk
+        finally:
+            await _release_expand_slot(session_id)
+
     return StreamingResponse(
-        generate_ndjson(
-            session_id=session_id,
-            req=req,
-            resolve_stage3_view_state=_resolve_stage3_view_state,
-        ),
+        _ndjson_with_release(),
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

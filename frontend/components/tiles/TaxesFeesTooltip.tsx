@@ -42,20 +42,20 @@ export function TaxesFeesTooltip({
     : 'Incl. taxes & fees';
 
   return (
-    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+    <div className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
       <span>{feesText}</span>
       <Popover>
         <PopoverTrigger asChild>
           <button
             type="button"
-            className="inline-flex items-center justify-center rounded-full hover:bg-muted/50 p-0.5 transition-colors"
+            className="inline-flex items-center justify-center rounded-full hover:bg-zinc-100 dark:hover:bg-white/10 p-0.5 transition-colors"
             aria-label="Tax and fee information"
           >
             <Info className="h-3 w-3" />
           </button>
         </PopoverTrigger>
         <PopoverContent className="max-w-xs text-xs p-3" side="top" align="start">
-          <p className="text-muted-foreground leading-relaxed">{EXPEDIA_TAX_LEGAL_TEXT}</p>
+          <p className="text-zinc-500 dark:text-zinc-400 leading-relaxed">{EXPEDIA_TAX_LEGAL_TEXT}</p>
         </PopoverContent>
       </Popover>
     </div>

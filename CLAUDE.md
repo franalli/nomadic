@@ -2,92 +2,13 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** Stage 14 planning (Stage 13 COMPLETE)
-- **Active files:** none (stage 13 complete, docs updated)
-- **DO NOT TOUCH:** any backend files, synthesizer.py, router_extraction.py, itinerary_builder.py, experience_generator.py, local_expert.py, plan_graph.py
-- **Frozen:** itinerary_builder.py, specialist_registry.py structure, synthesizer model routing (`_MODEL_BY_COMPLEXITY`), `backend/app/main.py` (13A endpoints + remove-block live), `backend/app/schemas.py` (BlockMove/ArrangementResult/RemoveBlock frozen), `backend/app/planner/nodes/constraint_guard.py` (arrangement validation frozen)
-- **Stage 13A:** COMPLETE (validate + apply endpoints live in main.py)
-- **Stage 13B:** COMPLETE — DnD wiring + price badge (`block.booked_tile?.price_estimate` in `ActivityMiniCard` + `DragPreviewCard`), `getTopicLabel()` for specialist display in all toast/badge contexts, `_lastPatchedTripInputs` PATCH dedup fix in documentStore
-
-### Stage 13B Architectural Decisions (LOCKED)
-
-**Decision 1 — DnD integration: `blockWrapper` + `dayWrapper` render props on `TimelineThread`.**
-TimelineThread stays DnD-agnostic. Two optional props were added:
-```tsx
-// TimelineThread.tsx — implemented
-blockWrapper?: (block: DayBlock, dayNumber: number, children: ReactNode) => ReactNode;
-dayWrapper?: (dayNumber: number, children: ReactNode) => ReactNode;
-```
-`ItineraryDndWrapper` provides both wrappers via `StrategyStageRenderer`. `dayWrapper` covers free/empty days where `blockWrapper` never fires.
-
-**Decision 2 — Budget: price badge on tiles ONLY. Progress bar deferred to Stage 14.**
-`tile.price_estimate` already exists on tiles. Just render it. Do not implement `totalSpent`, `budgetPerItem`, or any progress bar.
-
-### Stage 13B Mandatory Overrides (verified against codebase)
-
-**Blocker 1 — `version` is NOT on `PlanDocumentData`. Don't pass it to `mergeEnvelope`.**
-WRONG:
-```ts
-useDocumentStore.getState().mergeEnvelope({ day_cards: applied.day_cards, version: applied.version });
-```
-CORRECT — update separately:
-```ts
-useDocumentStore.getState().mergeEnvelope({ day_cards: applied.day_cards });
-useDocumentStore.setState({ version: applied.version });
-```
-(Same pattern as `fillDay()` in api.ts.)
-
-**Blocker 2 — `_fillDayPending`/`_arrangementPending`/`_patchPending` do NOT exist.**
-Store uses a single numeric counter. Use the existing mutex:
-```ts
-const store = useDocumentStore.getState();
-store.claimMutation();
-try {
-  // ... validate + apply calls ...
-} finally {
-  store.releaseMutation();
-}
-```
-`hasPendingMutations()` (already called in ChatPanel) covers this automatically.
-
-**Blocker 3 — `block.title` does NOT exist on `DayBlock`. `DragPreviewCard` will be blank.**
-WRONG: `{block.title}`
-CORRECT: `{block.summary || block.activity_type}`
-
-**Blocker 4 — `block.id` is `id?: string` (optional). Guard before `useDraggable`.**
-```tsx
-// In DraggableBlock — if no id, render non-draggable fallback
-if (!block.id) return <>{children}</>;
-```
-
-**Blocker 5 — Type is `DayBlock` (from `@/types/plan-envelope`), NOT `Block`.**
-Import: `import type { DayBlock } from '@/types/plan-envelope';`
-Use `DayBlock` everywhere — in component props, `active.data.current?.block as DayBlock`, etc.
-
-**Correctness fix 6 — Use `closestCorners` not `closestCenter` for vertical list layout.**
-```tsx
-import { DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-// collisionDetection={closestCorners}
-```
-
-**Correctness fix 7 — Guard `toDay` parsing against non-day drop targets.**
-```ts
-if (!(over.id as string).startsWith('day-')) return;
-const toDay = parseInt((over.id as string).replace('day-', ''));
-if (isNaN(toDay)) return;
-```
-
-### Key facts verified against codebase
-- Toast system: custom hook `useToast()` from `@/components/ui/toast` → `toast({ message, type: 'error'|'warning'|'info', duration })`
-- Store mutation gate: `claimMutation()` / `releaseMutation()` / `hasPendingMutations()` (counter-based, no per-op flags)
-- `day_cards` lives at `document.day_cards` inside store, NOT top-level
-- `version` IS top-level on store (`get().version`), initialized to `0`
-- New component files go in `frontend/components/plan/timeline/` (not flat `plan/`)
-- `DayBlock.constraints` is `string[]` — relevant for backend only, not touched in 13B
-- Lock icon: `import { Lock } from 'lucide-react'` (not react-icons)
-- `apiFetch` always adds `Content-Type: application/json` + CSRF + `credentials: 'include'`
-- `StrategyStageRenderer` passes `dayCards={viewModel.day_cards ?? []}` to `TimelineThread`
-- `TimelineThread` renders with `useRichBlocks=true` → `renderRichBlock()` per block
+- **Focus:** Stages 16–19 complete; docs updated to match
+- **Stage 16 (done):** Google Places provider (`google_places_provider.py`), 4-tier cascade in `tile_service/service.py` + `logistics_node.py`, `MessageLengthGate` + fast-422 in `main.py`/`input_gates.py`, per-session expand mutex in `request_dedup.py`, D3/D4/D6/D8 bug fixes, Gemini migration for router/extraction/local_expert/guard/experience/iata_resolver models
+- **Stage 17A (done):** Constraint badge deduplication in `TimelineThread.tsx` + `ActivityMiniCard.tsx` (`getConstraintDisplayModes`, icon-only pill for repeated constraints)
+- **Stage 17B (done):** Compact day variant in `TimelineThread.tsx` + `ActivityMiniCard.tsx` (`getDayVariant`, horizontal layout for single-activity days)
+- **Stage 18A (done):** Depth-1 undo stack in `documentStore.ts` (`UndoEntry`, `executeUndo`, `restore-snapshot` endpoint), undo-on-drag in `ItineraryDndWrapper.tsx`, `useUndoStack.ts` + `showMutationToast.ts`
+- **Stage 19 (done):** Map↔Timeline two-way sync — `useMapSync.ts` Zustand store, IntersectionObserver in `TimelineThread.tsx`, fly-to + `isUserInteractingRef` in `InteractiveMap.tsx`, `PIN_CONFIG` exact-key lookup, `route-utils.ts`, `MapPOI.dayNumber`
+- **DO NOT touch:** synthesizer.py, constraint_guard.py, plan_graph.py node structure
 
 ---
 

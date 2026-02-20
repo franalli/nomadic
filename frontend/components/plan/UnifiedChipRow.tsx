@@ -220,45 +220,30 @@ const CoreChip = memo(function CoreChip({
         // Dark hover: emerald accent per DS "Bioluminescent" aesthetic
         'dark:hover:border-emerald-500/50',
 
-        // --- STATE: SET (has user value) ---
-        // DS Section 3: Active pills use maximum contrast (zinc-900 light / white dark)
+        // --- STATE: SET (has user value) --- DS Tactile Rule: border-2, solid fill
         isSet && [
-          // Background: Very subtle grey
           'bg-zinc-50',
-          // Border: Zinc-900 at 30% opacity (per DS - not blue)
-          'border border-zinc-900/30',
-          // Text: Near-black
+          'border-2 border-zinc-900/30',
           'text-zinc-900 font-semibold',
-          // Shadow for "lifted" feel
-          'shadow-card',
-          // Dark mode: Glass Fill with emerald accent
           'dark:bg-white/10 dark:text-white dark:border-emerald-500/30',
           'dark:hover:bg-white/15',
         ],
 
-        // --- STATE: OPTIONAL (unset, optional field) ---
+        // --- STATE: OPTIONAL (unset) --- DS Tactile Rule: border-2 dashed
         !isSet && isOptional && [
-          // Background: Transparent
-          'bg-transparent',
-          // Border: Dashed, very light
-          'border border-dashed border-zinc-200',
-          // Text: Muted
+          'bg-white',
+          'border-2 border-dashed border-zinc-200',
           'text-zinc-400',
-          // Dark mode
-          'dark:border-white/10 dark:text-zinc-500',
+          'dark:bg-white/5 dark:border-white/15 dark:text-zinc-500',
           'dark:hover:border-white/30 dark:hover:text-zinc-300',
         ],
 
-        // --- STATE: UNSET REQUIRED (no value, required field) ---
+        // --- STATE: UNSET REQUIRED --- DS Tactile Rule: border-2 solid
         !isSet && !isOptional && [
-          // Background: Transparent
-          'bg-transparent',
-          // Border: Solid, subtle grey
-          'border border-zinc-200',
-          // Text: Muted grey
+          'bg-white',
+          'border-2 border-zinc-200',
           'text-zinc-400',
-          // Dark mode
-          'dark:bg-white/5 dark:text-zinc-500 dark:border-white/10',
+          'dark:bg-white/5 dark:text-zinc-500 dark:border-white/15',
           'dark:hover:border-white/30 dark:hover:text-white',
         ],
 
@@ -283,7 +268,7 @@ const CoreChip = memo(function CoreChip({
           disabled && 'opacity-60'
         )}
       />
-      <span className="text-xs font-semibold uppercase tracking-wide truncate max-w-[100px]">
+      <span className="text-xs font-semibold uppercase tracking-wide whitespace-nowrap">
         {value || label}
         {!value && isOptional && (
           <span className={`${DS.textSize.micro} opacity-50 ml-1 normal-case tracking-normal`}>(opt)</span>
@@ -335,38 +320,24 @@ const ModuleChip = memo(function ModuleChip({
         'inline-flex items-center gap-1.5 rounded-full flex-shrink-0',
         isMobile ? 'h-11 px-5' : 'h-9 px-4',
         'transition-all duration-200 ease-out active:scale-[0.95]',
-        'border',
 
-        // --- STATE: OFF (inactive) ---
+        // --- STATE: OFF (inactive) --- DS Tactile Rule: border-2, snap-to-black hover
         isOff && [
-          // Transparent background
-          'bg-transparent',
-          // Grey border
-          'border-zinc-200',
-          // Grey text
+          'bg-white',
+          'border-2 border-zinc-200',
           'text-zinc-400',
-          // Hover: border darkens
-          'hover:border-zinc-400 hover:text-zinc-600',
-          // Dark mode
-          'dark:border-white/10 dark:text-zinc-500',
+          'hover:border-zinc-900 hover:text-zinc-600',
+          'dark:bg-white/5 dark:border-white/15 dark:text-zinc-500',
           'dark:hover:border-white/30 dark:hover:text-zinc-300',
         ],
 
-        // --- STATE: ON (active - default or custom) ---
-        // DS Section 3: Active pills = maximum contrast
+        // --- STATE: ON (active) --- DS Tactile Rule: solid fill, maximum contrast
         isOn && [
-          // Solid white background
-          'bg-white',
-          // Zinc-900 border for active state (DS - not blue)
-          'border-zinc-900',
-          // Dark text
-          'text-zinc-900 font-medium',
-          // Subtle shadow
-          'shadow-card',
-          // Hover
-          'hover:bg-zinc-50 hover:shadow-soft',
-          // Dark mode: invert - solid white per DS pills.active
-          'dark:bg-white dark:text-black dark:border-white',
+          'bg-zinc-900 text-white',
+          'border-2 border-transparent',
+          'font-medium',
+          'hover:bg-zinc-800',
+          'dark:bg-white dark:text-black dark:border-transparent',
           'dark:hover:bg-zinc-100',
         ],
 
@@ -380,7 +351,7 @@ const ModuleChip = memo(function ModuleChip({
       {/* Checkmark for active state (replaces icon position) */}
       {/* DS: zinc-900 light / emerald dark for accent elements */}
       {isOn ? (
-        <Check className="h-4 w-4 flex-shrink-0 text-zinc-900 dark:text-emerald-500" strokeWidth={2.5} />
+        <Check className="h-4 w-4 flex-shrink-0 text-white dark:text-emerald-500" strokeWidth={2.5} />
       ) : (
         <Icon className="h-5 w-5 flex-shrink-0 text-zinc-400 dark:text-zinc-500" />
       )}
@@ -455,11 +426,12 @@ function UnifiedChipRowInner({
 
   return (
     <div className="flex flex-col gap-2 w-full">
-      {/* ROW 1: TRIP PARAMS (Where & When) */}
+      {/* MOBILE ROW 1: TRIP PARAMS (Where & When) */}
+      {/* DESKTOP ROW 1: All 5 core chips on one line (no-wrap, scrollable if needed) */}
       <div className={cn(
         'flex items-center gap-1.5',
         isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
-        !isMobile && 'flex-wrap'
+        !isMobile && 'overflow-x-auto no-scrollbar flex-nowrap justify-center'
       )}>
         <CoreChip
           icon={MapPin}
@@ -487,14 +459,7 @@ function UnifiedChipRowInner({
           isMobile={isMobile}
           disabled={isBookingMode}
         />
-      </div>
 
-      {/* ROW 2: TRAVELERS (Who & How Much) */}
-      <div className={cn(
-        'flex items-center gap-1.5',
-        isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
-        !isMobile && 'flex-wrap'
-      )}>
         <CoreChip
           icon={Users}
           label="Travelers"
@@ -516,11 +481,36 @@ function UnifiedChipRowInner({
         />
       </div>
 
+      {/* MOBILE ROW 2: TRAVELERS (separate row on mobile only) */}
+      {isMobile && (
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar -mx-4 px-4 py-1">
+          <CoreChip
+            icon={Users}
+            label="Travelers"
+            value={travelers}
+            onClick={onOpenTravelers}
+            isDefault={isTravelersDefault}
+            isMobile={isMobile}
+            disabled={isBookingMode}
+          />
+
+          <CoreChip
+            icon={DollarSign}
+            label="Budget"
+            value={budget}
+            onClick={onOpenBudget}
+            isOptional
+            isMobile={isMobile}
+            disabled={isBookingMode}
+          />
+        </div>
+      )}
+
       {/* ROW 3: BOOKING TYPES (What We Search For) */}
       <div className={cn(
         'flex items-center gap-2',
         isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
-        !isMobile && 'flex-wrap'
+        !isMobile && 'flex-wrap justify-center'
       )}>
         <ModuleChip
           icon={Plane}

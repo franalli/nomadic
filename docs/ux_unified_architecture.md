@@ -153,6 +153,8 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 | Component | File | Purpose |
 |-----------|------|---------|
 | usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (1.5s debounce to batch rapid toggles, AbortController cancels stale regens, deferred during active streaming) |
+| useMapSync | `hooks/useMapSync.ts` | Zustand store for two-way map↔timeline sync (visibleDayNumber, scrollTargetDayNumber, highlightedCardId) |
+| useUndoStack | `hooks/useUndoStack.ts` | Exposes undo entry from documentStore with 8s auto-expire timer |
 
 ### Progressive Disclosure Rules
 
@@ -1151,19 +1153,127 @@ Highlight fades after 2 seconds
 
 ### Implementation
 
+**State Management — `useMapSync` (Zustand store):**
+
+`frontend/hooks/useMapSync.ts` is a lightweight Zustand store (not persisted) that coordinates the two-way sync:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `visibleDayNumber` | `number \| null` | Set by `TimelineThread` scroll observer; consumed by `InteractiveMap` as `highlightedDay` |
+| `scrollTargetDayNumber` | `number \| null` | Set by `InteractiveMap` on pin click; consumed by `TimelineThread` to trigger scroll |
+| `scrollTargetBlockId` | `string \| null` | Set alongside `scrollTargetDayNumber` by `requestScrollTo()`; identifies the specific block to highlight |
+| `highlightedCardId` | `string \| null` | Set alongside `scrollTargetDayNumber`; drives the 2s highlight ring in `TimelineThread` |
+
+**Scroll → Map (`TimelineThread.tsx`):**
+- `dayHeaderRefs` (Map of dayNumber → HTMLElement) stores refs on each day header button.
+- An `IntersectionObserver` on the `scrollContainerRef` watches day header elements with a 150ms debounce.
+- On intersection: `useMapSync.getState().setVisibleDayNumber(day)`.
+- `PlanFullDensityView` reads `visibleDayNumber` and passes it as `highlightedDay` to `InteractiveMap`.
+
+**Map → Timeline (`InteractiveMap.tsx` + `PlanFullDensityView.tsx`):**
+- `onMarkerClick` callback: `handleMarkerClick(itemId)` in `PlanFullDensityView` finds the matching `MapPOI` by `itemId`, reads `poi.dayNumber`, then calls `useMapSync.getState().requestScrollTo(dayNumber, itemId)`.
+- `TimelineThread` listens to `scrollTargetDayNumber` → `scrollIntoView()` on the corresponding day header, then shows a 2s highlight ring (`ring-2 ring-emerald-500`).
+- `MapPOI.dayNumber` (added to `ghost-timeline-adapter.ts`) is populated by `extractPOIsFromDayCards` from `dayCard.day_number`.
+
+**Pin Icon Lookup — `PIN_CONFIG` (`InteractiveMap.tsx`):**
+
+Replaced fragile string-matching `getMarkerIcon()`/`getMarkerColor()` helpers with an exact-key `PIN_CONFIG: Record<string, {icon: LucideIcon, color: string}>` lookup object (`getPinConfig(type)` function). Colors are hex strings (not Tailwind classes) to survive JIT tree-shaking. Covers all 8 Tier 1 specialist types, Tier 2 categories, and logistics types. `DEFAULT_PIN` fallback is `MapPin` with zinc-400 (`#a1a1aa`).
+
+**Route GeoJSON (`route-utils.ts`):**
+
+`generateRouteGeoJson(dayCards, visibleDay)` in `frontend/lib/route-utils.ts` produces a GeoJSON `FeatureCollection` with a `LineString` connecting the first-coordinate block of each day, filtered to days up to `visibleDay`. Passed to `InteractiveMap` as `routeGeoJson` prop. Memoised in `PlanFullDensityView` using `useMemo([dayCards, visibleDay])`.
+
+**Fly-to on day highlight (`InteractiveMap.tsx`):**
+- When `highlightedDay` changes, the map computes the average `lat`/`lng` of all pins for that day and calls `map.flyTo()` with `zoom: 13` (single pin) or `zoom: 11` (multiple pins).
+- `isUserInteractingRef` tracks active pan/zoom via `onMoveStart`/`onMoveEnd` handlers — fly-to is suppressed while the user is manually navigating.
+
+**Marker click debounce (`InteractiveMap.tsx`):**
+- `lastClickRef` enforces a 500ms debounce between marker clicks to prevent rapid-fire scroll requests.
+
+**ResizeObserver (`InteractiveMap.tsx`):**
+- A `ResizeObserver` on the map container calls `map.resize()` to tell Mapbox to remeasure when the container size changes (e.g., panel open/close transitions).
+
 `InteractiveMap.tsx` validates all coordinates internally via `normalizeMapCoordinates()` (rejects non-finite, out-of-range, or missing values). `ghost-timeline-adapter.ts` applies equivalent validation via `_normalizeMapCoordinates()` when extracting POIs from strategy sections.
 
 **Data Sources:**
-- `DayCard.blocks[].coordinates` - Itinerary locations
-- `StrategySection.content_added[].coordinates` - Specialist POIs
+- `DayCard.blocks[].coordinates` - Itinerary locations (with `dayNumber` propagated to `MapPOI`)
+- `StrategySection.content_added[].coordinates` - Specialist POIs (fallback when no itinerary)
 
 ### Invariants
 
-1. **Map updates on scroll** - IntersectionObserver tracks visible timeline items
-2. **Click triggers scroll** - Clicking pin scrolls timeline to matching item
-3. **Route only in PLAN mode** - No route line for POI-only views
-4. **Day filter persists** - Hovering day filters map to that day's pins only
+1. **Map updates on scroll** - `IntersectionObserver` in `TimelineThread` tracks visible day headers → `useMapSync.setVisibleDayNumber()`
+2. **Click triggers scroll** - `onMarkerClick` → `useMapSync.requestScrollTo()` → `TimelineThread` scrollIntoView + 2s highlight ring
+3. **Route only in PLAN mode** - `generateRouteGeoJson` returns null when no `dayCards`; `InteractiveMap` skips layer when prop is null
+4. **Fly-to suppressed during user interaction** - `isUserInteractingRef` prevents jarring fly-to during manual pan/zoom
 5. **Coordinate validation** - Both `InteractiveMap` and `ghost-timeline-adapter` validate coordinates before rendering (finite, |lat|<=90, |lng|<=180)
+6. **PIN_CONFIG exact-key lookup** - No string-contains matching; unknown types fall back to `DEFAULT_PIN` (`MapPin`, zinc-400)
+7. **Marker click debounce** - 500ms via `lastClickRef` prevents rapid-fire scroll requests
+8. **ResizeObserver** - Map container resize triggers `map.resize()` so Mapbox remeasures on panel transitions
+
+---
+
+## III.C Constraint Badge Deduplication (Stage 17A)
+
+When the same constraint appears on multiple blocks in the same day (e.g., the 24h no-fly rule referenced by both an activity and a logistics block), showing the full badge on every block creates visual noise.
+
+**Implementation in `TimelineThread.tsx`:**
+
+- `_seenConstraintIds: Set<string>` is maintained per render pass across all blocks in all days.
+- `getConstraintDisplayModes(block): Map<string, 'full' | 'icon'>` iterates `block.active_constraints`:
+  - First occurrence of a `constraint.id` or blocking severity → mode `'full'` (full badge with label).
+  - Subsequent occurrences → mode `'icon'` (icon pill only, label in Tooltip on hover).
+  - The `Set` accumulates across days so cross-day dedup also applies.
+- The resulting `Map` is passed to `ActivityMiniCard` as the `constraintDisplayModes` prop.
+
+**`ActivityMiniCard.tsx` rendering:**
+
+- Splits `active_constraints` into `fullConstraints` (mode `'full'`) and `iconOnlyConstraints` (mode `'icon'`).
+- `fullConstraints` render the existing full badge layout.
+- `iconOnlyConstraints` render as compact icon pills with a `Tooltip` showing the constraint label on hover.
+
+**Invariant:** The first appearance of each constraint in the timeline always renders full; all subsequent are icon-only. This is a pure render-time dedup — no data mutation.
+
+---
+
+## III.D Compact Day Variant (Stage 17B)
+
+Days with a single short activity render in a compact horizontal layout to reduce scroll length.
+
+**`getDayVariant(card: DayCard): 'compact' | 'default'` in `TimelineThread.tsx`:**
+
+Returns `'compact'` when:
+- `card.blocks.length === 1`
+- The single block is not a skeleton, buffer, arrival, or departure block
+- The block has no booked tile (unbooked compact slot)
+
+Otherwise returns `'default'` (the existing full-card layout).
+
+**`ActivityMiniCard.tsx` with `variant='compact'`:**
+
+- Renders a horizontal thumbnail + content row instead of the vertical full-card layout.
+- Smaller height (~56px vs ~120px) for single-activity compact days.
+- All interactive affordances (book button, context menu, hold-to-delete) remain present.
+
+**Invariant:** Multi-activity days and days with logistics blocks (arrival/departure/check-in/check-out) always use `'default'` variant.
+
+---
+
+## III.E Depth-1 Undo Stack (Stage 18A)
+
+Drag-and-drop mutations on the itinerary are reversible via a depth-1 undo stack.
+
+**State (`documentStore.ts`):**
+- `UndoEntry`: `{ type: 'drag_move', label: string, previousDayCards: DayCard[], previousVersion: number, timestamp: number }`.
+- `setUndoEntry(entry)` / `clearUndoEntry()` manage the single slot.
+- `executeUndo()` calls `POST /api/document/restore-snapshot` with `previousDayCards` and `previousVersion`, then clears the entry.
+
+**Flow:**
+1. `ItineraryDndWrapper.tsx` captures `previousDayCards` + `previousVersion` snapshot before applying a drag arrangement.
+2. After successful apply, calls `setUndoEntry(...)` and `showMutationToast(label, toast)` to display a toast with an Undo CTA.
+3. `useUndoStack.ts` (mounted in `ItineraryDndWrapper`) auto-expires the `undoEntry` after 8s via `useEffect` + `setTimeout`.
+4. If user clicks Undo within 8s, `executeUndo()` restores the previous day_cards via the backend endpoint.
+
+**Invariant:** Only one undo entry exists at a time (depth-1). A new mutation overwrites the previous entry.
 
 ---
 
@@ -1668,14 +1778,14 @@ useSessionHydration() runs
 | `useBookingDrawerState` | Hook managing booking drawer open/close state and the fill-day API call triggered when a tile is added to a specific day via the drawer. Extracted from `StrategyStageRenderer`. |
 | `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
 | `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack/StrategyHero) |
-| `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts`. Accepts three optional render props for DnD injection: `blockWrapper?: (block: DayBlock, dayNumber: number, children: ReactNode) => ReactNode` (wraps each block — only applied when `useRichBlocks=true`); `dayWrapper?: (dayNumber: number, children: ReactNode) => ReactNode` (wraps the block-list container for activity days only — **not** applied to free/empty days); `freeDayDropSlot?: (dayNumber: number) => ReactNode` (renders a drop zone inside `FreeDayCard` between the subtitle and chips — preferred for free days to avoid highlighting the entire card). All three default to identity no-ops. |
-| `ItineraryDndWrapper` | `@dnd-kit/core` `DndContext` wrapper (`closestCorners`, `PointerSensor` with 8px activation distance). Orchestrates drag state, calls `validateArrangement()` then `applyArrangement()` on drop, applies store update via `mergeEnvelope` + `setState({version})`. Uses `claimMutation`/`releaseMutation` for the store mutation gate. Shows `DragOverlay` with `DragPreviewCard`. |
+| `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts`. Accepts three optional render props for DnD injection: `blockWrapper?: (block: DayBlock, dayNumber: number, children: ReactNode) => ReactNode` (wraps each block — only applied when `useRichBlocks=true`); `dayWrapper?: (dayNumber: number, children: ReactNode) => ReactNode` (wraps the block-list container for activity days only — **not** applied to free/empty days); `freeDayDropSlot?: (dayNumber: number) => ReactNode` (renders a drop zone inside `FreeDayCard` between the subtitle and chips — preferred for free days to avoid highlighting the entire card). All three default to identity no-ops. **Stage 19 map sync:** `IntersectionObserver` on `scrollContainerRef` tracks visible day headers → `useMapSync.setVisibleDayNumber()`. Listens to `scrollTargetDayNumber` → `scrollIntoView()` + 2s highlight ring. **Stage 17A:** `getConstraintDisplayModes(block)` deduplicates constraint badges per render pass — passes `constraintDisplayModes` Map to `ActivityMiniCard`. **Stage 17B:** `getDayVariant(card)` returns `'compact'` for single-block non-logistics days. |
+| `ItineraryDndWrapper` | `@dnd-kit/core` `DndContext` wrapper (`closestCorners`, `PointerSensor` with 8px activation distance). Orchestrates drag state, calls `validateArrangement()` then `applyArrangement()` on drop, applies store update via `mergeEnvelope` + `setState({version})`. Uses `claimMutation`/`releaseMutation` for the store mutation gate. Shows `DragOverlay` with `DragPreviewCard`. **Undo on drag:** Before applying arrangement, captures `previousDayCards` + `previousVersion` snapshot, sets `documentStore.setUndoEntry({ type: 'drag_move', label, previousDayCards, previousVersion })`, and calls `showMutationToast(label, toast)` to display an Undo CTA. Mounts `useUndoStack` for auto-expire side effect (clears `undoEntry` after 8s). |
 | `DraggableBlock` | Wraps each block with `useDraggable`. Locked blocks (`arrival`/`departure`/`check-in`/`check-out`/`is_buffer`) show a `Lock` icon and disable drag. When `block.id` is absent, renders a plain passthrough (no drag handle). Applies `opacity-30 scale-95` while dragging. |
 | `DroppableDay` | Wraps activity-day block lists with `useDroppable` (`id: "day-{dayNumber}"`). Two-div structure: outer div (`ref={setNodeRef}`, `min-h-[80px]`) owns the hit area; inner div owns ring + highlight styles. Highlights with `ring-1 ring-emerald-500/25 bg-emerald-500/[0.04]` when dragging over. Not used for free/empty days — those use `FreeDayDropSlot` instead. |
 | `FreeDayDropSlot` | Dedicated drop zone rendered inside `FreeDayCard` via the `freeDayDropSlot` render prop. Avoids highlighting the entire free-day card. Uses `useDroppable` with the same `day-{dayNumber}` id. |
 | `DragPreviewCard` | Ghost card shown in `DragOverlay` during drag. Renders `block.summary || block.activity_type`, specialist label via `getTopicLabel(block.specialist_type)`, and price from `block.booked_tile?.price_estimate`. |
 | `ChatPanel` | Chat orchestration — thin shell delegating to four extracted hooks: `useChatSend` (send + SSE lifecycle), `useChatEffects` (side effects), `useChatScrolling` (scroll + collapse). Module sheets (flights/stays/activities) are rendered by `ChatModuleSheets`. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown). |
-| `ChatModuleSheets` | Renders the three module sheets (FlightsSheet, StaysSheet, ActivitiesSheet) that live inside ChatPanel. Extracted to keep ChatPanel under 200 lines. |
+| `ChatModuleSheets` | Renders the three module sheets (FlightsSheet, StaysSheet, ActivitiesSheet) that live inside ChatPanel. Extracted to keep ChatPanel under 200 lines. **D3 preferred-tile prune:** When ActivitiesSheet saves with fewer categories, `onSaveSettings` computes `removedCats`, filters `planDocument.preferred_tile_ids` to drop tiles from removed categories (matched via `tile.meta.specialist_type`, `tile.meta.category`, or `tile.tags`), and calls `patchDocument({ preferred_tile_ids: pruned })` as a best-effort fire-and-forget. Backend Phase 5.25 provides a second authoritative filter. |
 | `useChatSend` | Hook orchestrating message send, SSE streaming lifecycle (`useChatSse` internally), node status, suggestion state, and active-status updates. Extracted from ChatPanel. Returns `sendMessageCore`, `addAssistantMessage`, `handleStopStreaming`, plus state (`isLoading`, `nodeStatus`, etc.). |
 | `useChatEffects` | Hook centralising ChatPanel side effects: scroll-on-load, ready-to-generate detection, input focus, node-status → activeStatus mapping, history loading. Extracted from ChatPanel. |
 | `useChatScrolling` | Hook managing scroll container ref, auto-scroll-to-bottom, user-scrolled-up detection, and mobile setup header collapse. Extracted from ChatPanel. |
@@ -1696,6 +1806,10 @@ useSessionHydration() runs
 | `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. Pure computation — no side effects. |
 | `useLandingEffects` | Hook extracted from `NomadicLanding` grouping side effects unrelated to itinerary generation: destination image fetching, `hasEverHadPlan` detection, topic tracking for mobile badges, specialist deep link handling. State is owned by the parent and passed in as params + setters. |
 | `specialist-colors.ts` | SSoT for specialist-to-color text class mappings (`SPECIALIST_TEXT_COLOR: Record<string, string>`). Used by `DragPreviewCard` and `ActivityMiniCard` for specialist label badges. Hue assignments match the DS constraint-priority palette. |
+| `useMapSync` | Zustand store (`frontend/hooks/useMapSync.ts`) for map↔timeline two-way sync. State: `visibleDayNumber` (set by TimelineThread scroll observer), `scrollTargetDayNumber` (set by InteractiveMap pin click), `highlightedCardId`. Actions: `setVisibleDayNumber()`, `requestScrollTo(dayNumber, itemId)`. Not persisted — resets on mount. |
+| `useUndoStack` | Hook (`frontend/hooks/useUndoStack.ts`) mounted in `ItineraryDndWrapper`. Returns `{ undoEntry, executeUndo }` and auto-expires `undoEntry` after 8s via `useEffect` + `setTimeout`. |
+| `showMutationToast` | Utility (`frontend/lib/showMutationToast.ts`) that shows a toast notification with an Undo CTA after drag/remove mutations. Calls `toast({ description: label, action: { label: 'Undo', onClick: documentStore.executeUndo } })`. |
+| `route-utils.ts` | Utility (`frontend/lib/route-utils.ts`) exporting `generateRouteGeoJson(dayCards, visibleDay)`. Returns a GeoJSON `FeatureCollection` with a `LineString` connecting the first-coordinate block of each day, capped at `visibleDay`. Returns null when `dayCards` is empty. |
 
 **Deleted Components (no longer in codebase):**
 - `ConflictResolutionBanner` -- conflict resolution now chat-driven via suggestion chips
@@ -2648,7 +2762,7 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Arrival/Departure | `LogisticsBlock` | Border-l-4, icon, time | Hard times (flights) |
 | Check-in/out | `LogisticsBlock` | Key icon, hotel name, inline constraints | Accommodation logistics |
 | Safety Buffer | `SafetyBlock` | Red zone, "No Flights until". **Excludes** arrival/departure anchors (those are `LogisticsBlock`, not `SafetyBlock`) | Constraint visualization |
-| Activity | `ActivityMiniCard` | Thumbnail, category badge, duration, time of day, description, constraints, price badge (`block.booked_tile?.price_estimate`), book button, hold-to-delete | Rich activity display with metadata |
+| Activity | `ActivityMiniCard` | Thumbnail, category badge, duration, time of day, description, constraints, price badge (`block.booked_tile?.price_estimate`), book button, hold-to-delete. **Stage 17A:** Accepts `constraintDisplayModes?: Map<string, 'full' \| 'icon'>` — renders icon-only pill with Tooltip for repeated constraints. **Stage 17B:** Accepts `variant?: 'default' \| 'compact'` — compact renders a horizontal thumbnail+content row (~56px height) for single-activity days. | Rich activity display with metadata |
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
 | Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker. Buffer blocks (SafetyBlock) render above FreeDayCard when present. **Suppressed on arrival and departure days** (no activity placement on travel days) | Quick-fill with generated activities or browse |
 

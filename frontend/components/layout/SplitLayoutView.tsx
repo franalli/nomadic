@@ -33,6 +33,8 @@ interface SplitLayoutViewProps {
   mobileInput?: React.ReactNode;
   /** Mobile-only: trip status bar rendered above swipe container (shared across pages) */
   mobileStatusBar?: React.ReactNode;
+  /** Data density from StrategyStageRenderer — controls landing vs plan-active layout */
+  dataDensity?: 'empty' | 'ghost' | 'bridge' | 'full';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,6 +52,8 @@ interface SplitLayoutViewProps {
  * - CSS scroll-snap with two full-screen pages
  * - Tab bar for tap navigation + badge indicator
  * - Auto-navigates to plan when content arrives
+ *
+ * Landing→Split transition uses pure CSS transitions (compositor thread, no layout thrash).
  */
 export const SplitLayoutView = memo(function SplitLayoutView({
   plannerContent,
@@ -61,8 +65,11 @@ export const SplitLayoutView = memo(function SplitLayoutView({
   planTabEnabled = false,
   mobileInput,
   mobileStatusBar,
+  dataDensity = 'empty',
 }: SplitLayoutViewProps) {
   const isDesktop = useIsDesktop();
+
+  const isLanding = dataDensity === 'empty';
 
   return (
     <div className="flex flex-col h-[100dvh] lg:h-screen overflow-hidden">
@@ -81,61 +88,98 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       />
 
       {/* Main Layout Container */}
-      {/* Desktop: Grid 40/60 split | Mobile: Horizontal swipe pages */}
+      {/* Desktop: Flex row (relative for topo overlay) | Mobile: Horizontal swipe pages */}
       <div
         className={cn(
           'flex-1 overflow-hidden min-h-0', // min-h-0 fixes flexbox height collapse on mobile
           // Mobile: flex column for swipe layout
           'flex flex-col',
-          // Desktop: Grid with fluid chat panel width (clamp for continuous scaling)
-          'lg:grid lg:grid-cols-[clamp(320px,28vw,480px)_1fr]'
+          // Desktop: flex row with relative positioning for topo background
+          'lg:flex lg:flex-row lg:relative'
         )}
       >
         {/* ─────────────────────────────────────────────────────────────────── */}
-        {/* Desktop Layout: True Split View (lg+) */}
+        {/* Desktop Layout: Adaptive Split View (lg+) */}
         {/* ─────────────────────────────────────────────────────────────────── */}
         {isDesktop && (
           <>
-            {/* Left Panel: Planner (40% or max 480px) */}
-            {/* Light Mode: Solid white cardstock with prominent shadow */}
-            {/* Dark Mode: Subtle tinted glass */}
+            {/* Topo background — CSS opacity transition, lingers longest (700ms) */}
+            <div
+              className={cn(
+                'absolute inset-0 pointer-events-none z-0 bg-white dark:bg-zinc-950',
+                'transition-opacity duration-700 ease-out',
+                isLanding ? 'opacity-100' : 'opacity-0',
+              )}
+            >
+              <div className="absolute inset-0 animate-topo-drift topo-contour-mask-350 opacity-[0.15] dark:opacity-[0.10]">
+                <div className="absolute inset-0 bg-black dark:bg-white" />
+              </div>
+            </div>
+
+            {/* Chat column — CSS width + margin transition (500ms ease-out) */}
             <aside
               className={cn(
-                'hidden lg:flex lg:flex-col',
-                'h-[calc(100vh-48px)]', // Full height minus header
-                'border-r',
-                // Light: white cardstock with sharp border
-                'bg-white border-zinc-200',
-                // Light: prominent shadow for "floating paper" effect
-                'shadow-[4px_0_24px_-12px_rgba(0,0,0,0.12),8px_0_40px_-20px_rgba(0,0,0,0.08)]',
-                // Dark: tinted glass with subtle border
-                'dark:bg-black/40 dark:backdrop-blur-xl dark:border-white/5',
-                'dark:shadow-[4px_0_12px_rgba(0,0,0,0.3)]',
-                'relative z-[1]'
+                'relative z-10 flex flex-col',
+                'h-[calc(100vh-48px)]',
+                'transition-all duration-500 ease-[cubic-bezier(0.25,0.1,0.25,1)]',
+                isLanding
+                  ? 'w-[640px] mx-auto'
+                  : [
+                      'w-[480px] mx-0 shrink-0',
+                      'border-r',
+                      'bg-white border-zinc-200',
+                      'shadow-[4px_0_24px_-12px_rgba(0,0,0,0.12),8px_0_40px_-20px_rgba(0,0,0,0.08)]',
+                      'dark:bg-black/40 dark:backdrop-blur-xl dark:border-white/5',
+                      'dark:shadow-[4px_0_12px_rgba(0,0,0,0.3)]',
+                    ],
               )}
               aria-label="Trip planner"
             >
-              <div className="flex-1 overflow-y-auto no-scrollbar p-5">
-                {plannerContent}
-              </div>
-              {/* Desktop footer - pinned at bottom of left rail */}
-              <footer className={`shrink-0 flex items-center justify-center gap-2 px-4 py-2 border-t border-[var(--theme-hairline)] ${DS.textSize.mini} text-[var(--theme-link-muted)]`}>
-                <Link href="/privacy" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Privacy</Link>
-                <span aria-hidden="true" className="opacity-30">·</span>
-                <Link href="/terms" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Terms</Link>
-                <span aria-hidden="true" className="opacity-30">·</span>
-                <Link href="/cookies" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Cookies</Link>
-                <span aria-hidden="true" className="opacity-30">·</span>
-                <Link href="/contact" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Contact</Link>
-              </footer>
+              {isLanding ? (
+                /* Landing: optical center via top padding, footer pinned to bottom */
+                <>
+                  <div className="flex-1 flex flex-col overflow-y-auto no-scrollbar px-4">
+                    {plannerContent}
+                  </div>
+                  <footer className={`shrink-0 flex items-center justify-center gap-2 px-4 py-3 ${DS.textSize.mini} text-[var(--theme-link-muted)]`}>
+                    <Link href="/privacy" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Privacy</Link>
+                    <span aria-hidden="true" className="opacity-30">·</span>
+                    <Link href="/terms" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Terms</Link>
+                    <span aria-hidden="true" className="opacity-30">·</span>
+                    <Link href="/cookies" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Cookies</Link>
+                    <span aria-hidden="true" className="opacity-30">·</span>
+                    <Link href="/contact" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Contact</Link>
+                  </footer>
+                </>
+              ) : (
+                <>
+                  <div className="flex-1 overflow-y-auto no-scrollbar p-4">
+                    {plannerContent}
+                  </div>
+                  {/* Desktop footer - pinned at bottom of left rail */}
+                  <footer className={`shrink-0 flex items-center justify-center gap-2 px-4 py-2 border-t border-[var(--theme-hairline)] ${DS.textSize.mini} text-[var(--theme-link-muted)]`}>
+                    <Link href="/privacy" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Privacy</Link>
+                    <span aria-hidden="true" className="opacity-30">·</span>
+                    <Link href="/terms" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Terms</Link>
+                    <span aria-hidden="true" className="opacity-30">·</span>
+                    <Link href="/cookies" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Cookies</Link>
+                    <span aria-hidden="true" className="opacity-30">·</span>
+                    <Link href="/contact" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Contact</Link>
+                  </footer>
+                </>
+              )}
             </aside>
 
-            {/* Right Panel: Plan View (60% or remaining space) */}
+            {/* Plan panel — always rendered, CSS transform + opacity transition (500ms, 100ms delay) */}
             <main
               className={cn(
-                'hidden lg:flex lg:flex-col',
+                'flex flex-col',
                 'h-[calc(100vh-48px)]',
-                'rightCanvas' // topo background via pseudo-elements
+                'rightCanvas',
+                'transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] delay-100',
+                isLanding
+                  ? 'w-0 min-w-0 opacity-0 overflow-hidden pointer-events-none'
+                  : 'flex-1 min-w-0 opacity-100',
               )}
               aria-label="Your trip plan"
               data-testid="plan-view"

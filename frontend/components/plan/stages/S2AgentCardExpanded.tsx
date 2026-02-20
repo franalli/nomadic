@@ -13,7 +13,7 @@ import { formatConstraintTitle, RichText } from './S2TopicConfig';
 
 export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
   return (
-    <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4">
+    <div className="px-4 pb-4 pt-2 border-t border-zinc-200/50 dark:border-white/10 space-y-4">
       {/* Destination Gallery — Vibe Trio for Local Expert */}
       {section.specialist_type === 'local_expert' && section.destination_gallery && section.destination_gallery.length > 0 && (
         <div className="mb-2">
@@ -39,7 +39,7 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
       {/* Specialist Constraints */}
       {section.constraints_applied && section.constraints_applied.length > 0 && (
         <div>
-          <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
+          <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-3 flex items-center gap-2">
             <ShieldCheck size={12} className="text-emerald-600 dark:text-emerald-400" /> Applied Constraints
           </h5>
           <div className="space-y-3">
@@ -61,7 +61,7 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
       {/* Expert Recommendations — skip for local_expert */}
       {section.content_added && section.content_added.length > 0 && section.specialist_type !== 'local_expert' && (
         <div>
-          <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
+          <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-3 flex items-center gap-2">
             <Lightbulb size={12} className="text-emerald-600 dark:text-emerald-400" /> Expert Recommendations
           </h5>
           <div className="grid gap-3">
@@ -84,7 +84,7 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
                       <span className="font-medium tracking-wide">{c.logic_hook}</span>
                     </div>
                   )}
-                  {c.day && <div className={`${DS.textSize.micro} text-muted-foreground mt-1.5`}>Day {c.day}</div>}
+                  {c.day && <div className={`${DS.textSize.micro} text-zinc-500 dark:text-zinc-400 mt-1.5`}>Day {c.day}</div>}
                 </div>
               </div>
             ))}
@@ -94,8 +94,8 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
 
       {/* Booking artifacts — general agent only */}
       {section.booking_artifacts && section.specialist_type === 'general' && (
-        <div className="flex flex-wrap gap-2 py-2 border-b border-border/30">
-          <span className="text-xs text-muted-foreground">Booking surfaces:</span>
+        <div className="flex flex-wrap gap-2 py-2 border-b border-zinc-200/30 dark:border-white/10">
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">Booking surfaces:</span>
           {section.booking_artifacts.activities_count > 0 && <span className="text-xs topic-bullet font-medium">{section.booking_artifacts.activities_count} activities shortlisted</span>}
           {section.booking_artifacts.hotels_count > 0 && <span className="text-xs topic-bullet font-medium">{section.booking_artifacts.hotels_count} hotels recommended</span>}
         </div>
@@ -104,11 +104,11 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
       {/* Optional upgrades */}
       {section.optional_upgrades && section.optional_upgrades.length > 0 && (
         <div>
-          <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Optional upgrades</h5>
+          <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-2">Optional upgrades</h5>
           <ul className="space-y-1.5">
             {section.optional_upgrades.slice(0, 3).map((item, idx) => (
-              <li key={idx} className="text-xs text-muted-foreground flex items-start gap-2">
-                <span className="text-muted-foreground/70 mt-0.5">+</span><RichText>{item}</RichText>
+              <li key={idx} className="text-xs text-zinc-500 dark:text-zinc-400 flex items-start gap-2">
+                <span className="text-zinc-400 dark:text-zinc-500 mt-0.5">+</span><RichText>{item}</RichText>
               </li>
             ))}
           </ul>
@@ -118,11 +118,11 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
       {/* Logistics notes */}
       {section.logistics_notes && section.logistics_notes.length > 0 && (
         <div>
-          <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Logistics</h5>
+          <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-2">Logistics</h5>
           <ul className="space-y-1.5">
             {section.logistics_notes.slice(0, 4).map((item, idx) => (
-              <li key={idx} className="text-xs text-muted-foreground flex items-start gap-2">
-                <span className="text-muted-foreground/50 mt-0.5">-</span><RichText>{item}</RichText>
+              <li key={idx} className="text-xs text-zinc-500 dark:text-zinc-400 flex items-start gap-2">
+                <span className="text-zinc-400/50 dark:text-zinc-500/50 mt-0.5">-</span><RichText>{item}</RichText>
               </li>
             ))}
           </ul>
@@ -132,20 +132,20 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
       {/* Tradeoffs + Impact */}
       {section.tradeoffs_summary && (
         <div>
-          <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Why this approach</h5>
-          <p className="text-xs text-muted-foreground"><RichText>{section.tradeoffs_summary}</RichText></p>
+          <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-2">Why this approach</h5>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400"><RichText>{section.tradeoffs_summary}</RichText></p>
         </div>
       )}
       {section.impact_areas && section.impact_areas.length > 0 && (
-        <div className="flex items-center gap-2 pt-2 border-t border-border/30">
-          <span className="text-xs text-muted-foreground">Impact:</span>
+        <div className="flex items-center gap-2 pt-2 border-t border-zinc-200/30 dark:border-white/10">
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">Impact:</span>
           {section.impact_areas.map((area, i) => <span key={i} className="text-xs px-1.5 py-0.5 topic-badge rounded">{area}</span>)}
         </div>
       )}
 
       {/* Provenance (debug info) */}
       {(section.strategy_node_id || section.strategy_version) && (
-        <details className={`${DS.textSize.micro} text-muted-foreground/70`}>
+        <details className={`${DS.textSize.micro} text-zinc-400 dark:text-zinc-500`}>
           <summary className="cursor-pointer">ⓘ Provenance</summary>
           <p className="mt-1 pl-2">Generated by: <span className="topic-bullet">{section.strategy_node_id}</span>{section.strategy_version && ` • v${section.strategy_version}`}</p>
         </details>

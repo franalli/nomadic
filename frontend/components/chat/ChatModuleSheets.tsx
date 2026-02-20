@@ -14,6 +14,7 @@ import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
 import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
 import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
+import { useDocumentStore } from '@/state/documentStore';
 import type { AckUpdate , ChatMessage } from '@/types/chat';
 import type {
   ActivitySettings,
@@ -24,6 +25,7 @@ import type {
 import { isBookingEnabled } from '@/types/document';
 import type { PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
+import type { Tile } from '@/types/tile';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -92,6 +94,7 @@ export function ChatModuleSheets({
   setActivitiesSheetOpen,
 }: ChatModuleSheetsProps) {
   const sheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { document: planDocument, version: docVersion, patchDocument } = useDocumentStore();
 
   useEffect(() => {
     return () => {
@@ -190,6 +193,35 @@ export function ChatModuleSheets({
         onSaveSettings={(settings) => {
           const prevDayPrefs = activitySettings?.day_preferences || {};
           const prevCats = new Set(activitySettings?.categories || []);
+          const newCats = new Set(settings.categories || []);
+
+          // D3: Prune preferred_tile_ids for tiles belonging to removed categories.
+          // Hearted tiles from a removed category would otherwise be placed by
+          // Phase 5.25 even when the user has switched away from that activity.
+          const removedCats = [...prevCats].filter(c => !newCats.has(c));
+          if (removedCats.length > 0 && planDocument) {
+            const currentPreferred = planDocument.preferred_tile_ids ?? [];
+            const tiles = planDocument.tiles ?? {};
+            const removedCatSet = new Set(removedCats.map(c => c.toLowerCase()));
+            const prunedPreferred = currentPreferred.filter((tileId) => {
+              const tile = tiles[tileId] as Tile | undefined;
+              if (!tile) return true; // Unknown tile — keep
+              const tileCategory = (
+                (tile.meta?.specialist_type as string | undefined)
+                ?? (tile.meta?.category as string | undefined)
+                ?? ''
+              ).toLowerCase();
+              const tileTags = new Set((tile.tags ?? []).map(t => t.toLowerCase()));
+              const isRemovedCategory =
+                (tileCategory && removedCatSet.has(tileCategory))
+                || [...tileTags].some(t => removedCatSet.has(t));
+              return !isRemovedCategory;
+            });
+            if (prunedPreferred.length !== currentPreferred.length) {
+              patchDocument({ version: docVersion, preferred_tile_ids: prunedPreferred });
+            }
+          }
+
           onUpdateActivitySettings?.(settings);
           toast('Activity preferences saved');
           const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
@@ -197,7 +229,6 @@ export function ChatModuleSheets({
           );
           if (isActive) {
             const newDayPrefs = settings.day_preferences || {};
-            const newCats = new Set(settings.categories || []);
             const updates: AckUpdate[] = [];
             for (const cat of newCats) {
               if (!prevCats.has(cat)) {

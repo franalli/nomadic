@@ -104,7 +104,8 @@
       "Bash(PYTHONPATH=. .venv/bin/pytest:*)",
       "Bash(bash:*)",
       "Bash(gh api:*)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(.venv/bin/python:*)"
     ],
     "deny": [],
     "ask": []

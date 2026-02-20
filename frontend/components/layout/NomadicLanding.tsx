@@ -27,7 +27,7 @@ import {
 import { LandingSheets } from '@/components/layout/LandingSheets';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
-import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
+import { computeDataDensity, type DataDensity, StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { useToast } from '@/components/ui/toast';
@@ -240,6 +240,13 @@ export function NomadicLanding() {
     localPendingTopics,
     hasBranchesReady,
   });
+
+  // Compute data density for adaptive layout
+  const dataDensity: DataDensity = computeDataDensity(
+    planViewState ?? 'S0_BOOTSTRAP',
+    planViewModel.strategy_sections,
+    docTiles ?? {}
+  );
 
   // Trip inputs editor
   const tripInputsEditor = useTripInputsEditor({
@@ -493,6 +500,7 @@ export function NomadicLanding() {
     <>
       <div className="appTopo text-foreground">
         <SplitLayoutView
+          dataDensity={dataDensity}
           plannerContent={plannerContent}
           planViewContent={planViewContent}
           planState={planState}

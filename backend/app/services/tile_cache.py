@@ -2,9 +2,9 @@
 Thread-safe two-tier caching for Tile data (hotels, activities).
 
 L1: In-memory TTLCache (24h TTL, 256 entries) - hot path
-L2: PostgreSQL response_cache (24h TTL) - warm persistence across restarts
+L2: PostgreSQL response_cache (72h TTL, env-configurable) - warm persistence across restarts
 
-Cache key format: tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}
+Cache key format: tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]
 
 Usage:
     from app.services.tile_cache import (
@@ -31,6 +31,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.planner.hashing import make_cache_key
 from app.services.cache_core import MemoryCache, l2_upsert
 
@@ -41,7 +42,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 L1_TTL_SECONDS = 86400  # 24 hours
 L1_MAX_SIZE = 256
-L2_TTL_HOURS = 24
+L2_TTL_HOURS = settings.tile_cache_ttl_hours  # default 72h — env: TILE_CACHE_TTL_HOURS
 
 # =============================================================================
 # L1: Thread-safe in-memory cache
@@ -55,29 +56,26 @@ def _tile_cache_key(
     destination: str,
     start_date: str,
     end_date: str,
+    variant: str = "",
 ) -> str:
     """
     Generate stable cache key:
-    tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}
+    tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]
 
     Key components:
-    - provider: "amadeus", "curated", "mock"
+    - provider: "google_places", "amadeus", "mock"
     - tile_type: "hotel", "activity"
     - destination: normalized lowercase, stripped
     - start_date, end_date: YYYY-MM-DD format
+    - variant: optional differentiator (e.g. "stars3" for min_stars=3 hotel queries)
 
-    Example: "tile::v2::amadeus::hotel::bali::2025-02-01::2025-02-14"
+    Example: "tile::v2::google_places::hotel::bali::2025-02-01::2025-02-14::stars3"
     """
     dest_normalized = destination.lower().strip() if destination else "unknown"
-    return make_cache_key(
-        "tile",
-        "v2",
-        provider,
-        tile_type,
-        dest_normalized,
-        start_date,
-        end_date,
-    )
+    parts = ["tile", "v2", provider, tile_type, dest_normalized, start_date, end_date]
+    if variant:
+        parts.append(variant)
+    return make_cache_key(*parts)
 
 
 # =============================================================================
@@ -114,17 +112,19 @@ async def get_cached_tiles(
     destination: str,
     start_date: str,
     end_date: str,
+    variant: str = "",
 ) -> Optional[List[dict]]:
     """
     Get cached tiles: L1 → L2 fallback with error handling.
 
     Args:
         db: Async database session
-        provider: Provider name ("amadeus", "curated", "mock")
+        provider: Provider name ("google_places", "amadeus", "mock")
         tile_type: Tile type ("hotel", "activity")
         destination: Trip destination
         start_date: Trip start date (YYYY-MM-DD)
         end_date: Trip end date (YYYY-MM-DD)
+        variant: Optional cache variant (e.g. "stars3" for min_stars=3 hotel queries)
 
     Returns:
         List of tile dicts or None if not found
@@ -132,7 +132,7 @@ async def get_cached_tiles(
     # Import here to avoid circular imports
     from app.db_models import ResponseCache
 
-    cache_key = _tile_cache_key(provider, tile_type, destination, start_date, end_date)
+    cache_key = _tile_cache_key(provider, tile_type, destination, start_date, end_date, variant)
 
     # L1: Memory check
     cached = _mem.get(cache_key)
@@ -195,6 +195,7 @@ async def set_cached_tiles(
     start_date: str,
     end_date: str,
     tiles: List[dict],
+    variant: str = "",
 ) -> None:
     """
     Cache tiles to both L1 and L2 with error handling.
@@ -207,8 +208,9 @@ async def set_cached_tiles(
         start_date: Trip start date
         end_date: Trip end date
         tiles: List of tile dicts (already serialized)
+        variant: Optional cache variant (e.g. "stars3" for min_stars=3 hotel queries)
     """
-    cache_key = _tile_cache_key(provider, tile_type, destination, start_date, end_date)
+    cache_key = _tile_cache_key(provider, tile_type, destination, start_date, end_date, variant)
 
     # L1: Always write to memory (fast path)
     _mem.set(cache_key, tiles)

@@ -50,7 +50,7 @@ backend/app/planner/
                     feasibility_service.py
   state/          → graph_state.py, typed_meta.py
   *.py            → specialist_registry.py, hashing.py,
-                    llm_factory.py, test_mode.py
+                    llm_factory.py, llm_structured.py, test_mode.py
 backend/app/
   plan_graph.py, main.py, schemas.py, config.py, db.py, db_models.py,
   debug_utils.py, graph_plan_utils.py, placeholders.py
@@ -59,7 +59,7 @@ backend/app/
                     experience_generator.py, regen_strategy.py, itinerary_builder.py,
                     unsplash.py, unsplash_queries.py, task_tracker.py
   tile_service/   → curated_provider.py, amadeus_provider.py, mock_provider.py,
-                    provider_base.py, service.py, models.py
+                    google_places_provider.py, provider_base.py, service.py, models.py
   tools/          → constraint_engine.py, amadeus_client.py, tile_service.py,
                     circuit_breaker.py
   crud_document.py, crud_trip.py, validation.py, validation_cache.py,

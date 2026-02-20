@@ -43,6 +43,10 @@ export interface RichBlockRendererProps {
   onOpenFlightsSettings?: () => void;
   /** Callback to remove a block from the itinerary */
   onRemoveBlock?: (blockId: string, dayNumber: number) => void;
+  /** Stage 17: Per-constraint display mode (full badge vs icon pill) */
+  constraintDisplayModes?: Map<string, 'full' | 'icon'>;
+  /** Stage 17: Day layout variant (compact = single-activity row) */
+  variant?: 'default' | 'compact';
 }
 
 export function RichBlockRenderer({
@@ -58,6 +62,8 @@ export function RichBlockRenderer({
   onOpenStaysSettings,
   onOpenFlightsSettings,
   onRemoveBlock,
+  constraintDisplayModes,
+  variant,
 }: RichBlockRendererProps) {
   // 1. LOGISTICS LAYER - Hard times (arrival/departure/check-in/check-out)
   if (block.buffer_type === 'arrival' || block.buffer_type === 'departure') {
@@ -169,6 +175,8 @@ export function RichBlockRenderer({
       onSwitchToAlternative={undefined}
       onRemove={onRemoveBlock && block.id ? () => onRemoveBlock(block.id!, dayNumber) : undefined}
       isRemovable={!block.is_buffer && !['arrival', 'departure', 'check-in', 'check-out'].includes(block.activity_type)}
+      constraintDisplayModes={constraintDisplayModes}
+      variant={variant}
     />
   );
 }

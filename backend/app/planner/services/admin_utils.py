@@ -96,32 +96,38 @@ async def clear_all_checkpoints() -> None:
 
 
 async def clear_response_caches() -> int:
-    """Clear ALL response caches (experience, specialist, tile, feasibility) L1 + L2."""
+    """Clear L1 in-memory caches (experience, specialist, tile, feasibility).
+
+    L2 (PostgreSQL) is only cleared when settings.clear_l2_on_session_reset is True
+    (set CLEAR_L2_ON_RESET=true in .env for local dev). In production this flag is
+    unset so L2 entries survive restarts and expire naturally via their TTL.
+    """
+    from app.config import settings
     from app.planner.services.feasibility_service import _feasibility_cache
     from app.services.experience_generator import clear_experience_cache
     from app.services.specialist_cache import clear_memory_cache as clear_specialist_cache
     from app.services.tile_cache import clear_memory_cache as clear_tile_cache
 
-    # L1: in-memory
+    # L1: always clear in-memory caches
     total = clear_experience_cache()
     total += clear_specialist_cache()
     total += clear_tile_cache()
     total += _feasibility_cache.clear()
 
-    # L2: database (all cache_types)
-    try:
-        from sqlalchemy import delete
+    # L2: only in dev when CLEAR_L2_ON_RESET=true
+    if settings.clear_l2_on_session_reset:
+        try:
+            from sqlalchemy import text
 
-        from app.db import _get_async_session_factory
-        from app.db_models import ResponseCache
+            from app.db import _get_async_session_factory
 
-        factory = _get_async_session_factory()
-        async with factory() as db:
-            result = await db.execute(delete(ResponseCache))
-            total += result.rowcount
-            await db.commit()
-    except Exception:
-        pass
+            factory = _get_async_session_factory()
+            async with factory() as db:
+                result = await db.execute(text("DELETE FROM response_cache"))
+                total += result.rowcount
+                await db.commit()
+        except Exception:
+            pass
 
     return total
 

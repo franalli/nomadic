@@ -80,8 +80,8 @@ export function FreeDayCard({
                 className={cn(
                   'px-3 py-1.5 rounded-full text-xs font-medium transition-all',
                   selectedCat === cat.value
-                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-black'
-                    : 'bg-white border border-zinc-200 text-zinc-600 dark:bg-white/5 dark:border-white/15 dark:text-zinc-400',
+                    ? 'bg-zinc-900 text-white border-2 border-transparent dark:bg-white dark:text-black dark:border-transparent'
+                    : 'bg-white border-2 border-zinc-200 text-zinc-600 hover:border-zinc-900 hover:text-zinc-900 dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
                   isDisabled && 'opacity-50 cursor-not-allowed'
                 )}
               >

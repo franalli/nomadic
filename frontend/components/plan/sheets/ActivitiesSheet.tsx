@@ -337,7 +337,12 @@ function ActivitiesSheetInner({
                     >
                       {option.label}
                     </span>
-                    <span className="text-xs text-zinc-500 dark:text-zinc-500">
+                    <span className={cn(
+                      'text-xs',
+                      isSelected
+                        ? 'text-zinc-300 dark:text-zinc-600'
+                        : 'text-zinc-500 dark:text-zinc-500'
+                    )}>
                       {option.description}
                     </span>
                   </button>

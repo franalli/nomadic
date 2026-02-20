@@ -74,6 +74,7 @@ backend/
 │   │   ├── __init__.py
 │   │   ├── hashing.py          # Hash utilities
 │   │   ├── llm_factory.py      # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
+│   │   ├── llm_structured.py   # Structured output retry/provider compatibility utilities
 │   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
 │   │   ├── test_mode.py        # Test mode utilities
 │   │   │
@@ -142,12 +143,13 @@ backend/
 │   │
 │   ├── tile_service/           # Tile data providers
 │   │   ├── __init__.py
-│   │   ├── amadeus_provider.py # Amadeus API integration
-│   │   ├── curated_provider.py # Curated content provider
-│   │   ├── mock_provider.py    # Mock data for testing
-│   │   ├── models.py           # Tile models
-│   │   ├── provider_base.py    # Base provider class
-│   │   └── service.py          # Tile service orchestrator
+│   │   ├── amadeus_provider.py       # Amadeus API integration
+│   │   ├── curated_provider.py       # Curated content provider
+│   │   ├── google_places_provider.py # Google Places API integration (sync + async; Hotels + Activities)
+│   │   ├── mock_provider.py          # Mock data for testing
+│   │   ├── models.py                 # Tile models
+│   │   ├── provider_base.py          # Base provider class
+│   │   └── service.py                # Tile service orchestrator (4-tier cascade: Curated → Google Places → Amadeus → Mock)
 │   │
 │   └── tools/                  # LangGraph tools
 │       ├── __init__.py
@@ -240,6 +242,11 @@ backend/
 │   ├── test_intent_router_bugs.py     # IntentRouter edge case regression tests
 │   ├── test_logistics_tile_scaling.py # Logistics tile scaling tests
 │   ├── test_post_arrangement_constraints.py  # Post-arrangement constraint recomputation tests
+│   ├── test_constraint_guard_merge.py # Constraint guard merge/dedup regression tests
+│   ├── test_graph_integration.py      # End-to-end graph integration tests
+│   ├── test_itinerary_builder_bugs.py # ItineraryBuilder edge case regression tests (D3 filter, D4 cap)
+│   ├── test_logistics_scaling.py      # Logistics provider scaling + cascade tests
+│   ├── test_router_category_bugs.py   # Router category gate regression tests (D6 stale-constraint purge)
 │   └── db/
 │       ├── test_expand_itinerary_api.py
 │       └── test_plan_document_api.py
@@ -446,6 +453,8 @@ frontend/
 │   ├── useSheetManager.ts
 │   ├── useSpecialistDeepLink.ts
 │   ├── useTripInputsWithFallback.ts
+│   ├── useMapSync.ts             # Zustand store for map↔timeline two-way sync (Stage 19)
+│   ├── useUndoStack.ts           # Auto-expire side effect hook for undo stack (clears undoEntry after 8s)
 │   └── useViewNavigation.ts
 │
 ├── lib/                        # Utility functions
@@ -460,7 +469,9 @@ frontend/
 │   ├── specialist-colors.ts    # Specialist-to-color text class mappings (SSoT for specialist badge text colors)
 │   ├── fillDayGuards.ts        # Fill-day client cooldown guard helpers
 │   ├── format-utils.ts         # Formatting utilities
-│   ├── ghost-timeline-adapter.ts
+│   ├── ghost-timeline-adapter.ts  # Ghost timeline + MapPOI extraction (MapPOI.dayNumber added Stage 19)
+│   ├── route-utils.ts          # generateRouteGeoJson() — GeoJSON LineString for map route (Stage 19)
+│   ├── showMutationToast.ts    # Toast helper with Undo CTA for drag/remove mutations
 │   ├── loaderConfig.ts         # Loader configuration
 │   ├── loaderCopyConfig.ts     # Loader copy text
 │   ├── placeholders.ts         # Placeholder data

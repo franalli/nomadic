@@ -81,7 +81,7 @@ frontend/
   hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
                      usePreferenceAutoRegen, useScrollCollapse, useSheetManager,
                      useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation,
-                     useChatSse
+                     useChatSse, useMapSync, useUndoStack
   types/           → chat.ts, document.ts, generated.ts, hooks.ts, loader.ts,
                      plan-envelope.ts, sheets.ts, summary.ts, tile.ts
   lib/             → design-system.ts, api.ts, animation-config.ts, streamParser.ts,
@@ -91,7 +91,7 @@ frontend/
                      date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
-                     popular-places.ts
+                     popular-places.ts, route-utils.ts, showMutationToast.ts
   __tests__/       → Vitest tests
 ```
 

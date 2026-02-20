@@ -118,6 +118,24 @@ class RequestMetrics:
 # =============================================================================
 
 
+MODEL_PRICING = {  # Per 1M tokens (USD)
+    "gpt-4o": {"prompt": 2.50, "completion": 10.00},
+    "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
+    "gemini-2.5-flash": {"prompt": 0.15, "completion": 0.60},
+    "gemini-2.5-pro": {"prompt": 1.25, "completion": 5.00},
+}
+
+
+def calculate_llm_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """Calculate cost in USD for an LLM call. Works outside CompactLogger."""
+    pricing = MODEL_PRICING.get(model)
+    if not pricing:
+        return 0.0
+    return (prompt_tokens / 1_000_000) * pricing["prompt"] + (
+        completion_tokens / 1_000_000
+    ) * pricing["completion"]
+
+
 class CompactLogger:
     """Structured, compact logging with token tracking. Active in compact and full modes."""
 
@@ -131,11 +149,7 @@ class CompactLogger:
         "tokens": "🔢",
     }
 
-    MODEL_PRICING = {  # Per 1M tokens (USD)
-        "gpt-4o": {"prompt": 2.50, "completion": 10.00},
-        "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
-        "gemini-2.5-flash": {"prompt": 0.15, "completion": 0.60},
-    }
+    MODEL_PRICING = MODEL_PRICING  # alias for backward compat
 
     # Cost thresholds from environment
     COST_WARNING_THRESHOLD = float(os.getenv("COST_THRESHOLD_WARNING", "0.10"))
@@ -313,12 +327,7 @@ class CompactLogger:
 
     def _calculate_cost(self, model: str, usage: TokenUsage) -> float:
         """Calculate cost in USD for token usage."""
-        if model not in self.MODEL_PRICING:
-            return 0.0
-        pricing = self.MODEL_PRICING[model]
-        prompt_cost = (usage.prompt / 1_000_000) * pricing["prompt"]
-        completion_cost = (usage.completion / 1_000_000) * pricing["completion"]
-        return prompt_cost + completion_cost
+        return calculate_llm_cost(model, usage.prompt, usage.completion)
 
     @staticmethod
     def _format_params(params: Dict[str, Any]) -> str:

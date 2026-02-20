@@ -96,7 +96,7 @@ const MARKDOWN_COMPONENTS = {
   },
   // Inline code for technical terms
   code: ({ children }: { children?: React.ReactNode }) => (
-    <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-sm">{children}</code>
+    <code className="rounded bg-zinc-100/80 dark:bg-zinc-800/80 px-1 py-0.5 font-mono text-sm">{children}</code>
   ),
   // Links with proper styling - includes specialist deep link support
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
@@ -126,7 +126,7 @@ const MARKDOWN_COMPONENTS = {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-primary underline decoration-primary/50 underline-offset-2 hover:decoration-primary transition-colors"
+        className="text-emerald-600 dark:text-emerald-400 underline decoration-emerald-500/50 underline-offset-2 hover:decoration-emerald-500 transition-colors"
       >
         {children}
       </a>
@@ -134,12 +134,12 @@ const MARKDOWN_COMPONENTS = {
   },
   // Blockquotes for emphasis or quotes
   blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <blockquote className="my-2 border-l-2 border-primary/40 pl-3 italic text-muted-foreground first:mt-0 last:mb-0">
+    <blockquote className="my-2 border-l-2 border-emerald-500/40 pl-3 italic text-zinc-500 dark:text-zinc-400 first:mt-0 last:mb-0">
       {children}
     </blockquote>
   ),
   // Horizontal rules for section breaks
-  hr: () => <hr className="my-3 border-border/50" />,
+  hr: () => <hr className="my-3 border-zinc-200/50 dark:border-white/10" />,
   // Headers (rarely used in chat but supported)
   h1: ({ children }: { children?: React.ReactNode }) => (
     <h1 className="mb-2 text-lg font-bold first:mt-0">{children}</h1>
@@ -176,6 +176,8 @@ interface ChatMessageRendererProps {
   lastUserMessage: string | null;
   /** Callback to retry sending a message */
   onRetry: (message: string) => void;
+  /** Landing mode — center messages instead of left/right alignment */
+  isLanding?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -189,6 +191,7 @@ export function ChatMessageRenderer({
   isLoading,
   lastUserMessage,
   onRetry,
+  isLanding = false,
 }: ChatMessageRendererProps) {
   // Check if this is part of a split message (for styling and retry button logic)
   const isSplitMessage = m._isPartOfSplit;
@@ -223,7 +226,7 @@ export function ChatMessageRenderer({
   return (
     <div
       className={cn(
-        isUserMessage ? 'text-right' : 'text-left',
+        isLanding ? 'text-center' : isUserMessage ? 'text-right' : 'text-left',
         'message-enter',
         spacingClass,
         getMessageDelayClass(idx),
@@ -238,14 +241,12 @@ export function ChatMessageRenderer({
             <div
               className={cn(
                 // Shape: Speech bubble with sharp bottom-right corner
-                'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all',
+                'rounded-2xl rounded-br-md px-3 py-2 text-left transition-all',
                 // Light Mode: Solid Black (The Commander)
                 'bg-zinc-900 text-white border border-zinc-900',
-                'shadow-card hover:shadow-soft hover:-translate-y-0.5',
                 'hover:bg-zinc-800 hover:border-zinc-800',
                 // Dark Mode: Solid White (Maximum Contrast Signal)
                 'dark:bg-white dark:text-zinc-950 dark:border-white',
-                'dark:shadow-[0_0_20px_-5px_rgba(255,255,255,0.3)]',
                 'dark:hover:bg-zinc-100'
               )}
             >
@@ -264,12 +265,10 @@ export function ChatMessageRenderer({
           <div
             className={cn(
               // Shape: Speech bubble with sharp bottom-left corner
-              'rounded-2xl rounded-bl-sm px-4 py-2.5 transition-all',
+              'rounded-2xl rounded-bl-sm px-3 py-2 transition-all',
               // Light Mode: Glass effect
               'bg-white/80 backdrop-blur-sm',
               'border border-zinc-200',
-              'shadow-card',
-              'hover:shadow-soft hover:-translate-y-0.5',
               // Dark Mode: Dark Glass (The System/Infrastructure)
               'dark:bg-white/5 dark:backdrop-blur-sm',
               'dark:border-white/10',
@@ -291,7 +290,7 @@ export function ChatMessageRenderer({
                 <button
                   type="button"
                   onClick={() => onRetry(lastUserMessage)}
-                  className="mt-2 flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+                  className="mt-2 flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 dark:hover:text-emerald-300 transition-colors"
                 >
                   <RotateCcw className="h-3 w-3" />
                   Retry

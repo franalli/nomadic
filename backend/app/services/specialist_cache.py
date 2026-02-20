@@ -33,6 +33,7 @@ from typing import Optional
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.planner.hashing import make_cache_key
 from app.services.cache_core import MemoryCache, l2_upsert
 
@@ -43,7 +44,8 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 L1_TTL_SECONDS = 3600  # 1 hour
 L1_MAX_SIZE = 128
-L2_TTL_DAYS = 7
+# default 168h (7d); override with SPECIALIST_CACHE_TTL_HOURS env var
+L2_TTL_HOURS = settings.specialist_cache_ttl_hours
 
 # =============================================================================
 # L1: Thread-safe in-memory cache
@@ -263,10 +265,10 @@ async def set_cached_specialist_output(
             cache_key=cache_key,
             cache_type="specialist",
             response_json=output,
-            ttl=timedelta(days=L2_TTL_DAYS),
+            ttl=timedelta(hours=L2_TTL_HOURS),
         )
         _mem.increment_stat("writes")
-        exp = (datetime.now(UTC) + timedelta(days=L2_TTL_DAYS)).date()
+        exp = (datetime.now(UTC) + timedelta(hours=L2_TTL_HOURS)).date()
         logger.info(f"[SPECIALIST_CACHE] Cached: {cache_key} (expires: {exp})")
     except Exception as e:
         logger.warning(f"[SPECIALIST_CACHE] L2 write failed: {e}")
@@ -285,7 +287,7 @@ def get_cache_stats() -> dict:
         "l1_size": len(_mem),
         "l1_maxsize": L1_MAX_SIZE,
         "l1_ttl_seconds": L1_TTL_SECONDS,
-        "l2_ttl_days": L2_TTL_DAYS,
+        "l2_ttl_hours": L2_TTL_HOURS,
     }
 
 

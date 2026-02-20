@@ -14,6 +14,7 @@ import { type ReactNode, useCallback } from 'react';
 import { useToast } from '@/components/ui/toast';
 import { REVEAL_TIMING } from '@/lib/animation-config';
 import { debugLog } from '@/lib/debug';
+import { showMutationToast } from '@/lib/showMutationToast';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DayCard } from '@/types/plan-envelope';
 
@@ -58,7 +59,9 @@ export function PlanTimelineSection({
   const handleRemoveBlock = useCallback(async (blockId: string, dayNumber: number) => {
     try {
       await removeBlock(blockId, dayNumber);
-      toast('Activity removed', { type: 'info', duration: 2000 });
+      // Show undo toast (undo entry is set inside store.removeBlock)
+      const undoEntry = useDocumentStore.getState().undoEntry;
+      showMutationToast(undoEntry?.label ?? 'Activity removed', toast);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to remove block';
       debugLog('[removeBlock] error:', msg);
@@ -131,7 +134,7 @@ export function PlanTimelineSection({
         ))}
         <div className="flex items-center justify-center gap-2 pt-4">
           <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />
-          <span className="text-sm text-muted-foreground">Building your itinerary...</span>
+          <span className="text-sm text-zinc-500 dark:text-zinc-400">Building your itinerary...</span>
         </div>
       </section>
     );

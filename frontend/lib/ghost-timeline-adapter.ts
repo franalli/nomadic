@@ -222,6 +222,7 @@ export interface MapPOI {
   title: string;
   type: string;
   coordinates: { lat: number; lng: number };
+  dayNumber?: number;
 }
 
 /**
@@ -324,6 +325,7 @@ export function extractPOIsFromDayCards(
           title: block.summary || block.activity_type,
           type: block.specialist_type || 'activity',
           coordinates: normalizedCoords,
+          dayNumber: dayCard.day_number,
         });
       } else {
         skippedNoCoords += 1;
@@ -380,5 +382,5 @@ export function calculateMapCenter(pois: MapPOI[]): { lat: number; lng: number; 
   const avgLat = validPois.reduce((sum, p) => sum + p.lat, 0) / validPois.length;
   const avgLng = validPois.reduce((sum, p) => sum + p.lng, 0) / validPois.length;
 
-  return { lat: avgLat, lng: avgLng, zoom: 11 };
+  return { lat: avgLat, lng: avgLng, zoom: 8 };
 }

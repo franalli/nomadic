@@ -21,6 +21,7 @@ CSRF Protection:
 """
 
 import asyncio
+import os
 import secrets
 from typing import Callable
 
@@ -37,15 +38,15 @@ SESSION_COOKIE_NAME = "session_id"
 CSRF_COOKIE_NAME = "csrf"
 SESSION_MAX_AGE = 14 * 24 * 60 * 60  # 14 days in seconds
 
-# Session creation throttle: max 10 new sessions per IP per hour
+# Session creation throttle (env-gated for curl E2E tests: MAX_SESSIONS_PER_IP_HOUR=100)
 _session_creation_counter: TTLCache = TTLCache(maxsize=10_000, ttl=3600)
 _session_creation_lock = asyncio.Lock()
-_MAX_SESSIONS_PER_IP_PER_HOUR = 10
+_MAX_SESSIONS_PER_IP_PER_HOUR = int(os.getenv("MAX_SESSIONS_PER_IP_HOUR", "10"))
 
 
 def _get_cookie_kwargs() -> dict:
     """Get cookie configuration based on environment."""
-    is_production = settings.env not in ("local", "development", "test")
+    is_production = settings.is_prod
 
     base_kwargs = {
         "path": "/",
@@ -186,7 +187,7 @@ def _get_cors_headers(request: Request) -> dict:
     """Get CORS headers for error responses based on request origin."""
     origin = request.headers.get("origin", "")
     allowed = {settings.frontend_origin}
-    if settings.env in ("local", "development", "test"):
+    if settings.is_dev:
         allowed.update({"http://localhost:3000", "http://127.0.0.1:3000"})
     if origin in allowed:
         return {

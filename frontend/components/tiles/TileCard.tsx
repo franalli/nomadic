@@ -311,8 +311,10 @@ export const TileCard = memo(function TileCard({
       data-tile-id={tile.id}
       onClick={handleToggleSelect}
       className={cn(
-        'bg-card group relative flex h-full flex-col overflow-hidden rounded-2xl border shadow-card transition-all hover:shadow-soft',
-        isSelected ? 'ring-primary border-primary ring-2' : 'border-border',
+        'bg-white dark:bg-zinc-900 group relative flex h-full flex-col overflow-hidden rounded-2xl border shadow-card transition-all hover:shadow-soft',
+        isSelected
+          ? 'ring-2 ring-emerald-500 border-emerald-500'
+          : 'border-zinc-200 dark:border-zinc-700',
         // Scale animation on selection for visual feedback (Tier 10.19)
         justSelected && 'scale-[1.02]',
         'transition-transform duration-200 ease-out'
@@ -447,7 +449,7 @@ export const TileCard = memo(function TileCard({
 
       <CardBody className="flex flex-1 flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-2">
-          <div className="font-display text-foreground text-lg font-semibold leading-tight">
+          <div className="font-display text-zinc-900 dark:text-white text-lg font-semibold leading-tight">
             {tile.title}
           </div>
           {tile.rating != null && (
@@ -457,7 +459,7 @@ export const TileCard = memo(function TileCard({
               ) : (
                 <>
                   <span className="text-zinc-500 dark:text-zinc-300">★</span>
-                  <span className="text-foreground">{tile.rating.toFixed(1)}</span>
+                  <span className="text-zinc-900 dark:text-white">{tile.rating.toFixed(1)}</span>
                 </>
               )}
             </div>

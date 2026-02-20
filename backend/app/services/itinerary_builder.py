@@ -363,6 +363,14 @@ class ItineraryBuilder:
         self._warnings: List[str] = []
         self._nofly_buffer_days: int = 0
         self._day_preferences = input_data.activity_day_preferences or {}
+        # Active categories for Phase 5.25 preferred-tile category filter.
+        # None means "no filter" (user didn't specify categories).
+        # set() means "user explicitly cleared all categories — skip all".
+        self._active_categories: Optional[set[str]] = (
+            {c.lower() for c in input_data.activity_categories}
+            if input_data.activity_categories is not None
+            else None
+        )
 
         try:
             # Parse dates
@@ -2177,6 +2185,28 @@ class ItineraryBuilder:
                 continue
             tile = tiles.get(tile_id)
             if tile and isinstance(tile, dict) and tile.get("type") == "activity":
+                # D3: Skip tiles whose category is no longer active (user removed category).
+                # Only filter when active_categories is explicitly set (not None).
+                # None = no category filter (categories not specified).
+                # set() = user cleared all categories — skip all preferred tiles.
+                if self._active_categories is not None:
+                    tile_cat = (
+                        (tile.get("meta") or {}).get("specialist_type")
+                        or (tile.get("meta") or {}).get("category")
+                        or tile.get("specialist_type")
+                        or ""
+                    ).lower()
+                    # Match against tags too if no explicit category field
+                    tile_tags = {t.lower() for t in tile.get("tags") or []}
+                    category_match = tile_cat in self._active_categories or bool(
+                        tile_tags & self._active_categories
+                    )
+                    if not category_match:
+                        _debug_itinerary(
+                            f"📅 Phase 5.25: Skipping preferred tile '{tile.get('title')}' "
+                            f"— category '{tile_cat}' not in active categories"
+                        )
+                        continue
                 title_key = _normalize_title_key(tile.get("title"))
                 if title_key and title_key in scheduled_title_keys:
                     _debug_itinerary(

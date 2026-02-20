@@ -89,18 +89,18 @@ export function BookingDrawer({
         )}
       >
         {/* Header */}
-        <SheetHeader className="p-4 border-b border-border/50">
+        <SheetHeader className="p-4 border-b border-zinc-200/50 dark:border-white/10">
           <div className="flex items-center justify-between">
             <SheetTitle>{CATEGORY_LABELS[category]}</SheetTitle>
             <button
               onClick={onClose}
               aria-label="Close"
-              className="p-2 hover:bg-muted rounded-lg transition-colors"
+              className="p-2 hover:bg-zinc-100 dark:hover:bg-white/10 rounded-lg transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
             {categoryTiles.length} option{categoryTiles.length !== 1 ? 's' : ''} available
           </p>
         </SheetHeader>
@@ -123,10 +123,10 @@ export function BookingDrawer({
 
           {/* Empty state */}
           {categoryTiles.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
+            <div className="text-center py-12 text-zinc-500 dark:text-zinc-400">
               <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
               <p className="font-medium">No {category === 'activity' ? 'activities' : `${category}s`} available</p>
-              <p className="text-sm mt-1 text-muted-foreground/70">
+              <p className="text-sm mt-1 text-zinc-400 dark:text-zinc-500">
                 {category === 'activity'
                   ? 'Activities will appear once specialists have generated recommendations.'
                   : 'Try adjusting your dates or destination.'}

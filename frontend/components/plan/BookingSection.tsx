@@ -24,7 +24,7 @@
  */
 
 
-import { ChevronDown, ChevronUp, Lock, Package } from 'lucide-react';
+import { Lock, Package } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
@@ -112,6 +112,10 @@ interface BookingSectionProps {
   strategySections?: StrategySection[];
   /** Callback to open stays/hotel settings sheet (for hotel gear icons) */
   onOpenStaysSettings?: () => void;
+  /** Controlled expanded state — when provided, internal toggle is suppressed */
+  isExpanded?: boolean;
+  /** Callback when expand state should change (only used when isExpanded is provided) */
+  onToggleExpanded?: () => void;
 }
 
 export function BookingSection({
@@ -134,12 +138,17 @@ export function BookingSection({
   onCartToggle,
   strategySections,
   onOpenStaysSettings,
+  isExpanded: controlledExpanded,
+  onToggleExpanded: _onToggleExpanded,
 }: BookingSectionProps) {
   // FIX: Live subscription to tiles - ensures updates even if parent doesn't re-render
   const storeTiles = useDocumentStore((s) => s.document?.tiles);
   const tiles = storeTiles ?? propTiles;
 
-  const [isExpanded, setIsExpanded] = useState(true);
+  // Auto-collapse in S3 — hotels are already visible as check-in/check-out blocks in the timeline
+  const hasItinerary = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
+  const [internalExpanded] = useState(!hasItinerary);
+  const isExpanded = controlledExpanded ?? internalExpanded;
   const [activeCategory, setActiveCategory] = useState<TileCategory>('stays');
   const [userSelectedTab, setUserSelectedTab] = useState(false);
   const prevCountsRef = useRef<Record<TileCategory, number> | null>(null);
@@ -382,7 +391,7 @@ export function BookingSection({
     return (
       <ModalErrorBoundary>
         <div id="booking-section">
-          <div className="px-4 pt-2 pb-1">
+          <div className="px-6 pt-0 pb-1">
             {savedTileIds.size > 0 && (
               <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full ${DS.textSize.micro} font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 mt-2`}>
                 {savedTileIds.size} in trip
@@ -391,7 +400,7 @@ export function BookingSection({
             {/* Section-level lock message - only show if dates are NOT set */}
             {/* @see docs/ux_unified_architecture.md Section XII - Tiles-first logic */}
             {!hasDates && (
-              <p className="flex items-center gap-1.5 text-xs text-muted-foreground mt-2">
+              <p className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400 mt-2">
                 <Lock className="h-3 w-3" />
                 <span>
                   Booking links unlock after you{' '}
@@ -412,47 +421,29 @@ export function BookingSection({
             )}
           </div>
 
-          {/* Category chips + expand/collapse - consolidated row */}
-          <div className="flex items-center justify-between px-4 py-3">
-            <div className="flex gap-2">
+          {/* Category tabs — only show when 2+ categories have content */}
+          {isExpanded && Object.values(categoryCounts).filter(n => n > 0).length > 1 && (
+            <div className="flex items-center gap-2 px-6 pt-1 pb-2">
               {(['stays', 'flights', 'activities'] as const)
                 .filter((category) => categoryCounts[category] > 0)
                 .map((category) => {
-                  const count = categoryCounts[category];
                   const isActive = activeCategory === category;
-
                   return (
                     <button
                       key={category}
                       onClick={() => { setActiveCategory(category); setUserSelectedTab(true); }}
-                      className={cn(
-                        chipBase,
-                        'font-medium',
-                        isActive ? chipActive : chipInactive
-                      )}
+                      className={cn(chipBase, 'font-medium', isActive ? chipActive : chipInactive)}
                     >
-                      {category.charAt(0).toUpperCase() + category.slice(1)} ({count})
+                      {category.charAt(0).toUpperCase() + category.slice(1)}
                     </button>
                   );
                 })}
             </div>
-            {/* Expand/collapse toggle - inline */}
-            <button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <span>{isExpanded ? 'Hide' : 'Show'}</span>
-              {isExpanded ? (
-                <ChevronUp className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5" />
-              )}
-            </button>
-          </div>
+          )}
 
           {/* Tile cards grid - mode-aware rendering */}
           {isExpanded && (
-            <div className="px-4 pb-4 space-y-4">
+            <div className="px-6 pb-4 space-y-4">
               {previewTiles.length > 0 ? (
                 <>
                   {previewTiles.map((tile) => (
@@ -484,13 +475,13 @@ export function BookingSection({
                     )
                   ))}
                   {remainingCount > 0 && (
-                    <p className="text-xs text-muted-foreground pt-2">
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-2">
                       +{remainingCount} more {activeCategory} available
                     </p>
                   )}
                 </>
               ) : filteredCount === 0 && categoryTotalCount > 0 ? (
-                <div className="text-xs text-muted-foreground py-2">
+                <div className="text-xs text-zinc-500 dark:text-zinc-400 py-2">
                   <p>No {activeCategory} match your filters.</p>
                   <button
                     type="button"
@@ -501,7 +492,7 @@ export function BookingSection({
                   </button>
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground py-2">
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2">
                   No {activeCategory} found yet.
                 </p>
               )}
@@ -538,7 +529,7 @@ export function BookingSection({
     const message = totalTiles > 0 ? 'Refreshing deals…' : 'Searching deals…';
     return (
       <div id="booking-section" className="px-4 py-2 space-y-4 animate-in fade-in duration-500">
-        <p className="text-xs text-muted-foreground">{message}</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">{message}</p>
         <MiniCardSkeleton />
         <MiniCardSkeleton />
         <MiniCardSkeleton />
@@ -550,7 +541,7 @@ export function BookingSection({
   if (state.startsWith('S2_')) {
     return (
       <div id="booking-section" className="px-4 py-2">
-        <p className="text-xs text-muted-foreground/70">
+        <p className="text-xs text-zinc-400 dark:text-zinc-500">
           Booking options appear after itinerary.
         </p>
       </div>
@@ -564,9 +555,9 @@ export function BookingSection({
       return (
         <div id="booking-section" className="flex items-center justify-center h-64">
           <div className="text-center">
-            <Package className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
-            <p className="text-muted-foreground">No booking options available yet.</p>
-            <p className="text-sm text-muted-foreground/70 mt-1">
+            <Package className="w-12 h-12 text-zinc-300 dark:text-zinc-600 mx-auto mb-3" />
+            <p className="text-zinc-500 dark:text-zinc-400">No booking options available yet.</p>
+            <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
               Generate an itinerary to see bookable options.
             </p>
           </div>
@@ -584,8 +575,8 @@ export function BookingSection({
               {/* Header */}
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-xl font-semibold text-foreground">Your Trip Options</h2>
-                  <p className="text-sm text-muted-foreground mt-1">
+                  <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Your Trip Options</h2>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
                     {totalTiles} options found • Add items to your trip
                   </p>
                 </div>
@@ -627,9 +618,9 @@ export function BookingSection({
           </div>
 
           {/* Mobile: Fixed Checkout Footer */}
-          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-background/95 backdrop-blur-sm border-t border-border p-4 pb-[env(safe-area-inset-bottom)] flex items-center justify-between">
+          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-sm border-t border-zinc-200 dark:border-zinc-700 p-4 pb-[env(safe-area-inset-bottom)] flex items-center justify-between">
             <div className="flex flex-col">
-              <span className="text-xs text-muted-foreground">Est. Total</span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">Est. Total</span>
               <span className="font-bold text-lg">
                 {checkoutCurrency === 'USD' ? '$' : checkoutCurrency === 'EUR' ? '€' : checkoutCurrency === 'GBP' ? '£' : checkoutCurrency}
                 {checkoutTotal.toLocaleString()}
@@ -642,7 +633,7 @@ export function BookingSection({
                 'px-6 py-3 rounded-lg font-semibold text-sm transition-colors',
                 savedTiles.length > 0
                   ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-soft'
-                  : 'bg-muted text-muted-foreground cursor-not-allowed'
+                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 cursor-not-allowed'
               )}
             >
               Checkout

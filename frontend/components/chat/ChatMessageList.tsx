@@ -28,6 +28,10 @@ interface ChatMessageListProps {
   onRetry: (message: string) => void;
   isDesktop: boolean;
   planViewState?: PlanViewState;
+  /** Landing mode — center messages in single-column layout */
+  isLanding?: boolean;
+  /** Content rendered at the top of the scroll area (hero banner + chips on desktop landing) */
+  scrollHeaderContent?: React.ReactNode;
 }
 
 export function ChatMessageList({
@@ -42,12 +46,15 @@ export function ChatMessageList({
   onRetry,
   isDesktop,
   planViewState,
+  isLanding = false,
+  scrollHeaderContent,
 }: ChatMessageListProps) {
   return (
     <div
       ref={scrollContainerRef}
       className={cn(
-        'min-h-0 flex-1 overflow-y-auto text-sm no-scrollbar relative z-10 pt-2 no-overflow-anchor',
+        'min-h-0 flex-1 overflow-y-auto text-sm no-scrollbar relative z-10 no-overflow-anchor',
+        isLanding ? 'pt-[18vh]' : 'pt-2',
         !isDesktop && 'flex flex-col',
       )}
       role="log"
@@ -57,6 +64,9 @@ export function ChatMessageList({
     >
       {/* Inner wrapper: messages flow top-down; on mobile, mt-auto anchors to bottom */}
       <div className={cn('flex flex-col space-y-4', !isDesktop && visibleMessages.length > 0 && 'mt-auto')}>
+        {/* Desktop landing: hero banner + chip row scroll inside the message list */}
+        {scrollHeaderContent}
+
         {isLoadingHistory ? (
           <ChatSkeleton count={2} />
         ) : (
@@ -72,10 +82,10 @@ export function ChatMessageList({
                   Try: &ldquo;Bali from Rome, Feb 11-14&rdquo;
                 </p>
                 <div className="mt-3 flex items-center gap-1.5">
-                  <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
+                  <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-emerald-600 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
                     Awaiting Input
                   </span>
-                  <div className={`w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:${DS.glowClass.cursor}`} />
+                  <div className={`w-1 h-1.5 bg-emerald-600 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:${DS.glowClass.cursor}`} />
                 </div>
               </div>
             )}
@@ -89,6 +99,7 @@ export function ChatMessageList({
                 isLoading={isLoading}
                 lastUserMessage={lastUserMessage}
                 onRetry={onRetry}
+                isLanding={isLanding}
               />
             ))}
             {/* Invisible sentinel for smooth scroll-to-bottom */}

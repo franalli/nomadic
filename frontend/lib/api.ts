@@ -205,6 +205,17 @@ export async function fetchWithRetry(
     try {
       const res = await apiFetch(path, options);
 
+      // D8: Handle 429 rate limit — honour Retry-After header before retrying
+      if (res.status === 429 && attempt < maxRetries) {
+        onRetry?.(attempt + 1, new Error('HTTP 429'));
+        const retryAfterSeconds = parseRetryAfter(res);
+        const delay = retryAfterSeconds
+          ? retryAfterSeconds * 1000
+          : Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
+        await sleep(delay);
+        continue;
+      }
+
       // Check for transient HTTP status codes
       if (isTransientStatus(res.status) && attempt < maxRetries) {
         onRetry?.(attempt + 1, new Error(`HTTP ${res.status}`));

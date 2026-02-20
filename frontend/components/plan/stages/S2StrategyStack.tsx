@@ -45,10 +45,10 @@ export function OpenDecisionsPanel({ decisions }: { decisions: OpenDecision[] })
           <li key={decision.id} className="flex items-start gap-2">
             <span
               className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                decision.is_blocking ? 'bg-zinc-900 dark:bg-white' : 'bg-muted-foreground/50'
+                decision.is_blocking ? 'bg-zinc-900 dark:bg-white' : 'bg-zinc-400 dark:bg-zinc-500'
               }`}
             />
-            <span className="text-xs text-card-foreground">{decision.statement}</span>
+            <span className="text-xs text-zinc-700 dark:text-zinc-300">{decision.statement}</span>
           </li>
         ))}
       </ul>
@@ -124,7 +124,7 @@ export function StrategyStack({
             key={`pending-${topic}`}
             data-topic={topic}
             style={getTopicColorStyle(topic)}
-            className="bg-card rounded-lg border border-border px-4 py-3 topic-border-left"
+            className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-700 px-4 py-3 topic-border-left"
           >
             <div className="flex items-center gap-2">
               <span className="topic-badge inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium">
@@ -135,7 +135,7 @@ export function StrategyStack({
                 Updating...
               </span>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">Generating strategy...</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">Generating strategy...</p>
           </div>
         );
       })}
@@ -166,7 +166,7 @@ export function StrategyStack({
         !hasPending && showTripHealth && (
           <div className="text-center py-6 opacity-40">
             <p className="text-xs uppercase tracking-widest text-zinc-500 dark:text-zinc-400">System Ready</p>
-            <p className={`${DS.textSize.micro} text-muted-foreground mt-1`}>
+            <p className={`${DS.textSize.micro} text-zinc-500 dark:text-zinc-400 mt-1`}>
               Add activities like diving or hiking to see specialist logic
             </p>
           </div>
@@ -177,7 +177,7 @@ export function StrategyStack({
       {overflow > 0 && !showAll && (
         <button
           onClick={() => setShowAll(true)}
-          className={cn('text-xs text-primary hover:underline py-1')}
+          className={cn('text-xs text-emerald-600 dark:text-emerald-400 hover:underline py-1')}
         >
           +{overflow} more specialist{overflow > 1 ? 's' : ''}
         </button>

@@ -41,15 +41,21 @@ import { cn } from '@/lib/utils';
 
 export type ToastType = 'success' | 'info' | 'warning' | 'error' | 'confirmation';
 
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface Toast {
   id: string;
   message: string;
   type: ToastType;
   duration?: number;
+  action?: ToastAction;
 }
 
 interface ToastContextValue {
-  toast: (message: string, options?: { type?: ToastType; duration?: number }) => void;
+  toast: (message: string, options?: { type?: ToastType; duration?: number; action?: ToastAction }) => void;
   dismiss: (id: string) => void;
 }
 
@@ -77,7 +83,7 @@ interface ToastItemProps {
 }
 
 const ToastItem = memo(function ToastItem({ toast, onDismiss }: ToastItemProps) {
-  const { id, message, type, duration = 2000 } = toast;
+  const { id, message, type, duration = 2000, action } = toast;
 
   // Auto dismiss
   useEffect(() => {
@@ -132,6 +138,17 @@ const ToastItem = memo(function ToastItem({ toast, onDismiss }: ToastItemProps) 
 
       {/* Message */}
       <span className="flex-1 min-w-0 break-words">{message}</span>
+
+      {/* Action button (e.g. Undo) */}
+      {action && (
+        <button
+          type="button"
+          onClick={() => { action.onClick(); onDismiss(id); }}
+          className="flex-shrink-0 text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition-colors px-1"
+        >
+          {action.label}
+        </button>
+      )}
 
       {/* Dismiss button - min 44px touch target per design-system.md */}
       <button
@@ -214,7 +231,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
   const toast = useCallback(
     (
       message: string,
-      options?: { type?: ToastType; duration?: number }
+      options?: { type?: ToastType; duration?: number; action?: ToastAction }
     ) => {
       const now = Date.now();
 
@@ -246,9 +263,11 @@ export function ToastProvider({ children }: ToastProviderProps) {
         );
 
       // If both are preference updates within throttle window, consolidate
+      // Exception: never consolidate toasts that carry an action button (e.g. Undo)
       if (
         isPreferenceUpdate &&
         wasPreferenceUpdate &&
+        !options?.action &&
         lastToastRef.current &&
         now - lastToastRef.current.timestamp < THROTTLE_WINDOW
       ) {
@@ -279,6 +298,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
         message,
         type: options?.type ?? 'success',
         duration: options?.duration ?? 2000,
+        ...(options?.action && { action: options.action }),
       };
 
       lastToastRef.current = { message, timestamp: now };

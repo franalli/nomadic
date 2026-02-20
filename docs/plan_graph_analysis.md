@@ -33,7 +33,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 | LLM-Powered Nodes   | 4     | IntentRouter, TripArchitect, VerticalSpecialist, Synthesizer                                                                |
 | Domain Specialists  | 1     | LocalExpert (LLM-Primary + Constraint Grounding, gated by `settings.local_expert_use_llm`, default on, uses `settings.local_expert_model` via `llm_factory`) |
 | Data Fetchers       | 1     | LogisticsNode (flight fetching + safety logic)                                                                              |
-| Deterministic Nodes | 1     | ConstraintGuard (mostly deterministic + one LLM-backed validation: `validate_place_exists()` via gpt-4o-mini)               |
+| Deterministic Nodes | 1     | ConstraintGuard (mostly deterministic + one LLM-backed validation: `validate_place_exists()` via `settings.guard_model`)    |
 | **Total Nodes**     | **7** | Core graph nodes                                                                                                            |
 
 > **Note:** `ItineraryBuilder` is a pure Python **service** (not a LangGraph node). It's called from both `format_result()` in `response_envelope.py` (via `itinerary_adapter.py`, shadow mode at S2_STRATEGY_READY) and the `/api/expand-itinerary` endpoint. The 7-node architecture is preserved.
@@ -44,7 +44,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 2. **"Diving IS an Agent"** - It requires domain logic (VerticalSpecialist)
 3. **"Architect sees the whole picture"** - Avoids context fracture
 4. **TripPlan is the SSoT** - Single Source of Truth for trip state
-5. **LLM-Based Intent Classification** - No regex minefield, `settings.router_model` (default `gpt-4o-mini`) classifies
+5. **LLM-Based Intent Classification** - No regex minefield, `settings.router_model` (default `gemini-2.5-flash`) classifies
 6. **Panic Button** - Hard-coded reset commands bypass LLM entirely
 7. **Constraint Injector Pattern** - Specialist runs BEFORE Architect calls tools
 8. **Local Expert Fallback** - Generic trips always have content via LocalExpert
@@ -62,6 +62,7 @@ backend/app/planner/
 ├── __init__.py              # Facade exports (stable public API)
 ├── hashing.py               # Stable hashing utilities (make_cache_key, field_hash)
 ├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing) + extract_token_usage(), resolve_schema_refs(), extract_json_content()
+├── llm_structured.py        # Structured output retry/provider compatibility (ainvoke_structured)
 ├── test_mode.py             # Test mode detection
 ├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
 #   Frontend mirror: frontend/lib/specialists.ts (colors, icons, keywords, display names)
@@ -109,7 +110,7 @@ backend/app/planner/
                                       │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  IntentRouter (LLM - Fast: router_model, default GPT-4o-mini)               │
+│  IntentRouter (LLM - Fast: router_model, default gemini-2.5-flash)          │
 │  ─────────────────────────────────────                                      │
 │  LLM-based intent classification (no regex!)                                │
 │  • Classifies: GREETING, RESET, or PLANNING                                 │
@@ -152,10 +153,10 @@ backend/app/planner/
 │  LogisticsNode (Data Fetcher - No LLM)                                      │
 │  ─────────────────────────────────────                                      │
 │  Fetches and sanitizes tile data (flights, hotels, activities)              │
-│  1. Check for curated destination (Dubai, Rome, Chamonix, Bali, Patagonia)  │
-│     → CuratedProvider for hotels/activities                                 │
-│  2. Fallback to MockProviders for non-curated destinations                  │
-│  3. Curated/Demo flights with carrier sanitization (XX → Emirates)          │
+│  1. Google Places enabled → GooglePlacesProvider (real names + photos)       │
+│  2. Amadeus enabled → AmadeusHotelProvider (real names)                     │
+│  3. Fallback → MockProviders                                                │
+│  4. Curated/Demo flights with carrier sanitization (XX → Emirates)          │
 │  4. Apply no-fly safety logic if specialist has_nofly_buffer (registry-driven)│
 │                                                                             │
 │  Outputs to: state.tiles["flights"], ["hotels"], ["activities"]             │
@@ -184,7 +185,7 @@ backend/app/planner/
 │  ────────────────────────────────  │            │
 │  Mostly deterministic validation   │            │
 │  One LLM-backed check:            │            │
-│  validate_place_exists (gpt-4o-mini)│           │
+│  validate_place_exists (gemini-2.5-flash)│      │
 │  • Budget: total < allocation      │            │
 │  • Temporal: dates valid           │            │
 │  • Specialist: departure buffer    │            │
@@ -264,12 +265,12 @@ on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 
 | Node                              | Type                       | Purpose                           | LLM Model                                                          | Max Tokens | Streaming             |
 | --------------------------------- | -------------------------- | --------------------------------- | ------------------------------------------------------------------ | ---------- | --------------------- |
-| `router` (IntentRouter)           | LLM (Fast)                 | Intent classification             | `settings.router_model` (default `gpt-4o-mini`, via `llm_factory`) | 150        | None                  |
-| `architect` (TripArchitect)       | LLM (Smart)                | Core planning, SSoT management    | `settings.extraction_model` (default `gpt-4o-mini`, via `llm_factory`) | Variable   | Simulated             |
+| `router` (IntentRouter)           | LLM (Fast)                 | Intent classification             | `settings.router_model` (default `gemini-2.5-flash`, via `llm_factory`) | 150        | None                  |
+| `architect` (TripArchitect)       | LLM (Smart)                | Core planning, SSoT management    | `settings.extraction_model` (default `gemini-2.5-flash`, via `llm_factory`) | Variable   | Simulated             |
 | `specialist` (VerticalSpecialist) | LLM (Expert)               | Domain constraints + content      | `settings.specialist_model` (default `gpt-4o`, via `llm_factory`) | Variable   | Simulated             |
-| `local_expert` (LocalExpert)      | LLM-Primary + Constraint Grounding | City logistics concierge          | `settings.local_expert_model` (default `gpt-4o-mini`, gated by `settings.local_expert_use_llm`) | N/A        | None                  |
+| `local_expert` (LocalExpert)      | LLM-Primary + Constraint Grounding | City logistics concierge          | `settings.local_expert_model` (default `gemini-2.5-flash`, gated by `settings.local_expert_use_llm`) | N/A        | None                  |
 | `logistics` (LogisticsNode)       | Data Fetcher               | Flight fetching + safety          | N/A                                                                | N/A        | None                  |
-| `guard` (ConstraintGuard)         | Python                     | Validation (mostly deterministic) | gpt-4o-mini (place validation only, via `validate_place_exists()`) | N/A        | None                  |
+| `guard` (ConstraintGuard)         | Python                     | Validation (mostly deterministic) | `settings.guard_model` (default `gemini-2.5-flash`, place validation only via `validate_place_exists()`) | N/A        | None                  |
 | `synthesizer` (Synthesizer)       | LLM (Writer)               | Response generation               | `settings.synthesizer_exploration_model` (exploration/specialist_update) or `settings.synthesizer_planning_model` (planning), via `llm_factory` | Variable   | True (astream_events) |
 
 \*LocalExpert uses LLM-primary architecture (gated by `settings.local_expert_use_llm`, default on). Static constraints from `LOCAL_EXPERT_CONSTRAINTS` are injected into the LLM system prompt as grounding context. Uses `settings.local_expert_model` via `get_llm_by_model(...)`.
@@ -300,7 +301,7 @@ on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 
 ### IntentRouter
 
-LLM-based intent classification AND field extraction using `settings.router_model` (default `gpt-4o-mini`) with Pydantic structured output via `get_llm_by_model(...)`.
+LLM-based intent classification AND field extraction using `settings.router_model` (default `gemini-2.5-flash`) with Pydantic structured output via `get_llm_by_model(...)`.
 
 | Classification          | Trigger                                        | Action                                                                                 |
 | ----------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -363,7 +364,7 @@ The Router uses two distinct execution paths depending on whether a plan is alre
 
 **Structured Output Extraction:**
 
-`_classify_and_extract_with_llm()` uses `llm.with_structured_output(RouterOutput)` with `settings.router_model` (default `gpt-4o-mini`):
+`_classify_and_extract_with_llm()` uses `llm.with_structured_output(RouterOutput)` with `settings.router_model` (default `gemini-2.5-flash`):
 
 1. Retries once on failure (`MAX_RETRIES = 1`) with raw error logging per attempt
 2. Treats `parsed is None` as a failed extraction attempt (ambiguous short input), then retries/fails through the same error path
@@ -439,15 +440,18 @@ This fixes the bug where users said "I want to go diving March 1-8" but were ask
 
 After LLM extraction populates `state.trip_plan`, the router runs `_run_input_gates(state)` via `GateRegistry`. Five gates validate trip fields:
 
-| Gate              | Checks                                                            | Severity         |
-| ----------------- | ----------------------------------------------------------------- | ---------------- |
-| `DateGate`        | Past dates, end before start, >18 months out                      | blocking         |
-| `DurationGate`    | <1 day, >90 days (blocking); >30 days (warning)                   | blocking/warning |
-| `TravelerGate`    | Children without adults, >25 total                                | blocking         |
-| `BudgetGate`      | <$50 (blocking), >$500K (blocking), >$100K (warning)              | blocking/warning |
-| `DestinationGate` | Multi-destination detection (LLM flag primary, 3+ comma fallback) | warning          |
+| Gate                 | Checks                                                            | Severity         |
+| -------------------- | ----------------------------------------------------------------- | ---------------- |
+| `DateGate`           | Past dates, end before start, >18 months out                      | blocking         |
+| `DurationGate`       | <1 day, >90 days (blocking); >30 days (warning)                   | blocking/warning |
+| `TravelerGate`       | Children without adults, >25 total                                | blocking         |
+| `BudgetGate`         | <$50 (blocking), >$500K (blocking), >$100K (warning)              | blocking/warning |
+| `DestinationGate`    | Multi-destination detection (LLM flag primary, 3+ comma fallback) | warning          |
+| `MessageLengthGate`  | `raw_user_message` > 2000 chars (defense-in-depth placeholder)    | blocking         |
 
 Blocking gates short-circuit to synthesizer (`short_circuit_type: "gate_blocked"`). Warnings continue with notes in `state.metadata["input_gate_warnings"]`. Gate exceptions are caught and logged (fail-open). Thresholds are centralized in `input_gate_config.py`. **Important:** `router_extracted_fields` is set BEFORE input gates run — even if gates block, the Architect should NOT re-extract the same message on a subsequent turn.
+
+**Message length enforcement (fast-path):** The primary check is a **fast 422 response** in `main.py:graph_plan_stream_endpoint` (before any DB work) sourced from `GATE_THRESHOLDS["max_user_message_chars"]` (2000 chars). `MessageLengthGate` is a defense-in-depth placeholder that activates only if `raw_user_message` is ever plumbed onto `TripPlan` — currently a no-op.
 
 **Multi-Destination Handling:** `RouterOutput` includes `multi_destination_detected` field. When true, `_populate_trip_plan_from_router_output()` stashes `_multi_dest_from_llm` and `_deferred_destinations` on `trip_plan` for `DestinationGate` to produce a warning like "Starting with Rome — we can plan Switzerland after this itinerary is set."
 
@@ -821,12 +825,14 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 
 **Provider Routing Strategy (Consistent with TileService):**
 
-| Destination Type                                 | Hotels          | Activities      | Flights               |
-| ------------------------------------------------ | --------------- | --------------- | --------------------- |
-| Curated (Dubai, Rome, Chamonix, Bali, Patagonia) | CuratedProvider | CuratedProvider | Curated + Demo Backup |
-| Non-Curated                                      | MockProvider    | MockProvider    | Demo Backup           |
+| Priority | Destination Type                                  | Hotels                  | Activities              | Flights               |
+| -------- | ------------------------------------------------- | ----------------------- | ----------------------- | --------------------- |
+| 1        | Curated (Dubai, Rome, Chamonix, Bali, Patagonia)  | CuratedProvider         | CuratedProvider         | Curated + Demo Backup |
+| 2        | `USE_GOOGLE_PLACES_PROVIDER=true`                 | GooglePlacesHotelProvider | GooglePlacesActivityProvider | Demo Backup      |
+| 3        | `USE_AMADEUS_PROVIDER=true`                       | AmadeusHotelProvider    | MockProvider            | Demo Backup           |
+| 4        | Fallback                                          | MockProvider            | MockProvider            | Demo Backup           |
 
-> **Note:** Amadeus providers are disabled for now to ensure consistent behavior between first request and regeneration flows.
+GooglePlacesProvider falls back to MockProvider when Places returns 0 results (quota, error, etc.). Google Places caches via existing `tile_cache.py` L1+L2 (24h TTL, compliant with Google ToS).
 
 **Airport Code Resolution:**
 
@@ -867,7 +873,7 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 
 **Two-Tier Activity System:**
 
-Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** is **open-ended** — any recreational activity string is accepted (not limited to a fixed set). Common hints (`TIER2_COMMON_HINTS`: yoga, cooking, nightlife, temples, beach, shopping, photography, sailing, wellness, culture, music, wine, food) serve as fast-path detection and fuzzy match vocabulary, but novel categories like "pottery", "horseback riding", "birdwatching" flow through the same pipeline. Tier 2 tiles are generated via `gpt-4o-mini` structured output.
+Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** is **open-ended** — any recreational activity string is accepted (not limited to a fixed set). Common hints (`TIER2_COMMON_HINTS`: yoga, cooking, nightlife, temples, beach, shopping, photography, sailing, wellness, culture, music, wine, food) serve as fast-path detection and fuzzy match vocabulary, but novel categories like "pottery", "horseback riding", "birdwatching" flow through the same pipeline. Tier 2 tiles are generated via `gemini-2.5-flash` structured output.
 
 When niche specialists are active, suppression is tier-aware:
 
@@ -919,7 +925,7 @@ else:
 
 **Experience Generator Service:** `backend/app/services/experience_generator.py`
 
-Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured output with `include_raw=True, method="function_calling"` (`tiles_per_category` param, default 2). Token usage logged via `extract_token_usage()`. `LogisticsNode._compute_tiles_per_category()` scales the count based on placeable days: `clamp(base, 2, cap)` where `base = max(2, total_placeable // num_categories)`, `cap = 4` when niche specialists are active, or `cap = min(8, max(4, ceil(free_days / num_categories)))` for pure Tier 2 (ensures enough tiles to cover free days without specialists). Each tile includes title, subtitle, category, duration, price estimate, time of day, skill level, and description (one-sentence hook, e.g. "Traditional flow with rice paddy views"). Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
+Generates 2–4 activities per Tier 2 category via `gemini-2.5-flash` structured output with `include_raw=True, method="function_calling"` (`tiles_per_category` param, default 2). Token usage logged via `extract_token_usage()`. `LogisticsNode._compute_tiles_per_category()` scales the count based on free days: `clamp(base, 2, cap)` where `base = max(2, total_placeable // num_categories)`, `cap = min(8, max(4, ceil(free_days / num_categories)))` (D4: free_days is the demand signal for Tier 2 tiles regardless of whether Tier 1 specialists are present — the cap no longer has a hard cap of 4 when Tier 1 specialists run; a 13-day yoga trip with 5 specialist days now gets `cap=6` tiles instead of 4). Each tile includes title, subtitle, category, duration, price estimate, time of day, skill level, and description (one-sentence hook, e.g. "Traditional flow with rice paddy views"). Tiles have deterministic IDs (`exp_{dest}_{category}_{index}`) for heart persistence. Uses L1+L2 caching (cache key includes `:n{tiles_per_category}` suffix). Falls back to `_tile_matches_categories()` keyword matching on LLM failure.
 
 **Duration constraint:** System prompt enforces 1–4 hour single-session activities. Post-processing clamps `duration_hours > 4` to 4h to prevent multi-day retreats from being generated (e.g., "Bali Yoga Retreat" at 48h).
 
@@ -939,7 +945,7 @@ Generates 2–4 activities per Tier 2 category via `gpt-4o-mini` structured outp
 
 ### ConstraintGuard
 
-Mostly deterministic validation. One LLM-backed check: `validate_place_exists()` calls `validate_input_async()` from `app.validation` (gpt-4o-mini with TTL caching). Fails open if validation service is unavailable.
+Mostly deterministic validation. One LLM-backed check: `validate_place_exists()` calls `validate_input_async()` from `app.validation` (`settings.guard_model`, default `gemini-2.5-flash`, with TTL caching). Fails open if validation service is unavailable.
 
 All other checks are registry-driven pure Python. Geographic and seasonal checks were deleted — the VerticalSpecialist LLM handles these via `check_feasibility()`.
 
@@ -1248,7 +1254,7 @@ When `activity_day_preferences` are set (e.g., `{"diving": 3, "hiking": 2}`), th
 
 After creating free day placeholders, the builder populates days with user-preferred activities (hearted tiles). Uses a two-pass strategy:
 
-1. **Pass 1 (Unified Slot Model):** Collects preferred tiles from `preferences.preferred_activity_ids`. Builds slot map (3 periods per day), places via round-robin on least-loaded days. Arrival/departure days have locked periods. Buffer blocks don't lock periods.
+1. **Pass 1 (Unified Slot Model):** Collects preferred tiles from `preferences.preferred_activity_ids`. **D3 category filter:** Before collecting, each tile is checked against `self._active_categories` (derived from `input_data.activity_categories`, set at `ItineraryBuilder.__init__`). If the user has explicitly set categories (`activity_categories is not None`) and a tile's category (via `meta.specialist_type`, `meta.category`, `specialist_type` field, or `tags`) is not in the active set, it is skipped — this prevents hearted tiles from removed categories (e.g., a diving tile after the user switches to yoga-only) from being placed. If `activity_categories is None` (categories never specified by user), the filter is inactive and all preferred tiles pass through. `activity_categories = []` (explicitly empty) means user cleared all categories — all preferred activity tiles are skipped. Builds slot map (3 periods per day), places via round-robin on least-loaded days. Arrival/departure days have locked periods. Buffer blocks don't lock periods.
 2. **Pass 2 (Co-Schedule Fallback):** Tiles that couldn't fit in Pass 1 (all slots full or specialist-per-day cap) are deferred. Re-scans using `_day_remaining_capacity()` + `_time_slot_score()` for hour-based placement on specialist days with spare capacity.
 
 Activity blocks created this way have `preference_status: "user_preferred"` for UI attribution.
@@ -1464,10 +1470,10 @@ Pydantic structured output is used for LLM nodes that need **guaranteed schema e
 | ---------------------- | ----------------------- | ---------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------- |
 | **IntentRouter**       | ✅ Yes                  | `settings.router_model` (via `llm_factory`) | `RouterOutput`, `IntentClassification`             | Intent + field extraction in one call                         |
 | **TripArchitect**      | ✅ Yes                  | `settings.extraction_model` (via `llm_factory`) | `ExtractedTripFields`, `ExtractedSettingsFields` | Trip field & settings extraction                              |
-| **LocalExpert**        | ✅ Yes (prompt-based)   | `settings.local_expert_model` (default `gpt-4o-mini`, via `llm_factory`) | `LocalExpertOutput`                                   | Prompt-based JSON (schema in system prompt); no function_calling |
+| **LocalExpert**        | ✅ Yes (prompt-based)   | `settings.local_expert_model` (default `gemini-2.5-flash`, via `llm_factory`) | `LocalExpertOutput`                                   | Prompt-based JSON (schema in system prompt); no function_calling |
 | **VerticalSpecialist** | ✅ Yes (function_calling, flattened schema) | `settings.specialist_model` (via `llm_factory`) | `LLMSpecialistOutput` via `_SPECIALIST_FLAT_SCHEMA` (inlined $defs) | LLM-first with fallback; guard against empty-dict cache poisoning |
-| **LogisticsNode**      | ❌ No                   | ❌ N/A                                   | N/A                                                   | API calls only (Amadeus, curated data)                        |
-| **ConstraintGuard**    | ❌ No                   | gpt-4o-mini (place validation only)      | N/A                                                   | Mostly deterministic; `validate_place_exists()` is LLM-backed |
+| **LogisticsNode**      | ❌ No                   | ❌ N/A                                   | N/A                                                   | API calls only (Google Places, Amadeus, curated data)         |
+| **ConstraintGuard**    | ❌ No                   | `settings.guard_model` (default `gemini-2.5-flash`, place validation only) | N/A                                    | Mostly deterministic; `validate_place_exists()` is LLM-backed |
 | **Synthesizer**        | ❌ No                   | `settings.synthesizer_*_model` (by response type, via `llm_factory`) | N/A                                      | Free-form natural language (correct)                          |
 
 > **Note:** VerticalSpecialist uses **LLM-first architecture** by default. Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
@@ -1488,6 +1494,7 @@ Pydantic structured output is used for LLM nodes that need **guaranteed schema e
 4. **`extract_token_usage()`** — Centralized in `llm_factory.py`. Handles `include_raw=True` dict unwrapping, LangChain 0.2+ `usage_metadata` (works for both OpenAI and Gemini), and `response_metadata["token_usage"]` fallback (older LangChain/OpenAI). Returns `{prompt_tokens, completion_tokens, total_tokens, model?}` or `{}`.
 5. **`resolve_schema_refs(schema)`** — Inlines `$defs` pointers in a JSON Schema to produce a flat schema for Gemini function calling. Use for schemas with few `$defs` (e.g., `LLMSpecialistOutput`: 2). Do NOT use for deeply nested schemas with shared refs (e.g., `LocalExpertOutput`: 31 `$defs`) — inlining duplicates shared models and bloats the schema. Result cached at module load as `_SPECIALIST_FLAT_SCHEMA`.
 6. **`extract_json_content(response)`** — Extracts JSON string from a LangChain `AIMessage`. Handles OpenAI string content, Gemini multi-part list content, and markdown code fence stripping: tries closed fence (`` ```json\n…\n``` ``) first, then falls back to unclosed fence for LLM truncation (extracts everything after opening `` ```json\n ``, strips trailing backticks). Returns raw JSON string for `model_validate_json()`. Used by LocalExpert (prompt-based JSON path).
+7. **`ainvoke_structured()` (`llm_structured.py`)** — Shared retry wrapper for cross-provider structured output. Signature: `ainvoke_structured(llm, schema, messages, *, model_name, max_retries=1, method="function_calling") → (parsed, token_usage_dict)`. Handles Gemini JSON parse failures and `parsed=None` retry loop. Do NOT use for LocalExpert (31 `$defs` breaks schema resolution). Replaces the duplicated per-node retry patterns.
 
 ### RouterOutput Schema
 
@@ -2287,9 +2294,9 @@ All four caches share a common `MemoryCache` primitive from `backend/app/service
 
 | Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
 |-------|-------------|---------|--------|--------|------------|---------|
-| Specialist | `specialist_cache.py` | 128 | 1h | 7 days | `specialist::v2::{topic}::{dest}::{month}::{bucket}::{skill}::{dpref}::{phash}` | LLM outputs |
-| Experience | `experience_generator.py` | 128 | 1h | 7 days | `experience::v2::{dest}::{sorted_cats}::{month}::n{tiles_per_category}` | Tier 2 tiles |
-| Tile | `tile_cache.py` | 256 | 24h | 24h | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}` | Provider API data |
+| Specialist | `specialist_cache.py` | 128 | 1h | 168h (env: SPECIALIST_CACHE_TTL_HOURS) | `specialist::v2::{topic}::{dest}::{month}::{bucket}::{skill}::{dpref}::{phash}` | LLM outputs |
+| Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month}::n{tiles_per_category}` | Tier 2 tiles |
+| Tile | `tile_cache.py` | 256 | 24h | 72h (env: TILE_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
 | Router | `router_cache.py` | 500 | 1h | N/A | `router::v2::SHA256({text}:{date})[:32]` | NL extraction |
 
 **Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'tiles'`).
@@ -2367,7 +2374,7 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 **Tier 2: Database Cache**
 
 - Table: `response_cache` (filtered by `cache_type = 'specialist'`)
-- TTL: 7 days
+- TTL: 168h (env: SPECIALIST_CACHE_TTL_HOURS)
 - Primary Key: `cache_key` (VARCHAR 256)
 - Storage: JSONB for `LLMSpecialistOutput.model_dump()`
 
@@ -2400,7 +2407,7 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 
 ### Experience Generator Cache
 
-Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Uses shared `MemoryCache` primitive from `cache_core.py`.
+Two-tier cache for Tier 2 experience tiles generated by `gemini-2.5-flash`. Uses shared `MemoryCache` primitive from `cache_core.py`.
 
 **Service:** `backend/app/services/experience_generator.py`
 
@@ -2414,7 +2421,7 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Uses shar
 **Tier 2: Database Cache**
 
 - Table: `response_cache` (filtered by `cache_type = 'experience'`)
-- TTL: 7 days
+- TTL: 72h (env: EXPERIENCE_CACHE_TTL_HOURS)
 - Storage: JSONB array of tile dicts
 
 **Cache Key Components:**
@@ -2433,7 +2440,7 @@ Two-tier cache for Tier 2 experience tiles generated by `gpt-4o-mini`. Uses shar
 
 1. L1 in-memory (thread-safe) → ~1ms
 2. L2 PostgreSQL → ~50ms (promotes to L1 on hit)
-3. `gpt-4o-mini` structured output → ~2-3s (writes to both layers)
+3. `gemini-2.5-flash` structured output → ~2-3s (writes to both layers)
 
 **Singleflight dedupe:** `generate_experiences()` wraps generation with an in-flight task map keyed by the same experience cache key. Concurrent callers (router prefetch + logistics) share one owner task instead of launching duplicate LLM calls. Waiters hydrate their state metadata from the shared result.
 
@@ -3213,6 +3220,7 @@ Phase 5.6: Experience Tile Placement (_place_experience_tiles) — Three-Pass Co
 
 Phase 5.25: Preferred Activity Placement (_populate_free_days_with_preferences)
 ├─ Populate free days with user-preferred activities (hearted tiles)
+├─ D3 category filter: skip tiles from removed categories when activity_categories is not None
 ├─ Pass 1 (Unified Slot Model): round-robin on least-loaded days
 └─ Pass 2 (Co-Schedule Fallback): deferred tiles on specialist days with spare capacity
 
@@ -3505,25 +3513,38 @@ POST /api/tiles/refresh
 
 ```
 tile_service/
-├── __init__.py           # Exports: search_tiles + booking types
-├── models.py             # SearchContext, TileSearchRequest
-├── service.py            # search_tiles() orchestrator
-├── provider_base.py      # Provider ABC + BookableProvider ABC
-├── mock_provider.py      # Mock providers for development
-├── amadeus_provider.py   # Amadeus API (disabled for now)
-└── curated_provider.py   # Curated content for hero destinations
+├── __init__.py               # Exports: search_tiles + booking types
+├── models.py                 # SearchContext, TileSearchRequest
+├── service.py                # search_tiles() orchestrator
+├── provider_base.py          # Provider ABC + BookableProvider ABC
+├── mock_provider.py          # Mock providers for development
+├── amadeus_provider.py       # Amadeus API (disabled by default)
+├── google_places_provider.py # Google Places API (hotels + activities; async-first)
+└── curated_provider.py       # Curated content for hero destinations
 ```
 
 ### Provider Routing Consistency
 
-Both `logistics_node.py` and `tile_service/service.py` use identical routing logic:
+The logistics_node now uses a 3-tier cascade (Google Places → Amadeus → Mock) while `tile_service/service.py` retains the full 4-tier cascade (including Curated):
 
-| Flow                           | Destination Type | Provider Used   |
-| ------------------------------ | ---------------- | --------------- |
-| First Request (logistics_node) | Curated          | CuratedProvider |
-| First Request (logistics_node) | Non-Curated      | MockProviders   |
-| Regeneration (tile_service)    | Curated          | CuratedProvider |
-| Regeneration (tile_service)    | Non-Curated      | MockProviders   |
+**`logistics_node.py` routing (3-tier):**
+
+| Priority | Condition                            | Hotels                    | Activities                    |
+| -------- | ------------------------------------ | ------------------------- | ----------------------------- |
+| 1        | `USE_GOOGLE_PLACES_PROVIDER=true`    | GooglePlacesHotelProvider | GooglePlacesActivityProvider  |
+| 2        | `USE_AMADEUS_PROVIDER=true`          | AmadeusHotelProvider      | MockActivityProvider          |
+| 3        | Fallback (offline/dev)               | MockHotelProvider         | MockActivityProvider          |
+
+**`tile_service/service.py` routing (4-tier):**
+
+| Priority | Condition                            | Hotels                    | Activities                    |
+| -------- | ------------------------------------ | ------------------------- | ----------------------------- |
+| 1        | Curated destination                  | CuratedProvider           | CuratedProvider               |
+| 2        | `USE_GOOGLE_PLACES_PROVIDER=true`    | GooglePlacesHotelProvider | GooglePlacesActivityProvider  |
+| 3        | `USE_AMADEUS_PROVIDER=true`          | AmadeusHotelProvider      | MockActivityProvider          |
+| 4        | Fallback (offline/dev)               | MockHotelProvider         | MockActivityProvider          |
+
+**Google Places fallback:** If GooglePlaces returns 0 results (quota exceeded, API error, unknown destination), both `logistics_node` and `tile_service/service.py` fall back to MockProviders. Cache key includes `provider=google_places` so Google Places results are distinct from Amadeus/mock caches.
 
 This ensures tiles have consistent images and data regardless of how they were fetched.
 

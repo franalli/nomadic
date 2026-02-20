@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, CheckCircle, Clock, Shield } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronDown, Clock, Shield } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { NICHE_SPECIALIST_IDS } from '@/lib/specialists';
@@ -16,6 +16,9 @@ interface StrategyConstraintBarProps {
   hasItineraryContent: boolean;
   showConstraints: boolean;
   onToggleConstraints: () => void;
+  stayCount?: number;
+  staysExpanded?: boolean;
+  onToggleStays?: () => void;
 }
 
 /** Trip DNA constraint pill bar — shows engine constraints with validation state. */
@@ -26,6 +29,9 @@ export function StrategyConstraintBar({
   hasItineraryContent,
   showConstraints,
   onToggleConstraints,
+  stayCount = 0,
+  staysExpanded = false,
+  onToggleStays,
 }: StrategyConstraintBarProps): ReactNode {
   // Filter: only niche specialists, not local_expert/general
   // Exclude soft/info severity — only show blocking + strong constraints
@@ -37,7 +43,7 @@ export function StrategyConstraintBar({
       return !sev || sev === 'blocking' || sev === 'strong';
     });
 
-  if (engineConstraints.length === 0) return null;
+  if (engineConstraints.length === 0 && stayCount === 0) return null;
 
   const getShortLabel = (c: { label?: string; rule?: string; reason?: string }) =>
     c.label ||
@@ -97,48 +103,64 @@ export function StrategyConstraintBar({
   };
 
   return (
-    <div className="flex items-start gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700">
-      <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0 leading-[30px]">
-        Trip DNA:
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="flex flex-wrap gap-2">
-          {engineConstraints.map((c, i) => {
-            const style = getPillStyle(c);
-            const t = `${c.type || ''} ${c.rule || ''} ${c.reason || ''}`.toLowerCase();
-            const blocking = [
-              'no_fly','no-fly','nofly','safety','altitude','buffer','24h','24 hour',
-              'diving','dive','scuba','decompression','fly','flight',
-            ];
-            const strong = ['morning','footwear','gear','timing','equipment','certification'];
-            const IconEl = blocking.some((k) => t.includes(k))
-              ? AlertTriangle
-              : strong.some((k) => t.includes(k))
-              ? Clock
-              : Shield;
-            return (
-              <span
-                key={`${c.rule}-${i}`}
-                title={c.reason || c.rule?.replace(/_/g, ' ')}
-                className={cn(
-                  'inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap',
-                  style.pillClass
-                )}
-              >
-                <IconEl className="w-4 h-4 shrink-0" />
-                <span>{getShortLabel(c)}</span>
-              </span>
-            );
-          })}
-        </div>
-      </div>
-      {hasItineraryContent && (
+    <div className="flex items-center gap-2 px-4 py-2 flex-wrap">
+      {engineConstraints.map((c, i) => {
+        const style = getPillStyle(c);
+        const t = `${c.type || ''} ${c.rule || ''} ${c.reason || ''}`.toLowerCase();
+        const blocking = [
+          'no_fly','no-fly','nofly','safety','altitude','buffer','24h','24 hour',
+          'diving','dive','scuba','decompression','fly','flight',
+        ];
+        const strong = ['morning','footwear','gear','timing','equipment','certification'];
+        const IconEl = blocking.some((k) => t.includes(k))
+          ? AlertTriangle
+          : strong.some((k) => t.includes(k))
+          ? Clock
+          : Shield;
+        return (
+          <span
+            key={`${c.rule}-${i}`}
+            title={c.reason || c.rule?.replace(/_/g, ' ')}
+            className={cn(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium whitespace-nowrap',
+              style.pillClass
+            )}
+          >
+            <IconEl className="w-3.5 h-3.5 shrink-0" />
+            <span>{getShortLabel(c)}</span>
+          </span>
+        );
+      })}
+      {stayCount > 0 && onToggleStays && (
+        <>
+          {engineConstraints.length > 0 && (
+            <span className="w-1 h-1 rounded-full bg-zinc-500/50 shrink-0" />
+          )}
+          <button
+            type="button"
+            onClick={onToggleStays}
+            className={cn(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium whitespace-nowrap transition-colors',
+              'border-zinc-300 dark:border-white/10 bg-zinc-100 dark:bg-white/[0.06]',
+              'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/10',
+            )}
+          >
+            🏨 Stays ({stayCount})
+            <ChevronDown className={cn('w-3 h-3 transition-transform', staysExpanded && 'rotate-180')} />
+          </button>
+        </>
+      )}
+      {hasItineraryContent && engineConstraints.length > 0 && (
         <button
           type="button"
           onClick={onToggleConstraints}
-          className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200 underline cursor-pointer shrink-0 ml-2 leading-[30px]"
+          className={cn(
+            'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors',
+            'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-white/[0.06] dark:hover:text-white',
+          )}
         >
-          {showConstraints ? 'Hide' : 'Details'}
+          Specialists
+          <ChevronDown className={cn('w-3 h-3 transition-transform', showConstraints && 'rotate-180')} />
         </button>
       )}
     </div>

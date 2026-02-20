@@ -13,7 +13,9 @@ import { useToast } from '@/components/ui/toast';
 import { fillDay } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { isFillDayCooldownActive } from '@/lib/fillDayGuards';
+import { showMutationToast } from '@/lib/showMutationToast';
 import { useDocumentStore } from '@/state/documentStore';
+import type { DayCard } from '@/types/plan-envelope';
 
 export interface UseTimelineFillDayParams {
   disableFillDayActions: boolean;
@@ -72,6 +74,9 @@ export function useTimelineFillDay({
       }
     }
     lastFillDayRequestAtRef.current = now;
+    // Snapshot BEFORE fill (for undo)
+    const snapshot = structuredClone(store.document?.day_cards ?? []) as DayCard[];
+    const prevVersion = store.version;
     store.claimMutation();
     setFillingDay(dayNumber);
     setFillDayRejection(null);
@@ -90,6 +95,16 @@ export function useTimelineFillDay({
         useDocumentStore.getState().replaceDayCard(
           dayNumber, result.day_card, result.version, result.tiles
         );
+        // Set undo entry and show toast with Undo CTA
+        const undoLabel = `Filled Day ${dayNumber}`;
+        useDocumentStore.getState().setUndoEntry({
+          type: 'fill_day',
+          label: undoLabel,
+          previousDayCards: snapshot,
+          previousVersion: prevVersion,
+          timestamp: Date.now(),
+        });
+        showMutationToast(undoLabel, toast);
       }
     } catch (err) {
       const is409 = err instanceof Error && err.message.includes('409');

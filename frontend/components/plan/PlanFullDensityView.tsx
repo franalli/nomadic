@@ -2,9 +2,11 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import type { ReactNode } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
+import { useMapSync } from '@/hooks/useMapSync';
 import { REVEAL_TIMING } from '@/lib/animation-config';
 import type { MapPOI } from '@/lib/ghost-timeline-adapter';
 import { calculateMapCenter, extractPOIsFromSections } from '@/lib/ghost-timeline-adapter';
@@ -21,8 +23,7 @@ import type { GenerationState } from './planStateHelpers';
 import { PlanTimelineSection } from './PlanTimelineSection';
 import { type TimelineVariant } from './TimelineThread';
 
-const DESKTOP_MAP_CONTENT_STYLE = { minWidth: 720, maxWidth: 900 } as const;
-
+const DESKTOP_MAP_CONTENT_STYLE = { minWidth: 480, maxWidth: 800 } as const;
 interface PlanFullDensityViewProps {
   state: PlanViewState; viewModel: PlanViewModel; filteredViewModel: PlanViewModel;
   fullModeSections: PlanViewModel['strategy_sections']; fullModePOIs: MapPOI[];
@@ -58,6 +59,22 @@ export function PlanFullDensityView({
     ? calculateMapCenter(fullModeMapItems) : { lat: 20, lng: 0, zoom: 2 };
   const showDesktopMap = isDesktop && fullModeMapItems.length > 0;
 
+  const handleMarkerClick = useCallback((itemId: string) => {
+    const item = fullModeMapItems.find((i) => i.id === itemId);
+    if (!item?.dayNumber) return;
+    useMapSync.getState().requestScrollTo(item.dayNumber, itemId);
+  }, [fullModeMapItems]);
+
+  const hasItinerary = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
+  const [staysExpanded, setStaysExpanded] = useState(!hasItinerary);
+  const handleToggleStays = useCallback(() => setStaysExpanded(v => !v), []);
+  const stayCount = useMemo(
+    () => Object.values(effectiveTiles).filter(t =>
+      t.type === 'hotel' || t.type === 'stay' || t.type === 'accommodation'
+    ).length,
+    [effectiveTiles]
+  );
+
   return (
     <div className={cn('flex', showDesktopMap && 'gap-6')}>
       <div
@@ -73,6 +90,9 @@ export function PlanFullDensityView({
           validatedRules={validatedRules} violatedRules={violatedRules}
           onRefineAssumptions={onRefineAssumptions} onOpenActivitySettings={onOpenActivitySettings}
           onToggleConstraints={onToggleConstraints}
+          stayCount={stayCount}
+          staysExpanded={staysExpanded}
+          onToggleStays={handleToggleStays}
         />
 
         {state === 'S2_STRATEGY_READY' &&
@@ -92,7 +112,7 @@ export function PlanFullDensityView({
               key="tiles-section" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
               transition={{ duration: REVEAL_TIMING.TILES_FADE / 1000 }}
               id="tiles-section"
-              className={cn('mt-4 px-4', isExpandingItinerary && 'opacity-60 pointer-events-none')}
+              className={cn('mt-1', isExpandingItinerary && 'opacity-60 pointer-events-none')}
             >
               <BookingSection
                 state={state} tiles={effectiveTiles} generation={generation}
@@ -101,6 +121,8 @@ export function PlanFullDensityView({
                 mode={effectiveMode as 'planning' | 'booking'}
                 strategySections={viewModel.strategy_sections}
                 onOpenStaysSettings={onOpenStaysSettings}
+                isExpanded={staysExpanded}
+                onToggleExpanded={handleToggleStays}
               />
             </motion.section>
           )}
@@ -108,10 +130,11 @@ export function PlanFullDensityView({
 
         {!isDesktop && hasItineraryContent && fullModePOIs.length > 0 && (
           <section className="mt-4 px-4">
-            <div className="h-[300px] overflow-hidden rounded-xl border border-border/50">
+            <div className="h-[300px] overflow-hidden rounded-xl border border-zinc-200/50 dark:border-white/10">
               <MapErrorBoundary className="h-full w-full">
                 <InteractiveMap items={fullModeMapItems} activeItemId={null}
-                  defaultCenter={mapCenter} className="h-full w-full" />
+                  defaultCenter={mapCenter} className="h-full w-full"
+                  interactive={false} showAttribution={false} />
               </MapErrorBoundary>
             </div>
           </section>
@@ -131,13 +154,18 @@ export function PlanFullDensityView({
       <AnimatePresence>
         {showDesktopMap && (
           <motion.div key="desktop-map" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-            transition={{ duration: 0.3 }} className="w-[400px] max-w-[35vw] shrink-0"
+            transition={{ duration: 0.3 }} className="flex-1 min-w-[350px]"
           >
             <div className="sticky top-0 h-screen overflow-hidden">
               <div className="h-full w-full">
                 <MapErrorBoundary className="h-full w-full">
-                  <InteractiveMap items={fullModeMapItems} activeItemId={null}
-                    defaultCenter={mapCenter} className="h-full w-full" />
+                  <InteractiveMap
+                    items={fullModeMapItems}
+                    activeItemId={null}
+                    defaultCenter={mapCenter}
+                    className="h-full w-full"
+                    onMarkerClick={handleMarkerClick}
+                  />
                 </MapErrorBoundary>
               </div>
             </div>

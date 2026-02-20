@@ -5,14 +5,14 @@ Placed AFTER Specialist nodes (reads constraints) and BEFORE Architect.
 This is the "Fetch & Polish" pattern for demo-ready data.
 
 Provider routing strategy (consistent with tile_service):
-1. Curated destinations (Dubai, Rome, Chamonix) → CuratedProvider (4K images, prices)
-2. Non-curated + Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
+1. Google Places enabled → GooglePlacesProvider (real names + photos, overrides Amadeus)
+2. Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
 3. Fallback → MockProviders
 
 @see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
 
 Key responsibilities:
-1. Fetch hotels/activities from providers (curated → amadeus → mock)
+1. Fetch hotels/activities from providers (google_places → amadeus → mock)
 2. Fetch flights from curated data or mock (amadeus flights disabled)
 3. Sanitize garbage test carriers (XX -> Emirates)
 4. Apply 24h no-fly safety logic for diving trips
@@ -40,7 +40,6 @@ from app.planner.services.iata_resolver import resolve_iata_codes
 from app.planner.state.graph_state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
 from app.services.task_tracker import track as _track_task
-from app.tile_service.curated_provider import CuratedProvider
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
 from app.tile_service.models import SearchContext
 
@@ -53,7 +52,7 @@ logger = logging.getLogger(__name__)
 def _hotel_logistics_hash(state: GraphState) -> str:
     """Hash inputs that affect hotel tile search. Changing activity settings won't bust this."""
     tp = state.trip_plan
-    settings = get_trip_settings(state)
+    trip_settings = get_trip_settings(state)
     return stable_hash(
         {
             "destination": (tp.destination or "").lower(),
@@ -62,7 +61,7 @@ def _hotel_logistics_hash(state: GraphState) -> str:
             "adults": tp.adults,
             "children": tp.children,
             "budget": tp.budget,
-            "hotel_settings": settings.hotel_settings.model_dump(),
+            "hotel_settings": trip_settings.hotel_settings.model_dump(),
         }
     )
 
@@ -70,7 +69,7 @@ def _hotel_logistics_hash(state: GraphState) -> str:
 def _activity_logistics_hash(state: GraphState) -> str:
     """Hash inputs that affect activity tile search. Changing hotel settings won't bust this."""
     tp = state.trip_plan
-    settings = get_trip_settings(state)
+    trip_settings = get_trip_settings(state)
     return stable_hash(
         {
             "destination": (tp.destination or "").lower(),
@@ -78,8 +77,8 @@ def _activity_logistics_hash(state: GraphState) -> str:
             "end_date": tp.end_date,
             "adults": tp.adults,
             "children": tp.children,
-            "activity_skill_level": settings.activity_settings.skill_level,
-            "activity_categories": sorted(settings.activity_settings.categories),
+            "activity_skill_level": trip_settings.activity_settings.skill_level,
+            "activity_categories": sorted(trip_settings.activity_settings.categories),
         }
     )
 
@@ -87,7 +86,7 @@ def _activity_logistics_hash(state: GraphState) -> str:
 def _flight_logistics_hash(state: GraphState) -> str:
     """Hash inputs that affect flight search."""
     tp = state.trip_plan
-    settings = get_trip_settings(state)
+    trip_settings = get_trip_settings(state)
     return stable_hash(
         {
             "destination": (tp.destination or "").lower(),
@@ -96,7 +95,7 @@ def _flight_logistics_hash(state: GraphState) -> str:
             "end_date": tp.end_date,
             "adults": tp.adults,
             "children": tp.children,
-            "flight_settings": settings.flight_settings.model_dump(),
+            "flight_settings": trip_settings.flight_settings.model_dump(),
         }
     )
 
@@ -665,28 +664,16 @@ async def logistics_node(state: GraphState) -> GraphState:
 
 
 def _tile_to_dict(tile) -> Dict[str, Any]:
-    """Convert a Tile object to a dict for state storage."""
-    return {
-        "id": tile.id,
-        "type": tile.type,
-        "partner": tile.partner,
-        "partner_product_id": tile.partner_product_id,
-        "title": tile.title,
-        "subtitle": tile.subtitle,
-        "image_url": tile.image_url,
-        "price_estimate": tile.price_estimate,
-        "currency": tile.currency,
-        "price_basis": tile.price_basis,
-        "is_estimate_only": tile.is_estimate_only,
-        "deeplink_url": tile.deeplink_url,
-        "rating": tile.rating,
-        "location_label": tile.location_label,
-        "tags": tile.tags,
-        "availability_status": tile.availability_status,
-        "meta": tile.meta,
-        "source": tile.source,
-        "source_agent": tile.source_agent or "logistics_node",
-    }
+    """Convert a Tile object to a dict for state storage.
+
+    Uses model_dump() to serialize all fields (including geo, pricing breakdown,
+    provider, review_count, etc.) so no new Tile fields are silently dropped.
+    The source_agent default is applied post-dump to preserve the logistics_node attribution.
+    """
+    d = tile.model_dump()
+    if not d.get("source_agent"):
+        d["source_agent"] = "logistics_node"
+    return d
 
 
 async def _fetch_hotels(
@@ -695,11 +682,12 @@ async def _fetch_hotels(
     hotel_settings,
     provider,
     dest_key,
-    curated_manifest,
     start_date,
     end_date,
     activity_settings,
     flight_settings,
+    dest_lat: float | None = None,
+    dest_lng: float | None = None,
 ):
     """
     Fetch hotel tiles with L1+L2 caching.
@@ -708,12 +696,18 @@ async def _fetch_hotels(
     """
     from app.services.tile_cache import get_cached_tiles, set_cached_tiles
 
+    # Build hotel cache variant from min_stars so changing star preference busts the cache
+    _min_stars = (
+        int(hotel_settings.get("min_stars") or 0) if isinstance(hotel_settings, dict) else 0
+    )
+    hotel_cache_variant = f"stars{_min_stars}" if _min_stars > 0 else ""
+
     async with async_session_factory() as db:
         # =====================================================================
         # HOTELS CACHE CHECK
         # =====================================================================
         cached_hotels = await get_cached_tiles(
-            db, provider, "hotel", plan.destination, start_date, end_date
+            db, provider, "hotel", plan.destination, start_date, end_date, hotel_cache_variant
         )
 
         if cached_hotels:
@@ -743,54 +737,64 @@ async def _fetch_hotels(
                 hotel_settings=hotel_settings or None,
                 activity_settings=activity_settings or None,
                 flight_settings=flight_settings or None,
+                destination_lat=dest_lat,
+                destination_lng=dest_lng,
             )
 
             hotel_tiles = []
             _provider_t0 = time.time()
 
-            if curated_manifest:
+            from app.config import settings
+
+            if settings.use_google_places_provider:
                 log(
                     "LOGISTICS",
-                    f"Using CuratedProvider for {plan.destination}",
-                    data="curated destination",
+                    f"Using GooglePlaces for hotels in {plan.destination}",
+                    data="real hotel names + photos",
                 )
-                curated_provider = CuratedProvider(dest_key)
-                all_tiles = curated_provider.search(ctx)
-                hotel_tiles = [t for t in all_tiles if t.type == "hotel"]
+                from app.tile_service.google_places_provider import GooglePlacesHotelProvider
+
+                hotel_provider = GooglePlacesHotelProvider()
+                hotel_tiles = await hotel_provider.search_async(ctx)
+                # Fallback to mock if Places returned nothing (quota, error, etc.)
+                if not hotel_tiles:
+                    log("LOGISTICS", "GooglePlaces returned 0 hotels — using mock fallback")
+                    hotel_tiles = MockHotelProvider().search(ctx)
+            elif settings.use_amadeus_provider:
+                log(
+                    "LOGISTICS",
+                    f"Using Amadeus for hotels in {plan.destination}",
+                    data="real hotel names",
+                )
+                from app.tile_service.amadeus_provider import AmadeusHotelProvider
+
+                hotel_provider = AmadeusHotelProvider()
+                hotel_tiles = await hotel_provider.search_async(ctx)
             else:
-                from app.config import settings
-
-                if settings.use_amadeus_provider:
-                    log(
-                        "LOGISTICS",
-                        f"Using Amadeus for hotels in {plan.destination}",
-                        data="real hotel names",
-                    )
-                    from app.tile_service.amadeus_provider import AmadeusHotelProvider
-
-                    hotel_provider = AmadeusHotelProvider()
-                    hotel_tiles = await hotel_provider.search_async(ctx)
-                else:
-                    log(
-                        "LOGISTICS",
-                        f"Using MockProviders for {plan.destination}",
-                        data="amadeus disabled",
-                    )
-                    hotel_provider = MockHotelProvider()
-                    hotel_tiles = hotel_provider.search(ctx)
+                log(
+                    "LOGISTICS",
+                    f"Using MockProviders for {plan.destination}",
+                    data="live providers disabled",
+                )
+                hotel_provider = MockHotelProvider()
+                hotel_tiles = hotel_provider.search(ctx)
 
             _provider_ms = int((time.time() - _provider_t0) * 1000)
-            _provider_name = "curated" if curated_manifest else provider
-            _debug_log(
-                f"Hotel provider ({_provider_name}): {_provider_ms}ms, {len(hotel_tiles)} tiles"
-            )
+            _debug_log(f"Hotel provider ({provider}): {_provider_ms}ms, {len(hotel_tiles)} tiles")
 
             # Convert to dicts and cache
             hotel_dicts = [_tile_to_dict(tile) for tile in hotel_tiles]
 
             if hotel_dicts:
                 await set_cached_tiles(
-                    db, provider, "hotel", plan.destination, start_date, end_date, hotel_dicts
+                    db,
+                    provider,
+                    "hotel",
+                    plan.destination,
+                    start_date,
+                    end_date,
+                    hotel_dicts,
+                    hotel_cache_variant,
                 )
 
     return hotel_dicts
@@ -802,12 +806,13 @@ async def _fetch_activities(
     activity_settings,
     provider,
     dest_key,
-    curated_manifest,
     start_date,
     end_date,
     hotel_settings,
     flight_settings,
     max_results: int = 5,
+    dest_lat: float | None = None,
+    dest_lng: float | None = None,
 ):
     """
     Fetch activity tiles with L1+L2 caching.
@@ -853,15 +858,22 @@ async def _fetch_activities(
                 hotel_settings=hotel_settings or None,
                 activity_settings=activity_settings or None,
                 flight_settings=flight_settings or None,
+                destination_lat=dest_lat,
+                destination_lng=dest_lng,
             )
 
             activity_tiles = []
 
-            if curated_manifest:
-                # Curated activities from same provider call
-                curated_provider = CuratedProvider(dest_key)
-                all_tiles = curated_provider.search(ctx)
-                activity_tiles = [t for t in all_tiles if t.type == "activity"]
+            from app.config import settings
+
+            if settings.use_google_places_provider:
+                from app.tile_service.google_places_provider import GooglePlacesActivityProvider
+
+                activity_provider = GooglePlacesActivityProvider()
+                activity_tiles = await activity_provider.search_async(ctx)
+                if not activity_tiles:
+                    log("LOGISTICS", "GooglePlaces returned 0 activities — using mock fallback")
+                    activity_tiles = MockActivityProvider().search(ctx)
             else:
                 # Activities always use Mock (no Amadeus activities API)
                 activity_provider = MockActivityProvider()
@@ -883,8 +895,8 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     Search for hotels and activities with L1+L2 caching.
 
     Provider routing strategy (consistent with tile_service):
-    1. Curated destinations (Dubai, Rome, Chamonix) → CuratedProvider (4K images, prices)
-    2. Non-curated + Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
+    1. Google Places enabled → GooglePlacesProvider (real names + photos, overrides Amadeus)
+    2. Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
     3. Fallback → MockProviders
 
     Caching strategy:
@@ -917,8 +929,18 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
     # Determine provider and cache key parameters
     dest_key = plan.destination.lower().strip() if plan.destination else ""
-    curated_manifest = DEMO_MANIFEST.get(dest_key, {})
-    provider = "curated" if curated_manifest else "amadeus"
+    if settings.use_google_places_provider:
+        provider = "google_places"
+    elif settings.use_amadeus_provider:
+        provider = "amadeus"
+    else:
+        provider = "mock"
+
+    log(
+        "LOGISTICS",
+        f"[TILE_CASCADE] destination={dest_key} provider={provider}",
+        data=f"gp={settings.use_google_places_provider} amadeus={settings.use_amadeus_provider}",
+    )
 
     start_date = str(plan.start_date) if plan.start_date else ""
     end_date = str(plan.end_date) if plan.end_date else ""
@@ -937,6 +959,17 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
         except ValueError:
             pass
 
+    # Geocode destination once for locationBias (both hotels and activities share the result)
+    dest_lat: float | None = None
+    dest_lng: float | None = None
+    if settings.use_google_places_provider and dest_key:
+        from app.tile_service.google_places_provider import _geocode_destination_async
+
+        geo = await _geocode_destination_async(plan.destination or dest_key)
+        if geo:
+            dest_lat, dest_lng = geo
+            _debug_log(f"[TILE_GEOCODE] {plan.destination} → ({dest_lat:.4f}, {dest_lng:.4f})")
+
     # Fetch hotels and activities in PARALLEL
     _gather_t0 = time.time()
     hotel_dicts, activity_dicts = await asyncio.gather(
@@ -946,11 +979,12 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             hotel_settings,
             provider,
             dest_key,
-            curated_manifest,
             start_date,
             end_date,
             activity_settings,
             flight_settings,
+            dest_lat=dest_lat,
+            dest_lng=dest_lng,
         ),
         _fetch_activities(
             async_session_factory,
@@ -958,12 +992,13 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             activity_settings,
             provider,
             dest_key,
-            curated_manifest,
             start_date,
             end_date,
             hotel_settings,
             flight_settings,
             max_results=activity_max_results,
+            dest_lat=dest_lat,
+            dest_lng=dest_lng,
         ),
     )
     _gather_ms = int((time.time() - _gather_t0) * 1000)
@@ -1375,10 +1410,11 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     # Specialist days can hold ~1 co-scheduled experience tile each
     total_placeable = free_days + specialist_days
     base = max(2, total_placeable // len(tier2_cats))
-    # When no niche specialists ran, ensure enough tiles to cover free days.
-    # Otherwise, keep the conservative cap to avoid overwhelming specialist days.
-    has_niche = specialist_days > 0
-    cap = 4 if has_niche else min(8, max(4, math.ceil(free_days / len(tier2_cats))))
+    # D4 fix: use free_days as the demand signal for Tier 2 tile count.
+    # Tier 2 tiles fill free days — the cap should track free_days regardless
+    # of whether Tier 1 specialists are present. Previous hard cap of 4
+    # under-filled long trips with few specialist days (e.g. 13-day yoga trip).
+    cap = min(8, max(4, math.ceil(free_days / len(tier2_cats))))
     tiles_per_cat = min(base, cap)
     log(
         "LOGISTICS",
