@@ -459,7 +459,7 @@ export function NomadicLanding() {
         onUpdateActivitySettings={handleUpdateActivitySettings}
         planViewState={planViewState}
         onOpenSheet={openSheet}
-        destinationImageUrl={destinationImageUrl}
+        destinationImageUrl={destinationCard?.image_url ?? destinationImageUrl}
       />
     </ErrorBoundary>
   );

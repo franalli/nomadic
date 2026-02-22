@@ -4,19 +4,27 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
 
 import app.middleware.session as session_middleware
 
 
-def _build_app() -> FastAPI:
+def _build_app(*, with_csrf: bool = False) -> FastAPI:
     app = FastAPI()
     app.add_middleware(session_middleware.SessionMiddleware)
+    if with_csrf:
+        app.add_middleware(session_middleware.CSRFMiddleware)
 
     @app.get("/ok")
     async def ok() -> dict[str, bool]:
         return {"ok": True}
+
+    if with_csrf:
+
+        @app.delete("/api/session", status_code=204)
+        async def reset_session() -> Response:
+            return session_middleware.clear_session_cookies(Response(status_code=204))
 
     return app
 
@@ -58,3 +66,27 @@ def test_session_throttle_under_concurrency() -> None:
         assert statuses.count(200) <= session_middleware._MAX_SESSIONS_PER_IP_PER_HOUR
     finally:
         session_middleware._MAX_SESSIONS_PER_IP_PER_HOUR = original_max
+
+
+def test_delete_session_then_fresh_init_sets_csrf_cookie() -> None:
+    session_middleware._session_creation_counter.clear()
+    app = _build_app(with_csrf=True)
+    original_cookie_domain = session_middleware.settings.cookie_domain
+    session_middleware.settings.cookie_domain = None
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/ok")
+            assert response.status_code == 200
+            csrf = client.cookies.get(session_middleware.CSRF_COOKIE_NAME)
+            assert csrf
+
+            response = client.delete("/api/session", headers={"X-CSRF-Token": csrf})
+            assert response.status_code == 204
+
+            client.cookies.clear()
+            response = client.get("/ok")
+            assert response.status_code == 200
+            assert client.cookies.get(session_middleware.CSRF_COOKIE_NAME)
+    finally:
+        session_middleware.settings.cookie_domain = original_cookie_domain

@@ -139,12 +139,38 @@ def _experience_cache_key(
     return key
 
 
+def _single_category_cache_key(
+    destination: str,
+    category: str,
+    month: str,
+    tiles_per_category: int = 2,
+) -> str:
+    """Stable cache key for single-category generation used by fill-day flows."""
+    dest_normalized = destination.lower().strip() if destination else "unknown"
+    category_normalized = category.lower().strip() if category else "unknown"
+    month_normalized = month if month else "unknown"
+    key = make_cache_key(
+        "experience_single",
+        "v1",
+        dest_normalized,
+        category_normalized,
+        month_normalized,
+        f"n{tiles_per_category}",
+    )
+    logger.info(f"[EXPERIENCE_CACHE] Single key: {key}")
+    return key
+
+
 # =============================================================================
 # L2: Database cache operations
 # =============================================================================
 
 
-async def _get_cached(db: AsyncSession, cache_key: str) -> Optional[list]:
+async def _get_cached(
+    db: AsyncSession,
+    cache_key: str,
+    cache_type: str = "experience",
+) -> Optional[list]:
     """Check L2 cache for experience output."""
     from app.db_models import ResponseCache
 
@@ -152,14 +178,14 @@ async def _get_cached(db: AsyncSession, cache_key: str) -> Optional[list]:
         result = await db.execute(
             select(ResponseCache)
             .where(ResponseCache.cache_key == cache_key)
-            .where(ResponseCache.cache_type == "experience")
+            .where(ResponseCache.cache_type == cache_type)
             .where(ResponseCache.expires_at > datetime.now(UTC))
         )
         row = result.scalar_one_or_none()
 
         if row:
             _mem.increment_stat("l2_hits")
-            logger.info(f"[EXPERIENCE_CACHE] key={cache_key} → HIT (L2)")
+            logger.info(f"[EXPERIENCE_CACHE] key={cache_key} → HIT (L2:{cache_type})")
             _mem.set(cache_key, row.response_json)  # Promote to L1
 
             stmt = (
@@ -175,7 +201,7 @@ async def _get_cached(db: AsyncSession, cache_key: str) -> Optional[list]:
             return row.response_json
 
         _mem.increment_stat("l2_misses")
-        logger.info(f"[EXPERIENCE_CACHE] key={cache_key} → MISS (L2)")
+        logger.info(f"[EXPERIENCE_CACHE] key={cache_key} → MISS (L2:{cache_type})")
         return None
 
     except Exception as e:
@@ -183,13 +209,18 @@ async def _get_cached(db: AsyncSession, cache_key: str) -> Optional[list]:
         return None
 
 
-async def _set_cached(db: AsyncSession, cache_key: str, output: list) -> None:
+async def _set_cached(
+    db: AsyncSession,
+    cache_key: str,
+    output: list,
+    cache_type: str = "experience",
+) -> None:
     """Write experience output to L2 cache."""
     try:
         await l2_upsert(
             db,
             cache_key=cache_key,
-            cache_type="experience",
+            cache_type=cache_type,
             response_json=output,
             ttl=timedelta(hours=L2_TTL_HOURS),
         )
@@ -369,6 +400,21 @@ def _experience_to_tile_dict(
     }
 
 
+def _cached_single_category_to_tiles(
+    cached_payload: list[dict],
+    destination: str,
+    base_index: int,
+) -> list[dict]:
+    """Rehydrate cached activities and apply runtime index offsets for tile IDs."""
+    tile_dicts: list[dict] = []
+    for idx, payload in enumerate(cached_payload):
+        tile = ExperienceTile.model_validate(payload)
+        if tile.duration_hours > 4:
+            tile.duration_hours = 4
+        tile_dicts.append(_experience_to_tile_dict(tile, destination, base_index + idx))
+    return tile_dicts
+
+
 async def generate_single_category(
     destination: str,
     category: str,
@@ -394,6 +440,57 @@ async def generate_single_category(
         f"[EXPERIENCE] Generating single category: {category} for {destination}"
         f", base_index={base_index}"
     )
+
+    cache_key = _single_category_cache_key(destination, category, month, tiles_per_category)
+
+    # L1: In-memory cache for repeat fill-day category requests
+    cached_payload = _mem.get(cache_key)
+    if cached_payload is not None:
+        _mem.increment_stat("l1_hits")
+        try:
+            tile_dicts = _cached_single_category_to_tiles(cached_payload, destination, base_index)
+            logger.info(
+                f"[EXPERIENCE] Single category cache HIT (L1): {category} → {len(tile_dicts)} tiles"
+            )
+            return tile_dicts
+        except (ValidationError, TypeError, ValueError) as e:
+            logger.warning(
+                "[EXPERIENCE] Single category L1 payload invalid, regenerating: %s",
+                e,
+            )
+    else:
+        _mem.increment_stat("l1_misses")
+
+    async_session_factory = None
+    try:
+        from app.db import _get_async_session_factory
+
+        async_session_factory = _get_async_session_factory()
+    except Exception as e:
+        logger.warning(f"[EXPERIENCE] Single category DB session unavailable: {e}")
+
+    # L2: Persistent cache (shared across process restarts)
+    if async_session_factory is not None:
+        try:
+            async with async_session_factory() as db:
+                l2_cached = await _get_cached(db, cache_key, cache_type="experience_single")
+                if l2_cached is not None:
+                    try:
+                        tile_dicts = _cached_single_category_to_tiles(
+                            l2_cached, destination, base_index
+                        )
+                        logger.info(
+                            f"[EXPERIENCE] Single category cache HIT (L2): {category} "
+                            f"→ {len(tile_dicts)} tiles"
+                        )
+                        return tile_dicts
+                    except (ValidationError, TypeError, ValueError) as e:
+                        logger.warning(
+                            "[EXPERIENCE] Single category L2 payload invalid, regenerating: %s",
+                            e,
+                        )
+        except Exception as e:
+            logger.warning(f"[EXPERIENCE] Single category L2 lookup failed: {e}")
 
     start_t = time.time()
     try:
@@ -444,6 +541,21 @@ async def generate_single_category(
     for tile in parsed.activities:
         if tile.duration_hours > 4:
             tile.duration_hours = 4
+
+    payload = [tile.model_dump() for tile in parsed.activities]
+    _mem.set(cache_key, payload)
+
+    if async_session_factory is not None:
+        try:
+            async with async_session_factory() as db:
+                await _set_cached(
+                    db,
+                    cache_key,
+                    payload,
+                    cache_type="experience_single",
+                )
+        except Exception as e:
+            logger.warning(f"[EXPERIENCE] Single category L2 write failed: {e}")
 
     # Convert to tile dicts with base_index offset
     tile_dicts = []
@@ -531,6 +643,7 @@ async def generate_experience_tiles_for_day(
             all_tiles = await enrich_activities_with_places(
                 all_tiles,
                 destination=destination,
+                path_label="tier2_enrich",
             )
         except Exception as e:
             logger.warning("[EXPERIENCE] fill-day enrichment failed, using LLM data: %s", e)
@@ -749,7 +862,7 @@ async def _generate_experiences_impl(
                     raw = result.get("raw")
                     if parsed is None:
                         raise ValueError("Structured output returned parsed=None")
-                elif hasattr(result, "model_fields"):
+                elif isinstance(result, ExperienceOutput):
                     parsed = result
                     raw = None
                 else:
@@ -803,6 +916,7 @@ async def _generate_experiences_impl(
                 new_tile_dicts = await enrich_activities_with_places(
                     new_tile_dicts,
                     destination=destination,
+                    path_label="tier2_enrich",
                 )
             except Exception as e:
                 logger.warning("[EXPERIENCE] Places enrichment failed, using LLM data: %s", e)

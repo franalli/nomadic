@@ -16,6 +16,7 @@ debug code from crashing production.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -58,7 +59,8 @@ def get_debug_mode() -> str:
 
     Returns: 'full', 'compact', or 'off'
     """
-    mode = settings.debug_mode.lower().strip()
+    # Read DEBUG dynamically so tests/runtime env changes are reflected immediately.
+    mode = os.getenv("DEBUG", "off").lower().strip()
     if mode in ("full", "compact"):
         return mode
     return "off"

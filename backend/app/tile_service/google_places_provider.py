@@ -17,18 +17,91 @@ import asyncio
 import hashlib
 import logging
 import time
+from datetime import UTC, datetime, timedelta
+from threading import Lock
 from typing import Any, Dict, List, Optional
 
 import httpx
+from sqlalchemy import select, update
 
 from app.config import settings
 from app.placeholders import get_placeholder_image
+from app.planner.hashing import make_cache_key, stable_hash_short
 from app.schemas import Geo, Tile
+from app.services.cache_core import MemoryCache, l2_upsert
 
 from .models import SearchContext
 from .provider_base import Provider
 
 logger = logging.getLogger(__name__)
+
+# Explicit Google Places usage labels for telemetry.
+_PLACES_PATH_LABELS = {"browse", "tier1_enrich", "tier2_enrich", "logistics"}
+_PLACES_COUNTER_FIELDS = (
+    "requests",
+    "successes",
+    "empty",
+    "errors",
+    "quota_exhausted",
+    "cache_hits",
+    "cache_misses",
+)
+_places_usage_lock = Lock()
+_places_usage_counters: dict[str, dict[str, int]] = {
+    label: {field: 0 for field in _PLACES_COUNTER_FIELDS} for label in _PLACES_PATH_LABELS
+}
+
+
+def _normalize_places_path(path_label: str) -> str:
+    normalized = (path_label or "").strip().lower()
+    return normalized if normalized in _PLACES_PATH_LABELS else "logistics"
+
+
+def record_google_places_usage(path_label: str, event: str, **context: Any) -> None:
+    """Record path-labeled Places usage counters and emit concise debug telemetry."""
+    path = _normalize_places_path(path_label)
+    field_map = {
+        "request": "requests",
+        "success": "successes",
+        "empty": "empty",
+        "error": "errors",
+        "quota": "quota_exhausted",
+        "cache_hit": "cache_hits",
+        "cache_miss": "cache_misses",
+    }
+    counter_field = field_map.get(event)
+
+    snapshot: dict[str, int] | None = None
+    if counter_field:
+        with _places_usage_lock:
+            _places_usage_counters[path][counter_field] += 1
+            snapshot = dict(_places_usage_counters[path])
+
+    if snapshot is not None:
+        logger.debug(
+            "[VERIFY][GOOGLE_PLACES][path=%s] event=%s counters=%s ctx=%s",
+            path,
+            event,
+            snapshot,
+            context,
+        )
+    else:
+        logger.debug("[VERIFY][GOOGLE_PLACES][path=%s] event=%s ctx=%s", path, event, context)
+
+
+def get_google_places_usage_counters() -> dict[str, dict[str, int]]:
+    """Expose usage counters for observability/tests."""
+    with _places_usage_lock:
+        return {path: dict(values) for path, values in _places_usage_counters.items()}
+
+
+def clear_google_places_usage_counters() -> None:
+    """Reset Places usage counters."""
+    with _places_usage_lock:
+        for path in _places_usage_counters:
+            for field in _places_usage_counters[path]:
+                _places_usage_counters[path][field] = 0
+
 
 # Google Places API (New) endpoint
 _PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
@@ -234,6 +307,7 @@ async def _call_places_api_async(
     max_results: int = 5,
     price_levels: list[str] | None = None,
     geo: tuple[float, float] | None = None,
+    path_label: str = "logistics",
 ) -> List[Dict[str, Any]]:
     """
     Call Google Places API Text Search (New) — async version.
@@ -242,11 +316,13 @@ async def _call_places_api_async(
     """
     api_key = settings.google_maps_api_key
     if not api_key:
+        record_google_places_usage(path_label, "error", reason="missing_api_key")
         logger.warning("[GOOGLE_PLACES] Skipped — API key not configured")
         return []
 
     payload, headers = _build_places_request(query, included_type, max_results, price_levels, geo)
     t0 = time.time()
+    record_google_places_usage(path_label, "request", included_type=included_type)
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(_PLACES_SEARCH_URL, json=payload, headers=headers)
@@ -254,6 +330,12 @@ async def _call_places_api_async(
             places = _parse_places_response(response.status_code, response.text, body)
             elapsed = int((time.time() - t0) * 1000)
             if places:
+                record_google_places_usage(
+                    path_label,
+                    "success",
+                    included_type=included_type,
+                    results=len(places),
+                )
                 logger.info(
                     "[GOOGLE_PLACES] %s search: query='%s' results=%d latency=%dms",
                     included_type,
@@ -262,6 +344,17 @@ async def _call_places_api_async(
                     elapsed,
                 )
             else:
+                if response.status_code == 429:
+                    record_google_places_usage(path_label, "quota", included_type=included_type)
+                elif response.status_code >= 400:
+                    record_google_places_usage(
+                        path_label,
+                        "error",
+                        included_type=included_type,
+                        status=response.status_code,
+                    )
+                else:
+                    record_google_places_usage(path_label, "empty", included_type=included_type)
                 logger.warning(
                     "[GOOGLE_PLACES] %s search EMPTY: query='%s' status=%d latency=%dms",
                     included_type,
@@ -271,6 +364,7 @@ async def _call_places_api_async(
                 )
             return places
     except Exception as exc:
+        record_google_places_usage(path_label, "error", included_type=included_type)
         elapsed = int((time.time() - t0) * 1000)
         logger.error(
             "[GOOGLE_PLACES] %s search FAILED: query='%s' error=%s latency=%dms",
@@ -288,6 +382,7 @@ def _call_places_api(
     max_results: int = 5,
     price_levels: list[str] | None = None,
     geo: tuple[float, float] | None = None,
+    path_label: str = "logistics",
 ) -> List[Dict[str, Any]]:
     """
     Call Google Places API Text Search (New) — sync version.
@@ -296,11 +391,13 @@ def _call_places_api(
     """
     api_key = settings.google_maps_api_key
     if not api_key:
+        record_google_places_usage(path_label, "error", reason="missing_api_key")
         logger.warning("[GOOGLE_PLACES] Skipped — API key not configured")
         return []
 
     payload, headers = _build_places_request(query, included_type, max_results, price_levels, geo)
     t0 = time.time()
+    record_google_places_usage(path_label, "request", included_type=included_type)
     try:
         with httpx.Client(timeout=5.0) as client:
             response = client.post(_PLACES_SEARCH_URL, json=payload, headers=headers)
@@ -308,6 +405,12 @@ def _call_places_api(
             places = _parse_places_response(response.status_code, response.text, body)
             elapsed = int((time.time() - t0) * 1000)
             if places:
+                record_google_places_usage(
+                    path_label,
+                    "success",
+                    included_type=included_type,
+                    results=len(places),
+                )
                 logger.info(
                     "[GOOGLE_PLACES] %s search: query='%s' results=%d latency=%dms",
                     included_type,
@@ -316,6 +419,17 @@ def _call_places_api(
                     elapsed,
                 )
             else:
+                if response.status_code == 429:
+                    record_google_places_usage(path_label, "quota", included_type=included_type)
+                elif response.status_code >= 400:
+                    record_google_places_usage(
+                        path_label,
+                        "error",
+                        included_type=included_type,
+                        status=response.status_code,
+                    )
+                else:
+                    record_google_places_usage(path_label, "empty", included_type=included_type)
                 logger.warning(
                     "[GOOGLE_PLACES] %s search EMPTY: query='%s' status=%d latency=%dms",
                     included_type,
@@ -325,6 +439,7 @@ def _call_places_api(
                 )
             return places
     except Exception as exc:
+        record_google_places_usage(path_label, "error", included_type=included_type)
         elapsed = int((time.time() - t0) * 1000)
         logger.error(
             "[GOOGLE_PLACES] %s search FAILED: query='%s' error=%s latency=%dms",
@@ -419,6 +534,7 @@ class GooglePlacesHotelProvider(Provider):
             max_results=max_results,
             price_levels=_hotel_price_levels(ctx.hotel_settings),
             geo=geo,
+            path_label="logistics",
         )
         return self._build_tiles(ctx, places)
 
@@ -437,6 +553,7 @@ class GooglePlacesHotelProvider(Provider):
             max_results=max_results,
             price_levels=_hotel_price_levels(ctx.hotel_settings),
             geo=geo,
+            path_label="logistics",
         )
         return self._build_tiles(ctx, places)
 
@@ -582,6 +699,7 @@ class GooglePlacesActivityProvider(Provider):
             included_type="tourist_attraction",
             max_results=max_results,
             geo=geo,
+            path_label="logistics",
         )
         return self._build_tiles(ctx, places)
 
@@ -599,6 +717,7 @@ class GooglePlacesActivityProvider(Provider):
             included_type="tourist_attraction",
             max_results=max_results,
             geo=geo,
+            path_label="logistics",
         )
         return self._build_tiles(ctx, places)
 
@@ -701,11 +820,207 @@ _ENRICH_FIELD_MASK = (
 )
 
 
+# Aggressive enrichment cache: L1 memory + L2 ResponseCache.
+_ENRICH_L1_TTL_SECONDS = 86400  # 24h hot cache
+_ENRICH_L1_MAX_SIZE = 2048
+_ENRICH_L2_TTL_HOURS = int(
+    getattr(settings, "google_places_enrichment_cache_ttl_hours", settings.tile_cache_ttl_hours)
+)
+_enrich_mem = MemoryCache(maxsize=_ENRICH_L1_MAX_SIZE, ttl=_ENRICH_L1_TTL_SECONDS)
+_ENRICH_MAX_PARALLEL_DEFAULT = 4
+_ENRICH_RETRY_ATTEMPTS_DEFAULT = 2
+_ENRICH_RETRY_BASE_MS_DEFAULT = 250
+
+
+def _normalize_for_cache(value: str) -> str:
+    return " ".join((value or "").lower().strip().split())
+
+
+def _enrich_max_parallel() -> int:
+    raw = getattr(settings, "google_places_enrichment_max_parallel", _ENRICH_MAX_PARALLEL_DEFAULT)
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return _ENRICH_MAX_PARALLEL_DEFAULT
+
+
+def _enrich_retry_attempts() -> int:
+    raw = getattr(
+        settings,
+        "google_places_enrichment_retry_attempts",
+        _ENRICH_RETRY_ATTEMPTS_DEFAULT,
+    )
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return _ENRICH_RETRY_ATTEMPTS_DEFAULT
+
+
+def _enrich_backoff_seconds(attempt: int) -> float:
+    raw = getattr(settings, "google_places_enrichment_retry_base_ms", _ENRICH_RETRY_BASE_MS_DEFAULT)
+    try:
+        base_ms = max(1, int(raw))
+    except (TypeError, ValueError):
+        base_ms = _ENRICH_RETRY_BASE_MS_DEFAULT
+    return (base_ms * (2**attempt)) / 1000.0
+
+
+def _retry_after_seconds(header: str | None) -> float | None:
+    if not header:
+        return None
+    try:
+        seconds = float(header)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, seconds)
+
+
+def _enrich_cache_key(title: str, destination: str) -> str:
+    title_norm = _normalize_for_cache(title) or "unknown"
+    dest_norm = _normalize_for_cache(destination) or "unknown"
+    query_sig = stable_hash_short(
+        {
+            "text_query": f"{title_norm} {dest_norm}".strip(),
+            "page_size": 1,
+            "language_code": "en",
+            "field_mask": _ENRICH_FIELD_MASK,
+        }
+    )
+    return make_cache_key(
+        "places",
+        "enrich",
+        "v2",
+        dest_norm[:80],
+        title_norm[:120],
+        f"q{query_sig}",
+    )
+
+
+async def _get_cached_enrichment(cache_key: str) -> dict[str, Any] | None:
+    """Load enrichment payload from L2 and promote to L1."""
+    from app.db import _get_async_session_factory
+    from app.db_models import ResponseCache
+
+    cached = _enrich_mem.get(cache_key)
+    if cached is not None:
+        return cached
+
+    async_session_factory = _get_async_session_factory()
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(
+                select(ResponseCache)
+                .where(ResponseCache.cache_key == cache_key)
+                .where(ResponseCache.cache_type == "tiles")
+                .where(ResponseCache.expires_at > datetime.now(UTC))
+            )
+            row = result.scalar_one_or_none()
+            if not row:
+                return None
+
+            _enrich_mem.set(cache_key, row.response_json)
+            stmt = (
+                update(ResponseCache)
+                .where(ResponseCache.cache_key == cache_key)
+                .values(
+                    hit_count=ResponseCache.hit_count + 1,
+                    last_hit_at=datetime.now(UTC),
+                )
+            )
+            await db.execute(stmt)
+            await db.commit()
+            return row.response_json
+    except Exception as e:
+        logger.debug("[GOOGLE_PLACES] Enrichment L2 read failed key=%s err=%s", cache_key, e)
+        return None
+
+
+async def _set_cached_enrichment(cache_key: str, payload: dict[str, Any]) -> None:
+    """Write enrichment payload to L1 + L2 cache."""
+    from app.db import _get_async_session_factory
+
+    _enrich_mem.set(cache_key, payload)
+    async_session_factory = _get_async_session_factory()
+    try:
+        async with async_session_factory() as db:
+            await l2_upsert(
+                db,
+                cache_key=cache_key,
+                cache_type="tiles",
+                response_json=payload,
+                ttl=timedelta(hours=_ENRICH_L2_TTL_HOURS),
+            )
+    except Exception as e:
+        logger.debug("[GOOGLE_PLACES] Enrichment L2 write failed key=%s err=%s", cache_key, e)
+
+
+def _apply_place_to_activity(activity: dict, place: dict, title: str) -> dict:
+    """Apply a cached/live Places match onto one activity payload."""
+    enriched = dict(activity)
+    loc = place.get("location", {})
+
+    # Overwrite coordinates with verified data ([lng, lat] Mapbox convention)
+    if loc.get("latitude") is not None and loc.get("longitude") is not None:
+        enriched["coordinates"] = [loc["longitude"], loc["latitude"]]
+
+    # Overwrite image with Google Places photo
+    photos = place.get("photos") or []
+    if photos:
+        photo_url = _get_photo_url(photos[0].get("name", ""))
+        if photo_url:
+            enriched["image_url"] = photo_url
+
+    # Add metadata
+    place_id = place.get("id", "")
+    enriched["google_place_id"] = place_id
+    enriched["rating"] = place.get("rating")
+    enriched["user_ratings_count"] = place.get("userRatingCount")
+    enriched["deeplink"] = (
+        place.get("googleMapsUri") or f"https://www.google.com/maps/place/?q=place_id:{place_id}"
+    )
+
+    # Store parsed price_level int (0-4) for frontend display ($ symbols).
+    # Also compute price_estimate for Tier 1 tiles that have no LLM price.
+    raw_price_level = place.get("priceLevel")
+    if raw_price_level is not None:
+        pl = _parse_price_level(raw_price_level)
+        enriched["price_level"] = pl
+        if enriched.get("price_estimate") is None:
+            # Assume 2 adults as a neutral baseline — enrichment has no traveler count
+            enriched["price_estimate"] = _estimate_activity_price(pl, travelers=2)
+            enriched["price_basis"] = "per_person"
+            enriched["currency"] = "USD"
+            enriched["is_estimate_only"] = True
+
+    # Store human-readable location label for detail views
+    location_label = place.get("shortFormattedAddress")
+    if location_label:
+        enriched["location_label"] = location_label
+
+    # Enrich description with editorial summary if richer than LLM text
+    existing_desc = enriched.get("description", "") or (
+        (enriched.get("meta") or {}).get("description", "")
+    )
+    editorial = (place.get("editorialSummary") or {}).get("text")
+    if editorial and len(editorial) > len(existing_desc):
+        enriched["editorial_summary"] = editorial
+
+    logger.debug(
+        "[GOOGLE_PLACES] Enriched '%s' → place_id=%s coords=%s rating=%s",
+        title,
+        place_id,
+        enriched.get("coordinates"),
+        enriched.get("rating"),
+    )
+    return enriched
+
+
 async def _enrich_single_activity(
     client: httpx.AsyncClient,
     activity: dict,
     destination: str,
     api_key: str,
+    path_label: str,
 ) -> dict:
     """Resolve a single activity against Google Places Text Search.
 
@@ -716,25 +1031,71 @@ async def _enrich_single_activity(
     if not title:
         return activity
 
+    cache_key = _enrich_cache_key(title, destination)
+    cached_payload = await _get_cached_enrichment(cache_key)
+    if cached_payload is not None:
+        record_google_places_usage(path_label, "cache_hit", cache="enrichment")
+        if cached_payload.get("matched"):
+            place = cached_payload.get("place")
+            if isinstance(place, dict):
+                try:
+                    return _apply_place_to_activity(activity, place, title)
+                except Exception as e:
+                    logger.warning(
+                        "[GOOGLE_PLACES] Cached enrichment parse failed for '%s': %s", title, e
+                    )
+        return activity
+
+    record_google_places_usage(path_label, "cache_miss", cache="enrichment")
+
     query = f"{title} {destination}"
-    try:
-        resp = await client.post(
-            _PLACES_SEARCH_URL,
-            headers={
-                "Content-Type": "application/json",
-                "X-Goog-Api-Key": api_key,
-                "X-Goog-FieldMask": _ENRICH_FIELD_MASK,
-            },
-            json={
-                "textQuery": query,
-                "pageSize": 1,
-                "languageCode": "en",
-            },
-        )
+    max_attempts = _enrich_retry_attempts()
+    places: list[dict] = []
+    for attempt in range(max_attempts):
+        record_google_places_usage(path_label, "request", mode="enrichment")
+        try:
+            resp = await client.post(
+                _PLACES_SEARCH_URL,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": api_key,
+                    "X-Goog-FieldMask": _ENRICH_FIELD_MASK,
+                },
+                json={
+                    "textQuery": query,
+                    "pageSize": 1,
+                    "languageCode": "en",
+                },
+            )
+        except Exception as e:
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(_enrich_backoff_seconds(attempt))
+                continue
+            record_google_places_usage(path_label, "error", mode="enrichment")
+            logger.warning("[GOOGLE_PLACES] Enrichment failed for '%s': %s", title, e)
+            return activity
+
         if resp.status_code == 429:
+            record_google_places_usage(path_label, "quota", mode="enrichment")
+            if attempt < max_attempts - 1:
+                retry_after = _retry_after_seconds(resp.headers.get("Retry-After"))
+                await asyncio.sleep(
+                    retry_after if retry_after is not None else _enrich_backoff_seconds(attempt)
+                )
+                continue
             logger.warning("[GOOGLE_PLACES] Enrichment quota exhausted for '%s'", title)
             return activity
-        if resp.status_code != 200:
+
+        if resp.status_code >= 500:
+            record_google_places_usage(
+                path_label,
+                "error",
+                mode="enrichment",
+                status=resp.status_code,
+            )
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(_enrich_backoff_seconds(attempt))
+                continue
             logger.warning(
                 "[GOOGLE_PLACES] Enrichment API error %d for '%s': %s",
                 resp.status_code,
@@ -742,73 +1103,56 @@ async def _enrich_single_activity(
                 resp.text[:200],
             )
             return activity
-        places = resp.json().get("places", [])
-    except Exception as e:
-        logger.warning("[GOOGLE_PLACES] Enrichment failed for '%s': %s", title, e)
-        return activity
+
+        if resp.status_code != 200:
+            record_google_places_usage(
+                path_label,
+                "error",
+                mode="enrichment",
+                status=resp.status_code,
+            )
+            logger.warning(
+                "[GOOGLE_PLACES] Enrichment API error %d for '%s': %s",
+                resp.status_code,
+                title,
+                resp.text[:200],
+            )
+            return activity
+
+        try:
+            body = resp.json()
+        except Exception as e:
+            record_google_places_usage(
+                path_label,
+                "error",
+                mode="enrichment",
+                status=resp.status_code,
+                reason="invalid_json",
+            )
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(_enrich_backoff_seconds(attempt))
+                continue
+            logger.warning(
+                "[GOOGLE_PLACES] Enrichment response parse failed for '%s': %s", title, e
+            )
+            return activity
+
+        places = body.get("places", [])
+        break
 
     if not places:
+        record_google_places_usage(path_label, "empty", mode="enrichment")
+        await _set_cached_enrichment(cache_key, {"matched": False})
         return activity
 
     try:
         place = places[0]
-        loc = place.get("location", {})
-
-        # Overwrite coordinates with verified data ([lng, lat] Mapbox convention)
-        if loc.get("latitude") is not None and loc.get("longitude") is not None:
-            activity["coordinates"] = [loc["longitude"], loc["latitude"]]
-
-        # Overwrite image with Google Places photo
-        photos = place.get("photos") or []
-        if photos:
-            photo_url = _get_photo_url(photos[0].get("name", ""))
-            if photo_url:
-                activity["image_url"] = photo_url
-
-        # Add metadata
-        place_id = place.get("id", "")
-        activity["google_place_id"] = place_id
-        activity["rating"] = place.get("rating")
-        activity["user_ratings_count"] = place.get("userRatingCount")
-        activity["deeplink"] = (
-            place.get("googleMapsUri")
-            or f"https://www.google.com/maps/place/?q=place_id:{place_id}"
-        )
-
-        # Store parsed price_level int (0-4) for frontend display ($ symbols).
-        # Also compute price_estimate for Tier 1 tiles that have no LLM price.
-        raw_price_level = place.get("priceLevel")
-        if raw_price_level is not None:
-            pl = _parse_price_level(raw_price_level)
-            activity["price_level"] = pl
-            if activity.get("price_estimate") is None:
-                # Assume 2 adults as a neutral baseline — enrichment has no traveler count
-                activity["price_estimate"] = _estimate_activity_price(pl, travelers=2)
-                activity["price_basis"] = "per_person"
-                activity["currency"] = "USD"
-                activity["is_estimate_only"] = True
-
-        # Store human-readable location label for detail views
-        location_label = place.get("shortFormattedAddress")
-        if location_label:
-            activity["location_label"] = location_label
-
-        # Enrich description with editorial summary if richer than LLM text
-        existing_desc = activity.get("description", "") or (
-            (activity.get("meta") or {}).get("description", "")
-        )
-        editorial = (place.get("editorialSummary") or {}).get("text")
-        if editorial and len(editorial) > len(existing_desc):
-            activity["editorial_summary"] = editorial
-
-        logger.debug(
-            "[GOOGLE_PLACES] Enriched '%s' → place_id=%s coords=%s rating=%s",
-            title,
-            place_id,
-            activity.get("coordinates"),
-            activity.get("rating"),
-        )
+        enriched = _apply_place_to_activity(activity, place, title)
+        await _set_cached_enrichment(cache_key, {"matched": True, "place": place})
+        record_google_places_usage(path_label, "success", mode="enrichment")
+        return enriched
     except Exception as e:
+        record_google_places_usage(path_label, "error", mode="enrichment")
         logger.warning("[GOOGLE_PLACES] Enrichment parse failed for '%s': %s", title, e)
 
     return activity
@@ -817,6 +1161,7 @@ async def _enrich_single_activity(
 async def enrich_activities_with_places(
     activities: list[dict],
     destination: str,
+    path_label: str = "tier2_enrich",
 ) -> list[dict]:
     """Post-process LLM-generated activities by resolving each against Google Places.
 
@@ -833,12 +1178,16 @@ async def enrich_activities_with_places(
     if not api_key or not activities:
         return activities
 
+    path = _normalize_places_path(path_label)
     t0 = time.time()
+    semaphore = asyncio.Semaphore(_enrich_max_parallel())
+
+    async def _enrich_with_limit(activity: dict) -> dict:
+        async with semaphore:
+            return await _enrich_single_activity(client, activity, destination, api_key, path)
+
     async with httpx.AsyncClient(timeout=5.0) as client:
-        coros = [
-            _enrich_single_activity(client, activity, destination, api_key)
-            for activity in activities
-        ]
+        coros = [_enrich_with_limit(activity) for activity in activities]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
 
     # On exception, keep original activity (graceful degradation)
@@ -857,7 +1206,8 @@ async def enrich_activities_with_places(
     enriched_count = sum(1 for r in final if r.get("google_place_id"))
     elapsed_ms = int((time.time() - t0) * 1000)
     logger.info(
-        "[GOOGLE_PLACES] Enriched %d/%d activities for %s in %dms",
+        "[GOOGLE_PLACES][%s] Enriched %d/%d activities for %s in %dms",
+        path,
         enriched_count,
         len(activities),
         destination,

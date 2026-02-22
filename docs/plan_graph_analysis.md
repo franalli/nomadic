@@ -843,7 +843,7 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 | 3        | `USE_AMADEUS_PROVIDER=true`                       | AmadeusHotelProvider    | MockProvider            | Demo Backup           |
 | 4        | Fallback                                          | MockProvider            | MockProvider            | Demo Backup           |
 
-GooglePlacesProvider falls back to MockProvider when Places returns 0 results (quota, error, etc.). Google Places caches via existing `tile_cache.py` L1+L2 (24h TTL, compliant with Google ToS).
+GooglePlacesProvider falls back to MockProvider when Places returns 0 results (quota, error, etc.). Google Places hotel/activity provider searches cache via `tile_cache.py` L1+L2, while activity enrichment now uses a dedicated `places::enrich::v2` L1+L2 cache. Requests are path-labeled (`logistics`, `browse`, `tier1_enrich`, `tier2_enrich`) via `record_google_places_usage()` for per-flow telemetry.
 
 **Airport Code Resolution:**
 
@@ -2341,16 +2341,18 @@ Thread-safe in-process caches managed via per-node `TTLCache` instances with `th
 
 **Two-Tier LLM/API Caches (Cross-Session):**
 
-All four caches share a common `MemoryCache` primitive from `backend/app/services/cache_core.py` — thread-safe `TTLCache` wrapper with `RLock` for cache ops and separate `_stats_lock` for hit/miss counters. Each service instantiates its own `MemoryCache` with domain-specific config (maxsize, TTL, stat keys). L2 writes use the shared `l2_upsert()` function in `cache_core.py` — a `pg_insert().on_conflict_do_update()` pattern that commits internally.
+All six caches share a common `MemoryCache` primitive from `backend/app/services/cache_core.py` — thread-safe `TTLCache` wrapper with `RLock` for cache ops and separate `_stats_lock` for hit/miss counters. Each service instantiates its own `MemoryCache` with domain-specific config (maxsize, TTL, stat keys). L2 writes use the shared `l2_upsert()` function in `cache_core.py` — a `pg_insert().on_conflict_do_update()` pattern that commits internally.
 
 | Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
 |-------|-------------|---------|--------|--------|------------|---------|
 | Specialist | `specialist_cache.py` | 128 | 1h | 168h (env: SPECIALIST_CACHE_TTL_HOURS) | `specialist::v2::{topic}::{dest}::{month}::{bucket}::{skill}::{dpref}::{phash}` | LLM outputs |
 | Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month}::n{tiles_per_category}` | Tier 2 tiles |
 | Tile | `tile_cache.py` | 256 | 24h | 72h (env: TILE_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
+| Browse | `activity_browser.py` | 256 | 6h | 72h (env: TILE_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
+| Places Enrichment | `google_places_provider.py` | 2048 | 24h | 168h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS; fallback TILE_CACHE_TTL_HOURS) | `places::enrich::v2::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups |
 | Router | `router_cache.py` | 500 | 1h | N/A | `router::v2::SHA256({text}:{date})[:32]` | NL extraction |
 
-**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'tiles'`).
+**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'tiles'`). Browse and Places enrichment L2 entries use `cache_type='tiles'`.
 
 ### Cache Invalidation Triggers
 
@@ -2529,7 +2531,10 @@ On-demand Google Places search for free/buffer days. Provides rich categorized r
 
 **Purpose:** Called by `POST /api/activities/browse` when the user taps "Browse Activities" on a free or buffer day. Also pre-called by `logistics_node.py` for pure Tier 1 trips to pre-stash results in `state.metadata["browseable_activities"]`.
 
-**Cache:** In-memory L1 only (no L2/DB). Key: `browse::v1::{destination}::{sorted_categories}::{month}` (month-level granularity — same activities are available across the full month). Max 200 entries, LRU eviction.
+**Cache:** Two-tier L1+L2.
+- L1: `MemoryCache(maxsize=256, ttl=6h)`
+- L2: `response_cache` (`cache_type='tiles'`, TTL=`tile_cache_ttl_hours`)
+- Key: `browse::v2::{destination}::{sorted_categories}::{month}::{center_bucket}` where `center_bucket` is `auto` or rounded `(lat,lng)` to 3 decimals.
 
 **Category mapping:** `CATEGORY_TO_PLACES_TYPES` dict maps 8 categories to Google Places API types:
 
@@ -2545,6 +2550,11 @@ On-demand Google Places search for free/buffer days. Provides rich categorized r
 | `wellness` | `gym`, `yoga_studio` |
 
 **Parallel search:** Runs up to 2 Places types per category concurrently via `asyncio.gather()`; deduplicates results by `place_id`.
+Each browse query calls Places with `path_label="browse"` for telemetry partitioning.
+
+**Singleflight dedupe:** Concurrent identical browse requests share one owner task keyed by the browse cache key. Waiters `await` the in-flight task instead of launching duplicate Places searches.
+
+**Failure-safe caching:** Empty results caused by transient Places failures (API/quota/errors) are not written to cache to avoid poisoning.
 
 **Output:** List of up to 20 tile dicts per request with fields:
 `id`, `type`, `title`, `subtitle`, `description`, `image_url`, `rating`, `review_count`, `google_place_id`, `deeplink`, `location_label`, `geo`, `price_estimate`, `price_level`, `source`, `provider`, `category`, `tags`, `place_id`, `maps_uri`
@@ -2615,15 +2625,18 @@ In addition to L1+L2 caches, specialist outputs are cached in `state.metadata["p
 **Invalidation Logic (at TOP of `vertical_specialist()`):**
 
 ```python
-# Track context changes by destination + month:bucket + Tier 1 day_preferences
+# Track context changes by destination + month:bucket + skill_level + Tier 1 day_preferences
 cached_key = state.metadata.get("_last_specialist_key", "")
 current_dest = (state.trip_plan.destination or "").lower().strip()
 _month = start_date[:7] if start_date else "no-month"
 _bucket = compute_duration_bucket(start_date, end_date)  # weekend/short/week/extended/twoweek/long
+_activity_settings = state.metadata.get("trip_inputs", {}).get("activity_settings", {}) or {}
+_skill_level = str(_activity_settings.get("skill_level") or "").strip().lower()
 # Only Tier 1 prefs — Tier 2 changes (nightlife, yoga) don't affect specialist outputs
-_tier1_prefs = {k: v for k, v in day_prefs.items() if k in TIER1_SPECIALIST_NAMES}
+_all_day_prefs = _activity_settings.get("day_preferences", {})
+_tier1_prefs = {k: v for k, v in _all_day_prefs.items() if k in TIER1_SPECIALIST_NAMES}
 _dp_suffix = json.dumps(_tier1_prefs, sort_keys=True) if _tier1_prefs else ""
-current_key = f"{current_dest}:{_month}:{_bucket}:{_dp_suffix}"
+current_key = f"{current_dest}:{_month}:{_bucket}:{_skill_level}:{_dp_suffix}"
 
 if cached_key and cached_key != current_key:
     _debug_log(f"[SPECIALIST] Context changed ({cached_key} → {current_key}), invalidating")
@@ -2632,11 +2645,12 @@ if cached_key and cached_key != current_key:
 state.metadata["_last_specialist_key"] = current_key
 ```
 
-**Why `destination:month:bucket:tier1_prefs`:**
+**Why `destination:month:bucket:skill_level:tier1_prefs`:**
 
 - Destination change: Different location = different content
 - Month change: Different season = different recommendations (rainy vs dry season)
 - Duration bucket change: Different trip class = different activity counts (uses same buckets as specialist_cache: weekend/short/week/extended/twoweek/long)
+- Skill level change: Prompt conditioning differs (`beginner` vs `advanced`) so specialist outputs must be regenerated
 - Tier 1 day preference change: User adjusts day allocation via stepper = different target counts. Tier 2 changes (nightlife, yoga) filtered out — they don't affect specialist LLM output.
 - Date extensions within the same month+bucket are cache-safe (specialist recommendations don't change for "Feb 11-14" vs "Feb 11-18" when both map to `2026-02:week`)
 - Matches L1+L2 persistent specialist_cache key strategy for consistency
@@ -2649,6 +2663,7 @@ state.metadata["_last_specialist_key"] = current_key
 | Destination | `bali:2026-02:week:...` → `new york:2026-02:week:...` | Cache cleared |
 | Month | `bali:2026-02:week` → `bali:2026-08:week` | Cache cleared |
 | Duration bucket | `bali:2026-02:week` → `bali:2026-02:extended` | Cache cleared |
+| Skill level | `...:beginner:...` → `...:advanced:...` | Cache cleared |
 | Tier 1 day prefs | `...:{"diving": 3}` → `...:{"diving": 5}` | Cache cleared |
 | Same month+bucket | `Feb 11-14` → `Feb 11-18` (both `week`) | Cache preserved |
 
@@ -3579,6 +3594,7 @@ class Resolution(BaseModel):
 | `/api/admin/clear-specialist-cache` | POST   | Clear specialist L1 + L2                                                        |
 | `/api/admin/clear-tile-cache`       | POST   | Clear tile L1 + L2                                                              |
 | `/api/admin/clear-router-cache`     | POST   | Clear router L1 only                                                            |
+| `/api/admin/clear-l1-l2-caches`     | POST   | Force-clear L1 memory caches + L2 response_cache/unsplash cache rows only      |
 | `/api/admin/clear-validation-cache` | POST   | Clear validation caches                                                         |
 | `/api/admin/fresh-start`            | POST   | Clear validation + response caches                                              |
 | `/api/admin/clear-all-checkpoints`  | POST   | Clear ALL LangGraph checkpoints                                                 |
@@ -3909,7 +3925,7 @@ useCartActions(): { addToCart, removeFromCart, clearCart }
 
 - `hooks/useMapSync.ts` - Central sync state management
 - `lib/route-utils.ts` - GeoJSON route generation
-- `components/map/MapLayerFilter.tsx` - Activity type toggles
+- `components/map/InteractiveMap.tsx` - Layer visibility + marker interactions
 
 ---
 

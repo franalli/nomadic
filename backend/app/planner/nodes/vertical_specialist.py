@@ -285,6 +285,7 @@ async def generate_specialist_output_llm(
     db: Optional[Any] = None,  # AsyncSession for persistent caching
     skill_level: Optional[str] = None,  # User skill from activity_settings
     target_activities: Optional[int] = None,  # User's day_preference for this topic
+    skip_cache_lookup: bool = False,  # Skip pre-LLM cache read when caller already checked cache
 ) -> Optional[LLMSpecialistOutput]:
     """
     Single LLM call generates feasibility + activities + constraints.
@@ -299,13 +300,16 @@ async def generate_specialist_output_llm(
             When set, overrides the default min/max calculation and the LLM is
             asked to generate exactly this many activities. If the LLM returns
             fewer, repeat-session padding fills the gap.
+        skip_cache_lookup: If True, bypasses the cache read in this function.
+            Useful when caller already performed cache lookup and wants to avoid
+            duplicate L1/L2 reads on single-specialist miss path.
     """
     from app.debug_utils import _debug_log
 
     # =========================================================================
     # CACHE CHECK: L1 (memory) → L2 (PostgreSQL)
     # =========================================================================
-    if db is not None:
+    if db is not None and not skip_cache_lookup:
         try:
             from app.services.specialist_cache import get_cached_specialist_output
 
@@ -1625,6 +1629,7 @@ async def _merge_specialist_into_state(
             content_added = await enrich_activities_with_places(
                 content_added,
                 destination=state.trip_plan.destination or "",
+                path_label="tier1_enrich",
             )
         except Exception as e:
             _debug_log(f"[SPECIALIST] Places enrichment failed, using LLM data: {e}")
@@ -1780,21 +1785,26 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         )
     except (ValueError, TypeError):
         _bucket = "unknown"
+    # Include skill_level and day_preferences so preference changes bust
+    # the parallel_llm_results cache.
+    _activity_settings = state.metadata.get("trip_inputs", {}).get("activity_settings", {}) or {}
+    if hasattr(_activity_settings, "model_dump"):
+        _activity_settings = _activity_settings.model_dump()
+    if not isinstance(_activity_settings, dict):
+        _activity_settings = {}
+    _skill_level = str(_activity_settings.get("skill_level") or "").strip().lower()
+
     # Include day_preferences so stepper changes bust the parallel_llm_results cache
     # Only include Tier 1 specialist prefs — Tier 2 category changes (nightlife, yoga)
     # don't affect specialist outputs and shouldn't invalidate the cache.
-    _all_day_prefs = (
-        state.metadata.get("trip_inputs", {})
-        .get("activity_settings", {})
-        .get("day_preferences", {})
-    )
+    _all_day_prefs = _activity_settings.get("day_preferences", {})
     _tier1_prefs = (
         {k: v for k, v in _all_day_prefs.items() if k in TIER1_SPECIALIST_NAMES}
         if _all_day_prefs
         else {}
     )
     _dp_suffix = json.dumps(_tier1_prefs, sort_keys=True) if _tier1_prefs else ""
-    current_key = f"{current_dest}:{_month}:{_bucket}:{_dp_suffix}"
+    current_key = f"{current_dest}:{_month}:{_bucket}:{_skill_level}:{_dp_suffix}"
 
     if cached_key and cached_key != current_key:
         _debug_log(
@@ -2022,6 +2032,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
                             db=db,
                             skill_level=_skill,
                             target_activities=_topic_day_pref,
+                            skip_cache_lookup=True,
                         )
 
                         if llm_result:

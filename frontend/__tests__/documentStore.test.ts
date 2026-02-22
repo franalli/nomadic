@@ -108,6 +108,7 @@ beforeEach(() => {
     error: null,
     llmUpdatedFields: new Set(),
     preferredTileIds: new Set(),
+    _lastPatchedTripInputs: null,
   });
   vi.clearAllMocks();
 });
@@ -263,6 +264,17 @@ describe('mergeEnvelope', () => {
 
     expect(useDocumentStore.getState().document!.day_cards).toEqual([]);
   });
+
+  it('clears browseableActivities when envelope sends an explicit empty list', () => {
+    useDocumentStore.setState({
+      document: makeDoc(),
+      browseableActivities: [{ title: 'Cached activity' }],
+    });
+
+    useDocumentStore.getState().mergeEnvelope({ browseable_activities: [] });
+
+    expect(useDocumentStore.getState().browseableActivities).toEqual([]);
+  });
 });
 
 describe('setFromPlanResponse', () => {
@@ -310,6 +322,30 @@ describe('setFromPlanResponse', () => {
 
     expect(useDocumentStore.getState().document!.plan_view_state).toBe('S3_EDITING');
   });
+
+  it('clears preferredTileIds when backend returns an explicit empty list', () => {
+    useDocumentStore.setState({
+      document: makeDoc(),
+      preferredTileIds: new Set(['tile-a']),
+    });
+
+    const response = makePatchResponse(2, { preferred_tile_ids: [] });
+    useDocumentStore.getState().setFromPlanResponse(response);
+
+    expect(useDocumentStore.getState().preferredTileIds.size).toBe(0);
+  });
+
+  it('clears browseableActivities when graph response returns an explicit empty list', () => {
+    useDocumentStore.setState({
+      document: makeDoc(),
+      browseableActivities: [{ title: 'Cached activity' }],
+    });
+
+    const response = makePatchResponse(2, { browseable_activities: [] });
+    useDocumentStore.getState().setFromPlanResponse(response);
+
+    expect(useDocumentStore.getState().browseableActivities).toEqual([]);
+  });
 });
 
 // ==========================================================================
@@ -346,6 +382,25 @@ describe('commitTripInputs', () => {
     expect(useDocumentStore.getState().version).toBe(2);
     expect(useDocumentStore.getState().isCommitting).toBe(false);
     expect(mockApiFetch).toHaveBeenCalledOnce();
+  });
+
+  it('prefers backend plan_view_state from PATCH response', async () => {
+    useDocumentStore.setState({
+      document: makeDoc({ plan_view_state: 'S3_ITINERARY_READY' }),
+      version: 1,
+    });
+
+    mockApiFetch.mockResolvedValueOnce(
+      mockResponse(200, makePatchResponse(2, {
+        plan_view_state: 'S2_STRATEGY_READY',
+        trip_inputs: { ...DEFAULT_TRIP_INPUTS, destination: 'Lisbon', budget: 3000 },
+      })),
+    );
+
+    const result = await useDocumentStore.getState().commitTripInputs({ budget: 3000 });
+
+    expect(result).toBe(true);
+    expect(useDocumentStore.getState().document!.plan_view_state).toBe('S2_STRATEGY_READY');
   });
 
   it('skips backend PATCH when updates are a no-op', async () => {

@@ -1032,6 +1032,86 @@ async def admin_clear_all_caches(  # noqa: ARG001
     return results
 
 
+@app.post("/api/admin/clear-l1-l2-caches", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_clear_l1_l2_caches(  # noqa: ARG001
+    request: Request, db: AsyncSession = async_db_dependency
+):
+    """
+    Force-clear cache layers (L1 memory + L2 DB) used by planner/services.
+
+    Clears:
+    - L1: specialist, tile, experience, router, feasibility, browse, enrichment,
+      exploration-answer, iata, unsplash memory
+    - L2: ALL rows in response_cache + unsplash image cache rows
+
+    Does NOT clear:
+    - Validation/rate-limit caches
+    - LangGraph checkpoints
+    - Session/chat/document data
+    """
+    _ = request
+    from sqlalchemy import delete
+
+    from app.db_models import ResponseCache
+    from app.planner.nodes.intent_router import _exploration_answer_cache
+    from app.planner.services.feasibility_service import _feasibility_cache
+    from app.planner.services.iata_resolver import clear_iata_cache
+    from app.services.activity_browser import _browse_cache
+    from app.services.experience_generator import clear_experience_cache
+    from app.services.router_cache import clear_cache as clear_router_cache
+    from app.services.specialist_cache import clear_memory_cache as clear_specialist_memory
+    from app.services.tile_cache import clear_memory_cache as clear_tile_memory
+    from app.tile_service.google_places_provider import _enrich_mem
+
+    unsplash_memory_before = int(get_unsplash_memory_stats().get("entries", 0))
+
+    l1_cleared = {
+        "specialist_memory": clear_specialist_memory(),
+        "tile_memory": clear_tile_memory(),
+        "experience_memory": clear_experience_cache(),
+        "router_memory": clear_router_cache(),
+        "feasibility_memory": _feasibility_cache.clear(),
+        "browse_memory": _browse_cache.clear(),
+        "places_enrichment_memory": _enrich_mem.clear(),
+        "exploration_answer_memory": _exploration_answer_cache.clear(),
+        "iata_memory": clear_iata_cache(),
+        "unsplash_memory": unsplash_memory_before,
+    }
+
+    await clear_unsplash_memory_cache()
+
+    l2_response_cache = 0
+    try:
+        response_cache_delete = await db.execute(delete(ResponseCache))
+        await db.commit()
+        l2_response_cache = int(response_cache_delete.rowcount or 0)
+    except Exception:
+        await db.rollback()
+
+    unsplash_db_cleared = await clear_unsplash_db_cache(db)
+
+    l2_cleared = {
+        "response_cache_rows": l2_response_cache,
+        "unsplash_database": unsplash_db_cleared,
+    }
+
+    total_l1 = sum(int(value) for value in l1_cleared.values())
+    total_l2 = sum(int(value) for value in l2_cleared.values())
+    return {
+        "timestamp": datetime.utcnow().isoformat(),
+        "cleared": {
+            "l1": l1_cleared,
+            "l2": l2_cleared,
+        },
+        "totals": {
+            "l1": total_l1,
+            "l2": total_l2,
+            "overall": total_l1 + total_l2,
+        },
+    }
+
+
 # =============================================================================
 # Specialist Cache Admin Endpoints
 # =============================================================================

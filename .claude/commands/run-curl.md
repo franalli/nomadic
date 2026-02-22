@@ -5,7 +5,7 @@ Run both curl test suites against the local backend and produce a backend issue 
 Before running, verify the backend is up:
 
 ```bash
-curl -s http://localhost:8000/health | python3 -c "import sys,json; d=json.load(sys.stdin); print('Backend UP:', d.get('status'))" 2>/dev/null || echo "ERROR: Backend not running — start it with: cd backend && python start.py"
+curl -s http://localhost:8000/health | python3 -c "import sys,json; d=json.load(sys.stdin); print('Backend UP:', d.get('status'))" 2>/dev/null || echo "ERROR: Backend not running — start it with: cd backend && python start.py --prod"
 ```
 
 If the backend is not running, stop and tell the user to start it first.
@@ -15,8 +15,14 @@ If the backend is not running, stop and tell the user to start it first.
 Run the suites one after another (they share the session rate limit budget):
 
 ```bash
-echo "=== BASIC SUITE ===" && bash backend/tests/run_curl_flows.sh 2>&1; echo ""
-echo "=== EXTENDED SUITE ===" && bash backend/tests/run_curl_flows_extended.sh 2>&1
+echo "=== BASIC SUITE ===" && bash backend/tests/run_curl_flows.sh 2>&1 | tee /tmp/curl_flows_basic.txt; echo ""
+echo "=== EXTENDED SUITE ===" && bash backend/tests/run_curl_flows_extended.sh 2>&1 | tee /tmp/curl_flows_extended.txt
+```
+
+If you run suites repeatedly in the same hour, set a higher session budget in `backend/.env`:
+
+```bash
+MAX_SESSIONS_PER_IP_HOUR=100
 ```
 
 ## Parse Results and Produce Report

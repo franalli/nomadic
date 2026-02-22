@@ -837,7 +837,7 @@ async def _classify_and_extract_with_llm(
             raw = result["raw"]
             from app.planner.llm_factory import extract_token_usage
 
-            token_usage = extract_token_usage(raw, model=settings.extraction_model)
+            token_usage = extract_token_usage(raw, model=settings.router_model)
 
             # =================================================================
             # VALIDATE & NORMALIZE EXTRACTED FIELDS

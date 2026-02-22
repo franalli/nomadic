@@ -31,29 +31,64 @@ FAIL=0
 SKIP=0
 COOKIE_JAR=$(mktemp)
 RESP=$(mktemp)
+LAST_HTTP_CODE=""
 
 # ── Session helpers ───────────────────────────────────────────────────────────
 
+log_infra_failure() {
+  local label="$1" code="$2"
+  echo "  ✗ INFRA: $label (HTTP $code)"
+  if [ -s "$RESP" ]; then
+    local body
+    body=$(tr '\n' ' ' < "$RESP" | cut -c1-220)
+    echo "    body: $body"
+  fi
+  FAIL=$((FAIL + 1))
+}
+
 init_session() {
   # GET /api/document to establish session + CSRF cookies
-  curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" -o /dev/null "$BASE/api/document"
+  LAST_HTTP_CODE=$(curl -s -o "$RESP" -w "%{http_code}" -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+    "$BASE/api/document")
+  if [ "$LAST_HTTP_CODE" != "200" ] && [ "$LAST_HTTP_CODE" != "204" ]; then
+    log_infra_failure "init_session GET /api/document" "$LAST_HTTP_CODE"
+    CSRF="none"
+    return 1
+  fi
+
   CSRF=$(grep -i csrf "$COOKIE_JAR" | awk '{print $NF}' | head -1 || true)
   if [ -z "$CSRF" ]; then
     echo "  ⚠  No CSRF cookie received — CSRF may be disabled locally"
     CSRF="none"
   fi
+  return 0
 }
 
-reset_session() {
-  curl -s -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
-    -X DELETE \
-    -H "X-CSRF-Token: $CSRF" \
-    -o /dev/null \
-    "$BASE/api/session" || true
-  # Wipe stale cookies and re-establish a fresh session
+fresh_session() {
   rm -f "$COOKIE_JAR"
   COOKIE_JAR=$(mktemp)
   init_session
+}
+
+reset_session() {
+  local delete_code
+  delete_code=$(curl -s -o "$RESP" -w "%{http_code}" -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    -X DELETE \
+    -H "X-CSRF-Token: $CSRF" \
+    "$BASE/api/session" || true)
+  LAST_HTTP_CODE="$delete_code"
+  if [ "$delete_code" != "204" ]; then
+    log_infra_failure "reset_session DELETE /api/session" "$delete_code"
+  fi
+
+  # Wipe stale cookies and re-establish a fresh session
+  rm -f "$COOKIE_JAR"
+  COOKIE_JAR=$(mktemp)
+  if ! init_session; then
+    return 1
+  fi
+
+  [ "$delete_code" = "204" ]
 }
 
 send_message() {
@@ -61,13 +96,17 @@ send_message() {
   # Escape double-quotes in message for JSON safety
   local escaped
   escaped=$(printf '%s' "$msg" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "\"$msg\"")
-  curl -s -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+  LAST_HTTP_CODE=$(curl -s -o "$RESP" -w "%{http_code}" -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
     -X POST \
     -H "Content-Type: application/json" \
     -H "X-CSRF-Token: $CSRF" \
     -d "{\"message\": $escaped}" \
-    -o "$RESP" \
-    "$BASE/api/graph_plan/stream"
+    "$BASE/api/graph_plan/stream")
+  if [ "$LAST_HTTP_CODE" != "200" ]; then
+    log_infra_failure "send_message POST /api/graph_plan/stream" "$LAST_HTTP_CODE"
+    return 1
+  fi
+  return 0
 }
 
 get_document() {
@@ -264,9 +303,9 @@ if should_run 7; then
 echo ""
 echo "═══ Flow 7: Google Places Cascade — Non-Curated Destination ═══"
 
-init_session
+if init_session; then
 
-# Detect Google Places flag from /health (field not present → disabled)
+# Detect Google Places flag from /health (field not present -> disabled)
 GP_ENABLED=$(curl -s "$BASE/health" | python3 -c "
 import sys, json
 try:
@@ -282,7 +321,7 @@ if [ -z "${GOOGLE_PLACES_API_KEY:-}" ] && [ -z "${USE_GOOGLE_PLACES_PROVIDER:-}"
   skip_test "Hotel tiles have Google Places metadata" "USE_GOOGLE_PLACES_PROVIDER not set in env"
   skip_test "Hotel coordinates are real (not [0,0])" "USE_GOOGLE_PLACES_PROVIDER not set in env"
 else
-  send_message "Lisbon March 10-17"
+  if send_message "Lisbon March 10-17"; then
 
   TILES_RAW=$(extract_from_sse_document "tiles")
 
@@ -317,6 +356,8 @@ for t in values:
 print('false')
 " 2>/dev/null || echo "false")
   check "Hotel coordinates are real (not [0,0])" "$HAS_REAL_COORDS" "true"
+  fi
+fi
 fi
 
 echo ""
@@ -331,7 +372,7 @@ if should_run 8; then
 echo ""
 echo "═══ Flow 8: Input Gate Rejection — Bad Inputs ═══"
 
-init_session
+if init_session; then
 
 # 8a: Oversized message (>2000 chars) → 422
 echo "  → Sending oversized message (2100 chars)"
@@ -371,6 +412,7 @@ HTTP_CODE=$(curl -s -o "$RESP" -w "%{http_code}" \
   -d '{"message": "hello"}' \
   "$BASE/api/graph_plan/stream")
 check "Missing CSRF token rejected with 403" "$HTTP_CODE" "403"
+fi
 
 echo ""
 fi
@@ -384,11 +426,10 @@ if should_run 9; then
 echo ""
 echo "═══ Flow 9: Inline Itinerary — Auto-Expand to S3 ═══"
 
-init_session
-reset_session
+if fresh_session; then
 
 echo "  → Sending: Diving in Bali, Feb 15-22, 2 days diving"
-send_message "Diving in Bali, Feb 15-22, 2 days diving"
+if send_message "Diving in Bali, Feb 15-22, 2 days diving"; then
 
 # Verify S3 auto-expansion
 VIEW_STATE=$(extract_from_sse_document "plan_view_state")
@@ -417,6 +458,8 @@ secs = json.load(sys.stdin)
 print(len(secs))
 " 2>/dev/null || echo "0")
 check_gte "Strategy sections present alongside day_cards" "$SECTION_COUNT" 1
+fi
+fi
 
 echo ""
 fi
@@ -430,13 +473,12 @@ if should_run 10; then
 echo ""
 echo "═══ Flow 10: Cache Survival — L2 Persists Across Session Reset ═══"
 
-init_session
-reset_session
+if fresh_session; then
 
 # Turn 1: cold cache
 echo "  → Turn 1 (cold): Diving in Bali, Feb 15-22"
 T1_START=$(python3 -c "import time; print(int(time.time()*1000))")
-send_message "Diving in Bali, Feb 15-22"
+if send_message "Diving in Bali, Feb 15-22"; then
 T1_END=$(python3 -c "import time; print(int(time.time()*1000))")
 T1_MS=$((T1_END - T1_START))
 echo "  ⏱  Turn 1 latency: ${T1_MS}ms"
@@ -454,12 +496,12 @@ echo "  Fingerprint 1: $FINGERPRINT_1"
 
 # Reset session (simulates page refresh / new session)
 echo "  → Resetting session..."
-reset_session
+if reset_session; then
 
 # Turn 2: warm L2 cache
 echo "  → Turn 2 (warm L2): Diving in Bali, Feb 15-22"
 T2_START=$(python3 -c "import time; print(int(time.time()*1000))")
-send_message "Diving in Bali, Feb 15-22"
+if send_message "Diving in Bali, Feb 15-22"; then
 T2_END=$(python3 -c "import time; print(int(time.time()*1000))")
 T2_MS=$((T2_END - T2_START))
 echo "  ⏱  Turn 2 latency: ${T2_MS}ms"
@@ -484,6 +526,10 @@ if [ "$T1_MS" -gt 0 ] && [ "$T2_MS" -gt 0 ]; then
     PASS=$((PASS + 1))  # warn only, don't fail (latency varies)
   fi
 fi
+fi
+fi
+fi
+fi
 
 echo ""
 fi
@@ -497,12 +543,11 @@ if should_run 11; then
 echo ""
 echo "═══ Flow 11: Constraint Violation — DAY_PREFERENCE_EXCEEDS_CAPACITY ═══"
 
-init_session
-reset_session
+if fresh_session; then
 
 # 4 hiking + 2 diving = 6 demanded; 5-day trip with 1 buffer = 4 usable → should block
 echo "  → Sending: Bali Feb 15-20, 4 days hiking and 2 days diving"
-send_message "Bali Feb 15-20, 4 days hiking and 2 days diving"
+if send_message "Bali Feb 15-20, 4 days hiking and 2 days diving"; then
 
 VIOLATIONS=$(extract_from_sse_document "constraint_violations")
 check_contains "Blocking violation present" "$VIOLATIONS" "DAY_PREFERENCE_EXCEEDS_CAPACITY"
@@ -520,6 +565,8 @@ arr = json.load(sys.stdin)
 print(len(arr) if isinstance(arr, list) else 0)
 " 2>/dev/null || echo "0")
 check_gte "Suggestion chips returned" "$SUGG_COUNT" 1
+fi
+fi
 
 echo ""
 fi
@@ -533,19 +580,18 @@ if should_run 12; then
 echo ""
 echo "═══ Flow 12: Constraint Resolution — Extend Dates After Violation ═══"
 
-init_session
-reset_session
+if fresh_session; then
 
 # Turn 1: trigger blocking violation
 echo "  → Turn 1: Bali Feb 15-20, 4 days hiking and 2 days diving"
-send_message "Bali Feb 15-20, 4 days hiking and 2 days diving"
+if send_message "Bali Feb 15-20, 4 days hiking and 2 days diving"; then
 
 VIOLATIONS=$(extract_from_sse_document "constraint_violations")
 check_contains "Turn 1: Blocking violation fired" "$VIOLATIONS" "DAY_PREFERENCE_EXCEEDS_CAPACITY"
 
 # Turn 2: extend trip to give enough days
 echo "  → Turn 2: Extend to Feb 26"
-send_message "Extend to Feb 26"
+if send_message "Extend to Feb 26"; then
 
 # Extract from SSE complete event (not GET /api/document which may be empty for new sessions)
 NEW_END=$(extract_from_sse_document "trip_inputs.end_date")
@@ -558,6 +604,9 @@ if echo "$VIEW_STATE" | grep -qE "S2|S3"; then
 else
   echo "  ✗ Plan still blocked after date extension (state=$VIEW_STATE)"
   FAIL=$((FAIL + 1))
+fi
+fi
+fi
 fi
 
 echo ""

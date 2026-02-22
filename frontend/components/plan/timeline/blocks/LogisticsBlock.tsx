@@ -11,7 +11,9 @@
 'use client';
 
 import { DoorOpen, Key, type LucideIcon, PlaneLanding, PlaneTakeoff, Settings } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
+import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, normalizeTitle } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
 
@@ -92,9 +94,28 @@ export function LogisticsBlock({
 }: LogisticsBlockProps) {
   const config = CONFIG[type];
   const Icon = config.icon;
+  const placeholderFallback = useMemo(
+    () =>
+      placeholderImageForTile({
+        id: hotelName || type,
+        type: (type === 'arrival' || type === 'departure') ? 'flight' : 'hotel',
+      }),
+    [hotelName, type]
+  );
+
+  const [resolvedImage, setResolvedImage] = useState(hotelImage);
+  const [triedPlaceholder, setTriedPlaceholder] = useState(false);
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
+
+  useEffect(() => {
+    setResolvedImage(hotelImage);
+    setTriedPlaceholder(false);
+    setImageLoadFailed(false);
+  }, [hotelImage]);
 
   // Only show preference badge for check-in blocks (hotels)
   const showPreferenceBadge = type === 'checkin' && preferenceStatus;
+  const showImage = Boolean(resolvedImage) && !imageLoadFailed;
 
   return (
     <div
@@ -144,18 +165,26 @@ export function LogisticsBlock({
       {/* Without image: icon fallback in same container */}
       <div className={cn(
         'w-10 h-10 shrink-0 rounded-lg overflow-hidden flex items-center justify-center',
-        hotelImage
+        showImage
           ? (type === 'arrival' || type === 'departure') ? 'bg-white' : 'bg-zinc-200 dark:bg-zinc-700'
           : 'bg-zinc-100 dark:bg-zinc-800'
       )}>
-        {hotelImage ? (
+        {showImage ? (
           <img
-            src={hotelImage}
+            src={resolvedImage}
             alt={hotelName || config.label}
             className={(type === 'arrival' || type === 'departure')
               ? 'w-7 h-7 object-contain'
               : 'w-full h-full object-cover'
             }
+            onError={() => {
+              if (!triedPlaceholder) {
+                setResolvedImage(placeholderFallback);
+                setTriedPlaceholder(true);
+                return;
+              }
+              setImageLoadFailed(true);
+            }}
           />
         ) : (
           <Icon className={cn('w-5 h-5', config.iconColor)} />

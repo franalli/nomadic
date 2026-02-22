@@ -10,7 +10,7 @@ files and corrects any drift between docs and code. Run this weekly or after maj
 
 **Source of truth:** The filesystem itself.
 
-1. Run `find backend/ frontend/ docs/ scripts/ -type f | head -300` and `find . -maxdepth 1 -type f` to get the actual file tree
+1. Run `find backend/ frontend/ docs/ scripts/ .claude/ .codex/ -type f | head -400` and `find . -maxdepth 1 -type f` to get the actual file tree
 2. Read current `docs/repo_structure.md`
 3. For each directory section in the doc:
    - Verify every listed file still exists. Remove entries for deleted files.
@@ -275,9 +275,9 @@ discover what's relevant dynamically.
 
 ### Step 6.1: Inventory
 
-For each agent in `.claude/agents/`:
+For each agent role, audit canonical specs in `.claude/agents/` and verify the matching wrapper in `.codex/agents/`:
 
-1. Read the agent spec file completely
+1. Read the canonical spec file in `.claude/agents/` and its wrapper in `.codex/agents/` (same role name)
 2. Extract every source file path, function name, class name, constant name, and pattern referenced in the spec
 3. Verify each referenced file still exists: `ls <path>` — if deleted, remove from spec
 4. Scan the agent's **File Ownership** section, extract the listed directories, then `find` those directories. Also check for new top-level directories not in any agent's ownership that contain relevant code:
@@ -292,6 +292,7 @@ If a directory exists that no agent owns and contains production code, flag it:
 "⚠️ Unowned directory: `<path>`. Assign to an agent or add to shared zone."
 
 5. For each NEW file found that isn't in the agent spec: read the file, determine if it's relevant to that agent's domain, add to file ownership if so
+6. Keep `.claude/agents/*` as canonical content and update `.codex/agents/*` wrapper metadata/instructions only when pointer behavior changes
 
 ### Step 6.2: Verify Claims
 
@@ -326,10 +327,11 @@ Verify no contradictions between agents:
 - Invariant descriptions are consistent (e.g., node count, coordinate format, renderer pattern)
 - Anti-patterns in code-reviewer align with rules in backend/frontend specialists
 - Reinforced CLAUDE.md rules are consistent across all agents
+- `.codex/agents/*` wrappers reference the correct canonical `.claude/agents/*` file
 
 ### Step 6.5: Write Corrections
 
-For each agent: if the spec describes behavior that doesn't match the source code, FIX THE AGENT SPEC. If new files/patterns/functions exist that the agent should know about, ADD THEM.
+For each agent: if canonical spec behavior doesn't match source code, FIX `.claude/agents/*`. If wrapper pointers are incorrect, FIX `.codex/agents/*`. If new files/patterns/functions exist that the agent should know about, add them to canonical specs.
 
 ---
 
@@ -395,6 +397,7 @@ Finally, output a summary:
 - docs/design-system.md: [sections changed]
 - docs/ux_unified_architecture.md: [sections changed]
 - .claude/agents/*: [which agents updated, why]
+- .codex/agents/*: [which agents updated, why]
 - CLAUDE.md: [sections changed]
 
 ### Drift Found
@@ -411,6 +414,7 @@ Finally, output a summary:
 - READ the actual source code. Do not rely on memory or assumptions.
 - Fix the DOC to match the CODE, never the reverse. Code is truth.
 - Preserve doc formatting, table structures, and section ordering.
+- Keep `.claude/agents/*` as canonical and `.codex/agents/*` as wrappers that reference canonical specs.
 - If a section is accurate, do not rewrite it. Only touch drifted sections.
 - If you're unsure whether something drifted or is intentional, add `<!-- REVIEW: [description] -->` instead of guessing.
 - **Strip sprint-level and development-timeline content.** Docs must reflect current state, not development history. Remove changelog sections, "shipped in sprint X" notes, "TODO" items that are done, migration/upgrade notes for completed migrations, and any other time-bound content that no longer serves a reader trying to understand the system as it exists today. If a section's only purpose was tracking a past transition, delete it entirely.

@@ -21,6 +21,7 @@ app.services.activity_browser.settings directly.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,6 +30,8 @@ import pytest
 _PLACES_API = "app.tile_service.google_places_provider._call_places_api_async"
 _GEOCODE_API = "app.tile_service.google_places_provider._geocode_destination_async"
 _SETTINGS = "app.services.activity_browser.settings"
+_BROWSE_L2_GET = "app.services.activity_browser._get_cached_browse"
+_BROWSE_L2_SET = "app.services.activity_browser._set_cached_browse"
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +81,17 @@ def _clear_browse_cache() -> None:
     from app.services.activity_browser import _browse_cache
 
     _browse_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _stub_browse_l2_cache():
+    """Default all tests to no-op L2 cache to keep unit tests deterministic."""
+    with (
+        patch(_BROWSE_L2_GET, new_callable=AsyncMock) as mock_l2_get,
+        patch(_BROWSE_L2_SET, new_callable=AsyncMock) as mock_l2_set,
+    ):
+        mock_l2_get.return_value = None
+        yield mock_l2_get, mock_l2_set
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +178,56 @@ class TestBrowseActivitiesHappyPath:
 
         ids = [t["place_id"] for t in results]
         assert ids.count("shared_id") == 1
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_shared_places_types_across_categories(self):
+        """Shared Places types across categories should only be queried once per request."""
+        with (
+            patch(_PLACES_API, new_callable=AsyncMock) as mock_places,
+            patch(_GEOCODE_API, new_callable=AsyncMock) as mock_geocode,
+            patch(_SETTINGS, _make_settings("fake-key")),
+        ):
+            mock_geocode.return_value = (-8.67, 115.21)
+            mock_places.return_value = [_make_place()]
+
+            from app.services.activity_browser import browse_activities
+
+            await browse_activities(
+                destination="Bali",
+                center=None,
+                categories=["spa", "wellness"],
+                date="2026-06-20",
+            )
+
+        requested_types = [c.kwargs["included_type"] for c in mock_places.await_args_list]
+        assert requested_types.count("spa") == 1
+        assert set(requested_types) == {"spa", "beauty_salon", "gym"}
+        assert mock_places.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_shared_type_results_keep_all_matching_categories(self):
+        """Shared Places types should surface under every matching requested category."""
+        with (
+            patch(_PLACES_API, new_callable=AsyncMock) as mock_places,
+            patch(_GEOCODE_API, new_callable=AsyncMock) as mock_geocode,
+            patch(_SETTINGS, _make_settings("fake-key")),
+        ):
+            mock_geocode.return_value = (-8.67, 115.21)
+            mock_places.return_value = [_make_place(place_id="shared_spa")]
+
+            from app.services.activity_browser import browse_activities
+
+            results = await browse_activities(
+                destination="Bali",
+                center=None,
+                categories=["spa", "wellness"],
+                date="2026-06-20",
+            )
+
+        shared = [tile for tile in results if tile.get("place_id") == "shared_spa"]
+        categories = {tile.get("category") for tile in shared}
+        assert categories == {"spa", "wellness"}
+        assert len(shared) == 2
 
     @pytest.mark.asyncio
     async def test_uses_provided_center_skips_geocode(self):
@@ -342,10 +406,11 @@ class TestBrowseActivitiesExceptionHandling:
 
     @pytest.mark.asyncio
     async def test_places_api_exception_returns_empty_not_raises(self):
-        """An exception from _call_places_api_async is caught; returns empty list."""
+        """When Places fails, browse returns empty and does not cache the failure."""
         with (
             patch(_PLACES_API, new_callable=AsyncMock) as mock_places,
             patch(_GEOCODE_API, new_callable=AsyncMock) as mock_geocode,
+            patch(_BROWSE_L2_SET, new_callable=AsyncMock) as mock_l2_set,
             patch(_SETTINGS, _make_settings("fake-key")),
         ):
             mock_geocode.return_value = (-8.67, 115.21)
@@ -353,17 +418,29 @@ class TestBrowseActivitiesExceptionHandling:
 
             from app.services.activity_browser import browse_activities
 
-            # Must not raise — _search_type() catches exceptions per-type
-            results = await browse_activities(
+            # Must not raise — _search_type() catches exceptions per-type.
+            results_1 = await browse_activities(
                 destination="Bali",
                 center=None,
                 categories=["cultural"],
                 date="2026-04-01",
             )
 
-        assert isinstance(results, list)
+            results_2 = await browse_activities(
+                destination="Bali",
+                center=None,
+                categories=["cultural"],
+                date="2026-04-01",
+            )
+
+        assert isinstance(results_1, list)
+        assert isinstance(results_2, list)
         # All type searches failed → result is empty
-        assert results == []
+        assert results_1 == []
+        assert results_2 == []
+        # cultural maps to 2 Places types; no failure-cache means both calls retry.
+        assert mock_places.await_count == 4
+        mock_l2_set.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_partial_failure_returns_successful_results(self):
@@ -397,6 +474,90 @@ class TestBrowseActivitiesExceptionHandling:
         # The second call succeeded — at least one result returned
         assert isinstance(results, list)
         assert len(results) >= 1
+
+
+class TestBrowseActivitiesPersistentCacheAndSingleflight:
+    """Verify L2 browse caching + in-flight singleflight dedupe behavior."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        _clear_browse_cache()
+        yield
+        _clear_browse_cache()
+
+    @pytest.mark.asyncio
+    async def test_l2_cache_hit_skips_places_calls(self):
+        l2_tiles = [
+            {
+                "id": "browse_cached",
+                "type": "activity",
+                "title": "Cached Place",
+                "place_id": "cached_1",
+                "provider": "google_places",
+                "source": "google_places",
+            }
+        ]
+        with (
+            patch(_PLACES_API, new_callable=AsyncMock) as mock_places,
+            patch(_GEOCODE_API, new_callable=AsyncMock) as mock_geocode,
+            patch(_BROWSE_L2_GET, new_callable=AsyncMock) as mock_l2_get,
+            patch(_BROWSE_L2_SET, new_callable=AsyncMock),
+            patch(_SETTINGS, _make_settings("fake-key")),
+        ):
+            mock_geocode.return_value = (-8.67, 115.21)
+            mock_l2_get.return_value = l2_tiles
+
+            from app.services.activity_browser import browse_activities
+
+            results = await browse_activities(
+                destination="Bali",
+                center=None,
+                categories=["cultural"],
+                date="2026-09-10",
+            )
+
+        assert results == l2_tiles
+        mock_places.assert_not_called()
+        assert mock_l2_get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_singleflight_dedupes_identical_concurrent_requests(self):
+        async def _slow_places(*args, **kwargs):
+            included_type = kwargs.get("included_type", "unknown")
+            await asyncio.sleep(0.05)
+            return [_make_place(place_id=f"gp_{included_type}", primary_type=included_type)]
+
+        with (
+            patch(_PLACES_API, new_callable=AsyncMock) as mock_places,
+            patch(_GEOCODE_API, new_callable=AsyncMock) as mock_geocode,
+            patch(_BROWSE_L2_GET, new_callable=AsyncMock) as mock_l2_get,
+            patch(_BROWSE_L2_SET, new_callable=AsyncMock) as mock_l2_set,
+            patch(_SETTINGS, _make_settings("fake-key")),
+        ):
+            mock_geocode.return_value = (-8.67, 115.21)
+            mock_places.side_effect = _slow_places
+            mock_l2_get.return_value = None
+
+            from app.services.activity_browser import browse_activities
+
+            req1 = browse_activities(
+                destination="Bali",
+                center=None,
+                categories=["cultural"],
+                date="2026-10-10",
+            )
+            req2 = browse_activities(
+                destination="Bali",
+                center=None,
+                categories=["cultural"],
+                date="2026-10-10",
+            )
+            result1, result2 = await asyncio.gather(req1, req2)
+
+        assert result1 == result2
+        # cultural maps to 2 Places types; with singleflight we only run one request set.
+        assert mock_places.await_count == 2
+        assert mock_l2_set.await_count == 1
 
     @pytest.mark.asyncio
     async def test_geocode_failure_still_searches_without_geo(self):

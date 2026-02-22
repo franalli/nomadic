@@ -241,7 +241,7 @@ function ChatMessageRendererInner({
             <div
               className={cn(
                 // Shape: Speech bubble with sharp bottom-right corner
-                'rounded-2xl rounded-br-md px-3 py-2 text-left transition-all',
+                'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all',
                 // Light Mode: Solid Black (The Commander)
                 'bg-zinc-900 text-white border border-zinc-900',
                 'shadow-card hover:shadow-soft hover:-translate-y-0.5',
@@ -267,10 +267,11 @@ function ChatMessageRendererInner({
           <div
             className={cn(
               // Shape: Speech bubble with sharp bottom-left corner
-              'rounded-2xl rounded-bl-sm px-3 py-2 transition-all',
+              'rounded-2xl rounded-bl-sm px-4 py-2.5 transition-all',
               // Light Mode: Glass effect
               'bg-white/80 backdrop-blur-sm',
               'border border-zinc-200',
+              'shadow-card hover:shadow-soft hover:-translate-y-0.5',
               // Dark Mode: Dark Glass (The System/Infrastructure)
               'dark:bg-white/5 dark:backdrop-blur-sm',
               'dark:border-white/10',

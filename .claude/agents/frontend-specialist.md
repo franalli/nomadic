@@ -40,6 +40,7 @@ Before ANY code change, read the relevant SSoT doc:
 
 ```
 frontend/
+  app/             → App Router pages, layout.tsx, route-level error boundaries
   components/
     animations/    → StartupSequence, Typewriter
     chat/          → ChatPanel, ChatSkeleton, SmartLoader,
@@ -81,18 +82,21 @@ frontend/
   hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
                      usePreferenceAutoRegen, useScrollCollapse, useSheetManager,
                      useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation,
-                     useChatSse, useMapSync, useUndoStack
+                     useChatEffects, useChatScrolling, useChatSend, useChatSse,
+                     useMapSync, useUndoStack
   types/           → chat.ts, document.ts, generated.ts, hooks.ts, loader.ts,
                      plan-envelope.ts, sheets.ts, summary.ts, tile.ts
   lib/             → design-system.ts, api.ts, animation-config.ts, streamParser.ts,
                      chipStyles.ts, tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
                      specialists.ts, utils.ts, contentPolicyGuard.ts,
-                     ghost-timeline-adapter.ts, destination-coords.ts, fillDayGuards.ts,
+                     ghost-timeline-adapter.ts, fillDayGuards.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
                      popular-places.ts, route-utils.ts, showMutationToast.ts
   __tests__/       → Vitest tests
+  public/          → Static assets (logos, marketing imagery)
+  scripts/         → Frontend utility scripts (build/dev support)
 ```
 
 ## DO NOT TOUCH

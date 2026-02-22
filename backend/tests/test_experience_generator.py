@@ -129,6 +129,68 @@ class TestL1MemoryCache:
 
 
 # =============================================================================
+# Single Category Cache Path
+# =============================================================================
+
+
+class TestSingleCategoryCachePath:
+    """Test generate_single_category cache behavior used by fill-day flow."""
+
+    @pytest.mark.asyncio
+    @patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
+    async def test_generate_single_category_l1_hit_skips_llm(self, _mock_unsplash):
+        from app.services.experience_generator import (
+            _cache_set,
+            _single_category_cache_key,
+            clear_experience_cache,
+            generate_single_category,
+        )
+
+        clear_experience_cache()
+        cache_key = _single_category_cache_key("Bali", "yoga", "2099-01", tiles_per_category=2)
+        _cache_set(
+            cache_key,
+            [
+                {
+                    "title": "Ubud Morning Vinyasa",
+                    "category": "yoga",
+                    "duration_hours": 1.5,
+                    "price_estimate": 30,
+                    "time_of_day": "morning",
+                    "skill_level": "beginner",
+                    "description": "Flow with rice terrace views.",
+                },
+                {
+                    "title": "Seminyak Sunset Yoga",
+                    "category": "yoga",
+                    "duration_hours": 2.0,
+                    "price_estimate": 35,
+                    "time_of_day": "evening",
+                    "skill_level": "intermediate",
+                    "description": "Beachside sunset sequence.",
+                },
+            ],
+        )
+
+        with patch("app.services.experience_generator.get_llm_by_model") as mock_get_llm:
+            result = await generate_single_category(
+                destination="Bali",
+                category="yoga",
+                month="2099-01",
+                tiles_per_category=2,
+                base_index=100,
+            )
+
+        mock_get_llm.assert_not_called()
+        assert len(result) == 2
+        assert result[0]["id"] == "exp_bali_yoga_100"
+        assert result[1]["id"] == "exp_bali_yoga_101"
+        assert result[0]["title"] == "Ubud Morning Vinyasa"
+        assert result[1]["title"] == "Seminyak Sunset Yoga"
+        clear_experience_cache()
+
+
+# =============================================================================
 # Pydantic Models
 # =============================================================================
 

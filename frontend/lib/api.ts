@@ -26,7 +26,59 @@ export interface BrowseTile {
   maps_uri?: string | null;
 }
 
+interface BrowseActivitiesParams {
+  destination: string;
+  dayNumber?: number;
+  date?: string | null;
+  hotelLocation?: { lat: number; lng: number } | null;
+  categories?: string[];
+}
+
+interface BrowseActivitiesResponse {
+  tiles: BrowseTile[];
+  total: number;
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const BROWSE_DEFAULT_CATEGORIES = ['cultural', 'food', 'nature', 'tours'];
+const BROWSE_CACHE_TTL_MS = 5 * 60 * 1000;
+const BROWSE_CACHE_MAX_ENTRIES = 64;
+const browseActivitiesCache = new Map<
+  string,
+  { expiresAt: number; payload: BrowseActivitiesResponse }
+>();
+const browseActivitiesInflight = new Map<string, Promise<BrowseActivitiesResponse>>();
+
+function normalizeCategories(categories?: string[]): string[] {
+  const source = categories ?? BROWSE_DEFAULT_CATEGORIES;
+  return Array.from(new Set(source.map((c) => c.trim().toLowerCase()).filter(Boolean))).sort();
+}
+
+function browseActivitiesKey(params: BrowseActivitiesParams): string {
+  return JSON.stringify({
+    destination: params.destination.trim().toLowerCase(),
+    dayNumber: params.dayNumber ?? null,
+    date: params.date ?? null,
+    categories: normalizeCategories(params.categories),
+    hotelLocation: params.hotelLocation
+      ? `${params.hotelLocation.lat},${params.hotelLocation.lng}`
+      : null,
+  });
+}
+
+function pruneBrowseActivitiesCache(now: number): void {
+  for (const [key, entry] of browseActivitiesCache.entries()) {
+    if (entry.expiresAt <= now) {
+      browseActivitiesCache.delete(key);
+    }
+  }
+
+  while (browseActivitiesCache.size > BROWSE_CACHE_MAX_ENTRIES) {
+    const oldestKey = browseActivitiesCache.keys().next().value;
+    if (!oldestKey) break;
+    browseActivitiesCache.delete(oldestKey);
+  }
+}
 
 /**
  * Read the CSRF token from the csrf cookie.
@@ -786,25 +838,51 @@ export function streamGraphPlan(
  * Browse activities for a destination via Google Places.
  * Used by the BrowseActivitiesSheet for free/buffer days.
  */
-export async function browseActivities(params: {
-  destination: string;
-  dayNumber?: number;
-  date?: string | null;
-  hotelLocation?: { lat: number; lng: number } | null;
-  categories?: string[];
-}): Promise<{ tiles: BrowseTile[]; total: number }> {
-  const res = await apiFetch('/api/activities/browse', {
-    method: 'POST',
-    body: JSON.stringify({
-      destination: params.destination,
-      day_number: params.dayNumber,
-      date: params.date,
-      hotel_location: params.hotelLocation,
-      categories: params.categories ?? ['cultural', 'food', 'nature', 'tours'],
-    }),
-  });
-  if (!res.ok) throw new Error(`browse-activities failed: ${res.status}`);
-  return res.json();
+export async function browseActivities(
+  params: BrowseActivitiesParams
+): Promise<BrowseActivitiesResponse> {
+  const categories = params.categories ?? BROWSE_DEFAULT_CATEGORIES;
+  const now = Date.now();
+  pruneBrowseActivitiesCache(now);
+
+  const cacheKey = browseActivitiesKey({ ...params, categories });
+  const cached = browseActivitiesCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.payload;
+  }
+
+  const inflight = browseActivitiesInflight.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = (async () => {
+    const res = await apiFetch('/api/activities/browse', {
+      method: 'POST',
+      body: JSON.stringify({
+        destination: params.destination,
+        day_number: params.dayNumber,
+        date: params.date,
+        hotel_location: params.hotelLocation,
+        categories,
+      }),
+    });
+    if (!res.ok) throw new Error(`browse-activities failed: ${res.status}`);
+    const payload = (await res.json()) as BrowseActivitiesResponse;
+    browseActivitiesCache.set(cacheKey, {
+      expiresAt: Date.now() + BROWSE_CACHE_TTL_MS,
+      payload,
+    });
+    pruneBrowseActivitiesCache(Date.now());
+    return payload;
+  })();
+
+  browseActivitiesInflight.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    browseActivitiesInflight.delete(cacheKey);
+  }
 }
 
 /**

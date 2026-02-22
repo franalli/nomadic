@@ -181,40 +181,29 @@ export function useLandingDerived({
   const hasDayCardsReady = (docDayCards?.length ?? 0) > 0;
 
   const planViewState: PlanViewState = useMemo(() => {
-    // Fast path: If plan content exists, trust backend's plan_view_state
-    if (
-      (hasTilesReady || hasDayCardsReady) &&
-      backendPlanViewState &&
-      backendPlanViewState !== 'S0_BOOTSTRAP'
-    ) {
+    // Backend is authoritative for non-bootstrap states.
+    // Bootstrap can be treated as "no authoritative plan yet" so local loading
+    // heuristics can still drive the framing state during first generation.
+    if (backendPlanViewState && backendPlanViewState !== 'S0_BOOTSTRAP') {
       return backendPlanViewState;
     }
 
     // Before user clicks "Build Plan", stay in Setup mode
     if (!hasEverHadPlan && !userRequestedGeneration && !hasTilesReady) {
-      if (backendPlanViewState === 'S2_STRATEGY_READY' && hasStrategyContent) {
-        return 'S2_STRATEGY_READY';
-      }
       return 'S0_BOOTSTRAP';
     }
 
     // During generation, show loading state
     if (isGenerating && userRequestedGeneration) return 'S1_FRAMING';
 
-    // CRITICAL: Check hasEverHadPlan BEFORE backend state
+    // Derive fallback when backend has not sent plan_view_state yet.
     if (hasEverHadPlan) {
-      if (backendPlanViewState && backendPlanViewState !== 'S0_BOOTSTRAP') {
-        return backendPlanViewState;
-      }
       if (hasTilesReady) return 'S2_STRATEGY_READY';
       return hasStrategyContent ? 'S2_STRATEGY_READY' : 'S2_BLOCKED';
     }
 
     // User requested generation but plan not ready yet
     if (userRequestedGeneration) {
-      if (backendPlanViewState && backendPlanViewState !== 'S0_BOOTSTRAP') {
-        return backendPlanViewState;
-      }
       return 'S1_FRAMING';
     }
 
@@ -226,7 +215,6 @@ export function useLandingDerived({
     hasEverHadPlan,
     userRequestedGeneration,
     hasTilesReady,
-    hasDayCardsReady,
   ]);
 
   // Merge pending topics: backend + local optimistic

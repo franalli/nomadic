@@ -4,7 +4,7 @@
 // frontend/components/ChatPanel.tsx
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import {
   forwardRef,
   useImperativeHandle,
@@ -399,7 +399,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   '-mx-4 -mt-4 mb-2',
                   'w-[calc(100%+2rem)]',
                   'overflow-hidden',
-                  showHero ? 'h-[120px]' : 'h-14',
+                  showHero
+                    ? 'h-[120px]'
+                    : 'h-14 border-b border-zinc-200/80 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md',
                 )}
               >
                 {/* Hero image — only when destination image available */}
@@ -407,7 +409,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   <img
                     src={destinationImageUrl!}
                     alt={destination}
-                    className="absolute inset-0 w-full h-full object-cover"
+                    className="absolute inset-0 h-full w-full object-cover"
                   />
                 )}
                 {/* Scrim: bottom half fades hard to panel background, top stays clear */}
@@ -416,25 +418,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 )}
                 {/* Status text — bottom-left on hero, centered on flat bar */}
                 <div className={cn(
-                  'absolute flex items-center gap-2',
+                  'absolute z-10 flex items-center gap-2',
                   showHero
-                    ? 'bottom-3 left-4'
-                    : 'inset-0 px-4 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-white/5',
+                    ? 'bottom-3 left-4 rounded-md bg-white/35 px-2 py-1 backdrop-blur-sm dark:bg-white/15'
+                    : 'inset-0 px-4',
                 )}>
                   {status.indicator === 'spin' ? (
                     <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />
                   ) : status.indicator === 'check' ? (
-                    <Check className="w-3 h-3 text-emerald-500" />
+                    null
                   ) : (
                     <div className={cn(
                       'w-2 h-2 rounded-full bg-emerald-500',
                       status.indicator === 'pulse' && 'animate-pulse',
                     )} />
                   )}
-                  <span className={cn(
-                    'text-sm font-semibold',
-                    showHero ? 'text-zinc-900 dark:text-white drop-shadow-sm' : 'text-zinc-900 dark:text-white',
-                  )}>
+                  <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
                     {status.text}
                   </span>
                   <span className={cn(

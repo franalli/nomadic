@@ -56,6 +56,7 @@ from app.planner.specialist_registry import (
 )
 from app.planner.state import GraphState, TripPlan
 from app.planner.state.typed_meta import get_trip_settings
+from app.services.cache_core import MemoryCache
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,14 @@ _GREETING_SUGGESTIONS = [
     "What kind of experience are you looking for?",
     "Any destination on your bucket list?",
 ]
+
+_EXPLORATION_ANSWER_L1_TTL_SECONDS = 300
+_EXPLORATION_ANSWER_L1_MAX_SIZE = 256
+_exploration_answer_cache = MemoryCache(
+    maxsize=_EXPLORATION_ANSWER_L1_MAX_SIZE,
+    ttl=_EXPLORATION_ANSWER_L1_TTL_SECONDS,
+    stat_keys=["hits", "misses", "writes"],
+)
 
 
 # Derived constant for suggestion prompts
@@ -1246,6 +1255,21 @@ def _get_conversation_ending(count: int, qtype: str, destination: str) -> str:
         )
 
 
+def _exploration_answer_cache_key(
+    question: str,
+    destination: str,
+    qtype: str,
+    count: int,
+) -> str:
+    """Stable cache key for exploration fallback answers."""
+    question_norm = " ".join(question.lower().split())
+    destination_norm = destination.lower().strip() if destination else "unknown"
+    qtype_norm = qtype.lower().strip() if qtype else "general"
+    payload = f"{question_norm}|{destination_norm}|{qtype_norm}|{count}"
+    digest = hashlib.sha256(payload.encode()).hexdigest()[:32]
+    return f"router_exploration_answer::v1::{digest}"
+
+
 async def _llm_fallback_answer(
     question: str,
     destination: str,
@@ -1257,6 +1281,20 @@ async def _llm_fallback_answer(
     Uses GPT-4o-mini with ~300 token limit for cost efficiency.
     """
     ending = _get_conversation_ending(count, qtype, destination)
+    cache_key = _exploration_answer_cache_key(question, destination, qtype, count)
+
+    cached = _exploration_answer_cache.get(cache_key)
+    if cached is not None:
+        _exploration_answer_cache.increment_stat("hits")
+        logger.debug(
+            "[ROUTER] Exploration answer cache HIT: qtype=%s destination=%s count=%s",
+            qtype,
+            destination,
+            count,
+        )
+        return cached
+
+    _exploration_answer_cache.increment_stat("misses")
 
     prompt = f"""You are a knowledgeable travel advisor. Answer this question comprehensively:
 
@@ -1280,18 +1318,25 @@ End with: {ending}"""
         response = await llm.ainvoke([HumanMessage(content=prompt)])
         content = response.content
         if isinstance(content, list):
-            return "".join(
+            answer = "".join(
                 c.get("text", str(c)) if isinstance(c, dict) else str(c) for c in content
             )
-        return str(content)
+        else:
+            answer = str(content)
+        _exploration_answer_cache.set(cache_key, answer)
+        _exploration_answer_cache.increment_stat("writes")
+        return answer
     except Exception as e:
         logger.warning(f"LLM fallback failed for {destination}: {e}")
         # Generic safe response
-        return (
+        fallback = (
             f"I'd love to help you learn more about {destination}! "
             f"While I don't have detailed info cached, I can help plan your trip. "
             f"{ending}"
         )
+        _exploration_answer_cache.set(cache_key, fallback)
+        _exploration_answer_cache.increment_stat("writes")
+        return fallback
 
 
 async def generate_comprehensive_answer(

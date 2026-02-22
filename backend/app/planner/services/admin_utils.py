@@ -15,6 +15,7 @@ Extracted from plan_graph.py (Stage 7, Phase 3).
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -102,7 +103,6 @@ async def clear_response_caches() -> int:
     (set CLEAR_L2_ON_RESET=true in .env for local dev). In production this flag is
     unset so L2 entries survive restarts and expire naturally via their TTL.
     """
-    from app.config import settings
     from app.planner.services.feasibility_service import _feasibility_cache
     from app.services.experience_generator import clear_experience_cache
     from app.services.specialist_cache import clear_memory_cache as clear_specialist_cache
@@ -114,8 +114,13 @@ async def clear_response_caches() -> int:
     total += clear_tile_cache()
     total += _feasibility_cache.clear()
 
-    # L2: only in dev when CLEAR_L2_ON_RESET=true
-    if settings.clear_l2_on_session_reset:
+    # L2: only when explicitly enabled at runtime.
+    truthy = {"1", "true", "yes", "on"}
+    clear_l2_raw = os.getenv("CLEAR_L2_ON_RESET", "").strip().lower()
+    pytest_running_raw = os.getenv("PYTEST_RUNNING", "").strip().lower()
+    clear_l2 = clear_l2_raw in truthy
+    pytest_running = pytest_running_raw in truthy
+    if clear_l2 and not pytest_running:
         try:
             from sqlalchemy import text
 

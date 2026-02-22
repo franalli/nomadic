@@ -9,7 +9,20 @@ nomadic/
 ├── .claude/                    # Claude Code configuration
 │   ├── agents/                 # Specialist agent specs (backend, frontend, code-reviewer)
 │   └── commands/               # Custom slash commands (audit, verify-build, etc.)
-├── .codex/                     # (deleted) Codex skills migrated to Claude Code `.claude/commands/`
+├── .codex/                     # Codex wrappers + skills
+│   ├── agents/                 # Wrapper specs pointing to canonical `.claude/agents/*`
+│   │   ├── backend-specialist.md
+│   │   ├── code-reviewer.md
+│   │   └── frontend-specialist.md
+│   └── skills/                 # Codex skills (SKILL.md per skill directory)
+│       ├── audit-code/SKILL.md
+│       ├── clear-cache/SKILL.md
+│       ├── clear-sprint/SKILL.md
+│       ├── enforce-style/SKILL.md
+│       ├── reassemble-docs/SKILL.md
+│       ├── run-curl/SKILL.md
+│       ├── update-docs/SKILL.md
+│       └── verify-build/SKILL.md
 ├── .github/                    # GitHub workflows and instructions
 ├── .vscode/                    # VS Code settings
 ├── backend/                    # Python FastAPI backend
@@ -27,8 +40,10 @@ nomadic/
 ├── AGENTS.md                   # Local Codex agent/skill trigger instructions
 ├── CLAUDE.md                   # AI assistant instructions
 ├── docker-compose.yml          # Docker configuration
+├── prompt_token_counts.json    # Prompt/token analysis output
 ├── README.md                   # Project readme
-└── render.yaml                 # Render deployment config
+├── render.yaml                 # Render deployment config
+└── temp_graph.txt              # Temporary graph debug artifact
 ```
 
 ---
@@ -188,13 +203,16 @@ backend/
 │   ├── conftest.py                       # Pytest fixtures
 │   ├── llm_stub.py                       # LLM mock for testing
 │   ├── run_curl_flows.sh                 # End-to-end curl flow tests
+│   ├── run_curl_flows_extended.sh        # Extended end-to-end curl flow tests
 │   ├── test_architecture.py              # Architecture tests
+│   ├── test_activity_browser.py          # Browse activities backend contract tests
 │   ├── test_conflict_resolution.py       # Conflict resolution & constraint alias tests
 │   ├── test_cross_domain_constraints.py  # Cross-domain constraint tests
 │   ├── test_demo_dataset.py              # Demo data tests
 │   ├── test_endpoint_contract.py         # Endpoint response contract tests
 │   ├── test_experience_generator.py      # Experience generator tests
 │   ├── test_fill_day_coordinates.py      # Fill-day coordinate + constraint mapping tests
+│   ├── test_google_places_enrichment.py  # Google Places enrichment/cache tests
 │   ├── test_hash_ban.py                  # Hash ban tests
 │   ├── test_iata_resolver.py             # IATA resolver tests
 │   ├── test_import_contract.py           # Import contract tests
@@ -245,9 +263,16 @@ backend/
 │   ├── test_post_arrangement_constraints.py  # Post-arrangement constraint recomputation tests
 │   ├── test_constraint_guard_merge.py # Constraint guard merge/dedup regression tests
 │   ├── test_graph_integration.py      # End-to-end graph integration tests
+│   ├── test_graph_plan_utils.py       # Graph plan helper contract tests
 │   ├── test_itinerary_builder_bugs.py # ItineraryBuilder edge case regression tests (D3 filter, D4 cap)
 │   ├── test_logistics_scaling.py      # Logistics provider scaling + cascade tests
 │   ├── test_router_category_bugs.py   # Router category gate regression tests (D6 stale-constraint purge)
+│   ├── test_router_extraction.py      # Router extraction schema/logic tests
+│   ├── test_router_utils.py           # Router utility helper tests
+│   ├── test_sse_state.py              # SSE connection state accounting tests
+│   ├── test_task_tracker.py           # Background task tracker lifecycle tests
+│   ├── test_unsplash_queries.py       # Unsplash query helper tests
+│   ├── test_validation_cache.py       # Validation cache behavior tests
 │   └── db/
 │       ├── test_expand_itinerary_api.py
 │       └── test_plan_document_api.py
@@ -514,11 +539,13 @@ frontend/
 │   ├── anti-fragmentation.test.tsx
 │   ├── chat-suggestion-actions.test.ts
 │   ├── constraint-states.test.tsx
+│   ├── browse-activities-cache.test.ts
 │   ├── documentStore.test.ts
 │   ├── fill-day-guards.test.ts
 │   ├── ghost-timeline-adapter.test.ts
 │   ├── map-error-boundary.test.ts
 │   ├── plan-copy.test.tsx
+│   ├── rich-block-renderer.test.tsx
 │   └── streaming.test.ts
 │
 ├── .prettierignore             # Prettier ignore patterns
@@ -584,3 +611,4 @@ docs/
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
 5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. New deps: `@dnd-kit/core`, `@dnd-kit/utilities`.
+6. **Agent Specs Canonical Source** - `.claude/agents/*` are canonical specialist specs; `.codex/agents/*` are wrappers that reference those canonical files.

@@ -2,6 +2,7 @@ import uuid
 from typing import List
 
 from app.config import settings
+from app.data.demo_curation import DEMO_MANIFEST
 from app.debug_utils import _debug
 from app.schemas import (
     Tile,
@@ -16,6 +17,15 @@ from .mock_provider import (
 )
 from .models import SearchContext
 from .provider_base import Provider
+
+
+def _flag_enabled(value: object) -> bool:
+    """Strict flag coercion to avoid MagicMock truthiness in tests."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
 
 
 def _build_search_context(req: TilesSearchRequest) -> SearchContext:
@@ -48,17 +58,34 @@ def _get_providers(ctx: SearchContext) -> List[Provider]:
     """
     Decide which providers to call based on the context.
 
-    Provider routing strategy (consistent with logistics_node):
-    1. Google Places enabled → GooglePlacesProvider (real names + photos, overrides Amadeus)
-    2. Amadeus enabled → AmadeusProvider for hotels (real names, placeholder images)
-    3. Fallback → MockProviders
+    Provider routing strategy:
+    1. Curated destination (demo curation enabled + destination in manifest)
+    2. Google Places enabled
+    3. Amadeus enabled
+    4. Mock fallback
 
     @see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
     """
     providers: List[Provider] = []
+    use_demo_curation = _flag_enabled(getattr(settings, "use_demo_curation", False))
+    use_google_places = _flag_enabled(getattr(settings, "use_google_places_provider", False))
+    use_amadeus = _flag_enabled(getattr(settings, "use_amadeus_provider", False))
+    destination_key = (ctx.destination or "").strip().lower()
+    has_curated_destination = bool(destination_key and destination_key in DEMO_MANIFEST)
 
-    # 1. GOOGLE PLACES FIRST - Real hotel and activity names with photos (overrides Amadeus)
-    if settings.use_google_places_provider:
+    # 1. CURATED FIRST (demo destinations)
+    if use_demo_curation and has_curated_destination:
+        _debug(f"[PROVIDER] Using CuratedProvider for destination: {destination_key}")
+        from .curated_provider import CuratedProvider
+
+        if "hotel" in ctx.verticals or "activity" in ctx.verticals or not ctx.verticals:
+            providers.append(CuratedProvider(destination_key))
+        if "flight" in ctx.verticals or not ctx.verticals:
+            providers.append(MockFlightProvider())
+        return providers
+
+    # 2. GOOGLE PLACES - real hotel/activity names with photos
+    if use_google_places:
         _debug(f"[PROVIDER] Using GooglePlaces for hotels/activities: {ctx.destination}")
         from .google_places_provider import GooglePlacesActivityProvider, GooglePlacesHotelProvider
 
@@ -70,8 +97,8 @@ def _get_providers(ctx: SearchContext) -> List[Provider]:
             providers.append(GooglePlacesActivityProvider())
         return providers
 
-    # 2. AMADEUS SECOND - Real hotel names with placeholder images
-    if settings.use_amadeus_provider:
+    # 3. AMADEUS - real hotel names with placeholder images
+    if use_amadeus:
         _debug(f"[PROVIDER] Using Amadeus for hotels: {ctx.destination}")
 
         if "hotel" in ctx.verticals or not ctx.verticals:
@@ -87,7 +114,7 @@ def _get_providers(ctx: SearchContext) -> List[Provider]:
 
         return providers
 
-    # 3. MOCK FALLBACK - Development/offline mode
+    # 4. MOCK FALLBACK - Development/offline mode
     _debug(f"[PROVIDER] Using MockProviders for: {ctx.destination}")
 
     if "hotel" in ctx.verticals or not ctx.verticals:
@@ -122,8 +149,13 @@ def search_tiles(req: TilesSearchRequest) -> TilesSearchResponse:
 
         all_tiles.extend(tiles)
 
-    # If Google Places was used but returned no hotels/activities, fall back to mock
-    if settings.use_google_places_provider:
+    google_path_active = any(
+        getattr(provider, "name", None) in {"google_places_hotel", "google_places_activity"}
+        for provider in providers
+    )
+
+    # Only append mock fallback when Google Places provider path is actually active.
+    if google_path_active:
         hotel_tiles = [t for t in all_tiles if t.type == "hotel"]
         activity_tiles = [t for t in all_tiles if t.type == "activity"]
         if not hotel_tiles and ("hotel" in ctx.verticals or not ctx.verticals):

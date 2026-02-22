@@ -1683,7 +1683,7 @@ plan_documents.document (JSONB)
 | `tiles` | ✅ Yes | ✅ Yes | Amadeus/Curated providers |
 | `strategy_sections` | ✅ Yes | ✅ Yes | Specialist nodes |
 | `day_cards` | ✅ Yes | ✅ Yes | Itinerary builder |
-| `plan_view_state` | ✅ Yes | ✅ Yes | State machine (reconciled on hydration) |
+| `plan_view_state` | ✅ Yes | ✅ Yes | State machine (backend-authoritative on hydration) |
 | `executed_strategy_topics` | ✅ Yes | ✅ Yes | Graph execution |
 | `can_expand_to_itinerary` | ✅ Yes | ✅ Yes | Stage 3 gate |
 | `preferred_tile_ids` | ✅ Yes | ✅ Yes | Heart actions (PATCH /api/document) |
@@ -1707,15 +1707,11 @@ useSessionHydration() runs
     ├── GET /api/document
     │   └── Returns full PlanDocumentData from DB
     │
-    ├── fetchDocument() upward reconciliation
-    │   ├── day_cards exist + state < S3:
-    │   │   ├── constraint_violations empty → promote to S3_ITINERARY_READY
-    │   │   └── constraint_violations present → promote to S3_EDITING
-    │   ├── strategy_sections exist + state < S2 → promote to S2_STRATEGY_READY
-    │   └── Guards: skip BLOCKED states, skip existing S3 variants
+    ├── fetchDocument() hydration
+    │   └── Backend document is stored directly (no frontend view-state promotion)
     │
-    ├── documentStore.set({ document: reconciledDocument })
-    │   └── Zustand store populated (with reconciled plan_view_state)
+    ├── documentStore.set({ document })
+    │   └── Zustand store populated with backend `plan_view_state`
     │
     └── StrategyStageRenderer reads from store
         ├── viewModel = useDocumentStore(s => s.document)
@@ -1804,7 +1800,7 @@ useSessionHydration() runs
 | `BookingDrawer` | Side sheet for tile browsing, triggered by FreeDayCard "Browse" or GhostSlot clicks. Supports `pinnedDayNumber` for per-day tile placement via fill-day API |
 | `TripHealthBar` | Compact inventory bar showing tile counts (hotels, flights, activities) for General/Local Expert sections in `S2StrategyView` |
 | `useItineraryGeneration` | Hook extracted from `NomadicLanding` encapsulating the full expand-itinerary flow: `proceedWithItineraryGeneration` (NDJSON streaming), auto-trigger logic for multi-specialist trips (Path A), `handleExpandToItinerary` (validation-gated expand), and `handleSelectNights`. Returns `{proceedWithItineraryGeneration, handleExpandToItinerary, handleSelectNights, hasItineraryContent}`. |
-| `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. Pure computation — no side effects. |
+| `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. `planViewState` is backend-authoritative when present; frontend fallback derivation is only used when backend state is absent. Pure computation — no side effects. |
 | `useLandingEffects` | Hook extracted from `NomadicLanding` grouping side effects unrelated to itinerary generation: destination image fetching, `hasEverHadPlan` detection, topic tracking for mobile badges, specialist deep link handling. State is owned by the parent and passed in as params + setters. |
 | `specialist-colors.ts` | SSoT for specialist-to-color text class mappings (`SPECIALIST_TEXT_COLOR: Record<string, string>`). Used by `DragPreviewCard` and `ActivityMiniCard` for specialist label badges. Hue assignments match the DS constraint-priority palette. |
 | `useMapSync` | Zustand store (`frontend/hooks/useMapSync.ts`) for map↔timeline two-way sync. State: `visibleDayNumber` (set by TimelineThread scroll observer), `scrollTargetDayNumber` (set by InteractiveMap pin click), `highlightedCardId`. Actions: `setVisibleDayNumber()`, `requestScrollTo(dayNumber, itemId)`. Not persisted — resets on mount. |
@@ -2760,8 +2756,8 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 
 | Type | Component | Visual | Purpose |
 |------|-----------|--------|---------|
-| Arrival/Departure | `LogisticsBlock` | Border-l-4, icon, time | Hard times (flights) |
-| Check-in/out | `LogisticsBlock` | Key icon, hotel name, inline constraints | Accommodation logistics |
+| Arrival/Departure | `LogisticsBlock` | Border-l-4, icon/time + resolved thumbnail (booked tile → tile map/preferred tiles → placeholder fallback) | Hard times (flights) |
+| Check-in/out | `LogisticsBlock` | Key icon, hotel name, inline constraints + resilient image fallback on load error | Accommodation logistics |
 | Safety Buffer | `SafetyBlock` | Red zone, "No Flights until". **Excludes** arrival/departure anchors (those are `LogisticsBlock`, not `SafetyBlock`) | Constraint visualization |
 | Activity | `ActivityMiniCard` | Thumbnail, category badge, duration, time of day, description, constraints, price badge (`block.booked_tile?.price_estimate`), book button, hold-to-delete. **Stage 17A:** Accepts `constraintDisplayModes?: Map<string, 'full' \| 'icon'>` — renders icon-only pill with Tooltip for repeated constraints. **Stage 17B:** Accepts `variant?: 'default' \| 'compact'` — compact renders a horizontal thumbnail+content row (~56px height) for single-activity days. | Rich activity display with metadata |
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
@@ -2830,12 +2826,12 @@ The `no_altitude_after_dive` constraint is emitted by the diving specialist but 
 **Component Files:**
 ```
 frontend/components/plan/timeline/
-├── RichBlockRenderer.tsx           # Smart block router: logistics → safety → ghost → activity (extracted from TimelineThread)
+├── RichBlockRenderer.tsx           # Smart block router + logistics image resolver (booked tile/id/preferred/title-match/placeholder)
 ├── useTimelineFillDay.ts           # Fill-day state + handler hook (per-day mutex, cooldown, generation guards; extracted from TimelineThread)
 ├── ...                             # DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot, etc.
 └── blocks/
     ├── types.ts                        # DisplayTime, TimeSlot, getDisplayTime()
-    ├── LogisticsBlock.tsx              # Arrival/departure/check-in + gear icons
+    ├── LogisticsBlock.tsx              # Arrival/departure/check-in + gear icons; image error fallback to deterministic placeholder
     ├── SafetyBlock.tsx                 # No-fly/rest-day/acclimatization constraints (default: rest_day)
     ├── ActivityMiniCard.tsx            # Rich activity with context menu + hold-to-delete
     ├── HoldToDeleteButton.tsx         # Press-and-hold circular progress delete button
@@ -3109,16 +3105,8 @@ Backend may return S2 for benign reasons (e.g., "from rome" only runs LogisticsN
 - `S3 → S0` (RESET) → **Allowed** (user explicit intent)
 - Destination/date change → **Tiles replaced**, day_cards cleared (clean slate)
 
-**View State Upward Reconciliation (fetchDocument):**
-On page refresh, `fetchDocument()` applies upward reconciliation to repair stale persisted state. If the data in the document contradicts the stored `plan_view_state`, it promotes:
-- `day_cards` exist + state below S3:
-  - `constraint_violations` empty → promote to `S3_ITINERARY_READY`
-  - `constraint_violations` present → promote to `S3_EDITING`
-- `strategy_sections` exist + state below S2 → promote to `S2_STRATEGY_READY`
-
-Guards prevent false promotion:
-- Already S3 variant (S3_BLOCKED, S3_EDITING, S3_PARTIAL_CONFLICT) → **Not promoted** (lateral states respected)
-- BLOCKED states (S2_BLOCKED) → **Not promoted** (blocking violation preserved)
+**Hydration Behavior (fetchDocument):**
+On page refresh, `fetchDocument()` hydrates backend `plan_view_state` directly. Frontend no longer performs upward reconciliation promotions during fetch; only downgrade-protection guards apply in merge paths (`setFromPlanResponse`, `mergeEnvelope`).
 
 **Expand-In-Progress Mutex:**
 ```typescript

@@ -173,8 +173,8 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     # Principles from warning-severity constraints (max 4)
     principles = [c["desc"] for c in warning_constraints[:4]]
 
-    # Must-dos from static data
-    must_dos = _get_static_must_dos(plan.destination)
+    # Keep skeleton must_dos empty when LLM enrichment is disabled.
+    must_dos = _get_static_must_dos(plan.destination) if settings.local_expert_use_llm else []
 
     section = build_local_expert_section(
         destination=plan.destination,

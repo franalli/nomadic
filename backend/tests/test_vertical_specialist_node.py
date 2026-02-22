@@ -38,6 +38,7 @@ from app.planner.state import (
 _VS = "app.planner.nodes.vertical_specialist"
 _MERGE = f"{_VS}._merge_specialist_into_state"
 _SESSION = "app.db._get_async_session_factory"
+_SPECIALIST_CACHE_GET = "app.services.specialist_cache.get_cached_specialist_output"
 
 # =============================================================================
 # Helpers
@@ -526,6 +527,7 @@ class TestVerticalSpecialistNodeEntry:
                 new_callable=AsyncMock,
                 return_value=None,
             ),
+            patch(_SPECIALIST_CACHE_GET, new_callable=AsyncMock, return_value=None),
             patch(
                 "app.planner.nodes.vertical_specialist.get_trip_settings",
                 return_value=MagicMock(
@@ -563,6 +565,7 @@ class TestVerticalSpecialistNodeEntry:
                 new_callable=AsyncMock,
                 return_value=LLMSpecialistOutput(feasibility_status="feasible"),
             ),
+            patch(_SPECIALIST_CACHE_GET, new_callable=AsyncMock, return_value=None),
             patch(
                 "app.planner.nodes.vertical_specialist.get_trip_settings",
                 return_value=MagicMock(

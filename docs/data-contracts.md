@@ -52,11 +52,11 @@
 | DELETE | `/api/session`   | Reset session & clear state | 204 No Content              |
 | GET    | `/health`        | Health check                | JSON                        |
 
-### Admin (13 endpoints, gated by `X-Admin-Key` header)
+### Admin (14 endpoints, gated by `X-Admin-Key` header)
 
 All admin routes require `X-Admin-Key` header matching `ADMIN_API_KEY` env var. Rate limited: 10/min.
 
-Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified). Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache` (L1+L2), `clear-router-cache`, `clear-all-caches` (clears planner + unsplash + specialist L1/L2 + tile L1/L2 + experience L1/L2 + router), `clear-all-checkpoints`, `clear-validation-cache`, `fresh-start`. Config (GET): `planner`, `graph-stats`.
+Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified). Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache` (L1+L2), `clear-router-cache`, `clear-l1-l2-caches` (force-wipes L1 memory caches + L2 response cache/unsplash cache only), `clear-all-caches` (clears planner + unsplash + specialist L1/L2 + tile L1/L2 + experience L1/L2 + router), `clear-all-checkpoints`, `clear-validation-cache`, `fresh-start`. Config (GET): `planner`, `graph-stats`.
 
 ---
 
@@ -85,7 +85,7 @@ Media type: `application/x-ndjson`. Events:
 | `done`     | `{type: "done", plan_view_state: "S3_ITINERARY_READY"|"S3_EDITING"|"S3_PARTIAL_CONFLICT", version?, dropped_preferred_count?, warnings?[]}` | Completion signal   |
 | `error`    | `{type: "error", message: "..."}`                                                                        | Error details       |
 
-**Frontend consumption:** `consumeNdjsonEnvelopeStream()` in `streamParser.ts` provides a shared NDJSON parser with typed callbacks (`onEnvelope`, `onProgress`, `onDone`, `onError`). Used by `usePreferenceAutoRegen` and `NomadicLanding` expand-itinerary flows to avoid duplicated stream parsing.
+**Frontend consumption:** `consumeNdjsonEnvelopeStream()` in `streamParser.ts` provides a shared NDJSON parser with typed callbacks (`onEnvelope`, `onProgress`, `onDone`, `onError`). Used by `usePreferenceAutoRegen` and `NomadicLanding` expand-itinerary flows to avoid duplicated stream parsing. Parser JSON failures are logged and skipped (stream continues).
 
 ### CSRF
 
@@ -129,6 +129,7 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `tile_cache_ttl_hours`           | 72                   | `TILE_CACHE_TTL_HOURS`         | L2 tile cache TTL                                           |
 | `specialist_cache_ttl_hours`     | 168                  | `SPECIALIST_CACHE_TTL_HOURS`   | L2 specialist cache TTL                                     |
 | `experience_cache_ttl_hours`     | 72                   | `EXPERIENCE_CACHE_TTL_HOURS`   | L2 experience cache TTL                                     |
+| `google_places_enrichment_cache_ttl_hours` | 168        | `GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS` | L2 cache TTL for Google Places activity enrichment payloads |
 | `clear_l2_on_session_reset`      | false                | `CLEAR_L2_ON_RESET`            | Wipe L2 caches on session reset (dev only)                  |
 | `google_maps_api_key`            | --                   | `GOOGLE_MAPS_API_KEY`          | Google Places API key                                       |
 | `google_maps_api_secret`         | --                   | `GOOGLE_MAPS_API_SECRET`       | Google Places API secret                                    |
@@ -298,11 +299,7 @@ Frontend-only states (not emitted by backend):
 
 Hydration guards:
   Downgrade protection (setFromPlanResponse, mergeEnvelope): S3→S2 blocked when day_cards exist
-  Upward reconciliation (fetchDocument): stale state promoted when data contradicts it
-    - day_cards exist + state < S3 (not BLOCKED/S3 variant):
-      - `constraint_violations` empty → S3_ITINERARY_READY
-      - `constraint_violations` present → S3_EDITING
-    - strategy_sections exist + state < S2 (not BLOCKED) → S2_STRATEGY_READY
+  Backend-authoritative hydration: fetch path persists backend `plan_view_state` as-is (no frontend promotion)
 ```
 
 ### Stage 3 Emission Contract
@@ -370,11 +367,11 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | Action                                                             | Purpose                                                                                                                                 |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `setFromPlanResponse()`                                            | Merge backend GraphPlanResponse into store (destination lock, S3-safe view state guard including lateral S3 transitions, tile/section merge, image URL sanitization) |
-| `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization) plus root-level `generation` merge from envelope. Uses RAF-batched buffering (Layer 1 jank reduction) — consecutive SSE events within the same ~16ms animation frame are deep-merged and flushed as a single setState call, collapsing 6 SSE events → 2-3 React renders. Module-level `_pendingEnvelope` + `_rafId` state. Can be bypassed with `_bypassRAF=true` (set during the flush itself to prevent recursion). |
+| `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization) plus root-level `generation` merge from envelope. Uses RAF-batched buffering when available (`globalThis.requestAnimationFrame`) and not in test mode (`NODE_ENV=test` or `VITEST=true`). Consecutive SSE events in the same frame are deep-merged and flushed as one setState call. Module-level `_pendingEnvelope` + `_rafId` state, with `_bypassRAF=true` during flush to prevent recursion. |
 | `updateTripInputs()`                                               | Sync local trip input update (no API call)                                                                                              |
 | `commitTripInputs()`                                               | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful). Filters no-op `trip_inputs` fields before PATCH using `_lastPatchedTripInputs` as baseline (not live zustand state — `updateTripInputs()` already mutated it); if empty after filtering, skips network write and returns success. Successful commits update `_lastPatchedTripInputs` and clear matching keys from `_userDirtySettings`. |
 | `ensureSettingsFlushed()`                                          | Flush only **dirty** settings before graph run (prevents overwriting backend-derived values). Per-send-cycle payload hash dedupe skips duplicate flush PATCHes for the same request cycle. |
-| `fetchDocument()`                                                  | GET /api/document (with upward view state reconciliation: promotes to `S3_EDITING` when day_cards exist with constraint violations)    |
+| `fetchDocument()`                                                  | GET /api/document (hydrates backend document/state directly; no frontend upward `plan_view_state` promotion)    |
 | `patchDocument()`                                                  | PATCH /api/document (preserves frontend-only fields)                                                                                    |
 | `toggleTilePreference()`                                           | Heart/unheart a tile (single-select for hotels, multi-select for activities). Debounced 500ms PATCH to batch rapid toggles.             |
 | `clearPreferences()`                                               | Clear all hearted tiles + sync to backend                                                                                               |
@@ -400,7 +397,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | `setFinalized()`                                                   | Set plan finalization flag (gates Book view access)                                                                                     |
 | `addToCart()` / `removeFromCart()` / `clearCart()`                  | Cart operations for booking mode                                                                                                        |
 | `hasAllRequiredFields()`                                           | Computed selector: returns true when destination is set (only requirement)                                                              |
-| `reset()`                                                          | Full store reset (aborts in-flight generation)                                                                                          |
+| `reset()`                                                          | Full store reset (aborts in-flight generation, cancels pending RAF flush, clears buffered envelope state)                              |
 
 **Per-session expand mutex (backend):** `request_dedup.py` exports `acquire_expand_slot(session_id)` / `release_expand_slot(session_id)`. If `acquire_expand_slot` returns `False` (expand already in-flight for this session), the `/api/expand-itinerary` endpoint returns HTTP 429 with `Retry-After: 5`. The mutex is backed by `TTLCache(maxsize=200, ttl=120)` — auto-expires after 120s to prevent permanent lock from crashed generators. Released via `finally` in the streaming response wrapper.
 
@@ -425,6 +422,7 @@ Module-level `_userDirtySettings: Set<string>` (not Zustand state — avoids re-
 - **Fill-day real-block guard:** `TimelineThread` skips fill-day if the target day already has real activity blocks (race condition with graph SSE populating the day concurrently)
 - **Fill-day generation gate:** `TimelineThread`/`StrategyStageRenderer` block fill-day while stream/regeneration is active (`currentRunId`/generation flags), then surface a non-blocking wait message
 - **Fill-day burst guard:** `TimelineThread` and `StrategyStageRenderer` enforce a 1.5s local cooldown between fill-day requests
+- **RAF merge guard:** `mergeEnvelope()` disables RAF buffering when `requestAnimationFrame` is unavailable or test env flags are set; merges run inline for deterministic tests
 - **Image URL hygiene:** document/envelope merge paths sanitize Picsum hosts (`picsum.photos`, `fastly.picsum.photos`) out of destination cards, tiles, day blocks, and strategy assets; required gallery/vibe images fall back to a deterministic Unsplash URL
 - **Bookable activity filter:** `isBookableActivityTile()` in `tileSelectors.ts` filters fill-day generated tiles (`source_agent` in `experience_generator` or `vertical_specialist`) from the booking surface (`BookingSection`). Non-activity tiles always pass through.
 

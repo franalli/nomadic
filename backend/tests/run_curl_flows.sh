@@ -8,23 +8,45 @@ PASS=0
 FAIL=0
 TOTAL=6
 COOKIE_JAR=$(mktemp)
+RESP=$(mktemp)
 
 # Get session + CSRF cookies (must use /api/document — /health skips session middleware)
-curl -s -c "$COOKIE_JAR" http://localhost:8000/api/document > /dev/null
+INIT_CODE=$(curl -s -o "$RESP" -w "%{http_code}" -c "$COOKIE_JAR" \
+  http://localhost:8000/api/document)
+if [ "$INIT_CODE" != "200" ] && [ "$INIT_CODE" != "204" ]; then
+  echo "ERROR: init session failed (GET /api/document HTTP $INIT_CODE)"
+  if [ -s "$RESP" ]; then
+    body=$(tr '\n' ' ' < "$RESP" | cut -c1-220)
+    echo "body: $body"
+  fi
+  rm -f "$COOKIE_JAR" "$RESP"
+  exit 1
+fi
 CSRF=$(grep csrf "$COOKIE_JAR" | awk '{print $NF}')
 echo "Session established (csrf=${CSRF:0:8}...)"
 
 post() {
   # SSE endpoint — capture full stream, extract the complete event's JSON payload
   local tmpfile
+  local http_code
   tmpfile=$(mktemp)
-  curl -s -X POST "$API" \
+  http_code=$(curl -s -w "%{http_code}" -X POST "$API" \
     -H "Content-Type: application/json" \
     -H "X-CSRF-Token: $CSRF" \
     -b "$COOKIE_JAR" \
     -c "$COOKIE_JAR" \
     -d "$1" \
-    -o "$tmpfile"
+    -o "$tmpfile")
+  cp "$tmpfile" "$RESP"
+  if [ "$http_code" != "200" ]; then
+    python3 - "$http_code" <<'PYEOF'
+import json
+import sys
+print(json.dumps({"_infra_http_code": sys.argv[1]}))
+PYEOF
+    rm -f "$tmpfile"
+    return 0
+  fi
   # Extract the complete event data (SSE format: "data: {json}")
   python3 -c "
 import json, sys
@@ -40,6 +62,35 @@ with open('$tmpfile') as f:
             break
 " 2>/dev/null || echo '{}'
   rm -f "$tmpfile"
+}
+
+ensure_post_ok() {
+  local flow="$1"
+  local payload="$2"
+  local infra_code
+  infra_code=$(echo "$payload" | python3 -c "
+import json, sys
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    print('PARSE_ERROR')
+    raise SystemExit
+print(payload.get('_infra_http_code', ''))
+" 2>/dev/null || echo "PARSE_ERROR")
+  if [ -z "$infra_code" ]; then
+    return 0
+  fi
+  if [ "$infra_code" = "PARSE_ERROR" ]; then
+    infra_code="invalid_json_payload"
+  fi
+  echo "  ✗ INFRA: $flow /api/graph_plan/stream HTTP $infra_code"
+  if [ -s "$RESP" ]; then
+    local body
+    body=$(tr '\n' ' ' < "$RESP" | cut -c1-220)
+    echo "    body: $body"
+  fi
+  FAIL=$((FAIL+1))
+  return 1
 }
 
 check() {
@@ -58,7 +109,8 @@ check() {
 echo ""
 echo "═══ Flow 1: Diving in Bali (Tier 1 specialist) ═══"
 R1=$(post '{"message":"I want to go diving in Bali for a week starting March 15"}')
-
+F1_OK=true
+if ensure_post_ok "Flow 1" "$R1"; then
 echo "$R1" | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
@@ -79,7 +131,6 @@ for s in secs:
 idc=doc.get('itinerary_day_cards')
 print(f'  itinerary_day_cards={len(idc) if idc else None}')
 "
-F1_OK=true
 check "trip_settings present" "
 ss=d.get('session_state',{});meta=ss.get('metadata',{});ts=meta.get('trip_settings')
 assert ts is not None, 'missing'
@@ -111,6 +162,9 @@ check "plan_view_state beyond S0" "
 doc=d.get('document',{})
 assert doc.get('plan_view_state','') != 'S0_BOOTSTRAP'
 " "$R1" || F1_OK=false
+else
+  F1_OK=false
+fi
 
 $F1_OK && PASS=$((PASS+1)) && echo "  ══ Flow 1 PASS ══" || echo "  ══ Flow 1 FAIL ══"
 
@@ -118,7 +172,8 @@ $F1_OK && PASS=$((PASS+1)) && echo "  ══ Flow 1 PASS ══" || echo "  ═�
 echo ""
 echo "═══ Flow 2: Yoga + Cooking in Bali (Tier 2) ═══"
 R2=$(post '{"message":"yoga and cooking in Bali for 5 days starting April 1"}')
-
+F2_OK=true
+if ensure_post_ok "Flow 2" "$R2"; then
 echo "$R2" | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
@@ -148,6 +203,9 @@ for s in doc.get('strategy_sections',[]):
     cb=s.get('content_blocks',[])
     if ca: assert ca==cb
 " "$R2" || F2_OK=false
+else
+  F2_OK=false
+fi
 
 $F2_OK && PASS=$((PASS+1)) && echo "  ══ Flow 2 PASS ══" || echo "  ══ Flow 2 FAIL ══"
 
@@ -155,7 +213,8 @@ $F2_OK && PASS=$((PASS+1)) && echo "  ══ Flow 2 PASS ══" || echo "  ═�
 echo ""
 echo "═══ Flow 3: Mixed diving + yoga ═══"
 R3=$(post '{"message":"diving and yoga in Bali for a week starting March 20"}')
-
+F3_OK=true
+if ensure_post_ok "Flow 3" "$R3"; then
 echo "$R3" | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
@@ -185,6 +244,9 @@ check "strategy_sections > 0" "
 doc=d.get('document',{})
 assert len(doc.get('strategy_sections',[])) > 0
 " "$R3" || F3_OK=false
+else
+  F3_OK=false
+fi
 
 $F3_OK && PASS=$((PASS+1)) && echo "  ══ Flow 3 PASS ══" || echo "  ══ Flow 3 FAIL ══"
 
@@ -192,7 +254,8 @@ $F3_OK && PASS=$((PASS+1)) && echo "  ══ Flow 3 PASS ══" || echo "  ═�
 echo ""
 echo "═══ Flow 4: Origin detection (2-turn) ═══"
 R4A=$(post '{"message":"I want to go to Bali for a week starting March 15"}')
-
+F4_OK=true
+if ensure_post_ok "Flow 4 turn 1" "$R4A"; then
 check "turn 1: trip_settings present" "
 ss=d.get('session_state',{});meta=ss.get('metadata',{})
 assert meta.get('trip_settings') is not None
@@ -201,7 +264,7 @@ assert meta.get('trip_settings') is not None
 SS4=$(echo "$R4A" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('session_state',{})))")
 
 R4B=$(post "{\"message\":\"I'm flying from San Francisco\",\"session_state\":$SS4}")
-
+if ensure_post_ok "Flow 4 turn 2" "$R4B"; then
 echo "$R4B" | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
@@ -231,6 +294,12 @@ ss=d.get('session_state',{});meta=ss.get('metadata',{})
 ti=meta.get('trip_inputs',{})
 assert ti.get('origin',''), 'missing'
 " "$R4B" || F4_OK=false
+else
+  F4_OK=false
+fi
+else
+  F4_OK=false
+fi
 
 $F4_OK && PASS=$((PASS+1)) && echo "  ══ Flow 4 PASS ══" || echo "  ══ Flow 4 FAIL ══"
 
@@ -238,10 +307,12 @@ $F4_OK && PASS=$((PASS+1)) && echo "  ══ Flow 4 PASS ══" || echo "  ═�
 echo ""
 echo "═══ Flow 5: Settings change mid-flow ═══"
 R5A=$(post '{"message":"I want to go to Bali for a week starting March 15"}')
+F5_OK=true
+if ensure_post_ok "Flow 5 turn 1" "$R5A"; then
 SS5=$(echo "$R5A" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('session_state',{})))")
 
 R5B=$(post "{\"message\":\"5-star hotels only\",\"session_state\":$SS5}")
-
+if ensure_post_ok "Flow 5 turn 2" "$R5B"; then
 echo "$R5B" | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
@@ -258,6 +329,12 @@ ss=d.get('session_state',{});meta=ss.get('metadata',{});ts=meta.get('trip_settin
 ms=ts.get('hotel_settings',{}).get('min_stars',0)
 assert ms >= 4, f'min_stars={ms}'
 " "$R5B" || F5_OK=false
+else
+  F5_OK=false
+fi
+else
+  F5_OK=false
+fi
 
 $F5_OK && PASS=$((PASS+1)) && echo "  ══ Flow 5 PASS ══" || echo "  ══ Flow 5 FAIL ══"
 
@@ -265,14 +342,14 @@ $F5_OK && PASS=$((PASS+1)) && echo "  ══ Flow 5 PASS ══" || echo "  ═�
 echo ""
 echo "═══ Flow 6: Bare destination — no errors ═══"
 R6=$(post '{"message":"Bali"}')
-
+F6_OK=true
+if ensure_post_ok "Flow 6" "$R6"; then
 echo "$R6" | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
 print(f'  error={d.get(\"error\")}')
 print(f'  plan_view_state={d.get(\"document\",{}).get(\"plan_view_state\",\"?\")}')
 "
-F6_OK=true
 check "no error field" "
 assert d.get('error') is None, f'error={d.get(\"error\")}'
 " "$R6" || F6_OK=false
@@ -280,6 +357,9 @@ assert d.get('error') is None, f'error={d.get(\"error\")}'
 check "valid JSON with document" "
 assert 'document' in d, 'missing document key'
 " "$R6" || F6_OK=false
+else
+  F6_OK=false
+fi
 
 $F6_OK && PASS=$((PASS+1)) && echo "  ══ Flow 6 PASS ══" || echo "  ══ Flow 6 FAIL ══"
 
@@ -289,5 +369,5 @@ echo "════════════════════════�
 echo "  Results: $PASS/$TOTAL passed, $FAIL checks failed"
 echo "═══════════════════════════════════════════"
 
-rm -f "$COOKIE_JAR"
+rm -f "$COOKIE_JAR" "$RESP"
 [ "$PASS" -eq "$TOTAL" ] && exit 0 || exit 1

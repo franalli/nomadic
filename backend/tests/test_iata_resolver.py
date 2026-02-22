@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.planner.services.iata_resolver import resolve_iata_codes
+from app.planner.services.iata_resolver import clear_iata_cache, resolve_iata_codes
 from app.planner.state import GraphState, TripPlan
 
 
@@ -37,6 +37,18 @@ def _mock_llm_response(content: str) -> AsyncMock:
     mock_result.content = content
     mock_llm.ainvoke = AsyncMock(return_value=mock_result)
     return mock_llm
+
+
+@pytest.fixture(autouse=True)
+def _clear_shared_cache_between_tests():
+    """Keep shared L1 cache deterministic across tests and avoid real DB hits."""
+    clear_iata_cache()
+    with patch(
+        "app.planner.services.iata_resolver._get_async_session_factory",
+        side_effect=Exception("db unavailable in unit tests"),
+    ):
+        yield
+    clear_iata_cache()
 
 
 class TestCachedCodeReuse:
@@ -191,3 +203,66 @@ class TestErrorHandling:
             mock_factory.assert_not_called()
         assert origin == ""
         assert dest == ""
+
+
+class TestSharedCacheReuse:
+    """IATA results should be reusable across independent GraphState instances."""
+
+    @pytest.mark.asyncio
+    async def test_shared_l1_cache_reuses_codes_across_states(self):
+        first_state = _make_state()
+        second_state = _make_state()
+        mock_llm = _mock_llm_response('{"origin": "SFO", "destination": "DPS"}')
+
+        with patch(
+            "app.planner.services.iata_resolver.get_llm_by_model",
+            return_value=mock_llm,
+        ) as llm_factory:
+            first_origin, first_dest = await resolve_iata_codes(
+                "San Francisco", "Bali", first_state
+            )
+            assert llm_factory.call_count == 1
+
+        with patch("app.planner.services.iata_resolver.get_llm_by_model") as llm_factory:
+            second_origin, second_dest = await resolve_iata_codes(
+                "San Francisco",
+                "Bali",
+                second_state,
+            )
+            llm_factory.assert_not_called()
+
+        assert first_origin == "SFO"
+        assert first_dest == "DPS"
+        assert second_origin == "SFO"
+        assert second_dest == "DPS"
+        assert second_state.trip_plan.origin_iata == "SFO"
+        assert second_state.trip_plan.destination_iata == "DPS"
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_city_cache_scoped_by_route_context(self):
+        """Same city text with different route context should not reuse stale origin code."""
+        first_state = _make_state()
+        second_state = _make_state()
+
+        first_llm = _mock_llm_response('{"origin": "SJC", "destination": "LHR"}')
+        second_llm = _mock_llm_response('{"origin": "SJO", "destination": "OSL"}')
+
+        with patch(
+            "app.planner.services.iata_resolver.get_llm_by_model",
+            return_value=first_llm,
+        ) as first_factory:
+            first_origin, first_dest = await resolve_iata_codes("San Jose", "London", first_state)
+            assert first_factory.call_count == 1
+
+        with patch(
+            "app.planner.services.iata_resolver.get_llm_by_model",
+            return_value=second_llm,
+        ) as second_factory:
+            second_origin, second_dest = await resolve_iata_codes("San Jose", "Oslo", second_state)
+            assert second_factory.call_count == 1
+
+        assert first_origin == "SJC"
+        assert first_dest == "LHR"
+        assert second_origin == "SJO"
+        assert second_dest == "OSL"
+        assert second_state.trip_plan.origin_iata == "SJO"

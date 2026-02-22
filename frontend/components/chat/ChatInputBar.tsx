@@ -131,7 +131,7 @@ export function ChatInputBar({
               className={cn(
                 'flex items-center justify-center h-11 w-11 rounded-[22px] transition-all duration-300',
                 input.trim() && !isLoading
-                  ? `bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:${DS.glowClass.lg} dark:hover:bg-emerald-500 hover:scale-105 active:scale-95`
+                  ? `bg-zinc-900 text-white shadow-sm shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:${DS.glowClass.sm} dark:hover:bg-emerald-500 hover:scale-105 active:scale-95`
                   : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600',
               )}
               title="Send message (Enter)"

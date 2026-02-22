@@ -11,6 +11,7 @@ All imports are lazy so unused providers add zero startup cost.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -76,28 +77,65 @@ def extract_token_usage(raw_response: object, *, model: str | None = None) -> di
     if raw_response is None:
         return {}
 
+    def _to_int(value: object) -> int | None:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.isdigit():
+                return int(stripped)
+        return None
+
     token_usage: dict = {}
 
-    # Path 1: LangChain 0.2+ usage_metadata — works for both OpenAI and Gemini
-    # usage_metadata is dict[str, Any] in modern LangChain but older Gemini versions
-    # may return an attribute-style object; support both via get() with getattr() fallback.
-    if hasattr(raw_response, "usage_metadata") and raw_response.usage_metadata:
-        um = raw_response.usage_metadata
-        if isinstance(um, dict):
-            token_usage = {
-                "prompt_tokens": um.get("input_tokens", 0),
-                "completion_tokens": um.get("output_tokens", 0),
-                "total_tokens": um.get("total_tokens", 0),
-            }
+    # Path 1: LangChain 0.2+ usage_metadata — works for both OpenAI and Gemini.
+    # Guard against MagicMock/placeholder attributes that should not override
+    # valid response_metadata.token_usage fallback.
+    usage_metadata = getattr(raw_response, "usage_metadata", None)
+    if usage_metadata is not None:
+        if isinstance(usage_metadata, Mapping):
+            prompt = _to_int(usage_metadata.get("input_tokens"))
+            completion = _to_int(usage_metadata.get("output_tokens"))
+            total = _to_int(usage_metadata.get("total_tokens"))
         else:
+            prompt = _to_int(getattr(usage_metadata, "input_tokens", None))
+            completion = _to_int(getattr(usage_metadata, "output_tokens", None))
+            total = _to_int(getattr(usage_metadata, "total_tokens", None))
+
+        if prompt is not None or completion is not None or total is not None:
+            prompt_tokens = prompt or 0
+            completion_tokens = completion or 0
             token_usage = {
-                "prompt_tokens": getattr(um, "input_tokens", 0),
-                "completion_tokens": getattr(um, "output_tokens", 0),
-                "total_tokens": getattr(um, "total_tokens", 0),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total if total is not None else (prompt_tokens + completion_tokens),
             }
-    # Path 2: OpenAI response_metadata fallback (older LangChain versions)
-    elif hasattr(raw_response, "response_metadata"):
-        token_usage = raw_response.response_metadata.get("token_usage", {})
+
+    # Path 2: OpenAI response_metadata fallback (older LangChain versions).
+    if not token_usage:
+        response_metadata = getattr(raw_response, "response_metadata", None)
+        if isinstance(response_metadata, Mapping):
+            fallback_usage = response_metadata.get("token_usage")
+            if isinstance(fallback_usage, Mapping):
+                prompt = _to_int(fallback_usage.get("prompt_tokens"))
+                completion = _to_int(fallback_usage.get("completion_tokens"))
+                total = _to_int(fallback_usage.get("total_tokens"))
+                if prompt is not None or completion is not None or total is not None:
+                    prompt_tokens = prompt or 0
+                    completion_tokens = completion or 0
+                    token_usage = {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": (
+                            total if total is not None else (prompt_tokens + completion_tokens)
+                        ),
+                    }
+                elif fallback_usage:
+                    token_usage = dict(fallback_usage)
 
     if token_usage and model:
         token_usage["model"] = model

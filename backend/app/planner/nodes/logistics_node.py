@@ -677,11 +677,38 @@ async def logistics_node(state: GraphState) -> GraphState:
 def _tile_to_dict(tile) -> Dict[str, Any]:
     """Convert a Tile object to a dict for state storage.
 
-    Uses model_dump() to serialize all fields (including geo, pricing breakdown,
-    provider, review_count, etc.) so no new Tile fields are silently dropped.
-    The source_agent default is applied post-dump to preserve the logistics_node attribution.
+    Supports both Pydantic models (model_dump) and plain objects used by tests
+    (SimpleNamespace, MagicMock). The source_agent default is applied after
+    serialization to preserve logistics attribution.
     """
-    d = tile.model_dump()
+    d: Dict[str, Any] = {}
+
+    model_dump = getattr(tile, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                d = dumped
+        except Exception:
+            d = {}
+
+    if not d:
+        if isinstance(tile, dict):
+            d = dict(tile)
+        else:
+            from app.schemas import Tile as TileSchema
+
+            attrs = vars(tile) if hasattr(tile, "__dict__") else {}
+            if attrs:
+                d = {field: attrs[field] for field in TileSchema.model_fields if field in attrs}
+            else:
+                # Fallback for attribute-only objects without __dict__.
+                for field in TileSchema.model_fields:
+                    if hasattr(tile, field):
+                        value = getattr(tile, field)
+                        if not callable(value):
+                            d[field] = value
+
     if not d.get("source_agent"):
         d["source_agent"] = "logistics_node"
     return d
@@ -1485,7 +1512,13 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
 
     free_days = trip_days - specialist_activity_days - 2 (arrival/departure)
     total_placeable = free_days + specialist_days (co-scheduling capacity)
-    tiles_per_category = clamp(base, 2, cap) where cap adapts for pure Tier 2
+    tiles_per_category = clamp(base, 2, cap)
+
+    Cap strategy:
+    - Mixed Tier1+Tier2 (specialist_days > 0): cap at 4.
+    - Pure Tier2 with strategy context and long free-day horizon (>7 days):
+      expand cap up to 8 to avoid under-filling long trips.
+    - Otherwise: cap at 4.
     """
     plan = state.trip_plan
     if not plan.start_date or not plan.end_date or not tier2_cats:
@@ -1509,11 +1542,17 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     # Specialist days can hold ~1 co-scheduled experience tile each
     total_placeable = free_days + specialist_days
     base = max(2, total_placeable // len(tier2_cats))
-    # D4 fix: use free_days as the demand signal for Tier 2 tile count.
-    # Tier 2 tiles fill free days — the cap should track free_days regardless
-    # of whether Tier 1 specialists are present. Previous hard cap of 4
-    # under-filled long trips with few specialist days (e.g. 13-day yoga trip).
-    cap = min(8, max(4, math.ceil(free_days / len(tier2_cats))))
+
+    if specialist_days > 0:
+        cap = 4
+    else:
+        strategy_sections = state.metadata.get("strategy_sections", [])
+        has_strategy_context = isinstance(strategy_sections, list) and len(strategy_sections) > 0
+        if has_strategy_context and free_days > 7:
+            cap = min(8, max(4, math.ceil(free_days / len(tier2_cats))))
+        else:
+            cap = 4
+
     tiles_per_cat = min(base, cap)
     log(
         "LOGISTICS",

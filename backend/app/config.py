@@ -171,6 +171,8 @@ class Settings(BaseSettings):
     specialist_cache_ttl_hours: int = 168
     # Nondeterministic LLM — shorter TTL lets model improvements flow through
     experience_cache_ttl_hours: int = 72
+    # Google Places enrichment of LLM-generated activities (Tier1/Tier2)
+    google_places_enrichment_cache_ttl_hours: int = 168
     # Wipe L2 (PostgreSQL) on session reset — for local dev/testing only
     # Set CLEAR_L2_ON_RESET=true in .env; leave unset in production
     clear_l2_on_session_reset: bool = os.getenv("CLEAR_L2_ON_RESET", "false").lower() == "true"
@@ -196,7 +198,9 @@ class Settings(BaseSettings):
     # =============================================================================
     rate_limit_enabled: bool = True
     admin_api_key: str = os.getenv("ADMIN_API_KEY", "")
-    max_sessions_per_ip_hour: int = 10  # Session creation throttle per IP
+    max_sessions_per_ip_hour: int = int(
+        os.getenv("MAX_SESSIONS_PER_IP_HOUR", "10")
+    )  # Session creation throttle per IP
 
     # Validation cache settings
     validation_cache_size: int = 5000  # Increased for progressive learning of unknown places

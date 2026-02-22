@@ -14,6 +14,7 @@ Usage:
 
 import asyncio
 import logging
+import os
 from dataclasses import field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional
@@ -36,16 +37,24 @@ logger = logging.getLogger(__name__)
 
 
 def _get_config():
-    """Get Amadeus configuration from settings (env-backed via pydantic-settings)."""
-    from app.config import settings
+    """Get Amadeus configuration from current environment values."""
+
+    def _int_env(name: str, default: int) -> int:
+        raw = os.getenv(name)
+        if raw is None or raw == "":
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            return default
 
     return {
-        "api_key": settings.amadeus_api_key,
-        "api_secret": settings.amadeus_api_secret,
-        "base_url": settings.amadeus_base_url,
-        "requests_per_minute": settings.amadeus_requests_per_minute,
-        "circuit_breaker_threshold": settings.amadeus_circuit_breaker_threshold,
-        "circuit_breaker_timeout": settings.amadeus_circuit_breaker_timeout,
+        "api_key": os.getenv("AMADEUS_API_KEY"),
+        "api_secret": os.getenv("AMADEUS_API_SECRET"),
+        "base_url": os.getenv("AMADEUS_BASE_URL", "https://test.api.amadeus.com"),
+        "requests_per_minute": _int_env("AMADEUS_REQUESTS_PER_MINUTE", 30),
+        "circuit_breaker_threshold": _int_env("AMADEUS_CIRCUIT_BREAKER_THRESHOLD", 5),
+        "circuit_breaker_timeout": _int_env("AMADEUS_CIRCUIT_BREAKER_TIMEOUT", 60),
     }
 
 

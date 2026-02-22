@@ -68,6 +68,8 @@ Map each changed file to its affected SSoT doc(s):
 | `frontend/app/page.tsx`                          | `docs/ux_unified_architecture.md` (landing page, entry point)                        |
 | `.claude/commands/*`                             | `docs/repo_structure.md` (Claude Code slash commands)                                |
 | `.claude/agents/*`                               | `docs/repo_structure.md` (Claude Code agent specs)                                   |
+| `.codex/commands/*`                              | `docs/repo_structure.md` (Codex command specs)                                       |
+| `.codex/agents/*`                                | `docs/repo_structure.md` (Codex agent specs)                                         |
 | `.codex/*`                                       | `docs/repo_structure.md` (Codex skills/config tree)                                  |
 | `backend/requirements.txt`                       | `docs/repo_structure.md` (Python dependencies)                                       |
 | `frontend/package.json`                          | `docs/repo_structure.md` (Node dependencies)                                         |
@@ -161,22 +163,24 @@ For EACH affected doc, read the current version, then apply ONLY the sections af
 ## Step 3: Update Agent Specs and CLAUDE.md
 
 Agents drift from two sources: invariant changes (rare) and file inventory changes (common). Check BOTH on every run.
+Treat `.claude/agents/` as canonical agent specs. Treat `.codex/agents/` as wrappers that point to canonical files.
 
 ### 3A: File Inventory Check (every run)
 
-For each specialist agent, compare the File Ownership section against the diff:
+For each specialist agent, compare the canonical `.claude/agents/*` File Ownership section against the diff:
 
 - If a file was CREATED in an agent's owned directories → add to File Ownership
 - If a file was DELETED or RENAMED → update File Ownership
 - If a new directory was created under an agent's domain → add it
 
 For each new file added to an agent's domain, evaluate whether a trigger keyword should be added to the agent's YAML `description` field. Add triggers for new concepts (services, utilities, patterns). Do NOT add triggers for test files, minor helpers, or config tweaks.
+After updating a canonical `.claude/agents/*` file, verify the corresponding `.codex/agents/*` wrapper still points to it.
 
 ### 3B: Invariant/Pattern Check (only when patterns change)
 
 Most diffs do NOT require updates beyond file inventory. Only update agent content sections when the diff changes a PATTERN or INVARIANT, not just a feature.
 
-**`.claude/agents/backend-specialist.md`** — Update content when:
+**`backend-specialist` canonical spec (`.claude/agents/backend-specialist.md`)** — Update content when:
 
 - New LangGraph node added or removed (update invariants — also triggers CLAUDE.md review)
 - Routing logic changed (update routing gotcha)
@@ -188,7 +192,7 @@ Most diffs do NOT require updates beyond file inventory. Only update agent conte
 - LLM factory provider or param change (update LLM factory gotcha)
 - DO NOT update for: new specialist entry, new endpoint, bug fixes, prompt changes
 
-**`.claude/agents/frontend-specialist.md`** — Update content when:
+**`frontend-specialist` canonical spec (`.claude/agents/frontend-specialist.md`)** — Update content when:
 
 - New DS token category added to design-system.ts (update token reference)
 - New view state or timeline variant (update halt conditions)
@@ -199,7 +203,7 @@ Most diffs do NOT require updates beyond file inventory. Only update agent conte
 - New state guard or mutex pattern (update halt conditions)
 - DO NOT update for: new component, styling tweaks, animation changes, mobile fixes
 
-**`.claude/agents/code-reviewer.md`** — Update content when:
+**`code-reviewer` canonical spec (`.claude/agents/code-reviewer.md`)** — Update content when:
 
 - New invariant discovered (add to review checklist)
 - New anti-pattern found during debugging (add to anti-patterns list)
@@ -242,6 +246,7 @@ Read the `## 🎯 Current Sprint` section in `CLAUDE.md`.
 
 - ONLY update sections directly affected by the diff. Never rewrite unchanged sections.
 - PRESERVE existing formatting, table structures, and section ordering in all docs.
+- Keep `.claude/agents/*` as canonical, and keep `.codex/agents/*` wrappers pointing to the matching canonical file.
 - If a doc section needs updating but you're unsure of the correct new content, flag it with `<!-- TODO: verify after [description of change] -->` instead of guessing.
 - If no docs need updating (e.g., test-only changes, comment edits), say so and stop.
 - Max 6 doc files modified per run. If more are affected, prioritize by: plan_graph_analysis > data-contracts > ux_unified_architecture > design-system > repo_structure > agents/CLAUDE.md.

@@ -446,7 +446,7 @@ export function Stepper({ value, min, max, onChange }) {
 | Text Primary | White | `dark:text-white` |
 | Text Secondary | Zinc-400 | `dark:text-zinc-400` |
 | Primary Action | Emerald-600 | `dark:bg-emerald-600` |
-| Primary Glow | Emerald | `shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]` |
+| Primary Glow | Emerald | `shadow-[0_0_14px_-8px_rgba(16,185,129,0.25)]` |
 | Input Focus Glow | Emerald | `shadow-[0_0_20px_-5px_rgba(16,185,129,0.1)]` |
 
 ### Restricted Colors
@@ -917,10 +917,10 @@ All primary action buttons in Dark Mode should have the **Emerald Glow** effect:
 // Primary Button (Dark Mode)
 canSave
   ? cn(
-      'bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800',
+      'bg-zinc-900 text-white shadow-sm shadow-zinc-900/8 hover:bg-zinc-800',
       // Dark: Glowing Emerald
       'dark:bg-emerald-600 dark:hover:bg-emerald-500',
-      'dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]'
+      'dark:shadow-[0_0_14px_-8px_rgba(16,185,129,0.25)]'
     )
   : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600 cursor-not-allowed'
 ```
@@ -2544,10 +2544,10 @@ All elevated surfaces use the custom shadow tokens from `tailwind.config.mts`. R
 
 | Class | Approved Context |
 |-------|-----------------|
-| `shadow-sm` | Active/selected pill lifted state, icon circles (timeline node, airline logo), small inline buttons |
+| `shadow-sm` | Active/selected pill lifted state, icon circles (timeline node, airline logo), small inline buttons, primary action button light-mode baseline (`DS.actions.primary`) |
 | `shadow-md` | Active/selected pill per DS.pills.active spec; user bubble hover in chat (`shadow-md hover:shadow-lg` is documented for commander bubble) |
 | `shadow-2xl` | Toast notifications (Section 13), glass modals/sheets matching `DS.materials.glass` |
-| `shadow-lg` | Primary action button light-mode shadow (`shadow-lg shadow-zinc-900/10` per DS.actions.primary), input focus state (`focus:shadow-lg focus:shadow-zinc-200/50`) |
+| `shadow-lg` | Input focus state (`focus:shadow-lg focus:shadow-zinc-200/50`) |
 | `shadow-xl` | Mapbox map markers only (third-party context) |
 | `dark:shadow-none` | Gallery image wrappers in dark mode (images provide their own visual separation) |
 

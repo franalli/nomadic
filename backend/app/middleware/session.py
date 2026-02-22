@@ -37,7 +37,7 @@ SESSION_COOKIE_NAME = "session_id"
 CSRF_COOKIE_NAME = "csrf"
 SESSION_MAX_AGE = 14 * 24 * 60 * 60  # 14 days in seconds
 
-# Session creation throttle (env-gated for curl E2E tests: MAX_SESSIONS_PER_IP_HOUR=100)
+# Session creation throttle (override with MAX_SESSIONS_PER_IP_HOUR for local E2E)
 _session_creation_counter: TTLCache = TTLCache(maxsize=10_000, ttl=3600)
 _session_creation_lock = asyncio.Lock()
 _MAX_SESSIONS_PER_IP_PER_HOUR = settings.max_sessions_per_ip_hour

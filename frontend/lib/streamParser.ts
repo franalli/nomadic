@@ -8,7 +8,7 @@
 
 import { debugLog } from '@/lib/debug';
 import type { PlanDocumentData } from '@/types/document';
-import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
+import type { GenerationState } from '@/types/plan-envelope';
 
 type StreamEnvelope = Partial<PlanDocumentData> & {
   generation?: GenerationState;
@@ -22,7 +22,7 @@ export type StreamEvent =
   | { type: 'envelope'; plan_envelope: StreamEnvelope }
   | {
       type: 'done';
-      plan_view_state: PlanViewState;
+      plan_view_state: 'S3_ITINERARY_READY' | 'S3_EDITING' | 'S3_PARTIAL_CONFLICT';
       dropped_preferred_count?: number;
       warnings?: string[];
       version?: number;
@@ -72,6 +72,7 @@ export function createStreamParser(onEvent: (event: StreamEvent) => void) {
         try {
           event = JSON.parse(line) as StreamEvent;
         } catch (e) {
+          console.error('[streamParser] Failed to parse stream line');
           debugLog('Failed to parse stream line:', line, e);
           continue;
         }
@@ -89,6 +90,7 @@ export function createStreamParser(onEvent: (event: StreamEvent) => void) {
         try {
           event = JSON.parse(buffer) as StreamEvent;
         } catch (e) {
+          console.error('[streamParser] Failed to parse final buffer');
           debugLog('Failed to parse final buffer:', buffer, e);
           buffer = '';
           return;
@@ -143,6 +145,17 @@ export async function consumeNdjsonEnvelopeStream(
         callbacks.onProgress?.(event);
         return;
       case 'done':
+        {
+          const doneState = (event as { plan_view_state?: unknown }).plan_view_state;
+          if (
+            doneState !== 'S3_ITINERARY_READY' &&
+            doneState !== 'S3_EDITING' &&
+            doneState !== 'S3_PARTIAL_CONFLICT'
+          ) {
+            callbacks.onUnknown?.(event);
+            return;
+          }
+        }
         callbacks.onDone?.(event);
         return;
       case 'error':
@@ -158,5 +171,6 @@ export async function consumeNdjsonEnvelopeStream(
     if (done) break;
     parser.feed(decoder.decode(value, { stream: true }));
   }
+  parser.feed(decoder.decode());
   parser.flush();
 }

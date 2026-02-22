@@ -41,25 +41,50 @@ You review, analyze, find bugs, suggest tests, and audit security.
 
 ## Specialist Delegation
 
-When specialist agents are available (for example under `.claude/agents/`), use:
+When specialist agents are available (location: `.codex/agents/`), use:
 
 - `backend-specialist` for Python/planner/services/FastAPI/LLM factory work
 - `frontend-specialist` for React/TypeScript/Zustand/styling/design system work
 - `code-reviewer` for read-only multi-file review after execution
 
+Agent model and source-of-truth notes:
+
+- In this manual, always use `.codex/agents/` and `.codex/skills/` paths.
+- Most agents inherit the session model.
+- `code-reviewer` is explicitly set to Opus for deeper review quality.
+
+Agent spec files are expected at:
+
+- `.codex/agents/backend-specialist.md`
+- `.codex/agents/frontend-specialist.md`
+- `.codex/agents/code-reviewer.md`
+
+Skill specs are expected at:
+
+- `.codex/skills/*/SKILL.md`
+- Do not use `codex/skills/*` (non-dot path)
+
 Delegation rules:
 
+- Before delegating, read the matching spec in `.codex/agents/*.md` and apply it as the task brief.
 - Multi-file changes (3+ files): delegate to a specialist.
 - Complex logic (constraint guard, builders, state machines): delegate.
 - Cross-stack work: backend specialist first, then frontend specialist; never both at once.
 - Post-task review on multi-file work: always run `code-reviewer`.
 - After every delegation, retrieve and present results immediately.
 
+When to work directly:
+
+- Single-file fixes, one-liners, and typos.
+- Exploratory or interactive tasks that need inline progress.
+- Reading files or answering questions about code.
+
 ## Parallelism Rules
 
 Run concurrently when safe:
 
 - Multiple file reads/greps/find operations
+- Independent node file changes
 - Lint, build, and tests across independent stacks
 - Independent backend and frontend tasks
 
@@ -85,16 +110,21 @@ If a task touches both frontend and backend zones, confirm scope before proceedi
 
 ## Governance - Single Sources of Truth
 
-Read these before reviewing architecture, APIs, schemas, frontend state, or UI rendering:
+ALWAYS read these before reviewing architecture, APIs, schemas, frontend state, or UI rendering:
+These four docs override your assumptions. Read before generating code.
 
 - `docs/plan_graph_analysis.md`
   - Governs backend architecture and node structure.
+  - MUST verify plan against spec before writing planner code.
 - `docs/design-system.md`
   - Governs UI styling, tokens, and component patterns.
+  - All React components must use these tokens. No invented Tailwind values.
 - `docs/ux_unified_architecture.md`
   - Governs view states, rendering logic, and UX flow.
+  - Never swap renderers. `StrategyStageRenderer` adapts by data density.
 - `docs/data-contracts.md`
   - Governs API routes, schemas, and state store shape.
+  - Check before modifying API endpoints, schemas, or state shape.
 
 ## Architecture and Invariants
 
@@ -110,7 +140,7 @@ Read these before reviewing architecture, APIs, schemas, frontend state, or UI r
 5. Safe routing: LLM-based intent classification via `settings.router_model`, no regex routing.
 6. Constraint injector: Specialist runs before Architect calls tools.
 7. One voice: Synthesizer enforces consistent tone across nodes.
-8. Centralized LLM factory: `get_llm_by_model()` handles provider detection, model params, and structured output retry.
+8. Centralized LLM factory: `get_llm_by_model()` handles provider detection, model params, and structured output retry. Models are configured via `settings.*_model` env vars.
 
 ### Stack
 
@@ -163,9 +193,16 @@ docker compose up db --build
 
 ## Performance Notes
 
-- Synthesizer model routing uses `_MODEL_BY_COMPLEXITY`; do not change without quality measurement.
+- Synthesizer model routing uses `_MODEL_BY_COMPLEXITY`; models are configured via `settings.*_model` env vars; do not change routing without quality measurement.
 - Prompt templates are cached in memory. Restart server after modifying:
   - `backend/app/prompts/synthesizer.txt`
+
+## Response Style
+
+- Skip preamble. Do not explain what you are about to do; just do it.
+- Make the change, show the diff, done.
+- Ask clarifying questions before writing code, not after.
+- After completing all changes, give one summary: files modified, key logic changes, and follow-ups. No narration during execution.
 
 ## Review Workflow
 
@@ -181,8 +218,11 @@ For each finding, provide severity, exact file path, and line reference.
 
 ## Context Management
 
+- `/compact` after completing major features or switching focus areas.
+- `/clear` when switching between frontend and backend work.
 - Reference specific files, not directories.
 - Avoid scanning whole directories or `node_modules`.
+- Avoid loading all spec docs at once.
 - Keep context tight and task-scoped.
 - If switching between backend and frontend concerns, reset context and re-check SSoT docs.
 
@@ -194,3 +234,13 @@ After context reset/compaction:
 2. Check `Current Sprint`.
 3. Confirm the next task with the user (do not assume).
 4. Read only the specific files involved before acting.
+
+## Auto-Compact Preservation
+
+When auto-compacting, preserve verbatim:
+
+- `Current Sprint` section
+- `Hard Rules` section (all 12 rules)
+- SSoT governance pointers
+- File paths and function signatures currently being modified
+- Domain safety rules (for example, diving 24-hour no-fly buffer)

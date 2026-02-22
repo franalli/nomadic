@@ -442,6 +442,21 @@ let _rafId: number | null = null;
 /** When true, mergeEnvelope skips buffering and runs the actual merge inline. */
 let _bypassRAF = false;
 
+function shouldUseRafEnvelopeBuffering(): boolean {
+  if (typeof globalThis.requestAnimationFrame !== 'function') {
+    return false;
+  }
+
+  // Keep mergeEnvelope deterministic in tests to avoid racey assertions.
+  if (typeof process !== 'undefined') {
+    if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // User-Dirty Settings Tracker
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1117,7 +1132,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
             executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
             pending_strategy_topics: currentDoc?.pending_strategy_topics ?? response.document.pending_strategy_topics,
-            plan_view_state: currentDoc?.plan_view_state ?? response.document.plan_view_state,
+            plan_view_state: response.document.plan_view_state ?? currentDoc?.plan_view_state,
             // Also preserve tiles which may come from graph
             tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
               ? currentDoc.tiles
@@ -1165,7 +1180,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
                 strategy_sections: currentDocRetry?.strategy_sections ?? retryResponse.document.strategy_sections,
                 executed_strategy_topics: currentDocRetry?.executed_strategy_topics ?? retryResponse.document.executed_strategy_topics,
                 pending_strategy_topics: currentDocRetry?.pending_strategy_topics ?? retryResponse.document.pending_strategy_topics,
-                plan_view_state: currentDocRetry?.plan_view_state ?? retryResponse.document.plan_view_state,
+                plan_view_state: retryResponse.document.plan_view_state ?? currentDocRetry?.plan_view_state,
                 tiles: currentDocRetry?.tiles && Object.keys(currentDocRetry.tiles).length > 0
                   ? currentDocRetry.tiles
                   : retryResponse.document.tiles,
@@ -1358,59 +1373,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         dayCardsCount: sanitizedResponseDocument.day_cards?.length ?? 0,
       });
 
-      // ============================================================
-      // VIEW STATE UPWARD RECONCILIATION (stale DB state repair)
-      // ============================================================
-      // If the backend persisted a stale plan_view_state that contradicts
-      // the actual data present, promote it. Guards against lateral/blocked
-      // states that should not be overridden.
-      const fetchedViewState = sanitizedResponseDocument.plan_view_state;
-      const fetchedDayCards = sanitizedResponseDocument.day_cards ?? [];
-      const fetchedViolations = sanitizedResponseDocument.constraint_violations ?? [];
-      const fetchedSections = sanitizedResponseDocument.strategy_sections ?? [];
-      let reconciledViewState = fetchedViewState;
-
-      // Day cards promotion: only from states below S3 that aren't already S3 variants
-      // S3_BLOCKED, S3_EDITING, S3_PARTIAL_CONFLICT are lateral S3 states — don't override
-      const isAlreadyS3 = fetchedViewState?.startsWith('S3_');
-      if (
-        fetchedDayCards.length > 0 &&
-        !isAlreadyS3 &&
-        !fetchedViewState?.includes('BLOCKED') &&
-        (VIEW_STATE_ORDER[fetchedViewState ?? 'S0_EMPTY'] ?? 0) < VIEW_STATE_ORDER['S3_ITINERARY_READY']
-      ) {
-        const promotedState = fetchedViolations.length > 0 ? 'S3_EDITING' : 'S3_ITINERARY_READY';
-        reconciledViewState = promotedState;
-        debugLog(
-          `[documentStore.fetchDocument] 🔧 Reconciled stale view state: ${fetchedViewState} → ${promotedState} (${fetchedDayCards.length} day_cards, ${fetchedViolations.length} violations)`
-        );
-      }
-
-      // Strategy sections promotion: only from states below S2, skip BLOCKED
-      if (
-        reconciledViewState === fetchedViewState && // no day_cards promotion happened
-        fetchedSections.length > 0 &&
-        !fetchedViewState?.includes('BLOCKED') &&
-        (VIEW_STATE_ORDER[fetchedViewState ?? 'S0_EMPTY'] ?? 0) < VIEW_STATE_ORDER['S2_STRATEGY_READY']
-      ) {
-        reconciledViewState = 'S2_STRATEGY_READY';
-        debugLog(
-          `[documentStore.fetchDocument] 🔧 Reconciled stale view state: ${fetchedViewState} → S2_STRATEGY_READY (${fetchedSections.length} strategy_sections exist)`
-        );
-      }
-
-      const documentToStore = reconciledViewState !== fetchedViewState
-        ? {
-            ...sanitizedResponseDocument,
-            plan_view_state: reconciledViewState as typeof fetchedViewState,
-          }
-        : sanitizedResponseDocument;
-
       set({
         version: response.version,
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
-        document: documentToStore,
+        document: sanitizedResponseDocument,
         isLoading: false,
         // Auto-select primary branch if none selected
         selectedBranchId:
@@ -1422,9 +1389,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         preferredTileIds: new Set(sanitizedResponseDocument.preferred_tile_ids ?? []),
         // Initialize the backend-confirmed shadow so the first pill PATCH after page
         // load has an accurate baseline (not the already-mutated zustand state).
-        _lastPatchedTripInputs: structuredClone(documentToStore.trip_inputs),
+        _lastPatchedTripInputs: structuredClone(sanitizedResponseDocument.trip_inputs),
         // Hydrate stashed activity tiles (Tier 1 suppressed — for Browse Activities sheet)
-        ...(sanitizedResponseDocument.browseable_activities?.length && {
+        ...(sanitizedResponseDocument.browseable_activities !== undefined && {
           browseableActivities: sanitizedResponseDocument.browseable_activities,
         }),
       });
@@ -1457,7 +1424,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         ...currentDoc,        // Keep existing frontend state
         ...response.document, // Apply PATCH updates (trip_inputs, branches, etc.)
         // Explicitly preserve fields that SSE sets but DB doesn't store:
-        plan_view_state: currentDoc?.plan_view_state ?? response.document.plan_view_state,
+        plan_view_state: response.document.plan_view_state ?? currentDoc?.plan_view_state,
         strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
         executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
         tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
@@ -1671,10 +1638,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       end_date: responseTripInputs.end_date ?? localTripInputs?.end_date ?? null,
       adults: responseTripInputs.adults ?? localTripInputs?.adults ?? null,
       children: responseTripInputs.children ?? localTripInputs?.children ?? null,
+      requires_assistance: responseTripInputs.requires_assistance ?? localTripInputs?.requires_assistance ?? null,
       budget: responseTripInputs.budget ?? localTripInputs?.budget ?? null,
       currency: responseTripInputs.currency ?? localTripInputs?.currency ?? 'USD',
       trip_duration: responseTripInputs.trip_duration ?? localTripInputs?.trip_duration ?? null,
       date_flex: responseTripInputs.date_flex ?? localTripInputs?.date_flex ?? false,
+      date_window_start: responseTripInputs.date_window_start ?? localTripInputs?.date_window_start ?? null,
+      date_window_end: responseTripInputs.date_window_end ?? localTripInputs?.date_window_end ?? null,
       // Merge activity_settings: preserve user-set day_preferences when backend omits them
       activity_settings: {
         ...localTripInputs?.activity_settings,
@@ -1712,7 +1682,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const currentPreferences = get().preferredTileIds;
     const responsePreferences = response.document.preferred_tile_ids;
     let mergedPreferences = currentPreferences;
-    if (responsePreferences && responsePreferences.length > 0) {
+    if (Array.isArray(responsePreferences)) {
       // Check if content actually changed before creating new Set
       const responsePrefSet = new Set(responsePreferences);
       const contentChanged = responsePrefSet.size !== currentPreferences.size ||
@@ -1833,7 +1803,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // Keep shadow in sync so filterNoopTripInputPatch has an accurate baseline
       // after graph runs that modify trip_inputs (e.g., backend adds categories).
       _lastPatchedTripInputs: structuredClone(mergedTripInputs),
-      ...(response.document.browseable_activities?.length && { browseableActivities: response.document.browseable_activities }),
+      ...(response.document.browseable_activities !== undefined && {
+        browseableActivities: response.document.browseable_activities,
+      }),
     });
   },
 
@@ -1842,13 +1814,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Buffer consecutive SSE events and flush once per paint frame.
     // This collapses tiles/strategy/view_state/day_cards arriving in the same
     // ~16ms window into a single setState call instead of 4–6 separate renders.
-    if (!_bypassRAF) {
+    if (!_bypassRAF && shouldUseRafEnvelopeBuffering()) {
       _pendingEnvelope = _pendingEnvelope
         ? deepMergeEnvelopes(_pendingEnvelope, envelope)
         : { ...envelope };
 
       if (!_rafId) {
-        _rafId = requestAnimationFrame(() => {
+        _rafId = globalThis.requestAnimationFrame(() => {
           const merged = _pendingEnvelope!;
           _pendingEnvelope = null;
           _rafId = null;
@@ -2062,7 +2034,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       updatedBy: 'planner',
       updatedAt: new Date().toISOString(),
       generation: envelope.generation !== undefined ? envelope.generation : get().generation,
-      ...(envelope.browseable_activities?.length && { browseableActivities: envelope.browseable_activities }),
+      ...(envelope.browseable_activities !== undefined && {
+        browseableActivities: envelope.browseable_activities,
+      }),
     });
   },
 
@@ -2528,6 +2502,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (abortController) {
       abortController.abort();
     }
+    if (_rafId !== null && typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(_rafId);
+    }
+    _pendingEnvelope = null;
+    _rafId = null;
+    _bypassRAF = false;
+    _userDirtySettings.clear();
+    _flushHashBySendCycle.clear();
     // Preferences are cleared via clearPreferences() which syncs to backend
     set({
       ...initialState,

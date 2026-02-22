@@ -81,8 +81,8 @@ export const DS = {
       px-6 py-3 rounded-xl
       font-bold text-sm
       transition-all duration-200 active:scale-[0.98]
-      bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800
-      dark:bg-emerald-600 dark:text-white dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)] dark:hover:bg-emerald-500
+      bg-zinc-900 text-white shadow-sm shadow-zinc-900/8 hover:bg-zinc-800
+      dark:bg-emerald-600 dark:text-white dark:shadow-[0_0_14px_-8px_rgba(16,185,129,0.25)] dark:hover:bg-emerald-500
     `,
 
     /**
