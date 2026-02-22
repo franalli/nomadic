@@ -32,6 +32,9 @@
 | POST   | `/api/document/apply-arrangement` | Validate + persist block moves with optimistic concurrency | `ArrangementApplyRequest{moves: BlockMove[], expected_version: int}` | `ArrangementResult{valid, violations, day_cards?, version?}` |
 | POST   | `/api/document/remove-block` | Remove a single block from the itinerary (pure Python, <10ms, no LLM) | `RemoveBlockRequest{block_id, day_number, expected_version}` | `RemoveBlockResponse{day_number, day_card, version, removed_block_id}` |
 | POST   | `/api/document/restore-snapshot` | Restore day_cards to a previous snapshot (undo stack; pure Python, <10ms, no LLM) | `RestoreSnapshotRequest{day_cards, expected_version}` | `RestoreSnapshotResponse{day_cards, version}` |
+| POST   | `/api/activities/browse`               | Browse Google Places activities for a free/buffer day | `BrowseActivitiesRequest{destination, day_number?, date?, hotel_location?, categories?}` | `{tiles: BrowseTile[], total: int}` |
+| POST   | `/api/document/insert-activity-block`  | Insert a browse tile as a block into a day (pure Python, no LLM) | `InsertActivityBlockRequest{day_number, tile, expected_version?}` | `InsertActivityBlockResponse{day_number, day_card, version, inserted_block_id}` |
+| GET    | `/api/specialist/{section_id}/enrichment` | Fetch Phase B enrichment status for a specialist section | -- | `SpecialistEnrichmentResponse{section_id, status: 'ready'|'pending', data?}` |
 
 ### Documents (Plan State)
 
@@ -206,6 +209,11 @@ PlanDocumentData
   |           |-- image_url?, duration?, coordinates: {lat, lng}?
   |           |-- scheduled_time?, logistics_details?, hotel_name?
   |           |-- booked_tile?, requires_booking, booking_category?
+  |           |-- rating?: number (Google Places star rating — browse-added activities)
+  |           |-- review_count?: number (Google Places review count)
+  |           |-- price_level?: number (Google Places price level: 0=free, 1=$, 2=$$, 3=$$$, 4=$$$$)
+  |           |-- google_place_id?: string (Google Places ID)
+  |           |-- deeplink?: string (Google Maps URL)
   |           '-- preference_status?, preference_override_reason?, alternative_tile_id?
   |           NOTE: activity_type carries the display title for the card
   |           (e.g. "Potato Head Beach Club"). specialist_type carries the
@@ -228,6 +236,7 @@ PlanDocumentData
   |-- open_decisions[]
   |-- itinerary_overview, itinerary_assumptions
   |-- applied_updates[], undo_snapshot, update_provenance
+  |-- browseable_activities: Tile[] (Tier-1-suppressed Google Places tiles for Browse Activities sheet; stashed by logistics_node)
   |-- ack_status, ack_updates[]
   |-- origin_just_set
   |-- tiles_replaced (bool: frontend should REPLACE tiles, not merge additively)
@@ -261,6 +270,10 @@ PlanDocumentData
 | `RemoveBlockResponse`         | Response from remove-block: `day_number`, `day_card` (updated day card dict), `version` (new version), `removed_block_id`                                                                                                                                                                                                                                                                                       |
 | `RestoreSnapshotRequest`      | Restore day_cards to a previous snapshot (undo stack): `day_cards: List[Dict]`, `expected_version: int` (optimistic concurrency). 409 on version conflict. No constraint validation — snapshot was captured immediately before the mutation. Rate limited to 20/min. |
 | `RestoreSnapshotResponse`     | Response from restore-snapshot: `day_cards: List[Dict]`, `version: int`                                                                                                                                                                                               |
+| `BrowseActivitiesRequest`       | Browse activities: destination, day_number?, date?, hotel_location?: {lat, lng}, categories?: string[] (default: cultural/food/nature/tours) |
+| `InsertActivityBlockRequest`    | Insert browse tile: day_number, tile (BrowseTile dict), expected_version? (deprecated — no longer enforced) |
+| `InsertActivityBlockResponse`   | Insert result: day_number, day_card, version, inserted_block_id |
+| `SpecialistEnrichmentResponse`  | Phase B enrichment: section_id, status ('ready'\|'pending'), data?: Dict |
 
 ---
 
@@ -323,7 +336,7 @@ Hydration guards:
 | `BookingState`     | idle, loading, ready, error                                        | Per-tab booking status                                                                                                                                                                                                          |
 | `TileType`         | flight, hotel, activity                                            | Tile category                                                                                                                                                                                                                   |
 | `TileProvider`     | expedia, booking, google_places, amadeus, curated, mock, unknown   | Booking/data partner (expanded to track all tile data sources)                                                                                                                                                                  |
-| `PartnerPrice`     | `{partner, price, currency, url?, logo?, isBestPrice?}`            | Frontend-only (`frontend/types/tile.ts`): partner pricing entry for multi-partner price comparison on BookableCard / TileDetailsModal. Not on Pydantic model. |
+| `PartnerPrice`     | `{partner, price, currency, url?, logo?, isBestPrice?}`            | Frontend-only (`frontend/types/tile.ts`): partner pricing entry for multi-partner price comparison on TileCard / TileDetailsModal. Not on Pydantic model. |
 | `AckStatus`        | applied, partial, no_change, needs_clarification, failed, rejected | Update acknowledgement status. `rejected` used for route violations (e.g., same-city error). Backend Literal does NOT include `pending`; frontend types (`chat.ts`, `plan-envelope.ts`) add `pending` as a frontend-only value. |
 
 ---
@@ -350,13 +363,14 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | Generation     | `generation` (`GenerationState \| null`) — envelope-driven generation status stored at root store level (not persisted in `document`) |
 | Cart           | `cartTileIds` (Set)                                                                               |
 | LLM Updates    | `llmUpdatedFields` (Set of field names LLM recently modified)                                     |
+| Browse Activities | `browseableActivities` (Array<Record<string, unknown>>) — Tier-1-suppressed activity tiles stashed by logistics_node; hydrated from `document.browseable_activities` and SSE envelope |
 
 ### Key Actions
 
 | Action                                                             | Purpose                                                                                                                                 |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `setFromPlanResponse()`                                            | Merge backend GraphPlanResponse into store (destination lock, S3-safe view state guard including lateral S3 transitions, tile/section merge, image URL sanitization) |
-| `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization) plus root-level `generation` merge from envelope |
+| `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization) plus root-level `generation` merge from envelope. Uses RAF-batched buffering (Layer 1 jank reduction) — consecutive SSE events within the same ~16ms animation frame are deep-merged and flushed as a single setState call, collapsing 6 SSE events → 2-3 React renders. Module-level `_pendingEnvelope` + `_rafId` state. Can be bypassed with `_bypassRAF=true` (set during the flush itself to prevent recursion). |
 | `updateTripInputs()`                                               | Sync local trip input update (no API call)                                                                                              |
 | `commitTripInputs()`                                               | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful). Filters no-op `trip_inputs` fields before PATCH using `_lastPatchedTripInputs` as baseline (not live zustand state — `updateTripInputs()` already mutated it); if empty after filtering, skips network write and returns success. Successful commits update `_lastPatchedTripInputs` and clear matching keys from `_userDirtySettings`. |
 | `ensureSettingsFlushed()`                                          | Flush only **dirty** settings before graph run (prevents overwriting backend-derived values). Per-send-cycle payload hash dedupe skips duplicate flush PATCHes for the same request cycle. |
@@ -375,7 +389,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | `setExpandInProgress()`                                            | Expand-itinerary mutex flag                                                                                                             |
 | `claimFillDay(day)`                                                | Per-day fill mutex: returns `false` if day already in flight (prevents concurrent fill-day on same day from different call sites)       |
 | `releaseFillDay(day)`                                              | Release per-day fill mutex after fill-day completes or fails                                                                            |
-| `removeBlock(blockId, dayNumber)`                                  | POST `/api/document/remove-block` with optimistic concurrency. Uses `claimMutation()`/`releaseMutation()` mutex. On success, replaces the affected `day_card` in store, bumps `version`, and sets `undoEntry` (type: `remove_block`, label from block summary, snapshot of previous day_cards). Throws `'VERSION_CONFLICT'` on 409. |
+| `removeBlock(blockId, dayNumber)`                                  | POST `/api/document/remove-block` with optimistic concurrency. **409 retry:** On version conflict, refetches the full document, syncs store state and snapshot, then retries once. Uses `claimMutation()`/`releaseMutation()` mutex. On success, replaces the affected `day_card` in store, bumps `version`, and sets `undoEntry`. `previousVersion` in undo entry is set from `result.version - 1` (not `prevVersion`) to stay correct after retry. |
 | `setUndoEntry(entry)`                                              | Set or clear the depth-1 undo entry (`UndoEntry \| null`)                                                                                                                                                                               |
 | `executeUndo()`                                                    | POST `/api/document/restore-snapshot` with `undoEntry.previousDayCards` + current `version`. Clears `undoEntry` immediately to prevent double-undo. Silently no-ops on 409 (plan was modified concurrently). On success, replaces `day_cards` and `version` in store. |
 | `claimMutation()` / `releaseMutation()`                            | Increment/decrement `_pendingMutations` counter for general mutation tracking                                                           |
@@ -433,12 +447,16 @@ Source: `frontend/lib/api.ts`
 | `validateArrangement()`      | POST `/api/document/validate-arrangement` | Check proposed block moves against constraints. Returns `{valid, violations[]}`. No LLM, target <50ms. |
 | `applyArrangement()`         | POST `/api/document/apply-arrangement` | Validate + persist block moves. Throws `'VERSION_CONFLICT'` on 409. On success, returns `{valid, violations, day_cards, version}` — caller must `mergeEnvelope({day_cards})` and `setState({version})` separately. |
 | `removeBlock()`              | POST `/api/document/remove-block` | Remove a single block. Throws `'VERSION_CONFLICT'` on 409. Returns `{day_number, day_card, version, removed_block_id}`. |
+| `browseActivities()`           | POST `/api/activities/browse`   | Browse Google Places activities for a destination. Params: `{destination, dayNumber?, date?, hotelLocation?, categories?}`. Returns `{tiles: BrowseTile[], total: number}`. |
+| `getSpecialistEnrichment()`    | GET `/api/specialist/{sectionId}/enrichment` | Fetch Phase B enrichment status for a local_expert section. Returns `{status: 'ready'|'pending', section_id, data?}` or `null` (404). 202 → `{status: 'pending'}`. |
 | `resetSession()`             | DELETE `/api/session`           | Clear session                                                                                                                                                                                                                 |
 | `fetchWithRetry()`           | (wraps apiFetch)                | Exponential backoff retry on transient errors                                                                                                                                                                                 |
 | `clearSessionLocalStorage()` | --                              | Clear session-related localStorage (preserves GDPR consent)                                                                                                                                                                   |
 | `isTransientError()`         | --                              | (module-private) Check if an error is retryable (timeout, network, 502/503/504)                                                                                                                                               |
 | `isTransientStatus()`        | --                              | (module-private) Check if HTTP status is retryable (502, 503, 504). 429 excluded — retrying amplifies rate limits.                                                                                                            |
 | `parseRetryAfter()`          | --                              | Parse `Retry-After` header from 429 response into numeric seconds (null if missing/unparseable)                                                                                                                               |
+
+**`BrowseTile` interface** (exported from `api.ts`): `{id, type, title, subtitle?, description?, image_url?, rating?, review_count?, location_label?, geo?: {lat, lng}, price_estimate?, source, provider, category, tags?, place_id?, maps_uri?}`
 
 ### Retry Logic
 

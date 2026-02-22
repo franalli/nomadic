@@ -62,7 +62,7 @@ backend/app/planner/
 ├── __init__.py              # Facade exports (stable public API)
 ├── hashing.py               # Stable hashing utilities (make_cache_key, field_hash)
 ├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing) + extract_token_usage(), resolve_schema_refs(), extract_json_content()
-├── llm_structured.py        # Structured output retry/provider compatibility (ainvoke_structured)
+├── patterns_registry.py     # Shared regex/keyword patterns (BUDGET_PATTERNS, TRAVELER_PATTERNS, SETTINGS_KEYWORDS)
 ├── test_mode.py             # Test mode detection
 ├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
 #   Frontend mirror: frontend/lib/specialists.ts (colors, icons, keywords, display names)
@@ -757,14 +757,17 @@ The "Concierge" node for city trips - ensures the Agent Feed is never empty. Use
 
 **Two-Phase Architecture:**
 
-**Phase A (Instant skeleton — 0ms, no LLM):** Runs synchronously inside the graph before any LLM call. Builds `constraints_applied` from static `_get_constraints_as_list()` data, fetches destination gallery (Vibe Trio), and emits a skeleton `StrategySection` with `travel_intelligence={}` via `build_local_expert_section()` + `upsert_section()`. The skeleton is in state immediately and triggers the `partial` SSE event downstream.
+**Phase A (Instant skeleton — 0ms, no LLM):** Runs synchronously inside the graph before any LLM call. Builds `constraints_applied` from static `_get_constraints_as_list()` data, populates `must_dos` from `_get_static_must_dos(plan.destination)` (returns the `must_dos` list from `LOCAL_EXPERT_CONSTRAINTS`; falls back to `[]` for unknown destinations, which Phase B LLM then fills), generates a smarter `one_liner` from warning-severity constraints (e.g., `"Paris: review booking_window requirements before your trip"`), extracts `principles` from warning-severity constraints (max 4), fetches destination gallery (Vibe Trio), and emits a skeleton `StrategySection` with `travel_intelligence={}` via `build_local_expert_section(principles=principles, must_dos=must_dos, ...)` + `upsert_section()`. The skeleton is in state immediately and triggers the `partial` SSE event downstream.
 
 **Phase B (Background LLM enrichment — non-blocking):** After Phase A completes, a closure capturing all required plan values (destination, dates, travelers) is registered in the module-level `_pending_enrichments` dict keyed by `session_id`. `streaming.py` fires this closure as an `asyncio.Task` **after** `db.commit()` (Phase B cannot be stomped by `apply_planner_update` and runs outside the graph's `asyncio.timeout()` context). The enrichment LLM call populates `travel_intelligence` and writes it back to the DB document.
 
 ```python
 # Phase A: instant skeleton
 constraint_list = _get_constraints_as_list(plan.destination)
-section = build_local_expert_section(destination=..., travel_intelligence={}, ...)
+must_dos = _get_static_must_dos(plan.destination)   # from LOCAL_EXPERT_CONSTRAINTS["must_dos"]; [] for unknown destinations
+principles = [c["description"] for c in constraint_list if c.get("severity") == "warning"][:4]
+one_liner = f"{plan.destination}: review {constraint_list[0]['type']} requirements before your trip" if constraint_list else ""
+section = build_local_expert_section(destination=..., travel_intelligence={}, principles=principles, must_dos=must_dos, ...)
 upsert_section(state.metadata, section, mode="appendable")  # in state immediately
 
 # Phase B: registered for post-commit fire (with TTL timestamp)
@@ -815,7 +818,15 @@ class LocalExpertOutput(BaseModel):
     quick_tips: List[str]
 ```
 
-**Note:** Phase B LLM call uses prompt-based JSON parsing (`max_tokens=8000`, `temperature=0.3`) — the full schema JSON (`_LOCAL_EXPERT_SCHEMA_JSON`, cached at module load) is injected into the system prompt; the LLM responds with raw JSON (no `with_structured_output` / function_calling). `extract_json_content()` strips markdown fences (closed and unclosed); `LocalExpertOutput.model_validate_json()` validates. On parse failure (`ValidationError`, `JSONDecodeError`, `TimeoutError`, empty content), `travel_intelligence` remains `{}` (Phase A skeleton is shown) — no exception propagation, no silent success. Static constraints from `_get_constraints_as_list()` (backed by `LOCAL_EXPERT_CONSTRAINTS`) are used directly in Phase A `constraints_applied` AND injected as grounding facts into the Phase B LLM prompt to prevent hallucination — they are NOT the sole output data. Each of the 12 categories is a nested Pydantic model. `asyncio.CancelledError` is always re-raised.
+**`LOCAL_EXPERT_CONSTRAINTS` format:** Each entry is a `dict` with two keys:
+- `"constraints"`: `list[dict]` — same constraint dicts as before (type, severity, description, etc.)
+- `"must_dos"`: `list[str]` — up to 5 destination-specific must-do activity strings (e.g., `"Watch the sunset from Tanah Lot temple"`)
+
+**Helper functions in `expert_constraints.py`:**
+- `_get_constraints_as_list(destination)` — returns the `constraints` list for the destination (empty list for unknown)
+- `_get_static_must_dos(destination)` — returns the `must_dos` list for the destination (empty list for unknown destinations; Phase B LLM fills these in for destinations not covered by the static data)
+
+**Note:** Phase B LLM call uses prompt-based JSON parsing (`max_tokens=8000`, `temperature=0.3`) — the full schema JSON (`_LOCAL_EXPERT_SCHEMA_JSON`, cached at module load) is injected into the system prompt; the LLM responds with raw JSON (no `with_structured_output` / function_calling). `extract_json_content()` strips markdown fences (closed and unclosed); `LocalExpertOutput.model_validate_json()` validates. On parse failure (`ValidationError`, `JSONDecodeError`, `TimeoutError`, empty content), `travel_intelligence` remains `{}` (Phase A skeleton is shown) — no exception propagation, no silent success. Static constraints from `_get_constraints_as_list()` (backed by `LOCAL_EXPERT_CONSTRAINTS["constraints"]`) are used directly in Phase A `constraints_applied` AND injected as grounding facts into the Phase B LLM prompt to prevent hallucination — they are NOT the sole output data. Each of the 12 categories is a nested Pydantic model. `asyncio.CancelledError` is always re-raised.
 
 **Exploration Mode Q&A:** When answering generic Q&A, the IntentRouter uses `_llm_fallback_answer` directly (not LocalExpert).
 
@@ -860,16 +871,19 @@ GooglePlacesProvider falls back to MockProvider when Places returns 0 results (q
 - `_activity_logistics_hash()`: destination, dates, travelers (adults + children), activity_skill_level, activity_categories
 - `_flight_logistics_hash()`: destination, origin, dates, travelers (adults + children), flight_settings
 
+**Auto-Upgrade Flights:** When `flights_requested` is still `"off"` but `plan.origin` is present (not null), LogisticsNode auto-upgrades flights to `"suggested"`. This mirrors the frontend logic in `documentStore.ts`. Updates `state.metadata["trip_inputs"]["booking_types"]["flights"] = "suggested"` to stay in sync with the response envelope.
+
 **Output:**
 
 - `state.tiles["flights"]` - Flight tiles for frontend display
 - `state.tiles["hotels"]` - Hotel tiles for frontend display
-- `state.tiles["activities"]` - Activity tiles for frontend display (tier-aware filtering: pure Tier 1 = full suppression, mixed = Tier 2 experience tiles only)
+- `state.tiles["activities"]` - Activity tiles for frontend display (tier-aware filtering: pure Tier 1 = per-category browse tiles stashed; mixed = Tier 2 experience tiles only)
 - `state.metadata["flight_options"]` - Backwards compatibility
 - `state.metadata["flight_search_possible"]` - Bool: flights requested + origin present + airport codes resolved
 - `state.metadata["flight_search_status"]` - `searched` or skip status (`skipped_disabled`, `skipped_no_origin`, `skipped_code_resolution`)
 - `state.metadata["flight_skip_reason"]` - Machine-readable skip reason for synthesizer grounding
 - `state.metadata["active_plan_categories"]` - Current Tier 1 + generated Tier 2 categories represented in this run (used by router as merge baseline on subsequent turns)
+- `state.metadata["browseable_activities"]` - Per-category browse tiles for pure Tier 1 trips (6 parallel Google Places queries across `cultural`, `food`, `nature`, `spa`, `tours`, `shopping`); annotated with `browse_category` field; stashed here for the BrowseActivitiesSheet to consume on-demand
 
 **Two-Tier Activity System:**
 
@@ -891,9 +905,19 @@ if has_niche_specialist:
 
     if not tier2_cats:
         # Pure Tier 1 — suppress ALL generic activity tiles.
-        # Free days render as "Free Day" blocks in the builder;
-        # the user can populate them on-demand via the fill-day endpoint.
+        # Instead, fetch per-category browse tiles (6 categories: cultural, food,
+        # nature, spa, tours, shopping) in parallel via activity_browser.browse_activities().
+        # Results stashed in state.metadata["browseable_activities"] (annotated with
+        # browse_category) for the BrowseActivitiesSheet to consume on-demand.
+        # Falls back to annotating existing generic tiles with browse_category if
+        # browse fetch fails or returns empty.
         state.tiles["activities"] = []
+        browseable = await activity_browser.browse_activities(
+            destination=plan.destination,
+            categories=["cultural", "food", "nature", "spa", "tours", "shopping"],
+            month=month,
+        )
+        state.metadata["browseable_activities"] = browseable
     else:
         # Mixed — generate Tier 2 experience tiles via LLM
         experience_tiles = await generate_experiences(
@@ -938,7 +962,7 @@ Generates 2–4 activities per Tier 2 category via `gemini-2.5-flash` structured
 | Trip Type                         | Categories                      | `executed_strategy_topics`   | Activities                                              |
 | --------------------------------- | ------------------------------- | ---------------------------- | ------------------------------------------------------- |
 | "diving in Bali" (short trip)     | `["diving"]`                    | `["local_expert", "diving"]` | **Suppressed** (specialist fills trip)                  |
-| "diving in Bali" (long trip)      | `["diving"]`                    | `["local_expert", "diving"]` | **Suppressed** (free days render as Free Day blocks)   |
+| "diving in Bali" (long trip)      | `["diving"]`                    | `["local_expert", "diving"]` | **Suppressed** (per-category browse tiles fetched via 6 parallel Places queries; stashed in `state.metadata["browseable_activities"]`) |
 | "diving + yoga + cooking in Bali" | `["diving", "yoga", "cooking"]` | `["local_expert", "diving"]` | **LLM-generated** yoga + cooking tiles (mixed Tier 1+2) |
 | "yoga + cooking in Bali"          | `["yoga", "cooking"]`           | `["local_expert"]`           | **LLM-generated** yoga + cooking tiles (pure Tier 2)    |
 | "trip to Rome"                    | `[]`                            | `["local_expert"]`           | **All shown** (no categories selected)                  |
@@ -1165,6 +1189,10 @@ Transforms specialist content + tiles into day-by-day timeline.
 │         Pass 1: Free day placement (existing behavior)           │
 │         Pass 2: Co-schedule on specialist days with capacity     │
 │  5.25  Preferred Activity Placement - Fill free days with hearts │
+│  5.55  Restore Browse-Pinned Tiles:                             │
+│         Re-insert tiles explicitly added via Browse→Add         │
+│         (source='browse_add'). These come from Google Places,   │
+│         not the LangGraph tile pool (Phase 5.25 can't find them)│
 │  6.    Tile Matching - Hotels span all days, preferences weighted│
 │  6.5   Constraint Tagging - Inline constraints for frontend      │
 │  6.75  Chronological Sort - Final block ordering                 │
@@ -1494,7 +1522,7 @@ Pydantic structured output is used for LLM nodes that need **guaranteed schema e
 4. **`extract_token_usage()`** — Centralized in `llm_factory.py`. Handles `include_raw=True` dict unwrapping, LangChain 0.2+ `usage_metadata` (works for both OpenAI and Gemini), and `response_metadata["token_usage"]` fallback (older LangChain/OpenAI). Returns `{prompt_tokens, completion_tokens, total_tokens, model?}` or `{}`.
 5. **`resolve_schema_refs(schema)`** — Inlines `$defs` pointers in a JSON Schema to produce a flat schema for Gemini function calling. Use for schemas with few `$defs` (e.g., `LLMSpecialistOutput`: 2). Do NOT use for deeply nested schemas with shared refs (e.g., `LocalExpertOutput`: 31 `$defs`) — inlining duplicates shared models and bloats the schema. Result cached at module load as `_SPECIALIST_FLAT_SCHEMA`.
 6. **`extract_json_content(response)`** — Extracts JSON string from a LangChain `AIMessage`. Handles OpenAI string content, Gemini multi-part list content, and markdown code fence stripping: tries closed fence (`` ```json\n…\n``` ``) first, then falls back to unclosed fence for LLM truncation (extracts everything after opening `` ```json\n ``, strips trailing backticks). Returns raw JSON string for `model_validate_json()`. Used by LocalExpert (prompt-based JSON path).
-7. **`ainvoke_structured()` (`llm_structured.py`)** — Shared retry wrapper for cross-provider structured output. Signature: `ainvoke_structured(llm, schema, messages, *, model_name, max_retries=1, method="function_calling") → (parsed, token_usage_dict)`. Handles Gemini JSON parse failures and `parsed=None` retry loop. Do NOT use for LocalExpert (31 `$defs` breaks schema resolution). Replaces the duplicated per-node retry patterns.
+7. **`patterns_registry.py`** — Shared regex/keyword lists used by multiple planner nodes. Centralizes `BUDGET_PATTERNS` (regex for budget extraction), `TRAVELER_PATTERNS` (regex for traveler count), and `SETTINGS_KEYWORDS` (keywords for settings detection). Imported by `intent_router.py` and `trip_architect.py`.
 
 ### RouterOutput Schema
 
@@ -1791,6 +1819,29 @@ class ItineraryBlock(BaseModel):
 ```
 
 > **Note:** S3 Itinerary View enhancement fields (`duration`, `scheduled_time`, `logistics_details`, `hotel_name`, `requires_booking`, `booking_category`, `booked_tile_id`) live on `DayBlockOutput` in `backend/app/services/itinerary_builder.py`, NOT on `ItineraryBlock` in `backend/app/planner/state/schemas.py`. The `ItineraryBlock` schema above is the specialist output; the `DayBlockOutput` schema is the itinerary builder output that the frontend consumes.
+
+**`DayBlockOutput` Google Places enrichment fields** (added for Browse→Add tiles; `Optional` on all specialist-generated blocks):
+
+| Field | Type | Source | Description |
+|---|---|---|---|
+| `rating` | `Optional[float]` | Google Places | Star rating (e.g., 4.7) |
+| `review_count` | `Optional[int]` | Google Places | Number of reviews |
+| `price_level` | `Optional[int]` | Google Places | 0=free, 1=$, 2=$$, 3=$$$, 4=$$$$ |
+| `google_place_id` | `Optional[str]` | Google Places | Stable place ID for deeplinking |
+| `deeplink` | `Optional[str]` | Google Places | Google Maps URL |
+
+Helper: `_price_estimate_to_level(price_estimate) -> Optional[int]` — converts a price estimate (float dollar amount or string `"$"`/`"$$"` markers) to a `price_level` int (0–4). Used when building `DayBlockOutput` from browse tiles that carry a `price_estimate` but not a native `price_level`.
+
+**`ItineraryBuilderInput` — `user_pinned_tiles` field:**
+
+```python
+class ItineraryBuilderInput(BaseModel):
+    # ... existing fields ...
+    user_pinned_tiles: Optional[Dict[str, Any]] = None
+    # Maps tile_id → {tile: dict, preferred_day: int, source: str}
+    # source='browse_add'  → Phase 5.55 re-inserts these (Google Places tiles)
+    # source='auto_fill'   → NOT re-inserted; regenerate fresh each run via fill-day
+```
 
 **S3 Block Type Mapping:**
 
@@ -2469,6 +2520,38 @@ Two-tier cache for Tier 2 experience tiles generated by `gemini-2.5-flash`. Uses
 - **Categories optional:** `categories` param no longer required (400 → graceful fallback to destination-appropriate activities)
 
 **Integration Point:** `logistics_node.py` → Tier 2 activity block (both mixed Tier 1+2 and pure Tier 2 paths)
+
+### Activity Browser Service
+
+On-demand Google Places search for free/buffer days. Provides rich categorized results for the BrowseActivitiesSheet UI.
+
+**Location:** `backend/app/services/activity_browser.py`
+
+**Purpose:** Called by `POST /api/activities/browse` when the user taps "Browse Activities" on a free or buffer day. Also pre-called by `logistics_node.py` for pure Tier 1 trips to pre-stash results in `state.metadata["browseable_activities"]`.
+
+**Cache:** In-memory L1 only (no L2/DB). Key: `browse::v1::{destination}::{sorted_categories}::{month}` (month-level granularity — same activities are available across the full month). Max 200 entries, LRU eviction.
+
+**Category mapping:** `CATEGORY_TO_PLACES_TYPES` dict maps 8 categories to Google Places API types:
+
+| Category | Google Places Types |
+|---|---|
+| `spa` | `spa`, `beauty_salon` |
+| `cultural` | `museum`, `art_gallery`, `tourist_attraction` |
+| `food` | `restaurant`, `food`, `cafe` |
+| `nature` | `park`, `natural_feature` |
+| `shopping` | `shopping_mall`, `store` |
+| `nightlife` | `night_club`, `bar` |
+| `tours` | `travel_agency`, `tourist_attraction` |
+| `wellness` | `gym`, `yoga_studio` |
+
+**Parallel search:** Runs up to 2 Places types per category concurrently via `asyncio.gather()`; deduplicates results by `place_id`.
+
+**Output:** List of up to 20 tile dicts per request with fields:
+`id`, `type`, `title`, `subtitle`, `description`, `image_url`, `rating`, `review_count`, `google_place_id`, `deeplink`, `location_label`, `geo`, `price_estimate`, `price_level`, `source`, `provider`, `category`, `tags`, `place_id`, `maps_uri`
+
+**Integration:**
+- `logistics_node.py` — pre-stashes for pure Tier 1 trips (6 categories in parallel) into `state.metadata["browseable_activities"]`; each tile annotated with `browse_category` field
+- `POST /api/activities/browse` endpoint — on-demand fetch for any category/destination combination
 
 #### Tier 2 Latency Optimization
 
@@ -3224,6 +3307,13 @@ Phase 5.25: Preferred Activity Placement (_populate_free_days_with_preferences)
 ├─ Pass 1 (Unified Slot Model): round-robin on least-loaded days
 └─ Pass 2 (Co-Schedule Fallback): deferred tiles on specialist days with spare capacity
 
+Phase 5.55: Restore Browse-Pinned Tiles (_restore_browse_pinned_tiles)
+├─ Re-insert tiles explicitly added via Browse→Add (source='browse_add')
+├─ These tiles come from Google Places (activity_browser service), NOT the LangGraph tile pool
+├─ Phase 5.25 cannot find them because they are not in state.tiles["activities"]
+├─ Only source='browse_add' tiles are restored; source='auto_fill' tiles regenerate fresh each run
+└─ Tiles placed on their preferred_day from user_pinned_tiles dict; respect day capacity
+
 Phase 6: Tile Matching (_match_tiles)
 ├─ Hotels span all days (with preference weighting)
 ├─ Activities matched to day blocks
@@ -3780,7 +3870,7 @@ The response envelope computes `plan_view_state` based on data richness, then pe
 | Component           | Mode     | Purpose                          | Location                  |
 | ------------------- | -------- | -------------------------------- | ------------------------- |
 | `SuggestionCard`    | PLANNING | Shows tiles with AI reasoning    | `components/plan/tiles/`  |
-| `BookableCard`      | BOOKING  | Shows price comparison           | `components/plan/tiles/`  |
+| `TileCard`          | BOOKING  | Shows price comparison           | `components/tiles/`       |
 | `AlternativesModal` | PLANNING | "Change" sheet with alternatives | `components/plan/modals/` |
 
 #### Mode-Aware Layout Components

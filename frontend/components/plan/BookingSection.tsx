@@ -18,14 +18,14 @@
  *
  * Two-Mode System:
  * - PLANNING mode: Shows SuggestionCard with AI reasoning, no checkout
- * - BOOKING mode: Shows BookableCard with price comparison, checkout sidebar
+ * - BOOKING mode: Reserved for future price comparison and checkout flow
  *
  * @see docs/ux_unified_architecture.md Section I.B - Booking Suggestions Pattern
  */
 
 
 import { Lock, Package } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
@@ -35,8 +35,6 @@ interface TileFilters {
   freeCancel: boolean;
   maxPrice: number | null;
 }
-import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
-import { debugLog } from '@/lib/debug';
 import { DS } from '@/lib/design-system';
 import { getActiveSpecialists } from '@/lib/specialist-utils';
 import { activityMatchesSpecialist as registryMatch } from '@/lib/specialists';
@@ -51,7 +49,6 @@ import { CategorySection } from './booking/CategorySection';
 import { CheckoutSidebar } from './booking/CheckoutSidebar';
 import { AlternativesModal } from './modals/AlternativesModal';
 import { isGenerating } from './planStateHelpers';
-import { BookableCard } from './tiles/BookableCard';
 import { SuggestionCard } from './tiles/SuggestionCard';
 
 /** Check if an activity tile matches active specialist types (with experience pass-through) */
@@ -59,9 +56,6 @@ function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boole
   if (tile.tags?.includes('experience')) return true;
   return registryMatch(tile, specialistTypes);
 }
-
-// Category types for S2 preview
-type TileCategory = 'stays' | 'flights' | 'activities';
 
 // Category configuration for manifest layout
 const CATEGORY_CONFIG = [
@@ -96,7 +90,7 @@ interface BookingSectionProps {
   /**
    * Two-mode system: planning or booking.
    * - planning: Shows SuggestionCard with AI reasoning
-   * - booking: Shows BookableCard with price comparison
+   * - booking: Reserved for future price comparison flow
    * @see docs/ux_unified_architecture.md Section I.B
    */
   mode?: ViewMode;
@@ -116,6 +110,10 @@ interface BookingSectionProps {
   isExpanded?: boolean;
   /** Callback when expand state should change (only used when isExpanded is provided) */
   onToggleExpanded?: () => void;
+  /** Controlled expanded state for flights section */
+  flightsExpanded?: boolean;
+  /** Callback when flights expand state should change */
+  onToggleFlights?: () => void;
 }
 
 export function BookingSection({
@@ -133,13 +131,15 @@ export function BookingSection({
   isBookView = false,
   mode = 'planning',
   onViewAlternatives,
-  partnerPrices = {},
-  cartTileIds = new Set(),
-  onCartToggle,
+  partnerPrices: _partnerPrices = {},
+  cartTileIds: _cartTileIds = new Set(),
+  onCartToggle: _onCartToggle,
   strategySections,
   onOpenStaysSettings,
   isExpanded: controlledExpanded,
   onToggleExpanded: _onToggleExpanded,
+  flightsExpanded = false,
+  onToggleFlights: _onToggleFlights,
 }: BookingSectionProps) {
   // FIX: Live subscription to tiles - ensures updates even if parent doesn't re-render
   const storeTiles = useDocumentStore((s) => s.document?.tiles);
@@ -149,12 +149,9 @@ export function BookingSection({
   const hasItinerary = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
   const [internalExpanded] = useState(!hasItinerary);
   const isExpanded = controlledExpanded ?? internalExpanded;
-  const [activeCategory, setActiveCategory] = useState<TileCategory>('stays');
-  const [userSelectedTab, setUserSelectedTab] = useState(false);
-  const prevCountsRef = useRef<Record<TileCategory, number> | null>(null);
   const [selectedTile, setSelectedTile] = useState<Tile | null>(null);
   const [alternativesTile, setAlternativesTile] = useState<Tile | null>(null);
-  const [filters, setFilters] = useState<TileFilters>({
+  const [filters] = useState<TileFilters>({
     sort: 'recommended',
     freeCancel: false,
     maxPrice: null,
@@ -172,31 +169,6 @@ export function BookingSection({
   // Compute category counts using normalized type matching
   const stayTiles = tileArray.filter(t => normalizeTileType(t.type) === 'hotel');
   const flightTiles = tileArray.filter(t => normalizeTileType(t.type) === 'flight');
-  const activityTiles = tileArray.filter(t => normalizeTileType(t.type) === 'activity').filter(isBookableActivityTile);
-
-  // Auto-switch to tab with biggest growth when new tiles arrive
-  useEffect(() => {
-    const counts: Record<TileCategory, number> = {
-      stays: stayTiles.length,
-      flights: flightTiles.length,
-      activities: activityTiles.length,
-    };
-    const prev = prevCountsRef.current;
-    prevCountsRef.current = counts;
-
-    if (!prev || userSelectedTab) return;
-    // First load: all previous counts are 0 — keep default 'stays'
-    if (Object.values(prev).every(v => v === 0)) return;
-
-    const deltas: [TileCategory, number][] = [
-      ['activities', counts.activities - prev.activities],
-      ['flights', counts.flights - prev.flights],
-      ['stays', counts.stays - prev.stays],
-    ];
-
-    const best = deltas.reduce((a, b) => (b[1] > a[1] ? b : a));
-    if (best[1] > 0) setActiveCategory(best[0]);
-  }, [stayTiles.length, flightTiles.length, activityTiles.length, userSelectedTab]);
 
   // Get saved tiles for checkout sidebar
   const savedTiles = useMemo(() => {
@@ -218,12 +190,6 @@ export function BookingSection({
     const tile = savedTiles[0] || tileArray[0];
     return tile?.currency || 'USD';
   }, [savedTiles, tileArray]);
-
-  const categoryCounts = {
-    stays: stayTiles.length,
-    flights: flightTiles.length,
-    activities: activityTiles.length,
-  };
 
   // Apply filters and sorting to tiles
   const applyFilters = useCallback((tilesToFilter: Tile[]): Tile[] => {
@@ -283,23 +249,6 @@ export function BookingSection({
   //   const tile = tileArray.find((t) => t.currency);
   //   return tile?.currency === 'EUR' ? '€' : tile?.currency === 'GBP' ? '£' : '$';
   // }, [tileArray]);
-
-  // Get filtered tiles for active category (max 6 for S2 preview)
-  const getFilteredCategoryTiles = useCallback((category: TileCategory): Tile[] => {
-    const baseTiles = category === 'stays' ? stayTiles
-      : category === 'flights' ? flightTiles
-      : activityTiles;
-    return applyFilters(baseTiles).slice(0, 6);
-  }, [stayTiles, flightTiles, activityTiles, applyFilters]);
-
-  const previewTiles = getFilteredCategoryTiles(activeCategory);
-  const categoryTotalCount = categoryCounts[activeCategory];
-  const filteredCount = applyFilters(
-    activeCategory === 'stays' ? stayTiles
-      : activeCategory === 'flights' ? flightTiles
-      : activityTiles
-  ).length;
-  const remainingCount = Math.max(0, filteredCount - previewTiles.length);
 
   // Handlers for MiniCard actions
   const handleDetailsClick = useCallback((tile: Tile) => {
@@ -421,80 +370,61 @@ export function BookingSection({
             )}
           </div>
 
-          {/* Category tabs — only show when 2+ categories have content */}
-          {isExpanded && Object.values(categoryCounts).filter(n => n > 0).length > 1 && (
-            <div className="flex items-center gap-2 px-6 pt-1 pb-2">
-              {(['stays', 'flights', 'activities'] as const)
-                .filter((category) => categoryCounts[category] > 0)
-                .map((category) => {
-                  const isActive = activeCategory === category;
-                  return (
-                    <button
-                      key={category}
-                      onClick={() => { setActiveCategory(category); setUserSelectedTab(true); }}
-                      className={cn(chipBase, 'font-medium', isActive ? chipActive : chipInactive)}
-                    >
-                      {category.charAt(0).toUpperCase() + category.slice(1)}
-                    </button>
-                  );
-                })}
-            </div>
-          )}
-
-          {/* Tile cards grid - mode-aware rendering */}
+          {/* Stays tiles — controlled by 🏨 Stays pill in StrategyConstraintBar */}
           {isExpanded && (
             <div className="px-6 pb-4 space-y-4">
-              {previewTiles.length > 0 ? (
+              {stayTiles.length > 0 ? (
                 <>
-                  {previewTiles.map((tile) => (
-                    effectiveMode === 'planning' ? (
-                      <SuggestionCard
-                        key={tile.id}
-                        tile={tile}
-                        reasoning={tile.meta?.reasoning as string | undefined}
-                        isSaved={savedTileIds.has(tile.id)}
-                        onSave={handleSaveClick}
-                        onViewAlternatives={() => handleViewAlternatives(tile)}
-                        onDetailsClick={handleDetailsClick}
-                        onOpenStaysSettings={onOpenStaysSettings}
-                        variant="compact"
-                      />
-                    ) : (
-                      <BookableCard
-                        key={tile.id}
-                        tile={tile}
-                        partnerPrices={partnerPrices[tile.id]}
-                        isInCart={cartTileIds.has(tile.id)}
-                        onBook={(t, partner) => {
-                          // External booking redirect would happen here
-                          debugLog('Book', t.id, 'via', partner);
-                        }}
-                        onCartToggle={onCartToggle}
-                        onDetailsClick={handleDetailsClick}
-                      />
-                    )
+                  {applyFilters(stayTiles).slice(0, 6).map((tile) => (
+                    <SuggestionCard
+                      key={tile.id}
+                      tile={tile}
+                      reasoning={tile.meta?.reasoning as string | undefined}
+                      isSaved={savedTileIds.has(tile.id)}
+                      onSave={handleSaveClick}
+                      onViewAlternatives={() => handleViewAlternatives(tile)}
+                      onDetailsClick={handleDetailsClick}
+                      onOpenStaysSettings={onOpenStaysSettings}
+                      variant="compact"
+                    />
                   ))}
-                  {remainingCount > 0 && (
+                  {applyFilters(stayTiles).length > 6 && (
                     <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-2">
-                      +{remainingCount} more {activeCategory} available
+                      +{applyFilters(stayTiles).length - 6} more stays available
                     </p>
                   )}
                 </>
-              ) : filteredCount === 0 && categoryTotalCount > 0 ? (
-                <div className="text-xs text-zinc-500 dark:text-zinc-400 py-2">
-                  <p>No {activeCategory} match your filters.</p>
-                  <button
-                    type="button"
-                    onClick={() => setFilters({ sort: 'recommended', freeCancel: false, maxPrice: null })}
-                    className="text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 dark:hover:text-emerald-400 mt-1"
-                  >
-                    Clear filters
-                  </button>
-                </div>
               ) : (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2">
-                  No {activeCategory} found yet.
-                </p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2">No stays found yet.</p>
+              )}
+            </div>
+          )}
+
+          {/* Flights tiles — controlled by ✈️ Flights pill in StrategyConstraintBar */}
+          {flightsExpanded && (
+            <div className="px-6 pb-4 space-y-4">
+              {flightTiles.length > 0 ? (
+                <>
+                  {applyFilters(flightTiles).slice(0, 6).map((tile) => (
+                    <SuggestionCard
+                      key={tile.id}
+                      tile={tile}
+                      reasoning={tile.meta?.reasoning as string | undefined}
+                      isSaved={savedTileIds.has(tile.id)}
+                      onSave={handleSaveClick}
+                      onViewAlternatives={() => handleViewAlternatives(tile)}
+                      onDetailsClick={handleDetailsClick}
+                      variant="compact"
+                    />
+                  ))}
+                  {applyFilters(flightTiles).length > 6 && (
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-2">
+                      +{applyFilters(flightTiles).length - 6} more flights available
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2">No flights found yet.</p>
               )}
             </div>
           )}
@@ -618,7 +548,7 @@ export function BookingSection({
           </div>
 
           {/* Mobile: Fixed Checkout Footer */}
-          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-sm border-t border-zinc-200 dark:border-zinc-700 p-4 pb-[env(safe-area-inset-bottom)] flex items-center justify-between">
+          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-sm border-t border-zinc-200 dark:border-white/10 p-4 pb-[env(safe-area-inset-bottom)] flex items-center justify-between">
             <div className="flex flex-col">
               <span className="text-xs text-zinc-500 dark:text-zinc-400">Est. Total</span>
               <span className="font-bold text-lg">

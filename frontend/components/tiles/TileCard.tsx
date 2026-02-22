@@ -601,7 +601,7 @@ export const TileCard = memo(function TileCard({
               <Button
                 variant="primary"
                 size="sm"
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-sm"
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-card"
                 onClick={handleViewDetailsClick}
               >
                 Book

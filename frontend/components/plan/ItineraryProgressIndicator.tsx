@@ -72,35 +72,35 @@ export function ItineraryProgressIndicator({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
-      transition={{ duration: 0.25 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
       className={cn(
         'w-full p-4 rounded-xl',
-        'bg-zinc-900/50 backdrop-blur-sm',
+        'bg-zinc-100/80 dark:bg-zinc-900/50 backdrop-blur-sm',
         'border',
         isError
-          ? 'border-red-500/30'
+          ? 'border-red-400/40 dark:border-red-500/30'
           : isConflict
-            ? 'border-amber-500/30'
-            : 'border-emerald-500/20',
+            ? 'border-amber-400/40 dark:border-amber-500/30'
+            : 'border-emerald-400/40 dark:border-emerald-500/20',
         className
       )}
     >
       <div className="flex items-center gap-3">
         {/* Status Icon */}
         {isActive && (
-          <Loader2 className="w-4 h-4 text-emerald-400 animate-spin shrink-0" />
+          <Loader2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 animate-spin shrink-0" />
         )}
         {stage === 'success' && (
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
         )}
         {isConflict && (
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
         )}
         {isError && (
-          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+          <AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
         )}
 
         {/* Message */}
@@ -109,10 +109,10 @@ export function ItineraryProgressIndicator({
             className={cn(
               'text-sm font-medium',
               isError
-                ? 'text-red-400'
+                ? 'text-red-600 dark:text-red-400'
                 : isConflict
-                  ? 'text-amber-400'
-                  : 'text-zinc-200'
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-zinc-700 dark:text-zinc-200'
             )}
           >
             {displayMessage}
@@ -120,7 +120,7 @@ export function ItineraryProgressIndicator({
 
           {/* Error details */}
           {isError && errorMessage && (
-            <p className="text-xs text-red-400/70 mt-1">{errorMessage}</p>
+            <p className="text-xs text-red-500/70 dark:text-red-400/70 mt-1">{errorMessage}</p>
           )}
         </div>
 
@@ -128,7 +128,7 @@ export function ItineraryProgressIndicator({
         {isError && onRetry && (
           <button
             onClick={onRetry}
-            className="px-3 py-1 text-xs font-medium text-red-400 hover:text-red-300 underline"
+            className="px-3 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 underline"
           >
             Retry
           </button>
@@ -137,9 +137,9 @@ export function ItineraryProgressIndicator({
 
       {/* Progress bar (only during active states) */}
       {isActive && (
-        <div className="mt-3 h-1 bg-zinc-800 rounded-full overflow-hidden">
+        <div className="mt-3 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
           <motion.div
-            className="h-full bg-emerald-500/60 rounded-full"
+            className="h-full bg-emerald-500 rounded-full"
             initial={{ width: '0%' }}
             animate={{
               width: progress != null ? `${progress}%` : '100%',

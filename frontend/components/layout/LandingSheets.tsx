@@ -98,6 +98,13 @@ export function LandingSheets({
             await storeCommitTripInputs({ origin: value });
             closeSheet();
             addToast(`Origin: ${value}`, 'confirmation');
+            // Trigger flight fetch via graph pipeline when plan is active
+            const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
+              planViewState
+            );
+            if (isActive) {
+              onSendMessage(GENERATE_PLAN_TRIGGER);
+            }
           } catch {
             addToast('Failed to save — please try again', 'error');
           }

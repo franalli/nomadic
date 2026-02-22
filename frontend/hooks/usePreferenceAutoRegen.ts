@@ -1,32 +1,24 @@
 /**
- * usePreferenceAutoRegen
+ * startPreferenceAutoRegen
  *
  * Automatically regenerates itinerary when user preferences (hearts) change.
  * Debounced (1.5s) to batch rapid heart toggles into a single expand call.
  *
+ * Module-level subscription (not a React hook) — avoids root re-renders from
+ * the 9 separate useDocumentStore() calls the previous hook version had.
+ *
  * @see docs/ux_unified_architecture.md - Heart Preference System
  */
-
-'use client';
-
-import { useCallback, useEffect, useRef } from 'react';
 
 import { apiFetch } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { consumeNdjsonEnvelopeStream } from '@/lib/streamParser';
 import { useDocumentStore } from '@/state/documentStore';
 
-interface UsePreferenceAutoRegenReturn {
-  /** Whether auto-regen is currently in progress */
-  isRegenerating: boolean;
-  /** ID of the tile that was just hearted (for inline spinner feedback) */
-  justHeartedId: string | null;
-}
-
 /**
  * Compare two sets for equality.
  */
-function setsEqual(a: Set<string>, b: Set<string>): boolean {
+export function setsEqual(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
   for (const id of a) {
     if (!b.has(id)) return false;
@@ -34,160 +26,164 @@ function setsEqual(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
-export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
-  // State from document store
-  const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
-  const lastGeneratedPreferences = useDocumentStore((s) => s.lastGeneratedPreferences);
-  const dayCards = useDocumentStore((s) => s.document?.day_cards);
-  const isRegenerating = useDocumentStore((s) => s.isRegenerating);
-  const expandInProgress = useDocumentStore((s) => s.expandInProgress);
-  const setRegenerationState = useDocumentStore((s) => s.setRegenerationState);
-  const awaitPreferencePatch = useDocumentStore((s) => s.awaitPreferencePatch);
-  const markPreferencesAsApplied = useDocumentStore((s) => s.markPreferencesAsApplied);
-  // Gate: defer fill-day during active plan generation (prevents noise during Q&A)
-  const isStreamingResponse = useDocumentStore((s) => s.currentRunId !== null);
+// ─── Module-level refs (stable across React renders) ─────────────────────────
 
-  // Track the tile that was just hearted (for UI feedback)
-  const justHeartedIdRef = useRef<string | null>(null);
+let abortRef: AbortController | null = null;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let lastPrefsRef: Set<string> = new Set();
+let pendingRegen = false;
 
-  // Abort in-flight regen when a new one triggers or component unmounts
-  const abortRef = useRef<AbortController | null>(null);
+// Track whether startPreferenceAutoRegen is already running
+let cleanupFn: (() => void) | null = null;
 
-  // Debounce timer for batching rapid heart toggles
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+// ─── Core regeneration logic ─────────────────────────────────────────────────
 
-  // Track if this is the initial mount
-  const isInitialMount = useRef(true);
+async function triggerRegeneration(): Promise<void> {
+  // Race condition guards
+  if (useDocumentStore.getState().isRegenerating) return;
+  if (useDocumentStore.getState().expandInProgress) return;
 
-  // Track last known preferences to detect which tile changed
-  const lastPrefsRef = useRef<Set<string>>(new Set());
+  // Abort any in-flight regen before starting a new one
+  abortRef?.abort();
+  abortRef = new AbortController();
+  const signal = abortRef.signal;
 
-  // Queue regen when preference changes are detected during expandInProgress mutex
-  const pendingRegenRef = useRef(false);
+  const { setExpandInProgress, setRegenerationState, awaitPreferencePatch, markPreferencesAsApplied } =
+    useDocumentStore.getState();
 
-  // Check if itinerary exists
-  const hasItinerary = (dayCards?.length ?? 0) > 0;
+  // Set expand-in-progress flag to prevent cascade
+  setExpandInProgress(true);
+  setRegenerationState({ isRegenerating: true });
 
-  // Regeneration function
-  const triggerRegeneration = useCallback(async () => {
-    // Race condition guards
-    if (useDocumentStore.getState().isRegenerating) return;
-    if (useDocumentStore.getState().expandInProgress) return;
+  try {
+    // Wait for preference PATCH to complete first
+    await awaitPreferencePatch();
 
-    // Abort any in-flight regen before starting a new one
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
-    const signal = abortRef.current.signal;
+    // Build request body
+    const document = useDocumentStore.getState().document;
+    const prefs = useDocumentStore.getState().preferredTileIds;
 
-    // Set expand-in-progress flag to prevent cascade
-    useDocumentStore.getState().setExpandInProgress(true);
-    setRegenerationState({ isRegenerating: true });
+    // Separate hotel, activity, and flight preferences
+    const hotelIds: string[] = [];
+    const activityIds: string[] = [];
+    const flightIds: string[] = [];
 
-    try {
-      // Wait for preference PATCH to complete first
-      await awaitPreferencePatch();
-
-      // Build request body
-      const document = useDocumentStore.getState().document;
-      const prefs = useDocumentStore.getState().preferredTileIds;
-
-      // Separate hotel, activity, and flight preferences
-      const hotelIds: string[] = [];
-      const activityIds: string[] = [];
-      const flightIds: string[] = [];
-
-      if (document?.tiles) {
-        for (const id of prefs) {
-          const tile = document.tiles[id];
-          if (tile) {
-            if (tile.type === 'hotel') {
-              hotelIds.push(id);
-            } else if (tile.type === 'activity') {
-              activityIds.push(id);
-            } else if (tile.type === 'flight') {
-              flightIds.push(id);
-            }
+    if (document?.tiles) {
+      for (const id of prefs) {
+        const tile = document.tiles[id];
+        if (tile) {
+          if (tile.type === 'hotel') {
+            hotelIds.push(id);
+          } else if (tile.type === 'activity') {
+            activityIds.push(id);
+          } else if (tile.type === 'flight') {
+            flightIds.push(id);
           }
         }
       }
+    }
 
-      const response = await apiFetch('/api/expand-itinerary', {
-        method: 'POST',
-        signal,
-        body: JSON.stringify({
-          idempotency_key: crypto.randomUUID(),
-          trip_inputs: document?.trip_inputs,
-          strategy_sections: document?.strategy_sections,
-          tiles: document?.tiles,
-          preferences: {
-            preferred_hotel_ids: hotelIds,
-            preferred_activity_ids: activityIds,
-            preferred_flight_ids: flightIds,
-          },
-        }),
+    const response = await apiFetch('/api/expand-itinerary', {
+      method: 'POST',
+      signal,
+      body: JSON.stringify({
+        idempotency_key: crypto.randomUUID(),
+        trip_inputs: document?.trip_inputs,
+        strategy_sections: document?.strategy_sections,
+        tiles: document?.tiles,
+        preferences: {
+          preferred_hotel_ids: hotelIds,
+          preferred_activity_ids: activityIds,
+          preferred_flight_ids: flightIds,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    if (response.body) {
+      await consumeNdjsonEnvelopeStream(response.body, {
+        onEnvelope: (planEnvelope) => {
+          useDocumentStore.getState().mergeEnvelope(planEnvelope);
+        },
+        onDone: (event) => {
+          // CRITICAL: Sync version from backend to prevent 409 on next PATCH
+          // expand-itinerary persists changes which increments version
+          if (typeof event.version === 'number') {
+            useDocumentStore.setState({ version: event.version });
+          }
+          // Log warning if some preferred activities couldn't fit
+          if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
+            debugLog(
+              `[itinerary] ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
+            );
+          }
+        },
+        onError: (event) => {
+          throw new Error(event.message || 'Regeneration failed');
+        },
       });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
-      if (response.body) {
-        await consumeNdjsonEnvelopeStream(response.body, {
-          onEnvelope: (planEnvelope) => {
-            useDocumentStore.getState().mergeEnvelope(planEnvelope);
-          },
-          onDone: (event) => {
-            // CRITICAL: Sync version from backend to prevent 409 on next PATCH
-            // expand-itinerary persists changes which increments version
-            if (typeof event.version === 'number') {
-              useDocumentStore.setState({ version: event.version });
-            }
-            // Log warning if some preferred activities couldn't fit
-            if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
-              debugLog(
-                `[itinerary] ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
-              );
-            }
-          },
-          onError: (event) => {
-            throw new Error(event.message || 'Regeneration failed');
-          },
-        });
-      }
-
-      // Success - mark preferences as applied
-      markPreferencesAsApplied();
-    } catch (error) {
-      if (signal.aborted) return; // Superseded by a newer regen — silent exit
-      console.error('[usePreferenceAutoRegen] Regeneration failed:', error);
-      // No toast for preference regen - it's a background operation
-    } finally {
-      setRegenerationState({ isRegenerating: false });
-      useDocumentStore.getState().setExpandInProgress(false);
-      justHeartedIdRef.current = null;
     }
-  }, [awaitPreferencePatch, markPreferencesAsApplied, setRegenerationState]);
 
-  // Abort in-flight regen and clear debounce on unmount
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, []);
+    // Success - mark preferences as applied
+    markPreferencesAsApplied();
+  } catch (error) {
+    if (signal.aborted) return; // Superseded by a newer regen — silent exit
+    console.error('[usePreferenceAutoRegen] Regeneration failed:', error);
+    // No toast for preference regen - it's a background operation
+  } finally {
+    useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+    useDocumentStore.getState().setExpandInProgress(false);
+  }
+}
 
-  // Watch for preference changes
-  useEffect(() => {
-    // Skip initial mount
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      lastPrefsRef.current = new Set(preferredTileIds);
-      return;
-    }
+// ─── Module-level subscription ────────────────────────────────────────────────
+
+/**
+ * startPreferenceAutoRegen
+ *
+ * Sets up two zustand subscriptions that watch for preference changes and
+ * trigger itinerary regeneration. Returns a cleanup function.
+ *
+ * Idempotent: if already running, returns the existing cleanup.
+ *
+ * Uses plain subscribe(listener) form compatible with vanilla create() stores.
+ * Selector extraction and equality checks are done inside the listener.
+ */
+export function startPreferenceAutoRegen(): () => void {
+  // Idempotent guard: if already running, return existing cleanup
+  if (cleanupFn !== null) return cleanupFn;
+
+  // Initialize last prefs from current store state so the first subscription
+  // callback correctly detects diffs rather than treating current state as a change
+  lastPrefsRef = new Set(useDocumentStore.getState().preferredTileIds);
+
+  // ─── Subscription 1: watch preferredTileIds for changes ──────────────────
+  //
+  // Plain subscribe receives (newState, prevState). We extract preferredTileIds
+  // and check for equality ourselves (subscribeWithSelector is not used here).
+  const unsubPrefs = useDocumentStore.subscribe((state, prevState) => {
+    const prefs = state.preferredTileIds;
+    const prevPrefs = prevState.preferredTileIds;
+
+    // Skip if the Set reference didn't change (fast path)
+    if (prefs === prevPrefs) return;
+
+    // Skip if Set contents are equal
+    if (setsEqual(prefs, prevPrefs)) return;
+
+    // Read all other needed state at trigger time
+    const dayCards = state.document?.day_cards;
+    const expandInProgress = state.expandInProgress;
+    const isStreamingResponse = state.currentRunId !== null;
+    const lastGeneratedPreferences = state.lastGeneratedPreferences;
 
     // Skip if no itinerary to regenerate
+    const hasItinerary = (dayCards?.length ?? 0) > 0;
     if (!hasItinerary) {
-      lastPrefsRef.current = new Set(preferredTileIds);
+      lastPrefsRef = new Set(prefs);
       return;
     }
 
@@ -195,53 +191,46 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
     // Queue for later instead of silently dropping
     if (expandInProgress || isStreamingResponse) {
       debugLog('[usePreferenceAutoRegen] Queuing - expand or streaming in progress');
-      pendingRegenRef.current = true;
-      lastPrefsRef.current = new Set(preferredTileIds);
+      pendingRegen = true;
+      lastPrefsRef = new Set(prefs);
       return;
     }
 
     // Check if preferences changed from last known
-    if (setsEqual(preferredTileIds, lastPrefsRef.current)) {
+    if (setsEqual(prefs, lastPrefsRef)) {
       return; // No change
     }
 
-    // Find which tile was just toggled (for inline spinner)
-    for (const id of preferredTileIds) {
-      if (!lastPrefsRef.current.has(id)) {
-        justHeartedIdRef.current = id;
-        break;
-      }
-    }
-    for (const id of lastPrefsRef.current) {
-      if (!preferredTileIds.has(id)) {
-        justHeartedIdRef.current = id;
-        break;
-      }
-    }
-
     // Update last prefs before triggering regen
-    lastPrefsRef.current = new Set(preferredTileIds);
+    lastPrefsRef = new Set(prefs);
 
     // Check if these preferences differ from last GENERATED preferences
     // (avoids re-triggering after regen completes and syncs)
-    if (setsEqual(preferredTileIds, lastGeneratedPreferences)) {
+    if (setsEqual(prefs, lastGeneratedPreferences)) {
       return;
     }
 
     // Debounce: batch rapid heart toggles into a single regen (1.5s window)
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      debounceRef.current = null;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
       triggerRegeneration();
     }, 1500);
-  }, [preferredTileIds, lastGeneratedPreferences, hasItinerary, triggerRegeneration, expandInProgress, isStreamingResponse]);
+  });
 
-  // Flush queued regen when expandInProgress mutex releases (debounced to avoid cascade)
-  useEffect(() => {
-    if (!expandInProgress && !isStreamingResponse && pendingRegenRef.current) {
-      pendingRegenRef.current = false;
+  // ─── Subscription 2: flush queued regen on expandInProgress mutex release ─
+  const unsubExpand = useDocumentStore.subscribe((state, prevState) => {
+    const expandInProgress = state.expandInProgress;
+    const prevExpandInProgress = prevState.expandInProgress;
+
+    // Only act on the transition from true → false
+    if (expandInProgress || !prevExpandInProgress) return;
+
+    const isStreamingResponse = state.currentRunId !== null;
+    if (!isStreamingResponse && pendingRegen) {
+      pendingRegen = false;
       // Debounce: let dust settle before firing queued regen
-      const timer = setTimeout(() => {
+      setTimeout(() => {
         // Dedup: skip if the expand that just finished already used current preferences
         const currentPrefs = useDocumentStore.getState().preferredTileIds;
         const lastGenerated = useDocumentStore.getState().lastGeneratedPreferences;
@@ -249,12 +238,18 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
           triggerRegeneration();
         }
       }, 500);
-      return () => clearTimeout(timer);
     }
-  }, [expandInProgress, isStreamingResponse, triggerRegeneration]);
+  });
 
-  return {
-    isRegenerating,
-    justHeartedId: justHeartedIdRef.current,
+  cleanupFn = () => {
+    unsubPrefs();
+    unsubExpand();
+    abortRef?.abort();
+    if (debounceTimer) clearTimeout(debounceTimer);
+    cleanupFn = null;
+    lastPrefsRef = new Set();
+    pendingRegen = false;
   };
+
+  return cleanupFn;
 }

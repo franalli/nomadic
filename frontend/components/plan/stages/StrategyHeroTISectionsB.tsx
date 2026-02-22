@@ -50,9 +50,9 @@ export function renderThingsToDo(h: SectionDataHelpers) {
             {mustDo.slice(0, 5).map((item, i) => (
               <div key={i} className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800">
                 <p className="font-medium text-zinc-900 dark:text-white">{item.name}</p>
-                {item.why && <p className="text-zinc-500 mt-0.5">{item.why}</p>}
+                {item.why && <p className="text-zinc-500 dark:text-zinc-400 mt-0.5">{item.why}</p>}
                 <div className={`flex gap-2 mt-1 ${DS.textSize.micro}`}>
-                  {item.cost && <span className="text-emerald-600">{item.cost}</span>}
+                  {item.cost && <span className="text-emerald-600 dark:text-emerald-400">{item.cost}</span>}
                   {item.booking && <span className="text-zinc-500 dark:text-zinc-400">{item.booking}</span>}
                 </div>
               </div>
@@ -82,9 +82,9 @@ export function renderNeighborhoods(h: SectionDataHelpers) {
           {whereToStay.map((n, i) => (
             <div key={i} className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800">
               <p className="font-medium text-zinc-900 dark:text-white">{n.name}</p>
-              {n.vibe && <p className="text-zinc-500 mt-0.5">{n.vibe}</p>}
+              {n.vibe && <p className="text-zinc-500 dark:text-zinc-400 mt-0.5">{n.vibe}</p>}
               <div className={`flex gap-2 mt-1 ${DS.textSize.micro}`}>
-                {n.price_range && <span className="px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700">{n.price_range}</span>}
+                {n.price_range && <span className="px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200">{n.price_range}</span>}
                 {Array.isArray(n.best_for) && n.best_for.slice(0, 2).map((b, j) => (
                   <span key={j} className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">{b}</span>
                 ))}
@@ -117,8 +117,8 @@ export function renderAccommodation(h: SectionDataHelpers) {
         <div className="grid grid-cols-2 gap-2">
           {priceItems.map(({ key, value }) => (
             <div key={key} className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800">
-              <p className={`${DS.textSize.micro} uppercase text-zinc-500`}>{key.replace('_', ' ')}</p>
-              <p className="font-medium">{value}</p>
+              <p className={`${DS.textSize.micro} uppercase text-zinc-500 dark:text-zinc-400`}>{key.replace('_', ' ')}</p>
+              <p className="font-medium text-zinc-900 dark:text-zinc-100">{value}</p>
             </div>
           ))}
         </div>

@@ -60,7 +60,7 @@ export function TimelineSkeleton() {
 
       {/* Loading indicator at bottom */}
       <div className="text-center pt-4 pb-2">
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-100 dark:bg-zinc-800/50">
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-100 dark:bg-zinc-800">
           <div className="flex gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce [animation-delay:0ms]" />
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce [animation-delay:150ms]" />
@@ -76,6 +76,6 @@ export function TimelineSkeleton() {
 }
 
 // Shimmer base classes
-const shimmerClasses = 'bg-zinc-200 dark:bg-zinc-700/50 animate-pulse';
+const shimmerClasses = 'bg-zinc-200 dark:bg-zinc-700 animate-pulse';
 
 export default TimelineSkeleton;

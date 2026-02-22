@@ -76,7 +76,7 @@ export function SystemAckLine({ status, updates = [], isPending }: SystemAckLine
     <div
       className={cn(
         'flex items-center gap-2 px-3 py-1.5',
-        'text-xs text-zinc-400',
+        'text-xs text-zinc-500 dark:text-zinc-400',
         'border-l-2',
         status === 'applied' && !isPending && 'border-emerald-500/50',
         status === 'partial' && 'border-zinc-500/50',

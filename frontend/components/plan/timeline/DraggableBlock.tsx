@@ -15,6 +15,9 @@ interface DraggableBlockProps {
 
 const LOCKED_TYPES = new Set(['arrival', 'departure', 'check-in', 'check-out', 'free_day']);
 
+// These types render their own UI — skip the drag lock icon to avoid overlap or redundancy.
+const NO_LOCK_ICON_TYPES = new Set(['arrival', 'departure', 'check-in', 'check-out', 'free_day']);
+
 // Stable placeholder used when block.id is absent — keeps hook call order consistent.
 const NO_ID_PLACEHOLDER = '__no_id__';
 
@@ -43,8 +46,8 @@ export function DraggableBlock({ block, dayNumber, children }: DraggableBlockPro
         isLocked && 'cursor-not-allowed'
       )}
     >
-      {isLocked && (
-        <Lock className="absolute top-2 right-2 z-10 h-3 w-3 text-zinc-500" />
+      {isLocked && !NO_LOCK_ICON_TYPES.has(block.activity_type) && (
+        <Lock className="absolute top-2 right-2 z-10 h-3 w-3 text-zinc-500 dark:text-zinc-400" />
       )}
       {isDragging ? (
         // Dashed "came from here" placeholder — fixed min-height approximates card

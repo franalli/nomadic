@@ -182,7 +182,7 @@ export function CategorySection({
 
                     {/* Price */}
                     <div className="mt-2 flex items-baseline gap-1">
-                      <span className="text-lg font-bold">
+                      <span className="text-lg font-bold text-zinc-900 dark:text-white">
                         {tile.currency === 'USD' ? '$' : tile.currency}
                         {(tile.total_inclusive ?? tile.price_estimate ?? 0).toLocaleString()}
                       </span>
@@ -196,8 +196,8 @@ export function CategorySection({
                     {/* Rating */}
                     {tile.rating && (
                       <div className="mt-1 flex items-center gap-1 text-sm">
-                        <span className="text-zinc-500 dark:text-zinc-300">★</span>
-                        <span className="font-medium">{tile.rating.toFixed(1)}</span>
+                        <span className="text-zinc-500 dark:text-zinc-400">★</span>
+                        <span className="font-medium text-zinc-900 dark:text-white">{tile.rating.toFixed(1)}</span>
                       </div>
                     )}
                   </div>

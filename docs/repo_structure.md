@@ -74,7 +74,7 @@ backend/
 │   │   ├── __init__.py
 │   │   ├── hashing.py          # Hash utilities
 │   │   ├── llm_factory.py      # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
-│   │   ├── llm_structured.py   # Structured output retry/provider compatibility utilities
+│   │   ├── patterns_registry.py # Shared regex/keyword patterns (budget, travelers, settings)
 │   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
 │   │   ├── test_mode.py        # Test mode utilities
 │   │   │
@@ -126,6 +126,7 @@ backend/
 │   │
 │   ├── services/
 │   │   ├── __init__.py
+│   │   ├── activity_browser.py      # On-demand Google Places search for Browse Activities sheet
 │   │   ├── cache_core.py            # Shared MemoryCache primitive (TTLCache + RLock + stats) + l2_upsert()
 │   │   ├── experience_generator.py  # Tier 2 experience tile generation via gpt-4o-mini (L1+L2 cache)
 │   │   ├── itinerary_builder.py     # Itinerary construction service
@@ -298,7 +299,6 @@ frontend/
 │   │   ├── ChatSuggestionBar.tsx     # Thin wrapper around ChatSuggestionChips for ChatPanel integration
 │   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
 │   │   ├── MobileChatInput.tsx
-│   │   ├── MobileSetupCollapsedHeader.tsx
 │   │   ├── SmartLoader.tsx
 │   │   ├── SystemAckLine.tsx
 │   │   ├── SystemReceipt.tsx
@@ -336,6 +336,7 @@ frontend/
 │   │
 │   ├── plan/                   # Plan view components
 │   │   ├── BookingSection.tsx
+│   │   ├── BrowseActivitiesSheet.tsx  # Bottom sheet for browsing categorized activity tiles (Tier 1 free days)
 │   │   ├── CoreChip.tsx
 │   │   ├── DestinationMapPlaceholder.tsx
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
@@ -394,7 +395,6 @@ frontend/
 │   │   │   └── StrategyHeroUtils.tsx            # Shared utilities for StrategyHero components
 │   │   │
 │   │   ├── tiles/
-│   │   │   ├── BookableCard.tsx
 │   │   │   └── SuggestionCard.tsx
 │   │   │
 │   │   └── timeline/

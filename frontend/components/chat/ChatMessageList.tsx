@@ -78,7 +78,7 @@ export function ChatMessageList({
                 <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
                   Where to next?
                 </h2>
-                <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
+                <p className="text-sm text-zinc-500 dark:text-zinc-500 mt-1">
                   Try: &ldquo;Bali from Rome, Feb 11-14&rdquo;
                 </p>
                 <div className="mt-3 flex items-center gap-1.5">

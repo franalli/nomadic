@@ -705,6 +705,8 @@ def _build_response_envelope(
         # Constraint validation receipts for Trip DNA bar badges
         "constraints_validated": state.metadata.get("constraints_validated", []),
         "constraint_violations": state.metadata.get("constraint_violations", []),
+        # Tier 1 suppressed activity tiles stashed for Browse Activities sheet
+        "browseable_activities": state.metadata.get("browseable_activities", []),
         # Itinerary day cards (computed by ItineraryBuilder, None until S2_STRATEGY_READY)
         "itinerary_day_cards": itinerary_day_cards,
         # Backend-only observability fields -- not consumed by frontend

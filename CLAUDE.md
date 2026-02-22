@@ -2,13 +2,11 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** Stages 16–19 complete; docs updated to match
-- **Stage 16 (done):** Google Places provider (`google_places_provider.py`), 4-tier cascade in `tile_service/service.py` + `logistics_node.py`, `MessageLengthGate` + fast-422 in `main.py`/`input_gates.py`, per-session expand mutex in `request_dedup.py`, D3/D4/D6/D8 bug fixes, Gemini migration for router/extraction/local_expert/guard/experience/iata_resolver models
-- **Stage 17A (done):** Constraint badge deduplication in `TimelineThread.tsx` + `ActivityMiniCard.tsx` (`getConstraintDisplayModes`, icon-only pill for repeated constraints)
-- **Stage 17B (done):** Compact day variant in `TimelineThread.tsx` + `ActivityMiniCard.tsx` (`getDayVariant`, horizontal layout for single-activity days)
-- **Stage 18A (done):** Depth-1 undo stack in `documentStore.ts` (`UndoEntry`, `executeUndo`, `restore-snapshot` endpoint), undo-on-drag in `ItineraryDndWrapper.tsx`, `useUndoStack.ts` + `showMutationToast.ts`
-- **Stage 19 (done):** Map↔Timeline two-way sync — `useMapSync.ts` Zustand store, IntersectionObserver in `TimelineThread.tsx`, fly-to + `isUserInteractingRef` in `InteractiveMap.tsx`, `PIN_CONFIG` exact-key lookup, `route-utils.ts`, `MapPOI.dayNumber`
-- **DO NOT touch:** synthesizer.py, constraint_guard.py, plan_graph.py node structure
+- **Focus:** [describe focus]
+- **Secondary:** [secondary priority or "none"]
+- **Active work:** backend planner intent/constraints/logistics + itinerary/experience services, new `activity_browser.py` path, frontend strategy/timeline/chat/layout rendering, and SSoT doc alignment in `docs/*`
+- **Known broken:** none explicitly tracked in current working diff
+- **DO NOT touch this sprint:** 7-node graph invariant, `llm_factory.py` provider/model-routing contract, API/schema compatibility surfaces
 
 ---
 

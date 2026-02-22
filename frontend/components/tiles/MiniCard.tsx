@@ -289,7 +289,7 @@ export const MiniCard = memo(function MiniCard({
               'hover:border-zinc-300 hover:shadow-soft hover:translate-y-[-1px]',
               // Dark: Glass fill with subtle border
               'dark:bg-white/5 dark:border-white/10',
-              'dark:hover:bg-white/8 dark:hover:border-white/20',
+              'dark:hover:bg-white/10 dark:hover:border-white/20',
             ],
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-offset-2',
         isExpanded && 'ring-1 ring-emerald-500/20'

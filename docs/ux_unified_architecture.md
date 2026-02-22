@@ -350,7 +350,7 @@ Users can heart tiles to signal preference to the AI. Hearts are preference sign
 **Implementation:** `toggleTilePreference()` checks tile type. If hotel/stay/accommodation, clears existing hotel preferences before adding new one.
 
 ### Data Flow
-1. User hearts tiles via `SuggestionCard`, `TileCard`, or `BookableCard`
+1. User hearts tiles via `SuggestionCard` or `TileCard`
 2. All heart clicks route through `documentStore.toggleTilePreference()`
 3. For hotels: clears existing hotel preference (single-select enforcement)
 4. `preferredTileIds` stored in Zustand + persisted to DB via PATCH `/api/document` (with 409 conflict retry)
@@ -835,7 +835,7 @@ const getShortLabel = (c) =>
 ┌─────────────────────────────────────────────────────────────────┐
 │  UI Components                                                   │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐               │
-│  │SuggestionCard│ │  TileCard   │ │BookableCard │               │
+│  │SuggestionCard│ │  TileCard   │ │ TileCard    │               │
 │  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘               │
 │         │               │               │                        │
 │         ▼               ▼               ▼                        │
@@ -1783,6 +1783,7 @@ useSessionHydration() runs
 | `DraggableBlock` | Wraps each block with `useDraggable`. Locked blocks (`arrival`/`departure`/`check-in`/`check-out`/`is_buffer`) show a `Lock` icon and disable drag. When `block.id` is absent, renders a plain passthrough (no drag handle). Applies `opacity-30 scale-95` while dragging. |
 | `DroppableDay` | Wraps activity-day block lists with `useDroppable` (`id: "day-{dayNumber}"`). Two-div structure: outer div (`ref={setNodeRef}`, `min-h-[80px]`) owns the hit area; inner div owns ring + highlight styles. Highlights with `ring-1 ring-emerald-500/25 bg-emerald-500/[0.04]` when dragging over. Not used for free/empty days — those use `FreeDayDropSlot` instead. |
 | `FreeDayDropSlot` | Dedicated drop zone rendered inside `FreeDayCard` via the `freeDayDropSlot` render prop. Avoids highlighting the entire free-day card. Uses `useDroppable` with the same `day-{dayNumber}` id. |
+| `BrowseActivitiesSheet` | Bottom sheet displayed on free/buffer days. Fetches categorized activity tiles from `POST /api/activities/browse` (Google Places). Shows category filter chips (cultural/food/nature/spa/tours/shopping). Calls `POST /api/document/insert-activity-block` to add selected tiles directly into the day. Reads pre-stashed tiles from `documentStore.browseableActivities` if available (avoids repeat API call). Located in `frontend/components/plan/BrowseActivitiesSheet.tsx`. |
 | `DragPreviewCard` | Ghost card shown in `DragOverlay` during drag. Renders `block.summary || block.activity_type`, specialist label via `getTopicLabel(block.specialist_type)`, and price from `block.booked_tile?.price_estimate`. |
 | `ChatPanel` | Chat orchestration — thin shell delegating to four extracted hooks: `useChatSend` (send + SSE lifecycle), `useChatEffects` (side effects), `useChatScrolling` (scroll + collapse). Module sheets (flights/stays/activities) are rendered by `ChatModuleSheets`. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown). |
 | `ChatModuleSheets` | Renders the three module sheets (FlightsSheet, StaysSheet, ActivitiesSheet) that live inside ChatPanel. Extracted to keep ChatPanel under 200 lines. **D3 preferred-tile prune:** When ActivitiesSheet saves with fewer categories, `onSaveSettings` computes `removedCats`, filters `planDocument.preferred_tile_ids` to drop tiles from removed categories (matched via `tile.meta.specialist_type`, `tile.meta.category`, or `tile.tags`), and calls `patchDocument({ preferred_tile_ids: pruned })` as a best-effort fire-and-forget. Backend Phase 5.25 provides a second authoritative filter. |
@@ -2919,7 +2920,7 @@ This section documents the mode-aware tile components used for suggestions and b
 | Component | Mode | Purpose | Location |
 |-----------|------|---------|----------|
 | `SuggestionCard` | PLANNING | AI-recommended tiles with reasoning | `components/plan/tiles/SuggestionCard.tsx` |
-| `BookableCard` | BOOKING | Price comparison + partner CTAs | `components/plan/tiles/BookableCard.tsx` |
+| `TileCard` | BOOKING | Price comparison + partner CTAs | `components/tiles/TileCard.tsx` |
 
 #### B. SuggestionCard (PLANNING Mode)
 
@@ -2953,7 +2954,7 @@ Shows AI-suggested tiles with reasoning and action buttons.
 - `onSave?: (tile: Tile) => void` - Save/unsave callback
 - `onViewAlternatives?: () => void` - Opens AlternativesModal
 
-#### C. BookableCard (BOOKING Mode)
+#### C. TileCard (BOOKING Mode)
 
 Shows tile with price comparison across booking partners.
 
@@ -3039,6 +3040,8 @@ useCartTileIds(): Set<string>
 **Destination Lock:** Once a destination is set, `setFromPlanResponse()` and `mergeEnvelope()` both block LLM-initiated destination changes (case-insensitive comparison). The incoming destination is silently replaced with the current value. Only `updateTripInputs()` (user-explicit action via chips/sheets) can change the destination, and doing so clears `preferredTileIds`.
 
 When a destination or date change does occur (via `updateTripInputs` + subsequent graph run), stale content must be cleared. This is handled in TWO code paths in `documentStore.ts`:
+
+**RAF buffering (Layer 1 jank reduction):** `mergeEnvelope` buffers consecutive SSE events within the same ~16ms animation frame using `requestAnimationFrame`. Module-level `_pendingEnvelope` accumulates events; `deepMergeEnvelopes()` collapses tiles, trip_inputs, and tiles_replaced flags. The RAF callback flushes once per paint frame, reducing 6 SSE events → 2-3 React renders.
 
 **1. `mergeEnvelope()` - Streaming updates from SSE:**
 ```typescript
@@ -3158,7 +3161,7 @@ The `BookingSection` component adapts rendering based on `mode` prop:
 <BookingSection
   mode="planning"  // Uses SuggestionCard, hides checkout
   // OR
-  mode="booking"   // Uses BookableCard, shows checkout sidebar
+  mode="booking"   // Uses TileCard, shows checkout sidebar
   ...
 />
 ```
@@ -3166,7 +3169,7 @@ The `BookingSection` component adapts rendering based on `mode` prop:
 | Mode | Tile Component | Checkout | Actions |
 |------|----------------|----------|---------|
 | PLANNING | SuggestionCard | Hidden | Save, Change, Details |
-| BOOKING | BookableCard | Visible | Book, Cart, Details |
+| BOOKING | TileCard | Visible | Book, Cart, Details |
 
 **Activity Tile Metadata Display:** `TileCard`, `MiniCard`, and `TileDetailsModal` render activity-specific metadata from `tile.meta` when `tile.type === 'activity'`: category badge (uppercase pill), duration hours (clock icon), time of day (sun/sunset/moon icon), and one-sentence description (from `meta.description`). The description field is generated by `experience_generator.py` and propagated via `meta.description`. `TileDetailsModal` additionally shows `skill_level` (if not beginner).
 
@@ -3476,7 +3479,7 @@ This section provides a quick reference for how the key systems are wired across
 | Component | File | Mode Prop | Planning UI | Booking UI |
 |-----------|------|-----------|-------------|------------|
 | **CategorySection** | `frontend/components/plan/booking/CategorySection.tsx:53` | `mode?: 'planning' \| 'booking'` | ❤️ Preferred / ♡ Add to Trip | In Cart / Remove from Cart |
-| **BookingSection** | `frontend/components/plan/BookingSection.tsx:570` | `mode={effectiveMode}` | SuggestionCard | BookableCard |
+| **BookingSection** | `frontend/components/plan/BookingSection.tsx:570` | `mode={effectiveMode}` | SuggestionCard | TileCard |
 | **StatusBadge** | `frontend/components/plan/booking/CategorySection.tsx:60-102` | `mode` param | "Preferred" with heart | Traffic light badges |
 
 ### Date Validation Wiring

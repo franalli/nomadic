@@ -3,6 +3,7 @@ import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -119,6 +120,12 @@ class Settings(BaseSettings):
     debug_plan_messages: bool = False  # Enable verbose debug logging for planning
     aggressive_cache_clear: bool = False  # Clear ALL caches on Fresh Start (dev mode)
     precise_token_count: bool = False  # Use tiktoken for precise token counting
+    debug_mode: str = Field(
+        default="off", alias="DEBUG"
+    )  # DEBUG env var: "off" | "compact" | "full"
+    pytest_running: bool = Field(default=False, alias="PYTEST_RUNNING")  # Set by conftest.py
+    cost_threshold_warning: float = 0.10  # LLM cost warning threshold (USD)
+    cost_threshold_critical: float = 1.00  # LLM cost critical threshold (USD)
 
     # backend — 0.0.0.0 required for container environments (Render, Docker)
     backend_host: str = "0.0.0.0"
@@ -189,6 +196,7 @@ class Settings(BaseSettings):
     # =============================================================================
     rate_limit_enabled: bool = True
     admin_api_key: str = os.getenv("ADMIN_API_KEY", "")
+    max_sessions_per_ip_hour: int = 10  # Session creation throttle per IP
 
     # Validation cache settings
     validation_cache_size: int = 5000  # Increased for progressive learning of unknown places
@@ -367,7 +375,7 @@ settings = Settings()
 def configure_langsmith_tracing(
     enabled: bool = True,
     project: str | None = None,
-) -> None:
+) -> str | None:
     """
     Configure LangSmith tracing environment variables.
 
@@ -377,10 +385,13 @@ def configure_langsmith_tracing(
     Args:
         enabled: Whether to enable tracing
         project: Optional project name override (defaults to settings.langsmith_project)
+
+    Returns:
+        The resolved project name (with env suffix), or None if tracing is not configured.
     """
     api_key = settings.langsmith_api_key
     if not api_key:
-        return
+        return None
 
     # Fully disable if tracing flag is off OR sample rate is 0
     effective_enabled = (
@@ -402,6 +413,7 @@ def configure_langsmith_tracing(
     # Set both — newer SDK reads LANGSMITH_PROJECT, older reads LANGCHAIN_PROJECT
     os.environ["LANGCHAIN_PROJECT"] = resolved_project
     os.environ["LANGSMITH_PROJECT"] = resolved_project
+    return resolved_project
 
 
 def generate_session_token() -> str:

@@ -326,6 +326,19 @@ def _experience_to_tile_dict(
     if image_url is None:
         image_url = get_image_url_sync(destination, variant=index % 6, activities=[tile.category])
 
+    # Convert USD price estimate to 0-4 price_level for uniform DayBlock display
+    _usd = float(tile.price_estimate)
+    if _usd <= 0:
+        _price_level = 0
+    elif _usd <= 30:
+        _price_level = 1
+    elif _usd <= 80:
+        _price_level = 2
+    elif _usd <= 150:
+        _price_level = 3
+    else:
+        _price_level = 4
+
     return {
         "id": tile_id,
         "type": "activity",
@@ -335,6 +348,7 @@ def _experience_to_tile_dict(
         "subtitle": subtitle,  # Derived, not LLM-generated
         "image_url": image_url,
         "price_estimate": float(tile.price_estimate),
+        "price_level": _price_level,
         "currency": "USD",
         "price_basis": "per_person",
         "is_estimate_only": True,
@@ -465,7 +479,11 @@ async def generate_experience_tiles_for_day(
         return []
 
     if not categories:
-        categories = ["activities"]
+        # Rotate through real Tier-2 categories so different days get different content.
+        # "activities" is not a real category — using it causes the LLM to set
+        # meta.category="activities" → specialist_type="activities" → "ACTIVITIES" badge.
+        _default_cats = ["cultural", "nature", "food", "tours", "shopping"]
+        categories = [_default_cats[day_number % len(_default_cats)]]
 
     # Round-robin categories across tile slots
     cat_tile_counts: dict[str, int] = {}

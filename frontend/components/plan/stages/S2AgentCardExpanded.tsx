@@ -19,14 +19,14 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
         <div className="mb-2">
           <div className="flex gap-3 overflow-x-auto pb-3 snap-x no-scrollbar md:hidden">
             {section.destination_gallery.filter(img => Boolean(img.image_url)).map((img, idx) => (
-              <div key={idx} className="shrink-0 snap-center relative w-64 h-40 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-200 dark:border-zinc-700/50">
+              <div key={idx} className="shrink-0 snap-center relative w-64 h-40 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-200 dark:border-white/10">
                 <Image src={img.image_url} alt={img.label} fill className="object-cover" />
               </div>
             ))}
           </div>
           <div className="hidden md:grid grid-cols-3 gap-4">
             {section.destination_gallery.filter(img => Boolean(img.image_url)).map((img, idx) => (
-              <div key={idx} className="relative h-48 md:h-64 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-100 dark:border-zinc-700/50 group">
+              <div key={idx} className="relative h-48 md:h-64 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-100 dark:border-white/10 group">
                 <Image src={img.image_url} alt={img.label} fill className="object-cover transition-transform duration-500 group-hover:scale-105" />
               </div>
             ))}
@@ -66,7 +66,7 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
           </h5>
           <div className="grid gap-3">
             {section.content_added.map((c, idx) => (
-              <div key={idx} className={cn('rounded-xl border transition-colors p-4 flex gap-3', 'bg-white border-zinc-200 hover:border-emerald-500/30 shadow-card', 'dark:bg-zinc-900 dark:border-zinc-700 dark:hover:border-zinc-600 dark:shadow-none')}>
+              <div key={idx} className={cn('rounded-xl border transition-colors p-4 flex gap-3', 'bg-white border-zinc-200 hover:border-emerald-500/30 shadow-card', 'dark:bg-zinc-900 dark:border-white/10 dark:hover:border-white/20 dark:shadow-none')}>
                 {c.image_url && (
                   <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-100 dark:bg-zinc-900">
                     <Image src={c.image_url} alt={c.title} width={64} height={64} className="object-cover w-full h-full" />

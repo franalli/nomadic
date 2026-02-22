@@ -32,6 +32,10 @@ type UIState = {
   isComparisonMode: boolean;
   comparisonBranchIds: [string, string] | null;
 
+  // Hover sync (card ↔ map, ephemeral — not persisted)
+  hoveredActivityId: string | null;
+  setHoveredActivityId: (id: string | null) => void;
+
   // Actions
   setSelectedBranchId: (branchId: string | null) => void;
   selectBranchIfNone: (branchId: string) => void;
@@ -53,6 +57,7 @@ const initialUIState = {
   selectedBranchId: null as string | null,
   isComparisonMode: false,
   comparisonBranchIds: null as [string, string] | null,
+  hoveredActivityId: null as string | null,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,10 +70,12 @@ const UI_STORAGE_KEY = 'nomadic-ui-state';
 // Store
 // ─────────────────────────────────────────────────────────────────────────────
 
-const useUIStore = create<UIState>()(
+export const useUIStore = create<UIState>()(
   persist(
     (set, get) => ({
       ...initialUIState,
+
+      setHoveredActivityId: (id: string | null) => set({ hoveredActivityId: id }),
 
       setSelectedBranchId: (branchId: string | null) => {
         set({ selectedBranchId: branchId });

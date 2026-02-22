@@ -253,7 +253,7 @@ const CoreChip = memo(function CoreChip({
 
         // --- STATE: DISABLED (BOOKING mode) ---
         disabled && [
-          'opacity-60 cursor-not-allowed',
+          'opacity-50 cursor-not-allowed pointer-events-none',
           'hover:scale-100 hover:border-current', // Disable hover effects
         ]
       )}
@@ -265,7 +265,7 @@ const CoreChip = memo(function CoreChip({
           isSet
             ? 'text-zinc-900 dark:text-emerald-400'
             : 'text-zinc-400 dark:text-zinc-500',
-          disabled && 'opacity-60'
+          disabled && 'opacity-50'
         )}
       />
       <span className="text-xs font-semibold uppercase tracking-wide whitespace-nowrap">
@@ -345,7 +345,7 @@ const ModuleChip = memo(function ModuleChip({
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20 dark:focus-visible:ring-emerald-500/30',
 
         // --- STATE: DISABLED (BOOKING mode) ---
-        disabled && 'opacity-50 cursor-not-allowed'
+        disabled && 'opacity-50 cursor-not-allowed pointer-events-none'
       )}
     >
       {/* Checkmark for active state (replaces icon position) */}

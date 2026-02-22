@@ -3,7 +3,8 @@
 
 import { AnimatePresence, motion, type PanInfo } from 'framer-motion';
 import { X } from 'lucide-react';
-import { memo, useCallback, useEffect } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/utils';
 
@@ -30,6 +31,10 @@ function BottomSheetInner({
   children,
   className,
 }: BottomSheetProps) {
+  // Track mount state to avoid SSR portal mismatch
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   // Close on escape key
   useEffect(() => {
     if (!open) return;
@@ -67,7 +72,7 @@ function BottomSheetInner({
     [onOpenChange]
   );
 
-  return (
+  const content = (
     <AnimatePresence>
       {open && (
         <>
@@ -150,6 +155,9 @@ function BottomSheetInner({
       )}
     </AnimatePresence>
   );
+
+  if (!mounted) return null;
+  return createPortal(content, document.body);
 }
 
 export const BottomSheet = memo(BottomSheetInner);

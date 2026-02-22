@@ -9,13 +9,14 @@ import {
 MapPin, Mountain, Music, Palmtree, Plane, ShoppingBag,
   Snowflake, Sunset, Utensils, Waves, Wind,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MapboxMap, { type ErrorEvent, Layer, type MapRef, Marker, NavigationControl, Source } from 'react-map-gl/mapbox';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { debugLog } from '@/lib/debug';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
+import { useUIStore } from '@/state/uiStore';
 
 import { isMapboxTimingError } from './mapbox-error-handler';
 export { isMapboxTimingError };
@@ -58,6 +59,10 @@ interface InteractiveMapProps {
   defaultCenter: MapCenter;
   className?: string;
   onMarkerClick?: (itemId: string) => void;
+  /** Card→map: highlight this pin when a day-card block is hovered */
+  externalHoveredItemId?: string | null;
+  /** Map→card: fires when a pin is hovered/unhovered */
+  onMarkerHover?: (itemId: string | null) => void;
   routeGeoJson?: GeoJSON.FeatureCollection | null;
   visibleLayers?: Set<string>;
   highlightedDay?: number | null;
@@ -156,6 +161,105 @@ const MARKER_Z_INDEX_STYLE: Record<'active' | 'hovered' | 'default', { zIndex: n
 const MAP_CONTAINER_STYLE = { width: '100%', height: '100%' } as const;
 
 // =============================================================================
+// MapMarkerItem — isolated per-marker component
+// Each instance subscribes to a boolean selector so only the 2 affected markers
+// re-render on hover instead of the entire marker list.
+// =============================================================================
+
+interface MapMarkerItemProps {
+  item: MapItem;
+  activeItemId: string | null;
+  highlightedDay?: number | null;
+  onMarkerClick?: (id: string) => void;
+  lastClickRef: React.RefObject<number>;
+}
+
+const MapMarkerItem = memo(function MapMarkerItem({
+  item,
+  activeItemId,
+  highlightedDay,
+  onMarkerClick,
+  lastClickRef,
+}: MapMarkerItemProps) {
+  // Subscribe to a boolean — only this marker re-renders on hover change
+  const isStoreHovered = useUIStore((s) => s.hoveredActivityId === item.id);
+  const isActive = item.id === activeItemId;
+  const pin = getPinConfig(item.type);
+  const MarkerIcon = pin.icon;
+  const markerBg = isActive ? '#10b981' : pin.color;
+  const isDimmed =
+    highlightedDay != null &&
+    item.dayNumber !== undefined &&
+    item.dayNumber !== highlightedDay;
+  const isSpecialistPoi = item.source === 'specialist';
+  const isHovered = isStoreHovered;
+  const showTooltip = isActive || isHovered;
+
+  return (
+    <Marker
+      longitude={item.coordinates.lng}
+      latitude={item.coordinates.lat}
+      anchor="bottom"
+      onClick={() => {
+        const now = Date.now();
+        if (now - lastClickRef.current < 500) return;
+        lastClickRef.current = now;
+        onMarkerClick?.(item.id);
+      }}
+      style={
+        isActive
+          ? MARKER_Z_INDEX_STYLE.active
+          : isHovered
+            ? MARKER_Z_INDEX_STYLE.hovered
+            : MARKER_Z_INDEX_STYLE.default
+      }
+    >
+      <div
+        className={cn(
+          'transition-all duration-300 transform cursor-pointer',
+          isActive ? 'scale-125' : 'scale-100 hover:scale-110',
+          isDimmed
+            ? 'opacity-30'
+            : isSpecialistPoi && !isActive
+              ? 'opacity-70 hover:opacity-100'
+              : 'opacity-100'
+        )}
+        onMouseEnter={() => { useUIStore.getState().setHoveredActivityId(item.id); }}
+        onMouseLeave={() => { useUIStore.getState().setHoveredActivityId(null); }}
+      >
+        <div
+          className={cn(
+            'flex items-center justify-center rounded-full shadow-xl border-2 transition-all',
+            isActive ? 'w-10 h-10 border-white' : 'w-8 h-8 border-white/80',
+            isDimmed && 'grayscale'
+          )}
+          style={{ backgroundColor: markerBg }}
+        >
+          <MarkerIcon
+            className="text-white"
+            size={isActive ? 20 : 16}
+          />
+        </div>
+
+        {item.dayNumber && !isActive && !isHovered && (
+          <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-zinc-800 border border-white/30 flex items-center justify-center">
+            <span className={`${DS.textSize.mapMarkerLabel} font-bold text-white`}>{item.dayNumber}</span>
+          </div>
+        )}
+
+        {showTooltip && (
+          <div className={`absolute top-full mt-2 left-1/2 -translate-x-1/2 z-[9999] bg-black/90 backdrop-blur-sm px-2.5 py-1.5 rounded-md ${DS.textSize.mini} text-white whitespace-nowrap pointer-events-none shadow-lg border border-white/10`}>
+            {item.dayNumber && <span className="text-emerald-400">Day {item.dayNumber} • </span>}
+            <span className="font-medium">{item.title}</span>
+            {!item.dayNumber && <span className="text-zinc-400 ml-1">· {item.type}</span>}
+          </div>
+        )}
+      </div>
+    </Marker>
+  );
+});
+
+// =============================================================================
 // Component
 // =============================================================================
 
@@ -177,7 +281,6 @@ export function InteractiveMap({
   const isMountedRef = useRef(true);
   const lastClickRef = useRef<number>(0);
   const [isMapReady, setIsMapReady] = useState(false);
-  const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
 
   // Dark mode detection for map style
   const [isDark, setIsDark] = useState(() =>
@@ -264,7 +367,7 @@ export function InteractiveMap({
           padding: isDesktop
             ? { top: 60, bottom: 60, left: 60, right: 60 }
             : { top: 30, bottom: 30, left: 30, right: 30 },
-          maxZoom: 8,
+          maxZoom: 14,
           minZoom: 5,
           duration: 1000,
         }
@@ -381,7 +484,7 @@ export function InteractiveMap({
         onLoad={handleMapLoad}
         onMoveStart={() => {
           isUserInteractingRef.current = true;
-          setHoveredItemId(null); // clear stale tooltip when map pans
+          useUIStore.getState().setHoveredActivityId(null); // clear stale tooltip when map pans
         }}
         onMoveEnd={() => { isUserInteractingRef.current = false; }}
         // Reuse maps to prevent recreation issues
@@ -412,83 +515,16 @@ export function InteractiveMap({
           </Marker>
         )}
 
-        {filteredItems.map((item) => {
-          const isActive = item.id === activeItemId;
-          const pin = getPinConfig(item.type);
-          const MarkerIcon = pin.icon;
-          const markerBg = isActive ? '#10b981' : pin.color; // emerald-500 when active
-          const isDimmed =
-            highlightedDay != null &&
-            item.dayNumber !== undefined &&
-            item.dayNumber !== highlightedDay;
-          const isSpecialistPoi = item.source === 'specialist';
-          const isHovered = item.id === hoveredItemId;
-          const showTooltip = isActive || isHovered;
-
-          return (
-            <Marker
-              key={item.id}
-              longitude={item.coordinates.lng}
-              latitude={item.coordinates.lat}
-              anchor="bottom"
-              onClick={() => {
-                const now = Date.now();
-                if (now - lastClickRef.current < 500) return;
-                lastClickRef.current = now;
-                onMarkerClick?.(item.id);
-              }}
-              style={
-                isActive
-                  ? MARKER_Z_INDEX_STYLE.active
-                  : isHovered
-                    ? MARKER_Z_INDEX_STYLE.hovered
-                    : MARKER_Z_INDEX_STYLE.default
-              }
-            >
-              <div
-                className={cn(
-                  'transition-all duration-300 transform cursor-pointer',
-                  isActive ? 'scale-125' : isHovered ? 'scale-110' : 'scale-100',
-                  isDimmed
-                    ? 'opacity-30'
-                    : isSpecialistPoi && !isActive && !isHovered
-                      ? 'opacity-70 hover:opacity-100'
-                      : 'opacity-100 hover:opacity-100'
-                )}
-                onMouseEnter={() => setHoveredItemId(item.id)}
-                onMouseLeave={() => setHoveredItemId(null)}
-              >
-                <div
-                  className={cn(
-                    'flex items-center justify-center rounded-full shadow-xl border-2 transition-all',
-                    isActive ? 'w-10 h-10 border-white' : 'w-8 h-8 border-white/80',
-                    isDimmed && 'grayscale'
-                  )}
-                  style={{ backgroundColor: markerBg }}
-                >
-                  <MarkerIcon
-                    className="text-white"
-                    size={isActive ? 20 : 16}
-                  />
-                </div>
-
-                {item.dayNumber && !isActive && !isHovered && (
-                  <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-zinc-800 border border-white/30 flex items-center justify-center">
-                    <span className={`${DS.textSize.mapMarkerLabel} font-bold text-white`}>{item.dayNumber}</span>
-                  </div>
-                )}
-
-                {showTooltip && (
-                  <div className={`absolute top-full mt-2 left-1/2 -translate-x-1/2 z-[9999] bg-black/90 backdrop-blur-sm px-2.5 py-1.5 rounded-md ${DS.textSize.mini} text-white whitespace-nowrap pointer-events-none shadow-lg border border-white/10`}>
-                    {item.dayNumber && <span className="text-emerald-400">Day {item.dayNumber} • </span>}
-                    <span className="font-medium">{item.title}</span>
-                    {!item.dayNumber && <span className="text-zinc-400 ml-1">· {item.type}</span>}
-                  </div>
-                )}
-              </div>
-            </Marker>
-          );
-        })}
+        {filteredItems.map((item) => (
+          <MapMarkerItem
+            key={item.id}
+            item={item}
+            activeItemId={activeItemId}
+            highlightedDay={highlightedDay}
+            onMarkerClick={onMarkerClick}
+            lastClickRef={lastClickRef}
+          />
+        ))}
       </MapboxMap>
     </div>
   );

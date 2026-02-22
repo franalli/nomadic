@@ -249,3 +249,52 @@ export function useViewNavigation(): UseViewNavigationReturn {
     hasLeftSetup,
   };
 }
+
+/**
+ * useViewNavigationLight
+ *
+ * Lightweight version for components that only need nav actions + basic derived state.
+ * All selectors return stable primitives (booleans, strings) — no object refs.
+ * Use this in root-level components like NomadicLanding to avoid broad re-renders.
+ */
+export function useViewNavigationLight(): Pick<
+  UseViewNavigationReturn,
+  'navigateTo' | 'finalizePlan' | 'canViewPlan' | 'activeView'
+> {
+  const storedActiveMode = useDocumentStore((s) => s.activeView ?? 'planning');
+  const hasDates = useDocumentStore((s) => Boolean(s.document?.trip_inputs?.start_date));
+  const isGenerating = useDocumentStore((s) => s.generation?.active === true);
+  const isPlanFinalized = useDocumentStore((s) => s.isPlanFinalized);
+  const hasTiles = useDocumentStore((s) => {
+    const tiles = s.document?.tiles;
+    if (!tiles) return false;
+    for (const _ in tiles) return true; // O(1) — early-exit on first own key
+    return false;
+  });
+  const inBookableState = useDocumentStore((s) =>
+    ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
+      s.document?.plan_view_state ?? ''
+    )
+  );
+  const setActiveView = useDocumentStore((s) => s.setActiveView);
+  const setFinalized = useDocumentStore((s) => s.setFinalized);
+
+  const canViewBooking = isPlanFinalized && (hasTiles || inBookableState);
+  const canViewPlan = hasDates || isGenerating;
+
+  const activeView: ViewName = storedActiveMode === 'booking' ? 'book' : hasDates ? 'plan' : 'setup';
+
+  const navigateTo = useCallback(
+    (view: ViewName): boolean => {
+      const mode = legacyToMode(view);
+      if (mode === 'booking' && (!canViewBooking || isGenerating)) return false;
+      setActiveView(mode);
+      return true;
+    },
+    [canViewBooking, isGenerating, setActiveView]
+  );
+
+  const finalizePlan = useCallback(() => setFinalized(true), [setFinalized]);
+
+  return { navigateTo, finalizePlan, canViewPlan, activeView };
+}

@@ -137,6 +137,7 @@ def build_local_expert_section(
     content_added: List[Dict[str, Any]],
     gallery_images: List[Dict[str, Any]],
     travel_intelligence: Dict[str, Any],
+    principles: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Build a local-expert strategy section dict.
 
@@ -148,7 +149,7 @@ def build_local_expert_section(
         "title": f"{destination} Trip Overview",
         "one_liner": one_liner,
         "bullets": bullets,
-        "principles": [],
+        "principles": principles if principles is not None else [],
         "must_dos": must_dos,
         "optional_upgrades": [],
         "logistics_notes": logistics_notes,

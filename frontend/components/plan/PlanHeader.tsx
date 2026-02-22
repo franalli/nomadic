@@ -4,15 +4,11 @@
  * PlanHeader
  *
  * Sticky header for the right-side plan panel.
- * Two variants:
- * 1. Empty (no destination) - Compact bar with progress indicator only
- * 2. Hero (destination exists) - Full image header with title/subtitle
+ * Plan panel shows chips only — hero image lives in ChatPanel.
  *
  * Two-mode system: PLANNING + BOOKING
  * - PLANNING: Evolves naturally based on user inputs (destination → dates → itinerary)
  * - BOOKING: Transaction mode with price comparison
- *
- * Progress indicator shows completion within PLANNING mode.
  */
 
 
@@ -22,15 +18,13 @@ import React from 'react';
 import { isBootstrap } from '@/components/plan/planStateHelpers';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
-import { placeholderImagesForBranch } from '@/lib/placeholders';
 import { getStatusPillText } from '@/lib/statusCopyMap';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
-import type { DestinationCard, PlanViewState } from '@/types/plan-envelope';
+import type { PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 
 interface PlanHeaderProps {
-  destinationCard?: DestinationCard;
   isGenerating?: boolean;
   /** Fallback title from tripInputs if destinationCard not available */
   fallbackTitle?: string;
@@ -49,7 +43,6 @@ interface PlanHeaderProps {
 }
 
 export function PlanHeader({
-  destinationCard,
   isGenerating = false,
   fallbackTitle,
   planViewState = 'S0_BOOTSTRAP',
@@ -59,63 +52,34 @@ export function PlanHeader({
   isStreaming = false,
   isCollapsed = false,
 }: PlanHeaderProps) {
-  // FIX: Header needs to update immediately when dates change in store
   const tripInputs = useTripInputsWithFallback(propTripInputs);
-  // Determine variant based on whether we have a destination
-  const title = destinationCard?.title || fallbackTitle || '';
-  const hasDestination = Boolean(title);
-  // Gate hero image layer on both title AND image - prevents flash during image load
-  const showHeroImage = hasDestination && Boolean(destinationCard?.image_url);
-  // Status pill text for progress indicator
+  const title = fallbackTitle || tripInputs?.destination || '';
   const statusPillText = getStatusPillText(isGenerating, isExpandingItinerary);
-
-  // Get image URL: always use placeholder if destination exists (never grey gradient)
-  const imageUrl = React.useMemo(() => {
-    if (destinationCard?.image_url) {
-      return destinationCard.image_url;
-    }
-    // Always use placeholder for known destination - never fall back to grey
-    if (title) {
-      const placeholders = placeholderImagesForBranch({ destination: title });
-      return placeholders[0] || '/assets/default-destination.jpg';
-    }
-    return null;
-  }, [destinationCard?.image_url, title]);
 
   // Check if we should show pills (S1+ with tripInputs and handler)
   const showPills =
     !isBootstrap(planViewState as PlanViewState) && tripInputs && onOpenSheet;
 
-  // Format date range for collapsed view (must be before early return to maintain hook order)
+  // Format date range for collapsed view (hooks must be called unconditionally)
   const startDate = tripInputs?.start_date;
   const endDate = tripInputs?.end_date;
   const dateRangeText = React.useMemo(() => {
     if (!startDate) return null;
     const start = new Date(startDate);
-    const startFormatted = start.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-    });
+    const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     if (endDate) {
       const end = new Date(endDate);
-      const endFormatted = end.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-      });
+      const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       return `${startFormatted} - ${endFormatted}`;
     }
     return startFormatted;
   }, [startDate, endDate]);
 
-  // Shared hero height - viewport-height relative so it scales with screen height, not width
-  // 13" (800px h) → 200px | 15" (900px h) → 225px | 27" (1440px h) → capped at 280px
-  const HERO_HEIGHT = 'h-[clamp(180px,25vh,280px)]';
-
   // COLLAPSED STATE: Compact header bar when scrolled
   if (isCollapsed) {
     return (
       <div className="relative flex-shrink-0">
-        <div className="border-b border-zinc-200 dark:border-white/5 bg-white dark:bg-zinc-950/80 backdrop-blur-xl">
+        <div className="border-b border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-950/95 backdrop-blur-xl">
           <div className="flex items-center justify-between px-4 py-2">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-zinc-900 dark:text-white">
@@ -127,8 +91,6 @@ export function PlanHeader({
                 </span>
               )}
             </div>
-
-            {/* Status pill - shown during generation */}
             {statusPillText && (
               <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-600 dark:text-emerald-400 dark:bg-emerald-500/10">
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -141,66 +103,21 @@ export function PlanHeader({
     );
   }
 
-  // HERO STATE: Two variants depending on whether destination image is ready
-  // Without image: Living Topography with centered prompt
-  // With image: Vertical stack — clean image, text below on app bg
-  if (!showHeroImage) {
-    // Pre-destination: Topo base with setup prompt
-    return (
-      <div className="relative flex-shrink-0">
-        <div className={`relative ${HERO_HEIGHT} overflow-y-clip overflow-x-visible`}>
-          <div className="absolute inset-0 z-10 hero-radial-mask-bg">
-            <div className="absolute inset-0 z-0 hero-radial-mask-inner">
-              <div className="absolute inset-0 animate-topo-drift topo-contour-mask-600 opacity-[0.12] dark:opacity-[0.18]">
-                <div className="absolute inset-0 bg-zinc-900 dark:bg-white" />
-              </div>
-            </div>
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(16,185,129,0.06)_0%,_transparent_55%)] dark:bg-[radial-gradient(ellipse_at_center,_rgba(16,185,129,0.12)_0%,_transparent_55%)] z-0" />
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4 pb-6 z-20">
-              <h1 className="text-2xl md:text-3xl font-semibold tracking-tight drop-shadow-sm text-black dark:text-white dark:drop-shadow-lg">
-                Build Your Itinerary
-              </h1>
-              <p className="mt-2 text-xs uppercase tracking-[0.25em] font-medium text-emerald-700 dark:text-emerald-400/80">
-                Intelligent Trip Architect
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Plan panel header: chips only, no hero image (hero lives in ChatPanel)
+  if (!showPills) return null;
 
-  // Post-destination: Compact image + pills in vertical flow
   return (
-    <div className="relative flex-shrink-0">
-      {/* Clean hero image — no overlay, no gradient */}
-      <div className={cn(
-        'mx-4 mt-4 rounded-2xl overflow-hidden shadow-2xl transition-all duration-300',
-        isGenerating || isExpandingItinerary
-          ? 'animate-pulse opacity-80 ring-1 ring-emerald-500/20 dark:ring-emerald-500/30'
-          : 'ring-1 ring-black/10 dark:ring-white/10'
-      )}>
-        {imageUrl && (
-          <img
-            src={imageUrl}
-            alt={title}
-            className="w-full max-h-[15vh] min-h-[120px] object-cover"
-          />
-        )}
-      </div>
-
-      {/* Pills ARE the summary — no title, no subtitle, no specialist pills */}
-      {showPills && (
-        <div className="px-6 pt-5 pb-4">
-          <TripSummaryPills
-            tripInputs={tripInputs}
-            onOpenSheet={onOpenSheet}
-            disabled={isStreaming}
-            variant="default"
-            readOnlyExceptDestination={false}
-          />
-        </div>
-      )}
+    <div className={cn(
+      'relative flex-shrink-0 px-4 pt-3 pb-1.5',
+      (isGenerating || isExpandingItinerary) && 'opacity-80',
+    )}>
+      <TripSummaryPills
+        tripInputs={tripInputs}
+        onOpenSheet={onOpenSheet}
+        disabled={isStreaming}
+        variant="default"
+        readOnlyExceptDestination={false}
+      />
     </div>
   );
 }

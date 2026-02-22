@@ -13,6 +13,7 @@
 
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
@@ -50,8 +51,12 @@ export function NextStepBar({
     };
   }, []);
 
-  // Read tripInputs from same store as chips - no prop drilling
-  const tripInputs = useDocumentStore((state) => state.document?.trip_inputs);
+  // Read only the date fields needed — avoids re-renders on unrelated trip_inputs changes
+  const tripInputs = useDocumentStore(useShallow((state) => ({
+    start_date: state.document?.trip_inputs?.start_date ?? null,
+    end_date: state.document?.trip_inputs?.end_date ?? null,
+    trip_duration: state.document?.trip_inputs?.trip_duration ?? null,
+  })));
 
   // Check if dates are in the past (defensive — DatesSheet blocks selection,
   // but NL extraction could produce past dates before guard catches them)
@@ -160,7 +165,7 @@ export function NextStepBar({
           // Material: Deep Glass
           'bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl',
           'border border-zinc-200 dark:border-white/10',
-          'shadow-2xl shadow-black/20 dark:shadow-black/50'
+          'shadow-soft dark:shadow-black/50'
         )}
       >
         {/* LEFT: Context (Tight) */}

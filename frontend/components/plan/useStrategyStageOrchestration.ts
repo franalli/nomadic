@@ -14,7 +14,6 @@ import { useToast } from '@/components/ui/toast';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
-import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import {
   extractPOIsFromDayCards,
@@ -32,13 +31,6 @@ import { getTopicLabel } from './stages/StrategyHeroUtils';
 import { useBookingDrawerState } from './useBookingDrawerState';
 
 export type DataDensity = 'empty' | 'ghost' | 'bridge' | 'full';
-
-const EMPTY_CONSTRAINTS_VALIDATED: Array<{
-  constraint_id: string; rule: string; status: 'satisfied'; specialist: string; label: string;
-}> = [];
-const EMPTY_CONSTRAINT_VIOLATIONS: Array<{
-  code: string; message: string; severity: string; category: string; rule?: string;
-}> = [];
 
 export function computeDataDensity(
   state: PlanViewState,
@@ -81,7 +73,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   const { toast } = useToast();
   const {
     storeTiles, storeDayCardsRaw, preferredTileIds, toggleTilePreference,
-    isRegenUpdating, constraintsValidated, constraintViolations,
+    isRegenUpdating,
   } = useDocumentStore(
     useShallow((s) => ({
       storeTiles: s.document?.tiles,
@@ -89,8 +81,6 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
       preferredTileIds: s.preferredTileIds,
       toggleTilePreference: s.toggleTilePreference,
       isRegenUpdating: s.isRegenerating,
-      constraintsValidated: s.document?.constraints_validated ?? EMPTY_CONSTRAINTS_VALIDATED,
-      constraintViolations: s.document?.constraint_violations ?? EMPTY_CONSTRAINT_VIOLATIONS,
     }))
   );
 
@@ -112,13 +102,6 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   }
   const effectiveDayCards = stableDayCardsRef.current ?? viewModel.day_cards;
 
-  const validatedRules = useMemo(
-    () => new Set(constraintsValidated.map((v) => v.rule)), [constraintsValidated]
-  );
-  const violatedRules = useMemo(
-    () => new Set(constraintViolations.filter((v) => v.rule).map((v) => v.rule!)),
-    [constraintViolations]
-  );
   const isAnyRegenerating = isRegenerating || isRegenUpdating;
   const hasSectionData = (viewModel.strategy_sections?.length ?? 0) > 0;
   const isDesktop = useIsDesktop();
@@ -187,7 +170,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
     return 'analyzing';
   }, [generating, generation?.stage]);
   const isStreaming = generating || isCommitting || isExpandingItinerary;
-  const { activeMode } = useViewNavigation();
+  const activeMode: ViewMode = useDocumentStore((s) => (s.activeView ?? 'planning') as ViewMode);
   const effectiveMode: ViewMode = explicitMode ?? activeMode;
 
   const displayLogic = useMemo(() => {
@@ -242,7 +225,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
     stableDensity, displayLogic, specialistData, fullModePOIs,
     nextAction, generating, isStreaming, effectiveMode,
     shouldShowAutoProgress, hideNextStepBar, progressStage,
-    validatedRules, violatedRules, preferenceCount: preferredTileIds.size,
+    preferenceCount: preferredTileIds.size,
     ...bookingDrawer,
   };
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { RefObject, useEffect, useState } from 'react';
+import { RefObject, useEffect, useRef, useState } from 'react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -44,6 +44,7 @@ export function useScrollCollapse(
 ): boolean {
   const { threshold = 100, hysteresis = 20 } = options;
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const isCollapsedRef = useRef(false);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -53,11 +54,13 @@ export function useScrollCollapse(
       const scrollTop = element.scrollTop;
 
       // Collapse when scrolled past threshold + hysteresis
-      if (!isCollapsed && scrollTop > threshold + hysteresis) {
+      if (!isCollapsedRef.current && scrollTop > threshold + hysteresis) {
+        isCollapsedRef.current = true;
         setIsCollapsed(true);
       }
       // Expand when scrolled back above threshold
-      else if (isCollapsed && scrollTop < threshold) {
+      else if (isCollapsedRef.current && scrollTop < threshold) {
+        isCollapsedRef.current = false;
         setIsCollapsed(false);
       }
     };
@@ -69,7 +72,7 @@ export function useScrollCollapse(
     handleScroll();
 
     return () => element.removeEventListener('scroll', handleScroll);
-  }, [scrollRef, isCollapsed, threshold, hysteresis]);
+  }, [scrollRef, threshold, hysteresis]); // isCollapsed removed — ref handles it
 
   return isCollapsed;
 }

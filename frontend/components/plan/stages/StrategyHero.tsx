@@ -17,9 +17,10 @@ import {
   Sparkles,
 } from 'lucide-react';
 import Image from 'next/image';
-import React, { useId, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 
 import { BottomSheet } from '@/components/ui/bottom-sheet';
+import { getSpecialistEnrichment } from '@/lib/api';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { StrategySection } from '@/types/plan-envelope';
@@ -37,9 +38,6 @@ import {
   renderTopicIcon,
   SPECIALIST_STYLE_CLASSES,
 } from './StrategyHeroUtils';
-
-// Re-export for callers that import directly from StrategyHero
-export { getShortConstraintLabel } from './StrategyHeroUtils';
 
 // =============================================================================
 // Main Component Props
@@ -90,6 +88,34 @@ export function StrategyHero({
 
   // Internal state for sheet (compact mode is now self-contained)
   const [isSheetOpen, setIsSheetOpen] = useState(false);
+
+  // Enriched section data for local_expert fetch-on-open
+  const [enrichedSection, setEnrichedSection] = useState<StrategySection | null>(null);
+  const displaySection = enrichedSection ?? section;
+
+  // Clear enriched cache when the underlying section changes (e.g. new graph response)
+  useEffect(() => {
+    setEnrichedSection(null);
+  }, [section.id]);
+
+  // Fetch-on-open: load local_expert enrichment when sheet opens and travel_intelligence is empty
+  useEffect(() => {
+    if (!isSheetOpen) return;
+    if (section.specialist_type !== 'local_expert') return;
+    const ti = section.travel_intelligence;
+    if (ti && Object.keys(ti).length > 0) return; // already enriched
+
+    let cancelled = false;
+    getSpecialistEnrichment(section.id).then((result) => {
+      if (cancelled) return;
+      if (result?.status === 'ready' && result.data) {
+        setEnrichedSection(result.data as unknown as StrategySection);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSheetOpen, section.id, section.specialist_type, section.travel_intelligence]);
 
   // Internal state for accordion expansion (used when not controlled)
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
@@ -190,7 +216,7 @@ export function StrategyHero({
         </button>
         <BottomSheet open={isSheetOpen} onOpenChange={setIsSheetOpen} title={`${topicLabel} Strategy`} hint="Tap outside to close">
           <div className="space-y-6 pb-24">
-            <CompactSheetContent section={section} constraints={constraints} />
+            <CompactSheetContent section={displaySection} constraints={constraints} />
           </div>
         </BottomSheet>
       </>
@@ -256,7 +282,7 @@ export function StrategyHero({
     </button>
     <BottomSheet open={isSheetOpen} onOpenChange={setIsSheetOpen} title={`${topicLabel} Strategy`} hint="Tap to expand">
       <div className="space-y-6 pb-24">
-        <HeroSheetContent section={section} constraints={constraints} heroImage={heroImage} />
+        <HeroSheetContent section={displaySection} constraints={constraints} heroImage={heroImage} />
       </div>
     </BottomSheet>
     </>

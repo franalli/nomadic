@@ -62,7 +62,7 @@ export function GatingBlocker({ featureLabel, gates, onClose }: GatingBlockerPro
       'bg-zinc-50 dark:bg-white/[0.02]',
       'border border-zinc-100 dark:border-white/5'
     )}>
-      <AlertCircle className="h-5 w-5 text-zinc-400 dark:text-zinc-500 flex-shrink-0 mt-0.5" />
+      <AlertCircle className="h-5 w-5 text-zinc-500 dark:text-zinc-400 flex-shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           To include {featureLabel}, set {missing.join(' + ')}.

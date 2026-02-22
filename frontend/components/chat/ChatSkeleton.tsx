@@ -31,7 +31,7 @@ function MessageSkeleton({ isUser = false }: { isUser?: boolean }) {
       <Skeleton
         className={cn(
           'h-8 w-8 shrink-0 rounded-full',
-          isUser ? 'bg-primary/20' : 'bg-muted'
+          isUser ? 'bg-zinc-300 dark:bg-zinc-700' : 'bg-zinc-200 dark:bg-zinc-700'
         )}
       />
 
@@ -42,8 +42,8 @@ function MessageSkeleton({ isUser = false }: { isUser?: boolean }) {
           className={cn(
             'flex flex-col gap-2 rounded-2xl px-4 py-3',
             isUser
-              ? 'bg-primary/10 rounded-br-sm'
-              : 'bg-muted/50 rounded-bl-sm'
+              ? 'bg-zinc-300 dark:bg-zinc-700 rounded-br-sm'
+              : 'bg-zinc-200 dark:bg-zinc-800 rounded-bl-sm'
           )}
         >
           {/* Text lines */}
@@ -86,9 +86,9 @@ export const ChatSkeleton = memo(function ChatSkeleton({
         <>
           <MessageSkeleton isUser={true} />
           <div className="flex w-full gap-4 py-4">
-            <Skeleton className="h-8 w-8 shrink-0 rounded-full bg-muted" />
+            <Skeleton className="h-8 w-8 shrink-0 rounded-full bg-zinc-200 dark:bg-zinc-700" />
             <div className="flex flex-col gap-2">
-              <div className="flex flex-col gap-2 rounded-2xl rounded-bl-sm bg-muted/50 px-4 py-3">
+              <div className="flex flex-col gap-2 rounded-2xl rounded-bl-sm bg-zinc-200 dark:bg-zinc-800 px-4 py-3">
                 <Skeleton className="h-4 w-56" />
                 <Skeleton className="h-4 w-72" />
                 <Skeleton className="h-4 w-48" />

@@ -11,7 +11,10 @@ from typing import Any, Dict, List
 # =============================================================================
 # EARLY WARNING SUPPRESSION (before any imports that might trigger warnings)
 # =============================================================================
-# Must happen before OpenAI/Pydantic imports to catch schema validation warnings
+# Must happen before OpenAI/Pydantic imports to catch schema validation warnings.
+# Bootstrap exception: importing `settings` here would instantiate pydantic_settings,
+# triggering the very warnings we're suppressing. Reads same DEBUG env var as
+# settings.debug_mode (Field alias="DEBUG") — single source of truth in config.py.
 _debug_mode = os.getenv("DEBUG", "off").lower().strip()
 if _debug_mode != "full":
     warnings.filterwarnings("ignore")
@@ -79,6 +82,7 @@ from app.schemas import (  # noqa: E402
     ArrangementResult,
     ArrangementValidateRequest,
     BlockViolation,
+    BrowseActivitiesRequest,
     ChatHistoryResponse,
     ChatMessageResponse,
     DayBlock,
@@ -87,6 +91,8 @@ from app.schemas import (  # noqa: E402
     ExpandItineraryRequest,
     ExpandItineraryStreamEvent,
     GraphPlanRequest,
+    InsertActivityBlockRequest,
+    InsertActivityBlockResponse,
     PlanDocumentData,
     PlanDocumentPatch,
     PlanDocumentResponse,
@@ -95,6 +101,7 @@ from app.schemas import (  # noqa: E402
     RemoveBlockResponse,
     RestoreSnapshotRequest,
     RestoreSnapshotResponse,
+    SpecialistEnrichmentResponse,
     Tile,
     TileRefreshRequest,
     TileRefreshResponse,
@@ -427,6 +434,34 @@ def _first_trip_anchor_coordinates(doc_data: PlanDocumentData) -> Dict[str, floa
             return normalized
 
     return None
+
+
+def _price_estimate_to_level(price_estimate: float | str | None) -> int | None:
+    """Bucket a per-person dollar estimate into a Google Places price_level (0-4).
+
+    Accepts:
+    - float/int: dollar amount bucketed by range
+    - str: Browse tile string markers ("Free", "$", "$$", "$$$", "$$$$")
+    - None: returns None
+
+    Used as a fallback when enrichment doesn't return a Places priceLevel
+    (common for experience-generator Tier 2 tiles and Browse tiles).
+    """
+    if price_estimate is None:
+        return None
+    if isinstance(price_estimate, str):
+        str_map = {"Free": 0, "$": 1, "$$": 2, "$$$": 3, "$$$$": 4}
+        return str_map.get(price_estimate)
+    p = float(price_estimate)
+    if p == 0:
+        return 0
+    if p < 30:
+        return 1
+    if p < 75:
+        return 2
+    if p < 150:
+        return 3
+    return 4
 
 
 def _resolve_fill_day_block_constraints(tile_specialist: str, meta: Dict[str, Any]) -> List[str]:
@@ -1522,6 +1557,58 @@ async def get_plan_document(
     )
 
 
+@app.get("/api/specialist/{section_id}/enrichment")
+@limiter.limit("30/minute")
+async def get_specialist_enrichment(
+    request: Request,
+    section_id: str,
+    db: AsyncSession = async_db_dependency,
+):
+    """
+    Fetch enriched specialist section data (Phase B result).
+
+    Returns 200 with section data if Phase B enrichment has completed.
+    Returns 202 with {"status": "pending"} if Phase B is still running or hasn't produced data yet.
+
+    Called by frontend on specialist card open (Option B3 fetch-on-open pattern).
+    """
+    session_id = get_session_from_request(request)
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = await get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document")
+
+    doc_data = get_document_data(doc)
+    section = next(
+        (s for s in (doc_data.strategy_sections or []) if s.id == section_id),
+        None,
+    )
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    # For local_expert: check if travel_intelligence has been populated by Phase B
+    if section.specialist_type == "local_expert":
+        ti = section.travel_intelligence or {}
+        if not ti or not any(v for v in ti.values() if v):
+            return JSONResponse(status_code=202, content={"status": "pending"})
+        return SpecialistEnrichmentResponse(
+            section_id=section_id,
+            status="ready",
+            data=section.model_dump(),
+        )
+
+    # For niche specialists: data is from the main LLM call (not Phase B)
+    # Return section as-is — it's either fully populated or not
+    return SpecialistEnrichmentResponse(
+        section_id=section_id,
+        status="ready",
+        data=section.model_dump(),
+    )
+
+
 @app.patch("/api/document", response_model=PlanDocumentResponse)
 @limiter.limit("60/minute")
 async def patch_plan_document(
@@ -2188,6 +2275,12 @@ async def fill_day_endpoint(
                             "title": title,
                             "subtitle": item.get("subtitle", ""),
                             "image_url": item.get("image_url", ""),
+                            "rating": item.get("rating"),
+                            "user_ratings_count": item.get("user_ratings_count"),
+                            "price_level": item.get("price_level"),
+                            "google_place_id": item.get("google_place_id"),
+                            "location_label": item.get("location_label"),
+                            "deeplink": item.get("deeplink"),
                             "tags": [s_type],
                             "specialist_type": s_type,
                             "meta": {
@@ -2249,6 +2342,26 @@ async def fill_day_endpoint(
         for tile in tiles:
             tile.setdefault("meta", {})["pinned_day"] = body.day_number
 
+        # Cross-day deduplication: filter tiles whose titles are already placed on other days.
+        # Without this, cached experience tiles (same destination/category/month) would appear
+        # identically on every free day the user fills.
+        if tiles:
+            placed_titles_elsewhere: set[str] = {
+                (b.activity_type or "").lower().strip()
+                for dc in doc_data.day_cards
+                for b in dc.blocks
+                if dc.day_number != body.day_number
+                and b.activity_type
+                and b.activity_type not in ("free_day", "placeholder", "arrival", "departure")
+            }
+            deduped = [
+                t
+                for t in tiles
+                if (t.get("title") or "").lower().strip() not in placed_titles_elsewhere
+            ]
+            if deduped:  # Only apply dedup when at least one tile survives
+                tiles = deduped
+
         if not tiles:
             return {
                 "day_number": body.day_number,
@@ -2257,14 +2370,40 @@ async def fill_day_endpoint(
                 "excluded_categories": sorted(excluded_categories),
             }
     else:
-        # Pure Tier 1 with all specialist tiles already placed — nothing to fill
-        logger.info(f"[FILL-DAY] All specialist tiles for {tier1_requested} already placed")
-        return {
-            "day_number": body.day_number,
-            "tiles_added": 0,
-            "version": doc.version,
-            "excluded_categories": sorted(excluded_categories),
-        }
+        # All Tier 1 specialist tiles already placed — fall back to experience generator
+        # so free days on specialist trips still get activities (cultural, food, etc.)
+        # rather than staying empty and confusing the user.
+        logger.info(
+            "[FILL-DAY] All specialist tiles for %s placed, falling back to experience generator "
+            "for day %d",
+            tier1_requested,
+            body.day_number,
+        )
+        date_str = day_card.date or ti.start_date
+        month = date_str[:7] if date_str and len(date_str) >= 7 else "unknown"
+
+        from app.services.experience_generator import generate_experience_tiles_for_day
+
+        budget_int = int(ti.budget) if ti.budget else None
+        tiles = await generate_experience_tiles_for_day(
+            destination=destination,
+            categories=None,  # day_number rotation picks the category
+            month=month,
+            day_number=body.day_number,
+            budget=budget_int,
+            tiles_per_day=1,
+        )
+
+        for tile in tiles:
+            tile.setdefault("meta", {})["pinned_day"] = body.day_number
+
+        if not tiles:
+            return {
+                "day_number": body.day_number,
+                "tiles_added": 0,
+                "version": doc.version,
+                "excluded_categories": sorted(excluded_categories),
+            }
 
     # Convert tiles to rich DayBlocks
     _VALID_PERIODS = {"morning", "afternoon", "evening"}
@@ -2298,6 +2437,10 @@ async def fill_day_endpoint(
                     break
         if not tile_specialist:
             tile_specialist = meta.get("category", "experience")
+        # Only show specialist badge for Tier 1 specialists (diving, hiking, etc.).
+        # Tier 2 / generic experience tiles (cultural, food, etc.) should not show a badge.
+        if tile_specialist and tile_specialist not in TIER1_SPECIALIST_NAMES:
+            tile_specialist = ""
         block_constraints = _resolve_fill_day_block_constraints(tile_specialist, meta)
 
         new_blocks.append(
@@ -2314,6 +2457,13 @@ async def fill_day_endpoint(
                 coordinates=block_coordinates,
                 booked_tile=tile,
                 booking_category="activity",
+                rating=tile.get("rating"),
+                review_count=tile.get("user_ratings_count") or tile.get("review_count"),
+                price_level=(
+                    tile.get("price_level") or _price_estimate_to_level(tile.get("price_estimate"))
+                ),
+                google_place_id=tile.get("google_place_id"),
+                deeplink=tile.get("deeplink"),
             )
         )
 
@@ -2591,6 +2741,141 @@ async def remove_block(
 
 
 # =============================================================================
+# Insert Activity Block Endpoint (Browse Activities Sheet)
+# =============================================================================
+
+
+@app.post("/api/document/insert-activity-block")
+@limiter.limit("30/minute")
+async def insert_activity_block(
+    request: Request,
+    body: InsertActivityBlockRequest,
+    db: AsyncSession = async_db_dependency,
+) -> InsertActivityBlockResponse:
+    """
+    Insert an activity tile as a new block into a day card.
+    Pure Python, <10ms. No LLM, no constraint validation.
+    Used by Browse Activities sheet when user taps a tile.
+    """
+    from app.crud_document import save_document_data
+
+    session_id = get_session_from_request(request)
+    session_key = f"session:{session_id}"
+    await _wait_for_session_stream_idle(session_key)
+
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = await get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document")
+
+    doc_data = get_document_data(doc)
+    day_cards = doc_data.day_cards or []
+
+    # Find target day card
+    day_card = None
+    day_idx = -1
+    for i, dc in enumerate(day_cards):
+        if dc.day_number == body.day_number:
+            day_card = dc
+            day_idx = i
+            break
+    if day_card is None:
+        raise HTTPException(status_code=404, detail=f"Day {body.day_number} not found")
+
+    tile = body.tile
+    block_id = f"browse_activity_{tile.get('id', 'unknown')}_{body.day_number}"
+
+    # Map geo → coordinates dict (DayBlock.coordinates is {lat, lng})
+    geo = tile.get("geo")
+    coordinates: dict[str, float] | None = None
+    if isinstance(geo, dict):
+        lat = geo.get("lat")
+        lng = geo.get("lng")
+        if lat is not None and lng is not None:
+            coordinates = {"lat": lat, "lng": lng}
+    elif isinstance(geo, list) and len(geo) == 2:
+        # [lng, lat] convention throughout pipeline
+        coordinates = {"lat": geo[1], "lng": geo[0]}
+
+    # Build new block from tile data.
+    # activity_type is intentionally empty so the renderer falls through to summary
+    # (the place name). Setting it to the category word ("shopping") would show
+    # "Shopping" as the heading instead of the actual venue name.
+    # Build tile dict with pinned_day meta for rebuild survival.
+    # Deep-copy meta to avoid mutating the original body.tile dict.
+    tile_with_meta = {
+        **tile,
+        "id": tile.get("id") or block_id,
+        "meta": {**(tile.get("meta") or {}), "pinned_day": body.day_number, "source": "browse_add"},
+    }
+
+    new_block = DayBlock(
+        id=block_id,
+        period="morning",
+        activity_type="",
+        summary=tile.get("title", "Activity"),
+        image_url=tile.get("image_url"),
+        duration=tile.get("duration"),
+        rating=tile.get("rating"),
+        review_count=tile.get("review_count"),
+        price_level=tile.get("price_level") or (tile.get("meta") or {}).get("price_level"),
+        coordinates=coordinates,
+        intensity=None,
+        is_buffer=False,
+        specialist_type=tile.get("browse_category") or tile.get("category") or None,
+        booked_tile=tile_with_meta,
+        constraints=[],
+        preference_status="user_preferred",
+    )
+
+    # Pin browse tile so itinerary builder re-places it on graph re-run.
+    # Uses the same user_pinned_tiles mechanism as fill-day Browse→Add.
+    browse_tile_id = tile.get("id") or block_id
+    # Write into doc_data.tiles so the builder can look up the tile in Phase 5.25
+    try:
+        doc_data.tiles[browse_tile_id] = Tile(
+            **{k: v for k, v in tile_with_meta.items() if k in Tile.model_fields}
+        )
+    except Exception:
+        pass  # Non-critical: builder will skip if tile doesn't validate
+    doc_data.user_pinned_tiles[browse_tile_id] = {
+        "tile": tile_with_meta,
+        "source": "browse_add",
+        "priority": "high",
+        "category": tile.get("category", "activities"),
+        "preferred_day": body.day_number,
+    }
+
+    # Append block, inserting before free_day placeholders if present and removing them
+    free_day_idx = next(
+        (i for i, b in enumerate(day_card.blocks) if b.activity_type == "free_day"),
+        None,
+    )
+    if free_day_idx is not None:
+        day_card.blocks.insert(free_day_idx, new_block)
+        # Remove free_day placeholder now that the day has an activity
+        day_card.blocks = [b for b in day_card.blocks if b.activity_type != "free_day"]
+        day_card.label = "Activity Day"
+    else:
+        day_card.blocks.append(new_block)
+
+    # Persist
+    doc_data.day_cards[day_idx] = day_card
+    saved = await save_document_data(db, doc=doc, data=doc_data, updated_by="user")
+    await db.commit()
+
+    return InsertActivityBlockResponse(
+        day_number=body.day_number,
+        day_card=day_card.model_dump(),
+        version=saved.version,
+        inserted_block_id=block_id,
+    )
+
+
+# =============================================================================
 # Restore Snapshot Endpoint (Stage 18 — Undo Stack)
 # =============================================================================
 
@@ -2634,6 +2919,59 @@ async def restore_snapshot(
         day_cards=[dc.model_dump() for dc in doc_data.day_cards],
         version=saved.version,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Activity Browser Endpoint
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.post("/api/activities/browse")
+@limiter.limit("5/minute")
+async def browse_activities_endpoint(
+    request: Request,
+    body: BrowseActivitiesRequest,
+    db: AsyncSession = async_db_dependency,
+):
+    """
+    On-demand activity search for free/buffer days.
+
+    Priority order:
+    1. Document's browseable_activities (Tier 1 suppressed tiles — free, already fetched)
+    2. Google Places API (new fetch — ~$0.12/request, cached by dest+categories+month)
+
+    Rate limited to 5 req/min per session to cap Places API spend.
+    """
+    from app.services.activity_browser import browse_activities
+
+    session_id = get_session_from_request(request)
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Check document for stashed browseable_activities first (no API cost)
+    doc = await get_document(db, session=session)
+    if doc:
+        doc_data = get_document_data(doc)
+        stashed = doc_data.browseable_activities or []
+        if stashed:
+            return {"tiles": stashed, "total": len(stashed), "source": "stashed"}
+
+    # Resolve center from hotel_location if provided
+    center = None
+    if body.hotel_location:
+        lat = body.hotel_location.get("lat")
+        lng = body.hotel_location.get("lng")
+        if lat is not None and lng is not None:
+            center = (float(lat), float(lng))
+
+    tiles = await browse_activities(
+        destination=body.destination,
+        center=center,
+        categories=body.categories,
+        date=body.date,
+    )
+    return {"tiles": tiles, "total": len(tiles), "source": "places"}
 
 
 # =============================================================================

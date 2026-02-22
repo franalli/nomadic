@@ -30,13 +30,14 @@ interface MobileNavState {
   reset: () => void;
 }
 
-export const useMobileNavStore = create<MobileNavState>((set) => ({
+export const useMobileNavStore = create<MobileNavState>((set, get) => ({
   activePage: 0,
   hasNewPlanContent: false,
   setActivePage: (page) => {
-    set({ activePage: page });
-    // Clear badge when viewing plan
-    if (page === 1) set({ hasNewPlanContent: false });
+    if (get().activePage === page) return;
+    const updates: Partial<MobileNavState> = { activePage: page };
+    if (page === 1) updates.hasNewPlanContent = false;
+    set(updates);
   },
   navigateToPlan: () => set({ activePage: 1, hasNewPlanContent: false }),
   navigateToChat: () => set({ activePage: 0 }),

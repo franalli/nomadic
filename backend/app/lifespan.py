@@ -6,7 +6,6 @@ Extracted from main.py to keep the FastAPI app module focused on routes.
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -39,8 +38,8 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     # Configure LangSmith tracing (sets LANGCHAIN_* env vars with project suffix)
     from app.config import configure_langsmith_tracing
 
-    configure_langsmith_tracing()
-    _debug(f"[Startup] LangSmith project resolved to: {os.environ.get('LANGCHAIN_PROJECT', 'N/A')}")
+    resolved_project = configure_langsmith_tracing()
+    _debug(f"[Startup] LangSmith project resolved to: {resolved_project or 'N/A'}")
 
     # Log build info for cache debugging
     logger.info(

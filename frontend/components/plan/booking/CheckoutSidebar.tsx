@@ -80,7 +80,7 @@ export function CheckoutSidebar({
     <div className="sticky top-4 space-y-4">
       {/* Main card */}
       <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl p-6 shadow-card">
-        <h3 className="font-semibold text-lg mb-4">Trip Summary</h3>
+        <h3 className="font-semibold text-lg mb-4 text-zinc-900 dark:text-white">Trip Summary</h3>
 
         {/* Selected items list (if any) */}
         {selectedTiles.length > 0 && (
@@ -124,8 +124,8 @@ export function CheckoutSidebar({
 
         {/* Total */}
         <div className="flex justify-between items-end mb-6">
-          <span className="font-bold text-lg">Total Est.</span>
-          <span className="font-bold text-3xl tracking-tight">
+          <span className="font-bold text-lg text-zinc-900 dark:text-white">Total Est.</span>
+          <span className="font-bold text-3xl tracking-tight text-zinc-900 dark:text-white">
             {formatPrice(total, currency)}
           </span>
         </div>

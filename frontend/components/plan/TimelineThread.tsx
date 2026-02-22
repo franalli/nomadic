@@ -19,15 +19,19 @@ import {
   Waves,
   Zap,
 } from 'lucide-react';
-import React, { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { useMapSync } from '@/hooks/useMapSync';
+import { apiFetch } from '@/lib/api';
 import { getDayIntensity, INTENSITY_CONFIG } from '@/lib/dayIntensity';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
-import { useDocumentTripInputs } from '@/state/documentStore';
+import { useDocumentStore } from '@/state/documentStore';
+import { useUIStore } from '@/state/uiStore';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
+import { BrowseActivitiesSheet } from './BrowseActivitiesSheet';
 import { getTopicLabel } from './stages/StrategyHeroUtils';
 import { FreeDayCard } from './timeline/blocks/FreeDayCard';
 import { SafetyBlock } from './timeline/blocks/SafetyBlock';
@@ -53,6 +57,20 @@ const CATEGORY_ICONS: Record<string, string> = {
  */
 const BUFFER_EXCLUSIONS: Record<string, string[]> = {
   diving: ['hiking', 'skiing', 'climbing'],
+};
+
+/**
+ * Adjacent-day cross-domain exclusions — mirrors specialist_registry.py CrossDomainBlock.
+ * Key = specialist present on adjacent day → value = categories blocked on target day.
+ * Covers both directions:
+ *   - diving on N-1 blocks hiking/skiing/climbing on N (forward: altitude-after-dive)
+ *   - hiking/skiing/climbing on N+1 blocks diving on N (reverse: dive-before-altitude)
+ */
+const ADJACENT_EXCLUSIONS: Record<string, string[]> = {
+  diving: ['hiking', 'skiing', 'climbing'],
+  hiking: ['diving'],
+  skiing: ['diving'],
+  climbing: ['diving'],
 };
 
 const INTENSITY_ICON_MAP: Record<string, LucideIcon> = { Leaf, Sun, Zap };
@@ -285,14 +303,71 @@ export function TimelineThread({
   const effectiveVariant: TimelineVariant = variant ?? (isDraft ? 'draft' : 'real');
   const { badge, badgeClass } = variantConfig[effectiveVariant];
 
+  // Bidirectional map↔card hover sync — DOM-based to avoid full-tree re-renders.
+  // useUIStore.subscribe writes directly to DOM attributes; no React state involved.
+  useEffect(() => {
+    let prevId: string | null = null;
+    const unsub = useUIStore.subscribe((state) => {
+      const id = state.hoveredActivityId;
+      if (id === prevId) return;
+      if (prevId) {
+        document.getElementById(`timeline-item-${prevId}`)?.removeAttribute('data-map-hovered');
+      }
+      if (id) {
+        document.getElementById(`timeline-item-${id}`)?.setAttribute('data-map-hovered', 'true');
+      }
+      prevId = id;
+    });
+    return unsub;
+  }, []);
+
   // Fill-day: delegated to extracted hook
-  const tripInputs = useDocumentTripInputs();
-  const destination = tripInputs?.destination ?? null;
-  const categories = tripInputs?.activity_settings?.categories;
+  const { destination, categories } = useDocumentStore(
+    useShallow((s) => ({
+      destination: s.document?.trip_inputs?.destination ?? null,
+      categories: s.document?.trip_inputs?.activity_settings?.categories,
+    }))
+  );
   const { fillingDay, fillDayRejection, handleFillDay } = useTimelineFillDay({
     disableFillDayActions,
     categories,
   });
+
+  // Browse Activities sheet state
+  const [browseSheetOpen, setBrowseSheetOpen] = useState(false);
+  const [browseSheetDay, setBrowseSheetDay] = useState<{ dayNumber?: number; date?: string | null } | null>(null);
+  const browseableActivities = useDocumentStore((s) => s.browseableActivities);
+
+  const handleSelectActivity = useCallback(async (tile: import('@/lib/api').BrowseTile) => {
+    const targetDay = browseSheetDay?.dayNumber;
+    if (!targetDay) return;
+
+    setBrowseSheetOpen(false);
+
+    const { document: currentDoc } = useDocumentStore.getState();
+    if (!currentDoc) return;
+
+    try {
+      const res = await apiFetch('/api/document/insert-activity-block', {
+        method: 'POST',
+        body: JSON.stringify({
+          day_number: targetDay,
+          tile,
+        }),
+      });
+      if (!res.ok) return;
+      const result = await res.json();
+      // Optimistically update the store with the returned day_card
+      const doc = useDocumentStore.getState().document;
+      if (!doc) return;
+      const dayCards = (doc.day_cards ?? []).map((dc) =>
+        dc.day_number === targetDay ? result.day_card : dc
+      );
+      useDocumentStore.setState({ document: { ...doc, day_cards: dayCards }, version: result.version });
+    } catch {
+      // Silent fail — the itinerary wasn't modified
+    }
+  }, [browseSheetDay]);
 
   const sortedDays = useMemo(() => {
     return [...dayCards].sort((a, b) => a.day_number - b.day_number);
@@ -377,37 +452,6 @@ export function TimelineThread({
   }, [scrollTarget, effectiveVariant, clearScrollTarget]);
 
 
-  // ── Stage 17A: Constraint badge deduplication ──────────────────────────
-  // Plain Set (not useRef) — accumulates within a single render pass only.
-  // Resets naturally on every render (which is correct: plan changes = full re-render).
-  // Must be defined before the sortedDays.map call so it's in scope.
-  const _seenConstraintIds = new Set<string>();
-
-  /**
-   * Returns display mode for each constraint on a block.
-   * MUST be called in document order (top→bottom through the day card loop)
-   * so first-occurrence tracking works correctly.
-   * - 'blocking' severity → always 'full' (never collapse safety-critical info)
-   * - First occurrence of a constraint ID → 'full'
-   * - Subsequent occurrences → 'icon' (compact pill)
-   */
-  function getConstraintDisplayModes(block: DayBlock): Map<string, 'full' | 'icon'> {
-    const modes = new Map<string, 'full' | 'icon'>();
-    for (const c of block.active_constraints ?? []) {
-      if (c.severity === 'blocking') {
-        _seenConstraintIds.add(c.id);
-        modes.set(c.id, 'full');
-        continue;
-      }
-      if (!_seenConstraintIds.has(c.id)) {
-        _seenConstraintIds.add(c.id);
-        modes.set(c.id, 'full');
-      } else {
-        modes.set(c.id, 'icon');
-      }
-    }
-    return modes;
-  }
 
   // ── Stage 17B: Compact single-activity day variant ─────────────────────
   function getDayVariant(card: DayCard): 'default' | 'compact' {
@@ -432,6 +476,7 @@ export function TimelineThread({
   }
 
   return (
+    <>
     <div className="relative pl-4 pr-2 py-6 space-y-8 timeline-thread">
       {/* Variant badge for non-real timelines */}
       {badge && (
@@ -556,7 +601,7 @@ export function TimelineThread({
               // The drop zone is injected via freeDayDropSlot inside FreeDayCard instead.
               // For activity days: apply dayWrapper (DroppableDay) around the blocks list.
               const blocksContainer = (
-              <div className="space-y-3 pl-[52px]">
+              <div className="space-y-4 pl-[52px]">
                 {(() => {
                 if (isFreeDay) {
                   return (
@@ -572,40 +617,68 @@ export function TimelineThread({
                           />
                         );
                       })}
-                      <FreeDayCard
-                        dayNumber={card.day_number}
-                        dayDate={card.date ?? null}
-                        destination={destination}
-                        availableCategories={(() => {
-                          if (!categories || categories.length <= 1) return undefined;
-                          // Derive categories excluded by buffer blocks on this day.
-                          // A rest_day buffer from diving excludes hiking/climbing/skiing.
-                          const excludedByBuffer = new Set<string>();
+                      {(() => {
+                          // Build excluded category set from two sources:
+                          // 1. Buffer blocks on this day (same-day exclusion)
+                          // 2. Adjacent day specialist types (forward/reverse cross-domain)
+                          const excludedByConstraint = new Set<string>();
                           for (const buf of bufferBlocks) {
                             const st = (buf.specialist_type || '').toLowerCase();
                             if (st && BUFFER_EXCLUSIONS[st]) {
-                              BUFFER_EXCLUSIONS[st].forEach(cat => excludedByBuffer.add(cat));
+                              BUFFER_EXCLUSIONS[st].forEach(cat => excludedByConstraint.add(cat));
                             }
                           }
-                          return categories
-                            .filter(c => !excludedByBuffer.has(c.toLowerCase()))
-                            .map(c => ({
-                              value: c,
-                              label: c.charAt(0).toUpperCase() + c.slice(1),
-                              icon: CATEGORY_ICONS[c.toLowerCase()] ?? '\u{1F3AF}',
-                            }));
+                          const adjDays = dayCards.filter(
+                            dc => Math.abs(dc.day_number - card.day_number) === 1
+                          );
+                          for (const adjDay of adjDays) {
+                            for (const adjBlock of adjDay.blocks) {
+                              const st = (adjBlock.specialist_type || '').toLowerCase();
+                              if (st && ADJACENT_EXCLUSIONS[st]) {
+                                ADJACENT_EXCLUSIONS[st].forEach(cat => excludedByConstraint.add(cat));
+                              }
+                            }
+                          }
+                          const filteredCategories = categories
+                            ? categories.filter(c => !excludedByConstraint.has(c.toLowerCase()))
+                            : undefined;
+                          // A day is a "constraint buffer" when it has buffer blocks AND
+                          // every user-selected activity type is excluded by constraints.
+                          // On such days: suppress chips + auto-generate CTA; show Browse instead.
+                          const isConstraintBuffer = bufferBlocks.length > 0
+                            && !!categories
+                            && categories.length > 0
+                            && filteredCategories?.length === 0;
+                          const chipsToShow = (categories && categories.length > 1 && !isConstraintBuffer)
+                            ? filteredCategories?.map(c => ({
+                                value: c,
+                                label: c.charAt(0).toUpperCase() + c.slice(1),
+                                icon: CATEGORY_ICONS[c.toLowerCase()] ?? '\u{1F3AF}',
+                              }))
+                            : undefined;
+                          return (
+                            <FreeDayCard
+                              dayNumber={card.day_number}
+                              dayDate={card.date ?? null}
+                              destination={destination}
+                              availableCategories={chipsToShow}
+                              isConstraintBuffer={isConstraintBuffer}
+                              onBrowse={() => {
+                                setBrowseSheetDay({ dayNumber: card.day_number, date: card.date ?? null });
+                                setBrowseSheetOpen(true);
+                              }}
+                              onFillDay={isConstraintBuffer ? undefined : handleFillDay}
+                              isFilling={fillingDay === card.day_number}
+                              isDisabled={disableFillDayActions}
+                              rejectionMessage={
+                                fillDayRejection?.dayNumber === card.day_number
+                                  ? fillDayRejection.reason
+                                  : undefined
+                              }
+                              dropZoneSlot={freeDayDropSlot?.(card.day_number)}
+                            />
+                          );
                         })()}
-                        onBrowse={() => onOpenBookingDrawer?.('activity', card.day_number)}
-                        onFillDay={handleFillDay}
-                        isFilling={fillingDay === card.day_number}
-                        isDisabled={disableFillDayActions}
-                        rejectionMessage={
-                          fillDayRejection?.dayNumber === card.day_number
-                            ? fillDayRejection.reason
-                            : undefined
-                        }
-                        dropZoneSlot={freeDayDropSlot?.(card.day_number)}
-                      />
                     </>
                   );
                 }
@@ -643,15 +716,16 @@ export function TimelineThread({
                   // === RICH BLOCK RENDERING (S3 Itinerary View) ===
                   if (useRichBlocks) {
                     const isActiveBlock = activeBlockId === blockId;
-                    // Stage 17A: compute constraint display modes in document order
-                    const constraintModes = getConstraintDisplayModes(block);
                     const richBlockInner = (
                       <div
                         id={`timeline-item-${blockId}`}
                         data-map-id={blockId}
+                        onMouseEnter={() => useUIStore.getState().setHoveredActivityId(blockId)}
+                        onMouseLeave={() => useUIStore.getState().setHoveredActivityId(null)}
                         className={cn(
                           'transition-all duration-300',
-                          isActiveBlock && 'ring-2 ring-emerald-500 ring-offset-2 ring-offset-background rounded-xl scale-[1.01]'
+                          isActiveBlock && 'ring-2 ring-emerald-500 ring-offset-2 ring-offset-background rounded-xl scale-[1.01]',
+                          '[&[data-map-hovered=true]]:ring-1 [&[data-map-hovered=true]]:ring-blue-400/60 [&[data-map-hovered=true]]:rounded-xl',
                         )}
                       >
                         <RichBlockRenderer
@@ -667,8 +741,8 @@ export function TimelineThread({
                           onOpenStaysSettings={onOpenStaysSettings}
                           onOpenFlightsSettings={onOpenFlightsSettings}
                           onRemoveBlock={onRemoveBlock}
-                          constraintDisplayModes={constraintModes}
                           variant={dayVariant}
+                          isHighlighted={false}
                         />
                       </div>
                     );
@@ -700,7 +774,7 @@ export function TimelineThread({
                             ? 'bg-zinc-500/5 border-zinc-500/20'
                             : isActiveBlock
                               ? 'scale-[1.02] border-emerald-500/50 shadow-soft bg-white dark:bg-zinc-900'
-                              : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 hover:border-emerald-500/50 hover:shadow-soft'
+                              : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-white/10 hover:border-emerald-500/50 hover:shadow-soft'
                       )}
                     >
                       {/* Unschedulable warning banner */}
@@ -820,6 +894,18 @@ export function TimelineThread({
         );
       })}
     </div>
+    {destination && (
+      <BrowseActivitiesSheet
+        open={browseSheetOpen}
+        onOpenChange={setBrowseSheetOpen}
+        destination={destination}
+        dayNumber={browseSheetDay?.dayNumber}
+        date={browseSheetDay?.date}
+        stashedTiles={browseableActivities.length > 0 ? browseableActivities : undefined}
+        onSelectActivity={handleSelectActivity}
+      />
+    )}
+    </>
   );
 }
 

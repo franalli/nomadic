@@ -66,7 +66,6 @@ interface UseChatEffectsParams {
   readyToGenerate?: boolean;
   hasBranches?: boolean;
   generateTriggered: boolean;
-  setReadyMessageShown: (v: boolean) => void;
   setGenerateTriggered: (v: boolean) => void;
 
   // Chat store actions
@@ -93,7 +92,6 @@ export function useChatEffects(params: UseChatEffectsParams): void {
     readyToGenerate,
     hasBranches,
     generateTriggered,
-    setReadyMessageShown,
     setGenerateTriggered,
     loadHistory,
     filterMessages,
@@ -160,22 +158,20 @@ export function useChatEffects(params: UseChatEffectsParams): void {
   // Reset generate-related state when readyToGenerate becomes false
   useEffect(() => {
     if (!readyToGenerate) {
-      setReadyMessageShown(false);
       setGenerateTriggered(false);
       filterMessages((msg) => !msg.id.startsWith(READY_MESSAGE_ID_PREFIX));
     }
-  }, [readyToGenerate, filterMessages, setReadyMessageShown, setGenerateTriggered]);
+  }, [readyToGenerate, filterMessages, setGenerateTriggered]);
 
   // Ready-to-generate message tracking (backend sends the message via streaming)
   useEffect(() => {
     if (readyToGenerate && !readyMessageShownRef.current && !hasBranches && !generateTriggered) {
       readyMessageShownRef.current = true;
-      setReadyMessageShown(true);
     }
     if (!readyToGenerate) {
       readyMessageShownRef.current = false;
     }
-  }, [readyToGenerate, hasBranches, generateTriggered, setReadyMessageShown]);
+  }, [readyToGenerate, hasBranches, generateTriggered]);
 
   // Smart Loader: Single mutating status line (DS Section 19.C)
   useEffect(() => {

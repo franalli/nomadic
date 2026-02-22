@@ -653,6 +653,11 @@ export interface DayBlock {
   // === NEW: Rich content fields (S3 Itinerary View) ===
   image_url?: string; // Activity thumbnail from specialist
   duration?: string; // "4 hours", "Half day"
+  rating?: number; // Google Places star rating (browse-added activities)
+  review_count?: number; // Google Places review count
+  price_level?: number;  // Google Places price level (0=free, 1=$, 2=$$, 3=$$$, 4=$$$$)
+  google_place_id?: string; // Google Places ID
+  deeplink?: string;        // Google Maps URL
 
   // === NEW: Logistics layer (hard times) ===
   scheduled_time?: string; // "08:00 AM" for flights/check-in

@@ -70,7 +70,7 @@ export function HoldToDeleteButton({
         'relative flex items-center justify-center w-8 h-8 rounded-full transition-colors',
         'hover:bg-red-50 dark:hover:bg-red-950/30',
         holding && 'bg-red-50 dark:bg-red-950/30',
-        disabled && 'opacity-40 cursor-not-allowed',
+        disabled && 'opacity-50 cursor-not-allowed pointer-events-none',
         className,
       )}
       onPointerDown={startHold}

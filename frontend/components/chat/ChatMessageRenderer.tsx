@@ -2,7 +2,7 @@
 'use client';
 
 import { RotateCcw } from 'lucide-react';
-import React from 'react';
+import React, { memo } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -89,7 +89,7 @@ const MARKDOWN_COMPONENTS = {
     const startsWithEmoji = /^[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u.test(text);
 
     return (
-      <li className={`relative pl-4 ${!startsWithEmoji ? "before:absolute before:left-0 before:top-[0.6em] before:h-1.5 before:w-1.5 before:rounded-full before:bg-primary/60 before:content-['']" : ''}`}>
+      <li className={`relative pl-4 ${!startsWithEmoji ? "before:absolute before:left-0 before:top-[0.6em] before:h-1.5 before:w-1.5 before:rounded-full before:bg-zinc-900/60 dark:before:bg-zinc-400/60 before:content-['']" : ''}`}>
         {children}
       </li>
     );
@@ -142,13 +142,13 @@ const MARKDOWN_COMPONENTS = {
   hr: () => <hr className="my-3 border-zinc-200/50 dark:border-white/10" />,
   // Headers (rarely used in chat but supported)
   h1: ({ children }: { children?: React.ReactNode }) => (
-    <h1 className="mb-2 text-lg font-bold first:mt-0">{children}</h1>
+    <h1 className="mb-2 text-lg font-bold text-zinc-900 dark:text-white first:mt-0">{children}</h1>
   ),
   h2: ({ children }: { children?: React.ReactNode }) => (
-    <h2 className="mb-2 text-base font-semibold first:mt-0">{children}</h2>
+    <h2 className="mb-2 text-base font-semibold text-zinc-900 dark:text-white first:mt-0">{children}</h2>
   ),
   h3: ({ children }: { children?: React.ReactNode }) => (
-    <h3 className="mb-1.5 text-sm font-semibold first:mt-0">{children}</h3>
+    <h3 className="mb-1.5 text-sm font-semibold text-zinc-900 dark:text-white first:mt-0">{children}</h3>
   ),
 };
 
@@ -184,7 +184,7 @@ interface ChatMessageRendererProps {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function ChatMessageRenderer({
+function ChatMessageRendererInner({
   message: m,
   index: idx,
   streamingMessageId,
@@ -244,9 +244,11 @@ export function ChatMessageRenderer({
                 'rounded-2xl rounded-br-md px-3 py-2 text-left transition-all',
                 // Light Mode: Solid Black (The Commander)
                 'bg-zinc-900 text-white border border-zinc-900',
+                'shadow-card hover:shadow-soft hover:-translate-y-0.5',
                 'hover:bg-zinc-800 hover:border-zinc-800',
                 // Dark Mode: Solid White (Maximum Contrast Signal)
                 'dark:bg-white dark:text-zinc-950 dark:border-white',
+                'dark:shadow-[0_0_20px_-5px_rgba(255,255,255,0.3)]',
                 'dark:hover:bg-zinc-100'
               )}
             >
@@ -303,3 +305,29 @@ export function ChatMessageRenderer({
     </div>
   );
 }
+
+// Custom comparator: skip re-render when all meaningful props are identical.
+// This prevents new spread-object `message` references from defeating memo.
+function areChatMessagePropsEqual(
+  prev: ChatMessageRendererProps,
+  next: ChatMessageRendererProps,
+): boolean {
+  return (
+    prev.message.id === next.message.id &&
+    prev.message.content === next.message.content &&
+    prev.message.role === next.message.role &&
+    prev.message.displayMode === next.message.displayMode &&
+    prev.message.ackUpdates === next.message.ackUpdates &&
+    prev.message.ackStatus === next.message.ackStatus &&
+    prev.message._isPartOfSplit === next.message._isPartOfSplit &&
+    prev.message._isFirstPart === next.message._isFirstPart &&
+    prev.message._isLastPart === next.message._isLastPart &&
+    prev.streamingMessageId === next.streamingMessageId &&
+    prev.isLoading === next.isLoading &&
+    prev.lastUserMessage === next.lastUserMessage &&
+    prev.isLanding === next.isLanding &&
+    prev.index === next.index
+  );
+}
+
+export const ChatMessageRenderer = memo(ChatMessageRendererInner, areChatMessagePropsEqual);

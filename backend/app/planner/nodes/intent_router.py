@@ -47,6 +47,7 @@ from app.planner.nodes.router_utils import (
     _extract_destination_context,
     get_new_specialists_from_text,
 )
+from app.planner.patterns_registry import BUDGET_PATTERNS, TRAVELER_PATTERNS
 from app.planner.specialist_registry import (
     ALL_CATEGORY_TO_SPECIALIST,
     ALL_SPECIALIST_KEYWORDS,
@@ -268,31 +269,6 @@ def _classify_question(
 # SETTINGS PATTERNS - Detect trip setting changes from chat messages
 # These trigger LogisticsNode to refetch tiles with updated parameters
 # =============================================================================
-
-# Budget patterns - extract numeric budget values
-BUDGET_PATTERNS = [
-    r"(?:budget|bugdet|spend|spending)\s*(?:is|of|around|about|to|at)?\s*\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?",
-    r"\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?\s*(?:budget|bugdet)",
-    # Pattern: "have/got $X to spend" or "have/got $X for the trip"
-    r"(?:have|got)\s*\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?"
-    r"\s*(?:to spend|for (?:the |this )?trip)?",
-    r"(?:up to|max(?:imum)?|around|about)\s*\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?",
-]
-
-# Traveler patterns - extract number of adults/children
-# IMPORTANT: Order matters! Most specific patterns first.
-TRAVELER_PATTERNS = [
-    # Combined adults AND children - MUST BE FIRST to capture "4 adults 2 kids"
-    r"(\d+)\s*(?:adult|person)s?\s*(?:and|,|&)\s*(\d+)\s*(?:child|kid|children|minor)s?",
-    # Children only (e.g., "2 children", "3 kids")
-    r"(\d+)\s*(?:child|kid|children|minor)s?",
-    # Group/party size (e.g., "party of 4")
-    r"(?:party of|group of|traveling with)\s*(\d+)",
-    # Adults only - AFTER combined pattern (e.g., "2 adults", "4 people")
-    r"(\d+)\s*(?:adult|person|people|traveler)s?(?:\s+of us)?",
-    # Qualitative patterns - LAST (e.g., "family of 4", "couple", "solo")
-    r"(?:family of|couple|solo|alone)",
-]
 
 # Hotel preference patterns
 HOTEL_PATTERNS = [
@@ -616,6 +592,42 @@ def _build_plan_progression_suggestions(state: "GraphState") -> list[dict]:
                 "condition": lambda s: bool(s.trip_plan.destination),
                 "priority": 5,
                 "category": "plan_activities",
+            }
+        )
+
+    # Flights discovery: no origin set, no flights fetched yet, plan is active
+    if not state.trip_plan.origin and not (state.tiles or {}).get("flights"):
+        suggestions.append(
+            {
+                "template": "Add flights from my city",
+                "source": "booking_discovery",
+                "condition": lambda s: bool(
+                    s.trip_plan.destination
+                    and s.trip_plan.start_date
+                    and not s.trip_plan.origin
+                    and not (s.tiles or {}).get("flights")
+                ),
+                "priority": 3,
+                "category": "plan_flights_hint",
+                "icon": "plane",
+            }
+        )
+
+    # Hotels compare: hotels are fetched, useful to surface comparison
+    hotels_fetched = bool((state.tiles or {}).get("hotels"))
+    if hotels_fetched:
+        suggestions.append(
+            {
+                "template": "Compare hotel options",
+                "source": "booking_discovery",
+                "condition": lambda s: bool(
+                    s.trip_plan.destination
+                    and s.trip_plan.start_date
+                    and bool((s.tiles or {}).get("hotels"))
+                ),
+                "priority": 3,
+                "category": "plan_hotels_compare",
+                "icon": "building-2",
             }
         )
 
@@ -1280,29 +1292,6 @@ End with: {ending}"""
             f"While I don't have detailed info cached, I can help plan your trip. "
             f"{ending}"
         )
-
-
-async def _safe_format_section_answer(
-    qtype: str,
-    section: str,
-    knowledge,
-    destination: str,
-    question: str,
-    count: int,
-) -> str:
-    """
-    Wrapper that handles missing/malformed Local Expert sections gracefully.
-    Falls back to LLM if section data is incomplete.
-    """
-    try:
-        answer = _format_section_answer(qtype, section, knowledge, destination)
-        if answer is None:
-            # Section returned None (no data) - use LLM
-            return await _llm_fallback_answer(question, destination, qtype, count)
-        return answer
-    except (AttributeError, KeyError, TypeError) as e:
-        logger.warning(f"Missing Local Expert section '{section}' for {destination}: {e}")
-        return await _llm_fallback_answer(question, destination, qtype, count)
 
 
 async def generate_comprehensive_answer(

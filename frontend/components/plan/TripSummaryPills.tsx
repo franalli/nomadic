@@ -20,8 +20,7 @@ import {
   formatTravelersForPills,
 } from '@/lib/format-utils';
 import { cn } from '@/lib/utils';
-import { DEFAULT_BOOKING_TYPES } from '@/state/documentStore';
-import { type DocumentTripInputs,isBookingEnabled } from '@/types/document';
+import type { DocumentTripInputs } from '@/types/document';
 import type { SheetType } from '@/types/sheets';
 
 interface TripSummaryPillsProps {
@@ -41,9 +40,6 @@ export function TripSummaryPills({
   variant = 'default',
   readOnlyExceptDestination = false,
 }: TripSummaryPillsProps) {
-  // Read booking_types from tripInputs with safe fallback for fresh/migrating docs
-  const bookingTypes = tripInputs.booking_types ?? DEFAULT_BOOKING_TYPES;
-
   // Compute display values
   const destination = tripInputs.destination || null;
   const origin = tripInputs.origin || null;
@@ -72,8 +68,8 @@ export function TripSummaryPills({
         : `${activityCategories.length} activit${activityCategories.length === 1 ? 'y' : 'ies'}`)
     : null;
 
-  // Origin visibility: show when flights enabled OR origin already set
-  const showOrigin = isBookingEnabled(bookingTypes.flights) || !!origin;
+  // Origin visibility: only show when origin is already set (ghost pill confuses destination relationship)
+  const showOrigin = !!origin;
 
   return (
     <div
@@ -129,18 +125,16 @@ export function TripSummaryPills({
         variant={variant}
       />
 
-      {activityCategories.length > 0 && (
-        <CoreChip
-          icon={Activity}
-          label="Activities"
-          value={activityLabel}
-          placeholder="Activities"
-          tone="default"
-          onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('activities')}
-          disabled={disabled || readOnlyExceptDestination}
-          variant={variant}
-        />
-      )}
+      <CoreChip
+        icon={Activity}
+        label="Activities"
+        value={activityLabel}
+        placeholder="Activities"
+        tone={activityCategories.length > 0 ? 'default' : 'optional'}
+        onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('activities')}
+        disabled={disabled || readOnlyExceptDestination}
+        variant={variant}
+      />
 
       <CoreChip
         icon={DollarSign}
@@ -153,6 +147,7 @@ export function TripSummaryPills({
         variant={variant}
         className="italic"
       />
+
     </div>
   );
 }

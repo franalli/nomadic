@@ -21,6 +21,7 @@ from typing import Any, Dict, List
 
 from app.config import settings
 from app.planner.llm_factory import get_llm_by_model
+from app.planner.patterns_registry import SETTINGS_KEYWORDS
 from app.planner.state import (
     ExtractedSettingsFields,
     ExtractedTripFields,
@@ -155,41 +156,6 @@ RULES:
 
 USER MESSAGE: {user_text}
 """
-
-# Keywords that indicate EXPLICIT settings/toggle intent.
-# Must be specific enough to avoid false positives on activity descriptions
-# like "yoga class", "cooking activity", "business district".
-SETTINGS_KEYWORDS = [
-    # Explicit toggle phrases
-    "turn off",
-    "turn on",
-    "no need",
-    "don't need",
-    "skip flights",
-    "skip hotels",
-    "no flights",
-    "no hotels",
-    "include flights",
-    "include hotels",
-    # Flight preferences (require "flight" context)
-    "direct flight",
-    "nonstop flight",
-    "no layover",
-    "layovers",
-    "first class",
-    "business class",
-    "economy class",
-    "one way",
-    "round trip",
-    # Hotel preferences (require "hotel"/"star" context)
-    "star hotel",
-    "star resort",
-    "luxury hotel",
-    "luxury resort",
-    "budget hotel",
-    "budget stay",
-    "mid-range hotel",
-]
 
 
 async def _extract_settings_with_llm(user_text: str) -> tuple[ExtractedSettingsFields, dict]:

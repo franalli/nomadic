@@ -653,7 +653,6 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | TileCard | `tiles/TileCard.tsx` | Raw glass card pattern, rating stars use neutral zinc scale |
 | MiniCard | `tiles/MiniCard.tsx` | Compact glass card pattern, rating stars use neutral zinc scale |
 | SuggestionCard | `plan/tiles/SuggestionCard.tsx` | Suggested card variant, neutral zinc rating treatment, emerald save state |
-| BookableCard | `plan/tiles/BookableCard.tsx` | Dark booking card, in-cart/border states use zinc, booked uses emerald |
 | GatingBlocker | `plan/sheets/GatingBlocker.tsx` | Shared prerequisite-gating notice for module sheets (Flights/Stays/Activities). Raw infoBox pattern (`bg-zinc-50 dark:bg-white/[0.02]`), raw smallAction pattern buttons |
 | AlternativesModal | `plan/modals/AlternativesModal.tsx` | Sheet modal with neutral zinc rating stars and diff badges |
 | CategorySection | `plan/booking/CategorySection.tsx` | Booking status dots/text with dark-aware zinc/emerald states |
@@ -663,6 +662,9 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | GhostSlot | `plan/timeline/blocks/GhostSlot.tsx` | Dashed-border CTA slot; `border-dashed border-zinc-300 dark:border-white/10` pattern |
 | LogisticsBlock | `plan/timeline/blocks/LogisticsBlock.tsx` | Flight/transfer timeline block; glass `dark:bg-zinc-900/50` pattern |
 | MapErrorBoundary | `map/MapErrorBoundary.tsx` | Map error fallback; raw zinc pattern (`bg-zinc-100 dark:bg-zinc-900`, `text-zinc-500`) |
+| StrategyConstraintBar | `plan/StrategyConstraintBar.tsx` | Subdued toggle pills (Section 29.1); `bg-zinc-100 dark:bg-white/[0.06] border-zinc-300 dark:border-white/15` |
+| PreferenceAttributionBadge | `plan/timeline/blocks/PreferenceAttributionBadge.tsx` | Inline badge for user-preferred/ai-override tile states; `bg-emerald-500/15 text-emerald-600 dark:text-emerald-400` |
+| FreeDayCard | `plan/timeline/blocks/FreeDayCard.tsx` | Section 28.8 + constraint-buffer variant (Section 29.4); uses `DS.actions.primary` for CTA |
 
 **Out of DS scope:** `consent-manager.tsx`, `legal-page.tsx` — follows shadcn/prose tokens.
 
@@ -2751,5 +2753,135 @@ Empty day placeholder with specialist chip picker and "Generate Activities" CTA.
 | Rejection message | `bg-amber-50 border-amber-200 text-amber-700` | `dark:bg-amber-900/20 dark:border-amber-700/30 dark:text-amber-300` |
 
 **Rule:** Rejection message amber IS approved semantic usage (constraint-driven rejection). CTA uses `DS.actions.primary`. Disabled state: `opacity-50 cursor-not-allowed` (not `opacity-60`).
+
+---
+
+## 29. Undocumented Patterns (Discovered via Audit)
+
+These patterns appear in production code and are now documented to prevent future divergence.
+
+---
+
+### 29.1 Subdued Toggle Pills (StrategyConstraintBar)
+
+Small rounded-full toggle pills for collapsing/expanding sub-sections (Stays, Flights, Specialists). These are NOT selection pills — they toggle visibility, not select a value.
+
+| Property | Light Mode | Dark Mode |
+|----------|-----------|-----------|
+| Background | `bg-zinc-100` | `dark:bg-white/[0.06]` |
+| Border | `border-zinc-300` | `dark:border-white/15` |
+| Text | `text-zinc-700` | `dark:text-zinc-300` |
+| Hover bg | `hover:bg-zinc-200` | `dark:hover:bg-white/10` |
+| Shape | `px-2.5 py-1 rounded-full text-xs whitespace-nowrap` | Same |
+| Transition | `transition-all duration-150` | Same |
+
+**Rule:** Border must be `dark:border-white/15` (not `/10`) to meet Tactile Rule. Use `transition-all duration-150` (not `transition-colors`) for scale/shadow inclusion.
+
+```tsx
+<button
+  className={cn(
+    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs whitespace-nowrap transition-all duration-150',
+    'border-zinc-300 dark:border-white/15 bg-zinc-100 dark:bg-white/[0.06]',
+    'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/10',
+  )}
+>
+  🏨 Stays (3)
+  <ChevronDown className={cn('w-3 h-3 transition-transform', isExpanded && 'rotate-180')} />
+</button>
+```
+
+**Implementation:** `frontend/components/plan/StrategyConstraintBar.tsx`
+
+---
+
+### 29.2 Settings Gear Button (Logistics / Tile Overlay)
+
+Compact gear button overlaid on card content (LogisticsBlock, TileCard). Always positioned `absolute top-2 right-2`.
+
+| Property | Light Mode | Dark Mode |
+|----------|-----------|-----------|
+| Background | `bg-black/10` | `dark:bg-white/10` |
+| Hover bg | `hover:bg-black/20` | `dark:hover:bg-white/20` |
+| Shape | `p-1.5 rounded-lg` | Same |
+| Icon | `w-3.5 h-3.5 text-zinc-600` | `dark:text-zinc-400` |
+| Transition | `transition-all` | Same |
+
+```tsx
+<button
+  className={cn(
+    'absolute top-2 right-2 p-1.5 rounded-lg transition-all',
+    'bg-black/10 hover:bg-black/20 dark:bg-white/10 dark:hover:bg-white/20'
+  )}
+  aria-label="Settings"
+>
+  <Settings className="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-400" />
+</button>
+```
+
+**Implementation:** `frontend/components/plan/timeline/blocks/LogisticsBlock.tsx`, `frontend/components/tiles/TileCard.tsx`
+
+---
+
+### 29.3 Status Dot (TripHealthBar)
+
+Small indicator dot showing inventory/readiness state.
+
+| State | Light Mode | Dark Mode |
+|-------|-----------|-----------|
+| Active (has inventory) | `bg-emerald-500` | Same |
+| Inactive (searching) | `bg-zinc-400` | `dark:bg-zinc-500` |
+
+**Shape:** `w-2 h-2 rounded-full flex-shrink-0`
+
+**Rule:** Dark mode inactive dot must be `dark:bg-zinc-500` (not `dark:bg-zinc-600`) — zinc-600 on zinc-950 fails contrast (~1.5:1). Zinc-500 on zinc-950 = ~3.2:1, meets 3:1 minimum for non-text indicators.
+
+```tsx
+<div
+  className={cn(
+    'w-2 h-2 rounded-full flex-shrink-0',
+    hasInventory ? 'bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-500'
+  )}
+/>
+```
+
+**Implementation:** `frontend/components/plan/TripHealthBar.tsx`
+
+---
+
+### 29.4 Constraint-Buffer Card (FreeDayCard variant)
+
+Shown when all user-selected activity types are blocked by adjacent constraints. Distinct from the normal FreeDayCard — no chips, no auto-generate CTA.
+
+| Property | Light Mode | Dark Mode |
+|----------|-----------|-----------|
+| Background | `bg-zinc-50` | `dark:bg-zinc-800/20` |
+| Border | `border border-zinc-200` | `dark:border-white/10` |
+| Icon container | `w-9 h-9 rounded-full bg-zinc-100` | `dark:bg-zinc-700/40` |
+| Icon color | `text-zinc-500` | `dark:text-zinc-400` |
+| Title | `text-sm font-semibold text-zinc-800` | `dark:text-zinc-200` |
+| Subtitle | `text-xs text-zinc-500` | `dark:text-zinc-400` |
+
+**Rule:** CTA button uses `DS.actions.primary` without `rounded-lg` override — the token already provides `rounded-xl`. Adding `rounded-lg` creates a specificity conflict.
+
+---
+
+### 29.5 Disabled Section Overlay Pattern
+
+When a sheet section is inactive (e.g., flight/stay preferences when toggle is off), the entire section uses an opacity + pointer-events overlay rather than disabling individual elements.
+
+```tsx
+<div
+  className={cn(
+    'space-y-6 transition-opacity',
+    !enabled && 'opacity-50 pointer-events-none'
+  )}
+>
+  {/* preferences content */}
+</div>
+```
+
+**Rule:** Use `opacity-50 pointer-events-none` together (never one without the other). Do NOT add `disabled` to individual child elements inside the overlay — this pattern is the section-level disabled state.
+
+**Implementation:** `FlightsSheet.tsx`, `StaysSheet.tsx`, `ActivitiesSheet.tsx`
 
 ---

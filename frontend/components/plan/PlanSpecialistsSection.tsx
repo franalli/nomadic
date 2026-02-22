@@ -4,7 +4,9 @@
  * PlanSpecialistsSection
  *
  * Specialists section for full-density plan view.
- * Shows strategy cards, constraint bar, and regeneration overlay.
+ * Shows strategy cards and regeneration overlay.
+ * StrategyConstraintBar is rendered above this in PlanFullDensityView
+ * so it spans the full panel width (content + map).
  */
 
 import type { ReactNode } from 'react';
@@ -14,7 +16,6 @@ import type { DestinationCard, PlanViewModel } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
 import { S2StrategyView } from './stages/S2StrategyView';
-import { StrategyConstraintBar } from './StrategyConstraintBar';
 
 interface PlanSpecialistsSectionProps {
   viewModel: PlanViewModel;
@@ -27,14 +28,8 @@ interface PlanSpecialistsSectionProps {
   isAnyRegenerating: boolean;
   isRegenUpdating: boolean;
   showConstraints: boolean;
-  validatedRules: Set<string>;
-  violatedRules: Set<string>;
   onRefineAssumptions?: () => void;
   onOpenActivitySettings?: () => void;
-  onToggleConstraints: () => void;
-  stayCount?: number;
-  staysExpanded?: boolean;
-  onToggleStays?: () => void;
 }
 
 export function PlanSpecialistsSection({
@@ -48,14 +43,8 @@ export function PlanSpecialistsSection({
   isAnyRegenerating,
   isRegenUpdating,
   showConstraints,
-  validatedRules,
-  violatedRules,
   onRefineAssumptions,
   onOpenActivitySettings,
-  onToggleConstraints,
-  stayCount,
-  staysExpanded,
-  onToggleStays,
 }: PlanSpecialistsSectionProps): ReactNode {
   return (
     <section id="specialists-section" className="relative">
@@ -88,17 +77,6 @@ export function PlanSpecialistsSection({
               />
             )
           )}
-          <StrategyConstraintBar
-            fullModeSections={fullModeSections}
-            validatedRules={validatedRules}
-            violatedRules={violatedRules}
-            hasItineraryContent={hasItineraryContent}
-            showConstraints={showConstraints}
-            onToggleConstraints={onToggleConstraints}
-            stayCount={stayCount}
-            staysExpanded={staysExpanded}
-            onToggleStays={onToggleStays}
-          />
         </>
       )}
 

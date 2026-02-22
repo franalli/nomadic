@@ -42,7 +42,7 @@ export function InlineDatePrompt({
   // If no start date, prompt for dates first
   if (!startDate) {
     return (
-      <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-6 mb-6">
+      <div className="bg-emerald-500/10 dark:bg-emerald-500/[0.06] border border-emerald-500/30 dark:border-emerald-500/20 rounded-xl p-6 mb-6">
         <div className="flex items-center gap-2 mb-4">
           <CalendarDays className="h-5 w-5 text-emerald-500" />
           <h3 className="font-medium text-zinc-900 dark:text-white">When are you traveling?</h3>
@@ -83,8 +83,8 @@ export function InlineDatePrompt({
             className={cn(
               'py-2 px-3 rounded-lg text-sm font-medium',
               'bg-white dark:bg-white/5 border-2 border-zinc-200 dark:border-white/15',
-              'hover:border-emerald-500/50 hover:bg-emerald-500/5',
-              'text-zinc-700 dark:text-zinc-300',
+              'hover:border-emerald-500/50 hover:bg-emerald-500/5 dark:hover:bg-white/10 dark:hover:border-white/40',
+              'text-zinc-700 dark:text-zinc-400',
               'transition-colors'
             )}
           >

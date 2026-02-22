@@ -1558,6 +1558,31 @@ async def _merge_specialist_into_state(
     state.ui_events.append("SPECIALIST_DONE")
 
     # Build strategy_section for UI display (with images from curated content)
+    skill_to_intensity = {
+        "beginner": "light",
+        "easy": "light",
+        "intermediate": "moderate",
+        "moderate": "moderate",
+        "advanced": "challenging",
+        "hard": "challenging",
+        "challenging": "challenging",
+    }
+    default_intensity = {
+        "diving": "moderate",
+        "hiking": "moderate",
+        "skiing": "challenging",
+        "cycling": "moderate",
+        "surfing": "moderate",
+    }
+    # Default price estimates per specialist type — overridden by Places enrichment when available.
+    # These are rough per-person baselines used only when Google Places returns no priceLevel.
+    _default_price_estimate: dict[str, float] = {
+        "diving": 70.0,
+        "hiking": 25.0,
+        "skiing": 120.0,
+        "cycling": 50.0,
+        "surfing": 60.0,
+    }
     content_added = []
     for block in output.content_blocks:
         if block.is_buffer:
@@ -1565,29 +1590,12 @@ async def _merge_specialist_into_state(
         image_url = block.image_url or _get_curated_image(
             topic, state.trip_plan.destination, block.title
         )
-        skill_to_intensity = {
-            "beginner": "light",
-            "easy": "light",
-            "intermediate": "moderate",
-            "moderate": "moderate",
-            "advanced": "challenging",
-            "hard": "challenging",
-            "challenging": "challenging",
-        }
-        default_intensity = {
-            "diving": "moderate",
-            "hiking": "moderate",
-            "skiing": "challenging",
-            "cycling": "moderate",
-            "surfing": "moderate",
-        }
         skill_key = block.skill_level.lower() if block.skill_level else None
         intensity = (
             skill_to_intensity.get(skill_key)
             if skill_key
             else default_intensity.get(topic, "moderate")
         )
-
         content_item = {
             "title": block.title,
             "description": block.description,
@@ -1598,6 +1606,7 @@ async def _merge_specialist_into_state(
             "coordinates": block.coordinates,
             "intensity": intensity,
             "duration_hours": block.duration_hours,
+            "price_estimate": _default_price_estimate.get(topic),
         }
         content_added.append(content_item)
 

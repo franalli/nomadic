@@ -266,6 +266,9 @@ export type PlanDocumentData = {
     rule?: string;
     suggested_action?: string;
   }>;
+
+  /** Tier-1-suppressed activity tiles stashed by logistics_node (for Browse Activities sheet) */
+  browseable_activities?: Array<Record<string, unknown>>;
 };
 
 export type PlanDocumentResponse = {

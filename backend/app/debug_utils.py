@@ -16,7 +16,6 @@ debug code from crashing production.
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -24,6 +23,8 @@ from typing import Any, Dict, Optional
 
 from rich.console import Console
 from rich.theme import Theme
+
+from app.config import settings
 
 # =============================================================================
 # DEBUG MODE CONFIGURATION
@@ -57,7 +58,7 @@ def get_debug_mode() -> str:
 
     Returns: 'full', 'compact', or 'off'
     """
-    mode = os.getenv("DEBUG", "off").lower().strip()
+    mode = settings.debug_mode.lower().strip()
     if mode in ("full", "compact"):
         return mode
     return "off"
@@ -151,9 +152,9 @@ class CompactLogger:
 
     MODEL_PRICING = MODEL_PRICING  # alias for backward compat
 
-    # Cost thresholds from environment
-    COST_WARNING_THRESHOLD = float(os.getenv("COST_THRESHOLD_WARNING", "0.10"))
-    COST_CRITICAL_THRESHOLD = float(os.getenv("COST_THRESHOLD_CRITICAL", "1.00"))
+    # Cost thresholds from centralized settings
+    COST_WARNING_THRESHOLD = settings.cost_threshold_warning
+    COST_CRITICAL_THRESHOLD = settings.cost_threshold_critical
 
     def __init__(self, name: str, metrics: Optional[RequestMetrics] = None):
         self.logger = logging.getLogger(f"app.{name}")

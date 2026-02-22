@@ -6,7 +6,7 @@ description: >
   Triggers on: UI components, DS tokens, plan rendering, chat panel, sheets/modals,
   pill chips, timeline blocks, tile cards, Framer Motion, Mapbox, mobile layout,
   ghost timeline, content policy guard, loader states, fill-day flow,
-  preference auto-regen, stream parser, or any file under frontend/.
+  preference auto-regen, stream parser, browse activities, or any file under frontend/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -44,7 +44,7 @@ frontend/
     animations/    → StartupSequence, Typewriter
     chat/          → ChatPanel, ChatSkeleton, SmartLoader,
                      SystemAckLine, SystemReceipt, TripStatusBar,
-                     HoldToDeleteButton, MobileChatInput, MobileSetupCollapsedHeader,
+                     HoldToDeleteButton, MobileChatInput,
                      ChatInputHandler, ChatMessageList, ChatSuggestionBar
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
                      PlanHeader, NextStepBar, planStateHelpers,
@@ -52,7 +52,7 @@ frontend/
                      ItineraryProgressIndicator, OriginPromptCard,
                      DestinationMapPlaceholder, PlanDensityViews, PlanFullDensityView,
                      PlanSpecialistsSection, PlanTimelineSection, StrategyConstraintBar,
-                     useBookingDrawerState, useStrategyStageOrchestration
+                     BrowseActivitiesSheet, useBookingDrawerState, useStrategyStageOrchestration
       booking/     → BookingDrawer, CategorySection, CheckoutSidebar
       modals/      → AlternativesModal
       stages/      → S2StrategyView, StrategyHero,
@@ -68,7 +68,7 @@ frontend/
                      DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot, ItineraryDndWrapper
         blocks/    → ActivityMiniCard, LogisticsBlock, SafetyBlock, GhostSlot,
                      FreeDayCard, PreferenceAttributionBadge, types.ts
-      tiles/       → BookableCard, SuggestionCard
+      tiles/       → SuggestionCard
     tiles/         → TileCard, MiniCard, TileDetailsModal, TaxesFeesTooltip
     ui/            → Shared UI primitives
     layout/        → SplitLayoutView, NomadicLanding, LandingHelpers, LandingSheets,

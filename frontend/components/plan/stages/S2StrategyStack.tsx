@@ -30,7 +30,7 @@ export function OpenDecisionsPanel({ decisions }: { decisions: OpenDecision[] })
   const blockingCount = decisions.filter((d) => d.is_blocking).length;
 
   return (
-    <div className="bg-zinc-100 rounded-lg border border-zinc-200 p-4 dark:bg-zinc-900/50 dark:border-zinc-700/30">
+    <div className="bg-zinc-100 dark:bg-zinc-900/50 rounded-xl border border-zinc-200 dark:border-white/10 p-4">
       <div className="flex items-center gap-2 mb-3">
         <AlertCircle className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
         <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-200">

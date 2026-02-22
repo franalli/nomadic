@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from app.debug_utils import _debug, _debug_itinerary
 from app.planner.specialist_registry import ALL_CONSTRAINT_ALIASES
+from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES as _TIER1_SPECIALIST_NAMES
 from app.planner.state import ConstraintSeverity
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,30 @@ def _normalize_title_key(title: Optional[str]) -> str:
     return re.sub(r"\s+", " ", (title or "").strip().lower())
 
 
+def _price_estimate_to_level(price_estimate: Any) -> Optional[int]:
+    """Convert price estimate to Google Places price_level int (0-4).
+
+    Accepts float/int dollar amount or string markers ("$", "$$", etc.).
+    """
+    if price_estimate is None:
+        return None
+    if isinstance(price_estimate, str):
+        return {"Free": 0, "$": 1, "$$": 2, "$$$": 3, "$$$$": 4}.get(price_estimate)
+    try:
+        p = float(price_estimate)
+    except (TypeError, ValueError):
+        return None
+    if p == 0:
+        return 0
+    if p < 30:
+        return 1
+    if p < 75:
+        return 2
+    if p < 150:
+        return 3
+    return 4
+
+
 # =============================================================================
 # Input/Output Types
 # =============================================================================
@@ -98,7 +123,12 @@ class DayBlockOutput(BaseModel):
     # Rich content
     image_url: Optional[str] = None
     duration: Optional[str] = None
+    rating: Optional[float] = None  # Google Places star rating
+    review_count: Optional[int] = None  # Google Places review count
+    price_level: Optional[int] = None  # Google Places price level (0-4)
     coordinates: Optional[Dict[str, float]] = None  # {lat, lng}
+    google_place_id: Optional[str] = None  # Google Places ID
+    deeplink: Optional[str] = None  # Google Maps URL
 
     # Logistics layer
     scheduled_time: Optional[str] = None
@@ -211,6 +241,12 @@ class ActivityBlock:
     buffer_reason: Optional[str] = None
     tile_id: Optional[str] = None
     constraints: List[str] = field(default_factory=list)
+    # Places metadata (from enrich_activities_with_places)
+    rating: Optional[float] = None
+    user_ratings_count: Optional[int] = None
+    price_level: Optional[int] = None
+    google_place_id: Optional[str] = None
+    deeplink: Optional[str] = None
 
 
 @dataclass
@@ -249,6 +285,8 @@ class ItineraryBuilderInput:
     preferences: Optional[PreferenceOverrideInput] = None  # User heart preferences
     activity_categories: Optional[List[str]] = None  # User-selected categories from pills
     activity_day_preferences: Optional[Dict[str, int]] = None  # {"diving": 3, "hiking": 2}
+    # Browse tiles explicitly added by user (source="browse_add") — survive graph re-runs
+    user_pinned_tiles: Optional[Dict[str, Any]] = None  # tile_id → {tile, preferred_day, source}
 
 
 # =============================================================================
@@ -493,6 +531,9 @@ class ItineraryBuilder:
             # Phase 5.5: Handle empty days (add FreeDay placeholders)
             days = self._handle_empty_days(days, input_data.tiles, tier2_cats)
 
+            # Phase 5.55: Restore browse tiles explicitly pinned by the user (survive re-runs)
+            days = self._restore_pinned_browse_tiles(days, input_data)
+
             # Phase 5.6: Place LLM-generated experience tiles on free days
             days = self._place_experience_tiles(days, input_data.tiles)
 
@@ -664,6 +705,15 @@ class ItineraryBuilder:
                     image_url=content.get("image_url"),
                     coordinates=content.get("coordinates"),
                     tile_id=content.get("tile_id"),
+                    rating=content.get("rating"),
+                    user_ratings_count=content.get("user_ratings_count"),
+                    price_level=(
+                        content.get("price_level")
+                        if content.get("price_level") is not None
+                        else _price_estimate_to_level(content.get("price_estimate"))
+                    ),
+                    google_place_id=content.get("google_place_id"),
+                    deeplink=content.get("deeplink"),
                 )
                 activities.append(activity)
 
@@ -1370,6 +1420,11 @@ class ItineraryBuilder:
                         duration=f"{activity.duration_hours}h" if activity.duration_hours else None,
                         constraints=activity.constraints,
                         preference_status=preference_status,
+                        rating=activity.rating,
+                        review_count=activity.user_ratings_count,
+                        price_level=activity.price_level,
+                        google_place_id=activity.google_place_id,
+                        deeplink=activity.deeplink,
                     )
                     if activity.coordinates:
                         block.coordinates = {
@@ -1435,6 +1490,11 @@ class ItineraryBuilder:
                         duration=f"{activity.duration_hours}h" if activity.duration_hours else None,
                         constraints=activity.constraints,
                         preference_status=preference_status,
+                        rating=activity.rating,
+                        review_count=activity.user_ratings_count,
+                        price_level=activity.price_level,
+                        google_place_id=activity.google_place_id,
+                        deeplink=activity.deeplink,
                     )
                     if activity.coordinates:
                         block.coordinates = {
@@ -1530,6 +1590,11 @@ class ItineraryBuilder:
                             duration=(f"{activity_hours}h"),
                             constraints=activity.constraints,
                             preference_status=("user_preferred" if is_user_preferred else None),
+                            rating=activity.rating,
+                            review_count=activity.user_ratings_count,
+                            price_level=activity.price_level,
+                            google_place_id=activity.google_place_id,
+                            deeplink=activity.deeplink,
                         )
                         if activity.coordinates:
                             block.coordinates = {
@@ -1641,6 +1706,11 @@ class ItineraryBuilder:
                     constraints=activity.constraints,
                     # Preference attribution for frontend badge
                     preference_status=preference_status,
+                    rating=activity.rating,
+                    review_count=activity.user_ratings_count,
+                    price_level=activity.price_level,
+                    google_place_id=activity.google_place_id,
+                    deeplink=activity.deeplink,
                 )
 
                 if activity.coordinates:
@@ -1774,6 +1844,79 @@ class ItineraryBuilder:
         return days
 
     # =========================================================================
+    # Phase 5.55: Restore Browse-Pinned Tiles
+    # =========================================================================
+
+    def _restore_pinned_browse_tiles(
+        self,
+        days: List[DayCardOutput],
+        input_data: "ItineraryBuilderInput",
+    ) -> List[DayCardOutput]:
+        """
+        Phase 5.55: Re-insert browse tiles explicitly added by the user (source='browse_add').
+
+        These tiles are NOT in input_data.tiles (they come from Google Places, not the
+        LangGraph tile pool), so Phase 5.25 cannot find them by preferred_activity_id.
+        This phase restores them directly from user_pinned_tiles before Phase 5.6 fills
+        the remaining free slots with Tier 2 experience tiles.
+
+        Only 'browse_add' tiles are restored. 'auto_fill' tiles regenerate fresh each run.
+        """
+        if not input_data.user_pinned_tiles:
+            return days
+
+        day_count = len(days)
+        restored = 0
+
+        for tile_id, pin_data in input_data.user_pinned_tiles.items():
+            if pin_data.get("source") != "browse_add":
+                continue
+
+            preferred_day = pin_data.get("preferred_day")
+            if not preferred_day or preferred_day < 1 or preferred_day > day_count:
+                continue
+
+            tile = pin_data.get("tile")
+            if not tile:
+                continue
+
+            day = days[preferred_day - 1]
+
+            # Skip anchor days (arrival/departure) — they have no capacity
+            rem_hours, rem_slots = self._day_remaining_capacity(day)
+            if rem_slots <= 0:
+                _debug_itinerary(
+                    f"📌 Phase 5.55: Skipping pinned '{tile.get('title')}' "
+                    f"on Day {preferred_day} — no capacity"
+                )
+                continue
+
+            # Deduplicate by tile_id
+            existing_ids = {b.id for b in day.blocks if b.id}
+            if tile_id in existing_ids:
+                _debug_itinerary(
+                    f"📌 Phase 5.55: Skipping '{tile.get('title')}' "
+                    f"— already on Day {preferred_day}"
+                )
+                continue
+
+            # Build the block using the shared converter
+            block = self._experience_tile_to_block(tile, preferred_day, 0)
+            block.id = tile_id  # Preserve original tile_id for dedup in later phases
+            block.preference_status = "user_preferred"  # type: ignore[attr-defined]
+
+            # Remove any free_day placeholder before inserting
+            day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
+            day.blocks.append(block)
+            restored += 1
+            _debug_itinerary(
+                f"📌 Phase 5.55: Restored browse tile '{tile.get('title')}' on Day {preferred_day}"
+            )
+
+        _debug_itinerary(f"✅ Phase 5.55: Restored {restored} pinned browse tiles")
+        return days
+
+    # =========================================================================
     # Co-Scheduling Helpers (used by Phase 5.6 and Phase 5.25)
     # =========================================================================
 
@@ -1846,18 +1989,40 @@ class ItineraryBuilder:
         time_of_day = meta.get("time_of_day", "afternoon")
         category = meta.get("category", "experience")
         period_map = {"morning": "morning", "afternoon": "afternoon", "evening": "evening"}
+        geo = tile.get("geo") or {}
+        coords = None
+        if isinstance(geo, dict) and geo.get("lat") and geo.get("lng"):
+            coords = {"lat": geo["lat"], "lng": geo["lng"]}
+        elif tile.get("coordinates"):
+            c = tile["coordinates"]
+            if isinstance(c, dict):
+                coords = c
+            elif isinstance(c, list) and len(c) == 2:
+                coords = {"lat": c[1], "lng": c[0]}  # [lng, lat] → {lat, lng}
         return DayBlockOutput(
             id=tile.get("id", f"exp_block_{day_number}_{count}"),
             period=period_map.get(time_of_day, "afternoon"),
             activity_type=tile.get("title", "Experience Activity"),
             summary=tile.get("title", "Experience Activity"),
-            specialist_type=category,
+            # Only tag Tier 1 specialist activities (diving, hiking, etc.).
+            # Tier 2 / generic experience tiles don't get a specialist badge.
+            specialist_type=category if category in _TIER1_SPECIALIST_NAMES else None,
             intensity="light",
             duration=f"{meta.get('duration_hours', 2)}h",
             image_url=tile.get("image_url"),
             booked_tile=tile,
             requires_booking=True,
             booking_category="activity",
+            rating=tile.get("rating"),
+            review_count=tile.get("user_ratings_count") or tile.get("review_count"),
+            price_level=(
+                tile.get("price_level")
+                if tile.get("price_level") is not None
+                else _price_estimate_to_level(tile.get("price_estimate"))
+            ),
+            google_place_id=tile.get("google_place_id") or tile.get("place_id"),
+            deeplink=tile.get("deeplink") or tile.get("maps_uri"),
+            coordinates=coords,
         )
 
     @staticmethod
@@ -2198,8 +2363,12 @@ class ItineraryBuilder:
                     ).lower()
                     # Match against tags too if no explicit category field
                     tile_tags = {t.lower() for t in tile.get("tags") or []}
-                    category_match = tile_cat in self._active_categories or bool(
-                        tile_tags & self._active_categories
+                    # Empty tile_cat = unidentifiable source (e.g. browse/Places tile) →
+                    # preserve as safety fallback, same logic as itinerary_adapter.py.
+                    category_match = (
+                        not tile_cat
+                        or tile_cat in self._active_categories
+                        or bool(tile_tags & self._active_categories)
                     )
                     if not category_match:
                         _debug_itinerary(
@@ -2324,6 +2493,13 @@ class ItineraryBuilder:
             if any(b.activity_type == "free_day" for b in day.blocks):
                 day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
 
+            # Resolve coordinates: DayBlock uses {lat, lng}, browse tiles carry geo {lat, lng}
+            _coords = tile.get("coordinates")
+            if not _coords:
+                _geo = tile.get("geo")
+                if isinstance(_geo, dict) and "lat" in _geo and "lng" in _geo:
+                    _coords = {"lat": _geo["lat"], "lng": _geo["lng"]}
+
             activity_block = DayBlockOutput(
                 id=f"pref_{tile['id']}_{day_idx}_{period}",
                 period=period,
@@ -2332,10 +2508,16 @@ class ItineraryBuilder:
                 summary=tile.get("title", "Activity"),
                 image_url=tile.get("image_url"),
                 duration=tile.get("duration"),
-                coordinates=tile.get("coordinates"),
+                rating=tile.get("rating"),
+                review_count=tile.get("review_count"),
+                price_level=tile.get("price_level"),
+                coordinates=_coords,
+                specialist_type=tile.get("specialist_type") or tile.get("category") or None,
                 preference_status="user_preferred",
                 booking_category="activity",
                 booked_tile=tile,
+                google_place_id=tile.get("google_place_id"),
+                deeplink=tile.get("deeplink"),
             )
 
             # Insert respecting period order
@@ -2466,10 +2648,15 @@ class ItineraryBuilder:
                         summary=tile.get("title", "Activity"),
                         image_url=tile.get("image_url"),
                         duration=tile.get("duration"),
+                        rating=tile.get("rating"),
+                        review_count=tile.get("review_count"),
+                        price_level=tile.get("price_level"),
                         coordinates=tile.get("coordinates"),
                         preference_status="user_preferred",
                         booking_category="activity",
                         booked_tile=tile,
+                        google_place_id=tile.get("google_place_id"),
+                        deeplink=tile.get("deeplink"),
                     )
                     day.blocks.append(activity_block)
                     if title_key:

@@ -94,7 +94,7 @@ export function ChatModuleSheets({
   setActivitiesSheetOpen,
 }: ChatModuleSheetsProps) {
   const sheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { document: planDocument, version: docVersion, patchDocument } = useDocumentStore();
+  const patchDocument = useDocumentStore((s) => s.patchDocument);
 
   useEffect(() => {
     return () => {
@@ -199,6 +199,7 @@ export function ChatModuleSheets({
           // Hearted tiles from a removed category would otherwise be placed by
           // Phase 5.25 even when the user has switched away from that activity.
           const removedCats = [...prevCats].filter(c => !newCats.has(c));
+          const { document: planDocument, version: docVersion } = useDocumentStore.getState();
           if (removedCats.length > 0 && planDocument) {
             const currentPreferred = planDocument.preferred_tile_ids ?? [];
             const tiles = planDocument.tiles ?? {};

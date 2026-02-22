@@ -97,7 +97,7 @@ export function BookingDrawer({
               aria-label="Close"
               className="p-2 hover:bg-zinc-100 dark:hover:bg-white/10 rounded-lg transition-colors"
             >
-              <X className="w-5 h-5" />
+              <X className="w-5 h-5 text-zinc-500 dark:text-zinc-400" />
             </button>
           </div>
           <p className="text-sm text-zinc-500 dark:text-zinc-400">

@@ -114,7 +114,7 @@ function FloatingBuildButtonInner({
               'hover:brightness-105',
               'active:scale-[0.98]',
               // Disabled state
-              'disabled:opacity-50 disabled:cursor-not-allowed'
+              'disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none'
             )}
           >
             {isGenerating ? (

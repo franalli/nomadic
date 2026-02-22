@@ -51,7 +51,7 @@ export function TaxesFeesTooltip({
             className="inline-flex items-center justify-center rounded-full hover:bg-zinc-100 dark:hover:bg-white/10 p-0.5 transition-colors"
             aria-label="Tax and fee information"
           >
-            <Info className="h-3 w-3" />
+            <Info className="h-3 w-3 text-zinc-400 dark:text-zinc-500" />
           </button>
         </PopoverTrigger>
         <PopoverContent className="max-w-xs text-xs p-3" side="top" align="start">

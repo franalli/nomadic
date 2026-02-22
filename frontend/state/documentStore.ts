@@ -412,6 +412,37 @@ function sanitizeEnvelopeImages(envelope: Partial<PlanDocumentData>): Partial<Pl
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RAF-Batched Envelope Buffering (Layer 1 jank reduction)
+// ─────────────────────────────────────────────────────────────────────────────
+// Buffers consecutive mergeEnvelope calls during streaming and flushes once per
+// animation frame. Collapses 6 SSE events → 2-3 React renders instead of 6.
+// Module-level (not Zustand state) to avoid triggering extra renders.
+
+/** Merge two raw envelope updates for RAF-buffered batching. */
+function deepMergeEnvelopes(base: EnvelopeUpdate, incoming: EnvelopeUpdate): EnvelopeUpdate {
+  const merged: EnvelopeUpdate = { ...base, ...incoming };
+  // tiles: shallow-union so both sets are preserved; replace-vs-merge strategy
+  // is applied later inside the actual mergeEnvelope logic.
+  if (base.tiles !== undefined && incoming.tiles !== undefined) {
+    merged.tiles = { ...base.tiles, ...incoming.tiles };
+  }
+  // trip_inputs: field-level merge so a partial update doesn't erase the other.
+  if (base.trip_inputs !== undefined && incoming.trip_inputs !== undefined) {
+    merged.trip_inputs = { ...base.trip_inputs, ...incoming.trip_inputs };
+  }
+  // tiles_replaced: if either envelope requests a full replace, honor it.
+  if (base.tiles_replaced || incoming.tiles_replaced) {
+    merged.tiles_replaced = true;
+  }
+  return merged;
+}
+
+let _pendingEnvelope: EnvelopeUpdate | null = null;
+let _rafId: number | null = null;
+/** When true, mergeEnvelope skips buffering and runs the actual merge inline. */
+let _bypassRAF = false;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // User-Dirty Settings Tracker
 // ─────────────────────────────────────────────────────────────────────────────
 // Tracks which settings the user has explicitly modified via the UI (pills/sheets).
@@ -584,6 +615,9 @@ type DocumentState = {
   // Envelope-driven generation status (store-owned, not persisted in document)
   generation: GenerationState | null;
 
+  // Stashed activity tiles (Tier 1 suppressed — available for Browse Activities sheet)
+  browseableActivities: Array<Record<string, unknown>>;
+
   // Streaming robustness - runId + abort tracking
   currentRunId: string | null;
   abortController: AbortController | null;
@@ -693,6 +727,8 @@ const initialState = {
   cartTileIds: new Set<string>(),
   // Envelope-driven generation status (not persisted in document payload)
   generation: null as GenerationState | null,
+  // Stashed activity tiles (Tier 1 suppressed — available for Browse Activities sheet)
+  browseableActivities: [] as Array<Record<string, unknown>>,
 };
 
 /**
@@ -1387,6 +1423,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         // Initialize the backend-confirmed shadow so the first pill PATCH after page
         // load has an accurate baseline (not the already-mutated zustand state).
         _lastPatchedTripInputs: structuredClone(documentToStore.trip_inputs),
+        // Hydrate stashed activity tiles (Tier 1 suppressed — for Browse Activities sheet)
+        ...(sanitizedResponseDocument.browseable_activities?.length && {
+          browseableActivities: sanitizedResponseDocument.browseable_activities,
+        }),
       });
       return sanitizedResponseDocument;
     } catch (err) {
@@ -1793,10 +1833,37 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // Keep shadow in sync so filterNoopTripInputPatch has an accurate baseline
       // after graph runs that modify trip_inputs (e.g., backend adds categories).
       _lastPatchedTripInputs: structuredClone(mergedTripInputs),
+      ...(response.document.browseable_activities?.length && { browseableActivities: response.document.browseable_activities }),
     });
   },
 
   mergeEnvelope: (envelope: EnvelopeUpdate) => {
+    // === RAF BUFFERING (Layer 1 jank reduction) ===
+    // Buffer consecutive SSE events and flush once per paint frame.
+    // This collapses tiles/strategy/view_state/day_cards arriving in the same
+    // ~16ms window into a single setState call instead of 4–6 separate renders.
+    if (!_bypassRAF) {
+      _pendingEnvelope = _pendingEnvelope
+        ? deepMergeEnvelopes(_pendingEnvelope, envelope)
+        : { ...envelope };
+
+      if (!_rafId) {
+        _rafId = requestAnimationFrame(() => {
+          const merged = _pendingEnvelope!;
+          _pendingEnvelope = null;
+          _rafId = null;
+          _bypassRAF = true;
+          try {
+            get().mergeEnvelope(merged);
+          } finally {
+            _bypassRAF = false;
+          }
+        });
+      }
+      return;
+    }
+    // === END RAF BUFFERING ===
+
     const { document: currentDoc } = get();
     if (!currentDoc) return;
 
@@ -1995,6 +2062,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       updatedBy: 'planner',
       updatedAt: new Date().toISOString(),
       generation: envelope.generation !== undefined ? envelope.generation : get().generation,
+      ...(envelope.browseable_activities?.length && { browseableActivities: envelope.browseable_activities }),
     });
   },
 
@@ -2123,7 +2191,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   // View navigation action
   setActiveView: (view: 'planning' | 'booking') => {
-    set({ activeView: view });
+    if (get().activeView !== view) set({ activeView: view });
   },
 
   setFinalized: (finalized: boolean) => {
@@ -2314,8 +2382,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   removeBlock: async (blockId: string, dayNumber: number) => {
     const store = get();
-    // Snapshot BEFORE mutation (for undo)
-    const snapshot = structuredClone(store.document?.day_cards ?? []) as DayCard[];
+    // Snapshot BEFORE mutation (for undo) — may be refreshed on 409 retry
+    let snapshot = structuredClone(store.document?.day_cards ?? []) as DayCard[];
     const prevVersion = store.version;
     // Find block summary for undo label
     const targetBlock = store.document?.day_cards
@@ -2325,15 +2393,31 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     store.claimMutation();
     try {
-      const res = await apiFetch('/api/document/remove-block', {
-        method: 'POST',
-        body: JSON.stringify({
-          block_id: blockId,
-          day_number: dayNumber,
-          expected_version: prevVersion,
-        }),
-      });
-      if (res.status === 409) throw new Error('VERSION_CONFLICT');
+      const attemptRemove = (ver: number) =>
+        apiFetch('/api/document/remove-block', {
+          method: 'POST',
+          body: JSON.stringify({
+            block_id: blockId,
+            day_number: dayNumber,
+            expected_version: ver,
+          }),
+        });
+
+      let res = await attemptRemove(prevVersion);
+
+      // 409 retry: refetch full document, sync store, refresh undo snapshot, retry once
+      if (res.status === 409) {
+        const freshRes = await apiFetch('/api/document');
+        if (freshRes.ok) {
+          const freshDoc = await freshRes.json();
+          set({ version: freshDoc.version, document: { ...get().document!, ...freshDoc } });
+          snapshot = structuredClone(freshDoc.day_cards ?? []) as DayCard[];
+          res = await attemptRemove(freshDoc.version);
+        } else {
+          debugLog('[documentStore] 409 refetch failed:', freshRes.status);
+        }
+      }
+
       if (!res.ok) throw new Error(`remove-block failed: ${res.status}`);
       const result = await res.json();
       const doc = get().document;
@@ -2348,7 +2432,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           type: 'remove_block',
           label: `Removed ${blockLabel}`,
           previousDayCards: snapshot,
-          previousVersion: prevVersion,
+          previousVersion: result.version - 1,
           timestamp: Date.now(),
         },
       });
@@ -2470,7 +2554,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
  * Subscribe to trip inputs only. Re-renders only when trip_inputs changes.
  */
 export const useDocumentTripInputs = () =>
-  useDocumentStore((state) => state.document?.trip_inputs);
+  useDocumentStore(useShallow((state) => state.document?.trip_inputs));
 
 // =============================================================================
 // Heart Preference System (PLANNING mode - preference signals for AI weighting)

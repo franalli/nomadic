@@ -380,6 +380,17 @@ async def logistics_node(state: GraphState) -> GraphState:
     # ==========================================================================
     _logistics_settings = get_trip_settings(state)
     flights_requested = _logistics_settings.booking_types.flights != "off"
+
+    # Auto-upgrade flights when origin is available but flights still at default 'off'.
+    # Mirrors frontend logic in documentStore.ts:52 ("Upgrades to 'suggested' when origin is set")
+    # but runs server-side where origin is available in-time (frontend PATCH races the graph).
+    if not flights_requested and plan.origin:
+        _debug_log("[LOGISTICS] ✈️ Auto-upgrading flights: off → suggested (origin present)")
+        flights_requested = True
+        # Persist so frontend stays in sync on next document fetch
+        trip_inputs_bt = state.metadata.get("trip_inputs", {}).get("booking_types", {})
+        trip_inputs_bt["flights"] = "suggested"
+
     direct_only_requested = bool(_logistics_settings.flight_settings.direct_only)
     trip_inputs = state.metadata.get("trip_inputs", {})
     trip_inputs_origin = trip_inputs.get("origin")
@@ -1194,16 +1205,104 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
         if not tier2_cats:
             # Pure Tier 1 — specialist provides curated activities.
-            # All generic activity tiles are suppressed; free days render as
-            # "Free Day" blocks in the builder, fillable on-demand.
+            # Suppress generic tiles from auto-scheduling; fetch per-category
+            # browse tiles (6 parallel Places queries) so the Browse Activities
+            # sheet has rich, categorized results instead of ~6 generic "tours".
             active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
             existing = state.tiles.get("activities", [])
+            existing_list = existing if isinstance(existing, list) else []
+
+            # Per-category fetch via activity_browser (parallel, L1-cached)
+            from app.services.activity_browser import browse_activities as _browse_activities
+
+            geo_center: tuple[float, float] | None = (
+                (dest_lat, dest_lng) if dest_lat is not None and dest_lng is not None else None
+            )
+            browse_date = start_date or None
+            all_categories = ["cultural", "food", "nature", "spa", "tours", "shopping"]
+            try:
+                browse_tiles = await _browse_activities(
+                    destination=plan.destination or "",
+                    center=geo_center,
+                    categories=all_categories,
+                    date=browse_date,
+                )
+            except Exception as _be:
+                log("LOGISTICS", f"[BROWSE] Per-category fetch failed: {_be} — fallback to generic")
+                browse_tiles = []
+
+            if browse_tiles:
+                # activity_browser tiles have a 'category' field; alias to browse_category
+                # so BrowseActivitiesSheet category filter works (it checks both fields).
+                stash = []
+                for t in browse_tiles:
+                    td = dict(t)
+                    td.setdefault("browse_category", td.get("category", "tours"))
+                    stash.append(td)
+                state.metadata["browseable_activities"] = stash
+                log(
+                    "LOGISTICS",
+                    f"[BROWSE] Per-category fetch: {len(stash)} tiles across"
+                    f" {len(all_categories)} categories",
+                    data=f"specialists={active_niche}",
+                )
+            elif existing_list:
+                # Fallback: stash the generic tiles with browse_category annotation
+                _PLACES_TYPE_TO_BROWSE_CAT: dict[str, str] = {
+                    "tourist_attraction": "tours",
+                    "travel_agency": "tours",
+                    "amusement_park": "tours",
+                    "museum": "cultural",
+                    "art_gallery": "cultural",
+                    "hindu_temple": "cultural",
+                    "temple": "cultural",
+                    "church": "cultural",
+                    "place_of_worship": "cultural",
+                    "park": "nature",
+                    "natural_feature": "nature",
+                    "national_park": "nature",
+                    "campground": "nature",
+                    "restaurant": "food",
+                    "cafe": "food",
+                    "bar": "food",
+                    "food": "food",
+                    "spa": "spa",
+                    "beauty_salon": "spa",
+                    "gym": "spa",
+                    "shopping_mall": "shopping",
+                    "market": "shopping",
+                    "store": "shopping",
+                    "clothing_store": "shopping",
+                }
+                annotated = []
+                for tile in existing_list:
+                    tile_dict = dict(tile) if not isinstance(tile, dict) else tile
+                    tags = tile_dict.get("tags", [])
+                    browse_cat = next(
+                        (
+                            _PLACES_TYPE_TO_BROWSE_CAT[t]
+                            for t in tags
+                            if t in _PLACES_TYPE_TO_BROWSE_CAT
+                        ),
+                        None,
+                    )
+                    if browse_cat is None:
+                        meta_cat = tile_dict.get("meta", {}).get("category", "")
+                        browse_cat = _PLACES_TYPE_TO_BROWSE_CAT.get(meta_cat, "tours")
+                    tile_dict["browse_category"] = browse_cat
+                    annotated.append(tile_dict)
+                state.metadata["browseable_activities"] = annotated
+                log(
+                    "LOGISTICS",
+                    f"[BROWSE] Fallback: stashed {len(annotated)} generic tiles for browse",
+                    data=f"specialists={active_niche}",
+                )
+
             state.tiles["activities"] = []
             activity_dicts = []
             log(
                 "LOGISTICS",
-                f"Suppressing {len(existing) if isinstance(existing, list) else 0} "
-                f"logistics activities — pure Tier 1",
+                f"Suppressing {len(existing_list)} logistics activities — pure Tier 1",
                 data=f"specialists={active_niche}",
             )
         else:

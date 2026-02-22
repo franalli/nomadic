@@ -10,18 +10,12 @@
  * @see docs/ux_unified_architecture.md Section 10.C
  */
 
-import { CheckCircle, Clock, MoreVertical, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { CheckCircle, Clock, MoreVertical, RefreshCw, Sparkles, Star, Trash2 } from 'lucide-react';
 import Image from 'next/image';
 import { useState } from 'react';
 
 import { getTopicLabel } from '@/components/plan/stages/StrategyHeroUtils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import { DS } from '@/lib/design-system';
 import { cn, normalizeTitle } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
@@ -67,6 +61,14 @@ const BADGE_BG_CLASS: Record<string, string> = {
   wildlife_safari: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
 };
 
+const PRICE_LEVEL_LABEL: Record<number, string> = {
+  0: 'Free',
+  1: '$',
+  2: '$$',
+  3: '$$$',
+  4: '$$$$',
+};
+
 const borderAccentClass: Record<string, string> = {
   diving: 'border-l-cyan-500',
   hiking: 'border-l-emerald-500',
@@ -97,10 +99,10 @@ interface ActivityMiniCardProps {
   onRemove?: () => void;
   /** Whether this block can be removed (not locked/buffer) */
   isRemovable?: boolean;
-  /** Stage 17A: Per-constraint display mode (full badge vs icon pill) */
-  constraintDisplayModes?: Map<string, 'full' | 'icon'>;
   /** Stage 17B: Day layout variant (compact = horizontal single-activity row) */
   variant?: 'default' | 'compact';
+  /** Whether this block is map-highlighted (hovered on map) */
+  isHighlighted?: boolean;
 }
 
 export function ActivityMiniCard({
@@ -115,8 +117,8 @@ export function ActivityMiniCard({
   onSwitchToAlternative,
   onRemove,
   isRemovable,
-  constraintDisplayModes,
   variant = 'default',
+  isHighlighted,
 }: ActivityMiniCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const st = block.specialist_type || '';
@@ -129,39 +131,7 @@ export function ActivityMiniCard({
     ? 'border-l-amber-500'
     : borderAccentClass[st] || 'border-l-zinc-300 dark:border-l-zinc-600';
 
-  // Stage 17A: Constraint display mode helpers
-  const iconOnlyConstraints = (block.active_constraints ?? []).filter(
-    (c) => constraintDisplayModes?.get(c.id) === 'icon'
-  );
-  const fullConstraints = (block.active_constraints ?? []).filter(
-    (c) => !constraintDisplayModes || constraintDisplayModes.get(c.id) === 'full'
-  );
-
-  // Reusable icon pill renderer for repeated constraints
-  const constraintIconPills = iconOnlyConstraints.length > 0 ? (
-    <TooltipProvider>
-      {iconOnlyConstraints.map((c) => (
-        <Tooltip key={c.id}>
-          <TooltipTrigger asChild>
-            <span
-              className={cn(
-                'inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] cursor-help',
-                c.severity === 'warning' && 'bg-amber-100 dark:bg-amber-900/20',
-                c.severity === 'info' && 'bg-blue-100 dark:bg-blue-900/20',
-                c.severity === 'success' && 'bg-emerald-100 dark:bg-emerald-900/20',
-              )}
-            >
-              {c.icon}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="max-w-[240px]">
-            <p className="font-semibold text-xs">{c.title}</p>
-            <p className="text-xs text-zinc-500">{c.description}</p>
-          </TooltipContent>
-        </Tooltip>
-      ))}
-    </TooltipProvider>
-  ) : null;
+  const activeConstraints = block.active_constraints ?? [];
 
   // ── Stage 17B: Compact variant ─────────────────────────────────────────
   if (variant === 'compact') {
@@ -170,10 +140,12 @@ export function ActivityMiniCard({
         {/* Horizontal row */}
         <div
           className={cn(
-            'group/row relative flex items-center gap-2.5 p-2.5 rounded-xl border border-l-4 transition-shadow',
+            'group/row relative flex items-center gap-2.5 p-2.5 rounded-xl border border-l-4 transition-colors duration-150',
             isUnschedulable
               ? 'bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/40 border-l-amber-500'
-              : cn('bg-white dark:bg-zinc-800/50 hover:shadow-soft', activityBorderClass),
+              : isHighlighted
+                ? cn('bg-zinc-700/70 border-emerald-500/40 shadow-lg shadow-emerald-500/10', activityBorderClass)
+                : cn('bg-white dark:bg-zinc-800/50 hover:shadow-soft', activityBorderClass),
           )}
         >
           {/* Thumbnail — 40×40 */}
@@ -212,8 +184,35 @@ export function ActivityMiniCard({
                   {block.duration}
                 </span>
               )}
-              {/* Icon-only constraint pills */}
-              {constraintIconPills}
+              {/* Star rating + review count (browse-added activities) */}
+              {block.rating != null && (
+                <span className="text-[10px] text-zinc-500 dark:text-zinc-400 flex items-center gap-0.5">
+                  <Star className="w-2.5 h-2.5 fill-current text-amber-400" />
+                  {block.rating.toFixed(1)}
+                  {block.review_count != null && (
+                    <span className="ml-0.5">
+                      ({block.review_count >= 1000
+                        ? `${Math.round(block.review_count / 1000)}K`
+                        : block.review_count.toLocaleString()})
+                    </span>
+                  )}
+                </span>
+              )}
+              {/* Price level */}
+              {block.price_level != null && PRICE_LEVEL_LABEL[block.price_level] && (
+                <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                  {PRICE_LEVEL_LABEL[block.price_level]}
+                </span>
+              )}
+              {/* Fallback: numeric price estimate when price_level is absent */}
+              {block.price_level == null &&
+                block.booked_tile?.price_estimate != null &&
+                typeof block.booked_tile.price_estimate === 'number' &&
+                block.booked_tile.price_estimate > 0 && (
+                <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                  ~${Math.round(block.booked_tile.price_estimate as number).toLocaleString()}
+                </span>
+              )}
             </div>
           </div>
 
@@ -225,50 +224,55 @@ export function ActivityMiniCard({
           )}
         </div>
 
-        {/* Full constraint badges — first-occurrence or blocking severity */}
-        {fullConstraints.length > 0 && (
-          <div className="space-y-1.5 pl-1">
-            {fullConstraints.map((constraint) => (
+        {/* Constraint sub-cards */}
+        {activeConstraints.length > 0 && (() => {
+          const primary = activeConstraints[0];
+          return (
+            <div className="pl-1">
               <div
-                key={constraint.id}
                 className={cn(
                   'flex items-start gap-2 p-2.5 rounded-lg text-xs',
-                  constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40',
-                  constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40',
-                  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40',
-                  constraint.severity === 'blocking' && 'bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/40'
+                  primary.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40',
+                  primary.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40',
+                  primary.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40',
+                  primary.severity === 'blocking' && 'bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/40'
                 )}
               >
-                <span className="text-base flex-shrink-0">{constraint.icon}</span>
+                <span className="flex-shrink-0 leading-none">
+                  {activeConstraints.map(c => c.icon).join(' ')}
+                </span>
                 <div className="flex-1 min-w-0">
                   <div className={cn(
                     'font-semibold mb-0.5',
-                    constraint.severity === 'warning' && 'text-amber-700 dark:text-amber-400',
-                    constraint.severity === 'info' && 'text-blue-700 dark:text-blue-400',
-                    constraint.severity === 'success' && 'text-emerald-700 dark:text-emerald-400',
-                    constraint.severity === 'blocking' && 'text-red-700 dark:text-red-400'
+                    primary.severity === 'warning' && 'text-amber-700 dark:text-amber-400',
+                    primary.severity === 'info' && 'text-blue-700 dark:text-blue-400',
+                    primary.severity === 'success' && 'text-emerald-700 dark:text-emerald-400',
+                    primary.severity === 'blocking' && 'text-red-700 dark:text-red-400'
                   )}>
-                    {constraint.title}
+                    {activeConstraints.map(c => c.title).join(' · ')}
                   </div>
                   <div className="text-zinc-600 dark:text-zinc-400">
-                    {constraint.description}
+                    {primary.description}
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          );
+        })()}
       </div>
     );
   }
 
   return (
+    <div className="flex flex-col gap-1.5">
     <div
       className={cn(
-        'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-l-4 transition-shadow',
+        'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-l-4 transition-colors duration-150',
         isUnschedulable
           ? 'bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/40'
-          : 'bg-white dark:bg-zinc-800/50 hover:shadow-soft',
+          : isHighlighted
+            ? 'bg-zinc-700/70 border-emerald-500/40 shadow-lg shadow-emerald-500/10'
+            : 'bg-white dark:bg-zinc-800/50 hover:shadow-soft',
         activityBorderClass,
       )}
     >
@@ -342,8 +346,26 @@ export function ActivityMiniCard({
               {block.duration}
             </span>
           )}
-          {/* Stage 17A: Icon-only constraint pills for repeated constraints */}
-          {constraintIconPills}
+          {/* Star rating + review count (browse-added activities) */}
+          {block.rating != null && (
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-0.5">
+              <Star className="w-3 h-3 fill-current text-amber-400" />
+              {block.rating.toFixed(1)}
+              {block.review_count != null && (
+                <span className="ml-0.5">
+                  ({block.review_count >= 1000
+                    ? `${Math.round(block.review_count / 1000)}K`
+                    : block.review_count.toLocaleString()})
+                </span>
+              )}
+            </span>
+          )}
+          {/* Price level */}
+          {block.price_level != null && PRICE_LEVEL_LABEL[block.price_level] && (
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              {PRICE_LEVEL_LABEL[block.price_level]}
+            </span>
+          )}
         </div>
 
         <h4 className="font-semibold text-sm mt-1.5 line-clamp-2 text-zinc-900 dark:text-white">
@@ -378,40 +400,6 @@ export function ActivityMiniCard({
           <span className={cn('inline-flex items-center gap-0.5 mt-1.5 rounded px-1.5 py-0.5 font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400', DS.textSize.micro)}>
             ~${block.booked_tile.price_estimate.toLocaleString()}
           </span>
-        )}
-
-        {/* Inline Constraint Badges — full mode only (first occurrence or blocking severity) */}
-        {fullConstraints.length > 0 && (
-          <div className="mt-4 space-y-2">
-            {fullConstraints.map((constraint) => (
-              <div
-                key={constraint.id}
-                className={cn(
-                  'flex items-start gap-2 p-3 rounded-lg text-xs',
-                  constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40',
-                  constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40',
-                  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40',
-                  constraint.severity === 'blocking' && 'bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/40'
-                )}
-              >
-                <span className="text-base flex-shrink-0">{constraint.icon}</span>
-                <div className="flex-1 min-w-0">
-                  <div className={cn(
-                    'font-semibold mb-0.5',
-                    constraint.severity === 'warning' && 'text-amber-700 dark:text-amber-400',
-                    constraint.severity === 'info' && 'text-blue-700 dark:text-blue-400',
-                    constraint.severity === 'success' && 'text-emerald-700 dark:text-emerald-400',
-                    constraint.severity === 'blocking' && 'text-red-700 dark:text-red-400'
-                  )}>
-                    {constraint.title}
-                  </div>
-                  <div className="text-zinc-600 dark:text-zinc-400">
-                    {constraint.description}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
         )}
 
         {/* Preference Attribution Badge */}
@@ -483,6 +471,42 @@ export function ActivityMiniCard({
           <HoldToDeleteButton onDelete={onRemove} />
         </div>
       )}
+    </div>
+    {/* Constraint sub-cards — always below the activity card */}
+    {activeConstraints.length > 0 && (() => {
+      const primary = activeConstraints[0];
+      return (
+        <div className="pl-1">
+          <div
+            className={cn(
+              'flex items-start gap-2 p-2.5 rounded-lg text-xs',
+              primary.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40',
+              primary.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40',
+              primary.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40',
+              primary.severity === 'blocking' && 'bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/40'
+            )}
+          >
+            <span className="flex-shrink-0 leading-none">
+              {activeConstraints.map(c => c.icon).join(' ')}
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className={cn(
+                'font-semibold mb-0.5',
+                primary.severity === 'warning' && 'text-amber-700 dark:text-amber-400',
+                primary.severity === 'info' && 'text-blue-700 dark:text-blue-400',
+                primary.severity === 'success' && 'text-emerald-700 dark:text-emerald-400',
+                primary.severity === 'blocking' && 'text-red-700 dark:text-red-400'
+              )}>
+                {activeConstraints.map(c => c.title).join(' · ')}
+              </div>
+              <div className="text-zinc-600 dark:text-zinc-400">
+                {primary.description}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    })()}
     </div>
   );
 }

@@ -177,7 +177,7 @@ export function AlternativesModal({
           {/* Current Selection */}
           {currentTile && (
             <div className="space-y-2">
-              <p className="text-xs text-zinc-500 uppercase tracking-wide font-medium">
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide font-medium">
                 Current Selection
               </p>
               <div className="flex gap-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
@@ -216,8 +216,8 @@ export function AlternativesModal({
 
           {/* Sort Controls */}
           <div className="flex items-center gap-2">
-            <SlidersHorizontal className="w-4 h-4 text-zinc-500" />
-            <span className="text-xs text-zinc-500">Sort by:</span>
+            <SlidersHorizontal className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">Sort by:</span>
             <div className="flex gap-1">
               {(['price', 'rating', 'name'] as SortOption[]).map((option) => (
                 <button
@@ -238,7 +238,7 @@ export function AlternativesModal({
 
           {/* Alternatives List */}
           <div className="space-y-2">
-            <p className="text-xs text-zinc-500 uppercase tracking-wide font-medium">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide font-medium">
               Alternatives ({sortedAlternatives.length})
             </p>
 
@@ -280,7 +280,7 @@ export function AlternativesModal({
                         <div className="flex items-center gap-2 mt-1">
                           {alt.rating && (
                             <div className="flex items-center gap-0.5">
-                              <Star className="w-3 h-3 text-zinc-500 dark:text-zinc-300 fill-current" />
+                              <Star className="w-3 h-3 text-zinc-500 dark:text-zinc-400 fill-current" />
                               <span className="text-xs text-zinc-700 dark:text-zinc-300">
                                 {alt.rating.toFixed(1)}
                               </span>

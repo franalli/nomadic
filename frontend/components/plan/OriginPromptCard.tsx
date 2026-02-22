@@ -35,13 +35,13 @@ export function OriginPromptCard({ onSetOrigin }: OriginPromptCardProps) {
     <div
       className={cn(
         'rounded-xl border p-4',
-        'bg-blue-500/5 border-blue-500/30',
-        'dark:bg-blue-500/10 dark:border-blue-500/20'
+        'bg-zinc-50 border-zinc-200',
+        'dark:bg-white/[0.03] dark:border-white/10'
       )}
     >
       <div className="flex items-center gap-3 mb-3">
-        <div className="p-2 rounded-lg bg-blue-500/10 dark:bg-blue-500/20">
-          <Plane className="h-4 w-4 text-blue-500 dark:text-blue-400" />
+        <div className="p-2 rounded-lg bg-zinc-100 dark:bg-white/5">
+          <Plane className="h-4 w-4 text-zinc-500 dark:text-zinc-400" />
         </div>
         <div className="flex-1">
           <h3 className="font-medium text-sm text-zinc-900 dark:text-white">
@@ -65,18 +65,19 @@ export function OriginPromptCard({ onSetOrigin }: OriginPromptCardProps) {
           }}
           className={cn(
             'flex-1 px-3 py-2 rounded-lg text-sm',
-            'bg-white dark:bg-zinc-900',
-            'border border-zinc-200 dark:border-zinc-700',
-            'focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500',
-            'placeholder:text-zinc-400 dark:placeholder:text-zinc-500'
+            'bg-zinc-50 dark:bg-black/40',
+            'border border-zinc-200 dark:border-white/5',
+            'focus:outline-none focus:border-zinc-900 dark:focus:border-emerald-500/50',
+            'text-zinc-900 dark:text-white',
+            'placeholder:text-zinc-400 dark:placeholder:text-zinc-600'
           )}
         />
         <Button
           onClick={handleSubmit}
           disabled={!value.trim()}
           className={cn(
-            'bg-blue-600 hover:bg-blue-500 text-white',
-            'dark:bg-blue-600 dark:hover:bg-blue-500',
+            'bg-zinc-900 hover:bg-zinc-800 text-white',
+            'dark:bg-emerald-600 dark:hover:bg-emerald-500',
             'disabled:opacity-50 disabled:cursor-not-allowed'
           )}
         >

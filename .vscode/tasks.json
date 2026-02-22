@@ -10,7 +10,8 @@
             },
             "presentation": {
                 "reveal": "always",
-                "panel": "dedicated"
+                "panel": "dedicated",
+                "clear": true
             },
             "runOptions": {
                 "runOn": "folderOpen"
@@ -27,7 +28,8 @@
             },
             "presentation": {
                 "reveal": "always",
-                "panel": "dedicated"
+                "panel": "dedicated",
+                "clear": true
             },
             "runOptions": {
                 "runOn": "folderOpen"
@@ -44,7 +46,8 @@
             },
             "presentation": {
                 "reveal": "always",
-                "panel": "dedicated"
+                "panel": "dedicated",
+                "clear": true
             },
             "runOptions": {
                 "runOn": "folderOpen"
@@ -59,6 +62,29 @@
                 "Backend: Uvicorn",
                 "Frontend: Next Dev"
             ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Kill Dev Processes",
+            "type": "shell",
+            "command": "lsof -ti:8000 | xargs kill -9 2>/dev/null; lsof -ti:3000 | xargs kill -9 2>/dev/null; docker compose stop db 2>/dev/null; echo 'Dev processes stopped.'",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared",
+                "close": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Restart Dev Servers",
+            "dependsOn": [
+                "Kill Dev Processes",
+                "Start All"
+            ],
+            "dependsOrder": "sequence",
             "problemMatcher": []
         },
         {

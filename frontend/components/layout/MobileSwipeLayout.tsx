@@ -93,15 +93,15 @@ function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = fal
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Tab bar */}
-      <div className="flex items-center gap-1 px-3 py-1 border-b border-white/10">
+      <div className="flex items-center gap-1 px-3 py-1 border-b border-zinc-200 dark:border-white/10">
         <button
           type="button"
           onClick={() => goToPage(0)}
           className={cn(
             'px-3 py-1 rounded-full text-xs font-medium transition-colors',
             activePage === 0
-              ? 'bg-foreground/10 text-foreground'
-              : 'text-muted-foreground hover:text-foreground'
+              ? 'bg-zinc-900/10 text-zinc-900 dark:bg-white/10 dark:text-white'
+              : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
           )}
         >
           Chat
@@ -113,10 +113,10 @@ function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = fal
           className={cn(
             'px-3 py-1 rounded-full text-xs font-medium transition-colors relative',
             !planTabEnabled
-              ? 'text-muted-foreground/40 cursor-not-allowed'
+              ? 'text-zinc-500 dark:text-zinc-400 opacity-50 cursor-not-allowed pointer-events-none'
               : activePage === 1
-                ? 'bg-foreground/10 text-foreground'
-                : 'text-muted-foreground hover:text-foreground'
+                ? 'bg-zinc-900/10 text-zinc-900 dark:bg-white/10 dark:text-white'
+                : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
           )}
         >
           Plan

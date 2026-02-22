@@ -184,15 +184,15 @@ export function useLandingEffects({
 
   // ─── Mobile badge: plan content updated while user is on chat page ─────
 
-  const mobileActivePage = useMobileNavStore((s) => s.activePage);
   const tileCount = docTileCount;
   const prevTileCountRef = useRef(0);
   useEffect(() => {
+    const mobileActivePage = useMobileNavStore.getState().activePage;
     if (!isDesktop && mobileActivePage === 0 && tileCount > prevTileCountRef.current) {
       mobileSetHasNewContent(true);
     }
     prevTileCountRef.current = tileCount;
-  }, [isDesktop, mobileActivePage, tileCount, mobileSetHasNewContent]);
+  }, [isDesktop, tileCount, mobileSetHasNewContent]);
 
   // ─── Specialist deep link navigation ───────────────────────────────────
 

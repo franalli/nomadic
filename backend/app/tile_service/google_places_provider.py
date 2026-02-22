@@ -83,8 +83,10 @@ def _get_photo_url(photo_name: str) -> Optional[str]:
 
 _GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
-# In-memory geocode cache to avoid repeat API calls for the same destination
+# In-memory geocode cache to avoid repeat API calls for the same destination.
+# _geocode_lock guards async reads/writes to prevent TOCTOU races in multi-worker prod.
 _geocode_cache: dict[str, tuple[float, float] | None] = {}
+_geocode_lock = asyncio.Lock()
 
 
 async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
@@ -93,10 +95,16 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
     Cache key is normalized (lowercased, stripped) to avoid duplicate lookups for the
     same destination under different casing. Only successful results are cached — transient
     failures (network errors, quota) are NOT cached so the next request can retry.
+
+    Lock-protected read then release before network I/O to prevent TOCTOU races
+    when multiple async tasks geocode the same destination concurrently.
     """
     key = dest.lower().strip()
-    if key in _geocode_cache:
-        return _geocode_cache[key]
+
+    async with _geocode_lock:
+        if key in _geocode_cache:
+            return _geocode_cache[key]
+
     api_key = settings.google_maps_api_key
     if not api_key:
         return None
@@ -111,11 +119,13 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
             if results:
                 loc = results[0]["geometry"]["location"]
                 coords: tuple[float, float] = (loc["lat"], loc["lng"])
-                _geocode_cache[key] = coords
+                async with _geocode_lock:
+                    _geocode_cache[key] = coords
                 logger.debug("[GOOGLE_PLACES] Geocoded '%s' → %s", dest, coords)
                 return coords
             # Destination not found (empty results) — cache None to avoid retrying bad input
-            _geocode_cache[key] = None
+            async with _geocode_lock:
+                _geocode_cache[key] = None
     except Exception as exc:
         logger.warning("[GOOGLE_PLACES] Geocode failed for '%s': %s", dest, exc)
         # Transient failure — do NOT cache, allow retry on next request
@@ -123,7 +133,10 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
 
 
 def _geocode_destination(dest: str) -> tuple[float, float] | None:
-    """Sync version of geocoder (used by tile_service/service.py sync path)."""
+    """Sync version of geocoder (used by tile_service/service.py sync path).
+
+    No lock needed here — sync path runs in a single thread (no concurrent writes).
+    """
     key = dest.lower().strip()
     if key in _geocode_cache:
         return _geocode_cache[key]
@@ -683,7 +696,8 @@ _ENRICH_FIELD_MASK = (
     "places.userRatingCount,"
     "places.priceLevel,"
     "places.editorialSummary,"
-    "places.googleMapsUri"
+    "places.googleMapsUri,"
+    "places.shortFormattedAddress"
 )
 
 
@@ -761,19 +775,23 @@ async def _enrich_single_activity(
             or f"https://www.google.com/maps/place/?q=place_id:{place_id}"
         )
 
-        # Fill price_estimate from Places priceLevel only when the activity has none.
-        # Tier 1 specialist tiles never get a price from the LLM pipeline, so this
-        # closes the gap. Tier 2 LLM tiles keep their category-aware estimate ($40
-        # default) since priceLevel is a coarser signal than the LLM's context.
-        if activity.get("price_estimate") is None:
-            raw_price_level = place.get("priceLevel")
-            if raw_price_level is not None:
-                pl = _parse_price_level(raw_price_level)
+        # Store parsed price_level int (0-4) for frontend display ($ symbols).
+        # Also compute price_estimate for Tier 1 tiles that have no LLM price.
+        raw_price_level = place.get("priceLevel")
+        if raw_price_level is not None:
+            pl = _parse_price_level(raw_price_level)
+            activity["price_level"] = pl
+            if activity.get("price_estimate") is None:
                 # Assume 2 adults as a neutral baseline — enrichment has no traveler count
                 activity["price_estimate"] = _estimate_activity_price(pl, travelers=2)
                 activity["price_basis"] = "per_person"
                 activity["currency"] = "USD"
                 activity["is_estimate_only"] = True
+
+        # Store human-readable location label for detail views
+        location_label = place.get("shortFormattedAddress")
+        if location_label:
+            activity["location_label"] = location_label
 
         # Enrich description with editorial summary if richer than LLM text
         existing_desc = activity.get("description", "") or (

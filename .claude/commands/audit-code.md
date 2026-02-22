@@ -537,7 +537,7 @@ Dead exports with zero importers → report them.
 
 ### 2D: Unnecessary Re-renders
 
-Scan for common re-render causes:
+Scan for common re-render causes, including high-frequency UI paths that are easy to miss:
 
 ```bash
 # 1. Fat Zustand selectors (selecting entire objects instead of specific fields)
@@ -551,6 +551,33 @@ grep -rn "\.map.*onClick={() =>" frontend/components/ --include="*.tsx" | head -
 
 # 4. Missing useMemo/useCallback on expensive computations passed as props
 grep -rn "useMemo\|useCallback" frontend/components/ --include="*.tsx" -l
+
+# 5. Broad trip_inputs subscriptions (fan-out rerenders on any trip input field change)
+grep -rn "useDocumentTripInputs(\|document\?\.trip_inputs\|useTripInputsWithFallback(" frontend/components/ frontend/hooks/ frontend/state/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+
+# 6. Chat list identity churn: cloned/spread message objects and paragraph splitting
+grep -rn "visibleMessages.*useMemo\|\\.flatMap(\|\\.map((m) => ({ ...m" frontend/components/chat/ --include="*.tsx" | grep -v __tests__
+
+# 7. Memoized row/item renderers that still receive unstable object/handler props
+grep -rn "memo(\|React\.memo\|are.*PropsEqual\|Comparator" frontend/components/chat/ frontend/components/plan/ frontend/components/map/ --include="*.tsx" | grep -v __tests__
+
+# 8. High-frequency hover store paths (map/timeline hover sync)
+grep -rn "hoveredActivityId\|setHoveredActivityId\|onMouseEnter.*setHoveredActivityId\|onMouseLeave.*setHoveredActivityId" frontend/components/map/ frontend/components/plan/ --include="*.tsx" | grep -v __tests__
+
+# 9. DOM query hover sync (avoid React rerender, but can still be hot-path expensive)
+grep -rn "querySelector(\|data-map-id\|data-map-hovered" frontend/components/plan/ --include="*.tsx" | grep -v __tests__
+
+# 10. Map prop identity churn (derived arrays/centers passed to map components)
+grep -rn "fullModeMapItems\|sectionFallbackPOIs\|mapCenter\|calculateMapCenter\|extractPOIsFromSections" frontend/components/plan/ --include="*.tsx" | grep -v __tests__
+
+# 11. Wrapper/lambda prop churn into heavy children (TimelineThread, map, virtualized-like trees)
+grep -rn "dayWrapper=\|blockWrapper=\|freeDayDropSlot=\|scrollHeaderContent=\|headerContent=\|plannerContent=\|planViewContent=" frontend/components/ --include="*.tsx" | grep -v __tests__
+
+# 12. Expensive selector computations inside subscriptions (Object.keys in selector)
+grep -rn "Object.keys(" frontend/ --include="*.ts" --include="*.tsx" | grep -E "useDocumentStore|useChatStore" | grep -v __tests__
+
+# 13. Per-item noop callback creation in mapped lists (breaks memoized child stability)
+grep -rn "\?\? (() => {})" frontend/components/ --include="*.tsx" | grep -v __tests__
 ```
 
 Report findings with severity assessment:
@@ -559,6 +586,21 @@ Report findings with severity assessment:
 - Inline styles → report all
 - Inline handlers in mapped lists → only flag if list is >20 items or handler triggers expensive re-renders
 - Missing `useMemo` → only flag if computation is genuinely expensive
+- Broad `trip_inputs` subscriptions in shared/root/hot components → **Medium** (or **High** if root-level)
+- Chat message identity churn (clone/split pipeline) that defeats memoized rows → **High**
+- Memoized children receiving unstable function/object props every parent render → **Medium**
+- Hover-store hot paths updating global state on mousemove/mouseenter across map/timeline → **High**
+- DOM query hover sync per hover event → **Low/Medium** (depends on event frequency + list size)
+- Map derived props not memoized before passing to map component → **Medium**
+- Wrapper/lambda prop churn into heavy timeline/map trees → **Medium**
+- Selector computations like `Object.keys(...)` inside store selectors → **Low/Medium**
+- Per-item fallback noop callbacks in mapped lists → **Low/Medium** (flag when it breaks memoized child)
+
+When reporting rerender findings, include:
+
+- Why it rerenders unnecessarily (identity churn vs subscription fan-out vs high-frequency state writes)
+- Whether the path is hot (chat streaming, map hover, timeline scroll)
+- Exact file/line and impacted subtree (e.g., "entire chat list", "all map markers", "root landing layout")
 
 ### 2E: Duplicate Code
 

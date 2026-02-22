@@ -567,6 +567,7 @@ input[type="number"]::-webkit-outer-spin-button {
   --chip-border: rgba(0, 0, 0, 0.12);
   --chip-text: rgba(0, 0, 0, 0.75);
   --chip-border-hover: rgba(0, 0, 0, 0.20);
+  --chip-bg-hover: rgba(0, 0, 0, 0.04);
   --chip-active-bg: rgba(16, 185, 129, 0.10);
   --chip-active-border: rgba(16, 185, 129, 0.45);
   --chip-active-text: rgba(0, 0, 0, 0.85);
@@ -591,16 +592,17 @@ input[type="number"]::-webkit-outer-spin-button {
     --theme-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 
     /* Chip state tokens - dark mode */
-    --chip-bg: rgba(255, 255, 255, 0.04);
-    --chip-border: rgba(255, 255, 255, 0.12);
-    --chip-text: rgba(255, 255, 255, 0.78);
-    --chip-border-hover: rgba(255, 255, 255, 0.20);
-    --chip-active-bg: rgba(16, 185, 129, 0.12);
-    --chip-active-border: rgba(16, 185, 129, 0.55);
-    --chip-active-text: rgba(255, 255, 255, 0.92);
-    --chip-active-icon: rgba(185, 255, 230, 0.95);
-    --chip-open-border: rgba(16, 185, 129, 0.65);
-    --chip-open-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
+    --chip-bg: transparent;
+    --chip-border: rgba(82, 82, 91, 0.30);       /* zinc-600/30 — unset ghost border */
+    --chip-text: rgba(113, 113, 122, 1.0);        /* zinc-500 — muted label */
+    --chip-border-hover: rgba(113, 113, 122, 0.50); /* zinc-500/50 */
+    --chip-bg-hover: rgba(39, 39, 42, 0.30);      /* zinc-800/30 — hover fill */
+    --chip-active-bg: rgba(2, 44, 34, 0.40);      /* emerald-950/40 — set state */
+    --chip-active-border: rgba(5, 150, 105, 0.50); /* emerald-600/50 */
+    --chip-active-text: rgba(255, 255, 255, 1.0); /* white */
+    --chip-active-icon: rgba(52, 211, 153, 0.95); /* emerald-400 */
+    --chip-open-border: rgba(5, 150, 105, 0.65);
+    --chip-open-shadow: 0 0 0 2px rgba(5, 150, 105, 0.18);
   }
 }
 
@@ -624,6 +626,7 @@ input[type="number"]::-webkit-outer-spin-button {
   --chip-border: rgba(0, 0, 0, 0.12);
   --chip-text: rgba(0, 0, 0, 0.75);
   --chip-border-hover: rgba(0, 0, 0, 0.20);
+  --chip-bg-hover: rgba(0, 0, 0, 0.04);
   --chip-active-bg: rgba(16, 185, 129, 0.10);
   --chip-active-border: rgba(16, 185, 129, 0.45);
   --chip-active-text: rgba(0, 0, 0, 0.85);
@@ -646,16 +649,17 @@ input[type="number"]::-webkit-outer-spin-button {
   --theme-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 
   /* Chip state tokens - dark mode */
-  --chip-bg: rgba(255, 255, 255, 0.04);
-  --chip-border: rgba(255, 255, 255, 0.12);
-  --chip-text: rgba(255, 255, 255, 0.78);
-  --chip-border-hover: rgba(255, 255, 255, 0.20);
-  --chip-active-bg: rgba(16, 185, 129, 0.12);
-  --chip-active-border: rgba(16, 185, 129, 0.55);
-  --chip-active-text: rgba(255, 255, 255, 0.92);
-  --chip-active-icon: rgba(185, 255, 230, 0.95);
-  --chip-open-border: rgba(16, 185, 129, 0.65);
-  --chip-open-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
+  --chip-bg: transparent;
+  --chip-border: rgba(82, 82, 91, 0.30);       /* zinc-600/30 — unset ghost border */
+  --chip-text: rgba(113, 113, 122, 1.0);        /* zinc-500 — muted label */
+  --chip-border-hover: rgba(113, 113, 122, 0.50); /* zinc-500/50 */
+  --chip-bg-hover: rgba(39, 39, 42, 0.30);      /* zinc-800/30 — hover fill */
+  --chip-active-bg: rgba(2, 44, 34, 0.40);      /* emerald-950/40 — set state */
+  --chip-active-border: rgba(5, 150, 105, 0.50); /* emerald-600/50 */
+  --chip-active-text: rgba(255, 255, 255, 1.0); /* white */
+  --chip-active-icon: rgba(52, 211, 153, 0.95); /* emerald-400 */
+  --chip-open-border: rgba(5, 150, 105, 0.65);
+  --chip-open-shadow: 0 0 0 2px rgba(5, 150, 105, 0.18);
 }
 
 /* ===== Chip Hierarchy System ===== */

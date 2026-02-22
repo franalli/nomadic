@@ -57,7 +57,7 @@ export const CoreChip = memo(function CoreChip({
         // Base transition
         'transition-all duration-[120ms] ease-out active:scale-[0.98]',
         // Disabled state
-        disabled && 'opacity-50 pointer-events-none',
+        disabled && 'opacity-50 cursor-not-allowed pointer-events-none',
 
         // === ON-IMAGE VARIANT (for hero/photo backgrounds) ===
         // Larger, touch-friendly sizing for hero pills
@@ -77,11 +77,11 @@ export const CoreChip = memo(function CoreChip({
         // === DEFAULT VARIANT (for normal page backgrounds) ===
         !isOnImage && hasValue && 'border-[var(--chip-active-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)] font-semibold',
         !isOnImage && !hasValue && tone === 'missing' && 'border-dashed border-zinc-400/50 bg-zinc-500/5 text-zinc-400',
-        !isOnImage && !hasValue && tone === 'optional' && 'border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)] opacity-70',
+        !isOnImage && !hasValue && tone === 'optional' && 'border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)]',
         !isOnImage && !hasValue && tone === 'default' && 'border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)]',
-        // Hover for default
-        !isOnImage && !disabled && !hasValue && 'hover:border-[var(--chip-border-hover)]',
-        !isOnImage && !disabled && hasValue && 'hover:border-[var(--chip-active-border)]',
+        // Hover — border + subtle fill
+        !isOnImage && !disabled && !hasValue && 'hover:bg-[var(--chip-bg-hover)] hover:border-[var(--chip-border-hover)]',
+        !isOnImage && !disabled && hasValue && 'hover:bg-[var(--chip-bg-hover)] hover:border-[var(--chip-active-border)]',
 
         // Focus ring
         'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--chip-active-icon)]/50',

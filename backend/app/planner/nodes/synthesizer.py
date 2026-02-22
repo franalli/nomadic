@@ -118,6 +118,9 @@ PILL_ACTION_MAP: Dict[str, tuple[str, Optional[str]]] = {
     # Budget/Travelers -> open respective sheets
     "plan_budget": ("open_pill", "budget"),
     "plan_travelers": ("open_pill", "travelers"),
+    # Booking discovery chips
+    "plan_flights_hint": ("open_pill", "origin"),
+    "plan_hotels_compare": ("send_message", None),
 }
 
 
@@ -1800,15 +1803,17 @@ def generate_suggestions(state: GraphState) -> List[str]:
         else:
             chip_type = "follow_up"
 
-        icon = None
-        if cat.startswith("specialist_"):
-            icon = "compass"
-        elif cat.startswith("plan_"):
-            icon = "sliders-horizontal"
-        elif cat.startswith("question_"):
-            icon = "help-circle"
-        elif cat in {"date_prompt", "date_contextual"}:
-            icon = "calendar"
+        # Candidate-level icon override takes precedence over category default
+        icon = c.get("icon")
+        if icon is None:
+            if cat.startswith("specialist_"):
+                icon = "compass"
+            elif cat.startswith("plan_"):
+                icon = "sliders-horizontal"
+            elif cat.startswith("question_"):
+                icon = "help-circle"
+            elif cat in {"date_prompt", "date_contextual"}:
+                icon = "calendar"
 
         meta = {"chip_type": chip_type, "category": cat, "icon": icon}
         action_type, action_target = PILL_ACTION_MAP.get(cat, ("send_message", None))

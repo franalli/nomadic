@@ -178,6 +178,8 @@ interface ChatPanelProps {
   planViewState?: PlanViewState;
   /** Shared sheet opener - opens trip input sheets at common parent level */
   onOpenSheet?: (sheet: SheetType) => void;
+  /** Destination hero image URL — shown as chat panel header in plan mode */
+  destinationImageUrl?: string | null;
   /**
    * Callback when user submits a message (before backend responds).
    * Used for optimistic UI - detect topics and show placeholder AgentCards.
@@ -221,6 +223,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       planViewState,
       onOpenSheet,
       onUserMessageSubmit,
+      destinationImageUrl,
     } = props;
 
     const isInputDisabledByPlanState = planState === 'RESOLVING';
@@ -237,7 +240,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Local state shared across hooks
     const [isSetupHeaderCollapsed, setIsSetupHeaderCollapsed] = useState(false);
     const [generateTriggered, setGenerateTriggered] = useState(false);
-    const [, setReadyMessageShown] = useState(false);
     const [activeStatus, setActiveStatus] = useState<ActiveStatus | null>(null);
 
     // Module sheet open states
@@ -287,7 +289,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       readyToGenerate,
       hasBranches,
       generateTriggered,
-      setReadyMessageShown,
       setGenerateTriggered,
       loadHistory,
       filterMessages,
@@ -334,40 +335,43 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         ? 'h-full'
         : 'min-h-[300px]';
 
-    // ── Visible messages (kept inline — stale-closure risk if extracted) ──
-    const visibleMessages = messages
-      .filter((m) => {
-        if (m.role === 'system' || m.displayMode === 'ack_line') return true;
-        if (!m.content || m.content.trim().length === 0) return false;
-        if (isGenerating && m.id === 'm0') return false;
-        return true;
-      })
-      .map((m) => {
-        if (hasBranches && m.id === 'm0') {
-          return { ...m, content: 'Edit constraints.' };
-        }
-        return m;
-      })
-      .map((m) => ({
-        ...m,
-        content: sanitizeContent(m.content),
-      }))
-      .flatMap((m): VisibleMessage[] => {
-        if (m.role === 'assistant') {
-          const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
-          if (paragraphs.length > 1) {
-            return paragraphs.map((paragraph, idx) => ({
-              ...m,
-              id: `${m.id}_p${idx}`,
-              content: paragraph.trim(),
-              _isPartOfSplit: true,
-              _isFirstPart: idx === 0,
-              _isLastPart: idx === paragraphs.length - 1,
-            }));
+    // ── Visible messages ──
+    const visibleMessages = useMemo(() =>
+      messages
+        .filter((m) => {
+          if (m.role === 'system' || m.displayMode === 'ack_line') return true;
+          if (!m.content || m.content.trim().length === 0) return false;
+          if (isGenerating && m.id === 'm0') return false;
+          return true;
+        })
+        .map((m) => {
+          if (hasBranches && m.id === 'm0') {
+            return { ...m, content: 'Edit constraints.' };
           }
-        }
-        return [m];
-      });
+          return m;
+        })
+        .map((m) => ({
+          ...m,
+          content: sanitizeContent(m.content),
+        }))
+        .flatMap((m): VisibleMessage[] => {
+          if (m.role === 'assistant') {
+            const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
+            if (paragraphs.length > 1) {
+              return paragraphs.map((paragraph, idx) => ({
+                ...m,
+                id: `${m.id}_p${idx}`,
+                content: paragraph.trim(),
+                _isPartOfSplit: true,
+                _isFirstPart: idx === 0,
+                _isLastPart: idx === paragraphs.length - 1,
+              }));
+            }
+          }
+          return [m];
+        }),
+      [messages, isGenerating, hasBranches]
+    );
 
     return (
       <div
@@ -378,28 +382,45 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           !isDesktop && 'pb-1',
         )}
       >
-        {/* ── DESKTOP: Status bar — shrink-0 header for non-bootstrap states ── */}
+        {/* ── DESKTOP: Hero status bar — shrink-0 header for non-bootstrap states ── */}
         {isDesktop && !isBootstrap(planViewState) && (() => {
           const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, dateRange);
+          const showHero = !!(destinationImageUrl && hasDestination);
           return (
             <AnimatePresence mode="wait">
               <motion.div
                 key="status-bar"
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.2, ease: 'easeOut' }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
                 className={cn(
-                  'z-40 shrink-0',
+                  'relative z-40 shrink-0',
                   '-mx-4 -mt-4 mb-2',
                   'w-[calc(100%+2rem)]',
-                  'h-14 px-4',
-                  'bg-white dark:bg-zinc-900',
-                  'border-b border-zinc-200 dark:border-white/5',
-                  'flex items-center',
+                  'overflow-hidden',
+                  showHero ? 'h-[120px]' : 'h-14',
                 )}
               >
-                <div className="flex items-center gap-2">
+                {/* Hero image — only when destination image available */}
+                {showHero && (
+                  <img
+                    src={destinationImageUrl!}
+                    alt={destination}
+                    className="absolute inset-0 w-full h-full object-cover"
+                  />
+                )}
+                {/* Scrim: bottom half fades hard to panel background, top stays clear */}
+                {showHero && (
+                  <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-white dark:from-zinc-900 to-transparent pointer-events-none" />
+                )}
+                {/* Status text — bottom-left on hero, centered on flat bar */}
+                <div className={cn(
+                  'absolute flex items-center gap-2',
+                  showHero
+                    ? 'bottom-3 left-4'
+                    : 'inset-0 px-4 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-white/5',
+                )}>
                   {status.indicator === 'spin' ? (
                     <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />
                   ) : status.indicator === 'check' ? (
@@ -410,10 +431,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                       status.indicator === 'pulse' && 'animate-pulse',
                     )} />
                   )}
-                  <span className="text-sm font-semibold text-zinc-900 dark:text-white">
+                  <span className={cn(
+                    'text-sm font-semibold',
+                    showHero ? 'text-zinc-900 dark:text-white drop-shadow-sm' : 'text-zinc-900 dark:text-white',
+                  )}>
                     {status.text}
                   </span>
-                  <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-500 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
+                  <span className={cn(
+                    `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold`,
+                    showHero
+                      ? 'text-emerald-600 dark:text-emerald-300'
+                      : `text-zinc-500 dark:text-emerald-500 dark:${DS.glowClass.dropText}`,
+                  )}>
                     {status.label}
                   </span>
                 </div>

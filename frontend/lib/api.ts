@@ -2,6 +2,30 @@
 import { debugLog } from '@/lib/debug';
 import { useDocumentStore } from '@/state/documentStore';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BrowseTile {
+  id: string;
+  type: string;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  image_url?: string | null;
+  rating?: number | null;
+  review_count?: number | null;
+  location_label?: string;
+  geo?: { lat: number; lng: number } | null;
+  price_estimate?: string | null;
+  source: string;
+  provider: string;
+  category: string;
+  tags?: string[];
+  place_id?: string;
+  maps_uri?: string | null;
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 /**
@@ -756,4 +780,45 @@ export function streamGraphPlan(
 
   // Return abort function
   return () => controller.abort();
+}
+
+/**
+ * Browse activities for a destination via Google Places.
+ * Used by the BrowseActivitiesSheet for free/buffer days.
+ */
+export async function browseActivities(params: {
+  destination: string;
+  dayNumber?: number;
+  date?: string | null;
+  hotelLocation?: { lat: number; lng: number } | null;
+  categories?: string[];
+}): Promise<{ tiles: BrowseTile[]; total: number }> {
+  const res = await apiFetch('/api/activities/browse', {
+    method: 'POST',
+    body: JSON.stringify({
+      destination: params.destination,
+      day_number: params.dayNumber,
+      date: params.date,
+      hotel_location: params.hotelLocation,
+      categories: params.categories ?? ['cultural', 'food', 'nature', 'tours'],
+    }),
+  });
+  if (!res.ok) throw new Error(`browse-activities failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Fetch enrichment data for a specialist section (local_expert only).
+ * Returns null if section not found, pending if not yet ready.
+ */
+export async function getSpecialistEnrichment(sectionId: string): Promise<{
+  status: 'ready' | 'pending';
+  section_id: string;
+  data?: Record<string, unknown>;
+} | null> {
+  const res = await apiFetch(`/api/specialist/${encodeURIComponent(sectionId)}/enrichment`);
+  if (res.status === 404) return null;
+  if (res.status === 202) return { status: 'pending', section_id: sectionId };
+  if (!res.ok) return null;
+  return res.json();
 }

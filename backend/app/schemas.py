@@ -612,7 +612,14 @@ class DayBlock(BaseModel):
     # Rich content fields
     image_url: Optional[str] = None
     duration: Optional[str] = None  # "4 hours", "Half day"
+    rating: Optional[float] = None  # Google Places star rating (browse-added activities)
+    review_count: Optional[int] = None  # Google Places review count
+    price_level: Optional[int] = (
+        None  # Google Places price level (0=free, 1=$, 2=$$, 3=$$$, 4=$$$$)
+    )
     coordinates: Optional[Dict[str, float]] = None  # {lat, lng}
+    google_place_id: Optional[str] = None  # Google Places ID
+    deeplink: Optional[str] = None  # Google Maps URL
 
     # Logistics layer (hard times)
     scheduled_time: Optional[str] = None  # "08:00 AM" for flights/check-in
@@ -830,6 +837,14 @@ class PlanDocumentData(BaseModel):
     constraints_validated: List[Dict[str, Any]] = Field(default_factory=list)
     constraint_violations: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # ==========================================================================
+    # Browse Activities Cache (Tier 1 suppressed tiles)
+    # ==========================================================================
+    # Google Places activity tiles suppressed from auto-scheduling (pure Tier 1 trips).
+    # Stashed here by logistics_node so Browse Activities sheet can reuse them
+    # without a new Places API call. Cleared when destination or dates change.
+    browseable_activities: List[Dict[str, Any]] = Field(default_factory=list)
+
 
 class PlanDocumentResponse(BaseModel):
     """Response when fetching the plan document."""
@@ -925,6 +940,23 @@ class RemoveBlockResponse(BaseModel):
     day_card: Dict[str, Any]
     version: int
     removed_block_id: str
+
+
+class InsertActivityBlockRequest(BaseModel):
+    """Insert an activity tile as a block into a specific day."""
+
+    day_number: int
+    tile: Dict[str, Any]  # BrowseTile dict from the frontend
+    expected_version: Optional[int] = None  # Deprecated — no longer enforced
+
+
+class InsertActivityBlockResponse(BaseModel):
+    """Response from insert-activity-block."""
+
+    day_number: int
+    day_card: Dict[str, Any]
+    version: int
+    inserted_block_id: str
 
 
 class RestoreSnapshotRequest(BaseModel):
@@ -1043,3 +1075,24 @@ class GraphPlanResponse(BaseModel):
 
     # Observability (optional, all fields have defaults)
     observability: Optional[GraphPlanObservability] = None
+
+
+class SpecialistEnrichmentResponse(BaseModel):
+    """Response for specialist section enrichment fetch."""
+
+    section_id: str
+    status: str  # "ready" or "pending"
+    data: Optional[Dict[str, Any]] = None
+
+
+class BrowseActivitiesRequest(BaseModel):
+    """Request to browse activities via Google Places for a free/buffer day."""
+
+    destination: str
+    day_number: Optional[int] = None
+    date: Optional[str] = None
+    hotel_location: Optional[Dict[str, float]] = None  # {"lat": ..., "lng": ...}
+    categories: List[str] = Field(
+        default_factory=lambda: ["cultural", "food", "nature", "tours"],
+        description="Activity categories to search",
+    )

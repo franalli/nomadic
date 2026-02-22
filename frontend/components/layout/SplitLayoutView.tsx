@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import React, { memo } from 'react';
+import React from 'react';
 
 import { MobileModeHeader } from '@/components/layout/MobileModeHeader';
 import { MobileSwipeLayout } from '@/components/layout/MobileSwipeLayout';
@@ -55,7 +55,7 @@ interface SplitLayoutViewProps {
  *
  * Landing→Split transition uses pure CSS transitions (compositor thread, no layout thrash).
  */
-export const SplitLayoutView = memo(function SplitLayoutView({
+export function SplitLayoutView({
   plannerContent,
   planViewContent,
   planState = 'INCOMPLETE',
@@ -217,4 +217,4 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       </div>
     </div>
   );
-});
+}

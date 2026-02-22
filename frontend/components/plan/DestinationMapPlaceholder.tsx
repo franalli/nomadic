@@ -29,7 +29,7 @@ export function DestinationMapPlaceholder({
   className,
 }: DestinationMapPlaceholderProps) {
   return (
-    <div className={cn("relative h-full w-full overflow-hidden bg-zinc-900/50 rounded-xl", className)}>
+    <div className={cn("relative h-full w-full overflow-hidden bg-zinc-100 dark:bg-zinc-900/50 rounded-xl", className)}>
       {/* Background image */}
       {imageUrl ? (
         <img
@@ -46,30 +46,30 @@ export function DestinationMapPlaceholder({
 
       {/* Map placeholder content */}
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <div className="p-4 rounded-full bg-zinc-800/60 backdrop-blur-sm mb-4 border border-zinc-700/30">
+        <div className="p-4 rounded-full bg-zinc-200/70 dark:bg-zinc-800/60 backdrop-blur-sm mb-4 border border-zinc-300/40 dark:border-zinc-700/30">
           {isLoading ? (
-            <Loader2 className="w-10 h-10 text-emerald-500/60 animate-spin" />
+            <Loader2 className="w-10 h-10 text-emerald-600 dark:text-emerald-500/60 animate-spin" />
           ) : (
-            <Map className="w-10 h-10 text-zinc-500/60" />
+            <Map className="w-10 h-10 text-zinc-500 dark:text-zinc-500/60" />
           )}
         </div>
-        <p className="text-sm font-medium text-zinc-400">
+        <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
           {isLoading ? 'Mapping locations...' : 'Interactive Map'}
         </p>
-        <p className="text-xs mt-1 text-zinc-500">
+        <p className="text-xs mt-1 text-zinc-500 dark:text-zinc-500">
           {isLoading ? 'Locations appear as they load' : 'Updates as you scroll'}
         </p>
       </div>
 
       {/* Status badge */}
-      <div className="absolute top-4 right-4 px-3 py-1.5 rounded-full bg-zinc-800/70 backdrop-blur-sm text-xs font-medium border border-zinc-700/30">
+      <div className="absolute top-4 right-4 px-3 py-1.5 rounded-full bg-zinc-200/80 dark:bg-zinc-800/70 backdrop-blur-sm text-xs font-medium border border-zinc-300/50 dark:border-zinc-700/30">
         {isLoading ? (
-          <span className="text-emerald-400 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
             Building
           </span>
         ) : (
-          <span className="text-zinc-400">Coming soon</span>
+          <span className="text-zinc-600 dark:text-zinc-400">Coming soon</span>
         )}
       </div>
     </div>

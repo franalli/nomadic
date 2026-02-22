@@ -7,7 +7,7 @@ description: >
   specialist registry, response envelope, state serialization, LangGraph nodes,
   FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
-  telemetry, or any file under backend/app/.
+  patterns_registry, activity_browser, telemetry, or any file under backend/app/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -50,14 +50,14 @@ backend/app/planner/
                     feasibility_service.py
   state/          → graph_state.py, typed_meta.py
   *.py            → specialist_registry.py, hashing.py,
-                    llm_factory.py, llm_structured.py, test_mode.py
+                    llm_factory.py, patterns_registry.py, test_mode.py
 backend/app/
   plan_graph.py, main.py, schemas.py, config.py, db.py, db_models.py,
   debug_utils.py, graph_plan_utils.py, placeholders.py
   prompts/        → synthesizer.txt, specialists/*.txt
   services/       → cache_core.py, specialist_cache.py, router_cache.py, tile_cache.py,
                     experience_generator.py, regen_strategy.py, itinerary_builder.py,
-                    unsplash.py, unsplash_queries.py, task_tracker.py
+                    unsplash.py, unsplash_queries.py, task_tracker.py, activity_browser.py
   tile_service/   → curated_provider.py, amadeus_provider.py, mock_provider.py,
                     google_places_provider.py, provider_base.py, service.py, models.py
   tools/          → constraint_engine.py, amadeus_client.py, tile_service.py,

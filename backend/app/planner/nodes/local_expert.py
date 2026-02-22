@@ -32,6 +32,7 @@ from app.planner.nodes.expert_constraints import (
     LocalExpertOutput,
     _get_constraint_context,
     _get_constraints_as_list,
+    _get_static_must_dos,
 )
 from app.planner.services.section_builder import (
     build_local_expert_section,
@@ -159,17 +160,33 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     if not gallery_images:
         gallery_images = get_destination_gallery(plan.destination)
 
-    # Build skeleton section — travel_intelligence is empty (populated by Phase B)
+    # Build Phase A skeleton — enriched from static data (no LLM)
+    # Better one_liner from constraint types
+    warning_constraints = [c for c in constraint_list if c["severity"] == "warning"]
+    if warning_constraints:
+        warning_types = list({c["type"] for c in warning_constraints})
+        joined = " & ".join(warning_types[:2])
+        one_liner = f"{plan.destination}: review {joined} requirements before your trip"
+    else:
+        one_liner = f"Your adventure in {plan.destination}"
+
+    # Principles from warning-severity constraints (max 4)
+    principles = [c["desc"] for c in warning_constraints[:4]]
+
+    # Must-dos from static data
+    must_dos = _get_static_must_dos(plan.destination)
+
     section = build_local_expert_section(
         destination=plan.destination,
-        one_liner=f"Your adventure in {plan.destination}",
+        one_liner=one_liner,
         bullets=[c["desc"] for c in constraint_list[:3]],
-        must_dos=[],
+        must_dos=must_dos,
         logistics_notes=[],
         constraints_applied=constraints_applied,
         content_added=[],
         gallery_images=gallery_images,
         travel_intelligence={},
+        principles=principles,
     )
 
     # Emit skeleton to state immediately (before any background tasks fire)

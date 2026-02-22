@@ -85,20 +85,20 @@ export function renderMoneyCosts(h: SectionDataHelpers) {
         <div className="grid grid-cols-3 gap-2 mt-2">
           {backpacker && (
             <div className="text-center p-2 rounded bg-zinc-50 dark:bg-zinc-800">
-              <p className={`${DS.textSize.micro} uppercase text-zinc-500`}>Budget</p>
-              <p className="font-medium">{backpacker}</p>
+              <p className={`${DS.textSize.micro} uppercase text-zinc-500 dark:text-zinc-400`}>Budget</p>
+              <p className="font-medium text-zinc-900 dark:text-zinc-100">{backpacker}</p>
             </div>
           )}
           {midRange && (
             <div className="text-center p-2 rounded bg-zinc-50 dark:bg-zinc-800">
-              <p className={`${DS.textSize.micro} uppercase text-zinc-500`}>Mid</p>
-              <p className="font-medium">{midRange}</p>
+              <p className={`${DS.textSize.micro} uppercase text-zinc-500 dark:text-zinc-400`}>Mid</p>
+              <p className="font-medium text-zinc-900 dark:text-zinc-100">{midRange}</p>
             </div>
           )}
           {luxury && (
             <div className="text-center p-2 rounded bg-zinc-50 dark:bg-zinc-800">
-              <p className={`${DS.textSize.micro} uppercase text-zinc-500`}>Luxury</p>
-              <p className="font-medium">{luxury}</p>
+              <p className={`${DS.textSize.micro} uppercase text-zinc-500 dark:text-zinc-400`}>Luxury</p>
+              <p className="font-medium text-zinc-900 dark:text-zinc-100">{luxury}</p>
             </div>
           )}
         </div>

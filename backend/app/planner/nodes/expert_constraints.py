@@ -286,163 +286,235 @@ class LocalExpertOutput(BaseModel):
 # Adding cities is optional — the LLM handles any destination without hints.
 # Only add entries when specific safety/cultural constraints are critical.
 
-LOCAL_EXPERT_CONSTRAINTS: dict[str, list[dict[str, str]]] = {
-    "dubai": [
-        {
-            "type": "cultural",
-            "desc": "Dress modestly in malls/public areas - shoulders and knees covered",
-            "severity": "warning",
-        },
-        {
-            "type": "seasonal",
-            "desc": "Summer (Jun-Aug) can exceed 45°C - plan indoor activities",
-            "severity": "warning",
-        },
-        {
-            "type": "cultural",
-            "desc": "Alcohol only in licensed venues (hotels, restaurants)",
-            "severity": "info",
-        },
-    ],
-    "paris": [
-        {
-            "type": "opening_hours",
-            "desc": "Louvre closed on Tuesdays",
-            "severity": "warning",
-        },
-        {
-            "type": "opening_hours",
-            "desc": "Most museums closed Mondays or Tuesdays - check before visiting",
-            "severity": "warning",
-        },
-        {
-            "type": "booking_window",
-            "desc": "Eiffel Tower requires booking 2-3 weeks ahead for summit access",
-            "severity": "warning",
-        },
-    ],
-    "rome": [
-        {
-            "type": "booking_window",
-            "desc": "Vatican Museums require advance tickets - same-day often sold out",
-            "severity": "warning",
-        },
-        {
-            "type": "booking_window",
-            "desc": "Colosseum timed entry tickets sell out days in advance",
-            "severity": "warning",
-        },
-        {
-            "type": "cultural",
-            "desc": "Dress code for churches: covered shoulders and knees required",
-            "severity": "info",
-        },
-    ],
-    "london": [
-        {
-            "type": "booking_window",
-            "desc": "West End shows sell out weeks ahead for popular productions",
-            "severity": "info",
-        },
-        {
-            "type": "opening_hours",
-            "desc": "Tube runs until ~midnight (24h on weekends on some lines)",
-            "severity": "info",
-        },
-        {
-            "type": "seasonal",
-            "desc": "Rain likely year-round - pack layers and waterproof jacket",
-            "severity": "info",
-        },
-    ],
-    "amsterdam": [
-        {
-            "type": "booking_window",
-            "desc": "Anne Frank House requires booking 6+ weeks ahead",
-            "severity": "warning",
-        },
-        {
-            "type": "booking_window",
-            "desc": "Van Gogh Museum timed tickets sell out - book 2 weeks ahead",
-            "severity": "warning",
-        },
-        {
-            "type": "cultural",
-            "desc": "Cycling rules: stay in bike lanes, signal turns",
-            "severity": "info",
-        },
-    ],
-    "tokyo": [
-        {
-            "type": "cultural",
-            "desc": "Many restaurants don't accept credit cards - carry cash",
-            "severity": "warning",
-        },
-        {
-            "type": "cultural",
-            "desc": "No tipping in Japan - considered rude",
-            "severity": "info",
-        },
-        {
-            "type": "booking_window",
-            "desc": "teamLab exhibitions require advance booking",
-            "severity": "warning",
-        },
-    ],
-    "new york": [
-        {
-            "type": "booking_window",
-            "desc": "Statue of Liberty crown access books out 3+ months ahead",
-            "severity": "warning",
-        },
-        {
-            "type": "booking_window",
-            "desc": "Broadway: book 2+ weeks for popular shows, or try TKTS day-of",
-            "severity": "info",
-        },
-        {
-            "type": "cultural",
-            "desc": "Tipping expected: 18-20% at restaurants",
-            "severity": "info",
-        },
-    ],
-    "bali": [
-        {
-            "type": "cultural",
-            "desc": "Cover shoulders and knees when visiting temples - sarongs at entrances",
-            "severity": "warning",
-        },
-        {
-            "type": "cultural",
-            "desc": "Hindu island - daily offerings (canang sari) everywhere, step over not on",
-            "severity": "info",
-        },
-        {
-            "type": "cultural",
-            "desc": "Never touch someone's head (sacred); don't point feet at shrines",
-            "severity": "info",
-        },
-        {
-            "type": "seasonal",
-            "desc": "Rainy season Nov-Mar brings afternoon showers - mornings best for diving",
-            "severity": "info",
-        },
-        {
-            "type": "safety",
-            "desc": "Strong currents at some beaches - swim only at patrolled areas",
-            "severity": "warning",
-        },
-        {
-            "type": "safety",
-            "desc": "Tap water not safe - drink bottled water only",
-            "severity": "warning",
-        },
-        {
-            "type": "transport",
-            "desc": "International Driving Permit required for scooter - police checkpoints",
-            "severity": "warning",
-        },
-    ],
+LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
+    "dubai": {
+        "constraints": [
+            {
+                "type": "cultural",
+                "desc": "Dress modestly in malls/public areas - shoulders and knees covered",
+                "severity": "warning",
+            },
+            {
+                "type": "seasonal",
+                "desc": "Summer (Jun-Aug) can exceed 45°C - plan indoor activities",
+                "severity": "warning",
+            },
+            {
+                "type": "cultural",
+                "desc": "Alcohol only in licensed venues (hotels, restaurants)",
+                "severity": "info",
+            },
+        ],
+        "must_dos": [
+            "Burj Khalifa visit",
+            "Dubai Mall exploration",
+            "Desert safari",
+            "Old Souk visit",
+            "Dhow cruise",
+        ],
+    },
+    "paris": {
+        "constraints": [
+            {
+                "type": "opening_hours",
+                "desc": "Louvre closed on Tuesdays",
+                "severity": "warning",
+            },
+            {
+                "type": "opening_hours",
+                "desc": "Most museums closed Mondays or Tuesdays - check before visiting",
+                "severity": "warning",
+            },
+            {
+                "type": "booking_window",
+                "desc": "Eiffel Tower requires booking 2-3 weeks ahead for summit access",
+                "severity": "warning",
+            },
+        ],
+        "must_dos": [
+            "Eiffel Tower",
+            "Louvre Museum",
+            "Seine River walk",
+            "Montmartre exploration",
+            "Local bistro dinner",
+        ],
+    },
+    "rome": {
+        "constraints": [
+            {
+                "type": "booking_window",
+                "desc": "Vatican Museums require advance tickets - same-day often sold out",
+                "severity": "warning",
+            },
+            {
+                "type": "booking_window",
+                "desc": "Colosseum timed entry tickets sell out days in advance",
+                "severity": "warning",
+            },
+            {
+                "type": "cultural",
+                "desc": "Dress code for churches: covered shoulders and knees required",
+                "severity": "info",
+            },
+        ],
+        "must_dos": [
+            "Colosseum",
+            "Vatican Museums",
+            "Trevi Fountain",
+            "Trastevere neighborhood",
+            "Campo de' Fiori market",
+        ],
+    },
+    "london": {
+        "constraints": [
+            {
+                "type": "booking_window",
+                "desc": "West End shows sell out weeks ahead for popular productions",
+                "severity": "info",
+            },
+            {
+                "type": "opening_hours",
+                "desc": "Tube runs until ~midnight (24h on weekends on some lines)",
+                "severity": "info",
+            },
+            {
+                "type": "seasonal",
+                "desc": "Rain likely year-round - pack layers and waterproof jacket",
+                "severity": "info",
+            },
+        ],
+        "must_dos": [
+            "British Museum",
+            "Borough Market",
+            "Tower Bridge walk",
+            "Notting Hill",
+            "West End show",
+        ],
+    },
+    "amsterdam": {
+        "constraints": [
+            {
+                "type": "booking_window",
+                "desc": "Anne Frank House requires booking 6+ weeks ahead",
+                "severity": "warning",
+            },
+            {
+                "type": "booking_window",
+                "desc": "Van Gogh Museum timed tickets sell out - book 2 weeks ahead",
+                "severity": "warning",
+            },
+            {
+                "type": "cultural",
+                "desc": "Cycling rules: stay in bike lanes, signal turns",
+                "severity": "info",
+            },
+        ],
+        "must_dos": [
+            "Canal boat tour",
+            "Rijksmuseum",
+            "Jordaan neighborhood walk",
+            "Van Gogh Museum",
+            "Vondelpark",
+        ],
+    },
+    "tokyo": {
+        "constraints": [
+            {
+                "type": "cultural",
+                "desc": "Many restaurants don't accept credit cards - carry cash",
+                "severity": "warning",
+            },
+            {
+                "type": "cultural",
+                "desc": "No tipping in Japan - considered rude",
+                "severity": "info",
+            },
+            {
+                "type": "booking_window",
+                "desc": "teamLab exhibitions require advance booking",
+                "severity": "warning",
+            },
+        ],
+        "must_dos": [
+            "Tsukiji outer market",
+            "Shibuya crossing",
+            "Senso-ji Temple",
+            "teamLab",
+            "Izakaya dinner",
+        ],
+    },
+    "new york": {
+        "constraints": [
+            {
+                "type": "booking_window",
+                "desc": "Statue of Liberty crown access books out 3+ months ahead",
+                "severity": "warning",
+            },
+            {
+                "type": "booking_window",
+                "desc": "Broadway: book 2+ weeks for popular shows, or try TKTS day-of",
+                "severity": "info",
+            },
+            {
+                "type": "cultural",
+                "desc": "Tipping expected: 18-20% at restaurants",
+                "severity": "info",
+            },
+        ],
+        "must_dos": [
+            "Central Park",
+            "High Line walk",
+            "Brooklyn Bridge",
+            "Museum of Natural History",
+            "Broadway show",
+        ],
+    },
+    "bali": {
+        "constraints": [
+            {
+                "type": "cultural",
+                "desc": "Cover shoulders and knees when visiting temples - sarongs at entrances",
+                "severity": "warning",
+            },
+            {
+                "type": "cultural",
+                "desc": "Hindu island - daily offerings (canang sari) everywhere, step over not on",
+                "severity": "info",
+            },
+            {
+                "type": "cultural",
+                "desc": "Never touch someone's head (sacred); don't point feet at shrines",
+                "severity": "info",
+            },
+            {
+                "type": "seasonal",
+                "desc": "Rainy season Nov-Mar brings afternoon showers - mornings best for diving",
+                "severity": "info",
+            },
+            {
+                "type": "safety",
+                "desc": "Strong currents at some beaches - swim only at patrolled areas",
+                "severity": "warning",
+            },
+            {
+                "type": "safety",
+                "desc": "Tap water not safe - drink bottled water only",
+                "severity": "warning",
+            },
+            {
+                "type": "transport",
+                "desc": "International Driving Permit required for scooter - police checkpoints",
+                "severity": "warning",
+            },
+        ],
+        "must_dos": [
+            "Temple visit (Tanah Lot or Uluwatu)",
+            "Rice terrace walk (Tegalalang)",
+            "Local market exploration",
+            "Traditional Balinese massage",
+            "Sunset at Seminyak beach",
+        ],
+    },
 }
 
 
@@ -454,12 +526,16 @@ def _get_constraint_context(destination: str) -> str:
     """
     dest_lower = destination.lower().strip()
 
-    constraints = None
+    entry = None
     for key in LOCAL_EXPERT_CONSTRAINTS:
         if key in dest_lower or dest_lower in key:
-            constraints = LOCAL_EXPERT_CONSTRAINTS[key]
+            entry = LOCAL_EXPERT_CONSTRAINTS[key]
             break
 
+    if not entry:
+        return ""
+
+    constraints = entry.get("constraints", [])
     if not constraints:
         return ""
 
@@ -479,5 +555,17 @@ def _get_constraints_as_list(destination: str) -> list[dict]:
     dest_lower = destination.lower().strip()
     for key in LOCAL_EXPERT_CONSTRAINTS:
         if key in dest_lower or dest_lower in key:
-            return LOCAL_EXPERT_CONSTRAINTS[key]
+            return LOCAL_EXPERT_CONSTRAINTS[key].get("constraints", [])
+    return []
+
+
+def _get_static_must_dos(destination: str) -> list[str]:
+    """Return top must-do activities from static destination data.
+
+    Falls back to empty list for unknown destinations (Phase B LLM will fill these).
+    """
+    dest_lower = destination.lower().strip()
+    for key in LOCAL_EXPERT_CONSTRAINTS:
+        if key in dest_lower or dest_lower in key:
+            return LOCAL_EXPERT_CONSTRAINTS[key].get("must_dos", [])[:5]
     return []

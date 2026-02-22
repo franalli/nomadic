@@ -7,9 +7,8 @@
  */
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
-import { SPRING_CONFIG } from '@/lib/animation-config';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
 import {
@@ -94,6 +93,13 @@ export function StrategyStageRenderer({
     tripInputs, mode: explicitMode, destinationTitle: destinationCard?.title,
   });
 
+  const hasItinerary = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
+
+  const [staysExpanded, setStaysExpanded] = useState(!hasItinerary);
+  const [flightsExpanded, setFlightsExpanded] = useState(false);
+  const handleToggleStays = useCallback(() => setStaysExpanded(v => !v), []);
+  const handleToggleFlights = useCallback(() => setFlightsExpanded(v => !v), []);
+
   const planContent = useMemo(() => {
     const { isShowingMirrorLoader, tripDuration } = o.displayLogic;
     const { fullModeSections, filteredViewModel, totalConstraints, ghostDayCards, ghostHasDuration } = o.specialistData;
@@ -132,23 +138,26 @@ export function StrategyStageRenderer({
         isStreaming={o.isStreaming} isAnyRegenerating={o.isAnyRegenerating}
         isRegenUpdating={o.isRegenUpdating} isDesktop={o.isDesktop}
         showConstraints={o.showConstraints} preferenceCount={o.preferenceCount}
-        validatedRules={o.validatedRules} violatedRules={o.violatedRules}
         effectiveMode={o.effectiveMode} timelineVariant={computeTimelineVariant(state)}
-        timelineSectionRef={o.timelineSectionRef} onRefineAssumptions={onRefineAssumptions}
+        timelineSectionRef={o.timelineSectionRef} scrollContainerRef={o.scrollContainerRef}
+        onRefineAssumptions={onRefineAssumptions}
         handleSaveTile={o.handleSaveTile} handleOpenBookingDrawer={o.handleOpenBookingDrawer}
         onOpenActivitySettings={onOpenActivitySettings} onOpenStaysSettings={onOpenStaysSettings}
         onOpenFlightsSettings={onOpenFlightsSettings}
         onToggleConstraints={() => o.setShowConstraints(!o.showConstraints)}
+        staysExpanded={staysExpanded} flightsExpanded={flightsExpanded}
+        onToggleStays={handleToggleStays} onToggleFlights={handleToggleFlights}
       />
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps -- onOpenActivitySettings etc intentionally excluded
   }, [
     o.displayLogic, o.specialistData, o.stableDensity, o.effectiveTripInputs, o.fullModePOIs,
     o.effectiveTiles, o.hasSectionData, o.hasItineraryContent, o.isStreaming, o.isAnyRegenerating,
-    o.isRegenUpdating, o.isDesktop, o.showConstraints, o.preferenceCount, o.validatedRules,
-    o.violatedRules, o.effectiveMode, o.timelineSectionRef, o.handleSaveTile, o.handleOpenBookingDrawer,
+    o.isRegenUpdating, o.isDesktop, o.showConstraints, o.preferenceCount,
+    o.effectiveMode, o.timelineSectionRef, o.scrollContainerRef, o.handleSaveTile, o.handleOpenBookingDrawer,
     state, viewModel, destinationCard, generation, savedTileIds, isExpandingItinerary,
     onRefineAssumptions, onSelectNights, onOpenSheet,
+    staysExpanded, flightsExpanded, handleToggleStays, handleToggleFlights,
   ]);
 
   const bookContent = useMemo(() => (
@@ -186,7 +195,7 @@ export function StrategyStageRenderer({
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <PlanHeader
-        destinationCard={destinationCard} isGenerating={o.generating} fallbackTitle={fallbackTitle}
+        isGenerating={o.generating} fallbackTitle={fallbackTitle}
         planViewState={state} isExpandingItinerary={isExpandingItinerary}
         tripInputs={o.effectiveTripInputs} onOpenSheet={onOpenSheet} isStreaming={o.isStreaming}
         isCollapsed={!o.isDesktop && o.isCollapsed}
@@ -216,8 +225,8 @@ export function StrategyStageRenderer({
       <AnimatePresence mode="wait">
         {o.shouldShowAutoProgress && o.effectiveMode === 'planning' && (
           <motion.div key="progress-indicator"
-            initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: SPRING_CONFIG.SLIDE.stiffness, damping: SPRING_CONFIG.SLIDE.damping }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
             className="sticky bottom-6 z-40 w-full justify-center pointer-events-none mt-8 hidden lg:flex"
           >
             <div className="pointer-events-auto w-fit mx-auto max-w-md">
@@ -230,8 +239,8 @@ export function StrategyStageRenderer({
         )}
         {o.nextAction && o.effectiveMode === 'planning' && !o.hideNextStepBar && (
           <motion.div key="next-step-bar"
-            initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: SPRING_CONFIG.SLIDE.stiffness, damping: SPRING_CONFIG.SLIDE.damping }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
             className="hidden lg:block"
           >
             <NextStepBar state={state} nextAction={o.nextAction} />

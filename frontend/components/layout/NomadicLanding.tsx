@@ -1,7 +1,7 @@
 'use client';
 
 import { Compass, Loader2, RotateCcw } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { StartupSequence } from '@/components/animations/StartupSequence';
@@ -32,9 +32,9 @@ import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { useToast } from '@/components/ui/toast';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
-import { usePreferenceAutoRegen } from '@/hooks/usePreferenceAutoRegen';
+import { startPreferenceAutoRegen } from '@/hooks/usePreferenceAutoRegen';
 import { useSheetManager } from '@/hooks/useSheetManager';
-import { useViewNavigation } from '@/hooks/useViewNavigation';
+import { useViewNavigationLight } from '@/hooks/useViewNavigation';
 import { debugLog } from '@/lib/debug';
 import { DS } from '@/lib/design-system';
 import { formatDateForDisplay } from '@/lib/utils';
@@ -124,13 +124,13 @@ export function NomadicLanding() {
   // ─── Shared hooks ────────────────────────────────────────────────────────
 
   const { activeSheet, openSheet, closeSheet } = useSheetManager();
-  const { navigateTo, finalizePlan, canViewPlan, activeView } = useViewNavigation();
+  const { navigateTo, finalizePlan, canViewPlan, activeView } = useViewNavigationLight();
   const chatPanelRef = useRef<ChatPanelHandle | null>(null);
-  usePreferenceAutoRegen();
+  useEffect(() => startPreferenceAutoRegen(), []);
 
   // ─── Local state ─────────────────────────────────────────────────────────
 
-  const [, setReceiptData] = useState<ChangeReceiptData | null>(null);
+  const receiptDataRef = useRef<ChangeReceiptData | null>(null);
   const previousTripInputsRef = useRef<DocumentTripInputs | null>(null);
   const [userRequestedGeneration, setUserRequestedGeneration] = useState(false);
   const [isFinalizing, setIsFinalizing] = useState(false);
@@ -317,7 +317,7 @@ export function NomadicLanding() {
       storeReset();
       useChatStore.getState().resetChat();
       setUiGeneration(null);
-      setReceiptData(null);
+      receiptDataRef.current = null;
       previousTripInputsRef.current = null;
       setHasEverHadPlan(false);
       setUserRequestedGeneration(false);
@@ -362,11 +362,11 @@ export function NomadicLanding() {
       const newInputs = result.response?.document?.trip_inputs ?? null;
       const changedFields = detectChangedFieldNames(previousTripInputsRef.current, newInputs);
       if (changedFields.length > 0) {
-        setReceiptData({
+        receiptDataRef.current = {
           type: changedFields.length === 1 ? 'partial' : 'updated',
           fields: changedFields,
           canUndo: true,
-        });
+        };
       }
     },
     [handlePlanResult]
@@ -459,6 +459,7 @@ export function NomadicLanding() {
         onUpdateActivitySettings={handleUpdateActivitySettings}
         planViewState={planViewState}
         onOpenSheet={openSheet}
+        destinationImageUrl={destinationImageUrl}
       />
     </ErrorBoundary>
   );

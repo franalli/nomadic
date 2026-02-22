@@ -608,7 +608,11 @@ async def generate_sse(
                             for _b in _dc.blocks:
                                 if _b.specialist_type:
                                     _existing_dc_topics.add(_b.specialist_type)
-                        if _graph_strat_topics != _existing_dc_topics:
+                        # Only compare Tier 1 types (those present in strategy).
+                        # Browse-inserted blocks (e.g. "cultural", "food") are not Tier 1
+                        # and must not trigger stale detection.
+                        _existing_dc_tier1 = _existing_dc_topics & _graph_strat_topics
+                        if _existing_dc_tier1 != _graph_strat_topics:
                             _debug(
                                 f"[streaming] Stale day_cards in DB: strategy={_graph_strat_topics}, "
                                 f"day_cards={_existing_dc_topics} — clearing for DB persistence"
@@ -856,6 +860,10 @@ async def generate_sse(
             response_document.origin_just_set = graph_document.get("origin_just_set", False)
             # Copy tiles_replaced flag — frontend should REPLACE tiles, not merge additively
             response_document.tiles_replaced = graph_document.get("tiles_replaced", False)
+            # Copy browseable_activities (Tier 1 suppressed tiles stashed by logistics_node)
+            browseable = graph_document.get("browseable_activities")
+            if browseable:
+                response_document.browseable_activities = browseable
 
             # Copy itinerary day cards if builder ran during graph execution
             graph_day_cards = graph_document.get("itinerary_day_cards")
@@ -883,7 +891,11 @@ async def generate_sse(
                     for _b in _dc.blocks:
                         if _b.specialist_type:
                             _resp_dc_topics.add(_b.specialist_type)
-                if _resp_strat_topics != _resp_dc_topics:
+                # Only compare Tier 1 types (those present in strategy).
+                # Browse-inserted blocks (e.g. "cultural", "food") are not Tier 1
+                # and must not trigger stale detection.
+                _resp_dc_tier1 = _resp_dc_topics & _resp_strat_topics
+                if _resp_dc_tier1 != _resp_strat_topics:
                     _debug(
                         f"[streaming] Stale day_cards in SSE response: strategy={_resp_strat_topics}, "
                         f"day_cards={_resp_dc_topics} — clearing to trigger expand-itinerary"
@@ -1257,6 +1269,7 @@ async def generate_ndjson(
                 preferences=preferences_input,
                 activity_categories=activity_categories,
                 activity_day_preferences=day_preferences,
+                user_pinned_tiles=doc_data.user_pinned_tiles if doc_data else None,
             )
 
             try:
@@ -1402,44 +1415,43 @@ async def generate_ndjson(
             )
             yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 
-            # Persist to document if we have itinerary data
-            if plan_envelope.get("day_cards"):
-                try:
-                    from app.schemas import DocumentTripInputs
+            # Always persist plan_view_state; only include day_cards when present
+            try:
+                from app.schemas import DocumentTripInputs
 
-                    # Convert trip_inputs to DocumentTripInputs
-                    trip_inputs_obj = None
-                    if trip_inputs:
-                        trip_inputs_obj = DocumentTripInputs.model_validate(trip_inputs)
+                # Convert trip_inputs to DocumentTripInputs
+                trip_inputs_obj = None
+                if trip_inputs:
+                    trip_inputs_obj = DocumentTripInputs.model_validate(trip_inputs)
 
-                    # Get trip context
-                    trip_context = await get_latest_trip_context_for_session(db, session=session)
-                    trip_context_id = trip_context.id if trip_context else 0
+                # Get trip context
+                trip_context = await get_latest_trip_context_for_session(db, session=session)
+                trip_context_id = trip_context.id if trip_context else 0
 
-                    # Convert day_cards to DayCard objects for persistence
-                    day_card_objs = None
-                    if plan_envelope.get("day_cards"):
-                        from app.schemas import DayCard as DayCardSchema
+                # Convert day_cards to DayCard objects for persistence (only when present)
+                day_card_objs = None
+                if plan_envelope.get("day_cards"):
+                    from app.schemas import DayCard as DayCardSchema
 
-                        day_card_objs = [
-                            DayCardSchema(**dc) if isinstance(dc, dict) else dc
-                            for dc in plan_envelope["day_cards"]
-                        ]
+                    day_card_objs = [
+                        DayCardSchema(**dc) if isinstance(dc, dict) else dc
+                        for dc in plan_envelope["day_cards"]
+                    ]
 
-                    await apply_planner_update(
-                        db,
-                        doc=doc,
-                        trip_context_id=trip_context_id,
-                        trip_inputs=trip_inputs_obj,
-                        # ViewModel fields for session restoration
-                        plan_view_state=new_plan_view_state,
-                        day_cards=day_card_objs,
-                        can_expand_to_itinerary=True,
-                    )
-                    await db.commit()
-                except (SQLAlchemyError, ValueError) as e:
-                    logger.warning(f"Failed to persist itinerary: {e}")
-                    await db.rollback()
+                await apply_planner_update(
+                    db,
+                    doc=doc,
+                    trip_context_id=trip_context_id,
+                    trip_inputs=trip_inputs_obj,
+                    # ViewModel fields for session restoration — always persist state
+                    plan_view_state=new_plan_view_state,
+                    day_cards=day_card_objs,
+                    can_expand_to_itinerary=day_card_objs is not None,
+                )
+                await db.commit()
+            except (SQLAlchemyError, ValueError) as e:
+                logger.warning(f"Failed to persist itinerary: {e}")
+                await db.rollback()
 
             # Emit done with version for frontend sync (prevents 409 on next PATCH)
             event = ExpandItineraryStreamEvent(

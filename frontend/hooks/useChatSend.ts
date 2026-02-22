@@ -140,7 +140,6 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
   const filterMessages = useChatStore((s) => s.filterMessages);
   const sessionState = useChatStore((s) => s.sessionState);
   const setSessionState = useChatStore((s) => s.setSessionState);
-  const messages = useChatStore((s) => s.messages);
 
   // Local state
   const [input, setInput] = useState('');
@@ -216,7 +215,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
 
     // Mark message as interrupted with a user-friendly message
     if (streamingMessageId) {
-      const currentMsg = messages.find((m) => m.id === streamingMessageId);
+      const currentMsg = useChatStore.getState().messages.find((m) => m.id === streamingMessageId);
       const currentContent = (currentMsg?.content || '').trim();
       updateMessage(streamingMessageId, {
         content: currentContent + '\n\n*[Response stopped. You can continue the conversation or ask me to elaborate.]*',
@@ -230,7 +229,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     setIsLoading(false);
     isSendingRef.current = false;
     delayedLoader.reset();
-  }, [streamingMessageId, messages, updateMessage, delayedLoader]);
+  }, [streamingMessageId, updateMessage, delayedLoader]);
 
   const sendMessageCore = useCallback(
     async (messageText: string, options?: { suggestionClicked?: string }) => {
