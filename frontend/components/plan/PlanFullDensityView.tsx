@@ -11,7 +11,6 @@ import { useMapSync } from '@/hooks/useMapSync';
 import { REVEAL_TIMING } from '@/lib/animation-config';
 import type { MapPOI } from '@/lib/ghost-timeline-adapter';
 import { calculateMapCenter, extractPOIsFromSections } from '@/lib/ghost-timeline-adapter';
-import { NICHE_SPECIALIST_IDS } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
@@ -117,14 +116,13 @@ export function PlanFullDensityView({
   // Map height = calc(100vh - headerOffset) where headerOffset is the scroll
   // container's distance from the viewport top (= PlanHeader height). This fills
   // the scroll container's visible viewport exactly after the map sticks.
-  const specialistConstraintCount = useMemo(() => {
-    return (fullModeSections ?? [])
-      .filter((s) => NICHE_SPECIALIST_IDS.includes(s.specialist_type || ''))
-      .flatMap((s) => s.constraints_applied || [])
-      .filter((c) => {
-        const sev = (c as Record<string, string>).severity;
-        return !sev || sev === 'blocking' || sev === 'strong';
-      }).length;
+  const specialistCount = useMemo(() => {
+    return (fullModeSections ?? []).filter((section) => {
+      const specialistType = section.specialist_type || '';
+      const isGeneralType = specialistType === 'general' || specialistType === 'local_expert';
+      if (isGeneralType) return true;
+      return (section.content_added?.length ?? 0) > 0;
+    }).length;
   }, [fullModeSections]);
 
   const flexRowRef = useRef<HTMLDivElement>(null);
@@ -164,7 +162,7 @@ export function PlanFullDensityView({
     const t2 = setTimeout(measure, 500);
     return () => { observer.disconnect(); clearTimeout(t1); clearTimeout(t2); };
 
-  }, [hasItineraryContent, showConstraints, staysExpanded, flightsExpanded, stayCount, flightCount, specialistConstraintCount, showDesktopMap, scrollContainerRef, timelineSectionRef]);
+  }, [hasItineraryContent, showConstraints, staysExpanded, flightsExpanded, stayCount, flightCount, specialistCount, showDesktopMap, scrollContainerRef, timelineSectionRef]);
 
   return (
     <div className="flex flex-col">
@@ -196,9 +194,9 @@ export function PlanFullDensityView({
           )}
 
         {/* Filter chips row — Specialists + Flights + Stays, flush with day cards */}
-        {hasItineraryContent && (specialistConstraintCount > 0 || flightCount > 0 || stayCount > 0) && (
+        {hasItineraryContent && (specialistCount > 0 || flightCount > 0 || stayCount > 0) && (
           <div className="flex items-center gap-2 px-4 pb-2 pt-1">
-            {specialistConstraintCount > 0 && (
+            {specialistCount > 0 && (
               <button
                 type="button"
                 onClick={onToggleConstraints}
@@ -208,7 +206,7 @@ export function PlanFullDensityView({
                 )}
               >
                 <Brain className="w-3.5 h-3.5" />
-                Specialists ({specialistConstraintCount})
+                Specialists ({specialistCount})
                 <ChevronDown className={cn('w-3 h-3 transition-transform', showConstraints && 'rotate-180')} />
               </button>
             )}
