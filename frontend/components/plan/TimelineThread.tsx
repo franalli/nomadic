@@ -528,7 +528,7 @@ export function TimelineThread({
                 className={cn(
                   'timeline-node flex-shrink-0 w-9 h-9 rounded-full border flex items-center justify-center transition-colors',
                   isSafety
-                    ? 'bg-zinc-500/10 border-zinc-500/50 text-zinc-500'
+                    ? 'bg-zinc-500/10 dark:bg-zinc-500/15 border-zinc-500/50 dark:border-zinc-500/40 text-zinc-600 dark:text-zinc-400'
                     : 'bg-white dark:bg-zinc-950 border-zinc-300/50 dark:border-white/20 text-zinc-500 dark:text-zinc-400 group-hover:border-emerald-500 group-hover:text-emerald-600 dark:group-hover:text-emerald-400'
                 )}
               >
@@ -541,7 +541,7 @@ export function TimelineThread({
                   className={cn(
                     'font-semibold tracking-tight',
                     dayVariant === 'compact' ? 'text-base' : 'text-lg',
-                    isSafety ? 'text-zinc-500' : 'text-zinc-900 dark:text-white'
+                    isSafety ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-900 dark:text-white'
                   )}
                 >
                   Day {card.day_number}
@@ -790,9 +790,9 @@ export function TimelineThread({
                           className={cn(
                             'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center',
                             isUnschedulable
-                              ? 'bg-amber-500/10 text-amber-500'
+                              ? 'bg-amber-500/10 dark:bg-amber-500/15 text-amber-600 dark:text-amber-300'
                               : isBlockSafety
-                                ? 'bg-zinc-500/10 text-zinc-500'
+                                ? 'bg-zinc-500/10 dark:bg-zinc-500/15 text-zinc-600 dark:text-zinc-400'
                                 : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
                           )}
                         >
@@ -803,7 +803,11 @@ export function TimelineThread({
                             <span
                               className={cn(
                                 'text-xs font-medium uppercase tracking-wide',
-                                isUnschedulable ? 'text-amber-500' : isBlockSafety ? 'text-zinc-500' : 'text-zinc-500 dark:text-zinc-400'
+                                isUnschedulable
+                                  ? 'text-amber-600 dark:text-amber-300'
+                                  : isBlockSafety
+                                    ? 'text-zinc-600 dark:text-zinc-400'
+                                    : 'text-zinc-500 dark:text-zinc-400'
                               )}
                             >
                               {block.period}
@@ -833,7 +837,7 @@ export function TimelineThread({
                             className={cn(
                               'mt-1 font-medium',
                               isUnschedulable
-                                ? 'line-through text-zinc-500'
+                                ? 'line-through text-zinc-500 dark:text-zinc-400'
                                 : isBlockSafety
                                   ? 'text-zinc-600 dark:text-zinc-400'
                                   : 'text-zinc-900 dark:text-white'
@@ -858,7 +862,7 @@ export function TimelineThread({
                               {block.constraints.map((constraint, i) => (
                                 <span
                                   key={i}
-                                  className="text-xs px-2 py-0.5 rounded-full bg-zinc-500/10 text-zinc-500 font-medium"
+                                  className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 font-medium"
                                 >
                                   💡 {constraint}
                                 </span>
@@ -875,7 +879,7 @@ export function TimelineThread({
 
                           {/* Buffer reason */}
                           {block.buffer_reason && (
-                            <div className="mt-2 text-xs font-medium px-2 py-1 rounded bg-zinc-500/10 inline-block text-zinc-600 dark:text-zinc-400">
+                            <div className="mt-2 text-xs font-medium px-2 py-1 rounded bg-zinc-500/10 dark:bg-zinc-500/15 inline-block text-zinc-600 dark:text-zinc-400">
                               {block.buffer_reason}
                             </div>
                           )}

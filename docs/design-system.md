@@ -2624,6 +2624,9 @@ Updates to Section 6 — new components discovered in audit:
 | `StrategyConstraintBar` | `plan/StrategyConstraintBar.tsx` | None (raw pattern) | Trip DNA constraint pills; priority coloring (red/amber/zinc); `hover:text-zinc-900 dark:hover:text-zinc-200` on Details toggle |
 | `S2AgentCard` | `plan/stages/S2AgentCard.tsx` | `DS.textSize.*` | Legacy specialist card with topic CSS vars; `shadow-card` on card, `hover:shadow-soft` on hover |
 | `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Density switcher; `bg-emerald-500 rounded-full animate-pulse` for live indicator dot |
+| `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (raw pattern) | Full-density itinerary layout; subdued toggle pills for Specialists/Flights/Stays and sticky desktop map column |
+| `TimelineThread` | `plan/TimelineThread.tsx` | `DS.textSize.*` | Day-thread renderer; constraint/status chips with light/dark contrast pairs and unschedulable overlays |
+| `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
 
 ---
 
@@ -2790,7 +2793,7 @@ Small rounded-full toggle pills for collapsing/expanding sub-sections (Stays, Fl
 </button>
 ```
 
-**Implementation:** `frontend/components/plan/StrategyConstraintBar.tsx`
+**Implementation:** `frontend/components/plan/StrategyConstraintBar.tsx`, `frontend/components/plan/PlanFullDensityView.tsx`
 
 ---
 

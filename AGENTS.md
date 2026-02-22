@@ -1,21 +1,196 @@
+# AGENTS.md - Nomadic Agent Operating Manual
+
 ## Project
 
 Nomadic - AI travel planning with LangGraph + FastAPI + Next.js + Gemini 2.5 Flash.
 
-## Your role
+## Role
 
 You are a reviewer and auditor. You do NOT write implementation code.
 You review, analyze, find bugs, suggest tests, and audit security.
 
-## Architecture
+## Current Sprint (update every session)
 
-- Backend: FastAPI + LangGraph plan graph, Pydantic data contracts
-- Frontend: Next.js + Zustand + Tailwind
-- All LLM calls via llm_factory.py, models from env vars
-- Structured output via llm_structured.py with retry wrapper
+- Focus: [describe focus]
+- Secondary: [secondary priority or "none"]
+- Active work: backend planner intent/constraints/logistics + itinerary/experience services, new `activity_browser.py` path, frontend strategy/timeline/chat/layout rendering, and SSoT doc alignment in `docs/*`
+- Known broken: none explicitly tracked in current working diff
+- Do not touch this sprint:
+  - 7-node graph invariant
+  - `llm_factory.py` provider/model-routing contract
+  - API/schema compatibility surfaces
 
-## Conventions
+## Hard Rules (never violate)
 
-- Python: async/await, Ruff formatting, type hints everywhere
-- TypeScript: Zustand stores, mobile-first, design tokens
-- Never hardcode model strings, airports, coordinates, specialist lists
+1. Do NOT refactor files beyond the scope of the current task.
+2. Do NOT add new dependencies without explicit approval.
+3. Do NOT rename, move, or restructure existing files or functions.
+4. Do NOT create new LangGraph nodes. 7-node invariant is law:
+   - `router`, `architect`, `specialist`, `local_expert`, `logistics`, `guard`, `synthesizer`
+5. Do NOT touch mobile-specific components unless explicitly asked.
+6. Do NOT modify API contracts or shared schemas without explicit approval.
+7. Limit changes to 8 files per task unless approved.
+8. Never do broad directory scans or read `node_modules`; reference specific files.
+9. Do NOT modify Synthesizer model routing (`_MODEL_BY_COMPLEXITY`) without measuring quality impact.
+10. All LLM construction must use `get_llm_by_model()` from `llm_factory.py`.
+    - No direct `ChatOpenAI()` or `ChatGoogleGenerativeAI()` in node/service code.
+11. No hard-coded world data.
+    - Never hard-code locations, airports, IATA codes, coordinates, airlines, or other effectively unbounded datasets.
+12. `TripPlan` is the sole SSoT for all trip state.
+    - No parallel state objects.
+
+## Specialist Delegation
+
+When specialist agents are available (for example under `.claude/agents/`), use:
+
+- `backend-specialist` for Python/planner/services/FastAPI/LLM factory work
+- `frontend-specialist` for React/TypeScript/Zustand/styling/design system work
+- `code-reviewer` for read-only multi-file review after execution
+
+Delegation rules:
+
+- Multi-file changes (3+ files): delegate to a specialist.
+- Complex logic (constraint guard, builders, state machines): delegate.
+- Cross-stack work: backend specialist first, then frontend specialist; never both at once.
+- Post-task review on multi-file work: always run `code-reviewer`.
+- After every delegation, retrieve and present results immediately.
+
+## Parallelism Rules
+
+Run concurrently when safe:
+
+- Multiple file reads/greps/find operations
+- Lint, build, and tests across independent stacks
+- Independent backend and frontend tasks
+
+Do NOT parallelize:
+
+- Edits that touch the same API contract (backend first)
+- Schema changes and dependent code (schema first)
+- Specialist delegation and review (specialist first, review second)
+- Writes to the same file
+
+## Parallel Work Zones
+
+If two sessions are running simultaneously:
+
+- Frontend zone (UI/state/components):
+  - `frontend/components/*`, `frontend/state/*`, `frontend/hooks/*`
+- Backend zone (nodes/services/prompts):
+  - `backend/app/planner/*`, `backend/app/services/*`, `backend/app/prompts/*`
+- Shared zone (coordinate first):
+  - `schemas.py`, `specialist_schemas.py`, API route signatures
+
+If a task touches both frontend and backend zones, confirm scope before proceeding.
+
+## Governance - Single Sources of Truth
+
+Read these before reviewing architecture, APIs, schemas, frontend state, or UI rendering:
+
+- `docs/plan_graph_analysis.md`
+  - Governs backend architecture and node structure.
+- `docs/design-system.md`
+  - Governs UI styling, tokens, and component patterns.
+- `docs/ux_unified_architecture.md`
+  - Governs view states, rendering logic, and UX flow.
+- `docs/data-contracts.md`
+  - Governs API routes, schemas, and state store shape.
+
+## Architecture and Invariants
+
+### Design Principles
+
+0. Keep it simple. No over-engineering.
+1. `TripPlan` is SSoT for all trip state.
+2. Data over agents: flights/hotels are data fetchers in `LogisticsNode`, not agents.
+3. Domain experts are agents:
+   - Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing) use `VerticalSpecialist`.
+   - Tier 2 (Sailing/Cooking/Yoga) are lightweight tile filters.
+4. Architect sees the whole picture to avoid context fracture.
+5. Safe routing: LLM-based intent classification via `settings.router_model`, no regex routing.
+6. Constraint injector: Specialist runs before Architect calls tools.
+7. One voice: Synthesizer enforces consistent tone across nodes.
+8. Centralized LLM factory: `get_llm_by_model()` handles provider detection, model params, and structured output retry.
+
+### Stack
+
+- Frontend: Next.js 16, React 19, TypeScript, Tailwind, Zustand, Framer Motion, Mapbox GL
+- Backend: Python 3.12, FastAPI, SQLAlchemy, Alembic, LangGraph, LangChain (OpenAI + Gemini)
+- LLM providers via `llm_factory.py`: OpenAI (`gpt-4o`, `gpt-4o-mini`), Google (`gemini-2.5-flash`)
+- Structured output is handled through `llm_structured.py` retry wrappers
+- Testing: Vitest (frontend), pytest (backend)
+- Linting: ESLint + Prettier (frontend), Ruff (backend)
+
+## Commands
+
+```bash
+# Frontend
+cd frontend && npm run dev
+cd frontend && npm run build
+cd frontend && npm run lint:fix
+
+# Backend
+cd backend && python start.py
+cd backend && pytest
+cd backend && ruff check . --fix
+
+# Always run after pytest
+rm -f backend/test_plan_document_pytest.db*
+
+# Environment
+# frontend/.env.local -> NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN
+# backend/.env -> DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY
+cd backend && alembic upgrade head
+docker compose up db --build
+```
+
+## Coding Standards
+
+### TypeScript and React
+
+- Check `docs/design-system.md` and `docs/ux_unified_architecture.md` first.
+- 2-space indent, named exports, `cn()` for classNames.
+- Use Lucide React for icons (not `react-icons`, not Heroicons).
+- Components should stay under 200 lines.
+
+### Python
+
+- Check `docs/plan_graph_analysis.md` first.
+- 100-char line length, type hints on all functions.
+- Use async for I/O.
+- Use Pydantic v2 for schemas.
+- Follow Ruff formatting.
+
+## Performance Notes
+
+- Synthesizer model routing uses `_MODEL_BY_COMPLEXITY`; do not change without quality measurement.
+- Prompt templates are cached in memory. Restart server after modifying:
+  - `backend/app/prompts/synthesizer.txt`
+
+## Review Workflow
+
+When reviewing or auditing, prioritize:
+
+1. Behavioral regressions and logic bugs.
+2. Contract drift (API routes, schemas, state shape).
+3. Violation of hard rules and architecture invariants.
+4. Security and privacy risks.
+5. Missing or weak tests.
+
+For each finding, provide severity, exact file path, and line reference.
+
+## Context Management
+
+- Reference specific files, not directories.
+- Avoid scanning whole directories or `node_modules`.
+- Keep context tight and task-scoped.
+- If switching between backend and frontend concerns, reset context and re-check SSoT docs.
+
+## Session Resumption
+
+After context reset/compaction:
+
+1. Re-read this `AGENTS.md`.
+2. Check `Current Sprint`.
+3. Confirm the next task with the user (do not assume).
+4. Read only the specific files involved before acting.

@@ -104,6 +104,12 @@ export function PlanFullDensityView({
     [effectiveTiles]
   );
 
+  const subduedTogglePillClass = cn(
+    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs whitespace-nowrap transition-all duration-150',
+    'border-zinc-300 dark:border-white/15 bg-zinc-100 dark:bg-white/[0.06]',
+    'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/10',
+  );
+
   // Measure the spacer height so the map top-aligns with Day 1.
   //
   // The map column sits inside flexRowRef. sticky top-0 snaps the map to the
@@ -200,12 +206,9 @@ export function PlanFullDensityView({
               <button
                 type="button"
                 onClick={onToggleConstraints}
-                className={cn(
-                  'inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-sm whitespace-nowrap transition-colors',
-                  'border-zinc-600/50 bg-transparent text-zinc-400 hover:bg-zinc-800/50',
-                )}
+                className={subduedTogglePillClass}
               >
-                <Brain className="w-3.5 h-3.5" />
+                <Brain className="w-3 h-3 shrink-0" />
                 Specialists ({specialistCount})
                 <ChevronDown className={cn('w-3 h-3 transition-transform', showConstraints && 'rotate-180')} />
               </button>
@@ -214,9 +217,9 @@ export function PlanFullDensityView({
               <button
                 type="button"
                 onClick={onToggleFlights}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-sm whitespace-nowrap transition-colors border-zinc-600/50 bg-transparent text-zinc-400 hover:bg-zinc-800/50"
+                className={subduedTogglePillClass}
               >
-                <Plane className="w-3.5 h-3.5" />
+                <Plane className="w-3 h-3 shrink-0" />
                 Flights ({flightCount})
                 <ChevronDown className={cn('w-3 h-3 transition-transform', flightsExpanded && 'rotate-180')} />
               </button>
@@ -225,9 +228,9 @@ export function PlanFullDensityView({
               <button
                 type="button"
                 onClick={onToggleStays}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-sm whitespace-nowrap transition-colors border-zinc-600/50 bg-transparent text-zinc-400 hover:bg-zinc-800/50"
+                className={subduedTogglePillClass}
               >
-                <Building2 className="w-3.5 h-3.5" />
+                <Building2 className="w-3 h-3 shrink-0" />
                 Stays ({stayCount})
                 <ChevronDown className={cn('w-3 h-3 transition-transform', staysExpanded && 'rotate-180')} />
               </button>
