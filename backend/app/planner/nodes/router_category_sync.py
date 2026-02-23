@@ -388,6 +388,17 @@ def has_explicit_category_intent(
     if any(re.search(rf"\b{re.escape(category)}\b", text) for category in all_hints):
         return True
 
+    # LLM-extracted removals are authoritative category mutations.
+    # Example: "remove all cultural" may not include a known hint token in text.
+    if router_output:
+        removals = {
+            r.lower().strip()
+            for r in (router_output.get("removal_targets") or [])
+            if r and r.strip()
+        }
+        if removals:
+            return True
+
     # LLM extraction may have found novel Tier 2 categories not in hints
     extracted: set[str] = set()
     if router_output:

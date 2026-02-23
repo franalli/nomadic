@@ -1600,11 +1600,15 @@ def _apply_modifications_to_state(
 
     trip_inputs = state.metadata.get("trip_inputs", {})
     activity_settings = trip_inputs.get("activity_settings", {})
+    booking_types = trip_inputs.get("booking_types", {})
     existing_cats = set(activity_settings.get("categories", []))
 
     # Apply additions
     if "add_categories" in mods:
         existing_cats |= mods["add_categories"]
+        # Explicit category additions indicate activities should be enabled.
+        if booking_types.get("activities") == "off":
+            booking_types["activities"] = "suggested"
 
     # Apply removals
     if "remove_categories" in mods:
@@ -1616,6 +1620,10 @@ def _apply_modifications_to_state(
                 state.metadata["strategy_sections"] = [
                     s for s in sections if s.get("specialist_type") != cat
                 ]
+        # If user removed all selected categories, treat this as explicit
+        # activity clear so logistics/itinerary do not backfill generic tiles.
+        if not existing_cats:
+            booking_types["activities"] = "off"
 
     # Apply skill level
     if "skill_level" in mods:
@@ -1631,6 +1639,8 @@ def _apply_modifications_to_state(
     # Write back categories
     activity_settings["categories"] = sorted(existing_cats)
     trip_inputs["activity_settings"] = activity_settings
+    if booking_types:
+        trip_inputs["booking_types"] = booking_types
     state.metadata["trip_inputs"] = trip_inputs
     state.metadata.pop("trip_settings", None)
     state.metadata["trip_settings"] = get_trip_settings(state).model_dump()

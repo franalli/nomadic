@@ -47,6 +47,15 @@ def test_has_explicit_category_intent_false_for_hotel_only():
     assert has_explicit_category_intent("5-star hotels only") is False
 
 
+def test_has_explicit_category_intent_true_for_removal_targets():
+    router_output = {
+        "activity_categories": [],
+        "specialist_hints": [],
+        "removal_targets": ["cultural"],
+    }
+    assert has_explicit_category_intent("remove all cultural", router_output) is True
+
+
 def test_collect_modifications_skips_categories_when_intent_is_false():
     state = SimpleNamespace(
         metadata={"trip_inputs": {"activity_settings": {"categories": ["diving"]}}}
@@ -66,6 +75,28 @@ def test_collect_modifications_skips_categories_when_intent_is_false():
         allow_category_modifications=False,
     )
     assert changes is None
+
+
+def test_collect_modifications_includes_removals_when_intent_is_true():
+    state = SimpleNamespace(
+        metadata={"trip_inputs": {"activity_settings": {"categories": ["cultural"]}}}
+    )
+    router_output = {
+        "activity_categories": [],
+        "specialist_hints": [],
+        "removal_targets": ["cultural"],
+        "skill_level": None,
+        "reset_budget": False,
+        "reset_hotel": False,
+    }
+    has_intent = has_explicit_category_intent("remove all cultural", router_output)
+    changes = _collect_modifications_from_extraction(
+        router_output,
+        state,
+        pre_populate_categories={"cultural"},
+        allow_category_modifications=has_intent,
+    )
+    assert changes == {"remove_categories": {"cultural"}}
 
 
 def test_estimate_prefetch_tiles_per_category_scales_with_trip():

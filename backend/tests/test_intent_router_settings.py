@@ -3,6 +3,7 @@
 import pytest
 
 from app.planner.nodes.intent_router import (
+    _apply_modifications_to_state,
     _apply_origin_to_state,
     _apply_settings_to_state,
     _detect_settings_from_message,
@@ -149,6 +150,45 @@ def test_populate_trip_plan_skips_category_writes_without_category_intent():
         state.metadata.get("trip_inputs", {}).get("activity_settings", {}).get("categories", [])
     )
     assert categories == ["diving", "surfing"]
+
+
+def test_apply_modifications_remove_last_category_disables_activities():
+    state = GraphState()
+    state.trip_plan.destination = "Rome"
+    state.metadata["trip_inputs"] = {
+        "activity_settings": {"categories": ["cultural"]},
+        "booking_types": {"activities": "suggested"},
+    }
+
+    result = _apply_modifications_to_state(
+        state,
+        {"remove_categories": {"cultural"}},
+        "remove all cultural",
+        None,
+    )
+
+    assert result is state
+    assert state.metadata["trip_inputs"]["activity_settings"]["categories"] == []
+    assert state.metadata["trip_inputs"]["booking_types"]["activities"] == "off"
+
+
+def test_apply_modifications_add_category_reenables_activities():
+    state = GraphState()
+    state.metadata["trip_inputs"] = {
+        "activity_settings": {"categories": []},
+        "booking_types": {"activities": "off"},
+    }
+
+    result = _apply_modifications_to_state(
+        state,
+        {"add_categories": {"yoga"}},
+        "add yoga",
+        None,
+    )
+
+    assert result is state
+    assert state.metadata["trip_inputs"]["activity_settings"]["categories"] == ["yoga"]
+    assert state.metadata["trip_inputs"]["booking_types"]["activities"] == "suggested"
 
 
 def test_validate_extraction_bumps_end_year_when_start_auto_bumps():
