@@ -409,42 +409,34 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   <img
                     src={destinationImageUrl!}
                     alt={destination}
-                    className="absolute inset-0 h-full w-full object-cover"
+                    className="absolute inset-0 h-full w-full object-cover brightness-90 saturate-[1.1]"
                   />
                 )}
                 {/* Scrim: bottom half fades hard to panel background, top stays clear */}
                 {showHero && (
-                  <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-white dark:from-zinc-900 to-transparent pointer-events-none" />
+                  <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
                 )}
-                {/* Status text — bottom-left on hero, centered on flat bar */}
-                <div className={cn(
-                  'absolute z-10 flex items-center gap-2',
-                  showHero
-                    ? 'bottom-3 left-4 rounded-md bg-white/35 px-2 py-1 backdrop-blur-sm dark:bg-white/15'
-                    : 'inset-0 px-4',
-                )}>
-                  {status.indicator === 'spin' ? (
-                    <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />
-                  ) : status.indicator === 'check' ? (
-                    null
-                  ) : (
-                    <div className={cn(
-                      'w-2 h-2 rounded-full bg-emerald-500',
-                      status.indicator === 'pulse' && 'animate-pulse',
-                    )} />
-                  )}
-                  <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                    {status.text}
-                  </span>
-                  <span className={cn(
-                    `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold`,
-                    showHero
-                      ? 'text-emerald-600 dark:text-emerald-300'
-                      : `text-zinc-500 dark:text-emerald-500 dark:${DS.glowClass.dropText}`,
-                  )}>
-                    {status.label}
-                  </span>
-                </div>
+                {!showHero && (
+                  <div className="absolute inset-0 z-10 flex items-center gap-2 px-4">
+                    {status.indicator === 'spin' ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />
+                    ) : status.indicator === 'check' ? null : (
+                      <div className={cn(
+                        'w-2 h-2 rounded-full bg-emerald-500',
+                        status.indicator === 'pulse' && 'animate-pulse',
+                      )} />
+                    )}
+                    <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                      {status.text}
+                    </span>
+                    <span className={cn(
+                      `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-500`,
+                      `dark:text-emerald-500 dark:${DS.glowClass.dropText}`,
+                    )}>
+                      {status.label}
+                    </span>
+                  </div>
+                )}
               </motion.div>
             </AnimatePresence>
           );

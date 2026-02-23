@@ -1,7 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Building2, ChevronDown, Plane } from 'lucide-react';
+import { Building2, ChevronDown, Loader2, Plane } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -12,7 +12,7 @@ import { REVEAL_TIMING } from '@/lib/animation-config';
 import { getSpecialistEnrichment } from '@/lib/api';
 import type { MapPOI } from '@/lib/ghost-timeline-adapter';
 import { calculateMapCenter, extractPOIsFromSections } from '@/lib/ghost-timeline-adapter';
-import { buildDestinationIntel, destinationFlag } from '@/lib/travelIntel';
+import { buildDestinationIntel } from '@/lib/travelIntel';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
@@ -148,7 +148,9 @@ export function PlanFullDensityView({
   );
   const localExpertSectionId = localExpertSection?.id ?? null;
   const localExpertHasTI = hasTravelIntelligence(localExpertSection);
-  const localExpertReady = localExpertEnrichmentState(localExpertSection) === 'ready';
+  const localExpertEnrichment = localExpertEnrichmentState(localExpertSection);
+  const localExpertReady = localExpertEnrichment === 'ready';
+  const isTravelIntelPending = localExpertEnrichment === 'pending';
   const localExpertSectionRef = useRef<StrategySection | null>(null);
   const [enrichedLocalExpertSection, setEnrichedLocalExpertSection] = useState<StrategySection | null>(null);
   const effectiveStrategySections = useMemo(() => {
@@ -165,8 +167,6 @@ export function PlanFullDensityView({
     [effectiveStrategySections]
   );
   const hasDestinationIntel = intelCategories.length > 0;
-  const intelPlace = effectiveFullDest || 'Destination';
-  const intelFlag = destinationFlag(effectiveFullDest);
   const showRowTwoChips = hasDestinationIntel || (hasItineraryContent && (flightCount > 0 || stayCount > 0));
 
   useEffect(() => {
@@ -400,8 +400,16 @@ export function PlanFullDensityView({
                     isAnyRegenerating && 'opacity-70'
                   )}
                 >
-                  <span className="truncate">{intelFlag} {intelPlace} Travel Intel</span>
-                  <ChevronDown className={cn('w-3 h-3 shrink-0 transition-transform', intelExpanded && 'rotate-180')} />
+                  <span className="truncate">Travel Advice</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {isTravelIntelPending && (
+                      <Loader2
+                        className="w-3 h-3 animate-spin text-emerald-500"
+                        aria-label="Travel advice is loading"
+                      />
+                    )}
+                    <ChevronDown className={cn('w-3 h-3 transition-transform', intelExpanded && 'rotate-180')} />
+                  </span>
                 </button>
               )}
             </div>
