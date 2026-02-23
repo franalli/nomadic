@@ -964,6 +964,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     hotel_settings = _settings.hotel_settings.model_dump()
     activity_settings = _settings.activity_settings.model_dump()
     flight_settings = _settings.flight_settings.model_dump()
+    activities_requested = _settings.booking_types.activities != "off"
 
     # Determine provider and cache key parameters
     dest_key = plan.destination.lower().strip() if plan.destination else ""
@@ -1008,10 +1009,41 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             dest_lat, dest_lng = geo
             _debug_log(f"[TILE_GEOCODE] {plan.destination} → ({dest_lat:.4f}, {dest_lng:.4f})")
 
-    # Fetch hotels and activities in PARALLEL
+    # Fetch hotels and activities in PARALLEL (unless activities are explicitly disabled).
+    # booking_types.activities='off' means "never show or search activities".
     _gather_t0 = time.time()
-    hotel_dicts, activity_dicts = await asyncio.gather(
-        _fetch_hotels(
+    if activities_requested:
+        hotel_dicts, activity_dicts = await asyncio.gather(
+            _fetch_hotels(
+                async_session_factory,
+                plan,
+                hotel_settings,
+                provider,
+                dest_key,
+                start_date,
+                end_date,
+                activity_settings,
+                flight_settings,
+                dest_lat=dest_lat,
+                dest_lng=dest_lng,
+            ),
+            _fetch_activities(
+                async_session_factory,
+                plan,
+                activity_settings,
+                provider,
+                dest_key,
+                start_date,
+                end_date,
+                hotel_settings,
+                flight_settings,
+                max_results=activity_max_results,
+                dest_lat=dest_lat,
+                dest_lng=dest_lng,
+            ),
+        )
+    else:
+        hotel_dicts = await _fetch_hotels(
             async_session_factory,
             plan,
             hotel_settings,
@@ -1023,22 +1055,8 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             flight_settings,
             dest_lat=dest_lat,
             dest_lng=dest_lng,
-        ),
-        _fetch_activities(
-            async_session_factory,
-            plan,
-            activity_settings,
-            provider,
-            dest_key,
-            start_date,
-            end_date,
-            hotel_settings,
-            flight_settings,
-            max_results=activity_max_results,
-            dest_lat=dest_lat,
-            dest_lng=dest_lng,
-        ),
-    )
+        )
+        activity_dicts = []
     _gather_ms = int((time.time() - _gather_t0) * 1000)
     _debug_log(
         f"Hotel+Activity gather: {_gather_ms}ms "
@@ -1067,6 +1085,28 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     state.tiles["hotels"] = hotel_dicts
     log("LOGISTICS", f"Found {len(hotel_dicts)} hotels for {plan.destination}")
     _debug_log(f"Hotels found: {len(hotel_dicts)}")
+
+    if not activities_requested:
+        state.tiles["activities"] = []
+        state.metadata.pop("browseable_activities", None)
+        state.metadata.pop("active_plan_categories", None)
+        state.metadata.pop("tier2_generation_key", None)
+        state.metadata.pop("tier2_generation_source", None)
+        state.metadata.pop("tier2_generation_elapsed_ms", None)
+        state.metadata.pop("tier2_generation_reason", None)
+        state.metadata.pop("tier2_new_content_generated", None)
+
+        log(
+            "LOGISTICS",
+            "Activities disabled in settings — skipped activity fetch/generation",
+        )
+        _debug_log("[LOGISTICS] activities_requested=False -> no activity tiles generated")
+
+        booking_summary = state.metadata.get("booking_summary", {})
+        booking_summary["hotels_found"] = len(hotel_dicts)
+        booking_summary["activities_found"] = 0
+        state.metadata["booking_summary"] = booking_summary
+        return
 
     previous_activity_ids = _activity_tile_id_set(state.tiles.get("activities", []))
     state.tiles["activities"] = activity_dicts

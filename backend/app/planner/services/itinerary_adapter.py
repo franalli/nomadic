@@ -34,6 +34,19 @@ def build_itinerary_from_state(state: GraphState) -> Optional[ItineraryResult]:
         return None
 
     settings = get_trip_settings(state)
+    activities_off = settings.booking_types.activities == "off"
+    raw_categories = settings.activity_settings.categories
+
+    # Keep category semantics aligned with streaming.expand-itinerary:
+    # - activities=off  -> []    (explicit clear, skip all activity placement)
+    # - activities=on/suggested with no categories -> None (no category filter)
+    # - activities=on/suggested with categories    -> categories list
+    if activities_off:
+        activity_categories: list[str] | None = []
+    elif raw_categories is not None:
+        activity_categories = raw_categories
+    else:
+        activity_categories = None
 
     # Build preferences from user-pinned tiles (fill-day Browse→Add + auto-fill)
     pinned_tiles = state.metadata.get("user_pinned_tiles", {})
@@ -76,7 +89,7 @@ def build_itinerary_from_state(state: GraphState) -> Optional[ItineraryResult]:
         destination=plan.destination,
         origin=plan.origin,
         preferences=preferences,
-        activity_categories=settings.activity_settings.categories or None,
+        activity_categories=activity_categories,
         activity_day_preferences=settings.activity_settings.day_preferences or None,
         user_pinned_tiles=pinned_tiles or None,
     )

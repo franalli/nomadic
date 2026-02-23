@@ -87,6 +87,11 @@ Media type: `application/x-ndjson`. Events:
 
 **Frontend consumption:** `consumeNdjsonEnvelopeStream()` in `streamParser.ts` provides a shared NDJSON parser with typed callbacks (`onEnvelope`, `onProgress`, `onDone`, `onError`). Used by `usePreferenceAutoRegen` and `NomadicLanding` expand-itinerary flows to avoid duplicated stream parsing. Parser JSON failures are logged and skipped (stream continues).
 
+**Activity category semantics (`/api/expand-itinerary`):**
+- `booking_types.activities == "off"` is normalized to `activity_categories=[]` in builder input (explicit clear, skip activity placement),
+- if activities are enabled and categories are omitted (`null`/`undefined`), builder receives `activity_categories=None` (no category filter),
+- if categories are present, builder receives the explicit category list (including `[]` when intentionally provided).
+
 ### CSRF
 
 - Reads `csrf` cookie (JS-readable, not HttpOnly)
@@ -368,8 +373,8 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `setFromPlanResponse()`                                            | Merge backend GraphPlanResponse into store (destination lock, S3-safe view state guard including lateral S3 transitions, tile/section merge, image URL sanitization) |
 | `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization) plus root-level `generation` merge from envelope. Uses RAF-batched buffering when available (`globalThis.requestAnimationFrame`) and not in test mode (`NODE_ENV=test` or `VITEST=true`). Consecutive SSE events in the same frame are deep-merged and flushed as one setState call. Module-level `_pendingEnvelope` + `_rafId` state, with `_bypassRAF=true` during flush to prevent recursion. |
-| `updateTripInputs()`                                               | Sync local trip input update (no API call)                                                                                              |
-| `commitTripInputs()`                                               | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful). Filters no-op `trip_inputs` fields before PATCH using `_lastPatchedTripInputs` as baseline (not live zustand state — `updateTripInputs()` already mutated it); if empty after filtering, skips network write and returns success. Successful commits update `_lastPatchedTripInputs` and clear matching keys from `_userDirtySettings`. |
+| `updateTripInputs()`                                               | Sync local trip input update (no API call). Runs `applyActivityCategoryDefaults()` normalization: if categories are empty and activities are not explicitly off, seeds default category (`cultural`); if activities are off with empty categories, clears stale `day_preferences`. |
+| `commitTripInputs()`                                               | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful). Filters no-op `trip_inputs` fields before PATCH using `_lastPatchedTripInputs` as baseline (not live zustand state — `updateTripInputs()` already mutated it); if empty after filtering, skips network write and returns success. Successful commits update `_lastPatchedTripInputs` and clear matching keys from `_userDirtySettings`. Both optimistic and response/409-retry document merges re-run `applyActivityCategoryDefaults()` before writing store state. |
 | `ensureSettingsFlushed()`                                          | Flush only **dirty** settings before graph run (prevents overwriting backend-derived values). Per-send-cycle payload hash dedupe skips duplicate flush PATCHes for the same request cycle. |
 | `fetchDocument()`                                                  | GET /api/document (hydrates backend document/state directly; no frontend upward `plan_view_state` promotion)    |
 | `patchDocument()`                                                  | PATCH /api/document (preserves frontend-only fields)                                                                                    |
@@ -418,7 +423,8 @@ Module-level `_userDirtySettings: Set<string>` (not Zustand state — avoids re-
 - **Mutation gate:** ChatPanel waits for `hasPendingMutations()` to clear (max 10s poll) before sending graph requests, preventing version conflicts from concurrent fill-day/drag-drop mutations
 - **Trip-input PATCH dedupe:** frontend filters unchanged `trip_inputs` fields before PATCH; backend enforces a matching no-op guard for pure `trip_inputs` writes
 - **Pre-graph settings flush dedupe:** `ensureSettingsFlushed()` computes a stable payload hash and skips duplicate flushes for the same send cycle (`sendCycleId`)
-- **Activity settings merge:** `setFromPlanResponse` preserves user-set `day_preferences` when backend response omits them (fallback to local `activity_settings.day_preferences`)
+- **Activity settings merge precedence:** `setFromPlanResponse` gives local sheet state priority for `activity_settings.categories`, `activity_settings.day_preferences`, and `booking_types.activities`, while backend response still drives other booking types (flights/hotels/transport)
+- **Activity defaults normalization:** all trip-input merge paths (`updateTripInputs`, `commitTripInputs`, `setFromPlanResponse`, `mergeEnvelope`) run `applyActivityCategoryDefaults()` to keep categories/booking-types/day-preferences consistent
 - **Fill-day real-block guard:** `TimelineThread` skips fill-day if the target day already has real activity blocks (race condition with graph SSE populating the day concurrently)
 - **Fill-day generation gate:** `TimelineThread`/`StrategyStageRenderer` block fill-day while stream/regeneration is active (`currentRunId`/generation flags), then surface a non-blocking wait message
 - **Fill-day burst guard:** `TimelineThread` and `StrategyStageRenderer` enforce a 1.5s local cooldown between fill-day requests

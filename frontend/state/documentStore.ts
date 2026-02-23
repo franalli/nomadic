@@ -287,6 +287,41 @@ const NON_ACTIVITY_BLOCK_TYPES = new Set([
   'decompression_buffer',
 ]);
 
+const DEFAULT_ACTIVITY_CATEGORY = 'cultural';
+
+function applyActivityCategoryDefaults(tripInputs: DocumentTripInputs): DocumentTripInputs {
+  const bookingTypes: BookingTypes = {
+    ...(tripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
+  };
+  const activitySettings: ActivitySettings = {
+    ...(tripInputs.activity_settings ?? {}),
+    skill_level: tripInputs.activity_settings?.skill_level ?? null,
+    categories: (tripInputs.activity_settings?.categories ?? []).filter(
+      (category): category is string => typeof category === 'string' && category.trim().length > 0
+    ),
+    day_preferences: tripInputs.activity_settings?.day_preferences ?? {},
+  };
+
+  if (activitySettings.categories.length === 0) {
+    if (bookingTypes.activities === 'off') {
+      // Explicit clear: keep empty categories and clear stale day_preferences.
+      activitySettings.day_preferences = {};
+    } else {
+      // Default behavior for untouched/new destinations.
+      activitySettings.categories = [DEFAULT_ACTIVITY_CATEGORY];
+    }
+  } else if (bookingTypes.activities === 'off') {
+    // Categories imply activities are enabled.
+    bookingTypes.activities = DEFAULT_BOOKING_TYPES.activities;
+  }
+
+  return {
+    ...tripInputs,
+    booking_types: bookingTypes,
+    activity_settings: activitySettings,
+  };
+}
+
 function shouldSuppressActivitiesFromTripInputs(
   tripInputs: DocumentTripInputs | undefined | null
 ): boolean {
@@ -1073,23 +1108,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       debugLog('[documentStore] 🧹 Cleared preferredTileIds (destination changed)');
     }
 
-    const mergedTripInputs: DocumentTripInputs = {
+    let mergedTripInputs: DocumentTripInputs = {
       ...document.trip_inputs,
       ...updates,
     };
-    const mergedCategories = mergedTripInputs.activity_settings?.categories ?? [];
-    if (mergedCategories.length === 0) {
-      mergedTripInputs.activity_settings = {
-        ...(mergedTripInputs.activity_settings ?? {}),
-        skill_level: mergedTripInputs.activity_settings?.skill_level ?? null,
-        categories: [],
-        day_preferences: {},
-      };
-      mergedTripInputs.booking_types = {
-        ...(mergedTripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
-        activities: 'off',
-      };
-    }
+    mergedTripInputs = applyActivityCategoryDefaults(mergedTripInputs);
 
     const suppressedLocalDayCards = shouldSuppressActivitiesFromTripInputs(mergedTripInputs)
       ? (stripActivitiesFromDayCards(document.day_cards) ?? document.day_cards)
@@ -1165,25 +1188,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
       // Optimistically update trip inputs - let backend be authoritative for missing_fields
       // We don't compute missing_fields here; the backend recomputes it on every PATCH response
-      const updatedTripInputs: DocumentTripInputs = {
+      let updatedTripInputs: DocumentTripInputs = {
         ...document.trip_inputs,
         ...effectiveUpdates,
         // Keep current missing_fields until backend responds with authoritative value
         missing_fields: document.trip_inputs.missing_fields ?? [],
       };
-      const optimisticCategories = updatedTripInputs.activity_settings?.categories ?? [];
-      if (optimisticCategories.length === 0) {
-        updatedTripInputs.activity_settings = {
-          ...(updatedTripInputs.activity_settings ?? {}),
-          skill_level: updatedTripInputs.activity_settings?.skill_level ?? null,
-          categories: [],
-          day_preferences: {},
-        };
-        updatedTripInputs.booking_types = {
-          ...(updatedTripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
-          activities: 'off',
-        };
-      }
+      updatedTripInputs = applyActivityCategoryDefaults(updatedTripInputs);
 
       // Optimistically update the store
       set({
@@ -1235,12 +1246,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             ? currentDoc.tiles
             : response.document.tiles,
         };
+        const normalizedPatchDocument: PlanDocumentData = {
+          ...mergedPatchDocument,
+          trip_inputs: applyActivityCategoryDefaults(mergedPatchDocument.trip_inputs),
+        };
 
         set({
           version: response.version,
           updatedBy: response.updated_by,
           updatedAt: response.updated_at,
-          document: applyActivitySuppressionToDocument(mergedPatchDocument),
+          document: applyActivitySuppressionToDocument(normalizedPatchDocument),
           isCommitting: false,
           error: null,
         });
@@ -1284,12 +1299,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
                 ? currentDocRetry.tiles
                 : retryResponse.document.tiles,
             };
+            const normalizedRetryDocument: PlanDocumentData = {
+              ...mergedRetryDocument,
+              trip_inputs: applyActivityCategoryDefaults(mergedRetryDocument.trip_inputs),
+            };
 
             set({
               version: retryResponse.version,
               updatedBy: retryResponse.updated_by,
               updatedAt: retryResponse.updated_at,
-              document: applyActivitySuppressionToDocument(mergedRetryDocument),
+              document: applyActivitySuppressionToDocument(normalizedRetryDocument),
               isCommitting: false,
               error: null,
             });
@@ -1780,7 +1799,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Strategy: For each field, use response value if it's set, otherwise keep local value
     const responseTripInputs = response.document.trip_inputs;
     const localTripInputs = currentDoc?.trip_inputs;
-    const mergedTripInputs: DocumentTripInputs = {
+    let mergedTripInputs: DocumentTripInputs = {
       ...DEFAULT_TRIP_INPUTS,
       ...responseTripInputs,
       // Preserve locally-set values that backend returned as null
@@ -1797,31 +1816,30 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       date_flex: responseTripInputs.date_flex ?? localTripInputs?.date_flex ?? false,
       date_window_start: responseTripInputs.date_window_start ?? localTripInputs?.date_window_start ?? null,
       date_window_end: responseTripInputs.date_window_end ?? localTripInputs?.date_window_end ?? null,
-      // Merge activity_settings: preserve user-set day_preferences when backend omits them
+      // Merge activity_settings: LOCAL takes priority for categories & day_preferences.
+      // The user's explicit sheet saves must survive graph-response overwrites.
       activity_settings: {
-        ...localTripInputs?.activity_settings,
         ...responseTripInputs.activity_settings,
-        categories: responseTripInputs.activity_settings?.categories
-          ?? localTripInputs?.activity_settings?.categories ?? [],
-        skill_level: responseTripInputs.activity_settings?.skill_level
-          ?? localTripInputs?.activity_settings?.skill_level ?? null,
-        day_preferences: responseTripInputs.activity_settings?.day_preferences
-          ?? localTripInputs?.activity_settings?.day_preferences,
+        ...localTripInputs?.activity_settings,
+        // Local categories win (user cleared via sheet → []). Fall back to response
+        // only when local is null/undefined (first load, no prior user action).
+        categories: localTripInputs?.activity_settings?.categories
+          ?? responseTripInputs.activity_settings?.categories ?? [],
+        skill_level: localTripInputs?.activity_settings?.skill_level
+          ?? responseTripInputs.activity_settings?.skill_level ?? null,
+        day_preferences: localTripInputs?.activity_settings?.day_preferences
+          ?? responseTripInputs.activity_settings?.day_preferences,
+      },
+      // Merge booking_types: response wins for flights/hotels/transport (backend NL commands),
+      // but preserve the user's explicit activities toggle (set via Activities sheet).
+      booking_types: {
+        ...(responseTripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
+        activities: localTripInputs?.booking_types?.activities
+          ?? responseTripInputs.booking_types?.activities
+          ?? DEFAULT_BOOKING_TYPES.activities,
       },
     };
-    const mergedCategories = mergedTripInputs.activity_settings?.categories ?? [];
-    if (mergedCategories.length === 0) {
-      mergedTripInputs.activity_settings = {
-        ...(mergedTripInputs.activity_settings ?? {}),
-        skill_level: mergedTripInputs.activity_settings?.skill_level ?? null,
-        categories: [],
-        day_preferences: {},
-      };
-      mergedTripInputs.booking_types = {
-        ...(mergedTripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
-        activities: 'off',
-      };
-    }
+    mergedTripInputs = applyActivityCategoryDefaults(mergedTripInputs);
 
     // If update is from planner, detect which fields changed
     let newLLMUpdatedFields = llmUpdatedFields;
@@ -2168,23 +2186,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // Merge envelope fields into current document
-    const mergedEnvelopeTripInputs = envelope.trip_inputs !== undefined
+    let mergedEnvelopeTripInputs = envelope.trip_inputs !== undefined
       ? { ...currentDoc.trip_inputs, ...envelope.trip_inputs }
       : undefined;
     if (mergedEnvelopeTripInputs) {
-      const envelopeCategories = mergedEnvelopeTripInputs.activity_settings?.categories ?? [];
-      if (envelopeCategories.length === 0) {
-        mergedEnvelopeTripInputs.activity_settings = {
-          ...(mergedEnvelopeTripInputs.activity_settings ?? {}),
-          skill_level: mergedEnvelopeTripInputs.activity_settings?.skill_level ?? null,
-          categories: [],
-          day_preferences: {},
-        };
-        mergedEnvelopeTripInputs.booking_types = {
-          ...(mergedEnvelopeTripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
-          activities: 'off',
-        };
-      }
+      mergedEnvelopeTripInputs = applyActivityCategoryDefaults(mergedEnvelopeTripInputs);
     }
 
     const effectiveTripInputs = mergedEnvelopeTripInputs ?? currentDoc.trip_inputs;

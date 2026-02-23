@@ -8,7 +8,7 @@
  * onSaveSettings, and cross-sheet navigation callbacks.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
@@ -93,6 +93,7 @@ export function ChatModuleSheets({
   activitiesSheetOpen,
   setActivitiesSheetOpen,
 }: ChatModuleSheetsProps) {
+  const [activityUserSaved, setActivityUserSaved] = useState(false);
   const sheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const patchDocument = useDocumentStore((s) => s.patchDocument);
   const updateTripInputs = useDocumentStore((s) => s.updateTripInputs);
@@ -185,7 +186,7 @@ export function ChatModuleSheets({
         onOpenChange={setActivitiesSheetOpen}
         enabled={isBookingEnabled(bookingTypes?.activities)}
         settings={activitySettings || { categories: [], skill_level: null }}
-        hasExplicitSettings={!!activitySettings}
+        hasExplicitSettings={activityUserSaved}
         hasDestination={hasDestination}
         onToggle={(enabled) => {
           if (onUpdateBookingTypes) {
@@ -194,6 +195,7 @@ export function ChatModuleSheets({
           toast(enabled ? 'Activities included' : 'Activities removed');
         }}
         onSaveSettings={async (settings) => {
+          setActivityUserSaved(true);
           const prevDayPrefs = activitySettings?.day_preferences || {};
           const prevCats = new Set(activitySettings?.categories || []);
           const newCats = new Set(settings.categories || []);

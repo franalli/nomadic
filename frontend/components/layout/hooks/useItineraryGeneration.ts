@@ -206,11 +206,32 @@ export function useItineraryGeneration({
           force_full_rebuild: options?.forceFullRebuild ?? false,
         });
 
+        // Normalize trip_inputs: when categories is empty, ensure activities='off'
+        // so the builder skips all tile placement (mirrors useChatSend normalization).
+        const rawTripInputs = currentDoc?.trip_inputs;
+        const normalizedTripInputs = (() => {
+          if (!rawTripInputs) return rawTripInputs;
+          const categories = rawTripInputs.activity_settings?.categories ?? [];
+          if (categories.length > 0) return rawTripInputs;
+          return {
+            ...rawTripInputs,
+            activity_settings: {
+              ...(rawTripInputs.activity_settings ?? {}),
+              categories: [] as string[],
+              day_preferences: {},
+            },
+            booking_types: {
+              ...(rawTripInputs.booking_types ?? {}),
+              activities: 'off' as const,
+            },
+          };
+        })();
+
         const response = await apiFetch('/api/expand-itinerary', {
           method: 'POST',
           body: JSON.stringify({
             idempotency_key: runId,
-            trip_inputs: currentDoc?.trip_inputs,
+            trip_inputs: normalizedTripInputs,
             strategy_sections: currentDoc?.strategy_sections,
             tiles: currentDoc?.tiles,
             preferences:

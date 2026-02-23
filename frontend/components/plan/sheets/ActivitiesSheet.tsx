@@ -285,11 +285,13 @@ function ActivitiesSheetInner({
     return Object.fromEntries(normalizedEntries);
   }, [settings.day_preferences]);
   const hasItinerary = (dayCards?.length ?? 0) > 0;
-  // Only fall back to inferred categories when the user has never explicitly
-  // saved activity settings. Once saved (even with empty categories []),
-  // respect the user's choice — don't re-infer from day cards.
+  // If saved categories exist, use them. Otherwise:
+  // - If user explicitly saved (even with []), respect that choice.
+  // - If user never saved, infer from day cards for initial display.
   const effectiveInitialCategories =
-    hasExplicitSettings ? normalizedSettingCategories : inferredCategories;
+    normalizedSettingCategories.length > 0
+      ? normalizedSettingCategories
+      : (hasExplicitSettings ? [] : inferredCategories);
   const effectiveInitialDayPreferences = hasItinerary
     ? Object.fromEntries(
         effectiveInitialCategories.map((cat) => [cat, inferredDayPreferences[cat] ?? normalizedSettingDayPreferences[cat] ?? 0])

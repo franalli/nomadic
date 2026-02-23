@@ -877,7 +877,7 @@ GooglePlacesProvider falls back to MockProvider when Places returns 0 results (q
 
 - `state.tiles["flights"]` - Flight tiles for frontend display
 - `state.tiles["hotels"]` - Hotel tiles for frontend display
-- `state.tiles["activities"]` - Activity tiles for frontend display (tier-aware filtering: pure Tier 1 = per-category browse tiles stashed; mixed = Tier 2 experience tiles only)
+- `state.tiles["activities"]` - Activity tiles for frontend display (tier-aware filtering: pure Tier 1 = per-category browse tiles stashed; mixed = Tier 2 experience tiles only). If `booking_types.activities == "off"`, this is forced to `[]` and logistics skips activity fetch/generation entirely.
 - `state.metadata["flight_options"]` - Backwards compatibility
 - `state.metadata["flight_search_possible"]` - Bool: flights requested + origin present + airport codes resolved
 - `state.metadata["flight_search_status"]` - `searched` or skip status (`skipped_disabled`, `skipped_no_origin`, `skipped_code_resolution`)
@@ -885,11 +885,15 @@ GooglePlacesProvider falls back to MockProvider when Places returns 0 results (q
 - `state.metadata["active_plan_categories"]` - Current Tier 1 + generated Tier 2 categories represented in this run (used by router as merge baseline on subsequent turns)
 - `state.metadata["browseable_activities"]` - Per-category browse tiles for pure Tier 1 trips (6 parallel Google Places queries across `cultural`, `food`, `nature`, `spa`, `tours`, `shopping`); annotated with `browse_category` field; stashed here for the BrowseActivitiesSheet to consume on-demand
 
+**Activities-off short-circuit:** When `TripSettings.booking_types.activities == "off"`, LogisticsNode fetches hotels only, sets `state.tiles["activities"] = []`, clears stale activity metadata (`browseable_activities`, `active_plan_categories`, Tier-2 generation markers), and updates booking summary counts (`activities_found = 0`). This runs before Tier-1/Tier-2 activity logic.
+
 **Two-Tier Activity System:**
 
 Activities use a two-tier system. **Tier 1** categories (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari) trigger full specialist graph runs — when active, their generic logistics tiles are suppressed since specialists own that layer. **Tier 2** is **open-ended** — any recreational activity string is accepted (not limited to a fixed set). Common hints (`TIER2_COMMON_HINTS`: yoga, cooking, nightlife, temples, beach, shopping, photography, sailing, wellness, culture, music, wine, food) serve as fast-path detection and fuzzy match vocabulary, but novel categories like "pottery", "horseback riding", "birdwatching" flow through the same pipeline. Tier 2 tiles are generated via `gemini-2.5-flash` structured output.
 
 When niche specialists are active, suppression is tier-aware:
+
+> Precondition: this branch only runs when `booking_types.activities != "off"`. If activities are off, LogisticsNode short-circuits earlier and does not run Tier-1/Tier-2 filtering.
 
 ```python
 # Canonical constant — single source of truth
@@ -3292,10 +3296,14 @@ Phase 5.5: Free Day Placeholders (_handle_empty_days)
 └─ Pass Tier 2 categories for later experience tile placement
 
 Phase 5.6: Experience Tile Placement (_place_experience_tiles) — Three-Pass Co-Scheduling
+├─ Early exit when `activity_categories=[]` (explicit clear / activities off): skip all placement
 ├─ Filter tiles by source_agent == "experience_generator"
 │  └─ Fallback: if no experience tiles, use ANY non-preferred activity tiles
 │     (type == "activity", no source_agent filter) for pure Tier 1 trips
 │     where logistics_node is the only activity tile source
+├─ When `activity_categories` is a non-empty set, apply per-tile category filter
+│  (match via `meta.specialist_type`, `meta.category`, `specialist_type`, or tags)
+│  before Pass 0/1/2
 ├─ Sort by time_of_day: morning → afternoon → evening
 ├─ Pass 0 (Pinned Tiles from fill-day):
 │   ├─ Tiles with meta.pinned_day are placed on their target day first
@@ -3323,10 +3331,13 @@ Phase 5.25: Preferred Activity Placement (_populate_free_days_with_preferences)
 └─ Pass 2 (Co-Schedule Fallback): deferred tiles on specialist days with spare capacity
 
 Phase 5.55: Restore Browse-Pinned Tiles (_restore_browse_pinned_tiles)
+├─ Early exit when `activity_categories=[]` (explicit clear / activities off): skip all pinned restores
 ├─ Re-insert tiles explicitly added via Browse→Add (source='browse_add')
 ├─ These tiles come from Google Places (activity_browser service), NOT the LangGraph tile pool
 ├─ Phase 5.25 cannot find them because they are not in state.tiles["activities"]
 ├─ Only source='browse_add' tiles are restored; source='auto_fill' tiles regenerate fresh each run
+├─ When `activity_categories` is a non-empty set, restore only matching categories
+│  (tile category / browse_category / tags)
 └─ Tiles placed on their preferred_day from user_pinned_tiles dict; respect day capacity
 
 Phase 6: Tile Matching (_match_tiles)
@@ -3825,6 +3836,12 @@ Thin bridge from `GraphState` to `ItineraryBuilder`. Uses shared `flatten_tiles_
 | `build_itinerary_from_state(state)` | Build `ItineraryResult` from graph state. Returns `None` if preconditions not met (no dates/sections). |
 
 **Stale pinned tile pruning:** `build_itinerary_from_state()` filters `user_pinned_tiles` against the user's current `activity_settings.categories` before passing them to the builder. Tiles whose `meta.category` doesn't match any active category are dropped — this prevents stale fill-day tiles (e.g., diving tiles from a previous session) from surviving a category change to yoga. Tiles with no identifiable category are preserved as a safety fallback.
+
+**Activity category semantics bridge:** `build_itinerary_from_state()` normalizes categories before invoking the builder:
+- `booking_types.activities == "off"` → `activity_categories=[]` (explicit clear, skip activity placement),
+- activities enabled + categories omitted (`None`) → `activity_categories=None` (no category filter),
+- activities enabled + categories present → pass category list as-is.
+This mirrors `/api/expand-itinerary` normalization in `streaming.py`.
 
 Called by `format_result()` step 6.5 (shadow mode — exception → warning, doesn't block response). On success, sets `state.metadata["last_builder_success"] = True`, computes `last_builder_drop_ratio` (`1.0 - placed/input`), and persists `builder_activities_input` / `builder_activities_placed` counts for synthesizer drop reporting; on failure, sets success to `False`, drop ratio to `1.0`, and stores `state.metadata["last_builder_resolutions"]` (serialized `Resolution[]`) so the constraint guard on the next turn can decide whether to suppress or re-surface cross-domain violations.
 

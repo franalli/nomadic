@@ -1276,7 +1276,19 @@ async def generate_ndjson(
             )
 
             builder = ItineraryBuilder()
-            activity_categories = trip_inputs_data.get("activity_settings", {}).get("categories")
+            booking_types = trip_inputs_data.get("booking_types", {})
+            activities_off = booking_types.get("activities") == "off"
+            raw_categories = trip_inputs_data.get("activity_settings", {}).get("categories")
+            # When activities are explicitly disabled, pass empty list so the builder
+            # treats it as "user cleared all categories" (set() → skip all tiles).
+            # When activities are enabled but categories is empty/None, pass None
+            # so the builder applies no category filter (place all activities).
+            if activities_off:
+                activity_categories: list[str] | None = []
+            elif raw_categories is not None:
+                activity_categories = raw_categories
+            else:
+                activity_categories = None
             day_preferences = trip_inputs_data.get("activity_settings", {}).get("day_preferences")
             builder_input = ItineraryBuilderInput(
                 start_date=start_date,

@@ -532,6 +532,8 @@ When the user saves activity or hotel preferences via the Activities/Stays sheet
 2. Sends `GENERATE_PLAN_TRIGGER` to re-run the graph with updated preferences
 3. Backend detects constraint hash change → specialists re-run with new settings
 
+**Activities sheet explicit-clear behavior:** `LandingSheets` and `ChatModuleSheets` track a local `activityUserSaved` flag and pass it as `hasExplicitSettings` into `ActivitiesSheet`. This prevents day-card inference from re-populating categories after the user explicitly saved an empty category list.
+
 **State tracking:**
 - `documentStore.updateTripInputs()` - Sync local state write (before validation)
 - `documentStore.commitTripInputs()` - Async API persist (after validation)
@@ -658,6 +660,10 @@ function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boole
 **Backend Two-Tier Suppression Logic:**
 ```python
 # logistics_node.py - after fetching activities
+if settings.booking_types.activities == "off":
+    state.tiles["activities"] = []
+    # clear browseable/tier2 metadata, return early
+
 NICHE_SPECIALISTS = TIER1_SPECIALISTS  # 8 specialists from specialist_registry.py
 TIER1_CATEGORIES = TIER1_SPECIALISTS
 
@@ -1766,7 +1772,7 @@ useSessionHydration() runs
 | --- | --- |
 | `StrategyStageRenderer` | Data density computation, conditional rendering, single renderer for all modes. Heavy computation and effects are delegated to `useStrategyStageOrchestration`. |
 | `useStrategyStageOrchestration` | Hook centralising all heavy computation, state, and effects for `StrategyStageRenderer` (keeps renderer under ~300 lines). Owns `DataDensity` computation, ghost timeline generation, map POI extraction, constraint validation sets, and fill-day guard refs. |
-| `PlanFullDensityView` | Full-density view (map + specialists + timeline). Receives all props from `StrategyStageRenderer` and renders the 60/40 desktop map layout. |
+| `PlanFullDensityView` | Full-density view (map + specialists + timeline). Receives all props from `StrategyStageRenderer` and renders the 60/40 desktop map layout. Trip alerts are now rendered in specialist/timeline surfaces; `TripAlertBanner` is no longer injected here. |
 | `PlanDensityViews` | Ghost, bridge, and mirror-loader density views (`PlanGhostDensityView`, `PlanBridgeDensityView`, `PlanMirrorLoader`). |
 | `PlanSpecialistsSection` | Specialists section for full-density view — renders strategy cards, constraint bar, and regeneration overlay. |
 | `PlanTimelineSection` | Timeline section for full-density view — handles DnD wrapping (`ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`), skeleton loading, and regeneration overlay. |
@@ -1782,7 +1788,7 @@ useSessionHydration() runs
 | `BrowseActivitiesSheet` | Bottom sheet displayed on free/buffer days. Fetches categorized activity tiles from `POST /api/activities/browse` (Google Places). Shows category filter chips (cultural/food/nature/spa/tours/shopping). Calls `POST /api/document/insert-activity-block` to add selected tiles directly into the day. Reads pre-stashed tiles from `documentStore.browseableActivities` if available (avoids repeat API call). Located in `frontend/components/plan/BrowseActivitiesSheet.tsx`. |
 | `DragPreviewCard` | Ghost card shown in `DragOverlay` during drag. Renders `block.summary || block.activity_type`, specialist label via `getTopicLabel(block.specialist_type)`, and price from `block.booked_tile?.price_estimate`. |
 | `ChatPanel` | Chat orchestration — thin shell delegating to four extracted hooks: `useChatSend` (send + SSE lifecycle), `useChatEffects` (side effects), `useChatScrolling` (scroll + collapse). Module sheets (flights/stays/activities) are rendered by `ChatModuleSheets`. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown). |
-| `ChatModuleSheets` | Renders the three module sheets (FlightsSheet, StaysSheet, ActivitiesSheet) that live inside ChatPanel. Extracted to keep ChatPanel under 200 lines. **D3 preferred-tile prune:** When ActivitiesSheet saves with fewer categories, `onSaveSettings` computes `removedCats`, filters `planDocument.preferred_tile_ids` to drop tiles from removed categories (matched via `tile.meta.specialist_type`, `tile.meta.category`, or `tile.tags`), and calls `patchDocument({ preferred_tile_ids: pruned })` as a best-effort fire-and-forget. Backend Phase 5.25 provides a second authoritative filter. |
+| `ChatModuleSheets` | Renders the three module sheets (FlightsSheet, StaysSheet, ActivitiesSheet) that live inside ChatPanel. Extracted to keep ChatPanel under 200 lines. Tracks `activityUserSaved` session state so ActivitiesSheet inference does not override an explicit user clear (`[]`). **D3 preferred-tile prune:** When ActivitiesSheet saves with fewer categories, `onSaveSettings` computes `removedCats`, filters `planDocument.preferred_tile_ids` to drop tiles from removed categories (matched via `tile.meta.specialist_type`, `tile.meta.category`, or `tile.tags`), and calls `patchDocument({ preferred_tile_ids: pruned })` as a best-effort fire-and-forget. Backend Phase 5.25 provides a second authoritative filter. |
 | `useChatSend` | Hook orchestrating message send, SSE streaming lifecycle (`useChatSse` internally), node status, suggestion state, and active-status updates. Extracted from ChatPanel. Returns `sendMessageCore`, `addAssistantMessage`, `handleStopStreaming`, plus state (`isLoading`, `nodeStatus`, etc.). |
 | `useChatEffects` | Hook centralising ChatPanel side effects: scroll-on-load, ready-to-generate detection, input focus, node-status → activeStatus mapping, history loading. Extracted from ChatPanel. |
 | `useChatScrolling` | Hook managing scroll container ref, auto-scroll-to-bottom, user-scrolled-up detection, and mobile setup header collapse. Extracted from ChatPanel. |
@@ -1799,7 +1805,7 @@ useSessionHydration() runs
 | `ItineraryProgressIndicator` | Progress indicator for multi-specialist auto-trigger itinerary generation |
 | `BookingDrawer` | Side sheet for tile browsing, triggered by FreeDayCard "Browse" or GhostSlot clicks. Supports `pinnedDayNumber` for per-day tile placement via fill-day API |
 | `TripHealthBar` | Compact inventory bar showing tile counts (hotels, flights, activities) for General/Local Expert sections in `S2StrategyView` |
-| `useItineraryGeneration` | Hook extracted from `NomadicLanding` encapsulating the full expand-itinerary flow: `proceedWithItineraryGeneration` (NDJSON streaming), auto-trigger logic for multi-specialist trips (Path A), `handleExpandToItinerary` (validation-gated expand), and `handleSelectNights`. Returns `{proceedWithItineraryGeneration, handleExpandToItinerary, handleSelectNights, hasItineraryContent}`. |
+| `useItineraryGeneration` | Hook extracted from `NomadicLanding` encapsulating the full expand-itinerary flow: `proceedWithItineraryGeneration` (NDJSON streaming), auto-trigger logic for multi-specialist trips (Path A), `handleExpandToItinerary` (validation-gated expand), and `handleSelectNights`. Before POSTing `/api/expand-itinerary`, it normalizes `trip_inputs`: empty activity categories are sent as `categories=[] + booking_types.activities='off'` so builder semantics match sheet intent. Returns `{proceedWithItineraryGeneration, handleExpandToItinerary, handleSelectNights, hasItineraryContent}`. |
 | `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. `planViewState` is backend-authoritative when present; frontend fallback derivation is only used when backend state is absent. Pure computation — no side effects. |
 | `useLandingEffects` | Hook extracted from `NomadicLanding` grouping side effects unrelated to itinerary generation: destination image fetching, `hasEverHadPlan` detection, topic tracking for mobile badges, specialist deep link handling. State is owned by the parent and passed in as params + setters. |
 | `specialist-colors.ts` | SSoT for specialist-to-color text class mappings (`SPECIALIST_TEXT_COLOR: Record<string, string>`). Used by `DragPreviewCard` and `ActivityMiniCard` for specialist label badges. Hue assignments match the DS constraint-priority palette. |

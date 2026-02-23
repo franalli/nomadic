@@ -24,7 +24,6 @@ import { OriginPromptCard } from './OriginPromptCard';
 import type { GenerationState } from './planStateHelpers';
 import { PlanTimelineSection } from './PlanTimelineSection';
 import { type TimelineVariant } from './TimelineThread';
-import { TripAlertBanner } from './TripAlertBanner';
 
 const DESKTOP_MAP_CONTENT_STYLE = { minWidth: 480, maxWidth: 800 } as const;
 const DESTINATION_INTEL_CACHE = new Map<string, StrategySection>();
@@ -481,13 +480,6 @@ export function PlanFullDensityView({
               </MapErrorBoundary>
             </div>
           </section>
-        )}
-
-        {hasItineraryContent && (
-          <TripAlertBanner
-            sections={effectiveStrategySections}
-            className="pt-2"
-          />
         )}
 
         <PlanTimelineSection

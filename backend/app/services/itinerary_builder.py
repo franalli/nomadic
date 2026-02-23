@@ -1951,6 +1951,11 @@ class ItineraryBuilder:
         if not input_data.user_pinned_tiles:
             return days
 
+        # If user explicitly cleared all activity categories, skip all placement.
+        if self._active_categories is not None and len(self._active_categories) == 0:
+            _debug_itinerary("📌 Phase 5.55 skipped: all activity categories cleared by user")
+            return days
+
         day_count = len(days)
         restored = 0
 
@@ -1965,6 +1970,28 @@ class ItineraryBuilder:
             tile = pin_data.get("tile")
             if not tile:
                 continue
+
+            # D3: Skip tiles whose category is no longer active.
+            # (Empty-set case already handled by early return above.)
+            if self._active_categories is not None and len(self._active_categories) > 0:
+                tile_cat = (
+                    (tile.get("meta") or {}).get("specialist_type")
+                    or (tile.get("meta") or {}).get("category")
+                    or tile.get("browse_category")
+                    or ""
+                ).lower()
+                tile_tags = {t.lower() for t in tile.get("tags") or []}
+                category_match = (
+                    not tile_cat
+                    or tile_cat in self._active_categories
+                    or bool(tile_tags & self._active_categories)
+                )
+                if not category_match:
+                    _debug_itinerary(
+                        f"📌 Phase 5.55: Skipping pinned '{tile.get('title')}' "
+                        f"— category '{tile_cat}' not in active categories"
+                    )
+                    continue
 
             day = days[preferred_day - 1]
 
@@ -2154,6 +2181,11 @@ class ItineraryBuilder:
             _debug_itinerary("⏭️ Phase 5.6 skipped: no tiles")
             return days
 
+        # If user explicitly cleared all activity categories, skip all placement.
+        if self._active_categories is not None and len(self._active_categories) == 0:
+            _debug_itinerary("⏭️ Phase 5.6 skipped: all activity categories cleared by user")
+            return days
+
         # Filter for experience generator tiles, excluding those claimed by Phase 5.25
         preferred_ids = set(self.preferences.preferred_activity_ids) if self.preferences else set()
 
@@ -2189,6 +2221,38 @@ class ItineraryBuilder:
                 return days
 
         _debug_itinerary(f"📅 Phase 5.6: Found {len(experience_tiles)} experience tiles")
+
+        # Per-tile category filter: when user has active categories, only place matching tiles.
+        # (Empty-set case already handled by early return above.)
+        if self._active_categories is not None and len(self._active_categories) > 0:
+            pre_count = len(experience_tiles)
+            filtered: list[dict] = []
+            for t in experience_tiles:
+                tile_cat = (
+                    (t.get("meta") or {}).get("specialist_type")
+                    or (t.get("meta") or {}).get("category")
+                    or t.get("specialist_type")
+                    or ""
+                ).lower()
+                tile_tags = {tag.lower() for tag in t.get("tags") or []}
+                category_match = (
+                    not tile_cat
+                    or tile_cat in self._active_categories
+                    or bool(tile_tags & self._active_categories)
+                )
+                if category_match:
+                    filtered.append(t)
+                else:
+                    _debug_itinerary(
+                        f"📅 Phase 5.6: Skipping '{t.get('title')}' "
+                        f"— category '{tile_cat}' not in active categories"
+                    )
+            experience_tiles = filtered
+            if not experience_tiles:
+                _debug_itinerary(
+                    f"⏭️ Phase 5.6 skipped: all {pre_count} tiles filtered by active categories"
+                )
+                return days
 
         # Sort by time_of_day: morning first, then afternoon, then evening
         experience_tiles.sort(
@@ -2456,9 +2520,10 @@ class ItineraryBuilder:
                     # Match against tags too if no explicit category field
                     tile_tags = {t.lower() for t in tile.get("tags") or []}
                     # Empty tile_cat = unidentifiable source (e.g. browse/Places tile) →
-                    # preserve as safety fallback, same logic as itinerary_adapter.py.
+                    # preserve only when user has active categories (safety fallback).
+                    # When _active_categories is empty set, reject all tiles.
                     category_match = (
-                        not tile_cat
+                        (not tile_cat and len(self._active_categories) > 0)
                         or tile_cat in self._active_categories
                         or bool(tile_tags & self._active_categories)
                     )

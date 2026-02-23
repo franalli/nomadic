@@ -154,6 +154,54 @@ class TestSuccessfulBuild:
 
     @patch("app.planner.services.itinerary_adapter.ItineraryBuilder")
     @patch("app.planner.services.itinerary_adapter.flatten_tiles_to_id_map")
+    def test_activities_off_passes_explicit_empty_category_list(
+        self, mock_flatten: MagicMock, mock_builder_cls: MagicMock
+    ) -> None:
+        mock_flatten.return_value = {}
+        mock_instance = MagicMock()
+        mock_instance.build.return_value = _fake_result()
+        mock_builder_cls.return_value = mock_instance
+
+        state = _make_state()
+        trip_settings = TripSettings()
+        trip_settings.booking_types.activities = "off"
+        trip_settings.activity_settings.categories = ["cultural"]
+        state.metadata["trip_settings"] = trip_settings.model_dump()
+
+        from app.planner.services.itinerary_adapter import build_itinerary_from_state
+
+        build_itinerary_from_state(state)
+
+        call_args = mock_instance.build.call_args
+        builder_input = call_args[0][0]
+        assert builder_input.activity_categories == []
+
+    @patch("app.planner.services.itinerary_adapter.ItineraryBuilder")
+    @patch("app.planner.services.itinerary_adapter.flatten_tiles_to_id_map")
+    def test_empty_categories_pass_none_when_activities_not_off(
+        self, mock_flatten: MagicMock, mock_builder_cls: MagicMock
+    ) -> None:
+        mock_flatten.return_value = {}
+        mock_instance = MagicMock()
+        mock_instance.build.return_value = _fake_result()
+        mock_builder_cls.return_value = mock_instance
+
+        state = _make_state()
+        trip_settings = TripSettings()
+        trip_settings.booking_types.activities = "suggested"
+        trip_settings.activity_settings.categories = []
+        state.metadata["trip_settings"] = trip_settings.model_dump()
+
+        from app.planner.services.itinerary_adapter import build_itinerary_from_state
+
+        build_itinerary_from_state(state)
+
+        call_args = mock_instance.build.call_args
+        builder_input = call_args[0][0]
+        assert builder_input.activity_categories is None
+
+    @patch("app.planner.services.itinerary_adapter.ItineraryBuilder")
+    @patch("app.planner.services.itinerary_adapter.flatten_tiles_to_id_map")
     def test_no_preferences_when_no_pinned_tiles(
         self, mock_flatten: MagicMock, mock_builder_cls: MagicMock
     ) -> None:

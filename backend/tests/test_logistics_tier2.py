@@ -353,6 +353,76 @@ async def test_logistics_sets_no_origin_flight_skip_metadata(
     assert state.tiles.get("flights") == []
 
 
+@pytest.mark.asyncio
+async def test_search_hotels_activities_skips_activity_fetch_when_activities_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GraphState(
+        trip_plan=TripPlan(destination="Rome", start_date="2026-03-01", end_date="2026-03-07")
+    )
+    state.tiles = {"hotels": [], "activities": [{"id": "legacy_activity"}], "flights": []}
+    state.metadata.update(
+        {
+            "trip_settings": {
+                "booking_types": {
+                    "hotels": "suggested",
+                    "flights": "off",
+                    "ground_transport": "off",
+                    "activities": "off",
+                },
+                "flight_settings": {
+                    "round_trip": True,
+                    "cabin_class": "economy",
+                    "direct_only": False,
+                },
+                "hotel_settings": {"min_stars": 0, "amenities": []},
+                "activity_settings": {
+                    "categories": ["cultural"],
+                    "skill_level": None,
+                    "day_preferences": {},
+                },
+                "transport_settings": {"car": False, "train": False, "bus": False},
+                "date_flex": False,
+                "trip_duration": None,
+                "date_window_start": None,
+                "date_window_end": None,
+            },
+            "browseable_activities": [{"id": "stale"}],
+            "active_plan_categories": ["cultural"],
+            "tier2_generation_key": "old_key",
+            "tier2_generation_source": "llm",
+            "tier2_generation_elapsed_ms": 123,
+            "tier2_generation_reason": "llm_generation",
+            "tier2_new_content_generated": True,
+        }
+    )
+
+    calls = {"hotels": 0, "activities": 0}
+
+    async def _fake_fetch_hotels(*_args, **_kwargs):
+        calls["hotels"] += 1
+        return [{"id": "hotel_1"}]
+
+    async def _fake_fetch_activities(*_args, **_kwargs):
+        calls["activities"] += 1
+        return [{"id": "activity_1"}]
+
+    monkeypatch.setattr(settings, "use_google_places_provider", False)
+    monkeypatch.setattr(logistics_node_module, "_fetch_hotels", _fake_fetch_hotels)
+    monkeypatch.setattr(logistics_node_module, "_fetch_activities", _fake_fetch_activities)
+
+    await _search_hotels_and_activities(state, state.trip_plan)
+
+    assert calls["hotels"] == 1
+    assert calls["activities"] == 0
+    assert state.tiles.get("hotels") == [{"id": "hotel_1"}]
+    assert state.tiles.get("activities") == []
+    assert "browseable_activities" not in state.metadata
+    assert "active_plan_categories" not in state.metadata
+    assert "tier2_generation_key" not in state.metadata
+    assert state.metadata.get("booking_summary", {}).get("activities_found") == 0
+
+
 # =====================================================================
 # Mock backfill: cap removal, long-trip fill, affinity sort, registry guard
 # =====================================================================

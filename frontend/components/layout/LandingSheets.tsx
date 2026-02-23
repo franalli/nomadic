@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+
 import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { BudgetSheet } from '@/components/plan/sheets/BudgetSheet';
 import { DatesSheet } from '@/components/plan/sheets/DatesSheet';
@@ -64,6 +66,10 @@ export function LandingSheets({
   handleUpdateActivitySettings,
   onSendMessage,
 }: LandingSheetsProps) {
+  // Track whether the user has explicitly saved activity settings in this session.
+  // When true, respect saved categories (even if empty) instead of inferring from day cards.
+  const [activityUserSaved, setActivityUserSaved] = useState(false);
+
   return (
     <>
       {/* Trip input sheets - shared between header pills and chat panel */}
@@ -199,10 +205,11 @@ export function LandingSheets({
         }}
         enabled={true}
         settings={tripInputs.activity_settings || { categories: [], skill_level: null }}
-        hasExplicitSettings={!!tripInputs.activity_settings}
+        hasExplicitSettings={activityUserSaved}
         hasDestination={hasDestination}
         onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
         onSaveSettings={async (settings) => {
+          setActivityUserSaved(true);
           handleUpdateActivitySettings(settings);
           try {
             const shouldDisableActivities = (settings.categories?.length ?? 0) === 0;
