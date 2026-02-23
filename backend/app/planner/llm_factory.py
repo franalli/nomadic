@@ -15,6 +15,8 @@ from collections.abc import Mapping
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
+from app.services.spend_guard import reserve_llm_spend_or_raise
+
 
 def get_llm_by_model(
     model: str,
@@ -26,6 +28,8 @@ def get_llm_by_model(
     max_retries: int | None = None,
 ) -> BaseChatModel:
     """Return a LangChain chat model for *model*, auto-detecting the provider."""
+    # Reserve estimated cost before constructing/using a paid provider client.
+    reserve_llm_spend_or_raise(model=model, max_tokens=max_tokens, source="get_llm_by_model")
 
     if model.startswith("gemini"):
         from langchain_google_genai import ChatGoogleGenerativeAI

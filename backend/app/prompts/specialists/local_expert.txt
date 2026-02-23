@@ -291,6 +291,15 @@ OUTPUT FORMAT (JSON)
     }
   ],
 
+  "recommendations": [
+    {
+      "title": "Short label for the recommendation",
+      "description": "Actionable recommendation text",
+      "category": "logistics | attraction | dining | activity | accommodation | scam_warning",
+      "logic_hook": "Why this helps the traveler"
+    }
+  ],
+
   "quick_tips": [
     "Top 5 one-liner tips that don't fit elsewhere"
   ]
@@ -306,3 +315,13 @@ CRITICAL RULES
 5. Tailor seasonality tips to their ACTUAL travel dates
 6. For "things to do", include booking requirements and best times
 7. Be honest about scams - tourists appreciate real warnings over sanitized advice
+8. Do not duplicate the same fact in multiple sections; each tip should be unique
+
+==============================
+DENSITY / QUALITY BAR (MANDATORY)
+==============================
+- For major destinations (high-tourism cities): return at least 8 unique constraints and 8 unique recommendations.
+- For smaller destinations: return at least 6 unique constraints and 6 unique recommendations.
+- Ensure "constraints" and "recommendations" are populated even when typed category objects are fully populated.
+- Prefer actionable, concrete tips over generic statements.
+- If data is uncertain, provide conservative guidance and label uncertainty in the text.

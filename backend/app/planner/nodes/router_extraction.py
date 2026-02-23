@@ -9,6 +9,7 @@ Handles:
 - State population from extraction results
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -748,6 +749,29 @@ def _parse_day_preferences(raw: Optional[str], user_text: str = "") -> dict[str,
     return {}
 
 
+def _build_current_trip_context(state: "GraphState") -> str:
+    """Build prompt context used for relative-date extraction."""
+    tp = state.trip_plan
+    if not tp or not tp.destination or not tp.start_date or not tp.end_date:
+        return ""
+
+    try:
+        start = datetime.strptime(tp.start_date, "%Y-%m-%d")
+        end = datetime.strptime(tp.end_date, "%Y-%m-%d")
+    except ValueError:
+        return ""
+
+    duration = (end - start).days + 1
+    return f"Current trip: {tp.destination}, {tp.start_date} to {tp.end_date} ({duration} days)"
+
+
+def _build_context_fingerprint(current_trip_context: str) -> str:
+    """Stable hash of prompt-level context dimensions that affect extraction."""
+    if not current_trip_context:
+        return ""
+    return hashlib.sha256(current_trip_context.encode()).hexdigest()[:16]
+
+
 # =============================================================================
 # LLM Extraction
 # =============================================================================
@@ -767,7 +791,7 @@ async def _classify_and_extract_with_llm(
 
     Caching strategy:
     - Only caches self-contained queries (no context dependencies)
-    - Key includes today_date for relative date resolution
+    - Key includes today_date + current_trip_context fingerprint
     - 1h TTL (conversational context is short-lived)
 
     Returns tuple of (RouterOutput, token_usage_dict).
@@ -776,11 +800,17 @@ async def _classify_and_extract_with_llm(
 
     today = datetime.now()
     today_date = today.strftime("%Y-%m-%d")
+    current_trip_context = _build_current_trip_context(state)
+    context_fingerprint = _build_context_fingerprint(current_trip_context)
 
     # =========================================================================
     # CACHE CHECK
     # =========================================================================
-    cached = get_cached_extraction(user_text, today_date)
+    cached = get_cached_extraction(
+        user_text,
+        today_date,
+        context_fingerprint=context_fingerprint,
+    )
     if cached is not None:
         try:
             output = RouterOutput.model_validate(cached)
@@ -803,21 +833,6 @@ async def _classify_and_extract_with_llm(
             structured_llm = llm.with_structured_output(
                 RouterOutput, include_raw=True, method="function_calling"
             )
-
-            # Build current trip context for relative date expressions
-            current_trip_context = ""
-            tp = state.trip_plan
-            if tp and tp.destination and tp.start_date and tp.end_date:
-                try:
-                    s = datetime.strptime(tp.start_date, "%Y-%m-%d")
-                    e = datetime.strptime(tp.end_date, "%Y-%m-%d")
-                    dur = (e - s).days + 1
-                    current_trip_context = (
-                        f"Current trip: {tp.destination}, "
-                        f"{tp.start_date} to {tp.end_date} ({dur} days)"
-                    )
-                except ValueError:
-                    pass
 
             # Format prompt with current date context
             current_year = today.year
@@ -859,7 +874,12 @@ async def _classify_and_extract_with_llm(
             # =================================================================
             # CACHE WRITE (only if self-contained query)
             # =================================================================
-            set_cached_extraction(user_text, today_date, parsed.model_dump())
+            set_cached_extraction(
+                user_text,
+                today_date,
+                parsed.model_dump(),
+                context_fingerprint=context_fingerprint,
+            )
 
             return parsed, token_usage
 

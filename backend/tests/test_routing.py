@@ -19,6 +19,7 @@ def _state(
     destination: str = "",
     origin: str = "",
     start_date: str = "",
+    end_date: str = "",
     intent: str | None = None,
     active_specialist: str | None = None,
     pending_specialists: list[str] | None = None,
@@ -34,6 +35,8 @@ def _state(
         s.trip_plan.origin = origin
     if start_date:
         s.trip_plan.start_date = start_date
+    if end_date:
+        s.trip_plan.end_date = end_date
     if intent is not None:
         s.intent = intent
     if active_specialist is not None:
@@ -102,8 +105,16 @@ class TestRouteAfterSpecialist:
         assert route_after_specialist(s) == "logistics"
 
     def test_dates_and_destination_to_logistics(self):
-        s = _state(destination="Bali", start_date="2026-03-15")
+        s = _state(
+            destination="Bali",
+            start_date="2026-03-15",
+            end_date="2026-03-22",
+        )
         assert route_after_specialist(s) == "logistics"
+
+    def test_partial_dates_skip_logistics(self):
+        s = _state(destination="Bali", start_date="2026-03-15")
+        assert route_after_specialist(s) == "architect"
 
     def test_architect_already_ran_to_guard(self):
         s = _state(destination="Bali", architect_ran_this_turn=True)
@@ -139,14 +150,24 @@ class TestRouteAfterArchitect:
         assert route_after_architect(s) != "local_expert"
 
     def test_dates_no_tiles_to_logistics(self):
-        s = _state(destination="Bali", start_date="2026-03-15", local_expert_ran=True)
+        s = _state(
+            destination="Bali",
+            start_date="2026-03-15",
+            end_date="2026-03-22",
+            local_expert_ran=True,
+        )
         assert route_after_architect(s) == "logistics"
+
+    def test_partial_dates_skip_logistics(self):
+        s = _state(destination="Bali", start_date="2026-03-15", local_expert_ran=True)
+        assert route_after_architect(s) != "logistics"
 
     def test_logistics_already_attempted_skips(self):
         """If logistics already ran this turn, don't loop back."""
         s = _state(
             destination="Bali",
             start_date="2026-03-15",
+            end_date="2026-03-22",
             local_expert_ran=True,
             logistics_attempted=True,
         )

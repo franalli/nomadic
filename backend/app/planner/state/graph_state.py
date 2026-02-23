@@ -480,7 +480,7 @@ class GraphState(BaseModel):
 
 def trip_plan_is_ready(plan: TripPlan) -> bool:
     """Check if trip plan has all required fields for booking."""
-    return bool(plan.destination and plan.start_date)
+    return bool(plan.destination and plan.start_date and plan.end_date)
 
 
 def get_missing_fields(plan: TripPlan) -> List[str]:
@@ -488,7 +488,7 @@ def get_missing_fields(plan: TripPlan) -> List[str]:
     missing = []
     if not plan.destination:
         missing.append("destination")
-    if not plan.start_date:
+    if not (plan.start_date and plan.end_date):
         missing.append("dates")
     return missing
 

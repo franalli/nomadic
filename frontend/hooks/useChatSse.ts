@@ -264,15 +264,21 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
 
             const primaryBranch =
               doc.branches?.find((b) => b.is_primary) ?? doc.branches?.[0];
-            onPlanResult({
-              tripContextId: doc.trip_context_id ?? null,
-              branches: doc.branches ?? [],
-              tiles: doc.tiles ?? {},
-              primaryBranchId: primaryBranch?.id ?? selectedBranchId ?? null,
-              tripInputs: doc.trip_inputs ?? null,
-              readyToGenerate: doc.ready_to_generate ?? false,
-              response: data,
-            });
+            let planResultApplied = true;
+            try {
+              onPlanResult({
+                tripContextId: doc.trip_context_id ?? null,
+                branches: doc.branches ?? [],
+                tiles: doc.tiles ?? {},
+                primaryBranchId: primaryBranch?.id ?? selectedBranchId ?? null,
+                tripInputs: doc.trip_inputs ?? null,
+                readyToGenerate: doc.ready_to_generate ?? false,
+                response: data,
+              });
+            } catch (planResultError) {
+              planResultApplied = false;
+              console.error('[ChatPanel] Failed to apply stream result, reconciling from server:', planResultError);
+            }
 
             const hasTiles = doc.tiles && Object.keys(doc.tiles).length > 0;
 
@@ -343,34 +349,44 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
 
             const tileCount = Object.keys(doc.tiles ?? {}).length;
             const viewState = doc.plan_view_state ?? 'unknown';
+            const prevInputs = prevTripInputsRef.current;
+            const newTripInputs = freshState.document?.trip_inputs;
+            const hasStrategyContent = (doc.strategy_sections?.length ?? 0) > 0;
+
             const shouldExpandStructural =
               (hasItinerary || freshHasDates) &&
               (hasNewSpecialist || hasStructuralNewTileType) &&
               !isSilentPlanGeneration;
-            const _prevInputs = prevTripInputsRef.current;
-            const _newInputs = freshState.document?.trip_inputs;
-            const _datesChanged =
-              _prevInputs &&
-              (_prevInputs.start_date !== _newInputs?.start_date ||
-                _prevInputs.end_date !== _newInputs?.end_date);
-            const _hasStrategy = (doc.strategy_sections?.length ?? 0) > 0;
-            const shouldExpandDates = _datesChanged && _hasStrategy && !isSilentPlanGeneration;
+            const datesChanged =
+              prevInputs &&
+              (prevInputs.start_date !== newTripInputs?.start_date ||
+                prevInputs.end_date !== newTripInputs?.end_date);
+            const shouldExpandDates = datesChanged && hasStrategyContent && !isSilentPlanGeneration;
+            const travelersChanged =
+              prevInputs &&
+              (prevInputs.adults !== newTripInputs?.adults ||
+                prevInputs.children !== newTripInputs?.children);
+            const budgetChanged = prevInputs && prevInputs.budget !== newTripInputs?.budget;
+            const originChanged = prevInputs && prevInputs.origin !== newTripInputs?.origin;
+            const otherInputsChanged = Boolean(travelersChanged || budgetChanged || originChanged);
+            const shouldExpandTripInputs =
+              hasItinerary &&
+              Boolean(prevInputs) &&
+              otherInputsChanged &&
+              !isSilentPlanGeneration;
             const shouldExpandCatchAll =
-              _hasStrategy && !hasItinerary && freshHasDates && !isSilentPlanGeneration;
-            const expandPath = graphBuiltItinerary
-              ? 'GRAPH_BUILT'
-              : shouldExpandStructural
-                ? 'STRUCTURAL'
-                : shouldExpandDates
-                  ? 'DATE_CHANGE'
-                  : shouldExpandCatchAll
-                    ? 'CATCH_ALL'
-                    : 'SKIP';
+              hasStrategyContent &&
+              !hasItinerary &&
+              freshHasDates &&
+              !isSilentPlanGeneration &&
+              !isBootstrap(doc.plan_view_state);
+
             debugLog(
               `[EXPAND] gate check: strategy=${newSpecialistTypes.length} tiles=${tileCount} ` +
               `viewState=${viewState} hasItinerary=${hasItinerary} freshHasDates=${freshHasDates} silent=${isSilentPlanGeneration} graphBuilt=${graphBuiltItinerary} ` +
-              `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!_datesChanged} ` +
-              `prevCategories=[${[...prevTileTypes]}] newCategories=[${[...newTileCategories]}] → ${expandPath}`
+              `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!datesChanged} ` +
+              `travelersChanged=${!!travelersChanged} budgetChanged=${!!budgetChanged} originChanged=${!!originChanged} ` +
+              `prevCategories=[${[...prevTileTypes]}] newCategories=[${[...newTileCategories]}]`
             );
 
             const blockingViolations =
@@ -384,110 +400,45 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               );
             }
 
-            let structuralRebuildTriggered = blockingViolations.length > 0 || graphBuiltItinerary;
-            if (shouldExpandStructural && !graphBuiltItinerary) {
-              debugLog('[ChatPanel] Structural change detected - auto-expanding...', {
-                hasNewSpecialist,
-                hasNewTileType,
-                prevSpecialists: [...prevSpecialistTypes],
-                newSpecialists: newSpecialistTypes,
-              });
-              structuralRebuildTriggered = true;
-              if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
-              autoExpandTimeoutRef.current = setTimeout(() => {
-                if (useDocumentStore.getState().expandInProgress) {
-                  debugLog('[ChatPanel] ⏭️ STRUCTURAL skipped - expand already in progress');
-                  return;
-                }
-                onAutoExpandItinerary?.({ forceFullRebuild: true });
-              }, 100);
-            } else if (hasItinerary && !hasNewSpecialist && !hasNewTileType) {
-              debugLog('[ChatPanel] Additive change only, itinerary preserved');
-            }
-
-            const newTripInputs = freshState.document?.trip_inputs;
-            const prevInputs = prevTripInputsRef.current;
-
-            const datesChanged =
-              prevInputs &&
-              (prevInputs.start_date !== newTripInputs?.start_date ||
-                prevInputs.end_date !== newTripInputs?.end_date);
-            const hasStrategyContent = (doc.strategy_sections?.length ?? 0) > 0;
-
-            if (
-              datesChanged &&
-              hasStrategyContent &&
-              !isSilentPlanGeneration &&
-              !structuralRebuildTriggered
-            ) {
-              debugLog('[ChatPanel] Dates changed - triggering itinerary rebuild...', {
-                prev: `${prevInputs!.start_date} - ${prevInputs!.end_date}`,
-                new: `${newTripInputs?.start_date} - ${newTripInputs?.end_date}`,
-                hasItinerary,
-              });
-              structuralRebuildTriggered = true;
-              if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
-              autoExpandTimeoutRef.current = setTimeout(() => {
-                if (useDocumentStore.getState().expandInProgress) {
-                  debugLog('[ChatPanel] ⏭️ DATE_CHANGE skipped - expand already in progress');
-                  return;
-                }
-                onAutoExpandItinerary?.({ forceFullRebuild: true });
-              }, 100);
-            }
-
-            if (
-              hasItinerary &&
-              prevInputs &&
-              !isSilentPlanGeneration &&
-              !structuralRebuildTriggered
-            ) {
-              const travelersChanged =
-                prevInputs.adults !== newTripInputs?.adults ||
-                prevInputs.children !== newTripInputs?.children;
-              const budgetChanged = prevInputs.budget !== newTripInputs?.budget;
-              const originChanged = prevInputs.origin !== newTripInputs?.origin;
-              const otherInputsChanged = travelersChanged || budgetChanged || originChanged;
-
-              if (otherInputsChanged) {
-                debugLog('[ChatPanel] Trip inputs changed - auto-rebuilding itinerary...', {
-                  travelersChanged,
-                  budgetChanged,
-                  originChanged,
-                  prev: { adults: prevInputs.adults, budget: prevInputs.budget },
-                  new: { adults: newTripInputs?.adults, budget: newTripInputs?.budget },
-                });
-                structuralRebuildTriggered = true;
-                if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
-                autoExpandTimeoutRef.current = setTimeout(() => {
-                  if (useDocumentStore.getState().expandInProgress) {
-                    debugLog('[ChatPanel] ⏭️ TRIP_INPUTS skipped - expand already in progress');
-                    return;
-                  }
-                  onAutoExpandItinerary?.({ forceFullRebuild: true });
-                }, 100);
+            let expandReason: 'STRUCTURAL' | 'DATE_CHANGE' | 'TRIP_INPUTS' | 'CATCH_ALL' | null =
+              null;
+            if (!graphBuiltItinerary && blockingViolations.length === 0) {
+              if (shouldExpandStructural) {
+                expandReason = 'STRUCTURAL';
+              } else if (shouldExpandDates) {
+                expandReason = 'DATE_CHANGE';
+              } else if (shouldExpandTripInputs) {
+                expandReason = 'TRIP_INPUTS';
+              } else if (shouldExpandCatchAll) {
+                expandReason = 'CATCH_ALL';
               }
             }
 
-            if (
-              hasStrategyContent &&
-              !hasItinerary &&
-              freshHasDates &&
-              !isSilentPlanGeneration &&
-              !structuralRebuildTriggered &&
-              !isBootstrap(doc.plan_view_state)
-            ) {
-              debugLog('[ChatPanel] Strategy exists but no itinerary - triggering rebuild...', {
-                strategyCount: doc.strategy_sections?.length,
-                hasItinerary,
-                viewState,
+            if (!expandReason && hasItinerary && !hasNewSpecialist && !hasNewTileType) {
+              debugLog('[ChatPanel] Additive change only, itinerary preserved');
+            }
+
+            if (expandReason) {
+              debugLog('[ChatPanel] Auto-expand scheduled:', {
+                reason: expandReason,
+                prevDates: prevInputs
+                  ? `${prevInputs.start_date ?? 'null'} - ${prevInputs.end_date ?? 'null'}`
+                  : null,
+                newDates: `${newTripInputs?.start_date ?? 'null'} - ${newTripInputs?.end_date ?? 'null'}`,
               });
-              structuralRebuildTriggered = true;
+
               if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
               autoExpandTimeoutRef.current = setTimeout(() => {
-                const freshDayCards = useDocumentStore.getState().document?.day_cards;
-                if (freshDayCards && freshDayCards.length > 0) {
-                  debugLog('[ChatPanel] ⏭️ CATCH-ALL skipped - itinerary already exists');
+                const latest = useDocumentStore.getState();
+                if (latest.expandInProgress) {
+                  debugLog(`[ChatPanel] ⏭️ ${expandReason} skipped - expand already in progress`);
+                  return;
+                }
+                if (
+                  expandReason === 'CATCH_ALL' &&
+                  (latest.document?.day_cards?.length ?? 0) > 0
+                ) {
+                  debugLog('[ChatPanel] ⏭️ CATCH_ALL skipped - itinerary already exists');
                   return;
                 }
                 onAutoExpandItinerary?.({ forceFullRebuild: true });
@@ -512,6 +463,42 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                   ackStatus: 'no_change',
                 });
               }
+            }
+
+            // Reconcile from persisted document when stream payload looks incomplete
+            // or the in-memory apply path threw. This prevents "manual refresh required".
+            const responseHasStrategy = (doc.strategy_sections?.length ?? 0) > 0;
+            const responseHasDayCards = (doc.day_cards?.length ?? 0) > 0;
+            const expectsDayCards = Boolean(doc.trip_inputs?.start_date && doc.trip_inputs?.end_date);
+            const needsReconcile =
+              !planResultApplied ||
+              !responseHasStrategy ||
+              (expectsDayCards && !responseHasDayCards);
+
+            if (needsReconcile) {
+              void (async () => {
+                const maxAttempts = 3;
+                for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                  try {
+                    const fresh = await useDocumentStore.getState().fetchDocument();
+                    if (!fresh) return;
+                    const hasStrategy = (fresh.strategy_sections?.length ?? 0) > 0;
+                    const hasDayCards = (fresh.day_cards?.length ?? 0) > 0;
+                    if (hasStrategy && (!expectsDayCards || hasDayCards)) {
+                      debugLog(
+                        `[ChatPanel] ✅ Reconciled from /api/document on attempt ${attempt}` +
+                        ` (strategy=${fresh.strategy_sections?.length ?? 0}, day_cards=${fresh.day_cards?.length ?? 0})`
+                      );
+                      return;
+                    }
+                  } catch (reconcileError) {
+                    debugLog('[ChatPanel] Reconcile fetch failed:', reconcileError);
+                  }
+                  if (attempt < maxAttempts) {
+                    await new Promise((resolveReconcile) => setTimeout(resolveReconcile, 500 * attempt));
+                  }
+                }
+              })();
             }
 
             setIsLoading(false);

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import importlib
 from typing import Any, Dict, List
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -164,6 +164,22 @@ class TestCacheHit:
                     {
                         "specialist_type": "local_expert",
                         "title": "Tokyo Trip Overview",
+                        "constraints_applied": [
+                            {
+                                "rule": f"Constraint {i}",
+                                "type": "booking_window",
+                                "severity": "warning",
+                            }
+                            for i in range(6)
+                        ],
+                        "content_added": [
+                            {
+                                "title": f"Tip {i}",
+                                "description": f"Recommendation {i}",
+                                "type": "logistics",
+                            }
+                            for i in range(6)
+                        ],
                     }
                 ]
             },
@@ -189,6 +205,22 @@ class TestCacheHit:
                     {
                         "specialist_type": "local_expert",
                         "title": "Bali Trip Overview",
+                        "constraints_applied": [
+                            {
+                                "rule": f"Constraint {i}",
+                                "type": "booking_window",
+                                "severity": "warning",
+                            }
+                            for i in range(6)
+                        ],
+                        "content_added": [
+                            {
+                                "title": f"Tip {i}",
+                                "description": f"Recommendation {i}",
+                                "type": "logistics",
+                            }
+                            for i in range(6)
+                        ],
                     }
                 ]
             },
@@ -257,6 +289,68 @@ class TestCacheMiss:
 
 
 # =============================================================================
+# 3b. Destination-scoped cache reuse (L1/L2) even with sparse session section
+# =============================================================================
+
+
+class TestDestinationCacheReuse:
+    """If session state is sparse, reuse destination-scoped L1/L2 cache before recompute."""
+
+    @pytest.mark.asyncio
+    async def test_sparse_session_uses_destination_cache(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mocks = _patch_common(monkeypatch)
+        monkeypatch.setattr(_le_mod.settings, "local_expert_use_llm", True)
+
+        state = _make_state(
+            destination="Rome",
+            active_specialist="local_expert",
+            metadata={
+                "strategy_sections": [
+                    {
+                        "specialist_type": "local_expert",
+                        "title": "Rome Trip Overview",
+                        "constraints_applied": [{"rule": "Sparse", "type": "booking_window"}],
+                        "content_added": [],
+                    }
+                ]
+            },
+        )
+
+        sentinel_response = object()
+        mock_cached_output = AsyncMock(return_value=sentinel_response)
+        monkeypatch.setattr(_le_mod, "_get_cached_local_expert_output", mock_cached_output)
+        monkeypatch.setattr(
+            _le_mod, "_enrich_legacy_lists", MagicMock(return_value=sentinel_response)
+        )
+        monkeypatch.setattr(_le_mod, "_has_rich_local_expert_output", MagicMock(return_value=True))
+        monkeypatch.setattr(
+            _le_mod,
+            "_build_section_from_cached_output",
+            MagicMock(
+                return_value={
+                    "id": "strategy_local_expert",
+                    "specialist_type": "local_expert",
+                    "title": "Rome Trip Overview",
+                    "constraints_applied": [{"rule": "Cached", "type": "visa"}],
+                    "content_added": [{"title": "Cached tip"}],
+                }
+            ),
+        )
+        mock_run = MagicMock()
+        monkeypatch.setattr(_le_mod, "_run_local_expert", mock_run)
+
+        result = await _le_mod.local_expert(state)
+
+        assert result.active_specialist is None
+        mock_cached_output.assert_called_once()
+        mocks["upsert_section"].assert_called_once()
+        mocks["mark_topic"].assert_called_once()
+        mock_run.assert_not_called()
+
+
+# =============================================================================
 # 4. LLM-disabled path -> fallback generates "Explore {dest}" section
 # =============================================================================
 
@@ -289,6 +383,10 @@ class TestLlmDisabledFallback:
         assert call_kwargs.kwargs["content_added"] == []
         # travel_intelligence is empty dict in skeleton
         assert call_kwargs.kwargs["travel_intelligence"] == {}
+        # LLM-disabled mode should mark enrichment as terminal ready (no pending spinner)
+        upserted_section = mocks["upsert_section"].call_args.args[1]
+        assert upserted_section["local_expert_enrichment"]["state"] == "ready"
+        assert upserted_section["local_expert_enrichment"]["error_code"] == "disabled"
 
         # State tracking
         assert result.metadata.get("local_expert_ran") is True

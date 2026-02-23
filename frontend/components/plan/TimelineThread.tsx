@@ -451,22 +451,6 @@ export function TimelineThread({
     clearScrollTarget();
   }, [scrollTarget, effectiveVariant, clearScrollTarget]);
 
-
-
-  // ── Stage 17B: Compact single-activity day variant ─────────────────────
-  function getDayVariant(card: DayCard): 'default' | 'compact' {
-    const activityBlocks = card.blocks.filter(
-      (b) =>
-        !b.is_buffer &&
-        b.activity_type !== 'arrival' &&
-        b.activity_type !== 'departure' &&
-        b.activity_type !== 'check-in' &&
-        b.activity_type !== 'check-out' &&
-        b.activity_type !== 'free_day'
-    );
-    return activityBlocks.length <= 1 ? 'compact' : 'default';
-  }
-
   if (sortedDays.length === 0) {
     return (
       <div className="text-center py-12 text-zinc-500 dark:text-zinc-400 border-2 border-dashed border-zinc-200 dark:border-white/10 rounded-xl">
@@ -504,7 +488,6 @@ export function TimelineThread({
         const isLast = index === sortedDays.length - 1;
         const DayIcon = getDayIcon(card, isFirst, isLast);
         const isSafety = isSafetyDay(card);
-        const dayVariant = useRichBlocks ? getDayVariant(card) : 'default';
 
         return (
           <div
@@ -521,7 +504,7 @@ export function TimelineThread({
               onClick={() => onDayClick?.(card.day_number)}
               onMouseEnter={() => !document.body.hasAttribute('data-dnd-active') && onDayHover?.(card.day_number)}
               onMouseLeave={() => !document.body.hasAttribute('data-dnd-active') && onDayHover?.(null)}
-              className={cn('flex items-center gap-4 w-full text-left group', dayVariant === 'compact' ? 'mb-1.5' : 'mb-4')}
+              className="flex items-center gap-4 w-full text-left group mb-4"
             >
               {/* Icon node on thread */}
               <div
@@ -540,7 +523,7 @@ export function TimelineThread({
                 <h3
                   className={cn(
                     'font-semibold tracking-tight',
-                    dayVariant === 'compact' ? 'text-base' : 'text-lg',
+                    'text-lg',
                     isSafety ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-900 dark:text-white'
                   )}
                 >
@@ -741,7 +724,6 @@ export function TimelineThread({
                           onOpenStaysSettings={onOpenStaysSettings}
                           onOpenFlightsSettings={onOpenFlightsSettings}
                           onRemoveBlock={onRemoveBlock}
-                          variant={dayVariant}
                           isHighlighted={false}
                         />
                       </div>

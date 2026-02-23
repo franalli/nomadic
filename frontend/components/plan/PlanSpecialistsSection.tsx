@@ -3,82 +3,34 @@
 /**
  * PlanSpecialistsSection
  *
- * Specialists section for full-density plan view.
- * Shows strategy cards and regeneration overlay.
- * StrategyConstraintBar is rendered above this in PlanFullDensityView
- * so it spans the full panel width (content + map).
+ * Destination intelligence section for full-density plan view.
+ * Renders trip-level travel intel (no specialist branding) and regeneration overlay.
  */
 
 import type { ReactNode } from 'react';
 
-import type { DocumentTripInputs } from '@/types/document';
-import type { DestinationCard, PlanViewModel } from '@/types/plan-envelope';
-import type { Tile } from '@/types/tile';
+import type { PlanViewModel } from '@/types/plan-envelope';
 
-import { S2StrategyView } from './stages/S2StrategyView';
+import { DestinationIntelCard } from './DestinationIntelCard';
 
 interface PlanSpecialistsSectionProps {
-  viewModel: PlanViewModel;
-  filteredViewModel: PlanViewModel;
-  fullModeSections: PlanViewModel['strategy_sections'];
-  effectiveTiles: Record<string, Tile>;
-  effectiveTripInputs: DocumentTripInputs | undefined;
-  destinationCard?: DestinationCard;
-  hasItineraryContent: boolean;
+  sections: PlanViewModel['strategy_sections'];
+  destination?: string | null;
   isAnyRegenerating: boolean;
   isRegenUpdating: boolean;
-  showConstraints: boolean;
-  onRefineAssumptions?: () => void;
-  onOpenActivitySettings?: () => void;
 }
 
 export function PlanSpecialistsSection({
-  viewModel,
-  filteredViewModel,
-  fullModeSections,
-  effectiveTiles,
-  effectiveTripInputs,
-  destinationCard,
-  hasItineraryContent,
+  sections,
+  destination,
   isAnyRegenerating,
   isRegenUpdating,
-  showConstraints,
-  onRefineAssumptions,
-  onOpenActivitySettings,
 }: PlanSpecialistsSectionProps): ReactNode {
+  const hasSections = (sections?.length ?? 0) > 0;
+
   return (
     <section id="specialists-section" className="relative">
-      {(fullModeSections?.length ?? 0) > 0 && (
-        <>
-          {!hasItineraryContent ? (
-            <S2StrategyView
-              key={`strategy-${destinationCard?.title}`}
-              viewModel={filteredViewModel}
-              onRefineAssumptions={onRefineAssumptions}
-              pendingTopics={viewModel.pending_strategy_topics}
-              executedTopics={viewModel.executed_strategy_topics}
-              tiles={effectiveTiles}
-              tripInputs={effectiveTripInputs}
-              density="full"
-              onOpenActivitySettings={onOpenActivitySettings}
-            />
-          ) : (
-            showConstraints && (
-              <S2StrategyView
-                key={`strategy-${destinationCard?.title}`}
-                viewModel={filteredViewModel}
-                onRefineAssumptions={onRefineAssumptions}
-                pendingTopics={viewModel.pending_strategy_topics}
-                executedTopics={viewModel.executed_strategy_topics}
-                tiles={effectiveTiles}
-                tripInputs={effectiveTripInputs}
-                density="full"
-                onOpenActivitySettings={onOpenActivitySettings}
-              />
-            )
-          )}
-        </>
-      )}
+      {hasSections && <DestinationIntelCard destination={destination} sections={sections ?? []} />}
 
       {/* Regeneration overlay */}
       {isAnyRegenerating && (

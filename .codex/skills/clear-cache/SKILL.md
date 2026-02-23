@@ -13,4 +13,5 @@ Use this skill as a 1:1 mapping to `.claude/commands/clear-cache.md`.
 
 1. Open `.claude/commands/clear-cache.md`.
 2. Run the health check and cache-clear call exactly as defined.
+   - If the health check fails, instruct startup with: `cd backend && .venv/bin/python start.py --prod`.
 3. Return the structured report with totals and non-zero cleared entries.

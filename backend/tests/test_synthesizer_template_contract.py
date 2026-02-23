@@ -10,10 +10,14 @@ from langchain_core.messages import HumanMessage
 from app.debug_utils import RequestMetrics
 from app.planner.nodes.synthesizer import (
     PILL_ACTION_MAP,
+    _build_destination_setup_message,
     _build_synthesis_context,
     _get_model_id,
     _ground_flight_response,
     _render_prompt_for_response_type,
+    _should_force_destination_setup_message,
+    _should_use_llm_synthesis,
+    generate_suggestions,
 )
 from app.planner.state import GraphState, TripPlan
 
@@ -153,6 +157,210 @@ def test_plan_flight_direct_legacy_alias_maps_to_direct_flights_trigger_action()
     assert action_target == "set_direct_flights_only"
 
 
+def test_plan_hotels_compare_maps_to_stays_sheet() -> None:
+    action_type, action_target = PILL_ACTION_MAP["plan_hotels_compare"]
+    assert action_type == "open_pill"
+    assert action_target == "stays"
+
+
+def test_plan_dates_refine_maps_to_dates_sheet() -> None:
+    action_type, action_target = PILL_ACTION_MAP["plan_dates_refine"]
+    assert action_type == "open_pill"
+    assert action_target == "dates"
+
+
+def test_date_chip_categories_do_not_force_open_pill_actions() -> None:
+    assert "date_prompt" not in PILL_ACTION_MAP
+    assert "date_contextual" not in PILL_ACTION_MAP
+
+
+def test_generate_suggestions_date_prompt_chips_use_send_message_actions() -> None:
+    state = GraphState(trip_plan=TripPlan(destination="Rome"))
+
+    generate_suggestions(state)
+    structured = state.metadata.get("suggestion_chips", [])
+    date_chips = [
+        chip for chip in structured if chip.get("category") in {"date_prompt", "date_contextual"}
+    ]
+
+    assert date_chips
+    assert all(chip.get("action_type") == "send_message" for chip in date_chips)
+    assert all(chip.get("action_target") is None for chip in date_chips)
+
+
+@pytest.mark.parametrize(
+    ("short_circuit_type", "expected"),
+    [
+        ("exploration", True),
+        ("soft_transition", True),
+        ("question_answer", True),
+        ("gate_blocked", True),
+        ("destination_locked", False),
+        ("reset_locked", False),
+        ("greeting", False),
+        ("reset", False),
+    ],
+)
+def test_should_use_llm_synthesis_by_short_circuit_type(
+    short_circuit_type: str,
+    expected: bool,
+) -> None:
+    state = _new_state(
+        metadata={
+            "short_circuit_response": True,
+            "short_circuit_type": short_circuit_type,
+        }
+    )
+
+    assert _should_use_llm_synthesis(state) is expected
+
+
+def test_should_force_destination_setup_message_when_destination_set_without_dates() -> None:
+    state = GraphState(trip_plan=TripPlan(destination="Rome"))
+    state.metadata["turn_applied_fields"] = ["destination"]
+
+    assert _should_force_destination_setup_message(state) is True
+
+
+def test_should_not_force_destination_setup_message_when_dates_exist() -> None:
+    state = GraphState(
+        trip_plan=TripPlan(destination="Rome", start_date="2026-03-01", end_date="2026-03-07")
+    )
+    state.metadata["turn_applied_fields"] = ["destination"]
+
+    assert _should_force_destination_setup_message(state) is False
+
+
+def test_build_destination_setup_message_mentions_dates_activities_and_origin_hint() -> None:
+    state = GraphState(trip_plan=TripPlan(destination="Rome"))
+    message = _build_destination_setup_message(state)
+
+    lowered = message.lower()
+    assert "dates" in lowered
+    assert "activit" in lowered
+    assert "origin is not required" in lowered
+
+
+def test_generate_suggestions_preserves_discover_slot_with_priority_zero_group() -> None:
+    state = GraphState(trip_plan=TripPlan(destination="Bali"))
+    state.metadata["detected_month"] = "March"
+
+    suggested_replies = generate_suggestions(state)
+    categories = [m.get("category") for m in state.metadata.get("suggestion_chip_meta", [])]
+    p0_categories = {"destination_choice", "date_prompt", "date_contextual"}
+
+    assert len(suggested_replies) == 3
+    assert sum(1 for c in categories if c in p0_categories) <= 2
+    assert any(
+        isinstance(c, str) and (c.startswith("question_") or c.startswith("plan_"))
+        for c in categories
+    )
+
+
+def test_generate_suggestions_rotates_question_categories_across_calls() -> None:
+    state = GraphState(trip_plan=TripPlan(destination="Bali"))
+
+    generate_suggestions(state)
+    first_meta = list(state.metadata.get("suggestion_chip_meta", []))
+    first_questions = {
+        m.get("category")
+        for m in first_meta
+        if isinstance(m, dict) and str(m.get("category", "")).startswith("question_")
+    }
+
+    generate_suggestions(state)
+    second_meta = list(state.metadata.get("suggestion_chip_meta", []))
+    second_questions = {
+        m.get("category")
+        for m in second_meta
+        if isinstance(m, dict) and str(m.get("category", "")).startswith("question_")
+    }
+
+    assert first_questions
+    assert second_questions
+    assert first_questions.isdisjoint(second_questions)
+
+
+def test_generate_suggestions_skips_just_asked_question_type() -> None:
+    state = GraphState(trip_plan=TripPlan(destination="Bali"))
+    state.messages = [HumanMessage(content="What's the weather like in Bali?")]
+
+    generate_suggestions(state)
+    categories = [m.get("category") for m in state.metadata.get("suggestion_chip_meta", [])]
+
+    assert "question_weather" not in categories
+
+
+def test_generate_suggestions_post_plan_prefers_refinement_actions() -> None:
+    state = GraphState(
+        trip_plan=TripPlan(destination="Rome", start_date="2026-02-27", end_date="2026-03-01")
+    )
+    state.metadata["plan_view_state"] = "S3_ITINERARY_READY"
+    state.tiles = {"hotels": [{"id": "h1"}], "flights": [], "activities": []}
+
+    generate_suggestions(state)
+    categories = [m.get("category") for m in state.metadata.get("suggestion_chip_meta", [])]
+
+    assert categories
+    assert all(
+        not (isinstance(category, str) and category.startswith("question_"))
+        for category in categories
+    )
+
+
+def test_generate_suggestions_keeps_departure_city_chip_until_origin_set() -> None:
+    state = GraphState(
+        trip_plan=TripPlan(destination="Rome", start_date="2026-02-27", end_date="2026-03-01")
+    )
+    state.metadata["plan_view_state"] = "S3_ITINERARY_READY"
+    state.metadata["last_suggested_replies"] = ["Set my departure city"]
+    state.metadata["trip_settings"] = {
+        "booking_types": {
+            "hotels": "suggested",
+            "flights": "suggested",
+            "activities": "suggested",
+            "ground_transport": "off",
+        },
+        "activity_settings": {"categories": []},
+    }
+    state.tiles = {"hotels": [{"id": "h1"}], "activities": [{"id": "a1"}], "flights": []}
+
+    suggestions = generate_suggestions(state)
+    categories = [m.get("category") for m in state.metadata.get("suggestion_chip_meta", [])]
+
+    assert "Set my departure city" in suggestions
+    assert "plan_flights_hint" in categories
+
+
+def test_generate_suggestions_resets_carryover_when_destination_changes() -> None:
+    state = GraphState(trip_plan=TripPlan(destination="Rome"))
+    state.metadata.update(
+        {
+            "last_destination_context": "bali",
+            "suggested_question_types": ["legacy_marker", "weather", "safety"],
+            "generic_question_count": 4,
+            "detected_month": "March",
+            "last_suggested_replies": ["legacy reply marker"],
+            "awaiting_dates": True,
+        }
+    )
+
+    generate_suggestions(state)
+    categories = [m.get("category") for m in state.metadata.get("suggestion_chip_meta", [])]
+    suggested_qtypes = state.metadata.get("suggested_question_types", [])
+    suggested_replies = state.metadata.get("last_suggested_replies", [])
+
+    assert "question_weather" in categories
+    assert state.metadata.get("last_destination_context") == "Rome"
+    assert "awaiting_dates" not in state.metadata
+    assert "generic_question_count" not in state.metadata
+    assert "detected_month" not in state.metadata
+    assert isinstance(suggested_qtypes, list)
+    assert "legacy_marker" not in suggested_qtypes
+    assert isinstance(suggested_replies, list)
+    assert all("legacy reply marker" not in text for text in suggested_replies)
+
+
 def test_synthesis_context_includes_no_origin_flight_guardrail() -> None:
     state = _new_state(
         metadata={
@@ -203,6 +411,23 @@ def test_ground_flight_response_corrects_hotel_activity_count_claims() -> None:
 
     assert "8 activities" not in grounded
     assert "Found **1 hotel** and **3 activities**." in grounded
+
+
+def test_ground_flight_response_drops_count_recap_for_question_turns() -> None:
+    state = _new_state(last_human="What's the weather like in Bali?")
+    state.tiles = {
+        "hotels": [{"id": "h1"}],
+        "activities": [{"id": "a1"}, {"id": "a2"}, {"id": "a3"}],
+        "flights": [],
+    }
+    state.metadata["tile_inventory_changed_this_turn"] = True
+
+    grounded = _ground_flight_response(
+        "March is warm with occasional rain. Found **1 hotel** and **3 activities**.",
+        state,
+    )
+
+    assert grounded == "March is warm with occasional rain."
 
 
 def test_ground_flight_response_ignores_date_adjustments_in_metadata() -> None:
@@ -384,6 +609,32 @@ def test_ground_flight_response_strips_unknown_added_entity_claim() -> None:
 
 
 @pytest.mark.asyncio
+async def test_synthesizer_overrides_destination_setup_message_when_dates_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GraphState(trip_plan=TripPlan(destination="Rome"))
+    state.messages = [HumanMessage(content="rome")]
+    state.metadata["turn_applied_fields"] = ["destination"]
+
+    async def _fake_enrich_with_images(_state: GraphState) -> None:
+        return None
+
+    async def _fake_synthesize_with_llm(_state: GraphState, _response_type: str):
+        return ("Rome is an excellent choice.", {"model": "gemini-2.5-flash"})
+
+    monkeypatch.setattr(synthesizer_module, "enrich_with_images", _fake_enrich_with_images)
+    monkeypatch.setattr(synthesizer_module, "synthesize_with_llm", _fake_synthesize_with_llm)
+    monkeypatch.setattr(synthesizer_module, "generate_suggestions", lambda _state: [])
+
+    await synthesizer_module.synthesizer(state)
+
+    lowered = state.last_summary.lower()
+    assert "set your dates" in lowered
+    assert "activit" in lowered
+    assert "origin is not required" in lowered
+
+
+@pytest.mark.asyncio
 async def test_synthesizer_settings_only_uses_terse_ack_without_llm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -451,6 +702,88 @@ async def test_synthesizer_settings_with_date_change_routes_to_llm(
 
     assert calls["llm"] == 1
     assert state.metadata.get("synthesizer_output", {}).get("used_llm") is True
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_settings_turn_avoids_count_only_reply_when_inventory_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _new_state(
+        metadata={
+            "settings_just_updated": True,
+            "actionable_acknowledgment": "Direct flights enabled.",
+            "constraint_violations": [],
+            "added_categories": [],
+            "tier2_new_content_generated": False,
+            # Force LLM path so post-grounding quality gate runs
+            "turn_applied_fields": ["end_date"],
+            "last_tile_counts": {"hotels": 1, "flights": 0, "activities": 6},
+        },
+        last_human="direct flights only",
+    )
+    state.tiles = {
+        "hotels": [{"id": "h1"}],
+        "flights": [],
+        "activities": [
+            {"id": "a1"},
+            {"id": "a2"},
+            {"id": "a3"},
+            {"id": "a4"},
+            {"id": "a5"},
+            {"id": "a6"},
+        ],
+    }
+
+    async def _fake_enrich_with_images(_state: GraphState) -> None:
+        return None
+
+    async def _fake_synthesize_with_llm(_state: GraphState, _response_type: str):
+        return ("Found **6 activities**.", {"model": "gemini-2.5-flash"})
+
+    monkeypatch.setattr(synthesizer_module, "enrich_with_images", _fake_enrich_with_images)
+    monkeypatch.setattr(synthesizer_module, "synthesize_with_llm", _fake_synthesize_with_llm)
+    monkeypatch.setattr(synthesizer_module, "generate_suggestions", lambda _state: [])
+
+    await synthesizer_module.synthesizer(state)
+
+    assert state.last_summary == "Direct flights enabled."
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_settings_turn_avoids_count_only_reply_even_when_inventory_changed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _new_state(
+        metadata={
+            "settings_just_updated": True,
+            "actionable_acknowledgment": "Direct flights enabled.",
+            "constraint_violations": [],
+            "added_categories": [],
+            "tier2_new_content_generated": False,
+            "turn_applied_fields": ["end_date"],
+            "last_tile_counts": {"hotels": 0, "flights": 0, "activities": 0},
+        },
+        last_human="direct flights only",
+    )
+    state.tiles = {
+        "hotels": [{"id": "h1"}],
+        "flights": [],
+        "activities": [{"id": "a1"}],
+    }
+
+    async def _fake_enrich_with_images(_state: GraphState) -> None:
+        return None
+
+    async def _fake_synthesize_with_llm(_state: GraphState, _response_type: str):
+        return ("Found **1 hotel** and **1 activity**.", {"model": "gemini-2.5-flash"})
+
+    monkeypatch.setattr(synthesizer_module, "enrich_with_images", _fake_enrich_with_images)
+    monkeypatch.setattr(synthesizer_module, "synthesize_with_llm", _fake_synthesize_with_llm)
+    monkeypatch.setattr(synthesizer_module, "generate_suggestions", lambda _state: [])
+
+    await synthesizer_module.synthesizer(state)
+
+    assert state.last_summary == "Direct flights enabled."
 
 
 @pytest.mark.asyncio

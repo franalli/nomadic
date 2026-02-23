@@ -557,6 +557,10 @@ class StrategySection(BaseModel):
     # Comprehensive travel intelligence from Local Expert (12-category dict)
     travel_intelligence: Optional[Dict[str, Any]] = None
 
+    # LocalExpert enrichment lifecycle (Phase A skeleton -> Phase B enrichment)
+    # Used to avoid silent pending timeouts in fetch-on-open UX.
+    local_expert_enrichment: Optional[Dict[str, Any]] = None
+
     # Destination gallery - "Vibe Trio" images for Local Expert card (hero destinations only)
     destination_gallery: List[Dict[str, str]] = Field(default_factory=list)
     # Each dict: {"label": "Dubai Marina", "image_url": "https://..."}
@@ -608,6 +612,9 @@ class DayBlock(BaseModel):
     specialist_type: Optional[str] = None  # "diving", "hiking", etc.
     constraints: List[str] = Field(default_factory=list)
     active_constraints: List[ActiveConstraint] = Field(default_factory=list)
+    activity_domain: Optional[Literal["tier1", "tier2"]] = None
+    activity_provenance: Optional[Literal["ai_suggested", "user_browse_added"]] = None
+    map_type: Optional[str] = None  # Canonical map pin category (e.g., "food", "cycling")
 
     # Rich content fields
     image_url: Optional[str] = None
@@ -1081,8 +1088,10 @@ class SpecialistEnrichmentResponse(BaseModel):
     """Response for specialist section enrichment fetch."""
 
     section_id: str
-    status: str  # "ready" or "pending"
+    status: Literal["ready", "pending", "failed"]
     data: Optional[Dict[str, Any]] = None
+    error_code: Optional[str] = None
+    retry_after_ms: Optional[int] = None
 
 
 class BrowseActivitiesRequest(BaseModel):

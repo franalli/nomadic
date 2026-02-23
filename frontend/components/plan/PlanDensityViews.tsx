@@ -14,8 +14,8 @@ import type { DocumentTripInputs } from '@/types/document';
 import type { DestinationCard, PlanViewModel } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 
+import { DestinationIntelCard } from './DestinationIntelCard';
 import { DestinationMapPlaceholder } from './DestinationMapPlaceholder';
-import { S2StrategyView } from './stages/S2StrategyView';
 import { TimelineSkeleton } from './timeline/TimelineSkeleton';
 import { TimelineThread } from './TimelineThread';
 
@@ -35,7 +35,6 @@ export function PlanMirrorLoader({ tripDuration }: { tripDuration: number }) {
 }
 
 interface GhostDensityViewProps {
-  viewModel: PlanViewModel;
   filteredViewModel: PlanViewModel;
   totalConstraints: number;
   ghostDayCards: PlanViewModel['day_cards'];
@@ -45,11 +44,9 @@ interface GhostDensityViewProps {
   onOpenSheet?: (sheet: SheetType) => void;
   onOpenStaysSettings?: () => void;
   onOpenFlightsSettings?: () => void;
-  onOpenActivitySettings?: () => void;
 }
 
 export function PlanGhostDensityView({
-  viewModel,
   filteredViewModel,
   totalConstraints,
   ghostDayCards,
@@ -59,8 +56,8 @@ export function PlanGhostDensityView({
   onOpenSheet,
   onOpenStaysSettings,
   onOpenFlightsSettings,
-  onOpenActivitySettings,
 }: GhostDensityViewProps) {
+  const destination = effectiveTripInputs?.destination;
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center justify-between">
@@ -76,16 +73,7 @@ export function PlanGhostDensityView({
           </span>
         )}
       </div>
-      <S2StrategyView
-        viewModel={filteredViewModel}
-        pendingTopics={viewModel.pending_strategy_topics}
-        executedTopics={viewModel.executed_strategy_topics}
-        tiles={{}}
-        tripInputs={effectiveTripInputs}
-        density="ghost"
-        autoExpandOnLoad={false}
-        onOpenActivitySettings={onOpenActivitySettings}
-      />
+      <DestinationIntelCard destination={destination} sections={filteredViewModel.strategy_sections ?? []} />
       <TimelineThread
         dayCards={ghostDayCards ?? []}
         isDraft={true}
@@ -99,7 +87,7 @@ export function PlanGhostDensityView({
       />
       <div className="text-center pt-4 pb-6">
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Activities from your specialists. Click &ldquo;Build Plan&rdquo; to see the full itinerary.
+          Tips and constraints are in place. Add dates to generate your itinerary.
         </p>
       </div>
     </div>
@@ -107,23 +95,19 @@ export function PlanGhostDensityView({
 }
 
 interface BridgeDensityViewProps {
-  viewModel: PlanViewModel;
   filteredViewModel: PlanViewModel;
   totalConstraints: number;
   hasDates: boolean;
   destinationCard?: DestinationCard;
   effectiveTripInputs: DocumentTripInputs | undefined;
-  onOpenActivitySettings?: () => void;
 }
 
 export function PlanBridgeDensityView({
-  viewModel,
   filteredViewModel,
   totalConstraints,
   hasDates,
   destinationCard,
   effectiveTripInputs,
-  onOpenActivitySettings,
 }: BridgeDensityViewProps) {
   const sections = filteredViewModel.strategy_sections ?? [];
   const effectiveDestination = effectiveTripInputs?.destination ?? destinationCard?.title;
@@ -149,15 +133,9 @@ export function PlanBridgeDensityView({
             )}
           </div>
         )}
-        <S2StrategyView
-          viewModel={filteredViewModel}
-          pendingTopics={viewModel.pending_strategy_topics}
-          executedTopics={viewModel.executed_strategy_topics}
-          tiles={{}}
-          tripInputs={effectiveTripInputs}
-          density="bridge"
-          autoExpandOnLoad={hasDates}
-          onOpenActivitySettings={onOpenActivitySettings}
+        <DestinationIntelCard
+          destination={effectiveDestination}
+          sections={filteredViewModel.strategy_sections ?? []}
         />
       </div>
       <div className={cn('hidden w-[350px] shrink-0 lg:block')}>

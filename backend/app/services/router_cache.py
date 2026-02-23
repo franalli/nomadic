@@ -8,7 +8,8 @@ CRITICAL: Only caches self-contained queries (no context dependencies).
 Context-dependent queries like "Show me diving there" would return wrong results
 if cached across different conversations.
 
-Cache key format: router::v2::SHA256({normalized_text}:{today_date})[:32]
+Cache key format:
+router::v3::SHA256({normalized_text}:{today_date}:{context_fingerprint})[:32]
 
 Usage:
     from app.services.router_cache import (
@@ -51,7 +52,11 @@ _mem = MemoryCache(
 )
 
 
-def _router_cache_key(user_text: str, today_date: str) -> str:
+def _router_cache_key(
+    user_text: str,
+    today_date: str,
+    context_fingerprint: str = "",
+) -> str:
     """
     Generate stable namespaced cache key with SHA256 payload hash.
 
@@ -61,14 +66,16 @@ def _router_cache_key(user_text: str, today_date: str) -> str:
     Args:
         user_text: User's message text
         today_date: Current date in YYYY-MM-DD format
+        context_fingerprint: Hash of current trip context injected into extraction prompt
 
     Returns:
         Namespaced cache key with version token
     """
     normalized = user_text.lower().strip()
-    content = f"{normalized}:{today_date}"
+    context_norm = (context_fingerprint or "").strip().lower()
+    content = f"{normalized}:{today_date}:{context_norm}"
     payload_hash = hashlib.sha256(content.encode()).hexdigest()[:32]
-    return make_cache_key("router", "v2", payload_hash)
+    return make_cache_key("router", "v3", payload_hash)
 
 
 def _is_self_contained_query(user_text: str, extraction: dict) -> bool:
@@ -134,18 +141,23 @@ def _is_self_contained_query(user_text: str, extraction: dict) -> bool:
 # =============================================================================
 
 
-def get_cached_extraction(user_text: str, today_date: str) -> Optional[dict]:
+def get_cached_extraction(
+    user_text: str,
+    today_date: str,
+    context_fingerprint: str = "",
+) -> Optional[dict]:
     """
     Get cached router extraction (L1 only).
 
     Args:
         user_text: User's message text
         today_date: Current date in YYYY-MM-DD format
+        context_fingerprint: Hash of current trip context
 
     Returns:
         Cached extraction dict or None if not found
     """
-    key = _router_cache_key(user_text, today_date)
+    key = _router_cache_key(user_text, today_date, context_fingerprint)
 
     cached = _mem.get(key)
 
@@ -160,7 +172,12 @@ def get_cached_extraction(user_text: str, today_date: str) -> Optional[dict]:
     return None
 
 
-def set_cached_extraction(user_text: str, today_date: str, extraction: dict) -> None:
+def set_cached_extraction(
+    user_text: str,
+    today_date: str,
+    extraction: dict,
+    context_fingerprint: str = "",
+) -> None:
     """
     Cache router extraction (L1 only).
 
@@ -170,6 +187,7 @@ def set_cached_extraction(user_text: str, today_date: str, extraction: dict) -> 
         user_text: User's message text
         today_date: Current date in YYYY-MM-DD format
         extraction: RouterOutput.model_dump() dict
+        context_fingerprint: Hash of current trip context
     """
     # Validate before caching
     if not _is_self_contained_query(user_text, extraction):
@@ -177,7 +195,7 @@ def set_cached_extraction(user_text: str, today_date: str, extraction: dict) -> 
         logger.info(f"[ROUTER_CACHE] ⚠️ SKIP (context-dependent): '{user_text[:40]}'")
         return
 
-    key = _router_cache_key(user_text, today_date)
+    key = _router_cache_key(user_text, today_date, context_fingerprint)
 
     _mem.set(key, extraction)
 

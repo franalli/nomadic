@@ -7,7 +7,7 @@
  */
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
@@ -85,20 +85,13 @@ export function StrategyStageRenderer({
   savedTileIds = new Set(), onSaveTile, tripInputs, onOpenSheet,
   isCommitting = false, hasEverHadPlan: _hasEverHadPlan = false,
   isRegenerating = false, onSelectNights, mode: explicitMode,
-  onOpenActivitySettings, onOpenStaysSettings, onOpenFlightsSettings,
+  onOpenActivitySettings: _onOpenActivitySettings, onOpenStaysSettings, onOpenFlightsSettings,
 }: StrategyStageRendererProps) {
   const o = useStrategyStageOrchestration({
     state, viewModel, tiles, generation, canGeneratePlan, hasDates,
     isExpandingItinerary, isCommitting, isRegenerating, onSaveTile,
     tripInputs, mode: explicitMode, destinationTitle: destinationCard?.title,
   });
-
-  const hasItinerary = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
-
-  const [staysExpanded, setStaysExpanded] = useState(!hasItinerary);
-  const [flightsExpanded, setFlightsExpanded] = useState(false);
-  const handleToggleStays = useCallback(() => setStaysExpanded(v => !v), []);
-  const handleToggleFlights = useCallback(() => setFlightsExpanded(v => !v), []);
 
   const planContent = useMemo(() => {
     const { isShowingMirrorLoader, tripDuration } = o.displayLogic;
@@ -108,28 +101,26 @@ export function StrategyStageRenderer({
     if (o.stableDensity === 'ghost') {
       return (
         <PlanGhostDensityView
-          viewModel={viewModel} filteredViewModel={filteredViewModel}
+          filteredViewModel={filteredViewModel}
           totalConstraints={totalConstraints} ghostDayCards={ghostDayCards}
           ghostHasDuration={ghostHasDuration} effectiveTripInputs={o.effectiveTripInputs}
           onSelectNights={onSelectNights} onOpenSheet={onOpenSheet}
           onOpenStaysSettings={onOpenStaysSettings} onOpenFlightsSettings={onOpenFlightsSettings}
-          onOpenActivitySettings={onOpenActivitySettings}
         />
       );
     }
     if (o.stableDensity === 'bridge') {
       return (
         <PlanBridgeDensityView
-          viewModel={viewModel} filteredViewModel={filteredViewModel}
+          filteredViewModel={filteredViewModel}
           totalConstraints={totalConstraints} hasDates={o.displayLogic.hasDates}
           destinationCard={destinationCard} effectiveTripInputs={o.effectiveTripInputs}
-          onOpenActivitySettings={onOpenActivitySettings}
         />
       );
     }
     return (
       <PlanFullDensityView
-        state={state} viewModel={viewModel} filteredViewModel={filteredViewModel}
+        state={state} viewModel={viewModel}
         fullModeSections={fullModeSections} fullModePOIs={o.fullModePOIs}
         effectiveTiles={o.effectiveTiles} effectiveTripInputs={o.effectiveTripInputs}
         destinationCard={destinationCard} generation={generation}
@@ -137,27 +128,22 @@ export function StrategyStageRenderer({
         hasItineraryContent={o.hasItineraryContent} isExpandingItinerary={isExpandingItinerary}
         isStreaming={o.isStreaming} isAnyRegenerating={o.isAnyRegenerating}
         isRegenUpdating={o.isRegenUpdating} isDesktop={o.isDesktop}
-        showConstraints={o.showConstraints} preferenceCount={o.preferenceCount}
+        preferenceCount={o.preferenceCount}
         effectiveMode={o.effectiveMode} timelineVariant={computeTimelineVariant(state)}
         timelineSectionRef={o.timelineSectionRef} scrollContainerRef={o.scrollContainerRef}
-        onRefineAssumptions={onRefineAssumptions}
         handleSaveTile={o.handleSaveTile} handleOpenBookingDrawer={o.handleOpenBookingDrawer}
-        onOpenActivitySettings={onOpenActivitySettings} onOpenStaysSettings={onOpenStaysSettings}
+        onOpenStaysSettings={onOpenStaysSettings}
         onOpenFlightsSettings={onOpenFlightsSettings}
-        onToggleConstraints={() => o.setShowConstraints(!o.showConstraints)}
-        staysExpanded={staysExpanded} flightsExpanded={flightsExpanded}
-        onToggleStays={handleToggleStays} onToggleFlights={handleToggleFlights}
       />
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps -- onOpenActivitySettings etc intentionally excluded
   }, [
     o.displayLogic, o.specialistData, o.stableDensity, o.effectiveTripInputs, o.fullModePOIs,
     o.effectiveTiles, o.hasSectionData, o.hasItineraryContent, o.isStreaming, o.isAnyRegenerating,
-    o.isRegenUpdating, o.isDesktop, o.showConstraints, o.preferenceCount,
+    o.isRegenUpdating, o.isDesktop, o.preferenceCount,
     o.effectiveMode, o.timelineSectionRef, o.scrollContainerRef, o.handleSaveTile, o.handleOpenBookingDrawer,
     state, viewModel, destinationCard, generation, savedTileIds, isExpandingItinerary,
     onRefineAssumptions, onSelectNights, onOpenSheet,
-    staysExpanded, flightsExpanded, handleToggleStays, handleToggleFlights,
   ]);
 
   const bookContent = useMemo(() => (
@@ -197,7 +183,8 @@ export function StrategyStageRenderer({
       <PlanHeader
         isGenerating={o.generating} fallbackTitle={fallbackTitle}
         planViewState={state} isExpandingItinerary={isExpandingItinerary}
-        tripInputs={o.effectiveTripInputs} onOpenSheet={onOpenSheet} isStreaming={o.isStreaming}
+        tripInputs={o.effectiveTripInputs} dayCards={o.effectiveDayCards}
+        onOpenSheet={onOpenSheet} isStreaming={o.isStreaming}
         isCollapsed={!o.isDesktop && o.isCollapsed}
       />
       <div className="flex-1 min-h-0 relative overflow-hidden">

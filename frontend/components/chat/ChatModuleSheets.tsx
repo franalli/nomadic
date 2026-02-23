@@ -14,7 +14,7 @@ import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
 import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
 import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
-import { useDocumentStore } from '@/state/documentStore';
+import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
 import type { AckUpdate , ChatMessage } from '@/types/chat';
 import type {
   ActivitySettings,
@@ -95,6 +95,8 @@ export function ChatModuleSheets({
 }: ChatModuleSheetsProps) {
   const sheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const patchDocument = useDocumentStore((s) => s.patchDocument);
+  const updateTripInputs = useDocumentStore((s) => s.updateTripInputs);
+  const commitTripInputs = useDocumentStore((s) => s.commitTripInputs);
 
   useEffect(() => {
     return () => {
@@ -190,7 +192,7 @@ export function ChatModuleSheets({
           }
           toast(enabled ? 'Activities included' : 'Activities removed');
         }}
-        onSaveSettings={(settings) => {
+        onSaveSettings={async (settings) => {
           const prevDayPrefs = activitySettings?.day_preferences || {};
           const prevCats = new Set(activitySettings?.categories || []);
           const newCats = new Set(settings.categories || []);
@@ -223,7 +225,29 @@ export function ChatModuleSheets({
             }
           }
 
+          const shouldDisableActivities = (settings.categories?.length ?? 0) === 0;
+          const nextBookingTypes = shouldDisableActivities
+            ? {
+                ...DEFAULT_BOOKING_TYPES,
+                ...(useDocumentStore.getState().document?.trip_inputs?.booking_types ?? {}),
+                activities: 'off' as const,
+              }
+            : undefined;
+
           onUpdateActivitySettings?.(settings);
+          if (nextBookingTypes) {
+            updateTripInputs({ booking_types: nextBookingTypes });
+          }
+
+          await commitTripInputs({
+            activity_settings: {
+              ...settings,
+              categories: settings.categories ?? [],
+              day_preferences: settings.categories?.length ? (settings.day_preferences ?? {}) : {},
+            },
+            ...(nextBookingTypes ? { booking_types: nextBookingTypes } : {}),
+          });
+
           toast('Activity preferences saved');
           const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
             planViewState ?? ''

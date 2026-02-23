@@ -100,9 +100,14 @@ class Settings(BaseSettings):
     # local_expert LLM — uses prompt-based JSON parsing (not function_calling)
     # to avoid Gemini $defs limitation
     local_expert_model: str = os.getenv("LOCAL_EXPERT_MODEL", "gemini-2.5-flash")
-    local_expert_use_llm: bool = True  # Set LOCAL_EXPERT_USE_LLM=false to disable LLM (tests/debug)
+    local_expert_use_llm: bool = (
+        os.getenv("LOCAL_EXPERT_USE_LLM", "true").lower() == "true"
+    )  # Set LOCAL_EXPERT_USE_LLM=false to disable LLM (tests/debug)
     # vertical_specialist domain reasoning — KEEP gpt-4o (quality risk on Gemini Flash)
     specialist_model: str = os.getenv("SPECIALIST_MODEL", "gpt-4o")
+    specialist_fallback_model: str | None = (
+        os.getenv("SPECIALIST_FALLBACK_MODEL", "").strip() or None
+    )
     # constraint_guard place validation
     guard_model: str = os.getenv("GUARD_MODEL", "gemini-2.5-flash")
     # synthesizer planning responses
@@ -117,15 +122,21 @@ class Settings(BaseSettings):
     iata_resolver_model: str = os.getenv("IATA_RESOLVER_MODEL", "gemini-2.5-flash")
 
     # Debug flags
-    debug_plan_messages: bool = False  # Enable verbose debug logging for planning
+    debug_plan_messages: bool = (
+        os.getenv("DEBUG_PLAN_MESSAGES", "false").lower() == "true"
+    )  # Enable verbose debug logging for planning
     aggressive_cache_clear: bool = False  # Clear ALL caches on Fresh Start (dev mode)
     precise_token_count: bool = False  # Use tiktoken for precise token counting
     debug_mode: str = Field(
         default="off", alias="DEBUG"
     )  # DEBUG env var: "off" | "compact" | "full"
     pytest_running: bool = Field(default=False, alias="PYTEST_RUNNING")  # Set by conftest.py
-    cost_threshold_warning: float = 0.10  # LLM cost warning threshold (USD)
-    cost_threshold_critical: float = 1.00  # LLM cost critical threshold (USD)
+    cost_threshold_warning: float = float(
+        os.getenv("COST_THRESHOLD_WARNING", "0.10")
+    )  # LLM cost warning threshold (USD)
+    cost_threshold_critical: float = float(
+        os.getenv("COST_THRESHOLD_CRITICAL", "1.00")
+    )  # LLM cost critical threshold (USD)
 
     # backend — 0.0.0.0 required for container environments (Render, Docker)
     backend_host: str = "0.0.0.0"
@@ -198,9 +209,36 @@ class Settings(BaseSettings):
     # =============================================================================
     rate_limit_enabled: bool = True
     admin_api_key: str = os.getenv("ADMIN_API_KEY", "")
+    media_proxy_signing_key: str = os.getenv("MEDIA_PROXY_SIGNING_KEY", "")
     max_sessions_per_ip_hour: int = int(
         os.getenv("MAX_SESSIONS_PER_IP_HOUR", "10")
     )  # Session creation throttle per IP
+    spend_guard_enabled: bool = os.getenv("SPEND_GUARD_ENABLED", "true").lower() == "true"
+    # Hard daily cost caps (USD) for paid external APIs.
+    spend_guard_session_daily_cap_usd: float = float(
+        os.getenv("SPEND_GUARD_SESSION_DAILY_CAP_USD", "2.0")
+    )
+    spend_guard_global_daily_cap_usd: float = float(
+        os.getenv("SPEND_GUARD_GLOBAL_DAILY_CAP_USD", "10.0")
+    )
+    # Estimated per-LLM-call token envelope used for pre-call budgeting.
+    spend_guard_llm_prompt_tokens_estimate: int = int(
+        os.getenv("SPEND_GUARD_LLM_PROMPT_TOKENS_ESTIMATE", "1200")
+    )
+    spend_guard_llm_completion_tokens_estimate: int = int(
+        os.getenv("SPEND_GUARD_LLM_COMPLETION_TOKENS_ESTIMATE", "700")
+    )
+    spend_guard_llm_unknown_model_estimated_call_usd: float = float(
+        os.getenv("SPEND_GUARD_LLM_UNKNOWN_MODEL_ESTIMATED_CALL_USD", "0.02")
+    )
+    # Google Places Text Search billable-call estimate (USD).
+    spend_guard_places_estimated_call_usd: float = float(
+        os.getenv("SPEND_GUARD_PLACES_ESTIMATED_CALL_USD", "0.017")
+    )
+    # Amadeus billable-call estimate (USD).
+    spend_guard_amadeus_estimated_call_usd: float = float(
+        os.getenv("SPEND_GUARD_AMADEUS_ESTIMATED_CALL_USD", "0.01")
+    )
 
     # Validation cache settings
     validation_cache_size: int = 5000  # Increased for progressive learning of unknown places
@@ -367,6 +405,15 @@ class Settings(BaseSettings):
     # Feature flag: enable Google Places for hotels and activities
     use_google_places_provider: bool = (
         os.getenv("USE_GOOGLE_PLACES_PROVIDER", "false").lower() == "true"
+    )
+    google_places_circuit_breaker_enabled: bool = (
+        os.getenv("GOOGLE_PLACES_CIRCUIT_BREAKER_ENABLED", "true").lower() == "true"
+    )
+    google_places_circuit_breaker_failure_threshold: int = int(
+        os.getenv("GOOGLE_PLACES_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "2")
+    )
+    google_places_circuit_breaker_open_seconds: int = int(
+        os.getenv("GOOGLE_PLACES_CIRCUIT_BREAKER_OPEN_SECONDS", "30")
     )
 
 

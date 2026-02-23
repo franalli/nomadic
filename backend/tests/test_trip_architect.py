@@ -25,6 +25,7 @@ from app.planner.state.graph_state import (
     TripPlan,
     create_missing_fields_response,
     get_missing_fields,
+    trip_plan_is_ready,
 )
 
 
@@ -430,6 +431,11 @@ class TestMissingFields:
         assert "dates" in missing
         assert "destination" not in missing
 
+    def test_partial_dates_still_missing(self) -> None:
+        plan = TripPlan(destination="Bali", start_date="2026-06-01", adults=2)
+        missing = get_missing_fields(plan)
+        assert "dates" in missing
+
     def test_complete_plan_no_missing(self) -> None:
         plan = TripPlan(
             destination="Bali",
@@ -469,6 +475,18 @@ class TestMissingFields:
         )
         response = create_missing_fields_response(plan)
         assert response is None
+
+    def test_trip_plan_ready_requires_start_and_end_dates(self) -> None:
+        start_only = TripPlan(destination="Bali", start_date="2026-06-01", adults=2)
+        complete = TripPlan(
+            destination="Bali",
+            start_date="2026-06-01",
+            end_date="2026-06-08",
+            adults=2,
+        )
+
+        assert trip_plan_is_ready(start_only) is False
+        assert trip_plan_is_ready(complete) is True
 
     def test_architect_generate_missing_fields_response(self) -> None:
         """TripArchitect.generate_missing_fields_response wraps the state helper."""

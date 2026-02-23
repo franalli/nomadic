@@ -421,100 +421,142 @@ REQUIREMENTS:
 set feasibility_status to "infeasible" with reason"""
 
     llm_start = time.time()
-    try:
-        llm = get_llm_by_model(settings.specialist_model, temperature=0.2, max_tokens=1000)
+    primary_model = settings.specialist_model
+    fallback_model_raw = settings.specialist_fallback_model or ""
+    fallback_model = fallback_model_raw.strip() or None
+    if fallback_model == primary_model:
+        fallback_model = None
 
-        # Use flattened schema for function calling — $defs inlined so Gemini accepts it.
-        # Passing a raw dict (not the Pydantic class) prevents LangChain from regenerating $defs.
-        # copy() guards against LangChain mutating the shared module-level constant in-place.
-        structured_llm = llm.with_structured_output(
-            dict(_SPECIALIST_FLAT_SCHEMA), include_raw=True, method="function_calling"
-        )
+    models_to_try = [primary_model]
+    if fallback_model:
+        models_to_try.append(fallback_model)
 
-        _debug_log(f"[LLM_SPECIALIST] system_prompt size: {len(system_prompt)} chars")
-        _debug_log(f"[LLM_SPECIALIST] Calling LLM for {topic} in {destination}")
+    _debug_log(f"[LLM_SPECIALIST] system_prompt size: {len(system_prompt)} chars")
+    _debug_log(
+        f"[LLM_SPECIALIST] Calling LLM for {topic} in {destination} "
+        f"(primary={primary_model}, fallback={fallback_model or 'none'})"
+    )
 
-        raw_result = await structured_llm.ainvoke(
-            [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt),
-            ]
-        )
+    last_error: Exception | None = None
+    for idx, model_name in enumerate(models_to_try):
+        is_fallback_attempt = idx > 0
+        if is_fallback_attempt:
+            _debug_log(
+                f"[LLM_SPECIALIST] Retrying with fallback model '{model_name}' "
+                f"after primary failure for topic={topic}"
+            )
 
-        parsed_dict = raw_result.get("parsed") if isinstance(raw_result, dict) else None
-        if parsed_dict is None:
-            raise ValueError("Structured output returned parsed=None")
-        output = LLMSpecialistOutput.model_validate(parsed_dict)
+        attempt_start = time.time()
+        try:
+            llm = get_llm_by_model(model_name, temperature=0.2, max_tokens=1000)
 
-        # Guard against LLM returning an all-defaults empty dict (feasible + zero activities).
-        # model_validate({}) would succeed silently and poison the 7-day L2 cache.
-        if output.feasibility_status == "feasible" and not output.activities:
-            raise ValueError("LLM returned feasible status with zero activities")
+            # Use flattened schema for function calling — $defs inlined so Gemini accepts it.
+            # Passing a raw dict (not the Pydantic class) prevents LangChain from regenerating
+            # $defs. copy() guards against LangChain mutating the shared constant in-place.
+            structured_llm = llm.with_structured_output(
+                dict(_SPECIALIST_FLAT_SCHEMA), include_raw=True, method="function_calling"
+            )
 
-        token_usage = extract_token_usage(raw_result, model=settings.specialist_model)
-        if token_usage:
-            _debug_log(f"[LLM_SPECIALIST] Token usage: {token_usage}")
+            raw_result = await structured_llm.ainvoke(
+                [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_prompt),
+                ]
+            )
 
-        elapsed = time.time() - llm_start
-        _debug_log(
-            f"[LLM_SPECIALIST] ✅ Success for {topic} in {elapsed:.1f}s: "
-            f"status={output.feasibility_status}, "
-            f"activities={len(output.activities)}, constraints={len(output.constraints)}"
-        )
+            parsed_dict = raw_result.get("parsed") if isinstance(raw_result, dict) else None
+            if parsed_dict is None:
+                raise ValueError("Structured output returned parsed=None")
+            output = LLMSpecialistOutput.model_validate(parsed_dict)
 
-        # =====================================================================
-        # FIX C: Pad with repeat sessions if LLM returned fewer than target
-        # =====================================================================
-        if (
-            target_activities is not None
-            and output.feasibility_status == "feasible"
-            and len(output.activities) < min(target_activities, available_days)
-        ):
-            deficit = min(target_activities, available_days) - len(output.activities)
-            original_count = len(output.activities)
-            if output.activities:
-                for i in range(deficit):
-                    source = output.activities[i % original_count]
-                    repeat = source.model_copy(
-                        update={"title": f"{source.title} (Session {2 + i // original_count})"}
+            # Guard against LLM returning an all-defaults empty dict (feasible + zero activities).
+            # model_validate({}) would succeed silently and poison the 7-day L2 cache.
+            if output.feasibility_status == "feasible" and not output.activities:
+                raise ValueError("LLM returned feasible status with zero activities")
+
+            token_usage = extract_token_usage(raw_result, model=model_name)
+            if token_usage:
+                _debug_log(f"[LLM_SPECIALIST] Token usage: {token_usage}")
+
+            elapsed = time.time() - llm_start
+            source = "fallback" if is_fallback_attempt else "primary"
+            _debug_log(
+                f"[LLM_SPECIALIST] ✅ Success ({source}={model_name}) for {topic} "
+                f"in {elapsed:.1f}s: status={output.feasibility_status}, "
+                f"activities={len(output.activities)}, constraints={len(output.constraints)}"
+            )
+
+            # =================================================================
+            # FIX C: Pad with repeat sessions if LLM returned fewer than target
+            # =================================================================
+            if (
+                target_activities is not None
+                and output.feasibility_status == "feasible"
+                and len(output.activities) < min(target_activities, available_days)
+            ):
+                deficit = min(target_activities, available_days) - len(output.activities)
+                original_count = len(output.activities)
+                if output.activities:
+                    for i in range(deficit):
+                        source_activity = output.activities[i % original_count]
+                        repeat = source_activity.model_copy(
+                            update={
+                                "title": (
+                                    f"{source_activity.title} (Session {2 + i // original_count})"
+                                )
+                            }
+                        )
+                        output.activities.append(repeat)
+                    _debug_log(
+                        f"[LLM_SPECIALIST] Padded {topic}: {original_count} → "
+                        f"{len(output.activities)} activities (target={target_activities})"
                     )
-                    output.activities.append(repeat)
+
+            # =================================================================
+            # CACHE WRITE: Store successful LLM output to L1 + L2
+            # =================================================================
+            if db is not None:
+                try:
+                    from app.services.specialist_cache import set_cached_specialist_output
+
+                    await set_cached_specialist_output(
+                        db=db,
+                        topic=topic,
+                        destination=destination,
+                        start_date=trip_plan.start_date,
+                        end_date=trip_plan.end_date,
+                        output=output.model_dump(),
+                        skill_level=skill_level,
+                        day_pref=target_activities,
+                    )
+                except Exception as cache_err:
+                    _debug_log(f"[LLM_SPECIALIST] Cache write failed (non-fatal): {cache_err}")
+
+            return output
+        except Exception as e:
+            last_error = e
+            attempt_elapsed = time.time() - attempt_start
+            if not is_fallback_attempt and fallback_model:
                 _debug_log(
-                    f"[LLM_SPECIALIST] Padded {topic}: {original_count} → "
-                    f"{len(output.activities)} activities (target={target_activities})"
+                    f"[LLM_SPECIALIST] ❌ Primary model '{model_name}' failed for {topic} "
+                    f"after {attempt_elapsed:.1f}s | type={type(e).__name__} | "
+                    f"msg={str(e)[:220]} | trying fallback='{fallback_model}'"
                 )
+                continue
 
-        # =====================================================================
-        # CACHE WRITE: Store successful LLM output to L1 + L2
-        # =====================================================================
-        if db is not None:
-            try:
-                from app.services.specialist_cache import set_cached_specialist_output
+            label = "fallback" if is_fallback_attempt else "primary"
+            _debug_log(
+                f"[LLM_SPECIALIST] ❌ {label.title()} model '{model_name}' failed for {topic} "
+                f"after {attempt_elapsed:.1f}s | type={type(e).__name__} | msg={str(e)[:220]}"
+            )
 
-                await set_cached_specialist_output(
-                    db=db,
-                    topic=topic,
-                    destination=destination,
-                    start_date=trip_plan.start_date,
-                    end_date=trip_plan.end_date,
-                    output=output.model_dump(),
-                    skill_level=skill_level,
-                    day_pref=target_activities,
-                )
-            except Exception as cache_err:
-                _debug_log(f"[LLM_SPECIALIST] Cache write failed (non-fatal): {cache_err}")
-
-        return output
-
-    except Exception as e:
-        elapsed = time.time() - llm_start
-        # Log exception type to diagnose: OutputParserException = schema mismatch,
-        # TimeoutError = LLM slow, ValidationError = Pydantic rejected field
+    elapsed = time.time() - llm_start
+    if last_error is not None:
         _debug_log(
             f"[LLM_SPECIALIST] ❌ FAILED for {topic} after {elapsed:.1f}s | "
-            f"type={type(e).__name__} | msg={str(e)[:300]}"
+            f"type={type(last_error).__name__} | msg={str(last_error)[:300]}"
         )
-        return None
+    return None
 
 
 def _get_minimal_safety_constraints(

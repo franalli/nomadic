@@ -86,6 +86,7 @@ class TestTripArchitect:
         state = GraphState()
         state.trip_plan.destination = "Bali"
         state.trip_plan.start_date = "2024-03-15"
+        state.trip_plan.end_date = "2024-03-22"
 
         mode = architect.determine_mode(state)
         assert mode == "planning"
@@ -257,7 +258,8 @@ class TestSynthesizer:
         suggestions = generate_suggestions(state)
         normalized = {s.strip().lower() for s in suggestions}
         assert len(suggestions) == len(normalized)
-        assert suggestions.count("What are must-do activities in Bali?") == 1
+        categories = [m.get("category") for m in state.metadata.get("suggestion_chip_meta", [])]
+        assert any(isinstance(c, str) and c.startswith("plan_") for c in categories)
 
     def test_suggested_replies_rotate_from_previous_turn(self):
         """When alternatives exist, avoid repeating the exact same chip from last turn."""
@@ -478,11 +480,18 @@ class TestFeasibilityChecks:
         assert status == "feasible", f"Expected 'feasible', got '{status}'"
 
     @pytest.mark.asyncio
-    async def test_miami_skiing_infeasible(self):
+    async def test_miami_skiing_infeasible(self, monkeypatch: pytest.MonkeyPatch):
         """Miami should return INFEASIBLE for skiing."""
-        from app.planner.services.feasibility_service import check_feasibility
+        import app.planner.services.feasibility_service as feasibility_service
 
-        status, reason, alternative = await check_feasibility("skiing", "Miami")
+        async def _fake_feasibility_llm(topic: str, destination: str):
+            assert topic == "skiing"
+            assert destination == "Miami"
+            return (False, "No reliable ski conditions")
+
+        monkeypatch.setattr(feasibility_service, "get_feasibility_llm", _fake_feasibility_llm)
+
+        status, reason, alternative = await feasibility_service.check_feasibility("skiing", "Miami")
 
         assert status == "infeasible", f"Expected 'infeasible', got '{status}'"
 

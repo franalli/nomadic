@@ -21,7 +21,7 @@ import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { getStatusPillText } from '@/lib/statusCopyMap';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
-import type { PlanViewState } from '@/types/plan-envelope';
+import type { DayCard, PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 
 interface PlanHeaderProps {
@@ -34,6 +34,8 @@ interface PlanHeaderProps {
   isExpandingItinerary?: boolean;
   /** Trip inputs for displaying summary pills in S1+ */
   tripInputs?: DocumentTripInputs;
+  /** Day cards for deriving scheduled activity counts in pills */
+  dayCards?: DayCard[];
   /** Handler to open a sheet for editing trip inputs */
   onOpenSheet?: (sheet: SheetType) => void;
   /** Whether streaming/generation is in progress (disables pills) */
@@ -48,6 +50,7 @@ export function PlanHeader({
   planViewState = 'S0_BOOTSTRAP',
   isExpandingItinerary = false,
   tripInputs: propTripInputs,
+  dayCards,
   onOpenSheet,
   isStreaming = false,
   isCollapsed = false,
@@ -113,6 +116,7 @@ export function PlanHeader({
     )}>
       <TripSummaryPills
         tripInputs={tripInputs}
+        dayCards={dayCards}
         onOpenSheet={onOpenSheet}
         disabled={isStreaming}
         variant="default"

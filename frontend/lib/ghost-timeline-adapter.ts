@@ -43,6 +43,33 @@ function _toFiniteNumber(value: unknown): number | null {
   return null;
 }
 
+function _toFiniteInteger(value: unknown): number | null {
+  const num = _toFiniteNumber(value);
+  if (num === null) return null;
+  return Math.round(num);
+}
+
+function _toIntensity(value: unknown): 'light' | 'moderate' | 'challenging' | undefined {
+  const normalized = _toNormalizedKey(value);
+  if (normalized === 'light' || normalized === 'moderate' || normalized === 'challenging') {
+    return normalized;
+  }
+  return undefined;
+}
+
+function _toPriceLevel(value: unknown): number | undefined {
+  const num = _toFiniteInteger(value);
+  if (num === null) return undefined;
+  if (num < 0 || num > 4) return undefined;
+  return num;
+}
+
+function _toOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
 function _normalizeMapCoordinates(
   latValue: unknown,
   lngValue: unknown
@@ -52,6 +79,123 @@ function _normalizeMapCoordinates(
   if (lat === null || lng === null) return null;
   if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
   return { lat, lng };
+}
+
+function _toNormalizedKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function _isBrowseBlock(block: DayBlock): boolean {
+  return block.activity_provenance === 'user_browse_added';
+}
+
+const _CANONICAL_POI_TYPES = new Set<string>([
+  'diving', 'hiking', 'skiing', 'cycling', 'surfing', 'sailing', 'climbing', 'wildlife_safari',
+  'yoga', 'wellness', 'spa', 'nightlife', 'cooking', 'culture', 'cultural', 'temples', 'food',
+  'beach', 'shopping', 'sightseeing', 'photography', 'relaxation', 'nature', 'tours',
+  'adventure', 'family', 'activity',
+]);
+
+const _POI_TYPE_ALIASES: Record<string, string> = {
+  cultural: 'cultural',
+  food: 'food',
+  nature: 'nature',
+  shopping: 'shopping',
+  spa: 'spa',
+  tours: 'tours',
+  tourist_attraction: 'tours',
+  travel_agency: 'tours',
+  point_of_interest: 'tours',
+  museum: 'cultural',
+  art_gallery: 'cultural',
+  historical_landmark: 'cultural',
+  cultural_landmark: 'cultural',
+  monument: 'cultural',
+  plaza: 'cultural',
+  ruins: 'cultural',
+  fountain: 'cultural',
+  hindu_temple: 'temples',
+  temple: 'temples',
+  church: 'cultural',
+  place_of_worship: 'cultural',
+  synagogue: 'cultural',
+  mosque: 'cultural',
+  restaurant: 'food',
+  cafe: 'food',
+  bar: 'food',
+  bakery: 'food',
+  meal_takeaway: 'food',
+  meal_delivery: 'food',
+  park: 'nature',
+  natural_feature: 'nature',
+  national_park: 'nature',
+  campground: 'nature',
+  zoo: 'nature',
+  botanical_garden: 'nature',
+  shopping_mall: 'shopping',
+  market: 'shopping',
+  store: 'shopping',
+  clothing_store: 'shopping',
+  department_store: 'shopping',
+  beauty_salon: 'spa',
+  gym: 'spa',
+};
+
+function _canonicalPoiType(value: unknown): string | null {
+  const key = _toNormalizedKey(value);
+  if (!key) return null;
+  let mapped = _POI_TYPE_ALIASES[key] ?? key;
+  if (!_CANONICAL_POI_TYPES.has(mapped)) {
+    if (/(museum|landmark|historic|monument|plaza|fountain)/.test(key)) mapped = 'cultural';
+    else if (/(temple|church|worship|mosque|synagogue)/.test(key)) mapped = 'temples';
+    else if (/(restaurant|cafe|bar|bakery|food|meal)/.test(key)) mapped = 'food';
+    else if (/(park|garden|nature|zoo|camp)/.test(key)) mapped = 'nature';
+    else if (/(shop|store|market|mall)/.test(key)) mapped = 'shopping';
+    else if (/(spa|wellness|gym|beauty)/.test(key)) mapped = 'spa';
+    else if (/(tour|attraction|point_of_interest|visitor)/.test(key)) mapped = 'tours';
+  }
+  return _CANONICAL_POI_TYPES.has(mapped) ? mapped : null;
+}
+
+function _resolvePoiTypeFromBookedTile(block: DayBlock): string | null {
+  const tile = block.booked_tile;
+  if (!tile || typeof tile !== 'object') return null;
+  const t = tile as Record<string, unknown>;
+  const meta = (t.meta && typeof t.meta === 'object') ? t.meta as Record<string, unknown> : {};
+
+  for (const candidate of [
+    t.map_type,
+    meta.map_type,
+    t.browse_category,
+    t.category,
+    meta.category,
+  ]) {
+    const canonical = _canonicalPoiType(candidate);
+    if (canonical) return canonical;
+  }
+
+  if (Array.isArray(t.tags)) {
+    for (const tag of t.tags) {
+      const canonical = _canonicalPoiType(tag);
+      if (canonical) return canonical;
+    }
+  }
+
+  return null;
+}
+
+function _resolvePoiType(block: DayBlock): string {
+  const mapType = _canonicalPoiType(block.map_type);
+  if (mapType) return mapType;
+  const specialistType = _canonicalPoiType(block.specialist_type);
+  if (specialistType) return specialistType;
+  const bookedTileType = _resolvePoiTypeFromBookedTile(block);
+  if (bookedTileType) return bookedTileType;
+  const activityType = _canonicalPoiType(block.activity_type);
+  if (activityType) return activityType;
+  return 'activity';
 }
 
 function _buildPoiFingerprint(
@@ -74,7 +218,28 @@ function _buildPoiFingerprint(
       const lat = block.coordinates?.lat;
       const lng = block.coordinates?.lng;
       const id = block.id ?? `${dayCard.day_number}-${idx}`;
-      tokens.push(`${id}:${lat ?? 'x'}:${lng ?? 'x'}`);
+      const bookedTile = (block.booked_tile && typeof block.booked_tile === 'object')
+        ? block.booked_tile as Record<string, unknown>
+        : null;
+      const bookedMeta = (bookedTile?.meta && typeof bookedTile.meta === 'object')
+        ? bookedTile.meta as Record<string, unknown>
+        : null;
+      const bookedTags = Array.isArray(bookedTile?.tags)
+        ? bookedTile?.tags.map((t) => String(t)).sort().join(',')
+        : '';
+      const typeKey = [
+        block.map_type ?? '',
+        block.specialist_type ?? '',
+        block.activity_type ?? '',
+        block.activity_provenance ?? '',
+        String(bookedTile?.map_type ?? ''),
+        String(bookedMeta?.map_type ?? ''),
+        String(bookedTile?.browse_category ?? ''),
+        String(bookedTile?.category ?? ''),
+        String(bookedMeta?.category ?? ''),
+        bookedTags,
+      ].join('~');
+      tokens.push(`${id}:${lat ?? 'x'}:${lng ?? 'x'}:${typeKey}`);
     });
   }
   return _hashFingerprint(tokens.join('|'));
@@ -223,6 +388,12 @@ export interface MapPOI {
   type: string;
   coordinates: { lat: number; lng: number };
   dayNumber?: number;
+  source?: 'itinerary' | 'specialist' | 'browse';
+  intensity?: 'light' | 'moderate' | 'challenging';
+  duration?: string;
+  rating?: number;
+  reviewCount?: number;
+  priceLevel?: number;
 }
 
 /**
@@ -257,11 +428,25 @@ export function extractPOIsFromSections(
         const [lng, lat] = content.coordinates;
         const normalized = _normalizeMapCoordinates(lat, lng);
         if (!normalized) return;
+        const rawContent = content as Record<string, unknown>;
+        const dayNumber = _toFiniteInteger(content.day ?? rawContent.day) ?? undefined;
+        const rating = _toFiniteNumber(rawContent.rating) ?? undefined;
+        const reviewCount =
+          _toFiniteInteger(rawContent.review_count ?? rawContent.reviewCount) ?? undefined;
+        const priceLevel =
+          _toPriceLevel(rawContent.price_level ?? rawContent.priceLevel) ?? undefined;
         pois.push({
           id: `poi-${section.specialist_type}-${idx}`,
           title: content.title,
           type: section.specialist_type || 'activity',
           coordinates: normalized,
+          source: 'specialist',
+          dayNumber,
+          intensity: _toIntensity(rawContent.intensity),
+          duration: _toOptionalString(rawContent.duration),
+          rating,
+          reviewCount,
+          priceLevel,
         });
       }
     });
@@ -323,9 +508,15 @@ export function extractPOIsFromDayCards(
         pois.push({
           id: blockId,
           title: block.summary || block.activity_type,
-          type: block.specialist_type || 'activity',
+          type: _resolvePoiType(block),
           coordinates: normalizedCoords,
           dayNumber: dayCard.day_number,
+          source: _isBrowseBlock(block) ? 'browse' : 'itinerary',
+          intensity: block.intensity,
+          duration: block.duration,
+          rating: block.rating,
+          reviewCount: block.review_count,
+          priceLevel: block.price_level,
         });
       } else {
         skippedNoCoords += 1;

@@ -57,6 +57,7 @@ from app.services.regen_strategy import (
     detect_changed_fields,
     get_strategy_description,
 )
+from app.services.spend_guard import spend_guard_scope
 from app.services.task_tracker import track as _track_bg_task
 from app.services.unsplash import get_image_url_sync
 
@@ -445,6 +446,8 @@ async def generate_sse(
             if session_state.get("metadata") is None:
                 session_state["metadata"] = {}
             session_state["metadata"]["session_id"] = session_id
+            if document_version is not None:
+                session_state["metadata"]["document_version"] = int(document_version)
 
             # Stream tokens from run_turn_streaming with per-event timeout
             # Use route timeout for total stream duration protection
@@ -453,41 +456,42 @@ async def generate_sse(
             token_count = 0
             stream_start = asyncio.get_event_loop().time()
 
-            async for event in run_turn_streaming(req.message, session_state):
-                # Check if we've exceeded total stream timeout
-                elapsed = asyncio.get_event_loop().time() - stream_start
-                if elapsed > route_timeout_seconds:
-                    logger.error(
-                        f"[{request_id}] Stream timeout after {elapsed:.1f}s "
-                        f"(limit: {route_timeout_seconds}s)"
-                    )
-                    timeout_payload = json.dumps(
-                        {"type": "error", "message": f"Stream timed out after {elapsed:.1f}s"}
-                    )
-                    yield f"event: error\ndata: {timeout_payload}\n\n"
-                    return
+            with spend_guard_scope(session_id):
+                async for event in run_turn_streaming(req.message, session_state):
+                    # Check if we've exceeded total stream timeout
+                    elapsed = asyncio.get_event_loop().time() - stream_start
+                    if elapsed > route_timeout_seconds:
+                        logger.error(
+                            f"[{request_id}] Stream timeout after {elapsed:.1f}s "
+                            f"(limit: {route_timeout_seconds}s)"
+                        )
+                        timeout_payload = json.dumps(
+                            {"type": "error", "message": f"Stream timed out after {elapsed:.1f}s"}
+                        )
+                        yield f"event: error\ndata: {timeout_payload}\n\n"
+                        return
 
-                if event["type"] == "token":
-                    token_count += 1
-                    if token_count <= 5 or token_count % 50 == 0:
-                        logger.debug(f"[{request_id}] Streaming token #{token_count}")
-                    yield f"event: token\ndata: {json.dumps(event)}\n\n"
-                elif event["type"] == "node_status":
-                    # Forward strategy node status for frontend progress tracking
-                    node = event["data"].get("node")
-                    status = event["data"].get("status")
-                    logger.debug(f"[{request_id}] Node status: {node} - {status}")
-                    yield f"event: node_status\ndata: {json.dumps(event)}\n\n"
-                elif event["type"] == "complete":
-                    logger.debug(f"[{request_id}] Stream complete after {token_count} tokens")
-                    final_result = event["data"]
-                elif event["type"] == "error":
-                    # Forward graph errors to frontend with actual message
-                    error_msg = event.get("message", "Unknown graph error")
-                    logger.error(f"[{request_id}] Graph error: {error_msg}")
-                    error_payload = json.dumps({"type": "error", "message": error_msg})
-                    yield f"event: error\ndata: {error_payload}\n\n"
-                    return
+                    if event["type"] == "token":
+                        token_count += 1
+                        if token_count <= 5 or token_count % 50 == 0:
+                            logger.debug(f"[{request_id}] Streaming token #{token_count}")
+                        yield f"event: token\ndata: {json.dumps(event)}\n\n"
+                    elif event["type"] == "node_status":
+                        # Forward strategy node status for frontend progress tracking
+                        node = event["data"].get("node")
+                        status = event["data"].get("status")
+                        logger.debug(f"[{request_id}] Node status: {node} - {status}")
+                        yield f"event: node_status\ndata: {json.dumps(event)}\n\n"
+                    elif event["type"] == "complete":
+                        logger.debug(f"[{request_id}] Stream complete after {token_count} tokens")
+                        final_result = event["data"]
+                    elif event["type"] == "error":
+                        # Forward graph errors to frontend with actual message
+                        error_msg = event.get("message", "Unknown graph error")
+                        logger.error(f"[{request_id}] Graph error: {error_msg}")
+                        error_payload = json.dumps({"type": "error", "message": error_msg})
+                        yield f"event: error\ndata: {error_payload}\n\n"
+                        return
 
             if final_result is None:
                 error_payload = json.dumps({"type": "error", "message": "No result from graph"})
@@ -660,6 +664,7 @@ async def generate_sse(
                         _ENRICHMENT_TTL_SECONDS,
                         _pending_enrichments,
                         _pending_lock,
+                        _persist_travel_intelligence,
                     )
 
                     async with _pending_lock:
@@ -673,7 +678,8 @@ async def generate_sse(
 
                             async def _enrich_no_trace(fn=_enrich_fn):
                                 with tracing_context(enabled=False):
-                                    await fn()
+                                    with spend_guard_scope(session_id):
+                                        await fn()
 
                             _enrich_task = asyncio.create_task(_enrich_no_trace())
                             _track_bg_task(_enrich_task)
@@ -683,6 +689,19 @@ async def generate_sse(
                                 "[SSE] Phase B: stale enrichment for %s",
                                 session_id,
                             )
+                            try:
+                                await _persist_travel_intelligence(
+                                    session_id,
+                                    None,
+                                    enrichment_state="failed",
+                                    error_code="stale",
+                                )
+                            except Exception as _persist_err:
+                                logger.warning(
+                                    "[SSE] Phase B: failed to mark stale enrichment for %s: %s",
+                                    session_id,
+                                    _persist_err,
+                                )
                 except (SQLAlchemyError, ValueError) as e:
                     logger.error(f"[{request_id}] Failed to persist document: {e}")
                     await db.rollback()

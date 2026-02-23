@@ -44,7 +44,7 @@ class TestRouterCacheKeyGeneration:
         key = _router_cache_key("test", "2025-03-01")
         parts = key.split("::")
         assert parts[0] == "router"
-        assert parts[1] == "v2"
+        assert parts[1] == "v3"
         assert len(parts[2]) == 32
         assert all(c in "0123456789abcdef" for c in parts[2])
 
@@ -53,6 +53,12 @@ class TestRouterCacheKeyGeneration:
         key1 = _router_cache_key("test query", "2025-03-01")
         key2 = _router_cache_key("test query", "2025-03-01")
         assert key1 == key2
+
+    def test_different_context_fingerprint_different_keys(self):
+        """Context fingerprint must isolate cache entries across trip context."""
+        key1 = _router_cache_key("next week", "2025-03-01", context_fingerprint="ctx_a")
+        key2 = _router_cache_key("next week", "2025-03-01", context_fingerprint="ctx_b")
+        assert key1 != key2
 
 
 class TestContextDependencyDetection:
@@ -270,6 +276,38 @@ class TestCacheDateSensitivity:
         result = get_cached_extraction("I want to go to Bali next Friday", "2025-03-01")
         assert result is not None
         assert result["destination"] == "Bali"
+
+    def test_same_query_same_date_context_fingerprint_cached_separately(self):
+        """Context fingerprint should prevent cross-context cache bleed."""
+        extraction_a = {"destination": "Bali", "start_date": "2025-03-07"}
+        extraction_b = {"destination": "Tokyo", "start_date": "2025-04-12"}
+
+        set_cached_extraction(
+            "next week works",
+            "2025-03-01",
+            extraction_a,
+            context_fingerprint="trip_a",
+        )
+        set_cached_extraction(
+            "next week works",
+            "2025-03-01",
+            extraction_b,
+            context_fingerprint="trip_b",
+        )
+
+        result_a = get_cached_extraction(
+            "next week works",
+            "2025-03-01",
+            context_fingerprint="trip_a",
+        )
+        result_b = get_cached_extraction(
+            "next week works",
+            "2025-03-01",
+            context_fingerprint="trip_b",
+        )
+
+        assert result_a is not None and result_a["destination"] == "Bali"
+        assert result_b is not None and result_b["destination"] == "Tokyo"
 
 
 class TestThreadSafety:

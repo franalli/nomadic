@@ -13,6 +13,7 @@ export interface BrowseTile {
   subtitle?: string;
   description?: string;
   image_url?: string | null;
+  photo_name?: string | null;
   rating?: number | null;
   review_count?: number | null;
   location_label?: string;
@@ -40,7 +41,7 @@ interface BrowseActivitiesResponse {
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-const BROWSE_DEFAULT_CATEGORIES = ['cultural', 'food', 'nature', 'tours'];
+const BROWSE_DEFAULT_CATEGORIES = ['cultural'];
 const BROWSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const BROWSE_CACHE_MAX_ENTRIES = 64;
 const browseActivitiesCache = new Map<
@@ -97,6 +98,13 @@ function getCsrfToken(): string | null {
   return null;
 }
 
+function createClientRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 /**
  * Check if a method requires CSRF protection.
  */
@@ -118,19 +126,31 @@ function isUnsafeMethod(method?: string): boolean {
  */
 export async function apiFetch(path: string, options?: RequestInit): Promise<Response> {
   const url = `${API_BASE}${path}`;
+  const method = (options?.method || 'GET').toUpperCase();
 
   // Build headers
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...(options?.headers || {}),
-  };
+  const headers = new Headers(options?.headers || {});
+  if (options?.body !== undefined && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  // Keep trace headers on unsafe methods to avoid forcing CORS preflights on simple GETs.
+  if (isUnsafeMethod(method)) {
+    if (!headers.has('X-Client-Request-Id')) {
+      headers.set('X-Client-Request-Id', createClientRequestId());
+    }
+    if (!headers.has('X-Client-Attempt')) {
+      headers.set('X-Client-Attempt', '1');
+    }
+  }
+  const clientRequestId = headers.get('X-Client-Request-Id');
+  const clientAttempt = headers.get('X-Client-Attempt');
 
   // Add CSRF token for unsafe methods
   let csrfToken: string | null = null;
   if (isUnsafeMethod(options?.method)) {
     csrfToken = getCsrfToken();
     if (csrfToken) {
-      (headers as Record<string, string>)['X-CSRF-Token'] = csrfToken;
+      headers.set('X-CSRF-Token', csrfToken);
     }
   }
 
@@ -148,7 +168,10 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
     });
 
     // Single-line success log (collapsed from 4 lines for cleaner console)
-    debugLog(`[apiFetch] ✅ ${options?.method || 'GET'} ${url} → ${res.status}`);
+    debugLog(
+      `[apiFetch] ✅ ${options?.method || 'GET'} ${url} → ${res.status} ` +
+      `(rid=${clientRequestId ?? 'n/a'} attempt=${clientAttempt ?? 'n/a'})`
+    );
     return res;
   } catch (error) {
     // DEBUG: Log detailed error info (Error objects don't serialize well)
@@ -159,6 +182,8 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
       hasCsrf: !!csrfToken,
       hasSignal: !!options?.signal,
       signalAborted: options?.signal?.aborted,
+      clientRequestId,
+      clientAttempt,
       errorName: err?.name,
       errorMessage: err?.message,
       wasAborted: err?.name === 'AbortError',
@@ -276,10 +301,18 @@ export async function fetchWithRetry(
   const { maxRetries = 3, baseDelay = 1000, maxDelay = 10000, onRetry } = retryOptions;
 
   let lastError: unknown;
+  const requestId = createClientRequestId();
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const res = await apiFetch(path, options);
+      const headers = new Headers(options?.headers || {});
+      headers.set('X-Client-Request-Id', requestId);
+      headers.set('X-Client-Attempt', String(attempt + 1));
+
+      const res = await apiFetch(path, {
+        ...options,
+        headers,
+      });
 
       // D8: Handle 429 rate limit — honour Retry-After header before retrying
       if (res.status === 429 && attempt < maxRetries) {
@@ -890,13 +923,32 @@ export async function browseActivities(
  * Returns null if section not found, pending if not yet ready.
  */
 export async function getSpecialistEnrichment(sectionId: string): Promise<{
-  status: 'ready' | 'pending';
+  status: 'ready' | 'pending' | 'failed';
   section_id: string;
   data?: Record<string, unknown>;
+  error_code?: string;
+  retry_after_ms?: number;
 } | null> {
-  const res = await apiFetch(`/api/specialist/${encodeURIComponent(sectionId)}/enrichment`);
+  // Bust intermediary/browser caches so repeated pending polls can progress to ready
+  // without requiring a hard refresh.
+  const nonce = Date.now();
+  const res = await apiFetch(
+    `/api/specialist/${encodeURIComponent(sectionId)}/enrichment?ts=${nonce}`,
+    { cache: 'no-store' }
+  );
   if (res.status === 404) return null;
-  if (res.status === 202) return { status: 'pending', section_id: sectionId };
+  if (res.status === 202) {
+    const pendingPayload = (await res.json().catch(() => ({}))) as {
+      retry_after_ms?: unknown;
+      section_id?: unknown;
+    };
+    return {
+      status: 'pending',
+      section_id: typeof pendingPayload.section_id === 'string' ? pendingPayload.section_id : sectionId,
+      retry_after_ms:
+        typeof pendingPayload.retry_after_ms === 'number' ? pendingPayload.retry_after_ms : 1500,
+    };
+  }
   if (!res.ok) return null;
   return res.json();
 }

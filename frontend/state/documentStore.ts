@@ -274,6 +274,69 @@ function sanitizeDayCards(dayCards: DayCard[] | undefined): DayCard[] | undefine
   return changed ? sanitized : dayCards;
 }
 
+const NON_ACTIVITY_BLOCK_TYPES = new Set([
+  'arrival',
+  'departure',
+  'check-in',
+  'check-out',
+  'check_in',
+  'check_out',
+  'free_day',
+  'rest_day',
+  'buffer',
+  'decompression_buffer',
+]);
+
+function shouldSuppressActivitiesFromTripInputs(
+  tripInputs: DocumentTripInputs | undefined | null
+): boolean {
+  // NOTE:
+  // Backend still returns valid day_cards even when booking_types.activities='off'
+  // or categories are empty (default setup flows). Suppressing client-side here
+  // drops legitimate itinerary content and forces manual refresh UX regressions.
+  // Keep suppression disabled until backend/front-end semantics are aligned.
+  void tripInputs;
+  return false;
+}
+
+function isActivityBlockForSuppression(block: DayCard['blocks'][number]): boolean {
+  if (block.is_buffer || block.buffer_type) return false;
+  const bookingCategory = (block.booking_category || '').trim().toLowerCase();
+  if (bookingCategory === 'hotel' || bookingCategory === 'flight') return false;
+  if (bookingCategory === 'activity') return true;
+  const kind = (block.activity_type || '').trim().toLowerCase();
+  if (NON_ACTIVITY_BLOCK_TYPES.has(kind)) return false;
+  const summary = (block.summary || '').trim().toLowerCase();
+  if (summary.includes('free day')) return false;
+  return true;
+}
+
+function stripActivitiesFromDayCards(dayCards: DayCard[] | undefined): DayCard[] | undefined {
+  if (!dayCards) return dayCards;
+  let changed = false;
+  const next = dayCards.map((card) => {
+    const filteredBlocks = card.blocks.filter((block) => !isActivityBlockForSuppression(block));
+    if (filteredBlocks.length !== card.blocks.length) {
+      changed = true;
+      return { ...card, blocks: filteredBlocks };
+    }
+    return card;
+  });
+  return changed ? next : dayCards;
+}
+
+function applyActivitySuppressionToDocument(document: PlanDocumentData): PlanDocumentData {
+  if (!document.day_cards || !shouldSuppressActivitiesFromTripInputs(document.trip_inputs)) {
+    return document;
+  }
+  const suppressedDayCards = stripActivitiesFromDayCards(document.day_cards) ?? document.day_cards;
+  if (suppressedDayCards === document.day_cards) return document;
+  return {
+    ...document,
+    day_cards: suppressedDayCards,
+  };
+}
+
 function sanitizeStrategySections(
   strategySections: StrategySection[] | undefined
 ): StrategySection[] | undefined {
@@ -523,6 +586,8 @@ function clearDirtySettingsForUpdates(updates: Partial<DocumentTripInputsPatch>)
 // Prevents concurrent commit operations using a Promise-based lock.
 // This avoids race conditions between the isCommitting check and set.
 let _commitLock: Promise<void> | null = null;
+let _fetchDocumentInFlight: Promise<PlanDocumentData | null> | null = null;
+let _fetchDocumentAbortController: AbortController | null = null;
 
 async function acquireCommitLock(): Promise<boolean> {
   if (_commitLock) {
@@ -961,16 +1026,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   ...initialState,
 
   // Trip input selectors
-  // Per YC demo spec: only destination is required to generate a plan
-  // Other fields (origin, dates) are optional accelerators, not blockers
+  // Plan readiness requires destination + full date range.
   hasAllRequiredFields: () => {
     const { document } = get();
     const tripInputs = document?.trip_inputs;
 
-    // Only require destination - everything else is optional
     const hasDestination = Boolean(tripInputs?.destination);
+    const hasStartDate = Boolean(tripInputs?.start_date);
+    const hasEndDate = Boolean(tripInputs?.end_date);
 
-    return hasDestination;
+    return hasDestination && hasStartDate && hasEndDate;
   },
 
   // Trip input actions
@@ -1008,13 +1073,33 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       debugLog('[documentStore] 🧹 Cleared preferredTileIds (destination changed)');
     }
 
+    const mergedTripInputs: DocumentTripInputs = {
+      ...document.trip_inputs,
+      ...updates,
+    };
+    const mergedCategories = mergedTripInputs.activity_settings?.categories ?? [];
+    if (mergedCategories.length === 0) {
+      mergedTripInputs.activity_settings = {
+        ...(mergedTripInputs.activity_settings ?? {}),
+        skill_level: mergedTripInputs.activity_settings?.skill_level ?? null,
+        categories: [],
+        day_preferences: {},
+      };
+      mergedTripInputs.booking_types = {
+        ...(mergedTripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
+        activities: 'off',
+      };
+    }
+
+    const suppressedLocalDayCards = shouldSuppressActivitiesFromTripInputs(mergedTripInputs)
+      ? (stripActivitiesFromDayCards(document.day_cards) ?? document.day_cards)
+      : document.day_cards;
+
     set({
       document: {
         ...document,
-        trip_inputs: {
-          ...document.trip_inputs,
-          ...updates,
-        },
+        trip_inputs: mergedTripInputs,
+        ...(suppressedLocalDayCards !== undefined && { day_cards: suppressedLocalDayCards }),
         // NOTE: Tiles NOT cleared here - backend clears on GENERATE_PLAN_NOW (Refresh)
       },
     });
@@ -1086,12 +1171,28 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         // Keep current missing_fields until backend responds with authoritative value
         missing_fields: document.trip_inputs.missing_fields ?? [],
       };
+      const optimisticCategories = updatedTripInputs.activity_settings?.categories ?? [];
+      if (optimisticCategories.length === 0) {
+        updatedTripInputs.activity_settings = {
+          ...(updatedTripInputs.activity_settings ?? {}),
+          skill_level: updatedTripInputs.activity_settings?.skill_level ?? null,
+          categories: [],
+          day_preferences: {},
+        };
+        updatedTripInputs.booking_types = {
+          ...(updatedTripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
+          activities: 'off',
+        };
+      }
 
       // Optimistically update the store
       set({
         document: {
           ...document,
           trip_inputs: updatedTripInputs,
+          ...(shouldSuppressActivitiesFromTripInputs(updatedTripInputs) && {
+            day_cards: stripActivitiesFromDayCards(document.day_cards) ?? document.day_cards,
+          }),
         },
       });
 
@@ -1122,22 +1223,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         const currentDoc = get().document;
 
         // Update with backend response, but preserve strategy fields from current state
+        const mergedPatchDocument: PlanDocumentData = {
+          ...response.document,
+          // Preserve strategy fields from graph (not persisted in DB)
+          strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
+          executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
+          pending_strategy_topics: currentDoc?.pending_strategy_topics ?? response.document.pending_strategy_topics,
+          plan_view_state: response.document.plan_view_state ?? currentDoc?.plan_view_state,
+          // Also preserve tiles which may come from graph
+          tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
+            ? currentDoc.tiles
+            : response.document.tiles,
+        };
+
         set({
           version: response.version,
           updatedBy: response.updated_by,
           updatedAt: response.updated_at,
-          document: {
-            ...response.document,
-            // Preserve strategy fields from graph (not persisted in DB)
-            strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
-            executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
-            pending_strategy_topics: currentDoc?.pending_strategy_topics ?? response.document.pending_strategy_topics,
-            plan_view_state: response.document.plan_view_state ?? currentDoc?.plan_view_state,
-            // Also preserve tiles which may come from graph
-            tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
-              ? currentDoc.tiles
-              : response.document.tiles,
-          },
+          document: applyActivitySuppressionToDocument(mergedPatchDocument),
           isCommitting: false,
           error: null,
         });
@@ -1170,21 +1273,23 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             const currentDocRetry = get().document;
 
             // Update with retry response, preserving strategy fields
+            const mergedRetryDocument: PlanDocumentData = {
+              ...retryResponse.document,
+              // Preserve strategy fields from graph (not persisted in DB)
+              strategy_sections: currentDocRetry?.strategy_sections ?? retryResponse.document.strategy_sections,
+              executed_strategy_topics: currentDocRetry?.executed_strategy_topics ?? retryResponse.document.executed_strategy_topics,
+              pending_strategy_topics: currentDocRetry?.pending_strategy_topics ?? retryResponse.document.pending_strategy_topics,
+              plan_view_state: retryResponse.document.plan_view_state ?? currentDocRetry?.plan_view_state,
+              tiles: currentDocRetry?.tiles && Object.keys(currentDocRetry.tiles).length > 0
+                ? currentDocRetry.tiles
+                : retryResponse.document.tiles,
+            };
+
             set({
               version: retryResponse.version,
               updatedBy: retryResponse.updated_by,
               updatedAt: retryResponse.updated_at,
-              document: {
-                ...retryResponse.document,
-                // Preserve strategy fields from graph (not persisted in DB)
-                strategy_sections: currentDocRetry?.strategy_sections ?? retryResponse.document.strategy_sections,
-                executed_strategy_topics: currentDocRetry?.executed_strategy_topics ?? retryResponse.document.executed_strategy_topics,
-                pending_strategy_topics: currentDocRetry?.pending_strategy_topics ?? retryResponse.document.pending_strategy_topics,
-                plan_view_state: retryResponse.document.plan_view_state ?? currentDocRetry?.plan_view_state,
-                tiles: currentDocRetry?.tiles && Object.keys(currentDocRetry.tiles).length > 0
-                  ? currentDocRetry.tiles
-                  : retryResponse.document.tiles,
-              },
+              document: applyActivitySuppressionToDocument(mergedRetryDocument),
               isCommitting: false,
               error: null,
             });
@@ -1334,74 +1439,106 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   fetchDocument: async () => {
-    debugLog('[documentStore.fetchDocument] 🚀 Starting fetch...');
-    set({ isLoading: true, error: null });
-    try {
-      const res = await apiFetch('/api/document');
-      debugLog('[documentStore.fetchDocument] 📡 Response status:', res.status);
+    if (_fetchDocumentInFlight) {
+      debugLog('[documentStore.fetchDocument] ⏭️ Joining in-flight fetch');
+      return _fetchDocumentInFlight;
+    }
 
-      // Handle 204 No Content FIRST (before trying to parse JSON)
-      // 204 is a success status (res.ok=true) but has no body
-      if (res.status === 204) {
-        debugLog('[documentStore.fetchDocument] ⚠️ No document (204 No Content)');
-        set({ isLoading: false, document: null });
-        return null;
-      }
+    _fetchDocumentInFlight = (async () => {
+      debugLog('[documentStore.fetchDocument] 🚀 Starting fetch...');
+      set({ isLoading: true, error: null });
+      try {
+        _fetchDocumentAbortController = new AbortController();
+        const res = await apiFetch('/api/document', {
+          signal: _fetchDocumentAbortController.signal,
+        });
+        debugLog('[documentStore.fetchDocument] 📡 Response status:', res.status);
 
-      if (!res.ok) {
-        if (res.status === 404) {
-          // 404: Legacy handling for no document
-          debugLog('[documentStore.fetchDocument] ⚠️ No document (404)');
+        // Handle 204 No Content FIRST (before trying to parse JSON)
+        // 204 is a success status (res.ok=true) but has no body
+        if (res.status === 204) {
+          debugLog('[documentStore.fetchDocument] ⚠️ No document (204 No Content)');
           set({ isLoading: false, document: null });
           return null;
         }
-        if (res.status === 429) {
-          const retrySeconds = parseRetryAfter(res) ?? 60;
-          debugLog(`[documentStore.fetchDocument] ⚠️ 429 Rate limited, retry after ${retrySeconds}s`);
-          throw new Error(`Rate limit reached. Please wait ${retrySeconds} seconds and try again.`);
-        }
-        throw new Error(`${res.status}`);
-      }
-      const response: PlanDocumentResponse = await res.json();
-      const sanitizedResponseDocument = sanitizeDocumentImages(response.document);
-      // DEBUG: Log document details
-      debugLog('[documentStore.fetchDocument] Response:', {
-        tilesCount: Object.keys(sanitizedResponseDocument.tiles ?? {}).length,
-        preferredTileIds: sanitizedResponseDocument.preferred_tile_ids,
-        branchesCount: sanitizedResponseDocument.branches?.length ?? 0,
-        plan_view_state: sanitizedResponseDocument.plan_view_state,
-        dayCardsCount: sanitizedResponseDocument.day_cards?.length ?? 0,
-      });
 
-      set({
-        version: response.version,
-        updatedBy: response.updated_by,
-        updatedAt: response.updated_at,
-        document: sanitizedResponseDocument,
-        isLoading: false,
-        // Auto-select primary branch if none selected
-        selectedBranchId:
-          get().selectedBranchId ||
-          sanitizedResponseDocument.branches.find((b) => b.is_primary)?.id ||
-          sanitizedResponseDocument.branches[0]?.id ||
-          null,
-        // Hydrate preferences from DB (replaces sessionStorage)
-        preferredTileIds: new Set(sanitizedResponseDocument.preferred_tile_ids ?? []),
-        // Initialize the backend-confirmed shadow so the first pill PATCH after page
-        // load has an accurate baseline (not the already-mutated zustand state).
-        _lastPatchedTripInputs: structuredClone(sanitizedResponseDocument.trip_inputs),
-        // Hydrate stashed activity tiles (Tier 1 suppressed — for Browse Activities sheet)
-        ...(sanitizedResponseDocument.browseable_activities !== undefined && {
-          browseableActivities: sanitizedResponseDocument.browseable_activities,
-        }),
-      });
-      return sanitizedResponseDocument;
-    } catch (err) {
-      console.error('[documentStore.fetchDocument] ❌ Error:', err);
-      const message = err instanceof Error ? err.message : 'Failed to fetch document';
-      set({ isLoading: false, error: message });
-      return null;
-    }
+        if (!res.ok) {
+          if (res.status === 404) {
+            // 404: Legacy handling for no document
+            debugLog('[documentStore.fetchDocument] ⚠️ No document (404)');
+            set({ isLoading: false, document: null });
+            return null;
+          }
+          if (res.status === 429) {
+            const retrySeconds = parseRetryAfter(res) ?? 60;
+            debugLog(
+              `[documentStore.fetchDocument] ⚠️ 429 Rate limited, retry after ${retrySeconds}s`
+            );
+            throw new Error(`Rate limit reached. Please wait ${retrySeconds} seconds and try again.`);
+          }
+          throw new Error(`${res.status}`);
+        }
+        const response: PlanDocumentResponse = await res.json();
+        const sanitizedResponseDocument = sanitizeDocumentImages(response.document);
+        const normalizedResponseDocument = applyActivitySuppressionToDocument(
+          sanitizedResponseDocument
+        );
+        const incomingPreferredTileIds = new Set(
+          normalizedResponseDocument.preferred_tile_ids ?? []
+        );
+        const existingPreferredTileIds = get().preferredTileIds;
+        const preferencesChanged =
+          existingPreferredTileIds.size !== incomingPreferredTileIds.size ||
+          [...incomingPreferredTileIds].some((id) => !existingPreferredTileIds.has(id));
+        // DEBUG: Log document details
+        debugLog('[documentStore.fetchDocument] Response:', {
+          tilesCount: Object.keys(normalizedResponseDocument.tiles ?? {}).length,
+          preferredTileIds: normalizedResponseDocument.preferred_tile_ids,
+          branchesCount: normalizedResponseDocument.branches?.length ?? 0,
+          plan_view_state: normalizedResponseDocument.plan_view_state,
+          dayCardsCount: normalizedResponseDocument.day_cards?.length ?? 0,
+        });
+
+        set({
+          version: response.version,
+          updatedBy: response.updated_by,
+          updatedAt: response.updated_at,
+          document: normalizedResponseDocument,
+          isLoading: false,
+          // Auto-select primary branch if none selected
+          selectedBranchId:
+            get().selectedBranchId ||
+            normalizedResponseDocument.branches.find((b) => b.is_primary)?.id ||
+            normalizedResponseDocument.branches[0]?.id ||
+            null,
+          // Hydrate preferences from DB (replaces sessionStorage)
+          ...(preferencesChanged && { preferredTileIds: incomingPreferredTileIds }),
+          // Initialize the backend-confirmed shadow so the first pill PATCH after page
+          // load has an accurate baseline (not the already-mutated zustand state).
+          _lastPatchedTripInputs: structuredClone(normalizedResponseDocument.trip_inputs),
+          // Hydrate stashed activity tiles (Tier 1 suppressed — for Browse Activities sheet)
+          ...(normalizedResponseDocument.browseable_activities !== undefined && {
+            browseableActivities: normalizedResponseDocument.browseable_activities,
+          }),
+        });
+        return normalizedResponseDocument;
+      } catch (err) {
+        if ((err as DOMException)?.name === 'AbortError') {
+          debugLog('[documentStore.fetchDocument] ⏹️ aborted');
+          set({ isLoading: false });
+          return null;
+        }
+        console.error('[documentStore.fetchDocument] ❌ Error:', err);
+        const message = err instanceof Error ? err.message : 'Failed to fetch document';
+        set({ isLoading: false, error: message });
+        return null;
+      } finally {
+        _fetchDocumentAbortController = null;
+        _fetchDocumentInFlight = null;
+      }
+    })();
+
+    return _fetchDocumentInFlight;
   },
 
   patchDocument: async (patch: PlanDocumentPatch) => {
@@ -1433,11 +1570,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         open_decisions: currentDoc?.open_decisions ?? response.document.open_decisions,
       };
 
+      const normalizedPatchedDocument = applyActivitySuppressionToDocument(
+        sanitizeDocumentImages(mergedDocument)
+      );
+
       set({
         version: response.version,
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
-        document: sanitizeDocumentImages(mergedDocument),
+        document: normalizedPatchedDocument,
         isLoading: false,
       });
     } catch (err) {
@@ -1527,6 +1668,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     // Normalize inbound image URLs across destination_card, tiles, day_cards, strategy sections.
     response.document = sanitizeDocumentImages(rawDoc);
+    // Defensive normalization: stream payload should always include trip_inputs,
+    // but guard to avoid runtime crashes if backend emits a partial document.
+    if (!response.document.trip_inputs) {
+      response.document.trip_inputs = structuredClone(DEFAULT_TRIP_INPUTS);
+    }
+    if (!response.document.trip_inputs.activity_settings) {
+      response.document.trip_inputs.activity_settings = structuredClone(DEFAULT_ACTIVITY_SETTINGS);
+    }
+    if (!response.document.trip_inputs.booking_types) {
+      response.document.trip_inputs.booking_types = structuredClone(DEFAULT_BOOKING_TYPES);
+    }
     if (response.document.day_cards?.length) {
       debugLog(`[documentStore.setFromPlanResponse] 📅 SSE day_cards: ${response.document.day_cards.length} cards`);
     }
@@ -1657,6 +1809,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           ?? localTripInputs?.activity_settings?.day_preferences,
       },
     };
+    const mergedCategories = mergedTripInputs.activity_settings?.categories ?? [];
+    if (mergedCategories.length === 0) {
+      mergedTripInputs.activity_settings = {
+        ...(mergedTripInputs.activity_settings ?? {}),
+        skill_level: mergedTripInputs.activity_settings?.skill_level ?? null,
+        categories: [],
+        day_preferences: {},
+      };
+      mergedTripInputs.booking_types = {
+        ...(mergedTripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
+        activities: 'off',
+      };
+    }
 
     // If update is from planner, detect which fields changed
     let newLLMUpdatedFields = llmUpdatedFields;
@@ -1714,11 +1879,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Only preserve existing cards when graph sent nothing (lightweight routes).
     // backendClearedCards (declared above) detects explicit staleness signal from backend.
     const hasGraphSentCards = Array.isArray(graphSentCards) && graphSentCards.length > 0;
-    const finalDayCards = hasGraphSentCards
+    const finalDayCardsRaw = hasGraphSentCards
       ? graphSentCards
       : backendClearedCards
         ? []  // Backend explicitly cleared — force empty to trigger expand-itinerary
         : (datesChanged ? [] : (currentDayCards ?? []));
+    const suppressActivities = shouldSuppressActivitiesFromTripInputs(mergedTripInputs);
+    const finalDayCards = suppressActivities
+      ? (stripActivitiesFromDayCards(finalDayCardsRaw) ?? finalDayCardsRaw)
+      : finalDayCardsRaw;
 
     if (hasGraphSentCards) {
       debugLog(`[documentStore.setFromPlanResponse] 📅 Day cards: FROM GRAPH (${graphSentCards.length} cards)`);
@@ -1728,6 +1897,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       debugLog('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (dates changed, no graph cards)');
     } else if (hasDayCards) {
       debugLog(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (no graph cards, keeping ${currentDayCards.length} existing)`);
+    }
+    if (suppressActivities) {
+      debugLog('[documentStore.setFromPlanResponse] 🚫 Activities suppressed in day_cards (activities off or no categories)');
     }
 
     // ============================================================
@@ -1996,6 +2168,32 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // Merge envelope fields into current document
+    const mergedEnvelopeTripInputs = envelope.trip_inputs !== undefined
+      ? { ...currentDoc.trip_inputs, ...envelope.trip_inputs }
+      : undefined;
+    if (mergedEnvelopeTripInputs) {
+      const envelopeCategories = mergedEnvelopeTripInputs.activity_settings?.categories ?? [];
+      if (envelopeCategories.length === 0) {
+        mergedEnvelopeTripInputs.activity_settings = {
+          ...(mergedEnvelopeTripInputs.activity_settings ?? {}),
+          skill_level: mergedEnvelopeTripInputs.activity_settings?.skill_level ?? null,
+          categories: [],
+          day_preferences: {},
+        };
+        mergedEnvelopeTripInputs.booking_types = {
+          ...(mergedEnvelopeTripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
+          activities: 'off',
+        };
+      }
+    }
+
+    const effectiveTripInputs = mergedEnvelopeTripInputs ?? currentDoc.trip_inputs;
+    const suppressActivitiesInMerge = shouldSuppressActivitiesFromTripInputs(effectiveTripInputs);
+    if (dayCardsToMerge && suppressActivitiesInMerge) {
+      dayCardsToMerge = stripActivitiesFromDayCards(dayCardsToMerge) ?? dayCardsToMerge;
+      debugLog('[documentStore.mergeEnvelope] 🚫 Activities suppressed in day_cards (activities off or no categories)');
+    }
+
     const updatedDoc: PlanDocumentData = {
       ...currentDoc,
       // Plan view state fields (use guarded finalViewState)
@@ -2010,8 +2208,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // Tiles: Apply computed merge strategy
       ...(tilesToMerge !== undefined && { tiles: tilesToMerge }),
       // Update trip_inputs if present
-      ...(envelope.trip_inputs !== undefined && {
-        trip_inputs: { ...currentDoc.trip_inputs, ...envelope.trip_inputs },
+      ...(mergedEnvelopeTripInputs !== undefined && {
+        trip_inputs: mergedEnvelopeTripInputs,
       }),
       // Constraint validation receipts for Trip DNA bar badges
       ...(envelope.constraints_validated !== undefined && {
@@ -2510,6 +2708,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     _bypassRAF = false;
     _userDirtySettings.clear();
     _flushHashBySendCycle.clear();
+    _fetchDocumentAbortController?.abort();
+    _fetchDocumentAbortController = null;
+    _fetchDocumentInFlight = null;
     // Preferences are cleared via clearPreferences() which syncs to backend
     set({
       ...initialState,

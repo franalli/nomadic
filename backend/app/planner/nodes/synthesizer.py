@@ -105,9 +105,8 @@ _HISTORY_DEPTH_BY_TYPE = {
 # Maps suggestion categories to (action_type, action_target) for frontend routing.
 # Categories not in this map default to ("send_message", None).
 PILL_ACTION_MAP: Dict[str, tuple[str, Optional[str]]] = {
-    # Date chips -> open date picker
-    "date_prompt": ("open_pill", "dates"),
-    "date_contextual": ("open_pill", "dates"),
+    # Pre-plan date chips are executable prompts (router extraction),
+    # not sheet openers. Keep default send_message behavior.
     # Booking settings -> open respective sheets
     "plan_hotel_stars": ("open_pill", "stays"),
     "plan_hotel_pref": ("open_pill", "stays"),
@@ -115,12 +114,14 @@ PILL_ACTION_MAP: Dict[str, tuple[str, Optional[str]]] = {
     "plan_flight_direct": ("trigger_action", "set_direct_flights_only"),  # legacy alias
     # Activities -> open activities sheet
     "plan_activity_explore": ("open_pill", "activities"),
+    "plan_activities": ("open_pill", "activities"),  # legacy alias
+    "plan_dates_refine": ("open_pill", "dates"),
     # Budget/Travelers -> open respective sheets
     "plan_budget": ("open_pill", "budget"),
     "plan_travelers": ("open_pill", "travelers"),
     # Booking discovery chips
     "plan_flights_hint": ("open_pill", "origin"),
-    "plan_hotels_compare": ("send_message", None),
+    "plan_hotels_compare": ("open_pill", "stays"),
 }
 
 
@@ -142,6 +143,10 @@ def _get_response_type(state) -> str:
     # Check for greeting/reset short circuits
     if meta.get("short_circuit_type") in ("greeting", "reset"):
         return "greeting"
+
+    # Router short-circuit Q&A paths should keep conversational exploration tone.
+    if meta.get("short_circuit_type") in ("exploration", "soft_transition", "question_answer"):
+        return "exploration"
 
     has_full_trip = (
         state.trip_plan
@@ -263,6 +268,33 @@ def _load_system_prompt(state=None) -> str:
     return _render_prompt_for_response_type(response_type)
 
 
+def _snapshot_tile_counts(state: GraphState) -> dict[str, int]:
+    """Current tile counts by booking category for response grounding."""
+    hotels = len([t for t in (state.tiles or {}).get("hotels", []) if t])
+    flights = len([t for t in (state.tiles or {}).get("flights", []) if t])
+    activities = len([t for t in (state.tiles or {}).get("activities", []) if t])
+    return {"hotels": hotels, "flights": flights, "activities": activities}
+
+
+def _tile_count_signature(counts: dict[str, int]) -> str:
+    """Stable cross-turn signature for tile inventory."""
+    return (
+        f"h{int(counts.get('hotels', 0))}|"
+        f"f{int(counts.get('flights', 0))}|"
+        f"a{int(counts.get('activities', 0))}"
+    )
+
+
+def _tile_inventory_changed(previous: object, current: dict[str, int]) -> bool:
+    """Detect tile-count changes across turns."""
+    if not hasattr(previous, "get"):
+        return True
+    for key in ("hotels", "flights", "activities"):
+        if int(previous.get(key, 0)) != current.get(key, 0):
+            return True
+    return False
+
+
 def _build_synthesis_context(state: GraphState, response_type: str | None = None) -> str:
     """
     Build context string from all graph sources for LLM synthesis.
@@ -326,6 +358,36 @@ def _build_synthesis_context(state: GraphState, response_type: str | None = None
 
     if added_cats:
         parts.append(f"- NEW categories this turn: {', '.join(added_cats)}")
+
+    tile_counts = meta.get("current_tile_counts")
+    if not isinstance(tile_counts, dict):
+        tile_counts = _snapshot_tile_counts(state)
+    tile_changed = meta.get("tile_inventory_changed_this_turn")
+    if tile_changed is None:
+        tile_changed = True
+    parts.append(
+        "- Tile counts now: hotels={hotels}, flights={flights}, activities={activities}".format(
+            hotels=int(tile_counts.get("hotels", 0)),
+            flights=int(tile_counts.get("flights", 0)),
+            activities=int(tile_counts.get("activities", 0)),
+        )
+    )
+    parts.append(f"- tile_inventory_changed_this_turn: {bool(tile_changed)}")
+    if not tile_changed:
+        parts.append(
+            "- CRITICAL: Do NOT restate tile counts unless the user explicitly asks for a recap."
+        )
+
+    short_circuit_type = meta.get("short_circuit_type")
+    if short_circuit_type in ("exploration", "soft_transition", "question_answer"):
+        draft = (state.last_summary or "").strip()
+        if draft:
+            parts.append("\n## Router Draft Answer")
+            parts.append(f"- short_circuit_type: {short_circuit_type}")
+            parts.append(f"- draft: {draft}")
+            parts.append(
+                "- Rewrite this naturally (do not copy phrasing verbatim) while preserving facts."
+            )
 
     already_active = meta.get("requested_already_active", [])
     if already_active:
@@ -1256,13 +1318,39 @@ def _ground_flight_response(message: str, state: GraphState) -> str:
     """
     Ensure chat text doesn't claim flights that were not actually returned.
     """
+    tile_inventory_changed = state.metadata.get("tile_inventory_changed_this_turn")
+    if tile_inventory_changed is None:
+        tile_inventory_changed = True
+
+    # Question/exploration turns should not end with inventory recap sentences.
+    # Keep the answer focused on the asked topic.
+    try:
+        from app.planner.nodes.intent_router import classify_question_type
+
+        for msg in reversed(state.messages[-4:]):
+            if not isinstance(msg, HumanMessage):
+                continue
+            qtype, _ = classify_question_type((msg.content or "").strip())
+            if qtype != "general":
+                tile_inventory_changed = False
+            break
+    except Exception:
+        pass
+
     grounded, claimed_categories = _strip_tile_count_claim_sentences(message)
     if claimed_categories:
-        authoritative_counts = _build_authoritative_tile_count_sentence(state, claimed_categories)
-        if authoritative_counts:
-            grounded = (
-                f"{grounded} {authoritative_counts}".strip() if grounded else authoritative_counts
+        if tile_inventory_changed:
+            authoritative_counts = _build_authoritative_tile_count_sentence(
+                state, claimed_categories
             )
+            if authoritative_counts:
+                grounded = (
+                    f"{grounded} {authoritative_counts}".strip()
+                    if grounded
+                    else authoritative_counts
+                )
+        else:
+            logger.debug("[VERIFY][SYNTH] removed_stale_tile_count_recap")
         logger.debug(
             "[VERIFY][SYNTH] corrected_tile_count_claims categories=%s",
             sorted(claimed_categories),
@@ -1291,6 +1379,32 @@ def _ground_flight_response(message: str, state: GraphState) -> str:
             logger.debug("[VERIFY][SYNTH] added_origin_prompt_for_flights")
 
     return grounded or message
+
+
+def _enforce_settings_ack_quality(message: str, state: GraphState) -> str:
+    """
+    Prevent low-signal count-only replies on settings turns.
+    """
+    if not state.metadata.get("settings_just_updated"):
+        return message
+
+    ack = (state.metadata.get("actionable_acknowledgment") or "").strip()
+    stripped, claimed_categories = _strip_tile_count_claim_sentences(message)
+
+    # Pure count recap (e.g., "Found 6 activities.") is low-signal on settings turns.
+    # Force acknowledgement of what changed.
+    if claimed_categories and not stripped:
+        return ack or "Updated your settings."
+
+    tile_inventory_changed = state.metadata.get("tile_inventory_changed_this_turn")
+    if tile_inventory_changed is None:
+        tile_inventory_changed = True
+
+    # Very terse reply on settings turn should still acknowledge the actual change.
+    if ack and not tile_inventory_changed and len((message or "").split()) <= 4:
+        return ack
+
+    return message
 
 
 async def synthesize_with_llm(
@@ -1367,6 +1481,53 @@ FALLBACK_MESSAGE = (
     "I've updated your trip plan — check the itinerary on the right. "
     "Let me know if you'd like to adjust anything."
 )
+
+
+def _should_force_destination_setup_message(state: GraphState) -> bool:
+    """
+    Force a deterministic guidance message after destination is set but dates are missing.
+
+    This avoids low-signal generic replies and keeps setup guidance consistent.
+    """
+    plan = state.trip_plan
+    if not plan.destination:
+        return False
+    if plan.start_date and plan.end_date:
+        return False
+
+    meta = state.metadata or {}
+    if meta.get("short_circuit_type") in {
+        "greeting",
+        "reset",
+        "gate_blocked",
+        "destination_locked",
+        "reset_locked",
+    }:
+        return False
+    if meta.get("constraint_violations") or meta.get("input_gate_violations"):
+        return False
+
+    turn_applied = meta.get("turn_applied_fields", [])
+    if isinstance(turn_applied, list) and "destination" not in turn_applied:
+        return False
+
+    return True
+
+
+def _build_destination_setup_message(state: GraphState) -> str:
+    """Canonical setup prompt after destination selection."""
+    destination = state.trip_plan.destination or "That destination"
+    settings = get_trip_settings(state)
+    has_activity_preferences = bool(settings.activity_settings.categories)
+    activity_phrase = (
+        "refine your activity picks"
+        if has_activity_preferences
+        else "pick the activities you care about"
+    )
+    return (
+        f"**{destination}** is a great choice. Next, set your dates and {activity_phrase}; "
+        f"origin is not required, but adding it enables flight search."
+    )
 
 
 # =============================================================================
@@ -1528,7 +1689,27 @@ def generate_suggestions(state: GraphState) -> List[str]:
         _build_plan_progression_suggestions,
         _build_question_suggestions,
         _build_specialist_suggestions,
+        classify_question_type,
     )
+
+    # Safety reset: when destination context changes but router exploration
+    # path did not run, clear stale question/date carryover before chip build.
+    current_destination_context = (state.trip_plan.destination or "").strip().lower()
+    previous_destination_context = (
+        str(state.metadata.get("last_destination_context") or "").strip().lower()
+    )
+    if (
+        current_destination_context
+        and previous_destination_context
+        and current_destination_context != previous_destination_context
+    ):
+        state.metadata.pop("awaiting_dates", None)
+        state.metadata.pop("detected_month", None)
+        state.metadata.pop("generic_question_count", None)
+        state.metadata["suggested_question_types"] = []
+        state.metadata.pop("last_suggested_replies", None)
+    if current_destination_context:
+        state.metadata["last_destination_context"] = state.trip_plan.destination
 
     dest = state.trip_plan.destination or ""
     constraint_violations = state.metadata.get("constraint_violations", [])
@@ -1693,7 +1874,39 @@ def generate_suggestions(state: GraphState) -> List[str]:
     candidates.extend(_build_question_suggestions(state))
 
     # ── Step 4: Filter by state condition ──
-    eligible = [c for c in candidates if c["condition"](state)]
+    # Avoid suggesting the exact question type the user just asked.
+    last_human = ""
+    for msg in reversed(state.messages[-4:]):
+        if isinstance(msg, HumanMessage):
+            last_human = (msg.content or "").strip()
+            break
+    just_asked_qtype = None
+    if last_human:
+        qtype, _ = classify_question_type(last_human)
+        if qtype != "general":
+            just_asked_qtype = qtype
+
+    eligible: list[dict] = []
+    for candidate in candidates:
+        if not candidate["condition"](state):
+            continue
+        category = str(candidate.get("category", ""))
+        if just_asked_qtype and category == f"question_{just_asked_qtype}":
+            continue
+        eligible.append(candidate)
+
+    settings = get_trip_settings(state)
+    sticky_categories: set[str] = set()
+    # Keep origin-collection chip visible until origin is actually set.
+    needs_origin_for_flights = bool(
+        state.trip_plan.destination
+        and state.trip_plan.start_date
+        and state.trip_plan.end_date
+        and not state.trip_plan.origin
+        and settings.booking_types.flights != "off"
+    )
+    if needs_origin_for_flights:
+        sticky_categories.add("plan_flights_hint")
 
     # ── Step 5: Slot allocation ──
     # Slot 1: ACTION (date prompts) — anchors the chip bar
@@ -1710,7 +1923,8 @@ def generate_suggestions(state: GraphState) -> List[str]:
         [c for c in eligible if c["category"].startswith(DISCOVER_PREFIXES)],
         key=lambda c: c["priority"],
     )
-    # Priority-0 groups (destination_choice, date chips) fill all 3 slots
+    # Priority-0 groups (destination/date chips) can dominate, but we reserve
+    # one slot for discover chips when available to reduce repetition.
     p0_group = sorted(
         [c for c in eligible if c["category"] in PRIORITY_0_CATS],
         key=lambda c: c["priority"],
@@ -1719,17 +1933,30 @@ def generate_suggestions(state: GraphState) -> List[str]:
     final: list[dict] = []
 
     if p0_group:
-        # Priority 0 fills all slots (destination choices, date prompts)
+        # Keep at least one slot for discover chips when available, so users
+        # can progress instead of seeing only date/destination prompts.
+        p0_limit = 2 if discovers else 3
         seen_cats: dict[str, int] = {}
         for c in p0_group:
-            if len(final) >= 3:
+            if len(final) >= p0_limit:
                 break
             cat = c["category"]
             cnt = seen_cats.get(cat, 0)
-            if cnt >= 3:
+            if cnt >= p0_limit:
                 continue
             seen_cats[cat] = cnt + 1
             final.append(c)
+
+        if len(final) < 3:
+            specialist_used = False
+            for d in discovers:
+                if len(final) >= 3:
+                    break
+                if d["category"].startswith("specialist_"):
+                    if specialist_used:
+                        continue
+                    specialist_used = True
+                final.append(d)
     else:
         # Slot 1: best action
         if actions:
@@ -1746,6 +1973,19 @@ def generate_suggestions(state: GraphState) -> List[str]:
                 specialist_used = True
             final.append(d)
 
+    # Sticky categories bypass rotation and stay in top slots while unresolved.
+    if sticky_categories:
+        sticky_candidates = [
+            c
+            for c in sorted(eligible, key=lambda c: c["priority"])
+            if c["category"] in sticky_categories
+        ]
+        for sticky in reversed(sticky_candidates):
+            if sticky in final:
+                final.remove(sticky)
+            final.insert(0, sticky)
+        final = final[:3]
+
     # ── Step 6: Render templates + collect chip metadata ──
     CTA_CATEGORIES = {"destination_choice", "date_prompt", "date_contextual"}
     SETTING_CATEGORIES = {"plan_hotel_pref", "plan_flight_pref", "plan_budget"}
@@ -1759,7 +1999,11 @@ def generate_suggestions(state: GraphState) -> List[str]:
     def _suggestion_text_key(text: str) -> str:
         return re.sub(r"\s+", " ", (text or "").strip().lower())
 
-    month = state.metadata.get("detected_month", "")
+    month = (
+        state.metadata.get("detected_month", "")
+        if state.trip_plan.destination and not state.trip_plan.start_date
+        else ""
+    )
     previous_text_keys = {
         _suggestion_text_key(text)
         for text in state.metadata.get("last_suggested_replies", [])
@@ -1785,17 +2029,17 @@ def generate_suggestions(state: GraphState) -> List[str]:
     def _append_candidate(c: dict, *, allow_previous: bool) -> bool:
         if len(result) >= 3:
             return False
+        cat = c.get("category", "")
         text = _render_suggestion_text(c, month)
         text_key = _suggestion_text_key(text)
         if text_key in seen_text_keys:
             logger.debug(f"[SUGGESTIONS] deduped duplicate chip='{text}'")
             return False
-        if not allow_previous and text_key in previous_text_keys:
+        if not allow_previous and text_key in previous_text_keys and cat not in sticky_categories:
             logger.debug(f"[SUGGESTIONS] rotated previous-turn chip='{text}'")
             return False
         seen_text_keys.add(text_key)
 
-        cat = c.get("category", "")
         if cat in CTA_CATEGORIES or c.get("priority", 10) <= 1:
             chip_type = "cta"
         elif cat in SETTING_CATEGORIES:
@@ -1857,8 +2101,8 @@ def generate_suggestions(state: GraphState) -> List[str]:
         if c["category"].startswith("question_")
     ]
     if shown_qtypes:
-        prev = state.metadata.get("suggested_question_types", [])
-        state.metadata["suggested_question_types"] = prev + shown_qtypes
+        prev = [q for q in state.metadata.get("suggested_question_types", []) if isinstance(q, str)]
+        state.metadata["suggested_question_types"] = (prev + shown_qtypes)[-24:]
 
     return result
 
@@ -2037,6 +2281,19 @@ async def synthesizer(state: GraphState) -> GraphState:
     llm_called = False
     message = ""
     response_type = _get_response_type(state)
+    current_tile_counts = _snapshot_tile_counts(state)
+    current_tile_signature = _tile_count_signature(current_tile_counts)
+    previous_tile_signature = state.metadata.get("last_tile_signature")
+    if isinstance(previous_tile_signature, str) and previous_tile_signature:
+        tile_inventory_changed_this_turn = previous_tile_signature != current_tile_signature
+    else:
+        tile_inventory_changed_this_turn = _tile_inventory_changed(
+            state.metadata.get("last_tile_counts"),
+            current_tile_counts,
+        )
+    state.metadata["current_tile_counts"] = current_tile_counts
+    state.metadata["current_tile_signature"] = current_tile_signature
+    state.metadata["tile_inventory_changed_this_turn"] = tile_inventory_changed_this_turn
 
     from app.debug_utils import log, log_tokens
 
@@ -2070,6 +2327,7 @@ async def synthesizer(state: GraphState) -> GraphState:
                 log("SYNTH", "Settings update generated new content — routing to LLM")
             llm_attempted = True
             llm_response, token_usage = await synthesize_with_llm(state, response_type)
+            token_usage = token_usage or {}
             # WARNING-2 fix: template bypass returns {"template_bypass": True}; don't
             # count it as an LLM call in observability metadata.
             llm_called = not token_usage.get("template_bypass", False)
@@ -2102,6 +2360,7 @@ async def synthesizer(state: GraphState) -> GraphState:
             log("SYNTH", "Generating LLM response...")
             llm_attempted = True
             llm_response, token_usage = await synthesize_with_llm(state, response_type)
+            token_usage = token_usage or {}
             # WARNING-2 fix: template bypass returns {"template_bypass": True}; don't
             # count it as an LLM call in observability metadata.
             llm_called = not token_usage.get("template_bypass", False)
@@ -2138,7 +2397,13 @@ async def synthesizer(state: GraphState) -> GraphState:
         else:
             # Check if we have a pre-computed response from router (exploration mode)
             short_circuit_type = state.metadata.get("short_circuit_type")
-            if short_circuit_type in ("exploration", "soft_transition", "question_answer"):
+            if short_circuit_type in (
+                "exploration",
+                "soft_transition",
+                "question_answer",
+                "destination_locked",
+                "reset_locked",
+            ):
                 # Use the pre-computed response from router - already in state.last_summary
                 message = state.last_summary
                 log("SYNTH", f"Pre-computed {short_circuit_type} ({len(message)} chars)")
@@ -2166,16 +2431,51 @@ async def synthesizer(state: GraphState) -> GraphState:
         else:
             await image_task
 
+    if _should_force_destination_setup_message(state):
+        message = _build_destination_setup_message(state)
+        log("SYNTH", "Applied destination setup guidance template")
+
     # Final grounding pass: avoid flight-count claims when logistics skipped flights.
     # Template-bypassed responses are grounded by construction (they read structured state
     # directly) — skip the hallucination stripper so it doesn't eat activity-name mentions.
     if llm_called:
         message = _ground_flight_response(message, state)
         message = _ground_specialist_update_response(message, response_type)
+    message = _enforce_settings_ack_quality(message, state)
 
-    # Generate suggestion chips (always template-based for consistency)
-    # Always regenerate to ensure fresh suggestions on every turn
-    suggested_replies = generate_suggestions(state)
+    # Generate suggestion chips (always template-based for consistency),
+    # except greeting/reset where router already provided canonical prompts.
+    short_circuit_type = state.metadata.get("short_circuit_type")
+    if (
+        short_circuit_type
+        in (
+            "greeting",
+            "reset",
+            "destination_locked",
+            "reset_locked",
+        )
+        and state.suggested_replies
+    ):
+        suggested_replies = list(state.suggested_replies)[:3]
+        state.metadata["suggestion_chip_meta"] = [
+            {"chip_type": "cta", "category": short_circuit_type, "icon": "sparkles"}
+            for _ in suggested_replies
+        ]
+        state.metadata["suggestion_chips"] = [
+            {
+                "message": text,
+                "action_type": "send_message",
+                "action_target": None,
+                "chip_type": "cta",
+                "category": short_circuit_type,
+                "icon": "sparkles",
+            }
+            for text in suggested_replies
+        ]
+        state.metadata["last_suggested_replies"] = suggested_replies
+    else:
+        # Always regenerate to ensure fresh suggestions on every turn
+        suggested_replies = generate_suggestions(state)
 
     # Log response details
     _chips = state.metadata.get("suggestion_chips", [])
@@ -2211,6 +2511,8 @@ async def synthesizer(state: GraphState) -> GraphState:
         "used_llm": llm_called,
         "llm_attempted": llm_attempted,
     }
+    state.metadata["last_tile_counts"] = current_tile_counts
+    state.metadata["last_tile_signature"] = current_tile_signature
 
     _debug_node_end(
         "synthesizer",
@@ -2246,10 +2548,22 @@ def _should_use_llm_synthesis(state: GraphState) -> bool:
     # Short-circuit responses (GREETING/RESET) use static responses for speed
     # These are simple acknowledgments, not planning responses
     if state.metadata.get("short_circuit_response"):
-        # Gate-blocked needs LLM to explain the issue naturally
-        if state.metadata.get("short_circuit_type") == "gate_blocked":
+        short_circuit_type = state.metadata.get("short_circuit_type")
+        # Gate-blocked and exploration-style short circuits should use LLM so
+        # responses are less repetitive and context-aware.
+        if short_circuit_type in {
+            "gate_blocked",
+            "exploration",
+            "soft_transition",
+            "question_answer",
+        }:
             return True
-        return False
+        return short_circuit_type not in {
+            "greeting",
+            "reset",
+            "destination_locked",
+            "reset_locked",
+        }
 
     # Everything else uses LLM - even missing_fields, pre_core, etc.
     # The prompt controls the response style and content

@@ -4,6 +4,7 @@ Tests document creation, retrieval, patching, and session deletion.
 """
 
 import asyncio
+import json
 import os
 import sys
 import threading
@@ -235,6 +236,25 @@ def get_session_cookies(session_token: str) -> dict:
     }
 
 
+def set_client_session_cookies(client_instance: TestClient, session_token: str) -> None:
+    """Set session + csrf cookies on the TestClient instance (non-deprecated style)."""
+    cookies = get_session_cookies(session_token)
+    client_instance.cookies.set("session_id", cookies["session_id"])
+    client_instance.cookies.set("csrf", cookies["csrf"])
+
+
+def request_with_session(
+    client_instance: TestClient,
+    method: str,
+    path: str,
+    session_token: str,
+    **kwargs,
+):
+    """Issue a request after applying session cookies at the client level."""
+    set_client_session_cookies(client_instance, session_token)
+    return client_instance.request(method, path, **kwargs)
+
+
 def get_csrf_headers() -> dict:
     """Get headers with CSRF token for unsafe methods."""
     return {"X-CSRF-Token": TEST_CSRF_TOKEN}
@@ -268,10 +288,7 @@ def test_get_document_returns_branches_and_tiles():
     """Test that GET /api/document returns the document with branches and tiles."""
     seed = seed_session_with_document(session_token="session-get-doc")
 
-    response = client.get(
-        "/api/document",
-        cookies=get_session_cookies(seed["session_token"]),
-    )
+    response = request_with_session(client, "GET", "/api/document", seed["session_token"])
 
     assert response.status_code == 200
     payload = response.json()
@@ -293,10 +310,7 @@ def test_get_document_returns_branches_and_tiles():
 
 def test_get_document_handles_missing_session():
     """Test that GET /api/document returns 204 for missing session (no document yet)."""
-    response = client.get(
-        "/api/document",
-        cookies=get_session_cookies("missing-session"),
-    )
+    response = request_with_session(client, "GET", "/api/document", "missing-session")
 
     assert response.status_code == 204
 
@@ -317,9 +331,11 @@ def test_patch_document_updates_selections():
         },
     }
 
-    response = client.patch(
+    response = request_with_session(
+        client,
+        "PATCH",
         "/api/document",
-        cookies=get_session_cookies(seed["session_token"]),
+        seed["session_token"],
         headers=get_csrf_headers(),
         json=patch,
     )
@@ -347,9 +363,11 @@ def test_patch_date_change_clears_stale_day_cards():
             "start_date": "2025-12-03",
         },
     }
-    response = client.patch(
+    response = request_with_session(
+        client,
+        "PATCH",
         "/api/document",
-        cookies=get_session_cookies(seed["session_token"]),
+        seed["session_token"],
         headers=get_csrf_headers(),
         json=patch,
     )
@@ -371,9 +389,11 @@ def test_patch_non_date_change_preserves_day_cards():
             "budget": 3500,
         },
     }
-    response = client.patch(
+    response = request_with_session(
+        client,
+        "PATCH",
         "/api/document",
-        cookies=get_session_cookies(seed["session_token"]),
+        seed["session_token"],
         headers=get_csrf_headers(),
         json=patch,
     )
@@ -424,9 +444,11 @@ def test_fill_day_uses_effective_total_days_from_cards_and_trip_inputs():
     set_document_fields(seed["session_token"], trip_inputs=trip_inputs, day_cards=day_cards)
 
     # With 7-day trip span this would be rejected; with 9-day card span it should pass.
-    response = client.post(
+    response = request_with_session(
+        client,
+        "POST",
         "/api/document/fill-day",
-        cookies=get_session_cookies(seed["session_token"]),
+        seed["session_token"],
         headers=get_csrf_headers(),
         json={"day_number": 7, "categories": ["diving"]},
     )
@@ -455,9 +477,11 @@ def test_fill_day_queues_behind_active_stream():
     def _call_fill_day() -> None:
         started.set()
         with TestClient(app) as local_client:
-            response = local_client.post(
+            response = request_with_session(
+                local_client,
+                "POST",
                 "/api/document/fill-day",
-                cookies=get_session_cookies(seed["session_token"]),
+                seed["session_token"],
                 headers=get_csrf_headers(),
                 json={"day_number": 1, "pinned_tile_ids": ["tile_1"]},
             )
@@ -488,9 +512,11 @@ def test_session_delete_wipes_document():
     """Test that DELETE /api/session removes the PlanDocument."""
     seed = seed_session_with_document(session_token="session-delete-doc")
 
-    response = client.delete(
+    response = request_with_session(
+        client,
+        "DELETE",
         "/api/session",
-        cookies=get_session_cookies(seed["session_token"]),
+        seed["session_token"],
         headers=get_csrf_headers(),
     )
 
@@ -984,9 +1010,11 @@ def test_patch_trip_inputs_activity_categories_preserves_existing_fields():
 
     seed = seed_session_with_document(session_token="session-activities-patch")
 
-    response = client.patch(
+    response = request_with_session(
+        client,
+        "PATCH",
         "/api/document",
-        cookies=get_session_cookies(seed["session_token"]),
+        seed["session_token"],
         headers=get_csrf_headers(),
         json={
             "version": 1,
@@ -1002,10 +1030,7 @@ def test_patch_trip_inputs_activity_categories_preserves_existing_fields():
         "🍝 food",
     ]
 
-    persisted = client.get(
-        "/api/document",
-        cookies=get_session_cookies(seed["session_token"]),
-    )
+    persisted = request_with_session(client, "GET", "/api/document", seed["session_token"])
     assert persisted.status_code == 200
     persisted_doc = persisted.json()
     assert persisted_doc["document"]["trip_inputs"]["activity_settings"]["categories"] == [
@@ -1019,18 +1044,17 @@ def test_patch_trip_inputs_noop_does_not_bump_version():
 
     seed = seed_session_with_document(session_token="session-noop-trip-inputs")
 
-    existing = client.get(
-        "/api/document",
-        cookies=get_session_cookies(seed["session_token"]),
-    )
+    existing = request_with_session(client, "GET", "/api/document", seed["session_token"])
     assert existing.status_code == 200
     existing_payload = existing.json()
     existing_version = existing_payload["version"]
     existing_trip_inputs = existing_payload["document"]["trip_inputs"]
 
-    response = client.patch(
+    response = request_with_session(
+        client,
+        "PATCH",
         "/api/document",
-        cookies=get_session_cookies(seed["session_token"]),
+        seed["session_token"],
         headers=get_csrf_headers(),
         json={
             "version": existing_version,
@@ -1044,3 +1068,108 @@ def test_patch_trip_inputs_noop_does_not_bump_version():
     payload = response.json()
     assert payload["changes_made"] is False
     assert payload["version"] == existing_version
+
+
+def test_expand_itinerary_duplicate_idempotency_returns_done_noop():
+    """POST /api/expand-itinerary should return duplicate_noop for reused idempotency key."""
+
+    session_token = f"session-expand-dup-{time.time_ns()}"
+    headers = get_csrf_headers()
+    idempotency_key = f"dup-key-{time.time_ns()}"
+
+    first = request_with_session(
+        client,
+        "POST",
+        "/api/expand-itinerary",
+        session_token,
+        headers=headers,
+        json={"idempotency_key": idempotency_key},
+    )
+    assert first.status_code == 200
+
+    second = request_with_session(
+        client,
+        "POST",
+        "/api/expand-itinerary",
+        session_token,
+        headers=headers,
+        json={"idempotency_key": idempotency_key},
+    )
+    assert second.status_code == 200
+
+    lines = [line for line in second.text.splitlines() if line.strip()]
+    assert lines
+    event = json.loads(lines[-1])
+    assert event["type"] == "done"
+    assert event["message"] == "duplicate_noop"
+
+
+def test_expand_itinerary_stream_contract_first_and_duplicate():
+    """Expand-itinerary should stream normal NDJSON first, then duplicate_noop on replay."""
+
+    original_generate_ndjson = main_module.generate_ndjson
+
+    async def fake_generate_ndjson(*, session_id, req, resolve_stage3_view_state):  # noqa: ANN001
+        yield (
+            json.dumps(
+                {
+                    "type": "progress",
+                    "stage": "itinerary",
+                    "message": "mock-progress",
+                    "pct": 10,
+                }
+            )
+            + "\n"
+        )
+        yield (
+            json.dumps(
+                {
+                    "type": "done",
+                    "plan_view_state": "S3_ITINERARY_READY",
+                    "version": 7,
+                }
+            )
+            + "\n"
+        )
+
+    main_module.generate_ndjson = fake_generate_ndjson
+    try:
+        session_token = f"session-expand-stream-{time.time_ns()}"
+        headers = get_csrf_headers()
+        idempotency_key = f"stream-key-{time.time_ns()}"
+        payload = {"idempotency_key": idempotency_key}
+
+        first = request_with_session(
+            client,
+            "POST",
+            "/api/expand-itinerary",
+            session_token,
+            headers=headers,
+            json=payload,
+        )
+        assert first.status_code == 200
+        first_events = [json.loads(line) for line in first.text.splitlines() if line.strip()]
+        assert [evt["type"] for evt in first_events] == ["progress", "done"]
+        assert first_events[0]["stage"] == "itinerary"
+        assert first_events[0]["pct"] == 10
+        assert first_events[1]["plan_view_state"] == "S3_ITINERARY_READY"
+        assert first_events[1]["version"] == 7
+
+        duplicate = request_with_session(
+            client,
+            "POST",
+            "/api/expand-itinerary",
+            session_token,
+            headers=headers,
+            json=payload,
+        )
+        assert duplicate.status_code == 200
+        duplicate_events = [
+            json.loads(line) for line in duplicate.text.splitlines() if line.strip()
+        ]
+        assert len(duplicate_events) == 1
+        assert duplicate_events[0]["type"] == "done"
+        assert duplicate_events[0]["message"] == "duplicate_noop"
+        assert "plan_view_state" not in duplicate_events[0]
+    finally:
+        main_module.generate_ndjson = original_generate_ndjson

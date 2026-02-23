@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { browseActivities, type BrowseTile } from '@/lib/api';
 import { DS } from '@/lib/design-system';
+import { getSignedGooglePlacesPhotoProxyUrl, isGooglePlacesPhotoProxyUrl } from '@/lib/googlePlacesPhoto';
 import { cn } from '@/lib/utils';
 
 const CATEGORIES = [
@@ -21,7 +22,6 @@ const CATEGORIES = [
   { value: 'food', label: 'Food' },
   { value: 'nature', label: 'Nature' },
   { value: 'spa', label: 'Spa' },
-  { value: 'tours', label: 'Tours' },
   { value: 'shopping', label: 'Shopping' },
 ];
 
@@ -46,6 +46,7 @@ export function BrowseActivitiesSheet({
   stashedTiles,
 }: BrowseActivitiesSheetProps) {
   const [tiles, setTiles] = useState<BrowseTile[]>([]);
+  const [signedImageByTileId, setSignedImageByTileId] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState('all');
@@ -59,7 +60,7 @@ export function BrowseActivitiesSheet({
         destination,
         dayNumber,
         date,
-        categories: ['cultural', 'food', 'nature', 'spa', 'tours', 'shopping'],
+        categories: ['cultural'],
       });
       setTiles(result.tiles);
     } catch {
@@ -85,7 +86,38 @@ export function BrowseActivitiesSheet({
   // Reset tiles when destination changes
   useEffect(() => {
     setTiles([]);
+    setSignedImageByTileId({});
   }, [destination]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const candidates = tiles.filter((tile) => Boolean(tile.photo_name));
+    if (candidates.length === 0) return () => {
+      cancelled = true;
+    };
+
+    Promise.all(
+      candidates.map(async (tile) => {
+        const signed = await getSignedGooglePlacesPhotoProxyUrl(tile.photo_name, {
+          maxWidth: 256,
+          maxHeight: 256,
+        });
+        return { tileId: tile.id, signed };
+      })
+    ).then((entries) => {
+      if (cancelled) return;
+      const next: Record<string, string> = {};
+      for (const entry of entries) {
+        if (entry.signed) next[entry.tileId] = entry.signed;
+      }
+      if (Object.keys(next).length === 0) return;
+      setSignedImageByTileId((prev) => ({ ...prev, ...next }));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tiles]);
 
   // browse_category is set by logistics_node for stashed tiles (mapped from Places primaryType).
   // activity_browser.py sets category directly. Fall back to category for API-fetched tiles.
@@ -169,8 +201,10 @@ export function BrowseActivitiesSheet({
       {/* Activity tiles */}
       {!loading && !error && filteredTiles.length > 0 && (
         <div className="space-y-3">
-          {filteredTiles.map((tile) => (
-            <button
+          {filteredTiles.map((tile) => {
+            const imageSrc = signedImageByTileId[tile.id] || tile.image_url;
+            return (
+              <button
               key={tile.id}
               type="button"
               onClick={() => onSelectActivity?.(tile)}
@@ -182,14 +216,15 @@ export function BrowseActivitiesSheet({
               )}
             >
               <div className="flex gap-3">
-                {tile.image_url ? (
+                {imageSrc ? (
                   <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0">
                     <Image
-                      src={tile.image_url}
+                      src={imageSrc}
                       alt={tile.title}
                       fill
                       className="object-cover"
                       sizes="64px"
+                      unoptimized={isGooglePlacesPhotoProxyUrl(imageSrc) || imageSrc.startsWith('/')}
                     />
                   </div>
                 ) : (
@@ -230,8 +265,9 @@ export function BrowseActivitiesSheet({
                   </div>
                 </div>
               </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
       )}
     </BottomSheet>

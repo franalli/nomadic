@@ -20,9 +20,15 @@ import os
 
 import pytest
 
+_RUN_LIVE_LLM_TESTS = os.environ.get("RUN_LIVE_LLM_TESTS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("OPENAI_API_KEY"),
-    reason="OPENAI_API_KEY not set — skipping live integration tests",
+    (not _RUN_LIVE_LLM_TESTS) or (not os.environ.get("OPENAI_API_KEY")),
+    reason="Live LLM tests require RUN_LIVE_LLM_TESTS=1 and OPENAI_API_KEY",
 )
 
 logger = logging.getLogger(__name__)

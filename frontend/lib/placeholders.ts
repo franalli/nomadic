@@ -17,6 +17,48 @@ function hashCode(str: string): number {
 
 // Curated Unsplash photo IDs by category (high-quality travel imagery)
 const PLACEHOLDER_IMAGES: Record<string, string[]> = {
+  culture: [
+    'photo-1493976040374-85c8e12f0c0e',
+    'photo-1518998053901-5348d3961a04',
+    'photo-1552832230-c0197dd311b5',
+    'photo-1504598318550-17eba1008a68',
+  ],
+  cooking: [
+    'photo-1556910103-1c02745aae4d',
+    'photo-1507048331197-7d4ac70811cf',
+    'photo-1466637574441-749b8f19452f',
+    'photo-1414235077428-338989a2e8c0',
+  ],
+  wellness: [
+    'photo-1540555700478-4be289fbec6d',
+    'photo-1544161515-4ab6ce6db874',
+    'photo-1600334089648-b0d9d3028eb2',
+    'photo-1515377905703-c4788e51af15',
+  ],
+  nightlife: [
+    'photo-1566417713940-fe7c737a9ef2',
+    'photo-1514933651103-005eec06c04b',
+    'photo-1470337458703-46ad1756a187',
+    'photo-1516450360452-9312f5e86fc7',
+  ],
+  hiking: [
+    'photo-1551632811-561732d1e306',
+    'photo-1506905925346-21bda4d32df4',
+    'photo-1464822759023-fed622ff2c3b',
+    'photo-1527631746610-bca00a040d60',
+  ],
+  skiing: [
+    'photo-1551524559-8af4e6624178',
+    'photo-1605540436563-5bca919ae766',
+    'photo-1517483000871-1dbf64a6e1c6',
+    'photo-1516939884455-1445c8652f83',
+  ],
+  diving: [
+    'photo-1544551763-46a013bb70d5',
+    'photo-1559827260-dc66d52bef19',
+    'photo-1544551763-77ef2d0cfc6c',
+    'photo-1560275619-4662e36fa65c',
+  ],
   hotel: [
     'photo-1566073771259-6a8506099945',
     'photo-1551882547-ff40c63fe5fa',
@@ -49,6 +91,37 @@ const PLACEHOLDER_IMAGES: Record<string, string[]> = {
   ],
 };
 
+function activityPlaceholderCategory(rawCategory?: string): string {
+  const key = (rawCategory || '').toLowerCase().trim();
+  if (!key) return 'activity';
+
+  if (/(culture|cultural|museum|landmark|monument|gallery|temple|church|mosque|synagogue|historic|plaza|ruins|fountain|attraction|point_of_interest|tour)/.test(key)) {
+    return 'culture';
+  }
+  if (/(food|restaurant|cafe|bar|bakery|meal|cooking)/.test(key)) {
+    return 'cooking';
+  }
+  if (/(nightlife|night|club)/.test(key)) {
+    return 'nightlife';
+  }
+  if (/(spa|wellness|beauty|gym|massage|yoga)/.test(key)) {
+    return 'wellness';
+  }
+  if (/(hike|trail|mountain|trek)/.test(key)) {
+    return 'hiking';
+  }
+  if (/(ski|snow)/.test(key)) {
+    return 'skiing';
+  }
+  if (/(dive|snorkel|reef|scuba)/.test(key)) {
+    return 'diving';
+  }
+  if (/(nature|park|garden|zoo|beach|camp|adventure)/.test(key)) {
+    return 'activity';
+  }
+  return 'activity';
+}
+
 type TilePlaceholderInput = {
   id?: string;
   slug?: string;
@@ -73,7 +146,9 @@ export function placeholderImageForTile(tile: TilePlaceholderInput): string {
   } else if (type.includes('flight')) {
     category = 'flight';
   } else if (type.includes('activity') || type.includes('experience')) {
-    category = 'activity';
+    category = activityPlaceholderCategory(tile.category || tile.type);
+  } else if (tile.category) {
+    category = activityPlaceholderCategory(tile.category);
   }
 
   const images = PLACEHOLDER_IMAGES[category] || PLACEHOLDER_IMAGES.default;

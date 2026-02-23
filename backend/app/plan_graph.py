@@ -41,7 +41,7 @@ from app.planner.services.response_envelope import format_result
 from app.planner.services.state_serde import (
     restore_graph_state,
 )
-from app.planner.state import GraphState, TripPlan, reset_turn_metadata
+from app.planner.state import GraphState, TripPlan, reset_turn_metadata, trip_plan_is_ready
 from app.planner.state.typed_meta import get_persistent_meta, get_turn_meta
 
 logger = logging.getLogger(__name__)
@@ -57,12 +57,19 @@ logger = logging.getLogger(__name__)
 # Panic Button - Non-LLM Kill Switch
 # =============================================================================
 
-PANIC_COMMANDS = frozenset({"/reset", "reset", "stop", "clear", "/stop", "/clear"})
+# Reserved for emergency commands (currently unused by chat input).
+PANIC_COMMANDS = frozenset()
 
 
 def _is_panic_command(text: str) -> bool:
     """Check if user input is a panic command (hard-coded, no LLM)."""
     return text.strip().lower() in PANIC_COMMANDS
+
+
+def _is_chat_reset_noop(text: str) -> bool:
+    """Typed reset-style chat commands are no-ops; only UI RESET should reset state."""
+    normalized = text.strip().lower()
+    return normalized in {"reset", "/reset", "stop", "clear", "/stop", "/clear"}
 
 
 def _create_reset_response() -> Dict[str, Any]:
@@ -77,6 +84,24 @@ def _create_reset_response() -> Dict[str, Any]:
         "trip_inputs": {},
         "ready_to_generate": False,
         "ui_events": ["UI_RESET"],
+    }
+
+
+def _create_noop_response(session_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return a no-op response that preserves the current session unchanged."""
+    current_session = session_state or {}
+    restored_state = restore_graph_state(current_session)
+    current_trip_inputs = current_session.get("trip_inputs", {})
+    if not isinstance(current_trip_inputs, dict):
+        current_trip_inputs = {}
+    return {
+        "assistant_message": "",
+        "suggested_responses": [],
+        "session_state": current_session,
+        "branches": [],
+        "trip_inputs": current_trip_inputs,
+        "ready_to_generate": trip_plan_is_ready(restored_state.trip_plan),
+        "ui_events": [],
     }
 
 
@@ -295,7 +320,7 @@ def route_after_specialist(
     # CRITICAL FIX: Allow logistics routing when destination+dates exist (for hotels/activities)
     # even without origin. Hotels don't need origin - only flights do.
     # Previously this required origin, blocking hotel search.
-    has_dates = bool(state.trip_plan.start_date)
+    has_dates = bool(state.trip_plan.start_date and state.trip_plan.end_date)
     has_origin = bool(state.trip_plan.origin)
     has_destination = bool(state.trip_plan.destination)
 
@@ -366,9 +391,13 @@ def route_after_architect(
     turn = get_turn_meta(state)
     persistent = get_persistent_meta(state)
 
+    # Architect can short-circuit with a user-facing message (e.g., destination lock).
+    if turn.short_circuit_response:
+        return "synthesizer"
+
     has_destination = bool(state.trip_plan.destination)
     has_origin = bool(state.trip_plan.origin)
-    has_dates = bool(state.trip_plan.start_date)
+    has_dates = bool(state.trip_plan.start_date and state.trip_plan.end_date)
     has_tiles = bool(state.tiles)
     is_speculative = state.intent == "speculative"
     local_expert_ran = persistent.local_expert_ran
@@ -661,6 +690,12 @@ async def run_turn(
     """
     from langchain_core.messages import HumanMessage
 
+    # Chat no-op: typed reset-style commands should not mutate state.
+    # UI RESET button is the only reset pathway.
+    if _is_chat_reset_noop(user_message):
+        logger.info(f"Chat no-op command ignored: '{user_message}'")
+        return _create_noop_response(session_state)
+
     # PANIC BUTTON - non-LLM kill switch (must be first!)
     if _is_panic_command(user_message):
         logger.info(f"Panic button triggered: '{user_message}'")
@@ -800,6 +835,13 @@ async def run_turn_streaming(
     from langchain_core.messages import HumanMessage
 
     from app.debug_utils import CompactLogger, RequestMetrics
+
+    # Chat no-op: typed reset-style commands should not mutate state.
+    # UI RESET button is the only reset pathway.
+    if _is_chat_reset_noop(user_message):
+        logger.info(f"Chat no-op command ignored (streaming): '{user_message}'")
+        yield {"type": "complete", "data": _create_noop_response(session_state)}
+        return
 
     # PANIC BUTTON - non-LLM kill switch (must be first!)
     if _is_panic_command(user_message):

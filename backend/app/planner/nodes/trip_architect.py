@@ -398,6 +398,43 @@ def _detect_and_handle_pivot(state: "GraphState", old_destination: str | None) -
     return True
 
 
+def _block_destination_switch_in_architect(
+    state: "GraphState",
+    old_destination: str | None,
+) -> bool:
+    """
+    Enforce destination lock at architect level.
+
+    Router may not extract destination changes for every pre-plan utterance.
+    Architect extraction is the final gate to prevent silent destination pivots.
+    """
+    new_destination = state.trip_plan.destination
+    if not old_destination or not new_destination:
+        return False
+    if old_destination.lower() == new_destination.lower():
+        return False
+
+    state.trip_plan.destination = old_destination
+    state.last_summary = (
+        "I can't switch destinations mid-plan. "
+        f"You're currently planning **{old_destination}**. "
+        f"To change to **{new_destination}**, click the **RESET** button first."
+    )
+    state.suggested_replies = [
+        f"Continue with {old_destination}",
+        "Why do I need to click RESET?",
+        "Set my dates",
+    ]
+    state.metadata["short_circuit_response"] = True
+    state.metadata["short_circuit_type"] = "destination_locked"
+    state.metadata["destination_switch_blocked"] = {
+        "from": old_destination,
+        "to": new_destination,
+    }
+    state.metadata["exploration_mode"] = False
+    return True
+
+
 # =============================================================================
 # Architect Prompt Templates (for reference - templates used in responses)
 # =============================================================================
@@ -819,6 +856,9 @@ async def trip_architect(state: GraphState) -> GraphState:
                 completion_tokens=field_tokens.get("completion_tokens", 0),
                 purpose="field_extraction",
             )
+
+    if _block_destination_switch_in_architect(state, prev_trip_values.get("destination")):
+        return state
 
     # Detect destination pivot and clear stale state (preserves origin, dates, travelers, budget)
     _detect_and_handle_pivot(state, prev_trip_values.get("destination"))

@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.config import settings
 from app.planner.hashing import make_cache_key
 from app.planner.nodes.vertical_specialist import (
     LLMActivity,
@@ -24,6 +25,7 @@ from app.planner.nodes.vertical_specialist import (
     VerticalSpecialist,
     _migrate_legacy_constraints,
     convert_llm_output_to_specialist_output,
+    generate_specialist_output_llm,
     vertical_specialist,
 )
 from app.planner.state import (
@@ -748,3 +750,119 @@ class TestGenerateOutputEdgeCases:
         enhancements = specialist.generate_enhancements(state)
         # Should return a list (may be empty if registry has no enhancements)
         assert isinstance(enhancements, list)
+
+
+# =============================================================================
+# 11. generate_specialist_output_llm — model fallback behavior
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_generate_specialist_output_llm_retries_with_fallback_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Primary model failure retries with SPECIALIST_FALLBACK_MODEL and succeeds."""
+    trip_plan = TripPlan(
+        destination="Bali",
+        start_date="2026-03-01",
+        end_date="2026-03-07",
+    )
+
+    primary_structured = MagicMock()
+    primary_structured.ainvoke = AsyncMock(side_effect=RuntimeError("primary timeout"))
+    fallback_structured = MagicMock()
+    fallback_structured.ainvoke = AsyncMock(
+        return_value={
+            "parsed": {
+                "feasibility_status": "feasible",
+                "activities": [{"title": "Reef Dive"}],
+                "constraints": [],
+            }
+        }
+    )
+
+    primary_llm = MagicMock()
+    primary_llm.with_structured_output.return_value = primary_structured
+    fallback_llm = MagicMock()
+    fallback_llm.with_structured_output.return_value = fallback_structured
+
+    mock_get_llm = MagicMock(side_effect=[primary_llm, fallback_llm])
+    mock_debug_log = MagicMock()
+
+    monkeypatch.setattr(settings, "specialist_model", "gpt-4o")
+    monkeypatch.setattr(settings, "specialist_fallback_model", "gemini-2.5-flash")
+
+    with (
+        patch(f"{_VS}.load_prompt", return_value="System prompt"),
+        patch(f"{_VS}.get_llm_by_model", mock_get_llm),
+        patch("app.debug_utils._debug_log", mock_debug_log),
+    ):
+        output = await generate_specialist_output_llm(
+            topic="diving",
+            destination="Bali",
+            trip_plan=trip_plan,
+            db=None,
+            skip_cache_lookup=True,
+        )
+
+    assert output is not None
+    assert output.feasibility_status == "feasible"
+    assert len(output.activities) == 1
+    assert mock_get_llm.call_count == 2
+    assert mock_get_llm.call_args_list[0].args[0] == "gpt-4o"
+    assert mock_get_llm.call_args_list[1].args[0] == "gemini-2.5-flash"
+
+    logs = " | ".join(str(call.args[0]) for call in mock_debug_log.call_args_list if call.args)
+    assert "Primary model 'gpt-4o' failed" in logs
+    assert "Retrying with fallback model 'gemini-2.5-flash'" in logs
+    assert "Success (fallback=gemini-2.5-flash)" in logs
+
+
+@pytest.mark.asyncio
+async def test_generate_specialist_output_llm_logs_when_primary_and_fallback_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both model failures are logged and function returns None."""
+    trip_plan = TripPlan(
+        destination="Bali",
+        start_date="2026-03-01",
+        end_date="2026-03-07",
+    )
+
+    primary_structured = MagicMock()
+    primary_structured.ainvoke = AsyncMock(side_effect=RuntimeError("primary timeout"))
+    fallback_structured = MagicMock()
+    fallback_structured.ainvoke = AsyncMock(side_effect=RuntimeError("fallback timeout"))
+
+    primary_llm = MagicMock()
+    primary_llm.with_structured_output.return_value = primary_structured
+    fallback_llm = MagicMock()
+    fallback_llm.with_structured_output.return_value = fallback_structured
+
+    mock_get_llm = MagicMock(side_effect=[primary_llm, fallback_llm])
+    mock_debug_log = MagicMock()
+
+    monkeypatch.setattr(settings, "specialist_model", "gpt-4o")
+    monkeypatch.setattr(settings, "specialist_fallback_model", "gemini-2.5-flash")
+
+    with (
+        patch(f"{_VS}.load_prompt", return_value="System prompt"),
+        patch(f"{_VS}.get_llm_by_model", mock_get_llm),
+        patch("app.debug_utils._debug_log", mock_debug_log),
+    ):
+        output = await generate_specialist_output_llm(
+            topic="diving",
+            destination="Bali",
+            trip_plan=trip_plan,
+            db=None,
+            skip_cache_lookup=True,
+        )
+
+    assert output is None
+    assert mock_get_llm.call_count == 2
+
+    logs = " | ".join(str(call.args[0]) for call in mock_debug_log.call_args_list if call.args)
+    assert "Primary model 'gpt-4o' failed" in logs
+    assert "Retrying with fallback model 'gemini-2.5-flash'" in logs
+    assert "Fallback model 'gemini-2.5-flash' failed" in logs
+    assert "FAILED for diving" in logs

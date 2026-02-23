@@ -255,12 +255,18 @@ class TestL2DatabaseCache:
         Resets the cached engine/factory so each test gets a fresh
         connection bound to the current event loop.
         """
+        from sqlalchemy import text
+
         import app.db as db_mod
 
         db_mod._async_engine = None
         db_mod._async_session_factory = None
         factory = db_mod._get_async_session_factory()
         async with factory() as session:
+            try:
+                await session.execute(text("SELECT 1"))
+            except Exception as exc:  # pragma: no cover - environment-dependent
+                pytest.skip(f"L2 DB cache tests require reachable PostgreSQL: {exc}")
             yield session
         await db_mod._async_engine.dispose()
         db_mod._async_engine = None

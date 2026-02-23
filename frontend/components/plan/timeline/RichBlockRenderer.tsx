@@ -49,8 +49,6 @@ export interface RichBlockRendererProps {
   onOpenFlightsSettings?: () => void;
   /** Callback to remove a block from the itinerary */
   onRemoveBlock?: (blockId: string, dayNumber: number) => void;
-  /** Stage 17: Day layout variant (compact = single-activity row) */
-  variant?: 'default' | 'compact';
   /** Whether this block is map-highlighted (hovered on map) */
   isHighlighted?: boolean;
 }
@@ -170,7 +168,6 @@ export function RichBlockRenderer({
   onOpenStaysSettings,
   onOpenFlightsSettings,
   onRemoveBlock,
-  variant,
   isHighlighted,
 }: RichBlockRendererProps) {
   const tiles = useDocumentStore((state) => state.document?.tiles);
@@ -301,7 +298,6 @@ export function RichBlockRenderer({
       onSwitchToAlternative={undefined}
       onRemove={onRemoveBlock && block.id ? () => onRemoveBlock(block.id!, dayNumber) : undefined}
       isRemovable={!block.is_buffer && !['arrival', 'departure', 'check-in', 'check-out'].includes(block.activity_type)}
-      variant={variant}
       isHighlighted={isHighlighted}
     />
   );

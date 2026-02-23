@@ -3,11 +3,13 @@ from types import SimpleNamespace
 from app.planner.nodes.logistics_node import _tier2_generation_key
 from app.planner.nodes.router_category_sync import (
     _collect_modifications_from_extraction,
+    _detect_actionable_input,
     _estimate_prefetch_tiles_per_category,
     _tier2_prefetch_key,
     detect_category_merge_mode,
     has_explicit_category_intent,
 )
+from app.planner.state import GraphState, TripPlan
 
 
 def _build_state(start_date: str | None, end_date: str | None, specialist_items: int):
@@ -89,3 +91,9 @@ def test_tier2_prefetch_key_is_stable_for_category_order():
     key_a = _tier2_prefetch_key("Bali", "2026-02", {"yoga", "nightlife"}, 4)
     key_b = _tier2_prefetch_key("Bali", "2026-02", {"nightlife", "yoga"}, 4)
     assert key_a == key_b
+
+
+def test_detect_actionable_input_date_only_does_not_fuzzy_add_category():
+    state = GraphState(trip_plan=TripPlan(destination="Bali"))
+    changes = _detect_actionable_input("I'm thinking March 10 to March 17", state)
+    assert not changes or "add_categories" not in changes

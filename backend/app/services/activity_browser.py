@@ -141,8 +141,71 @@ def _humanize_type(place_type: str) -> str:
     return place_type.replace("_", " ").title()
 
 
+def _placeholder_category_for_browse(category: str, primary_type: str) -> str:
+    """Map browse category/primaryType to placeholder image category."""
+    c = (category or "").strip().lower()
+    p = (primary_type or "").strip().lower()
+
+    # User-selected browse category should win over primary type ambiguity.
+    if any(token in c for token in ["food", "cooking"]):
+        return "cooking"
+    if any(token in c for token in ["cultural", "culture", "tours"]):
+        return "culture"
+    if any(token in c for token in ["nightlife", "night"]):
+        return "nightlife"
+    if any(token in c for token in ["spa", "wellness", "yoga"]):
+        return "wellness"
+    if any(token in c for token in ["hiking", "trail", "mountain", "trek"]):
+        return "hiking"
+    if any(token in c for token in ["ski", "snow"]):
+        return "skiing"
+    if any(token in c for token in ["dive", "snorkel", "reef", "scuba"]):
+        return "diving"
+    if any(token in c for token in ["nature", "park", "garden", "zoo", "beach", "camp"]):
+        return "adventure"
+
+    if any(
+        token in p
+        for token in [
+            "museum",
+            "landmark",
+            "monument",
+            "gallery",
+            "temple",
+            "church",
+            "mosque",
+            "synagogue",
+            "historic",
+            "plaza",
+            "ruins",
+            "fountain",
+            "attraction",
+            "point_of_interest",
+            "tour",
+            "travel_agency",
+        ]
+    ):
+        return "culture"
+    if any(token in p for token in ["restaurant", "cafe", "bar", "bakery", "meal", "food"]):
+        return "cooking"
+    if any(token in p for token in ["nightlife", "night", "club"]):
+        return "nightlife"
+    if any(token in p for token in ["spa", "wellness", "beauty", "gym", "massage", "yoga"]):
+        return "wellness"
+    if any(token in p for token in ["hike", "trail", "mountain", "trek"]):
+        return "hiking"
+    if any(token in p for token in ["ski", "snow"]):
+        return "skiing"
+    if any(token in p for token in ["dive", "snorkel", "reef", "scuba"]):
+        return "diving"
+    if any(token in p for token in ["nature", "park", "garden", "zoo", "beach", "camp"]):
+        return "adventure"
+    return "activity"
+
+
 def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
     """Transform a Google Places place dict into a browse tile dict."""
+    from app.placeholders import get_placeholder_image
     from app.tile_service.google_places_provider import _get_photo_url
 
     place_id = place.get("id", "")
@@ -170,9 +233,15 @@ def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
 
     photos = place.get("photos", [])
     image_url = None
+    photo_name = None
     if photos:
         photo_name = photos[0].get("name", "")
         image_url = _get_photo_url(photo_name)
+    if not image_url:
+        image_url = get_placeholder_image(
+            category=_placeholder_category_for_browse(category, primary_type),
+            seed=(place_id or name),
+        )
 
     editorial = place.get("editorialSummary", {}).get("text", "")
     maps_uri = place.get("googleMapsUri")
@@ -198,6 +267,7 @@ def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
         "tags": [primary_type],
         "place_id": place_id,
         "maps_uri": maps_uri,
+        "photo_name": photo_name,
     }
 
 

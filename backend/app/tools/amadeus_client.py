@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Literal, Optional
 import httpx
 from pydantic import BaseModel
 
+from app.services.spend_guard import SpendLimitExceeded, reserve_amadeus_spend_or_raise
 from app.tools.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerOpenError,
@@ -263,6 +264,12 @@ class AmadeusClient:
 
         # Get token
         token = await self._get_access_token()
+
+        # Reserve spend before making a paid upstream call.
+        try:
+            reserve_amadeus_spend_or_raise(source=f"amadeus:{endpoint}")
+        except SpendLimitExceeded as exc:
+            raise AmadeusAPIError(code="SPEND_CAP", message=str(exc)) from exc
 
         # Make request
         url = f"{self.base_url}{endpoint}"

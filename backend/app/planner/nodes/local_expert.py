@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -29,7 +30,9 @@ from app.data.demo_curation import DEMO_MANIFEST
 from app.placeholders import get_destination_gallery
 from app.planner.llm_factory import extract_json_content, extract_token_usage, get_llm_by_model
 from app.planner.nodes.expert_constraints import (
+    LocalConstraint,
     LocalExpertOutput,
+    LocalRecommendation,
     _get_constraint_context,
     _get_constraints_as_list,
     _get_static_must_dos,
@@ -55,6 +58,516 @@ _MAX_PENDING_ENRICHMENTS = 50
 _ENRICHMENT_TTL_SECONDS = 120  # 2 minutes
 _pending_enrichments: dict[str, tuple[object, float]] = {}  # (factory, monotonic_ts)
 _pending_lock = asyncio.Lock()  # Protects _pending_enrichments against coroutine interleaving
+_active_destination_enrichments: set[str] = set()
+_active_enrichment_lock = asyncio.Lock()
+
+
+def _utc_now_iso() -> str:
+    """UTC timestamp helper for enrichment status snapshots."""
+    return datetime.now(UTC).isoformat()
+
+
+def _norm_text(value: str) -> str:
+    """Normalize strings for deterministic de-duplication."""
+    import re
+
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def _append_constraint(
+    out: list[LocalConstraint],
+    seen: set[str],
+    *,
+    type_: str,
+    description: str,
+    severity: str = "info",
+) -> None:
+    text = description.strip()
+    if not text:
+        return
+    key = _norm_text(text)
+    if key in seen:
+        return
+    seen.add(key)
+    out.append(LocalConstraint(type=type_, description=text, severity=severity))
+
+
+def _append_recommendation(
+    out: list[LocalRecommendation],
+    seen: set[str],
+    *,
+    title: str,
+    description: str,
+    category: str,
+    logic_hook: str = "",
+) -> None:
+    t = title.strip()
+    d = description.strip()
+    if not t or not d:
+        return
+    key = _norm_text(f"{t}::{d}")
+    if key in seen:
+        return
+    seen.add(key)
+    out.append(
+        LocalRecommendation(
+            title=t,
+            description=d,
+            category=category,
+            logic_hook=logic_hook.strip(),
+        )
+    )
+
+
+def _enrich_legacy_lists(response: LocalExpertOutput) -> LocalExpertOutput:
+    """
+    Ensure legacy `constraints` and `recommendations` lists are sufficiently rich.
+
+    The frontend Travel Intel card currently consumes these flattened arrays.
+    When the model returns sparse legacy arrays but rich typed category fields,
+    we deterministically backfill from typed fields to keep UX density consistent.
+    """
+    MIN_CONSTRAINTS = 8
+    MIN_RECOMMENDATIONS = 8
+    MAX_CONSTRAINTS = 12
+    MAX_RECOMMENDATIONS = 12
+
+    constraints_out: list[LocalConstraint] = []
+    constraint_seen: set[str] = set()
+
+    for c in response.constraints:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_=c.type or "general",
+            description=c.description,
+            severity=c.severity or "info",
+        )
+
+    recommendations_out: list[LocalRecommendation] = []
+    recommendation_seen: set[str] = set()
+    for r in response.recommendations:
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title=r.title,
+            description=r.description,
+            category=r.category or "logistics",
+            logic_hook=r.logic_hook or "",
+        )
+
+    v = response.visa_entry
+    if v.key_requirements:
+        for req in v.key_requirements[:3]:
+            _append_constraint(
+                constraints_out,
+                constraint_seen,
+                type_="visa",
+                description=f"Entry requirement: {req}",
+                severity="info",
+            )
+    if v.max_stay_days:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="visa",
+            description=f"Typical tourist stay limit is {v.max_stay_days} days",
+            severity="info",
+        )
+    if v.immigration_tip:
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Immigration tip",
+            description=v.immigration_tip,
+            category="logistics",
+            logic_hook="Helps avoid border delays",
+        )
+
+    s = response.safety_health
+    if s.tap_water_safe is False:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="safety",
+            description="Tap water is generally not safe to drink",
+            severity="warning",
+        )
+    for concern in s.common_concerns[:4]:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="safety",
+            description=concern,
+            severity="warning",
+        )
+    if s.emergency_number:
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Emergency number",
+            description=f"Save {s.emergency_number} in your phone before arrival",
+            category="logistics",
+            logic_hook="Faster response in emergencies",
+        )
+    if s.nearest_hospital:
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Tourist-friendly hospital",
+            description=s.nearest_hospital,
+            category="logistics",
+            logic_hook="Useful backup for urgent care",
+        )
+
+    m = response.money_costs
+    if m.exchange_tip:
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Exchange tip",
+            description=m.exchange_tip,
+            category="logistics",
+            logic_hook="Avoid bad FX rates",
+        )
+    if m.atm_note:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="money",
+            description=m.atm_note,
+            severity="info",
+        )
+    if m.haggling:
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Haggling norm",
+            description=m.haggling,
+            category="cultural",
+            logic_hook="Avoid awkward payment interactions",
+        )
+
+    t = response.transportation
+    if t.traffic_note:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="transport",
+            description=t.traffic_note,
+            severity="info",
+        )
+    if t.ride_apps:
+        apps = ", ".join(t.ride_apps[:3])
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Ride apps",
+            description=f"Use {apps} for licensed rides",
+            category="logistics",
+            logic_hook="Reduces taxi scams and pricing surprises",
+        )
+    if t.airport_to_city:
+        first = t.airport_to_city[0]
+        details = [first.method]
+        if first.price:
+            details.append(first.price)
+        if first.time:
+            details.append(first.time)
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Airport transfer",
+            description=" · ".join(details),
+            category="logistics",
+            logic_hook="Plan arrival transfers before landing",
+        )
+
+    c = response.cultural_norms
+    if c.dress_code.temples:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="cultural",
+            description=f"Temple/church dress code: {c.dress_code.temples}",
+            severity="info",
+        )
+    if c.dress_code.restaurants:
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Restaurant dress norm",
+            description=c.dress_code.restaurants,
+            category="cultural",
+            logic_hook="Avoid denied entry at stricter venues",
+        )
+    for taboo in c.important_taboos[:3]:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="cultural",
+            description=taboo,
+            severity="info",
+        )
+
+    conn = response.connectivity
+    if conn.best_sim_provider:
+        desc = conn.best_sim_provider
+        if conn.sim_cost:
+            desc = f"{desc} ({conn.sim_cost})"
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Best SIM/eSIM option",
+            description=desc,
+            category="logistics",
+            logic_hook="Get data immediately on arrival",
+        )
+    if conn.essential_apps:
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Essential apps",
+            description=", ".join(conn.essential_apps[:4]),
+            category="logistics",
+            logic_hook="Helps with transport, maps, and payments",
+        )
+
+    sea = response.seasonality
+    if sea.current_season_tip:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="seasonal",
+            description=sea.current_season_tip,
+            severity="info",
+        )
+    if sea.rainy_season:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="seasonal",
+            description=f"Rainy season: {sea.rainy_season}",
+            severity="info",
+        )
+
+    td = response.things_to_do
+    for exp in td.must_do[:5]:
+        if exp.booking and exp.booking.lower() not in {"walk-in ok", "walk in ok"}:
+            _append_constraint(
+                constraints_out,
+                constraint_seen,
+                type_="booking_window",
+                description=f"{exp.name}: {exp.booking}",
+                severity="warning",
+            )
+        why_bits = [exp.why] if exp.why else []
+        if exp.cost:
+            why_bits.append(exp.cost)
+        if why_bits:
+            _append_recommendation(
+                recommendations_out,
+                recommendation_seen,
+                title=exp.name,
+                description=" · ".join(why_bits),
+                category="attraction",
+                logic_hook="High-value local experience",
+            )
+
+    n = response.neighborhoods
+    for area in n.where_to_stay[:3]:
+        desc = area.vibe or "Recommended area"
+        if area.price_range:
+            desc = f"{desc} ({area.price_range})"
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title=f"Stay in {area.name}",
+            description=desc,
+            category="accommodation",
+            logic_hook="Better base for your daily routing",
+        )
+
+    a = response.accommodation
+    if a.book_ahead:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="booking_window",
+            description=f"Accommodation booking window: {a.book_ahead}",
+            severity="warning",
+        )
+    if a.booking_platforms:
+        _append_recommendation(
+            recommendations_out,
+            recommendation_seen,
+            title="Best booking platforms",
+            description=", ".join(a.booking_platforms[:3]),
+            category="accommodation",
+            logic_hook="Higher availability and clearer cancellation policies",
+        )
+
+    scam = response.scams_traps
+    for item in scam.common_scams[:3]:
+        _append_constraint(
+            constraints_out,
+            constraint_seen,
+            type_="safety",
+            description=f"Common scam: {item.name}",
+            severity="warning",
+        )
+        if item.how_to_avoid:
+            _append_recommendation(
+                recommendations_out,
+                recommendation_seen,
+                title=f"Avoid {item.name}",
+                description=item.how_to_avoid,
+                category="scam_warning",
+                logic_hook="Reduces fraud risk",
+            )
+
+    if len(constraints_out) > MAX_CONSTRAINTS:
+        constraints_out = constraints_out[:MAX_CONSTRAINTS]
+    if len(recommendations_out) > MAX_RECOMMENDATIONS:
+        recommendations_out = recommendations_out[:MAX_RECOMMENDATIONS]
+
+    if len(constraints_out) < MIN_CONSTRAINTS or len(recommendations_out) < MIN_RECOMMENDATIONS:
+        logger.debug(
+            "LOCAL_EXPERT densifier: constraints=%s recommendations=%s",
+            len(constraints_out),
+            len(recommendations_out),
+        )
+
+    response.constraints = constraints_out
+    response.recommendations = recommendations_out
+    return response
+
+
+def _has_rich_local_expert_output(response: LocalExpertOutput) -> bool:
+    """Guard against stale sparse cache payloads that degrade Travel Intel quality."""
+    constraints_count = len([c for c in response.constraints if c.description.strip()])
+    recommendations_count = len(
+        [r for r in response.recommendations if (r.title.strip() or r.description.strip())]
+    )
+    quick_tips_count = len(
+        [tip for tip in response.quick_tips if isinstance(tip, str) and tip.strip()]
+    )
+    total = constraints_count + recommendations_count + quick_tips_count
+    return total >= 8 and (constraints_count >= 3 or recommendations_count >= 3)
+
+
+def _to_travel_intelligence_dict(response: LocalExpertOutput) -> dict:
+    """Serialize LocalExpertOutput typed fields into strategy-section travel_intelligence."""
+    return {
+        "destination_overview": (
+            response.destination_overview.model_dump() if response.destination_overview else None
+        ),
+        "visa_entry": response.visa_entry.model_dump() if response.visa_entry else None,
+        "safety_health": response.safety_health.model_dump() if response.safety_health else None,
+        "money_costs": response.money_costs.model_dump() if response.money_costs else None,
+        "transportation": response.transportation.model_dump() if response.transportation else None,
+        "cultural_norms": response.cultural_norms.model_dump() if response.cultural_norms else None,
+        "connectivity": response.connectivity.model_dump() if response.connectivity else None,
+        "seasonality": response.seasonality.model_dump() if response.seasonality else None,
+        "things_to_do": response.things_to_do.model_dump() if response.things_to_do else None,
+        "neighborhoods": response.neighborhoods.model_dump() if response.neighborhoods else None,
+        "accommodation": response.accommodation.model_dump() if response.accommodation else None,
+        "scams_traps": response.scams_traps.model_dump() if response.scams_traps else None,
+        "packing": response.packing.model_dump() if response.packing else None,
+        "quick_tips": response.quick_tips or [],
+    }
+
+
+async def _get_cached_local_expert_output(destination: str, log) -> LocalExpertOutput | None:
+    """Destination-scoped cache lookup (L1/L2) for local_expert enrichment payload."""
+    from app.db import _get_async_session_factory
+    from app.services.specialist_cache import get_cached_specialist_output
+
+    async_session_factory = _get_async_session_factory()
+    try:
+        async with async_session_factory() as cache_db:
+            cached_payload = await get_cached_specialist_output(
+                cache_db,
+                topic="local_expert",
+                destination=destination,
+                # Destination-scoped key: no dates/day pref/skill.
+                start_date=None,
+                end_date=None,
+                skill_level=None,
+                day_pref=None,
+            )
+    except Exception as cache_err:  # pragma: no cover - defensive
+        log("LOCAL_EXPERT", f"Destination cache lookup failed (non-fatal): {cache_err}")
+        return None
+
+    if not cached_payload:
+        return None
+
+    try:
+        return LocalExpertOutput.model_validate(cached_payload)
+    except ValidationError:
+        log("LOCAL_EXPERT", "Destination cache payload invalid — ignoring cached entry")
+        return None
+
+
+def _build_section_from_cached_output(destination: str, response: LocalExpertOutput) -> dict:
+    """Build a fully-hydrated local_expert section from cached LocalExpertOutput."""
+    dest_key = destination.lower().strip()
+    gallery_images = []
+    if dest_key in DEMO_MANIFEST:
+        gallery_images = DEMO_MANIFEST[dest_key].get("destination_gallery", [])
+    if not gallery_images:
+        gallery_images = get_destination_gallery(destination)
+
+    constraints_applied = [
+        {
+            "rule": c.description,
+            "type": c.type,
+            "severity": c.severity,
+            "reason": c.description,
+        }
+        for c in response.constraints
+    ]
+    content_added = [
+        {
+            "title": r.title,
+            "description": r.description,
+            "type": r.category,
+            "logic_hook": r.logic_hook,
+        }
+        for r in response.recommendations
+    ]
+    principles = [p for p in (response.quick_tips or []) if isinstance(p, str)][:4]
+    if not principles:
+        principles = [c.description for c in response.constraints[:4]]
+
+    must_dos = [exp.name for exp in response.things_to_do.must_do[:5] if exp.name]
+    one_liner = (
+        response.destination_overview.tagline
+        if response.destination_overview and response.destination_overview.tagline
+        else f"Your adventure in {destination}"
+    )
+    bullets = [c.description for c in response.constraints[:3]]
+
+    section = build_local_expert_section(
+        destination=destination,
+        one_liner=one_liner,
+        bullets=bullets,
+        must_dos=must_dos,
+        logistics_notes=[],
+        constraints_applied=constraints_applied,
+        content_added=content_added,
+        gallery_images=gallery_images,
+        travel_intelligence=_to_travel_intelligence_dict(response),
+        principles=principles,
+    )
+    section["local_expert_enrichment"] = {
+        "state": "ready",
+        "error_code": None,
+        "updated_at": _utc_now_iso(),
+    }
+    return section
+
 
 # =============================================================================
 # Local Expert Node
@@ -110,10 +623,39 @@ async def local_expert(state: GraphState) -> GraphState:
         cached_title = cached_section.get("title", "")
         current_destination = plan.destination
         if cached_title and current_destination and current_destination in cached_title:
-            log("LOCAL_EXPERT", f"Cache HIT: Reusing cached output for {current_destination}")
-            state.metadata["last_executed_specialist"] = "local_expert"
-            state.active_specialist = None
-            return state  # No-op, output already in state from session restore
+            cached_constraints = cached_section.get("constraints_applied") or []
+            cached_recommendations = cached_section.get("content_added") or []
+            if len(cached_constraints) >= 6 and len(cached_recommendations) >= 6:
+                log("LOCAL_EXPERT", f"Cache HIT: Reusing cached output for {current_destination}")
+                state.metadata["last_executed_specialist"] = "local_expert"
+                state.active_specialist = None
+                return state  # No-op, output already in state from session restore
+            log(
+                "LOCAL_EXPERT",
+                "Cache BYPASS: existing section too sparse; regenerating enrichment",
+            )
+
+    # Session state can be stale (pre-enrichment skeleton). Always check destination-scoped
+    # specialist cache before re-running Phase A/Phase B so repeated turns avoid recomputation.
+    if settings.local_expert_use_llm:
+        cached_response = await _get_cached_local_expert_output(plan.destination, log)
+        if cached_response is not None:
+            cached_response = _enrich_legacy_lists(cached_response)
+            if _has_rich_local_expert_output(cached_response):
+                section = _build_section_from_cached_output(plan.destination, cached_response)
+                upsert_section(state.metadata, section, mode="appendable")
+                mark_topic_executed(state.metadata, "local_expert")
+                log(
+                    "LOCAL_EXPERT",
+                    f"Cache HIT (destination L1/L2): reused cached enrichment for {plan.destination}",
+                )
+                state.metadata["last_executed_specialist"] = "local_expert"
+                state.active_specialist = None
+                return state
+            log(
+                "LOCAL_EXPERT",
+                f"Cache BYPASS (destination L1/L2): sparse cached enrichment for {plan.destination}",
+            )
 
     try:
         return await _run_local_expert(state, plan, log)
@@ -188,6 +730,11 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
         travel_intelligence={},
         principles=principles,
     )
+    section["local_expert_enrichment"] = {
+        "state": "pending" if settings.local_expert_use_llm else "ready",
+        "error_code": None if settings.local_expert_use_llm else "disabled",
+        "updated_at": _utc_now_iso(),
+    }
 
     # Emit skeleton to state immediately (before any background tasks fire)
     from app.debug_utils import _debug_log
@@ -297,7 +844,67 @@ Output as JSON with "constraints" and "recommendations" arrays."""
 
         async def _enrich() -> None:
             """Background LLM enrichment — writes travel_intelligence to DB."""
+            destination_key = (_b_destination or "").strip().lower()
+
+            async with _active_enrichment_lock:
+                if destination_key and destination_key in _active_destination_enrichments:
+                    log(
+                        "LOCAL_EXPERT",
+                        f"Phase B: in-flight dedupe HIT for {_b_destination} — skipping duplicate run",
+                    )
+                    return
+                if destination_key:
+                    _active_destination_enrichments.add(destination_key)
+
             try:
+                # Destination-scoped cache check (L1 memory -> L2 response_cache) to avoid
+                # repeated heavy local_expert enrichment calls across turns/sessions.
+                from app.db import _get_async_session_factory
+                from app.services.specialist_cache import get_cached_specialist_output
+
+                async_session_factory = _get_async_session_factory()
+                cached_payload = None
+                try:
+                    async with async_session_factory() as cache_db:
+                        cached_payload = await get_cached_specialist_output(
+                            cache_db,
+                            topic="local_expert",
+                            destination=_b_destination,
+                            # Destination-scoped key: don't include dates/skill/day_pref
+                            # so repeated destination queries reuse enrichment.
+                            start_date=None,
+                            end_date=None,
+                            skill_level=None,
+                            day_pref=None,
+                        )
+                except Exception as cache_err:
+                    log("LOCAL_EXPERT", f"Phase B cache lookup failed (non-fatal): {cache_err}")
+
+                if cached_payload:
+                    try:
+                        response = LocalExpertOutput.model_validate(cached_payload)
+                        response = _enrich_legacy_lists(response)
+                        if _has_rich_local_expert_output(response):
+                            log("LOCAL_EXPERT", f"Phase B cache HIT for {_b_destination}")
+                            if _session_id:
+                                await _persist_travel_intelligence(
+                                    _session_id,
+                                    response,
+                                    enrichment_state="ready",
+                                )
+                                log(
+                                    "LOCAL_EXPERT",
+                                    f"Phase B: cached travel_intelligence persisted for session {_session_id}",
+                                )
+                            return
+                        log(
+                            "LOCAL_EXPERT",
+                            f"Phase B cache BYPASS for {_b_destination}: sparse payload",
+                        )
+                    except ValidationError:
+                        # Cache schema drift should not fail enrichment; fall back to LLM.
+                        log("LOCAL_EXPERT", "Phase B cache payload invalid — falling back to LLM")
+
                 llm = get_llm_by_model(
                     settings.local_expert_model,
                     temperature=0.3,
@@ -319,10 +926,37 @@ Output as JSON with "constraints" and "recommendations" arrays."""
 
                 content = extract_json_content(raw)
                 if not content:
-                    log("LOCAL_EXPERT", "Phase B: LLM returned empty content — skipping persist")
+                    if _session_id:
+                        await _persist_travel_intelligence(
+                            _session_id,
+                            None,
+                            enrichment_state="failed",
+                            error_code="parse_error",
+                        )
+                    log("LOCAL_EXPERT", "Phase B: LLM returned empty content — marked failed")
                     return
 
                 response = LocalExpertOutput.model_validate_json(content)
+                response = _enrich_legacy_lists(response)
+
+                # Best-effort cache write for future destination-scoped reuse.
+                from app.services.specialist_cache import set_cached_specialist_output
+
+                try:
+                    async with async_session_factory() as cache_db:
+                        await set_cached_specialist_output(
+                            cache_db,
+                            topic="local_expert",
+                            destination=_b_destination,
+                            start_date=None,
+                            end_date=None,
+                            output=response.model_dump(),
+                            skill_level=None,
+                            day_pref=None,
+                        )
+                    log("LOCAL_EXPERT", f"Phase B cache WRITE for {_b_destination}")
+                except Exception as cache_err:
+                    log("LOCAL_EXPERT", f"Phase B cache write failed (non-fatal): {cache_err}")
 
                 token_usage = extract_token_usage(raw, model=settings.local_expert_model)
                 if token_usage:
@@ -338,7 +972,11 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                     )
 
                 if _session_id:
-                    await _persist_travel_intelligence(_session_id, response)
+                    await _persist_travel_intelligence(
+                        _session_id,
+                        response,
+                        enrichment_state="ready",
+                    )
                     log(
                         "LOCAL_EXPERT",
                         f"Phase B: travel_intelligence persisted for session {_session_id}",
@@ -360,6 +998,14 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                 _debug_error(
                     f"LOCAL_EXPERT Phase B parse/timeout error: {e}\n{traceback.format_exc()}"
                 )
+                if _session_id:
+                    error_code = "timeout" if isinstance(e, asyncio.TimeoutError) else "parse_error"
+                    await _persist_travel_intelligence(
+                        _session_id,
+                        None,
+                        enrichment_state="failed",
+                        error_code=error_code,
+                    )
                 log("LOCAL_EXPERT", f"Phase B: non-fatal LLM error: {type(e).__name__}")
             except Exception as e:
                 import traceback
@@ -369,7 +1015,18 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                 _debug_error(
                     f"LOCAL_EXPERT Phase B unexpected error: {e}\n{traceback.format_exc()}"
                 )
+                if _session_id:
+                    await _persist_travel_intelligence(
+                        _session_id,
+                        None,
+                        enrichment_state="failed",
+                        error_code="llm_error",
+                    )
                 log("LOCAL_EXPERT", f"Phase B: non-fatal unexpected error: {type(e).__name__}")
+            finally:
+                if destination_key:
+                    async with _active_enrichment_lock:
+                        _active_destination_enrichments.discard(destination_key)
 
         # Stash enrichment coroutine-factory in module-level dict so streaming.py can fire it
         # after db.commit() — avoids cancellation by the graph's asyncio.timeout() context
@@ -385,6 +1042,15 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                 _pending_enrichments[_session_id] = (_enrich, time.monotonic())
             log("LOCAL_EXPERT", "Phase B: enrichment stashed for post-commit firing")
         else:
+            sections = state.metadata.get("strategy_sections", [])
+            for s in sections:
+                if s.get("specialist_type") == "local_expert":
+                    s["local_expert_enrichment"] = {
+                        "state": "failed",
+                        "error_code": "no_session",
+                        "updated_at": _utc_now_iso(),
+                    }
+                    break
             log("LOCAL_EXPERT", "Phase B: no session_id — enrichment skipped")
     else:
         log("LOCAL_EXPERT", "LLM disabled (local_expert_use_llm=False) — skeleton only")
@@ -419,37 +1085,24 @@ Output as JSON with "constraints" and "recommendations" arrays."""
 # =============================================================================
 
 
-async def _persist_travel_intelligence(session_id: str, response: LocalExpertOutput) -> None:
-    """Write enriched travel_intelligence to the local_expert section in the DB document.
-
-    Called from the Phase B background task after LLM enrichment completes.
-    Looks up the PlanDocument by session token, finds the local_expert section,
-    and updates travel_intelligence + constraints_applied + content_added in-place.
-
-    Silently returns (no-op) if the document or section is not found.
-    """
+async def _persist_travel_intelligence(
+    session_id: str,
+    response: LocalExpertOutput | None,
+    *,
+    enrichment_state: str,
+    error_code: str | None = None,
+) -> None:
+    """Persist local_expert enrichment status and optional travel intelligence payload."""
     from app.crud_document import get_document, get_document_data, save_document_data
     from app.crud_trip import get_session_by_token
     from app.db import _get_async_session_factory
 
-    travel_intelligence = {
-        "destination_overview": (
-            response.destination_overview.model_dump() if response.destination_overview else None
-        ),
-        "visa_entry": response.visa_entry.model_dump() if response.visa_entry else None,
-        "safety_health": response.safety_health.model_dump() if response.safety_health else None,
-        "money_costs": response.money_costs.model_dump() if response.money_costs else None,
-        "transportation": response.transportation.model_dump() if response.transportation else None,
-        "cultural_norms": response.cultural_norms.model_dump() if response.cultural_norms else None,
-        "connectivity": response.connectivity.model_dump() if response.connectivity else None,
-        "seasonality": response.seasonality.model_dump() if response.seasonality else None,
-        "things_to_do": response.things_to_do.model_dump() if response.things_to_do else None,
-        "neighborhoods": response.neighborhoods.model_dump() if response.neighborhoods else None,
-        "accommodation": response.accommodation.model_dump() if response.accommodation else None,
-        "scams_traps": response.scams_traps.model_dump() if response.scams_traps else None,
-        "packing": response.packing.model_dump() if response.packing else None,
-        "quick_tips": response.quick_tips or [],
-    }
+    if enrichment_state not in {"ready", "failed"}:
+        raise ValueError(f"Invalid enrichment_state: {enrichment_state}")
+
+    travel_intelligence = None
+    if response is not None:
+        travel_intelligence = _to_travel_intelligence_dict(response)
 
     async_session_factory = _get_async_session_factory()
     async with async_session_factory() as db:
@@ -472,29 +1125,35 @@ async def _persist_travel_intelligence(session_id: str, response: LocalExpertOut
             # StrategySection objects from get_document_data() are always Pydantic models
             if section.specialist_type != "local_expert":
                 continue
-            section.travel_intelligence = travel_intelligence
-            if response.constraints:
-                section.constraints_applied = [
-                    {
-                        "rule": c.description,
-                        "type": c.type,
-                        "severity": c.severity,
-                        "reason": c.description,
-                    }
-                    for c in response.constraints
-                ]
-            if response.recommendations:
-                section.content_added = [
-                    {
-                        "title": r.title,
-                        "description": r.description,
-                        "type": r.category,
-                        "logic_hook": r.logic_hook,
-                    }
-                    for r in response.recommendations
-                ]
-            if response.destination_overview and response.destination_overview.tagline:
-                section.one_liner = response.destination_overview.tagline
+            section.local_expert_enrichment = {
+                "state": enrichment_state,
+                "error_code": error_code,
+                "updated_at": _utc_now_iso(),
+            }
+            if travel_intelligence is not None:
+                section.travel_intelligence = travel_intelligence
+                if response.constraints:
+                    section.constraints_applied = [
+                        {
+                            "rule": c.description,
+                            "type": c.type,
+                            "severity": c.severity,
+                            "reason": c.description,
+                        }
+                        for c in response.constraints
+                    ]
+                if response.recommendations:
+                    section.content_added = [
+                        {
+                            "title": r.title,
+                            "description": r.description,
+                            "type": r.category,
+                            "logic_hook": r.logic_hook,
+                        }
+                        for r in response.recommendations
+                    ]
+                if response.destination_overview and response.destination_overview.tagline:
+                    section.one_liner = response.destination_overview.tagline
             updated = True
             break
 
@@ -504,4 +1163,8 @@ async def _persist_travel_intelligence(session_id: str, response: LocalExpertOut
 
         await save_document_data(db, doc=doc, data=data, updated_by="planner")
         await db.commit()
-        logger.debug("LOCAL_EXPERT _persist: travel_intelligence written to DB")
+        logger.debug(
+            "LOCAL_EXPERT _persist: enrichment state=%s written to DB (error=%s)",
+            enrichment_state,
+            error_code,
+        )

@@ -16,11 +16,14 @@ Extracted from plan_graph.py (Stage 7, Phase 2).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 from app.placeholders import get_hero_image
+from app.planner.hashing import make_cache_key
 from app.planner.services.section_builder import (
     mark_topic_executed,
     sort_sections_anchor_first,
@@ -37,6 +40,7 @@ from app.planner.specialist_registry import (
 from app.planner.state import GraphState, TripPlan, trip_plan_is_ready
 from app.planner.state.typed_meta import get_trip_settings
 from app.schemas import StrategySection as StrategySectionModel
+from app.services.cache_core import MemoryCache
 from app.utils.tile_utils import flatten_tiles_to_id_map
 
 logger = logging.getLogger(__name__)
@@ -54,6 +58,107 @@ _USER_SETTINGS_FIELDS = (
     "transport_settings",
     "booking_types",
 )
+
+# Session-scoped L1 cache for shadow itinerary cards.
+# Keep this short-lived to avoid stale cards while still skipping redundant
+# builder work on rapid follow-up turns.
+_ITINERARY_L1_TTL_SECONDS = 90
+_ITINERARY_L1_MAX_SIZE = 256
+_itinerary_day_cards_l1 = MemoryCache(
+    maxsize=_ITINERARY_L1_MAX_SIZE,
+    ttl=_ITINERARY_L1_TTL_SECONDS,
+    stat_keys=["hits", "misses", "writes"],
+)
+
+
+def clear_itinerary_day_cards_l1_cache() -> int:
+    """Test/admin helper to clear itinerary day-card L1 cache."""
+    return _itinerary_day_cards_l1.clear()
+
+
+def _normalize_section(section: Any) -> dict[str, Any]:
+    if isinstance(section, dict):
+        return section
+    if hasattr(section, "model_dump"):
+        return section.model_dump()
+    return {}
+
+
+def _itinerary_inputs_hash(state: GraphState, flattened_tiles: Dict[str, Any]) -> str:
+    sections = state.metadata.get("strategy_sections", []) or []
+    section_signature = []
+    for section in sections:
+        sec = _normalize_section(section)
+        content = sec.get("content_added", []) or []
+        section_signature.append(
+            {
+                "id": sec.get("id"),
+                "specialist_type": sec.get("specialist_type"),
+                "feasibility_status": sec.get("feasibility_status"),
+                "content_len": len(content),
+                "content_titles": [
+                    (c.get("title") if isinstance(c, dict) else str(c)) for c in content[:5]
+                ],
+            }
+        )
+
+    tile_signature = []
+    for tile_id in sorted(flattened_tiles.keys()):
+        tile = flattened_tiles.get(tile_id) or {}
+        if not isinstance(tile, dict):
+            continue
+        tile_signature.append(
+            {
+                "id": tile_id,
+                "type": tile.get("type"),
+                "title": tile.get("title"),
+                "price_estimate": tile.get("price_estimate"),
+                "category": tile.get("category"),
+            }
+        )
+
+    settings = get_trip_settings(state)
+    payload = {
+        "trip_plan": {
+            "destination": state.trip_plan.destination,
+            "origin": state.trip_plan.origin,
+            "start_date": state.trip_plan.start_date,
+            "end_date": state.trip_plan.end_date,
+            "adults": state.trip_plan.adults,
+            "children": state.trip_plan.children,
+            "budget": state.trip_plan.budget,
+            "currency": state.trip_plan.currency,
+        },
+        "activity_settings": (
+            settings.activity_settings.model_dump()
+            if settings and settings.activity_settings is not None
+            else {}
+        ),
+        "strategy_sections": section_signature,
+        "tiles": tile_signature,
+        "user_pinned_tile_ids": sorted((state.metadata.get("user_pinned_tiles") or {}).keys()),
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _itinerary_l1_key(state: GraphState, flattened_tiles: Dict[str, Any]) -> str | None:
+    session_id = str(state.metadata.get("session_id") or "").strip()
+    if not session_id:
+        return None
+    doc_version = state.metadata.get("document_version")
+    try:
+        doc_version_int = int(doc_version)
+    except (TypeError, ValueError):
+        return None
+    input_hash = _itinerary_inputs_hash(state, flattened_tiles)
+    return make_cache_key(
+        "itinerary_day_cards",
+        "v1",
+        session_id,
+        f"dv{doc_version_int}",
+        input_hash,
+    )
 
 
 # =============================================================================
@@ -73,12 +178,18 @@ def _compute_plan_view_state(state: GraphState) -> str:
     Bridge State: Promotes to S2 when specialist content exists (even without dates/tiles)
     to show Strategy Cards + Sample Day Flow + POI Map immediately.
     """
-    # S2: Has tiles → full logistics mode (dates set, real prices)
+    # Minimum gate: keep setup view until destination + BOTH dates are known.
+    has_core_trip_fields = bool(
+        state.trip_plan.destination and state.trip_plan.start_date and state.trip_plan.end_date
+    )
+    if not has_core_trip_fields:
+        return "S0_BOOTSTRAP"
+
+    # S2: Has tiles → full logistics mode (real inventory/prices)
     if state.tiles and any(state.tiles.values()):
         return "S2_STRATEGY_READY"
 
-    # S2: Has specialist content → strategy preview mode (inspiration, no prices)
-    # This enables the "Bridge State" - showing diving/skiing/hiking cards before dates
+    # S2: Has specialist content (post-date strategy content)
     sections = state.metadata.get("strategy_sections", [])
     has_specialist_content = any(
         s.get("specialist_type") not in ("general", None) for s in sections
@@ -86,8 +197,8 @@ def _compute_plan_view_state(state: GraphState) -> str:
     if has_specialist_content:
         return "S2_STRATEGY_READY"
 
-    # S0: No tiles or specialist content → blank slate / setup checklist
-    return "S0_BOOTSTRAP"
+    # Destination + dates established: open plan view even before tiles.
+    return "S2_STRATEGY_READY"
 
 
 def _flatten_tiles_to_id_map(tiles_by_category: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -809,7 +920,36 @@ def format_result(
         f"{state.trip_plan.start_date or ''}|"
         f"{state.trip_plan.end_date or ''}"
     )
+    itinerary_l1_key = _itinerary_l1_key(state, flattened_tiles)
     if plan_view_state == "S2_STRATEGY_READY" and not has_blocking:
+        cached_shadow = _itinerary_day_cards_l1.get(itinerary_l1_key) if itinerary_l1_key else None
+        if isinstance(cached_shadow, dict) and isinstance(cached_shadow.get("day_cards"), list):
+            itinerary_day_cards = cached_shadow["day_cards"]
+            cached_view_state = cached_shadow.get("view_state")
+            if isinstance(cached_view_state, str) and cached_view_state.startswith("S3"):
+                plan_view_state = cached_view_state
+                state.metadata["plan_view_state"] = plan_view_state
+            state.metadata["last_builder_success"] = True
+            state.metadata["last_itinerary_day_cards"] = itinerary_day_cards
+            state.metadata["last_itinerary_view_state"] = plan_view_state
+            state.metadata["last_itinerary_cache_key"] = itinerary_cache_key
+            _itinerary_day_cards_l1.increment_stat("hits")
+            _debug_log(
+                "[format_result] Reused itinerary_day_cards "
+                f"(l1_key={itinerary_l1_key}, cards={len(itinerary_day_cards)})"
+            )
+            return _build_response_envelope(
+                state,
+                trip_inputs,
+                flattened_tiles,
+                plan_view_state,
+                strategy_sections,
+                executed_topics,
+                itinerary_day_cards,
+            )
+        if itinerary_l1_key:
+            _itinerary_day_cards_l1.increment_stat("misses")
+
         short_circuit_type = state.metadata.get("short_circuit_type")
         can_reuse_cached_itinerary = short_circuit_type in {"question_answer", "exploration"}
         cached_day_cards = state.metadata.get("last_itinerary_day_cards")
@@ -872,6 +1012,15 @@ def format_result(
                     state.metadata["last_itinerary_day_cards"] = itinerary_day_cards
                     state.metadata["last_itinerary_view_state"] = plan_view_state
                     state.metadata["last_itinerary_cache_key"] = itinerary_cache_key
+                    if itinerary_l1_key:
+                        _itinerary_day_cards_l1.set(
+                            itinerary_l1_key,
+                            {
+                                "day_cards": itinerary_day_cards,
+                                "view_state": plan_view_state,
+                            },
+                        )
+                        _itinerary_day_cards_l1.increment_stat("writes")
                     # Track drop ratio for guard suppression accuracy
                     if result.total_activities_input > 0:
                         state.metadata["last_builder_drop_ratio"] = 1.0 - (
@@ -921,6 +1070,15 @@ def format_result(
                         state.metadata["last_itinerary_day_cards"] = itinerary_day_cards
                         state.metadata["last_itinerary_view_state"] = plan_view_state
                         state.metadata["last_itinerary_cache_key"] = itinerary_cache_key
+                        if itinerary_l1_key:
+                            _itinerary_day_cards_l1.set(
+                                itinerary_l1_key,
+                                {
+                                    "day_cards": itinerary_day_cards,
+                                    "view_state": plan_view_state,
+                                },
+                            )
+                            _itinerary_day_cards_l1.increment_stat("writes")
                     if result and result.resolutions:
                         state.metadata["last_builder_resolutions"] = [
                             r.model_dump() for r in result.resolutions

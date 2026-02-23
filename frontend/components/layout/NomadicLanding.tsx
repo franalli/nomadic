@@ -241,12 +241,17 @@ export function NomadicLanding() {
     hasBranchesReady,
   });
 
+  // Keep right-side plan view closed until destination + full date range are present.
+  const hasPlanViewPrerequisites = hasDestination && hasStartDate && hasEndDate;
+
   // Compute data density for adaptive layout
-  const dataDensity: DataDensity = computeDataDensity(
-    planViewState ?? 'S0_BOOTSTRAP',
-    planViewModel.strategy_sections,
-    docTiles ?? {}
-  );
+  const dataDensity: DataDensity = hasPlanViewPrerequisites
+    ? computeDataDensity(
+        planViewState ?? 'S0_BOOTSTRAP',
+        planViewModel.strategy_sections,
+        docTiles ?? {}
+      )
+    : 'empty';
 
   // Trip inputs editor
   const tripInputsEditor = useTripInputsEditor({
@@ -290,6 +295,7 @@ export function NomadicLanding() {
 
   const {
     proceedWithItineraryGeneration,
+    requestAutoExpandItinerary,
     handleExpandToItinerary,
     handleSelectNights,
     hasItineraryContent,
@@ -429,7 +435,7 @@ export function NomadicLanding() {
         selectedBranchId={selectedBranchId}
         onPlanResult={handlePlanResultWithReceipt}
         onGeneratePlanStart={handleGeneratePlanStartWithSnapshot}
-        onAutoExpandItinerary={proceedWithItineraryGeneration}
+        onAutoExpandItinerary={requestAutoExpandItinerary}
         fullHeight={false}
         hasBranches={hasBranchesReady}
         readyToGenerate={readyToGenerate}

@@ -539,9 +539,28 @@ export function useLocalBookingSettings(
   const handleUpdateActivitySettings = useCallback(
     (settings: Partial<ActivitySettings>) => {
       markSettingDirty('activity_settings');
-      ensureBookingTypeEnabled('activities');
       const currentSettings = activitySettingsRef.current;
       const newSettings = { ...currentSettings, ...settings };
+      const hasExplicitCategoryUpdate = Object.prototype.hasOwnProperty.call(settings, 'categories');
+      const nextCategories = hasExplicitCategoryUpdate
+        ? (settings.categories ?? [])
+        : (newSettings.categories ?? []);
+
+      if (nextCategories.length > 0) {
+        ensureBookingTypeEnabled('activities');
+      } else if (hasExplicitCategoryUpdate) {
+        // Explicitly clearing categories means activities are off, not "mixed fallback".
+        markSettingDirty('booking_types');
+        const updatedBookingTypes = { ...bookingTypesRef.current, activities: 'off' as BookingTypeState };
+        bookingTypesRef.current = updatedBookingTypes;
+        setLocalBookingTypes(updatedBookingTypes);
+        commitWithDebounce(
+          { booking_types: updatedBookingTypes },
+          bookingTypesCommitTimer,
+          hasPendingBookingTypesChanges
+        );
+      }
+
       // Update ref and state synchronously so rapid clicks work correctly
       activitySettingsRef.current = newSettings;
       setLocalActivitySettings(newSettings);

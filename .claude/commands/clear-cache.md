@@ -3,6 +3,11 @@ Clear L1 + L2 caches through the admin API endpoint.
 ## Prerequisites
 
 Backend must be running locally on port 8000.
+Start it from the backend virtualenv:
+
+```bash
+cd backend && .venv/bin/python start.py --prod
+```
 
 Optional (if `ADMIN_API_KEY` is configured): export your key first.
 
@@ -13,7 +18,7 @@ export ADMIN_API_KEY="your-key" # pragma: allowlist secret
 ## Step 1: Health Check
 
 ```bash
-curl -s http://localhost:8000/health | python3 -c "import sys,json; d=json.load(sys.stdin); print('Backend UP:', d.get('status'))" 2>/dev/null || echo "ERROR: Backend not running"
+curl -s http://localhost:8000/health | python3 -c "import sys,json; d=json.load(sys.stdin); print('Backend UP:', d.get('status'))" 2>/dev/null || echo "ERROR: Backend not running — start it with: cd backend && .venv/bin/python start.py --prod"
 ```
 
 If backend is not running, stop and ask the user to start it.

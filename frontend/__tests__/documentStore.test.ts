@@ -113,6 +113,69 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe('hasAllRequiredFields', () => {
+  it('returns false when destination is set but dates are missing', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: {
+          ...DEFAULT_TRIP_INPUTS,
+          destination: 'Rome',
+          start_date: null,
+          end_date: null,
+        },
+      }),
+    });
+
+    expect(useDocumentStore.getState().hasAllRequiredFields()).toBe(false);
+  });
+
+  it('returns true only when destination and both dates are set', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: {
+          ...DEFAULT_TRIP_INPUTS,
+          destination: 'Rome',
+          start_date: '2026-03-01',
+          end_date: '2026-03-07',
+        },
+      }),
+    });
+
+    expect(useDocumentStore.getState().hasAllRequiredFields()).toBe(true);
+  });
+});
+
+describe('fetchDocument single-flight', () => {
+  it('dedupes concurrent fetchDocument calls into one backend request', async () => {
+    let resolveFetch: ((value: Response) => void) | null = null;
+    mockApiFetch.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    const p1 = useDocumentStore.getState().fetchDocument();
+    const p2 = useDocumentStore.getState().fetchDocument();
+
+    expect(mockApiFetch).toHaveBeenCalledTimes(1);
+    expect(resolveFetch).not.toBeNull();
+
+    const response = makePatchResponse(3, {
+      trip_inputs: { ...DEFAULT_TRIP_INPUTS, destination: 'Rome' },
+      branches: [],
+      tiles: {},
+      plan_view_state: 'S0_BOOTSTRAP',
+    });
+    resolveFetch!(mockResponse(200, response));
+
+    const [d1, d2] = await Promise.all([p1, p2]);
+    expect(mockApiFetch).toHaveBeenCalledTimes(1);
+    expect(d1).toEqual(d2);
+    expect(d1?.trip_inputs.destination).toBe('Rome');
+  });
+});
+
 // ==========================================================================
 // Group 1: mergeEnvelope
 // ==========================================================================

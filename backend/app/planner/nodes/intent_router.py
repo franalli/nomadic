@@ -78,6 +78,13 @@ _exploration_answer_cache = MemoryCache(
     stat_keys=["hits", "misses", "writes"],
 )
 
+_EXPLORATION_CARRYOVER_META_KEYS = (
+    "awaiting_dates",
+    "detected_month",
+    "generic_question_count",
+    "suggested_question_types",
+)
+
 
 # Derived constant for suggestion prompts
 _SPECIALIST_NAMES_CSV = ", ".join(sorted(TIER1_SPECIALIST_NAMES))
@@ -156,6 +163,249 @@ def _clear_stale_specialist_content(state: GraphState) -> None:
     logger.info("[Router] Cleared stale specialist content for constraint change")
 
 
+def _normalize_destination_context(value: Optional[str]) -> str:
+    """Normalize destination-like text for stable comparisons."""
+    return (value or "").strip().lower()
+
+
+def _destination_context_changed(state: GraphState, destination: Optional[str]) -> bool:
+    """Detect destination context shifts to clear stale exploration metadata."""
+    previous = _normalize_destination_context(state.metadata.get("last_destination_context"))
+    current = _normalize_destination_context(destination or state.trip_plan.destination)
+    return bool(previous and current and previous != current)
+
+
+def _clear_exploration_carryover(state: GraphState) -> None:
+    """Clear cross-turn exploration hints that cause repetitive suggestions."""
+    for key in _EXPLORATION_CARRYOVER_META_KEYS:
+        state.metadata.pop(key, None)
+
+
+def _reset_destination_bound_state_if_changed(state: GraphState) -> bool:
+    """
+    Clear destination-bound artifacts when destination context changes.
+
+    This prevents stale local expert constraints/tiles from surviving a
+    destination switch (e.g., Bali data shown after switching to Rome).
+    Returns True when a reset was applied.
+    """
+    previous = _normalize_destination_context(
+        state.metadata.get("last_destination_context") or state.metadata.get("tiles_destination")
+    )
+    current = _normalize_destination_context(state.trip_plan.destination)
+
+    if not (previous and current and previous != current):
+        return False
+
+    _clear_exploration_carryover(state)
+    _clear_stale_specialist_content(state)
+    state.metadata["local_expert_ran"] = False
+    state.metadata["executed_strategy_topics"] = [
+        t for t in state.metadata.get("executed_strategy_topics", []) if t != "local_expert"
+    ]
+    state.metadata["tiles_destination"] = None
+
+    logger.info(
+        "[Router] Destination changed (%s -> %s); reset destination-bound state",
+        previous,
+        current,
+    )
+    return True
+
+
+def _block_destination_switch_if_needed(
+    state: GraphState,
+    proposed_destination: Optional[str],
+) -> bool:
+    """
+    Enforce destination lock: destination changes require UI reset button.
+    """
+    current = _normalize_destination_context(state.trip_plan.destination)
+    proposed = _normalize_destination_context(proposed_destination)
+
+    if not (current and proposed and current != proposed):
+        return False
+
+    current_display = str(state.trip_plan.destination).strip()
+    proposed_display = str(proposed_destination).strip().title()
+    state.last_summary = (
+        "I can't switch destinations mid-plan. "
+        f"You're currently planning **{current_display}**. "
+        f"To change to **{proposed_display}**, click the **RESET** button first."
+    )
+    state.suggested_replies = [
+        f"Continue with {current_display}",
+        "Why do I need to click RESET?",
+        "Set my dates",
+    ]
+    state.metadata["short_circuit_response"] = True
+    state.metadata["short_circuit_type"] = "destination_locked"
+    state.metadata["destination_switch_blocked"] = {
+        "from": current_display,
+        "to": proposed_display,
+    }
+    state.metadata["exploration_mode"] = False
+    return True
+
+
+def _detect_destination_switch_request(user_text: str) -> Optional[str]:
+    """
+    Detect explicit destination-switch commands in plain chat text.
+    """
+    text = (user_text or "").strip()
+    if not text:
+        return None
+
+    patterns = (r"^\s*(?:switch|change)\s+(?:destination\s+)?to\s+(.+?)\s*$",)
+    for pattern in patterns:
+        match = re.match(pattern, text, flags=re.IGNORECASE)
+        if match:
+            candidate = match.group(1).strip().strip(".!?")
+            if candidate and _looks_like_destination_switch_candidate(candidate):
+                return candidate
+    return None
+
+
+_NON_DESTINATION_SWITCH_HINTS = re.compile(
+    r"\b(?:"
+    r"hotel|hotels|flight|flights|direct|nonstop|layover|stopover|"
+    r"budget|price|pricing|cheap|cheaper|expensive|luxury|star|"
+    r"activity|activities|itinerary|day|days|night|nights|week|weeks|month|months|"
+    r"traveler|travelers|adult|adults|child|children|kid|kids|"
+    r"room|rooms|class|economy|business|first|seat|seats"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _looks_like_destination_switch_candidate(candidate: str) -> bool:
+    """Filter out switch phrases that are clearly settings/constraints updates."""
+    cleaned = (candidate or "").strip()
+    if not cleaned:
+        return False
+    return _NON_DESTINATION_SWITCH_HINTS.search(cleaned) is None
+
+
+_DESTINATION_QUERY_PREFIXES = {
+    "what",
+    "when",
+    "where",
+    "why",
+    "how",
+    "can",
+    "could",
+    "would",
+    "should",
+    "is",
+    "are",
+    "do",
+    "does",
+    "did",
+    "which",
+}
+
+_DESTINATION_SETUP_CUE_WORDS = {
+    "to",
+    "visit",
+    "go",
+    "going",
+    "travel",
+    "traveling",
+    "headed",
+}
+
+_DESTINATION_GENERIC_TOKENS = {
+    "trip",
+    "travel",
+    "vacation",
+    "holiday",
+    "plan",
+    "planning",
+    "adventure",
+    "beach",
+    "mountain",
+    "mountains",
+    "city",
+    "break",
+    "getaway",
+}
+
+_DESTINATION_FILLER_TOKENS = {"i", "we", "my", "me", "the", "a", "an", "our"}
+
+
+def _looks_like_destination_setup_turn(user_text: str) -> bool:
+    """Heuristic for destination setup turns before plan activation."""
+    text = (user_text or "").strip()
+    if not text:
+        return False
+
+    text_lower = text.lower()
+    if text_lower.endswith("?"):
+        return False
+    if re.search(r"\d", text_lower):
+        return False
+
+    words = re.findall(r"[a-zA-Z][a-zA-Z'-]*", text_lower)
+    if not words or len(words) > 8:
+        return False
+    if words[0] in _DESTINATION_QUERY_PREFIXES:
+        return False
+
+    specialist_words = [word for word in words if word in ALL_SPECIALIST_KEYWORDS]
+    if specialist_words:
+        trailing_place = re.search(r"\b(?:in|to)\s+([a-zA-Z][a-zA-Z' -]{1,40})$", text_lower)
+        if trailing_place:
+            tail_words = re.findall(r"[a-zA-Z][a-zA-Z'-]*", trailing_place.group(1).lower())
+            if tail_words and not all(word in ALL_SPECIALIST_KEYWORDS for word in tail_words):
+                return True
+        return False
+
+    cue_indexes = [idx for idx, word in enumerate(words) if word in _DESTINATION_SETUP_CUE_WORDS]
+    for idx in cue_indexes:
+        candidate_words = [
+            word
+            for word in words[idx + 1 :]
+            if word not in _DESTINATION_FILLER_TOKENS and word not in _DESTINATION_SETUP_CUE_WORDS
+        ]
+        if not candidate_words:
+            continue
+
+        if all(word in _DESTINATION_GENERIC_TOKENS for word in candidate_words):
+            continue
+        if all(word in ALL_SPECIALIST_KEYWORDS for word in candidate_words):
+            continue
+
+        return True
+
+    meaningful = [word for word in words if word not in _DESTINATION_FILLER_TOKENS]
+    if not meaningful:
+        return False
+
+    # Accept short destination-like nouns ("rome", "new york"), but reject
+    # generic travel phrases that don't identify a place ("beach vacation").
+    if len(meaningful) <= 3:
+        if all(word in ALL_SPECIALIST_KEYWORDS for word in meaningful):
+            return False
+        return not all(word in _DESTINATION_GENERIC_TOKENS for word in meaningful)
+
+    return False
+
+
+def _should_attempt_preplan_opportunistic_extraction(state: GraphState, user_text: str) -> bool:
+    """Run extraction early when a pre-plan message likely contains core trip fields."""
+    if state.metadata.get("router_extracted_fields"):
+        return False
+
+    text_lower = (user_text or "").lower()
+    if any(re.search(pattern, text_lower) for pattern in DATE_INDICATORS):
+        return True
+
+    if state.trip_plan.destination:
+        return False
+
+    return _looks_like_destination_setup_turn(user_text)
+
+
 # =============================================================================
 # Classification Schema — Extracted to router_extraction.py
 # =============================================================================
@@ -207,7 +457,7 @@ QUESTION_TYPE_MAPPING = {
     "visa|passport|entry|immigration": ("visa", "visa_entry"),
     "get around|transport|taxi|uber|scooter": ("transport", "transportation"),
     "wear|dress|clothes|attire": ("cultural", "cultural_norms"),
-    "must see|must do|attractions|things to do": ("activities", "things_to_do"),
+    "must see|must do|must-do|attractions|things to do": ("activities", "things_to_do"),
     "stay|hotel|neighborhood|area|lodging|resort|hostel|airbnb|accommodation": (
         "accommodation",
         "neighborhoods",
@@ -521,6 +771,10 @@ def _build_question_suggestions(state: "GraphState") -> list[dict]:
     """
     if not state.trip_plan.destination:
         return []
+    # Post-plan UX guard: once core trip fields are set, question chips become
+    # low-value dead ends versus direct refinement actions.
+    if state.trip_plan.start_date and state.trip_plan.end_date:
+        return []
 
     already_suggested = set(state.metadata.get("suggested_question_types", []))
 
@@ -549,15 +803,13 @@ def _build_question_suggestions(state: "GraphState") -> list[dict]:
 
 def _build_plan_progression_suggestions(state: "GraphState") -> list[dict]:
     """
-    Generate plan-progression suggestions at S2+ (active plan with dates).
-    These nudge the user toward refining preferences instead of exploring.
+    Generate post-date progression suggestions once core trip dates are known.
+    These nudge the user toward refinement instead of repetitive exploration.
     Priority 4: above exploration questions (6), below specialists (3).
     """
-    if not _is_plan_active(state):
-        return []
-
     dest = state.trip_plan.destination
-    if not dest or not state.trip_plan.start_date:
+    has_core_dates = bool(state.trip_plan.start_date and state.trip_plan.end_date)
+    if not dest or not has_core_dates:
         return []
 
     _settings = get_trip_settings(state)
@@ -596,11 +848,41 @@ def _build_plan_progression_suggestions(state: "GraphState") -> list[dict]:
     if not _settings.activity_settings.categories:
         suggestions.append(
             {
-                "template": "What are must-do activities in {destination}?",
+                "template": "Browse activities in {destination}",
                 "source": "question_type",
                 "condition": lambda s: bool(s.trip_plan.destination),
                 "priority": 5,
-                "category": "plan_activities",
+                "category": "plan_activity_explore",
+            }
+        )
+
+    # Keep one persistent refinement action so users can recover from
+    # low-quality chips and directly adjust trip inputs.
+    suggestions.append(
+        {
+            "template": "Change my dates",
+            "source": "date_extraction",
+            "condition": lambda s: bool(
+                s.trip_plan.destination and s.trip_plan.start_date and s.trip_plan.end_date
+            ),
+            "priority": 4,
+            "category": "plan_dates_refine",
+            "icon": "calendar",
+        }
+    )
+
+    # Budget refinement (if not set yet)
+    if not state.trip_plan.budget:
+        suggestions.append(
+            {
+                "template": "Set my budget",
+                "source": "settings_detection",
+                "condition": lambda s: bool(
+                    s.trip_plan.destination and s.trip_plan.start_date and s.trip_plan.end_date
+                ),
+                "priority": 4,
+                "category": "plan_budget",
+                "icon": "dollar-sign",
             }
         )
 
@@ -608,7 +890,7 @@ def _build_plan_progression_suggestions(state: "GraphState") -> list[dict]:
     if not state.trip_plan.origin and not (state.tiles or {}).get("flights"):
         suggestions.append(
             {
-                "template": "Add flights from my city",
+                "template": "Set my departure city",
                 "source": "booking_discovery",
                 "condition": lambda s: bool(
                     s.trip_plan.destination
@@ -1280,7 +1562,6 @@ async def _llm_fallback_answer(
     LLM answer for exploration questions.
     Uses GPT-4o-mini with ~300 token limit for cost efficiency.
     """
-    ending = _get_conversation_ending(count, qtype, destination)
     cache_key = _exploration_answer_cache_key(question, destination, qtype, count)
 
     cached = _exploration_answer_cache.get(cache_key)
@@ -1296,17 +1577,22 @@ async def _llm_fallback_answer(
 
     _exploration_answer_cache.increment_stat("misses")
 
-    prompt = f"""You are a knowledgeable travel advisor. Answer this question comprehensively:
+    conversation_stage = "first"
+    if count == 2:
+        conversation_stage = "second"
+    elif count >= 3:
+        conversation_stage = "later"
+
+    prompt = f"""You are a knowledgeable travel advisor. Answer this question comprehensively.
+This is the {conversation_stage} exploration turn in this destination context.
 
 Question: {question}
 Destination: {destination}
 Topic: {qtype}
 
-Provide a helpful, detailed answer (4-5 sentences). Be conversational and warm.
-Include specific examples, prices if relevant, and practical tips.
-Format with bullet points where appropriate.
-
-End with: {ending}"""
+Provide a helpful answer in 3-4 sentences. Be conversational and warm.
+Include practical specifics (timing, costs, or logistics) when relevant.
+Do NOT end with a follow-up question or planning CTA."""
 
     llm = get_llm_by_model(
         settings.router_model,
@@ -1331,8 +1617,8 @@ End with: {ending}"""
         # Generic safe response
         fallback = (
             f"I'd love to help you learn more about {destination}! "
-            f"While I don't have detailed info cached, I can help plan your trip. "
-            f"{ending}"
+            "I don't have detailed local data cached for that question yet, "
+            "but I can still help shape the trip."
         )
         _exploration_answer_cache.set(cache_key, fallback)
         _exploration_answer_cache.increment_stat("writes")
@@ -1934,8 +2220,8 @@ async def intent_router(state: GraphState) -> GraphState:
     - Returns static response for GREETING/RESET (skips architect)
     - Passes PLANNING intent to architect for handling
 
-    The panic button (/reset, stop, clear) is handled in run_turn BEFORE
-    the graph is invoked, so we don't need to check for it here.
+    Typed reset commands are blocked at run_turn entry and treated as no-ops,
+    so the router only handles normal conversational intents.
     """
     import time
 
@@ -1997,6 +2283,19 @@ async def intent_router(state: GraphState) -> GraphState:
     _debug_log(f"[ROUTER] trip_plan.origin={state.trip_plan.origin!r}")
     _debug_log(f"[ROUTER] metadata.trip_inputs.origin={trip_inputs_origin!r}")
 
+    # Destination lock guard: explicit switch requests must use UI RESET button.
+    explicit_switch_target = _detect_destination_switch_request(user_text)
+    if state.trip_plan.destination and explicit_switch_target:
+        if _block_destination_switch_if_needed(state, explicit_switch_target):
+            _debug_node_end(
+                "router",
+                "🧭",
+                intent="DESTINATION_LOCKED",
+                destination=state.trip_plan.destination,
+                short_circuit=True,
+            )
+            return state
+
     # Check for origin mismatch at graph entry point
     if trip_inputs_origin and not state.trip_plan.origin:
         logger.warning(
@@ -2037,7 +2336,8 @@ async def intent_router(state: GraphState) -> GraphState:
     # ==========================================================================
     # RELATIVE DATE MUTATION — deterministic, no LLM, works pre- and post-plan
     # ==========================================================================
-    if _resolve_relative_date_mutation(state, user_text):
+    relative_date_mutated = _resolve_relative_date_mutation(state, user_text)
+    if relative_date_mutated:
         state.metadata["_post_plan_date_change"] = True
         from app.debug_utils import log
 
@@ -2071,6 +2371,11 @@ async def intent_router(state: GraphState) -> GraphState:
         try:
             router_output, token_usage = await _classify_and_extract_with_llm(user_text, state)
             extracted_router_output = router_output.model_dump()
+
+            if _block_destination_switch_if_needed(state, router_output.destination):
+                state.metadata["router_output"] = extracted_router_output
+                state.metadata["router_extracted_fields"] = True
+                return state
 
             if token_usage:
                 from app.debug_utils import log_tokens
@@ -2119,6 +2424,29 @@ async def intent_router(state: GraphState) -> GraphState:
                 allow_category_updates=has_category_intent,
             )
             _sync_date_auto_adjustments()
+
+            # Deterministic relative-date mutation already updated end_date. If LLM
+            # extraction also emits an end_date for the same message, keep the
+            # deterministic value to avoid double-applying "extend by N days".
+            if (
+                relative_date_mutated
+                and pre_llm_end
+                and not router_output.start_date
+                and state.trip_plan.end_date != pre_llm_end
+            ):
+                state.trip_plan.end_date = pre_llm_end
+                if state.trip_plan.start_date:
+                    try:
+                        start_dt = datetime.strptime(state.trip_plan.start_date, "%Y-%m-%d")
+                        end_dt = datetime.strptime(state.trip_plan.end_date, "%Y-%m-%d")
+                        state.trip_plan.duration_days = (end_dt - start_dt).days + 1
+                    except ValueError:
+                        pass
+                log(
+                    "ROUTER",
+                    f"[RELATIVE_DATE] Locked deterministic end_date after LLM extraction → "
+                    f"{pre_llm_end}",
+                )
 
             # Guard against LLM drifting a date the user didn't change.
             # Compare against pre_llm_* (post-deterministic-mutation) so that a
@@ -2368,6 +2696,15 @@ async def intent_router(state: GraphState) -> GraphState:
             )
 
         destination = _extract_destination_context(state)
+        if _destination_context_changed(state, destination):
+            logger.info(
+                "[ROUTER] Destination context changed (%s -> %s); clearing exploration carryover",
+                state.metadata.get("last_destination_context"),
+                destination,
+            )
+            _clear_exploration_carryover(state)
+        if destination:
+            state.metadata["last_destination_context"] = destination
 
         # =====================================================================
         # OPPORTUNISTIC EXTRACTION: Extract dates/fields from EVERY message
@@ -2378,15 +2715,22 @@ async def intent_router(state: GraphState) -> GraphState:
         old_start_date = state.trip_plan.start_date
         old_end_date = state.trip_plan.end_date
 
-        text_lower = user_text.lower()
-        has_date_in_message = any(re.search(p, text_lower) for p in DATE_INDICATORS)
+        should_extract_preplan = _should_attempt_preplan_opportunistic_extraction(
+            state,
+            user_text,
+        )
 
-        if has_date_in_message and not state.metadata.get("router_extracted_fields"):
-            log("ROUTER", "[OPPORTUNISTIC] Extracting (dates detected in pre-plan)...")
+        if should_extract_preplan:
+            log("ROUTER", "[OPPORTUNISTIC] Extracting pre-plan message for core trip fields...")
 
             try:
                 router_output, token_usage = await _classify_and_extract_with_llm(user_text, state)
                 extracted_router_output = router_output.model_dump()
+
+                if _block_destination_switch_if_needed(state, router_output.destination):
+                    state.metadata["router_output"] = extracted_router_output
+                    state.metadata["router_extracted_fields"] = True
+                    return state
 
                 if token_usage:
                     from app.debug_utils import log_tokens
@@ -2427,6 +2771,27 @@ async def intent_router(state: GraphState) -> GraphState:
                     state.metadata["date_auto_adjustments"] = adjustments
                 else:
                     state.metadata.pop("date_auto_adjustments", None)
+
+                # Same double-apply guard for pre-plan opportunistic extraction.
+                if (
+                    relative_date_mutated
+                    and old_end_date
+                    and not router_output.start_date
+                    and state.trip_plan.end_date != old_end_date
+                ):
+                    state.trip_plan.end_date = old_end_date
+                    if state.trip_plan.start_date:
+                        try:
+                            start_dt = datetime.strptime(state.trip_plan.start_date, "%Y-%m-%d")
+                            end_dt = datetime.strptime(state.trip_plan.end_date, "%Y-%m-%d")
+                            state.trip_plan.duration_days = (end_dt - start_dt).days + 1
+                        except ValueError:
+                            pass
+                    log(
+                        "ROUTER",
+                        "[RELATIVE_DATE] Locked deterministic end_date during "
+                        f"opportunistic extraction → {old_end_date}",
+                    )
 
                 # Flag extraction BEFORE input gates — even if gates block,
                 # the Architect should NOT re-extract the same message.
@@ -2588,13 +2953,10 @@ async def intent_router(state: GraphState) -> GraphState:
                         state.metadata["detected_month"] = _mc
                         break
 
-                # Generate context-aware date suggestions based on any month mentioned
-                state.suggested_replies = _get_date_suggestions(
-                    user_text
-                )  # DEPRECATED: replaced by SuggestionPool
                 state.metadata["short_circuit_response"] = True
                 state.metadata["short_circuit_type"] = "exploration"
                 state.metadata["awaiting_dates"] = True
+                state.metadata["exploration_mode"] = True
 
                 _debug_node_end(
                     "router",
@@ -2675,7 +3037,6 @@ async def intent_router(state: GraphState) -> GraphState:
                     ending = "When would you like to go?"
 
                 state.last_summary = f"{answer}\n\n{ending}"
-                state.suggested_replies = _get_exploration_suggestions(qtype, destination)
                 state.metadata["short_circuit_response"] = True
                 state.metadata["short_circuit_type"] = "exploration"
 
@@ -2935,19 +3296,9 @@ async def intent_router(state: GraphState) -> GraphState:
                     ending = f"Got it, starting {state.trip_plan.start_date}. {activity_prompt}"
                 else:
                     ending = activity_prompt
-                suggestions = [
-                    f"Plan {destination} diving trip",
-                    f"Plan {destination} hiking trip",
-                    "Show me all options",
-                ]
             else:
                 # Has activity, needs date
                 ending = "When are you thinking of going? Timing can affect the best activities."
-                suggestions = [
-                    "Next month",
-                    "I'm flexible on dates",
-                    f"Plan {destination} trip",
-                ]
 
             # Update state
             count = state.metadata.get("generic_question_count", 0) + 1
@@ -2956,7 +3307,6 @@ async def intent_router(state: GraphState) -> GraphState:
             state.metadata["exploration_mode"] = True
 
             state.last_summary = f"{answer}\n\n{ending}"
-            state.suggested_replies = suggestions
             state.metadata["short_circuit_response"] = True
             state.metadata["short_circuit_type"] = "soft_transition"
 
@@ -3021,6 +3371,7 @@ async def intent_router(state: GraphState) -> GraphState:
         state.last_summary = STATIC_RESPONSES["GREETING"]["message"]
         state.suggested_replies = list(STATIC_RESPONSES["GREETING"]["suggested_replies"])
         state.metadata["short_circuit_response"] = True
+        state.metadata["short_circuit_type"] = "greeting"
         state.metadata["router_output"] = classification.model_dump()
 
         _debug_node_end(
@@ -3031,19 +3382,25 @@ async def intent_router(state: GraphState) -> GraphState:
         )
         return state
 
-    # Handle RESET - clear state, return static response, skip architect
+    # Handle RESET intent from chat: no in-chat reset allowed.
+    # UI RESET button is the only reset pathway.
     if classification.intent == "RESET":
-        state.last_summary = STATIC_RESPONSES["RESET"]["message"]
-        state.suggested_replies = list(STATIC_RESPONSES["RESET"]["suggested_replies"])
-        state.ui_events.append("UI_RESET")
-        state.trip_plan = TripPlan()  # Clear the plan
+        state.last_summary = (
+            "Use the **RESET** button to start over. Chat commands won't reset the current plan."
+        )
+        state.suggested_replies = [
+            "Continue planning",
+            "Set my dates",
+            "Adjust preferences",
+        ]
         state.metadata["short_circuit_response"] = True
+        state.metadata["short_circuit_type"] = "reset_locked"
         state.metadata["router_output"] = classification.model_dump()
 
         _debug_node_end(
             "router",
             "🧭",
-            intent="RESET",
+            intent="RESET_LOCKED",
             short_circuit=True,
         )
         return state
@@ -3072,6 +3429,8 @@ async def intent_router(state: GraphState) -> GraphState:
     # Set specialist if detected from text OR from UI activity settings
     # Combine detected specialists from LLM and activity settings
     specialist_hints = list(classification.specialist_hints)  # Copy to avoid mutation
+
+    destination_state_reset = _reset_destination_bound_state_if_changed(state)
 
     # =========================================================================
     # CONSTRAINT CHANGE DETECTION: Re-run specialists when inputs change
@@ -3109,8 +3468,9 @@ async def intent_router(state: GraphState) -> GraphState:
     # 1. Constraints changed (destination, dates, budget, etc. modified)
     # 2. GENERATE_PLAN_NOW + specialists were executed before (ensures fresh run with complete data)
     # NOTE: Use (executed or requested) so infeasible specialists get resurrected
-    should_rerun_specialists = (constraints_changed or is_generate_trigger) and (
-        executed or requested
+    has_prior_specialists = bool(executed or requested)
+    should_rerun_specialists = bool(constraints_changed or is_generate_trigger) and (
+        has_prior_specialists
     )
 
     log(
@@ -3136,7 +3496,8 @@ async def intent_router(state: GraphState) -> GraphState:
                     f"with fresh data: {niche_specialists}",
                 )
 
-            _clear_stale_specialist_content(state)
+            if not destination_state_reset:
+                _clear_stale_specialist_content(state)
 
             # Re-inject niche specialists into hints so they run again
             for topic in niche_specialists:

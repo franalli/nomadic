@@ -192,9 +192,9 @@ Report any duplicates found with locations. Severity:
 - Duplicate function names across files → **Medium**
 - Similar error handling blocks → **Low** (flag only if 3+ identical patterns)
 
-### 1F: Security
+### 1F: Security — Code Vulnerabilities
 
-Scan for common security vulnerabilities:
+Scan for common code-level security vulnerabilities:
 
 ```bash
 # 1. Hardcoded secrets, API keys, tokens in source files (not .env)
@@ -208,6 +208,9 @@ grep -rn "eval(\|exec(\|subprocess\.\|os\.system(\|os\.popen(" backend/app/ --in
 
 # 4. Run detect-secrets scan against baseline
 cd backend && detect-secrets scan --baseline ../.secrets.baseline 2>&1 || echo "detect-secrets not installed, skipping"
+
+# 5. User input interpolated directly into LLM prompts (prompt injection)
+grep -rn "req\.message\|request\.message\|f\".*{message\|f'.*{message" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__ | grep -v test_ | head -20
 ```
 
 For each finding, assess:
@@ -215,7 +218,185 @@ For each finding, assess:
 - Hardcoded secrets → **Critical** if actual values, **Low** if just variable names referencing env
 - Raw SQL → **Critical** if user input can reach it, **High** otherwise
 - eval/exec/subprocess → **Critical** unless input is fully controlled
+- User message interpolated directly into system prompt without sanitization → **High** (prompt injection: user can override system instructions)
 - Skip: test fixtures, mock data, comments explaining security patterns
+
+### 1F2: Abuse & Spend Protection Audit
+
+This codebase makes paid calls to OpenAI, Google Places, and Amadeus. A single unprotected endpoint can drain API budgets in minutes. Audit every layer of abuse defence.
+
+#### 1F2-1: Rate Limit Coverage — Every Endpoint
+
+```bash
+# List all route decorators in main.py with their line numbers
+grep -n "@app\.\(get\|post\|patch\|delete\|put\)" backend/app/main.py
+
+# List all @limiter.limit decorators
+grep -n "@limiter\.limit" backend/app/main.py
+
+# Find @app.* route decorators NOT immediately preceded by @limiter.limit
+# (check 1-2 lines above each @app. decorator for @limiter.limit)
+awk '/^@limiter\.limit/{found=1; next} /^@app\.(get|post|patch|delete|put)/{if(!found) print NR": MISSING limiter: "$0; found=0}' backend/app/main.py
+
+# Also check analytics_routes.py
+grep -n "@limiter\.limit\|@router\.\(get\|post\|patch\|delete\)" backend/app/analytics_routes.py 2>/dev/null | head -20
+```
+
+Verify rate limits on high-cost endpoints are tight enough:
+- `/api/graph_plan/stream` — expected `≤10/minute + ≤30/hour` (runs full LLM pipeline)
+- `/api/expand-itinerary` — expected `≤20/minute` (runs itinerary builder)
+- `/api/document/fill-day` — expected `≤10/minute` (runs experience generator LLM)
+- `/api/activities/browse` — expected `≤10/minute` (runs Google Places)
+- `/api/tiles/refresh` — expected `≤10/minute` (runs Google Places + Amadeus)
+- `/api/specialist/{section_id}/enrichment` — expected `≤30/minute` (runs specialist LLM)
+
+Report:
+- Any endpoint without `@limiter.limit` → **Critical** if it touches a paid API, **High** otherwise
+- Rate limit looser than the targets above → **High**
+- `rate_limit_enabled = False` in config with no env-var guard → **Critical** if someone sets it False in production
+
+#### 1F2-2: Spend Guard Scope Coverage
+
+`spend_guard.py` enforces per-session and global daily USD caps via `_session_id_ctx` (a `ContextVar`). If `spend_guard_scope(session_id)` is not called before a paid API call, `_session_id_ctx.get()` returns `None` and `_reserve_or_raise()` silently no-ops. The caps are never enforced for that request.
+
+```bash
+# All spend_guard_scope call sites (these are the endpoints with active spend enforcement)
+grep -n "spend_guard_scope" backend/app/main.py backend/app/streaming.py | grep -v "import\|def spend_guard"
+
+# The most expensive generator (expand-itinerary) runs generate_ndjson —
+# check if spend_guard_scope is called inside it
+grep -n "spend_guard_scope" backend/app/streaming.py
+# Count: if only 2 occurrences (graph_plan/stream + specialist enrichment),
+# then generate_ndjson (expand-itinerary) has NO spend_guard_scope → Critical
+
+# Confirm reserve_* is called at the factory/provider level (guards all paid calls)
+grep -rn "reserve_llm_spend_or_raise\|reserve_places_spend_or_raise\|reserve_amadeus_spend_or_raise" \
+  backend/app/ --include="*.py" | grep -v __pycache__ | grep -v "def reserve\|test_"
+# Expected: llm_factory.py (covers all LLM), google_places_provider.py (covers Places),
+# amadeus_client.py (covers Amadeus). Any paid API path bypassing these three = unguarded.
+
+# Confirm spend guard silently skips when session_id is None
+grep -n "if not sid\|if sid is None\|not sid" backend/app/services/spend_guard.py
+```
+
+Report:
+- `generate_ndjson` (expand-itinerary endpoint) missing `spend_guard_scope` → **Critical** (itinerary builder makes multiple LLM calls per request; 20/minute rate limit × no session cap = unlimited cost)
+- Any endpoint path calling paid APIs without an enclosing `spend_guard_scope` → **Critical**
+- `spend_guard_scope(None)` silently no-ops → **High** (requests that somehow reach paid endpoints without a session_id are uncapped; verify session middleware always runs first)
+- Any paid API invocation that bypasses `get_llm_by_model()` / `google_places_provider.py` / `amadeus_client.py` → **Critical** (no reserve call at all)
+
+#### 1F2-3: Spend Guard Configuration
+
+```bash
+# All spend guard settings and their defaults in config.py
+grep -n "spend_guard" backend/app/config.py
+
+# Verify caps are non-zero (zero means disabled per _reserve_or_raise logic)
+# "if session_cap > 0 and ..." — a cap of 0.0 disables that check
+grep -n "spend_guard_session_daily_cap_usd\|spend_guard_global_daily_cap_usd" backend/app/config.py
+
+# Unknown model fallback cost estimate
+grep -n "spend_guard_llm_unknown_model_estimated_call_usd" backend/app/config.py
+# Default $0.02 — at $2/session cap this allows 100 calls per session before cap triggers
+
+# Admin endpoint that resets spend counters — is it rate-limited and logged?
+grep -n "clear_spend_guard\|spend_guard_counters\|spend.*reset" backend/app/main.py | grep -v test_
+
+# Spend guard state is module-level (in-memory) — confirm no persistence
+grep -n "_session_spend_usd\|_global_spend_usd\|_spend_day_key" backend/app/services/spend_guard.py | head -10
+```
+
+Report:
+- `spend_guard_session_daily_cap_usd = 0` → **Critical** (session cap disabled)
+- `spend_guard_global_daily_cap_usd = 0` → **Critical** (global cap disabled)
+- `SPEND_GUARD_ENABLED` env var can disable all guards → **Critical** (must be verified `true` in prod; there is no hard floor)
+- Spend guard is in-memory — server restart resets all daily counters → **High** (attacker who forces a restart resets the day's spend budget; or autoscaling with multiple instances means each instance has its own budget)
+- Unknown model estimate ($0.02) very low — if a new model is added to llm_factory without updating `_MODEL_PRICING_PER_1M` in spend_guard, every call is underestimated → **Medium**
+- `clear_spend_guard_counters()` admin endpoint not rate-limited or not requiring admin auth → **High**
+
+#### 1F2-4: Input Size & Payload Limits
+
+Even with rate limits, unbounded input fields let each individual request cost far more than estimated.
+
+```bash
+# 1. Check message field max_length in GraphPlanRequest
+grep -n "class GraphPlanRequest" backend/app/schemas.py -A 20 | head -25
+# message: str with no Field(max_length=N) → unbounded
+
+# 2. Check all user-facing string fields across request schemas
+grep -rn "class.*Request.*BaseModel" backend/app/schemas.py | head -20
+# For each Request model, check if string fields have Field(max_length=...)
+
+# 3. Uvicorn request body size limit
+grep -rn "limit_max_uploads\|body_limit\|max_request_body\|--limit-max-requests\|MAX_BODY" backend/ --include="*.py" --include="*.sh" --include="*.toml" 2>/dev/null | grep -v __pycache__
+grep -n "uvicorn.run\|reload\|workers\|limit" backend/start.py 2>/dev/null | head -10
+
+# 4. trip_inputs and session_state are untyped dicts — no depth/size limit
+grep -n "trip_inputs.*dict\|session_state.*dict" backend/app/schemas.py | head -10
+```
+
+Report:
+- `GraphPlanRequest.message` with no `max_length` → **High** (50k-char message at 6/min = 300k tokens/min through LLM; cost estimate based on 1200-token prompt assumption is wrong)
+- No uvicorn body size limit → **High** (100MB JSON parsed in memory before rate limiter runs; can exhaust RAM)
+- `trip_inputs: dict` / `session_state: dict` with no size/depth limit → **Medium** (deeply nested dicts exhaust stack during Pydantic validation)
+
+#### 1F2-5: Session & Auth Hardening
+
+```bash
+# 1. Session ID generation — must use cryptographically secure random source
+grep -rn "session_id\|generate.*session\|create.*session" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_ | grep -i "secret\|uuid\|random\|token" | head -15
+
+# 2. Session cookie attributes
+grep -rn "set_cookie\|httponly\|samesite\|secure" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_ | head -15
+
+# 3. Rate key is session_id (cookie) → IP fallback — can attacker create unlimited sessions?
+grep -n "MAX_SESSIONS_PER_IP_HOUR\|session_throttle\|sessions_per_ip" backend/app/config.py backend/app/main.py 2>/dev/null | head -10
+# Without session creation throttle, attacker rotates sessions to get fresh rate limit budgets
+
+# 4. Admin key — timing-safe comparison and no weak default
+grep -n "require_admin\|compare_digest\|admin_api_key" backend/app/main.py | head -10
+grep -n "admin_api_key" backend/app/config.py | head -5
+
+# 5. CSRF — covers all unsafe methods?
+grep -rn "CSRFMiddleware\|safe_methods\|CSRF_EXEMPT\|csrf_skip" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_ | head -15
+```
+
+Report:
+- Session IDs not generated with `secrets.token_urlsafe(32)` or equivalent → **Critical** (guessable sessions allow rate-limit budget theft)
+- Session cookie missing `HttpOnly` → **High** (XSS steals session cookie, inherits rate limit identity)
+- Session cookie missing `Secure` in prod → **High** (session hijack over HTTP)
+- No session creation rate throttle per IP → **High** (attacker creates N sessions = N × rate limit budget; e.g., 100 sessions × 6/min = 600 graph_plan calls/min)
+- `admin_api_key` not configured → admin endpoint returns 403 (correct) — verify this is enforced
+- CSRF middleware missing or not covering POST endpoints → **High**
+
+#### 1F2-6: SSE / Streaming Hardening
+
+```bash
+# 1. SSE connection limits
+grep -n "MAX_SSE_PER_SESSION\|MAX_SSE_PER_IP" backend/app/sse_state.py
+
+# 2. SSE slot release in finally block (leak detection)
+grep -n "_release_sse_slot\|finally" backend/app/main.py | head -20
+# _release_sse_slot must be in a finally block wrapping the SSE generator
+
+# 3. Expand-itinerary mutex release in finally block
+grep -n "_release_expand_slot\|_acquire_expand_slot\|finally" backend/app/main.py | head -20
+
+# 4. Generator disconnect handling
+grep -n "GeneratorExit\|CancelledError" backend/app/streaming.py | head -10
+
+# 5. LLM call cancellation on client disconnect
+# If the client disconnects mid-stream, the LLM ainvoke() call should be cancelled
+# Check if there's an asyncio.Task.cancel() or AbortController equivalent wrapping LLM calls
+grep -rn "asyncio\.wait_for\|asyncio\.shield\|cancel()\|task\.cancel" backend/app/streaming.py backend/app/planner/ --include="*.py" | grep -v __pycache__ | head -15
+```
+
+Report:
+- `_release_sse_slot` not in a `finally` block → **Critical** (client disconnect leaves slot permanently occupied; after MAX_SSE_PER_SESSION disconnects the session is permanently blocked)
+- `_release_expand_slot` not in a `finally` block → **Critical** (expand-itinerary permanently locked for session after any error)
+- No `asyncio.wait_for` or task cancellation wrapping LLM calls → **High** (client disconnects mid-stream but LLM call continues to completion, burning tokens with no one reading the output)
+- `GeneratorExit`/`CancelledError` not caught → **High** (cleanup code after `yield` is skipped on disconnect: DB sessions leaked, spend not finalized)
+- No streaming timeout (client can hold SSE open indefinitely without reading, keeping LLM alive) → **High**
 
 ### 1G: Circular Imports
 
@@ -254,6 +435,23 @@ For each source module, check if a corresponding test file exists. Report:
 - Do NOT flag: `__init__.py`, config files, migration files, `debug_utils.py`
 - Severity: **High** for planner nodes and core services, **Medium** for utilities and tools
 
+#### 1H-1: Test Harness API Drift (Starlette/httpx)
+
+```bash
+# Per-request cookies= is deprecated/removed in newer httpx paths used by TestClient.
+# Flag direct request calls that still pass cookies= instead of using client cookies helpers.
+grep -rn "client\.\(get\|post\|patch\|put\|delete\)(.*cookies=" backend/tests/ --include="*.py" | grep -v __pycache__
+
+# Find existing shared cookie helpers (preferred pattern)
+grep -rn "set_client_session_cookies\|request_with_session\|client\.cookies\.set" backend/tests/ --include="*.py" | grep -v __pycache__
+```
+
+Report:
+
+- Per-request `cookies=` in TestClient calls → **Medium** (deprecation warnings now; runtime break risk on dependency upgrade)
+- Test suites with repeated auth cookie setup and no helper abstraction → **Low** (high churn + easy to reintroduce deprecated usage)
+- Do NOT flag plain `cookies` dict literals used as data fixtures (only request call arguments)
+
 ### 1I: Debug Print Pollution
 
 Scan for stray `print()` statements left from debugging:
@@ -271,98 +469,225 @@ Report each finding. Exclude:
 
 ### 1J: Cache Health
 
-The backend has a multi-tier caching system: `cache_core.py` (shared MemoryCache primitive), `router_cache.py` (L1-only), `specialist_cache.py` (L1+L2), `tile_cache.py` (L1+L2), `experience_generator.py` (L1+L2), and `cache_access.py` (planner-level cache handles). Audit for correctness across all cache layers.
+The backend has a multi-tier caching system: `cache_core.py` (shared MemoryCache primitive and `l2_upsert`), `router_cache.py` (L1-only), `specialist_cache.py` (L1+L2), `tile_cache.py` (L1+L2), `experience_generator.py` (L1+L2, two `cache_type` partitions: "experience" and "experience_single"). Audit for correctness across all layers.
 
 #### 1J-1: TTL Consistency
 
 ```bash
-# Check all TTL values across cache modules
-grep -rn "TTL\|ttl\|_TTL_" backend/app/services/*cache*.py backend/app/planner/cache_access.py backend/app/services/experience_generator.py --include="*.py" | grep -v __pycache__
+# List all TTL constants per module — compare L1 vs L2 for each domain
+grep -rn "L1_TTL_SECONDS\|L2_TTL_HOURS\|L2_TTL_SECONDS\|L1_MAX_SIZE" \
+  backend/app/services/specialist_cache.py \
+  backend/app/services/tile_cache.py \
+  backend/app/services/router_cache.py \
+  backend/app/services/experience_generator.py | grep -v __pycache__
 
-# Check L2 TTL vs L1 TTL — L2 should always be >= L1 to avoid serving stale L2 data that L1 has already evicted
+# Check that L2_TTL_HOURS is sourced from settings (not hardcoded) in all L1+L2 modules
+grep -rn "L2_TTL_HOURS\s*=" backend/app/services/ --include="*.py" | grep -v __pycache__
+# Each should reference settings.* — a bare integer literal here is a violation
+
+# Verify L2 TTL is always >= L1 TTL (L1 evicts first, then L2 shouldn't bring stale data back)
+# For each module, compute: L2_TTL_HOURS * 3600 >= L1_TTL_SECONDS?
+# specialist_cache: L1=3600s (1h), L2=settings.specialist_cache_ttl_hours (default 168h = 604800s) ✓
+# tile_cache: L1=86400s (24h), L2=settings.tile_cache_ttl_hours (default 72h = 259200s) ✓
+# experience: L1=3600s (1h), L2=settings.experience_cache_ttl_hours (default 72h = 259200s) ✓
+# Flag any module where L2_TTL_HOURS * 3600 < L1_TTL_SECONDS
 ```
 
 Report:
 
-- L2 TTL shorter than L1 TTL for the same cache domain → **High** (L1 evicts, L2 promotes stale data back)
-- Inconsistent TTL values between related caches → **Medium**
-- Missing TTL on any cache instantiation → **Critical**
+- `L2_TTL_HOURS` set to a hardcoded integer instead of `settings.*` → **High** (can't tune without redeploy; config.py env defaults bypass env vars)
+- L2 TTL < L1 TTL for the same domain → **High** (L1 evicts entry, L2 then promotes stale data back on next L1 miss)
+- Missing TTL on any `MemoryCache()`/`TTLCache()` instantiation → **Critical**
 
 #### 1J-2: Cache Key Collisions
 
 ```bash
-# Check all cache key construction — should use make_cache_key from hashing.py
-grep -rn "def.*cache_key\|make_cache_key\|cache_key =" backend/app/services/ backend/app/planner/ --include="*.py" | grep -v __pycache__
-
-# Check namespace prefixes — each domain must use a unique prefix
+# All make_cache_key calls — check namespace prefixes are unique per domain
 grep -rn 'make_cache_key(' backend/app/services/ backend/app/planner/ --include="*.py" | grep -v __pycache__
+
+# Expected namespace prefixes per module:
+# specialist_cache: "specialist"
+# tile_cache: "tile"
+# router_cache: "router"
+# experience_generator (multi-category): "experience"
+# experience_generator (single-category): "experience_single"
+# Any duplicate first arg across different domains → collision
+
+# Check that all cache key functions use make_cache_key (not raw string concatenation)
+grep -rn "def _.*cache_key" backend/app/services/ backend/app/planner/ --include="*.py" | grep -v __pycache__
+# For each, verify it calls make_cache_key internally
+
+# Check for version tokens in all key-building functions
+grep -rn '"v1"\|"v2"\|"v3"\|"v4"' backend/app/services/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# Check for stable_hash_short usage in cache keys (8-char = 32-bit; ~2% collision at 10k entries)
+grep -rn "stable_hash_short" backend/app/services/ backend/app/planner/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# Check for make_cache_key calls with optional fields that could be None
+# (None becomes "" in make_cache_key — keys with None vs "" in that slot will collide)
+grep -rn "make_cache_key(" backend/app/services/ --include="*.py" | grep -v __pycache__ | grep -v test_
+# For each call, identify any argument that could be None (check function signature defaults)
 ```
 
 Report:
 
-- Cache key functions that DON'T use `make_cache_key` from `hashing.py` → **Medium** (inconsistent key format)
-- Two different cache domains using the same namespace prefix → **Critical** (key collision across domains)
-- Cache keys missing version token (e.g., "v2") → **Medium** (no safe cache invalidation on format change)
+- Two cache domains sharing the same namespace prefix as first `make_cache_key` arg → **Critical** (key collision)
+- `cache_type="experience"` and `cache_type="experience_single"` are distinct L2 partitions — verify no overlap in key space
+- Cache key function not using `make_cache_key` (raw string concat) → **Medium** (can't guarantee separator stability)
+- Missing version token (no `"v1"`/`"v2"` component) → **Medium** (no safe invalidation path on format change)
+- `stable_hash_short` (8-char hash) in a cache key → **Medium** (32-bit birthday collision risk at scale)
+- Optional `None` argument passed to `make_cache_key` without a default (`or "unknown"` guard) → **Medium** (collides with explicit empty-string input)
 
 #### 1J-3: L1/L2 Consistency
 
 ```bash
-# Check that every set operation writes to BOTH L1 and L2 (for L1+L2 caches)
-grep -rn "def set_cached\|async def set_cached" backend/app/services/*cache*.py backend/app/services/experience_generator.py --include="*.py" | grep -v __pycache__
+# Check L1 write happens BEFORE L2 write in all set functions (L1 should always be warm first)
+grep -rn "_mem.set\|_cache_set" backend/app/services/specialist_cache.py backend/app/services/tile_cache.py backend/app/services/experience_generator.py | grep -v __pycache__
+# _mem.set should appear before l2_upsert in each set function body
+
+# Check that l2_upsert is called (not raw pg_insert) in all L2 write paths
+grep -rn "pg_insert\|l2_upsert" backend/app/services/ --include="*.py" | grep -v __pycache__ | grep -v cache_core
+# Direct pg_insert outside cache_core.py → bypass of shared l2_upsert contract
+
+# Check for rollback consistency in L2 write error handlers
+# tile_cache has OperationalError branch WITHOUT rollback — check all error branches
+grep -rn "except OperationalError\|except Exception" backend/app/services/tile_cache.py backend/app/services/specialist_cache.py backend/app/services/experience_generator.py | grep -v __pycache__
+# Every except block that catches a DB error after an l2_upsert should call db.rollback()
+
+# Check that callers don't commit after l2_upsert (l2_upsert commits internally)
+# Any await db.commit() AFTER await l2_upsert(...) in the same function → double commit
+grep -rn "l2_upsert\|db.commit" backend/app/services/ --include="*.py" | grep -v __pycache__ | grep -v cache_core
+
+# L2 uses pg_insert (PostgreSQL-specific dialect) — incompatible with SQLite test DBs
+grep -rn "pg_insert\|from sqlalchemy.dialects.postgresql" backend/app/services/ --include="*.py" | grep -v __pycache__
+# Verify tests that test L2 write paths use PostgreSQL (not SQLite)
+grep -rn "sqlite\|:memory:\|test_plan_document" backend/tests/ --include="*.py" | grep -v __pycache__ | head -10
 ```
 
-For each `set_cached_*` function in L1+L2 caches (`specialist_cache.py`, `tile_cache.py`, `experience_generator.py`), verify:
+For each `set_cached_*` function in L1+L2 caches, verify:
 
-- L1 write (`_mem.set`) AND L2 write (`pg_insert` / db write) both happen → if only one, report as **High**
-- L2 write failure is caught and doesn't crash the request → if uncaught, report as **High**
-- L2 write failure doesn't leave L1 with data that L2 doesn't have (acceptable short-term, but document) → **Low**
+- L1 write (`_mem.set`) appears before the `l2_upsert` call → if reversed, first write to L2 could succeed then L1 write could fail, leaving L2 warm but L1 cold (minor but inconsistent)
+- `OperationalError` branch in `tile_cache.set_cached_tiles` has NO `await db.rollback()` — verify if this is intentional or a bug → **High** if DB session is left in a failed state
+- Every exception branch that follows a started DB write calls `db.rollback()` → if missing, **High** (session left in aborted state, next use will fail with `InFailedSqlTransaction`)
+- `l2_upsert` commits internally — no caller should `await db.commit()` after a successful `l2_upsert` call → if found, **High** (double commit or commit of unrelated pending writes)
 
 #### 1J-4: Cache Invalidation
 
 ```bash
-# Check for cache invalidation/clearing paths
-grep -rn "cache_clear\|clear_cache\|clear_memory_cache\|\.clear()\|cache_pop\|cache_delete" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+# Catalog all L1 clear functions per module
+grep -rn "def clear_memory_cache\|def clear_cache\|def clear_experience_cache" backend/app/services/ --include="*.py" | grep -v __pycache__
+# Note naming inconsistency: specialist/tile use clear_memory_cache, router uses clear_cache,
+# experience uses clear_experience_cache. The admin endpoint must know each module's exact name.
 
-# Check if invalidation clears BOTH L1 and L2 where applicable
-grep -rn "def clear\|async def clear" backend/app/services/*cache*.py --include="*.py" | grep -v __pycache__
+# Catalog all L2 clear functions per module
+grep -rn "def clear_db_cache\|async def clear_db_cache\|async def clear_experience_db_cache" backend/app/services/ --include="*.py" | grep -v __pycache__
+
+# Check that clear_experience_db_cache clears BOTH "experience" AND "experience_single" cache types
+grep -n "clear_experience_db_cache\|cache_type.*experience" backend/app/services/experience_generator.py | grep -v __pycache__
+# If only cache_type == "experience" is deleted, "experience_single" entries survive in L2 → stale fill-day cache
+
+# Check that the admin clear endpoint calls ALL module clear functions (L1 + L2)
+grep -rn "clear_memory_cache\|clear_cache\|clear_experience_cache\|clear_db_cache\|clear_experience_db_cache" backend/app/main.py | grep -v __pycache__
+
+# Check that cancel_inflight() in experience_generator is called during lifespan shutdown
+grep -n "cancel_inflight\|lifespan" backend/app/main.py | head -20
+grep -n "cancel_inflight" backend/app/services/experience_generator.py | head -5
 ```
 
 Report:
 
-- Invalidation clears L1 but not L2 (or vice versa) → **High** (stale data survives in the other tier)
-- No invalidation path exists for a cache domain → **Medium** (can only wait for TTL expiry)
-- Invalidation called without proper lock → **High** (race condition)
+- `clear_experience_db_cache` only deletes `cache_type == "experience"` but NOT `"experience_single"` → **High** (fill-day L2 entries survive a "clear all" operation; users see stale data after cache flush)
+- Admin endpoint missing a call to any module's `clear_memory_cache`/`clear_cache` → **High** (partial clear leaves L1 warm after expected flush)
+- Admin endpoint missing a call to any module's `clear_db_cache` → **High** (L2 not cleared, will repopulate L1 on next request)
+- Naming inconsistency across modules (`clear_memory_cache` vs `clear_cache` vs `clear_experience_cache`) → **Medium** (easy to accidentally skip one in admin code)
+- `cancel_inflight()` not registered in lifespan shutdown → **Medium** (in-flight experience generation tasks not cancelled on graceful restart; may log errors after shutdown)
 
 #### 1J-5: Unbounded Cache Growth
 
 ```bash
-# Check all MemoryCache / TTLCache instantiations for maxsize
-grep -rn "MemoryCache(\|TTLCache(" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+# Check all MemoryCache instantiations for maxsize
+grep -rn "MemoryCache(" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+
+# Known maxsizes: specialist=128, tile=256, router=500, experience=128
+# Flag any MemoryCache without explicit maxsize or with maxsize > 5000
 
 # Check for raw dicts or lists used as ad-hoc caches without TTL/size limits
 grep -rn "^_cache\s*=\s*{}\|^_cache\s*:\s*dict\|^CACHE\s*=" backend/app/ --include="*.py" | grep -v __pycache__
+
+# Check _inflight_generation_tasks (experience_generator) — unbounded dict of asyncio Tasks
+grep -n "_inflight_generation_tasks" backend/app/services/experience_generator.py | grep -v __pycache__
+# This dict grows with one entry per unique in-flight key and should be cleaned up on task completion
 ```
 
 Report:
 
-- `TTLCache` or `MemoryCache` without `maxsize` → **Critical** (unbounded memory growth)
-- Raw `dict` used as cache without size limit or TTL → **High** (memory leak under load)
-- `maxsize` set unreasonably high (>10000 for in-memory) → **Medium**
+- `MemoryCache()` without `maxsize` → **Critical** (unbounded memory growth)
+- `_inflight_generation_tasks` dict — verify entries are removed after task completion (not just on shutdown) → **High** if entries persist after tasks finish (slow memory leak under concurrent load)
+- Raw `dict` used as cache without TTL/size limit → **High**
+- `maxsize` > 5000 for in-memory L1 cache → **Medium** (may exhaust heap under memory pressure)
 
 #### 1J-6: Direct Cache Bypass
 
 ```bash
-# Check if any code accesses cache internals directly instead of using cache_access.py or service functions
+# Check if any node code accesses TTLCache directly instead of through MemoryCache service functions
 grep -rn "TTLCache\|_cache\[" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__ | grep -v test_
 
-# Check if node code imports cache modules directly instead of going through cache_access
-grep -rn "from app.services.*cache import\|from app.planner.cache_access import" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__
+# Check that node code imports cache SERVICE functions (not cache internals)
+grep -rn "from app.services.*cache import\|from app.services.experience_generator import" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__
+
+# Check experience_generator.has_cached() is used correctly — it only checks L1 (not L2)
+# Callers that rely on has_cached() to skip LLM generation may still miss warm L2 entries
+grep -rn "has_cached(" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
 ```
 
 Report:
 
-- Node code directly accessing `TTLCache` internals (bypassing lock-protected accessors) → **Critical** (race condition)
-- Inconsistent import patterns (some nodes using `cache_access`, others importing cache services directly) → **Medium**
+- Node code importing `TTLCache` directly → **Critical** (bypasses `MemoryCache` lock, race condition)
+- `has_cached()` in `experience_generator.py` checks L1 only — callers that use it as a "skip LLM" gate may still generate when L2 is warm → **Medium** (unnecessary LLM spend; L1 is cold after restart)
+
+#### 1J-7: In-flight Deduplication Safety (Experience Generator)
+
+```bash
+# Check the inflight lock and dict in experience_generator.py
+grep -n "_inflight_generation_lock\|_inflight_generation_tasks\|async with _inflight_generation_lock" backend/app/services/experience_generator.py | grep -v __pycache__
+
+# Verify the check-and-set on _inflight_generation_tasks is inside the lock
+# Pattern: "async with _inflight_generation_lock: ... if key not in _inflight ... _inflight[key] = task"
+# If the dict is read or written OUTSIDE the lock, there's a TOCTOU race
+grep -n "_inflight_generation_tasks" backend/app/services/experience_generator.py | grep -v __pycache__
+
+# Verify inflight entries are removed after task completion (success AND failure)
+# Look for finally blocks or callbacks that delete from _inflight_generation_tasks
+grep -n "finally\|_inflight_generation_tasks.pop\|del _inflight_generation_tasks" backend/app/services/experience_generator.py | grep -v __pycache__
+```
+
+Report:
+
+- `_inflight_generation_tasks` read or written outside `async with _inflight_generation_lock` → **Critical** (TOCTOU race: two coroutines both see "not in dict", both launch LLM calls, duplicate work and duplicate L2 writes)
+- `_inflight_generation_tasks[key]` not removed after task completes (in a `finally` block or `.add_done_callback`) → **High** (dict grows unboundedly; future requests for the same key see a completed Task, may get wrong result or error)
+- `cancel_inflight()` clears dict but doesn't await task cancellation before returning → **Medium** (cancelled tasks may still be running when caller proceeds)
+
+#### 1J-8: Cross-Module Stats API Consistency
+
+```bash
+# Check get_cache_stats() signature and returned keys in all cache modules
+grep -rn "def get_cache_stats" backend/app/services/ --include="*.py" | grep -v __pycache__
+
+# Check actual stat keys returned by each module
+grep -n "stat_keys=" backend/app/services/ --include="*.py" -r | grep -v __pycache__
+# router_cache uses stat_keys=["hits", "misses", "skipped_context_dependent"]
+# specialist/tile/experience use default ["l1_hits", "l1_misses", "l2_hits", "l2_misses", "writes"]
+# If admin code aggregates by standard key names (l1_hits etc), router stats return 0 for those keys
+
+# Check admin stats endpoint for how it aggregates
+grep -n "get_cache_stats\|cache_stats" backend/app/main.py | grep -v __pycache__
+```
+
+Report:
+
+- `router_cache` uses non-standard stat keys (`"hits"`, `"misses"`) while all other modules use `"l1_hits"`, `"l1_misses"` → **Medium** (admin dashboard aggregation using standard keys returns 0 for router stats; hit rate calculations are wrong)
+- Any module missing `get_cache_stats()` → **Medium** (incomplete observability)
+- Admin endpoint not calling `get_cache_stats()` for all modules → **Low** (silent blind spots in cache monitoring)
 
 ### 1K: Resource Lifecycle & Leak Prevention
 
@@ -578,6 +903,44 @@ grep -rn "Object.keys(" frontend/ --include="*.ts" --include="*.tsx" | grep -E "
 
 # 13. Per-item noop callback creation in mapped lists (breaks memoized child stability)
 grep -rn "\?\? (() => {})" frontend/components/ --include="*.tsx" | grep -v __tests__
+
+# 14. Context provider value instability (new object/array literal as value prop — re-renders ALL consumers every render)
+grep -rn "\.Provider value={{" frontend/components/ frontend/hooks/ --include="*.tsx" --include="*.ts" | grep -v __tests__
+grep -rn "\.Provider value={\[" frontend/components/ frontend/hooks/ --include="*.tsx" --include="*.ts" | grep -v __tests__
+
+# 15. Zustand selectors with inline computation (new reference returned every read even when data unchanged)
+grep -rn "useDocumentStore((s\|state) =>" frontend/ --include="*.ts" --include="*.tsx" | grep -E "\.filter\(|\.map\(|\.find\(|\.reduce\(|\.sort\(" | grep -v __tests__
+grep -rn "useChatStore((s\|state) =>" frontend/ --include="*.ts" --include="*.tsx" | grep -E "\.filter\(|\.map\(|\.find\(|\.reduce\(|\.sort\(" | grep -v __tests__
+
+# 16. Custom hooks returning new object/array literals on every call (missing useMemo on return value)
+# Hooks that return inline object literals — every caller re-renders on each invocation
+grep -rn "^  return {" frontend/hooks/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+grep -rn "^  return \[" frontend/hooks/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+# Cross-reference: which of those hooks do NOT wrap the return in useMemo?
+grep -rn "useMemo" frontend/hooks/ --include="*.ts" --include="*.tsx" -l
+
+# 17. Framer Motion inline animation/variant objects (new object identity each render triggers animation churn)
+grep -rn "animate={{\|initial={{\|exit={{\|transition={{\|variants={{" frontend/components/ --include="*.tsx" | grep -v __tests__ | head -20
+
+# 18. Non-style inline JSX object props (extends check 2 — any non-style prop receiving an inline object literal)
+grep -rn "={{[^}]*:[^}]*}}" frontend/components/ --include="*.tsx" | grep -v "style={{" | grep -v __tests__ | head -20
+
+# 19. Index-as-key in dynamic lists (causes full unmount/remount instead of reconciliation)
+grep -rn "key={index}\|key={i}\|key={idx}\|key={_i}\|key={_idx}" frontend/components/ --include="*.tsx" | grep -v __tests__
+# Also check .map((item, index) => ... key={index}) patterns
+grep -rn "\.map(.*index.*=>.*key={index}" frontend/components/ --include="*.tsx" | grep -v __tests__
+
+# 20. Multiple store subscriptions in a single component (each subscription is an independent listener — fan-out risk)
+# Find components that subscribe to 3+ stores
+grep -rn "useDocumentStore\|useChatStore\|useUIStore\|useMobileNavStore" frontend/components/ --include="*.tsx" | grep -v __tests__ | awk -F: '{print $1}' | sort | uniq -c | sort -rn | head -15
+
+# 21. useEffect setting state unconditionally (no early-return guard) — can trigger render cascade
+grep -rn "useEffect" frontend/components/ --include="*.tsx" | grep -v __tests__ | xargs -I{} grep -l "setState\|set[A-Z]" 2>/dev/null | head -10
+# Check for effects that set state without a conditional guard (== or !== check before setState)
+grep -rn "useEffect" frontend/components/ frontend/hooks/ --include="*.tsx" --include="*.ts" -A 5 | grep -v __tests__ | grep "set[A-Z][a-z]" | grep -v "if\|==" | head -15
+
+# 22. Referential instability in default prop values (inline object/array as default parameter in destructure)
+grep -rn "= {}\|= \[\]" frontend/components/ --include="*.tsx" | grep -E "^\s*\{|function|const.*=.*\(" | grep -v __tests__ | grep -v "useState\|useRef\|useMemo" | head -15
 ```
 
 Report findings with severity assessment:
@@ -595,6 +958,15 @@ Report findings with severity assessment:
 - Wrapper/lambda prop churn into heavy timeline/map trees → **Medium**
 - Selector computations like `Object.keys(...)` inside store selectors → **Low/Medium**
 - Per-item fallback noop callbacks in mapped lists → **Low/Medium** (flag when it breaks memoized child)
+- Context provider with inline object/array value → **High** (re-renders every consumer on every parent render; wrap value in `useMemo`)
+- Zustand selector with `.filter()`/`.map()`/`.find()` returning new array/object → **High** (new reference every read; extract derived value with `useMemo` outside the selector)
+- Custom hook returning inline object/array without `useMemo` → **Medium** (every caller sees identity change; wrap return in `useMemo`)
+- Framer Motion inline animation/variant objects → **Medium** (animation system gets new config object each render; hoist to module-level constants or `useMemo`)
+- Non-style inline JSX object props → **Medium** (same as `style={{}}` — new reference each render; flag if passed to memoized or heavy children)
+- Index-as-key in dynamic lists → **High** if list items can reorder or be inserted/deleted (causes full unmount/remount), **Low** if list is append-only and stable
+- Components subscribing to 3+ stores → **Medium** (multiplicative re-render exposure; consider colocating selectors or derived state into a single subscription hook)
+- `useEffect` setting state unconditionally without early-return guard → **Medium** (may cause render cascade; verify deps array prevents infinite loop)
+- Inline object/array default prop values (`= {}`, `= []` in destructure) → **Low/Medium** (new reference each call if used as `useEffect` dep or passed to memoized children)
 
 When reporting rerender findings, include:
 
@@ -722,6 +1094,26 @@ Report:
 
 - `await` in component without surrounding try/catch → **Medium** (unhandled rejection crashes the component)
 - `.then()` without `.catch()` → **Medium** (silent failure)
+
+#### 2F-6: Duplicate Request Fan-out (StrictMode + Multi-Path Triggers)
+
+```bash
+# Endpoints that are easy to trigger from multiple paths
+grep -rn "expand-itinerary\|expandItinerary\|graph_plan/stream\|streamPlan\|startStream" frontend/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+
+# Effect/timer driven trigger points that can overlap
+grep -rn "useEffect\|setTimeout\|setInterval" frontend/components/ frontend/hooks/ frontend/state/ --include="*.ts" --include="*.tsx" | grep -E "expand-itinerary|expandItinerary|graph_plan/stream|streamPlan|retry|refetch" | grep -v __tests__
+
+# Single-flight/idempotency guards in client state
+grep -rn "inflight\|inFlight\|pendingRequest\|requestKey\|lastRequest\|isHydrating" frontend/components/ frontend/hooks/ frontend/state/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+```
+
+Report:
+
+- Same endpoint callable from multiple trigger paths without a single-flight guard → **Critical** (duplicate backend writes and conflicting UI state)
+- Timer/effect retries can overlap first request (no cancellation or guard) → **High**
+- React StrictMode causes duplicate calls in development and behavior diverges from production → **Medium** (must be tested explicitly)
+- Missing regression tests for overlap path (e.g., trigger A + trigger B + stream callback) → **High**
 
 ### 2G: Console.log Pollution
 
@@ -905,6 +1297,33 @@ Report:
 - Click handlers on `<div>`/`<span>` without `role` and `tabIndex` → **Medium** (keyboard users can't activate)
 - Form inputs without labels → **Medium**
 - Do NOT flag: decorative elements, Mapbox internal elements, shadcn/ui primitives (they handle a11y internally)
+
+### 2O: Prompt Suggestion Actionability & Chat UX Contracts
+
+Ensure chat suggestions are either actionable backend intents or explicit UI-open actions, never dead-end text.
+
+```bash
+# Suggestion/chip generation and click handling
+grep -rn "suggestion\|quick action\|quick_action\|chip\|handleSuggestion\|onSuggestionClick" frontend/components/ frontend/hooks/ frontend/state/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+
+# Routes/actions that open input pills (calendar, budget, activities, origin)
+grep -rn "open.*calendar\|open.*budget\|open.*activit\|open.*origin\|set.*Pill\|set.*Modal" frontend/components/ frontend/hooks/ frontend/state/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+
+# Prevent destructive commands from plain chat text (reset, destination switch)
+grep -rn "reset\|switch to\|change to\|destination" frontend/components/chat frontend/hooks frontend/state backend/app/planner backend/app/main.py --include="*.ts" --include="*.tsx" --include="*.py" | grep -v __tests__ | grep -v __pycache__
+
+# Plan view gate logic (must require destination + dates)
+grep -rn "plan_view_state\|S1_DESTINATION_SET\|S2_STRATEGY_READY\|S4_ITINERARY\|destination\|start_date\|end_date" frontend/state frontend/lib backend/app/planner --include="*.ts" --include="*.tsx" --include="*.py" | grep -v __tests__ | grep -v __pycache__
+```
+
+Report:
+
+- Suggestion chip text implies an action but has no bound action/intent metadata → **High** (dead-end UX)
+- Suggestion click injects text that does nothing (no backend intent and no UI-open behavior) → **High**
+- Typing `reset` in chat triggers reset/destructive state mutation → **Critical** (reset must be UI-button only)
+- Destination can be changed after lock without explicit reset flow → **High**
+- Itinerary/plan view unlocks with destination only (missing dates) → **Critical** (invalid plan gate)
+- Chat surfaces internal operation/debug strings instead of assistant copy → **High**
 
 ---
 
@@ -1121,6 +1540,32 @@ Report:
 - Rate limiter 429 response missing `Access-Control-Allow-Origin` header → **High** (browser shows generic CORS error instead of rate limit message; frontend can't distinguish 429 from network failure)
 - CSRF 403 response missing CORS headers → **High** (same problem)
 - All middleware error responses include CORS headers (or CORSMiddleware wraps them) → OK
+
+### 3H: Expand-Itinerary Idempotency & Stream Contract
+
+Verify duplicate itinerary expansion requests are idempotent and emit a stable terminal stream contract.
+
+```bash
+# Backend idempotency, inflight lock, duplicate short-circuit markers
+grep -rn "expand_itinerary\|inflight\|idempot\|duplicate_noop\|already_in_progress" backend/app/main.py backend/app/services/ backend/app/planner/ --include="*.py" | grep -v __pycache__
+
+# Stream response framing and terminal events
+grep -rn "StreamingResponse\|text/event-stream\|application/x-ndjson\|yield .*\\\"done\\\"\|yield .*duplicate_noop" backend/app/main.py backend/app/services/ --include="*.py" | grep -v __pycache__
+
+# Frontend handling of duplicate_noop/done terminal cases
+grep -rn "duplicate_noop\|already_in_progress\|expand-itinerary\|expandItinerary" frontend/components/ frontend/hooks/ frontend/state/ frontend/lib/ --include="*.ts" --include="*.tsx" | grep -v __tests__
+
+# Contract tests for first-call and duplicate-call behavior
+grep -rn "expand_itinerary\|duplicate_noop\|stream contract\|test_expand_itinerary" backend/tests/ frontend/__tests__/ --include="*.py" --include="*.ts" --include="*.tsx"
+```
+
+Report:
+
+- Duplicate request path can run full expansion work again (no lock/idempotency guard) → **Critical**
+- Duplicate request returns non-terminal or malformed stream (no `done` frame) → **Critical** (frontend hangs/spins)
+- Frontend treats duplicate-noop as error and retries, causing call storms → **High**
+- Duplicate request response leaks internal debug/diff payload into chat UI → **High**
+- Missing tests that assert first-call + duplicate-call terminal behavior → **High**
 
 ---
 
@@ -1450,7 +1895,13 @@ Produce the final report in this format:
 | Duplicate code                |       |          |       |
 | Schema drift                  |       |          |       |
 | Dead endpoints                |       |          |       |
-| Security vulnerabilities      |       |          |       |
+| Security — code vulnerabilities |       |          |       |
+| Abuse — rate limit coverage   |       |          |       |
+| Abuse — spend guard scope     |       |          |       |
+| Abuse — spend guard config    |       |          |       |
+| Abuse — input size limits     |       |          |       |
+| Abuse — session & auth        |       |          |       |
+| Abuse — SSE/streaming hardening |      |          |       |
 | CORS & security headers       |       |          |       |
 | Middleware ordering & preflight |      |          |       |
 | Circular imports              |       |          |       |
@@ -1465,7 +1916,13 @@ Produce the final report in this format:
 | Env variable drift            |       |          |       |
 | Alembic migration health      |       |          |       |
 | Dependency health             |       |          |       |
-| Cache health                  |       |          |       |
+| Cache health — TTL consistency |       |          |       |
+| Cache health — key collisions |       |          |       |
+| Cache health — L1/L2 consistency |     |          |       |
+| Cache health — invalidation   |       |          |       |
+| Cache health — unbounded growth |      |          |       |
+| Cache health — in-flight dedup |       |          |       |
+| Cache health — stats API      |       |          |       |
 | Resource lifecycle & leaks    |       |          |       |
 | LLM output validation         |       |          |       |
 | LangGraph node count          |       |          |       |

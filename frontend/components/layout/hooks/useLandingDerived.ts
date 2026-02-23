@@ -125,13 +125,15 @@ export function useLandingDerived({
   const hasDestination = Boolean(tripInputs.destination);
   const hasStartDate = Boolean(tripInputs.start_date);
   const hasEndDate = Boolean(tripInputs.end_date);
+  const hasDateRange = hasStartDate && hasEndDate;
+  const hasPlanPrerequisites = hasDestination && hasDateRange;
 
   // Use backend-provided plan_state if available, otherwise derive from local state
   const documentPlanState = docPlanState;
   const planState: PlanState = useMemo(() => {
     if (documentPlanState) return documentPlanState;
     if (isGenerating) return 'RESOLVING';
-    if (missingFields.length > 0 || !hasOrigin || !hasDestination || !hasStartDate) {
+    if (missingFields.length > 0 || !hasOrigin || !hasDestination || !hasStartDate || !hasEndDate) {
       return 'INCOMPLETE';
     }
     return 'STABLE';
@@ -142,6 +144,7 @@ export function useLandingDerived({
     hasOrigin,
     hasDestination,
     hasStartDate,
+    hasEndDate,
   ]);
 
   // Destination card (from backend or derive locally)
@@ -181,6 +184,11 @@ export function useLandingDerived({
   const hasDayCardsReady = (docDayCards?.length ?? 0) > 0;
 
   const planViewState: PlanViewState = useMemo(() => {
+    // Hard gate: right-side plan view stays closed until destination + full dates are set.
+    if (!hasPlanPrerequisites) {
+      return 'S0_BOOTSTRAP';
+    }
+
     // Backend is authoritative for non-bootstrap states.
     // Bootstrap can be treated as "no authoritative plan yet" so local loading
     // heuristics can still drive the framing state during first generation.
@@ -209,6 +217,7 @@ export function useLandingDerived({
 
     return 'S0_BOOTSTRAP';
   }, [
+    hasPlanPrerequisites,
     backendPlanViewState,
     isGenerating,
     hasStrategyContent,
@@ -264,17 +273,16 @@ export function useLandingDerived({
 
   // Plan tab enabled when we have branches/plan content
   const planTabEnabled = useMemo(() => {
+    if (!hasPlanPrerequisites) return false;
     return hasBranchesReady || !isBootstrap(planViewState);
-  }, [hasBranchesReady, planViewState]);
+  }, [hasPlanPrerequisites, hasBranchesReady, planViewState]);
 
   // Fallback title
   const fallbackTitle = tripInputs.destination ?? undefined;
 
   // CTA gating flags
-  const hasDates =
-    (Boolean(tripInputs.start_date) && Boolean(tripInputs.end_date)) ||
-    (tripInputs.date_flex === true && tripInputs.trip_duration != null);
-  const canGeneratePlan = hasDestination && hasDates;
+  const hasDates = hasDateRange;
+  const canGeneratePlan = hasPlanPrerequisites;
   const hasPlan = hasBranchesReady;
 
   return {

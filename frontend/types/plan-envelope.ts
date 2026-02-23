@@ -583,6 +583,11 @@ export interface StrategySection {
   // Contains visa, safety, money, transport, culture, connectivity, seasonality,
   // things to do, neighborhoods, accommodation, scams, and packing info
   travel_intelligence?: TravelIntelligence;
+  local_expert_enrichment?: {
+    state?: 'ready' | 'pending' | 'failed' | string;
+    error_code?: string | null;
+    updated_at?: string;
+  };
 
   // Provenance (debug only, not shown in UI)
   strategy_node_id?: string;
@@ -649,6 +654,11 @@ export interface DayBlock {
   is_skeleton?: boolean;
   // Specialist type for ghost blocks (e.g., "diving", "hiking")
   specialist_type?: string;
+  // Explicit activity model axes (domain + provenance)
+  activity_domain?: 'tier1' | 'tier2';
+  activity_provenance?: 'ai_suggested' | 'user_browse_added';
+  // Canonical map pin category (e.g., "food", "cycling")
+  map_type?: string;
 
   // === NEW: Rich content fields (S3 Itinerary View) ===
   image_url?: string; // Activity thumbnail from specialist

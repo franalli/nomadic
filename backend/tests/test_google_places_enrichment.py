@@ -83,6 +83,26 @@ class _FakeAsyncHttpClient:
         return await self._post_handler(url=url, headers=headers, json=json)
 
 
+def test_apply_place_to_activity_sets_photo_name_for_proxying():
+    from app.tile_service.google_places_provider import _apply_place_to_activity
+
+    activity = {
+        "title": "Cooking Class",
+        "meta": {"category": "cooking"},
+        "image_url": "https://images.unsplash.com/photo-placeholder",
+    }
+    place = {
+        "id": "gp_photo_name",
+        "photos": [{"name": "places/abc123/photos/photo456"}],
+        "location": {"latitude": 41.89, "longitude": 12.49},
+    }
+
+    enriched = _apply_place_to_activity(activity, place, "Cooking Class")
+
+    assert enriched.get("photo_name") == "places/abc123/photos/photo456"
+    assert (enriched.get("meta") or {}).get("photo_name") == "places/abc123/photos/photo456"
+
+
 @pytest.mark.asyncio
 async def test_enrich_single_activity_retries_on_transient_5xx():
     from app.tile_service.google_places_provider import _enrich_single_activity

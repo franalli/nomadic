@@ -64,4 +64,14 @@ describe('createStreamParser', () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'progress', stage: 'itinerary' });
   });
+
+  it('accepts done events without plan_view_state for duplicate no-op acks', () => {
+    const events: StreamEvent[] = [];
+    const parser = createStreamParser((e) => events.push(e));
+
+    parser.feed('{"type":"done","message":"duplicate_noop"}\n');
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'done', message: 'duplicate_noop' });
+  });
 });

@@ -29,13 +29,14 @@ import {
   Ticket,
   Users,
 } from 'lucide-react';
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
+import { useDocumentStore } from '@/state/documentStore';
 import { type ActivitySettings,type BookingTypes, type FlightSettings, type HotelSettings, isBookingEnabled } from '@/types/document';
-import type { ViewMode } from '@/types/plan-envelope';
+import type { DayBlock, DayCard, ViewMode } from '@/types/plan-envelope';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -95,9 +96,13 @@ const isHotelCustom = (settings?: HotelSettings): boolean => {
   );
 };
 
-const isActivityCustom = (settings?: ActivitySettings): boolean => {
-  if (!settings) return false;
-  return settings.categories !== undefined && settings.categories.length > 0;
+const isActivityCustom = (
+  settings?: ActivitySettings,
+  fallbackCategories: string[] = []
+): boolean => {
+  if (!settings) return fallbackCategories.length > 0;
+  const categories = settings.categories && settings.categories.length > 0 ? settings.categories : fallbackCategories;
+  return categories.length > 0;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,14 +168,162 @@ function getHotelChipSummary(settings?: HotelSettings): string | null {
   return `${tokens.slice(0, 2).join(' · ')} +${tokens.length - 2}`;
 }
 
-function getActivityChipSummary(settings?: ActivitySettings): string | null {
-  if (!settings || !settings.categories || settings.categories.length === 0) {
-    return null;
+function getActivitySelectedCount(
+  settings?: ActivitySettings,
+  fallbackCategories: string[] = []
+): number {
+  const categoriesRaw = settings?.categories && settings.categories.length > 0
+    ? settings.categories
+    : fallbackCategories;
+  if (categoriesRaw.length === 0) {
+    return 0;
   }
 
-  const categories = settings.categories.map(c => c.charAt(0).toUpperCase() + c.slice(1));
-  if (categories.length <= 4) return categories.join(' · ');
-  return `${categories.slice(0, 3).join(' · ')} +${categories.length - 3}`;
+  const normalized = categoriesRaw
+    .map((category) => canonicalCategoryKey(category) ?? category.trim().toLowerCase())
+    .filter((category): category is string => !!category);
+
+  return Array.from(new Set(normalized)).length;
+}
+
+const NON_ACTIVITY_TYPES = new Set([
+  'arrival', 'departure', 'check-in', 'check-out', 'check_in', 'check_out',
+  'free_day', 'rest_day', 'buffer', 'decompression_buffer',
+]);
+
+const CATEGORY_ALIAS: Record<string, string> = {
+  culture: 'cultural',
+  tours: 'tours',
+  attraction: 'tours',
+  tourist_attraction: 'tours',
+  point_of_interest: 'tours',
+  travel_agency: 'tours',
+  cultural_attraction: 'cultural',
+  museum: 'cultural',
+  art_gallery: 'cultural',
+  historical_landmark: 'cultural',
+  cultural_landmark: 'cultural',
+  monument: 'cultural',
+  plaza: 'cultural',
+  ruins: 'cultural',
+  fountain: 'cultural',
+  hindu_temple: 'temples',
+  temple: 'temples',
+  church: 'cultural',
+  place_of_worship: 'cultural',
+  synagogue: 'cultural',
+  mosque: 'cultural',
+  restaurant: 'food',
+  cafe: 'food',
+  bar: 'food',
+  bakery: 'food',
+  meal_takeaway: 'food',
+  meal_delivery: 'food',
+  park: 'nature',
+  natural_feature: 'nature',
+  national_park: 'nature',
+  campground: 'nature',
+  zoo: 'nature',
+  botanical_garden: 'nature',
+  shopping_mall: 'shopping',
+  market: 'shopping',
+  store: 'shopping',
+  clothing_store: 'shopping',
+  department_store: 'shopping',
+  beauty_salon: 'spa',
+  gym: 'spa',
+};
+
+const TIER1_CONSTRAINT_HINTS: Record<string, RegExp[]> = {
+  diving: [/\bdiv(e|ing|er|es)\b/i, /\bscuba\b/i, /\bno[- ]fly\b/i, /\bdecompression\b/i],
+  hiking: [/\bhik(e|ing)\b/i, /\btrek\b/i, /\btrail\b/i],
+  skiing: [/\bski(ing)?\b/i, /\bsnowboard(ing)?\b/i, /\baltitude\b/i],
+  cycling: [/\bcycl(e|ing)\b/i, /\bbik(e|ing)\b/i],
+  surfing: [/\bsurf(ing)?\b/i, /\bwave\b/i],
+  sailing: [/\bsail(ing)?\b/i, /\byacht(ing)?\b/i, /\bmarine\b/i],
+};
+
+function toCategoryKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function canonicalCategoryKey(value: unknown): string | null {
+  const key = toCategoryKey(value);
+  if (!key) return null;
+  const mapped = CATEGORY_ALIAS[key] ?? key;
+  if (/(culture|cultural|heritage)/.test(key)) return 'cultural';
+  if (/(museum|landmark|historic|monument|plaza|fountain)/.test(key)) return 'cultural';
+  if (/(temple|church|worship|mosque|synagogue)/.test(key)) return 'temples';
+  if (/(restaurant|cafe|bar|bakery|food|meal)/.test(key)) return 'food';
+  if (/(park|garden|nature|zoo|camp)/.test(key)) return 'nature';
+  if (/(shop|store|market|mall)/.test(key)) return 'shopping';
+  if (/(spa|wellness|gym|beauty)/.test(key)) return 'spa';
+  if (/(tour|point_of_interest|visitor|travel_agency)/.test(key)) return 'tours';
+  return mapped;
+}
+
+function resolveBlockCategory(block: DayBlock): string | null {
+  if (block.is_buffer) return null;
+  const activityType = toCategoryKey(block.activity_type);
+  if (activityType && NON_ACTIVITY_TYPES.has(activityType)) return null;
+
+  const bookedTile = block.booked_tile as Record<string, unknown> | undefined;
+  const meta = bookedTile?.meta && typeof bookedTile.meta === 'object'
+    ? bookedTile.meta as Record<string, unknown>
+    : undefined;
+
+  return (
+    canonicalCategoryKey(block.map_type) ??
+    canonicalCategoryKey(block.specialist_type) ??
+    canonicalCategoryKey(bookedTile?.map_type) ??
+    canonicalCategoryKey(meta?.map_type) ??
+    canonicalCategoryKey((bookedTile as Record<string, unknown> | undefined)?.browse_category) ??
+    canonicalCategoryKey(bookedTile?.category) ??
+    canonicalCategoryKey(meta?.category)
+  );
+}
+
+function inferConstraintCategories(block: DayBlock): string[] {
+  const categories = new Set<string>();
+  const specialist = canonicalCategoryKey(block.specialist_type);
+  if (specialist && specialist in TIER1_CONSTRAINT_HINTS) {
+    categories.add(specialist);
+  }
+
+  const textParts: string[] = [];
+  if (typeof block.buffer_reason === 'string') textParts.push(block.buffer_reason);
+  if (Array.isArray(block.constraints)) textParts.push(...block.constraints.filter((c): c is string => typeof c === 'string'));
+  if (Array.isArray(block.active_constraints)) {
+    block.active_constraints.forEach((c) => {
+      if (typeof c.id === 'string') textParts.push(c.id);
+      if (typeof c.title === 'string') textParts.push(c.title);
+      if (typeof c.description === 'string') textParts.push(c.description);
+    });
+  }
+  const text = textParts.join(' ');
+  if (!text) return Array.from(categories);
+
+  Object.entries(TIER1_CONSTRAINT_HINTS).forEach(([category, patterns]) => {
+    if (patterns.some((p) => p.test(text))) {
+      categories.add(category);
+    }
+  });
+  return Array.from(categories);
+}
+
+function inferCategoriesFromDayCards(dayCards: DayCard[] | undefined): string[] {
+  if (!dayCards || dayCards.length === 0) return [];
+  const inferred = new Set<string>();
+  dayCards.forEach((card) => {
+    card.blocks?.forEach((block) => {
+      const category = resolveBlockCategory(block);
+      if (category) inferred.add(category);
+      inferConstraintCategories(block).forEach((c) => inferred.add(c));
+    });
+  });
+  return Array.from(inferred);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -401,6 +554,11 @@ function UnifiedChipRowInner({
 }: UnifiedChipRowProps) {
   const isDesktop = useIsDesktop();
   const isMobile = !isDesktop;
+  const dayCards = useDocumentStore((s) => s.document?.day_cards);
+  const inferredActivityCategories = useMemo(
+    () => inferCategoriesFromDayCards(dayCards),
+    [dayCards]
+  );
 
   // In BOOKING mode, chips are read-only (show values but can't edit)
   const isBookingMode = mode === 'booking';
@@ -418,8 +576,9 @@ function UnifiedChipRowInner({
 
   const getActivitiesState = (): ModuleState => {
     if (!isBookingEnabled(bookingTypes.activities)) return 'off';
-    return isActivityCustom(activitySettings) ? 'on-custom' : 'on-default';
+    return isActivityCustom(activitySettings, inferredActivityCategories) ? 'on-custom' : 'on-default';
   };
+  const selectedActivityCount = getActivitySelectedCount(activitySettings, inferredActivityCategories);
 
   // Check if travelers has been modified from default
   const isTravelersDefault = travelers === '1 adult';
@@ -534,9 +693,9 @@ function UnifiedChipRowInner({
 
         <ModuleChip
           icon={Ticket}
-          label="Activities"
+          label={selectedActivityCount > 0 ? `Activities(${selectedActivityCount})` : 'Activities'}
           state={getActivitiesState()}
-          summary={getActivityChipSummary(activitySettings)}
+          summary={null}
           onClick={onOpenActivities}
           isMobile={isMobile}
           disabled={isBookingMode}

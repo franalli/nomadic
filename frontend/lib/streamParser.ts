@@ -22,7 +22,8 @@ export type StreamEvent =
   | { type: 'envelope'; plan_envelope: StreamEnvelope }
   | {
       type: 'done';
-      plan_view_state: 'S3_ITINERARY_READY' | 'S3_EDITING' | 'S3_PARTIAL_CONFLICT';
+      plan_view_state?: 'S3_ITINERARY_READY' | 'S3_EDITING' | 'S3_PARTIAL_CONFLICT';
+      message?: string;
       dropped_preferred_count?: number;
       warnings?: string[];
       version?: number;
@@ -145,17 +146,6 @@ export async function consumeNdjsonEnvelopeStream(
         callbacks.onProgress?.(event);
         return;
       case 'done':
-        {
-          const doneState = (event as { plan_view_state?: unknown }).plan_view_state;
-          if (
-            doneState !== 'S3_ITINERARY_READY' &&
-            doneState !== 'S3_EDITING' &&
-            doneState !== 'S3_PARTIAL_CONFLICT'
-          ) {
-            callbacks.onUnknown?.(event);
-            return;
-          }
-        }
         callbacks.onDone?.(event);
         return;
       case 'error':

@@ -11,6 +11,7 @@ import { TravelersSheet } from '@/components/plan/sheets/TravelersSheet';
 import { TripSettingsSheet } from '@/components/plan/sheets/TripSettingsSheet';
 import { parseISODateLocal } from '@/lib/date-utils';
 import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
+import { DEFAULT_BOOKING_TYPES } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { PlanViewState } from '@/types/plan-envelope';
@@ -200,17 +201,37 @@ export function LandingSheets({
         settings={tripInputs.activity_settings || { categories: [], skill_level: null }}
         hasDestination={hasDestination}
         onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
-        onSaveSettings={(settings) => {
+        onSaveSettings={async (settings) => {
           handleUpdateActivitySettings(settings);
-          setGearActivitiesSheetOpen(false);
-          closeSheet();
-          addToast('Activity preferences saved', 'confirmation');
-          // Trigger plan regeneration if plan is active
-          const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
-            planViewState
-          );
-          if (isActive) {
-            onSendMessage(GENERATE_PLAN_TRIGGER);
+          try {
+            const shouldDisableActivities = (settings.categories?.length ?? 0) === 0;
+            const nextBookingTypes = shouldDisableActivities
+              ? {
+                  ...DEFAULT_BOOKING_TYPES,
+                  ...(tripInputs.booking_types ?? {}),
+                  activities: 'off' as const,
+                }
+              : undefined;
+            if (nextBookingTypes) {
+              storeUpdateTripInputs({ booking_types: nextBookingTypes });
+            }
+            // Ensure backend has the latest activity_settings before regeneration.
+            await storeCommitTripInputs({
+              activity_settings: settings,
+              ...(nextBookingTypes ? { booking_types: nextBookingTypes } : {}),
+            });
+            setGearActivitiesSheetOpen(false);
+            closeSheet();
+            addToast('Activity preferences saved', 'confirmation');
+            // Trigger plan regeneration if plan is active
+            const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
+              planViewState
+            );
+            if (isActive) {
+              onSendMessage(GENERATE_PLAN_TRIGGER);
+            }
+          } catch {
+            addToast('Failed to save — please try again', 'error');
           }
         }}
       />

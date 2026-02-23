@@ -5,7 +5,7 @@ Uses the Google Places API (New) Text Search to find real hotels and activities.
 Provider cascade: curated → google_places → mock
 
 Price estimation: price_level (0-4) × destination cost tier.
-Photos: Google Places Photos API (direct URL with API key).
+Photos: Placeholder images only (avoid exposing Google API keys in client URLs).
 Deeplinks: Google Hotels deeplink for hotels, Google Maps for activities.
 
 Quota exhaustion or API errors → returns empty list → mock fallback applies.
@@ -29,6 +29,7 @@ from app.placeholders import get_placeholder_image
 from app.planner.hashing import make_cache_key, stable_hash_short
 from app.schemas import Geo, Tile
 from app.services.cache_core import MemoryCache, l2_upsert
+from app.services.spend_guard import SpendLimitExceeded, reserve_places_spend_or_raise
 
 from .models import SearchContext
 from .provider_base import Provider
@@ -36,7 +37,7 @@ from .provider_base import Provider
 logger = logging.getLogger(__name__)
 
 # Explicit Google Places usage labels for telemetry.
-_PLACES_PATH_LABELS = {"browse", "tier1_enrich", "tier2_enrich", "logistics"}
+_PLACES_PATH_LABELS = {"browse", "tier1_enrich", "tier2_enrich", "logistics", "geocode"}
 _PLACES_COUNTER_FIELDS = (
     "requests",
     "successes",
@@ -103,6 +104,103 @@ def clear_google_places_usage_counters() -> None:
                 _places_usage_counters[path][field] = 0
 
 
+# Circuit breaker state per usage path.
+_places_circuit_lock = Lock()
+_places_circuit_state: dict[str, dict[str, float | int]] = {
+    label: {"failures": 0, "open_until": 0.0} for label in _PLACES_PATH_LABELS
+}
+
+
+def _circuit_threshold() -> int:
+    try:
+        return max(1, int(settings.google_places_circuit_breaker_failure_threshold))
+    except (TypeError, ValueError):
+        return 5
+
+
+def _circuit_open_seconds() -> int:
+    try:
+        return max(1, int(settings.google_places_circuit_breaker_open_seconds))
+    except (TypeError, ValueError):
+        return 120
+
+
+def _is_places_circuit_open(path_label: str) -> bool:
+    if not settings.google_places_circuit_breaker_enabled:
+        return False
+
+    path = _normalize_places_path(path_label)
+    now = time.time()
+    with _places_circuit_lock:
+        state = _places_circuit_state[path]
+        open_until = float(state.get("open_until", 0.0))
+        if open_until <= 0:
+            return False
+        if now >= open_until:
+            state["open_until"] = 0.0
+            state["failures"] = 0
+            return False
+        return True
+
+
+def _record_places_circuit_success(path_label: str) -> None:
+    if not settings.google_places_circuit_breaker_enabled:
+        return
+    path = _normalize_places_path(path_label)
+    with _places_circuit_lock:
+        state = _places_circuit_state[path]
+        state["failures"] = 0
+        state["open_until"] = 0.0
+
+
+def _record_places_circuit_failure(path_label: str, *, status_code: int | None = None) -> None:
+    if not settings.google_places_circuit_breaker_enabled:
+        return
+
+    # Only upstream service failures/quotas should influence breaker state.
+    if status_code is not None and status_code != 429 and status_code < 500:
+        return
+
+    path = _normalize_places_path(path_label)
+    threshold = _circuit_threshold()
+    open_seconds = _circuit_open_seconds()
+    with _places_circuit_lock:
+        state = _places_circuit_state[path]
+        failures = int(state.get("failures", 0)) + 1
+        state["failures"] = failures
+        if failures >= threshold:
+            state["open_until"] = time.time() + open_seconds
+            logger.warning(
+                "[GOOGLE_PLACES][%s] circuit OPEN after %d failures for %ds",
+                path,
+                failures,
+                open_seconds,
+            )
+
+
+def clear_google_places_circuit_breaker() -> None:
+    """Reset breaker state for all Google Places paths."""
+    with _places_circuit_lock:
+        for path in _places_circuit_state:
+            _places_circuit_state[path]["failures"] = 0
+            _places_circuit_state[path]["open_until"] = 0.0
+
+
+def get_google_places_circuit_breaker_state() -> dict[str, dict[str, float | int | bool]]:
+    """Expose breaker state for observability/tests."""
+    now = time.time()
+    with _places_circuit_lock:
+        out: dict[str, dict[str, float | int | bool]] = {}
+        for path, state in _places_circuit_state.items():
+            open_until = float(state.get("open_until", 0.0))
+            out[path] = {
+                "failures": int(state.get("failures", 0)),
+                "open_until": open_until,
+                "open": open_until > now,
+            }
+        return out
+
+
 # Google Places API (New) endpoint
 _PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 
@@ -146,12 +244,58 @@ def _estimate_activity_price(price_level: Optional[int], travelers: int) -> floa
     return round(per_person * max(travelers, 1), 2)
 
 
+def _placeholder_category_for_place_type(primary_type: Optional[str]) -> str:
+    """Map Google Places primaryType to placeholder image category."""
+    key = (primary_type or "").strip().lower()
+    if not key:
+        return "activity"
+
+    if any(
+        token in key
+        for token in [
+            "museum",
+            "landmark",
+            "monument",
+            "gallery",
+            "temple",
+            "church",
+            "mosque",
+            "synagogue",
+            "historic",
+            "plaza",
+            "ruins",
+            "fountain",
+            "attraction",
+            "point_of_interest",
+            "tour",
+            "travel_agency",
+        ]
+    ):
+        return "culture"
+    if any(token in key for token in ["restaurant", "cafe", "bar", "bakery", "meal", "food"]):
+        return "cooking"
+    if any(token in key for token in ["night", "club"]):
+        return "nightlife"
+    if any(token in key for token in ["spa", "wellness", "beauty", "gym", "massage"]):
+        return "wellness"
+    if any(token in key for token in ["hike", "trail", "mountain", "trek"]):
+        return "hiking"
+    if any(token in key for token in ["ski", "snow"]):
+        return "skiing"
+    if any(token in key for token in ["dive", "snorkel", "reef", "scuba"]):
+        return "diving"
+    if any(token in key for token in ["park", "garden", "zoo", "nature", "beach", "camp"]):
+        return "adventure"
+    return "activity"
+
+
 def _get_photo_url(photo_name: str) -> Optional[str]:
-    """Build a Google Places photo URL from a photo resource name."""
-    api_key = settings.google_maps_api_key
-    if not photo_name or not api_key:
-        return None
-    return f"https://places.googleapis.com/v1/{photo_name}/media?maxWidthPx=800&key={api_key}"
+    """Do not expose API-keyed photo URLs to clients.
+
+    Returning None forces safe placeholder usage in downstream tile builders.
+    """
+    _ = photo_name
+    return None
 
 
 _GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
@@ -173,15 +317,26 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
     when multiple async tasks geocode the same destination concurrently.
     """
     key = dest.lower().strip()
+    path = "geocode"
 
     async with _geocode_lock:
         if key in _geocode_cache:
+            record_google_places_usage(path, "cache_hit", cache="geocode")
             return _geocode_cache[key]
+    record_google_places_usage(path, "cache_miss", cache="geocode")
+
+    if _is_places_circuit_open(path):
+        record_google_places_usage(path, "error", reason="circuit_open", mode="geocode")
+        logger.warning("[GOOGLE_PLACES][%s] Circuit open — skipping geocode", path)
+        return None
 
     api_key = settings.google_maps_api_key
     if not api_key:
+        record_google_places_usage(path, "error", reason="missing_api_key", mode="geocode")
         return None
     try:
+        reserve_places_spend_or_raise(source="google_places:geocode")
+        record_google_places_usage(path, "request", mode="geocode")
         async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.get(
                 _GEOCODE_URL,
@@ -189,17 +344,37 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
             )
             data = resp.json() if resp.status_code == 200 else {}
             results = data.get("results", [])
+            if resp.status_code == 429 or resp.status_code >= 500:
+                _record_places_circuit_failure(path, status_code=resp.status_code)
+                if resp.status_code == 429:
+                    record_google_places_usage(path, "quota", mode="geocode")
+                else:
+                    record_google_places_usage(
+                        path,
+                        "error",
+                        mode="geocode",
+                        status=resp.status_code,
+                    )
+                return None
+            _record_places_circuit_success(path)
             if results:
                 loc = results[0]["geometry"]["location"]
                 coords: tuple[float, float] = (loc["lat"], loc["lng"])
                 async with _geocode_lock:
                     _geocode_cache[key] = coords
+                record_google_places_usage(path, "success", mode="geocode")
                 logger.debug("[GOOGLE_PLACES] Geocoded '%s' → %s", dest, coords)
                 return coords
             # Destination not found (empty results) — cache None to avoid retrying bad input
             async with _geocode_lock:
                 _geocode_cache[key] = None
+            record_google_places_usage(path, "empty", mode="geocode")
+    except SpendLimitExceeded as exc:
+        record_google_places_usage(path, "error", reason="spend_cap", mode="geocode")
+        logger.warning("[GOOGLE_PLACES][%s] Spend guard blocked geocode: %s", path, exc)
     except Exception as exc:
+        _record_places_circuit_failure(path, status_code=None)
+        record_google_places_usage(path, "error", reason="exception", mode="geocode")
         logger.warning("[GOOGLE_PLACES] Geocode failed for '%s': %s", dest, exc)
         # Transient failure — do NOT cache, allow retry on next request
     return None
@@ -211,23 +386,54 @@ def _geocode_destination(dest: str) -> tuple[float, float] | None:
     No lock needed here — sync path runs in a single thread (no concurrent writes).
     """
     key = dest.lower().strip()
+    path = "geocode"
     if key in _geocode_cache:
+        record_google_places_usage(path, "cache_hit", cache="geocode")
         return _geocode_cache[key]
+    record_google_places_usage(path, "cache_miss", cache="geocode")
+
+    if _is_places_circuit_open(path):
+        record_google_places_usage(path, "error", reason="circuit_open", mode="geocode")
+        logger.warning("[GOOGLE_PLACES][%s] Circuit open — skipping geocode", path)
+        return None
     api_key = settings.google_maps_api_key
     if not api_key:
+        record_google_places_usage(path, "error", reason="missing_api_key", mode="geocode")
         return None
     try:
+        reserve_places_spend_or_raise(source="google_places:geocode")
+        record_google_places_usage(path, "request", mode="geocode")
         with httpx.Client(timeout=3.0) as client:
             resp = client.get(_GEOCODE_URL, params={"address": dest, "key": api_key})
             data = resp.json() if resp.status_code == 200 else {}
             results = data.get("results", [])
+            if resp.status_code == 429 or resp.status_code >= 500:
+                _record_places_circuit_failure(path, status_code=resp.status_code)
+                if resp.status_code == 429:
+                    record_google_places_usage(path, "quota", mode="geocode")
+                else:
+                    record_google_places_usage(
+                        path,
+                        "error",
+                        mode="geocode",
+                        status=resp.status_code,
+                    )
+                return None
+            _record_places_circuit_success(path)
             if results:
                 loc = results[0]["geometry"]["location"]
                 coords: tuple[float, float] = (loc["lat"], loc["lng"])
                 _geocode_cache[key] = coords
+                record_google_places_usage(path, "success", mode="geocode")
                 return coords
             _geocode_cache[key] = None
+            record_google_places_usage(path, "empty", mode="geocode")
+    except SpendLimitExceeded as exc:
+        record_google_places_usage(path, "error", reason="spend_cap", mode="geocode")
+        logger.warning("[GOOGLE_PLACES][%s] Spend guard blocked geocode: %s", path, exc)
     except Exception as exc:
+        _record_places_circuit_failure(path, status_code=None)
+        record_google_places_usage(path, "error", reason="exception", mode="geocode")
         logger.warning("[GOOGLE_PLACES] Geocode failed for '%s': %s", dest, exc)
     return None
 
@@ -314,24 +520,35 @@ async def _call_places_api_async(
     Returns list of place dicts, or empty list on any error.
     Uses httpx.AsyncClient to avoid blocking the event loop.
     """
+    path = _normalize_places_path(path_label)
+    if _is_places_circuit_open(path):
+        record_google_places_usage(path, "error", reason="circuit_open")
+        logger.warning("[GOOGLE_PLACES][%s] Circuit open — skipping paid call", path)
+        return []
+
     api_key = settings.google_maps_api_key
     if not api_key:
-        record_google_places_usage(path_label, "error", reason="missing_api_key")
+        record_google_places_usage(path, "error", reason="missing_api_key")
         logger.warning("[GOOGLE_PLACES] Skipped — API key not configured")
         return []
 
     payload, headers = _build_places_request(query, included_type, max_results, price_levels, geo)
     t0 = time.time()
-    record_google_places_usage(path_label, "request", included_type=included_type)
+    record_google_places_usage(path, "request", included_type=included_type)
     try:
+        reserve_places_spend_or_raise(source=f"google_places:{path}")
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(_PLACES_SEARCH_URL, json=payload, headers=headers)
             body = response.json() if response.status_code == 200 else {}
             places = _parse_places_response(response.status_code, response.text, body)
             elapsed = int((time.time() - t0) * 1000)
+            if response.status_code == 429 or response.status_code >= 500:
+                _record_places_circuit_failure(path, status_code=response.status_code)
+            else:
+                _record_places_circuit_success(path)
             if places:
                 record_google_places_usage(
-                    path_label,
+                    path,
                     "success",
                     included_type=included_type,
                     results=len(places),
@@ -345,16 +562,16 @@ async def _call_places_api_async(
                 )
             else:
                 if response.status_code == 429:
-                    record_google_places_usage(path_label, "quota", included_type=included_type)
+                    record_google_places_usage(path, "quota", included_type=included_type)
                 elif response.status_code >= 400:
                     record_google_places_usage(
-                        path_label,
+                        path,
                         "error",
                         included_type=included_type,
                         status=response.status_code,
                     )
                 else:
-                    record_google_places_usage(path_label, "empty", included_type=included_type)
+                    record_google_places_usage(path, "empty", included_type=included_type)
                 logger.warning(
                     "[GOOGLE_PLACES] %s search EMPTY: query='%s' status=%d latency=%dms",
                     included_type,
@@ -363,8 +580,13 @@ async def _call_places_api_async(
                     elapsed,
                 )
             return places
+    except SpendLimitExceeded as exc:
+        record_google_places_usage(path, "error", included_type=included_type, reason="spend_cap")
+        logger.warning("[GOOGLE_PLACES][%s] Spend guard blocked call: %s", path, exc)
+        return []
     except Exception as exc:
-        record_google_places_usage(path_label, "error", included_type=included_type)
+        _record_places_circuit_failure(path, status_code=None)
+        record_google_places_usage(path, "error", included_type=included_type)
         elapsed = int((time.time() - t0) * 1000)
         logger.error(
             "[GOOGLE_PLACES] %s search FAILED: query='%s' error=%s latency=%dms",
@@ -389,24 +611,35 @@ def _call_places_api(
     Used by the sync Provider.search() path (tile_service/service.py).
     Returns list of place dicts, or empty list on any error.
     """
+    path = _normalize_places_path(path_label)
+    if _is_places_circuit_open(path):
+        record_google_places_usage(path, "error", reason="circuit_open")
+        logger.warning("[GOOGLE_PLACES][%s] Circuit open — skipping paid call", path)
+        return []
+
     api_key = settings.google_maps_api_key
     if not api_key:
-        record_google_places_usage(path_label, "error", reason="missing_api_key")
+        record_google_places_usage(path, "error", reason="missing_api_key")
         logger.warning("[GOOGLE_PLACES] Skipped — API key not configured")
         return []
 
     payload, headers = _build_places_request(query, included_type, max_results, price_levels, geo)
     t0 = time.time()
-    record_google_places_usage(path_label, "request", included_type=included_type)
+    record_google_places_usage(path, "request", included_type=included_type)
     try:
+        reserve_places_spend_or_raise(source=f"google_places:{path}")
         with httpx.Client(timeout=5.0) as client:
             response = client.post(_PLACES_SEARCH_URL, json=payload, headers=headers)
             body = response.json() if response.status_code == 200 else {}
             places = _parse_places_response(response.status_code, response.text, body)
             elapsed = int((time.time() - t0) * 1000)
+            if response.status_code == 429 or response.status_code >= 500:
+                _record_places_circuit_failure(path, status_code=response.status_code)
+            else:
+                _record_places_circuit_success(path)
             if places:
                 record_google_places_usage(
-                    path_label,
+                    path,
                     "success",
                     included_type=included_type,
                     results=len(places),
@@ -420,16 +653,16 @@ def _call_places_api(
                 )
             else:
                 if response.status_code == 429:
-                    record_google_places_usage(path_label, "quota", included_type=included_type)
+                    record_google_places_usage(path, "quota", included_type=included_type)
                 elif response.status_code >= 400:
                     record_google_places_usage(
-                        path_label,
+                        path,
                         "error",
                         included_type=included_type,
                         status=response.status_code,
                     )
                 else:
-                    record_google_places_usage(path_label, "empty", included_type=included_type)
+                    record_google_places_usage(path, "empty", included_type=included_type)
                 logger.warning(
                     "[GOOGLE_PLACES] %s search EMPTY: query='%s' status=%d latency=%dms",
                     included_type,
@@ -438,8 +671,13 @@ def _call_places_api(
                     elapsed,
                 )
             return places
+    except SpendLimitExceeded as exc:
+        record_google_places_usage(path, "error", included_type=included_type, reason="spend_cap")
+        logger.warning("[GOOGLE_PLACES][%s] Spend guard blocked call: %s", path, exc)
+        return []
     except Exception as exc:
-        record_google_places_usage(path_label, "error", included_type=included_type)
+        _record_places_circuit_failure(path, status_code=None)
+        record_google_places_usage(path, "error", included_type=included_type)
         elapsed = int((time.time() - t0) * 1000)
         logger.error(
             "[GOOGLE_PLACES] %s search FAILED: query='%s' error=%s latency=%dms",
@@ -451,8 +689,11 @@ def _call_places_api(
         return []
 
 
-def _parse_price_level(price_level: Any) -> int:
-    """Normalize Google Places priceLevel (string enum or int) to an int 0-4."""
+def _parse_price_level(price_level: Any) -> Optional[int]:
+    """Normalize Google Places priceLevel (string enum or int) to an int 0-4.
+
+    Returns None when the upstream field is absent/unknown.
+    """
     price_level_map = {
         "PRICE_LEVEL_FREE": 0,
         "PRICE_LEVEL_INEXPENSIVE": 1,
@@ -461,10 +702,10 @@ def _parse_price_level(price_level: Any) -> int:
         "PRICE_LEVEL_VERY_EXPENSIVE": 4,
     }
     if isinstance(price_level, str):
-        return price_level_map.get(price_level, 2)
+        return price_level_map.get(price_level)
     if isinstance(price_level, int):
-        return price_level
-    return 2  # default: MODERATE
+        return price_level if 0 <= price_level <= 4 else None
+    return None
 
 
 def _hotel_query(dest: str, hotel_settings: Any) -> str:
@@ -654,6 +895,7 @@ class GooglePlacesHotelProvider(Provider):
                         "adults": ctx.adults,
                         "children": ctx.children,
                         "place_id": place_id,
+                        "photo_name": photo_name,
                     },
                     score=0.8 - 0.02 * i,
                     source="live",
@@ -738,8 +980,11 @@ class GooglePlacesActivityProvider(Provider):
 
             photos = place.get("photos") or []
             photo_name = photos[0].get("name") if photos else None
+            primary_type = place.get("primaryType", "attraction")
+            placeholder_category = _placeholder_category_for_place_type(primary_type)
             image_url = _get_photo_url(photo_name) or get_placeholder_image(
-                "activity", seed=f"{dest}-activity-{i}"
+                placeholder_category,
+                seed=f"{dest}-{primary_type}-{place_id}",
             )
 
             loc = place.get("location") or {}
@@ -756,7 +1001,6 @@ class GooglePlacesActivityProvider(Provider):
                 or f"https://www.google.com/maps/place/?q=place_id:{place_id}"
             )
             summary = (place.get("editorialSummary") or {}).get("text", "")
-            primary_type = place.get("primaryType", "attraction")
 
             tiles.append(
                 Tile(
@@ -786,6 +1030,7 @@ class GooglePlacesActivityProvider(Provider):
                         "children": ctx.children,
                         "place_id": place_id,
                         "category": primary_type,
+                        "photo_name": photo_name,
                     },
                     score=0.75 - 0.02 * i,
                     source="live",
@@ -966,7 +1211,14 @@ def _apply_place_to_activity(activity: dict, place: dict, title: str) -> dict:
     # Overwrite image with Google Places photo
     photos = place.get("photos") or []
     if photos:
-        photo_url = _get_photo_url(photos[0].get("name", ""))
+        photo_name = photos[0].get("name", "")
+        if isinstance(photo_name, str) and photo_name:
+            enriched["photo_name"] = photo_name
+            meta = dict(enriched.get("meta") or {})
+            meta["photo_name"] = photo_name
+            enriched["meta"] = meta
+
+        photo_url = _get_photo_url(photo_name)
         if photo_url:
             enriched["image_url"] = photo_url
 
@@ -1031,10 +1283,11 @@ async def _enrich_single_activity(
     if not title:
         return activity
 
+    path = _normalize_places_path(path_label)
     cache_key = _enrich_cache_key(title, destination)
     cached_payload = await _get_cached_enrichment(cache_key)
     if cached_payload is not None:
-        record_google_places_usage(path_label, "cache_hit", cache="enrichment")
+        record_google_places_usage(path, "cache_hit", cache="enrichment")
         if cached_payload.get("matched"):
             place = cached_payload.get("place")
             if isinstance(place, dict):
@@ -1046,14 +1299,20 @@ async def _enrich_single_activity(
                     )
         return activity
 
-    record_google_places_usage(path_label, "cache_miss", cache="enrichment")
+    record_google_places_usage(path, "cache_miss", cache="enrichment")
 
     query = f"{title} {destination}"
     max_attempts = _enrich_retry_attempts()
     places: list[dict] = []
     for attempt in range(max_attempts):
-        record_google_places_usage(path_label, "request", mode="enrichment")
+        if _is_places_circuit_open(path):
+            record_google_places_usage(path, "error", mode="enrichment", reason="circuit_open")
+            logger.warning("[GOOGLE_PLACES][%s] Circuit open — skipping enrichment", path)
+            return activity
+
+        record_google_places_usage(path, "request", mode="enrichment")
         try:
+            reserve_places_spend_or_raise(source=f"google_places_enrich:{path}")
             resp = await client.post(
                 _PLACES_SEARCH_URL,
                 headers={
@@ -1067,16 +1326,22 @@ async def _enrich_single_activity(
                     "languageCode": "en",
                 },
             )
+        except SpendLimitExceeded as exc:
+            record_google_places_usage(path, "error", mode="enrichment", reason="spend_cap")
+            logger.warning("[GOOGLE_PLACES][%s] Spend guard blocked enrichment: %s", path, exc)
+            return activity
         except Exception as e:
+            _record_places_circuit_failure(path, status_code=None)
             if attempt < max_attempts - 1:
                 await asyncio.sleep(_enrich_backoff_seconds(attempt))
                 continue
-            record_google_places_usage(path_label, "error", mode="enrichment")
+            record_google_places_usage(path, "error", mode="enrichment")
             logger.warning("[GOOGLE_PLACES] Enrichment failed for '%s': %s", title, e)
             return activity
 
         if resp.status_code == 429:
-            record_google_places_usage(path_label, "quota", mode="enrichment")
+            _record_places_circuit_failure(path, status_code=429)
+            record_google_places_usage(path, "quota", mode="enrichment")
             if attempt < max_attempts - 1:
                 retry_after = _retry_after_seconds(resp.headers.get("Retry-After"))
                 await asyncio.sleep(
@@ -1087,8 +1352,9 @@ async def _enrich_single_activity(
             return activity
 
         if resp.status_code >= 500:
+            _record_places_circuit_failure(path, status_code=resp.status_code)
             record_google_places_usage(
-                path_label,
+                path,
                 "error",
                 mode="enrichment",
                 status=resp.status_code,
@@ -1106,7 +1372,7 @@ async def _enrich_single_activity(
 
         if resp.status_code != 200:
             record_google_places_usage(
-                path_label,
+                path,
                 "error",
                 mode="enrichment",
                 status=resp.status_code,
@@ -1123,7 +1389,7 @@ async def _enrich_single_activity(
             body = resp.json()
         except Exception as e:
             record_google_places_usage(
-                path_label,
+                path,
                 "error",
                 mode="enrichment",
                 status=resp.status_code,
@@ -1132,16 +1398,17 @@ async def _enrich_single_activity(
             if attempt < max_attempts - 1:
                 await asyncio.sleep(_enrich_backoff_seconds(attempt))
                 continue
-            logger.warning(
-                "[GOOGLE_PLACES] Enrichment response parse failed for '%s': %s", title, e
-            )
+                logger.warning(
+                    "[GOOGLE_PLACES] Enrichment response parse failed for '%s': %s", title, e
+                )
             return activity
 
+        _record_places_circuit_success(path)
         places = body.get("places", [])
         break
 
     if not places:
-        record_google_places_usage(path_label, "empty", mode="enrichment")
+        record_google_places_usage(path, "empty", mode="enrichment")
         await _set_cached_enrichment(cache_key, {"matched": False})
         return activity
 
@@ -1149,10 +1416,10 @@ async def _enrich_single_activity(
         place = places[0]
         enriched = _apply_place_to_activity(activity, place, title)
         await _set_cached_enrichment(cache_key, {"matched": True, "place": place})
-        record_google_places_usage(path_label, "success", mode="enrichment")
+        record_google_places_usage(path, "success", mode="enrichment")
         return enriched
     except Exception as e:
-        record_google_places_usage(path_label, "error", mode="enrichment")
+        record_google_places_usage(path, "error", mode="enrichment")
         logger.warning("[GOOGLE_PLACES] Enrichment parse failed for '%s': %s", title, e)
 
     return activity

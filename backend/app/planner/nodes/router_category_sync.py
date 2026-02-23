@@ -267,17 +267,27 @@ def _detect_actionable_input(user_text: str, state: "GraphState") -> Optional[di
         "build",
         "itinerary",
         "set",
+        "think",
+        "thinking",
+        "start",
+        "starting",
     }
     remaining = set(re.findall(r"\b[a-z]{3,}\b", text_lower))
     remaining -= all_known
     remaining -= stop_words
     remaining -= set(SKILL_LEVEL_MAP.keys())
 
-    # Fuzzy-match before declaring unresolved
+    # Fuzzy-match before declaring unresolved.
+    # Guardrails: only allow fuzzy category adds when the user shows explicit
+    # category mutation intent and the message is not date-centric.
+    has_category_mutation_intent = any(p.search(text_lower) for p in _CATEGORY_INTENT_PATTERNS)
+    has_date_like_content = any(re.search(p, text_lower) for p in DATE_INDICATORS)
+    allow_fuzzy_category_adds = has_category_mutation_intent and not has_date_like_content
+
     fuzzy_vocab = _get_fuzzy_vocab(state)
     still_unresolved = set()
     for token in remaining:
-        match = _fuzzy_resolve_token(token, fuzzy_vocab)
+        match = _fuzzy_resolve_token(token, fuzzy_vocab) if allow_fuzzy_category_adds else None
         if match:
             logger.info(f"[CATEGORY_SYNC] Fuzzy: '{token}' → '{match}'")
             changes.setdefault("add_categories", set()).add(match)

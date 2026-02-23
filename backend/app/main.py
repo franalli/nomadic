@@ -1,12 +1,19 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import math
 import os
+import re
 import secrets
+import time
 import warnings
 from datetime import datetime
 from typing import Any, Dict, List
+from urllib.parse import urlencode
+
+import httpx
 
 # =============================================================================
 # EARLY WARNING SUPPRESSION (before any imports that might trigger warnings)
@@ -109,6 +116,10 @@ from app.schemas import (  # noqa: E402
     TripInputValidationRequest,
     TripInputValidationResponse,
 )
+from app.services.spend_guard import (  # noqa: E402
+    SpendLimitExceeded,
+    spend_guard_scope,
+)
 from app.services.unsplash import (  # noqa: E402
     clear_db_cache as clear_unsplash_db_cache,
 )
@@ -141,6 +152,95 @@ from app.validation import (  # noqa: E402
 
 # Configure logging for the graph plan route
 logger = logging.getLogger(__name__)
+
+_GOOGLE_PLACES_PHOTO_NAME_RE = re.compile(r"^places/[A-Za-z0-9_-]+/photos/[A-Za-z0-9_-]+$")
+
+_GOOGLE_PLACES_PHOTO_MAX_SIGNED_TTL_SECONDS = 30 * 60
+
+
+def _media_proxy_signing_secret() -> str:
+    """Return server-side secret used to sign media proxy URLs."""
+    secret = (
+        settings.media_proxy_signing_key
+        or settings.admin_api_key
+        or settings.google_maps_api_secret
+        or settings.google_maps_api_key
+        or ""
+    ).strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="Media proxy signing key not configured")
+    return secret
+
+
+def _sign_google_places_photo_request(
+    *,
+    session_id: str,
+    name: str,
+    max_width: int,
+    max_height: int,
+    exp: int,
+) -> str:
+    payload = f"{session_id}\n{name}\n{max_width}\n{max_height}\n{exp}".encode("utf-8")
+    secret = _media_proxy_signing_secret().encode("utf-8")
+    return hmac.new(secret, payload, hashlib.sha256).hexdigest()
+
+
+def _build_signed_google_places_photo_url(
+    *,
+    session_id: str,
+    name: str,
+    max_width: int,
+    max_height: int,
+    ttl_seconds: int,
+) -> str:
+    now = int(time.time())
+    ttl = max(60, min(ttl_seconds, _GOOGLE_PLACES_PHOTO_MAX_SIGNED_TTL_SECONDS))
+    exp = now + ttl
+    sig = _sign_google_places_photo_request(
+        session_id=session_id,
+        name=name,
+        max_width=max_width,
+        max_height=max_height,
+        exp=exp,
+    )
+    query = urlencode(
+        {
+            "name": name,
+            "max_width": max_width,
+            "max_height": max_height,
+            "exp": exp,
+            "sig": sig,
+        }
+    )
+    return f"/api/media/google-places-photo?{query}"
+
+
+def _attach_signed_photo_urls_to_browse_tiles(
+    tiles: list[dict[str, Any]],
+    *,
+    session_id: str,
+    max_width: int = 256,
+    max_height: int = 256,
+    ttl_seconds: int = 300,
+) -> list[dict[str, Any]]:
+    """Rewrite browse tile image URLs to signed proxy URLs when photo_name is present."""
+    for tile in tiles:
+        if not isinstance(tile, dict):
+            continue
+        raw_photo_name = tile.get("photo_name")
+        if not isinstance(raw_photo_name, str):
+            continue
+        photo_name = raw_photo_name.strip()
+        if not _GOOGLE_PLACES_PHOTO_NAME_RE.fullmatch(photo_name):
+            continue
+        tile["image_url"] = _build_signed_google_places_photo_url(
+            session_id=session_id,
+            name=photo_name,
+            max_width=max_width,
+            max_height=max_height,
+            ttl_seconds=ttl_seconds,
+        )
+    return tiles
 
 
 def _resolve_stage3_view_state(builder_success: bool, conflicts: List[Any]) -> PlanViewState:
@@ -537,15 +637,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def require_admin(request: Request) -> None:
     """FastAPI dependency: reject requests without valid X-Admin-Key header.
 
-    In local/development/test environments, admin routes are open if ADMIN_API_KEY is unset.
-    In production, ADMIN_API_KEY must be configured or all admin routes return 403.
+    ADMIN_API_KEY must be configured in every environment.
     """
     key = settings.admin_api_key
     if not key:
-        # No key configured — allow in dev, block in prod
-        if not settings.is_dev:
-            raise HTTPException(403, "Admin API key not configured")
-        return
+        raise HTTPException(403, "Admin API key not configured")
     if not secrets.compare_digest(request.headers.get("X-Admin-Key", ""), key):
         raise HTTPException(403, "Invalid admin key")
 
@@ -626,7 +722,12 @@ app.add_middleware(
     allow_origins=_get_allowed_origins(),
     allow_credentials=True,  # Required for cookies
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-CSRF-Token"],  # Explicitly allow CSRF header
+    allow_headers=[
+        "Content-Type",
+        "X-CSRF-Token",
+        "X-Client-Request-Id",
+        "X-Client-Attempt",
+    ],
     expose_headers=["Vary"],
 )
 
@@ -704,13 +805,132 @@ def health():
     }
 
 
+@app.get("/api/media/google-places-photo")
+@limiter.limit("120/minute")
+async def proxy_google_places_photo(
+    request: Request,
+    name: str,
+    max_width: int = 640,
+    max_height: int = 480,
+    exp: int = 0,
+    sig: str = "",
+    db: AsyncSession = async_db_dependency,
+):
+    """
+    Server-side proxy for Google Places photos.
+
+    Keeps API keys on the backend while returning image bytes to the client.
+    """
+    session_id = get_session_from_request(request)
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Session missing or expired")
+
+    photo_name = (name or "").strip()
+    if not _GOOGLE_PLACES_PHOTO_NAME_RE.fullmatch(photo_name):
+        raise HTTPException(status_code=400, detail="Invalid Google photo reference")
+
+    if not settings.google_maps_api_key:
+        raise HTTPException(status_code=503, detail="Google Maps API key not configured")
+
+    max_width = max(64, min(max_width, 1600))
+    max_height = max(64, min(max_height, 1600))
+
+    now = int(time.time())
+    if exp <= now:
+        raise HTTPException(status_code=403, detail="Signed photo URL expired")
+    if exp > now + _GOOGLE_PLACES_PHOTO_MAX_SIGNED_TTL_SECONDS:
+        raise HTTPException(status_code=403, detail="Signed photo URL has invalid expiry")
+    expected_sig = _sign_google_places_photo_request(
+        session_id=session_id,
+        name=photo_name,
+        max_width=max_width,
+        max_height=max_height,
+        exp=exp,
+    )
+    if not sig or not secrets.compare_digest(sig, expected_sig):
+        raise HTTPException(status_code=403, detail="Invalid signed photo URL")
+
+    upstream_url = f"https://places.googleapis.com/v1/{photo_name}/media"
+    params = {
+        "maxWidthPx": max_width,
+        "maxHeightPx": max_height,
+        "key": settings.google_maps_api_key,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            upstream = await client.get(upstream_url, params=params, headers={"Accept": "image/*"})
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Google Places photo fetch failed") from exc
+
+    if upstream.status_code == 404:
+        raise HTTPException(status_code=404, detail="Google Places photo not found")
+    if upstream.status_code == 429:
+        raise HTTPException(status_code=429, detail="Google Places photo rate-limited")
+    if upstream.status_code >= 400:
+        raise HTTPException(status_code=502, detail="Google Places photo upstream error")
+
+    content_type = (upstream.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if not content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=502, detail="Google Places photo returned non-image payload"
+        )
+
+    headers = {"Cache-Control": "private, max-age=300"}
+    content_length = upstream.headers.get("content-length")
+    if content_length:
+        headers["Content-Length"] = content_length
+
+    return Response(content=upstream.content, media_type=content_type, headers=headers)
+
+
+@app.get("/api/media/google-places-photo-url")
+@limiter.limit("240/minute")
+async def signed_google_places_photo_url(
+    request: Request,
+    name: str,
+    max_width: int = 640,
+    max_height: int = 480,
+    ttl_seconds: int = 300,
+    db: AsyncSession = async_db_dependency,
+):
+    """Issue short-lived, session-bound signed URLs for Google Places photo proxy."""
+    session_id = get_session_from_request(request)
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Session missing or expired")
+
+    photo_name = (name or "").strip()
+    if not _GOOGLE_PLACES_PHOTO_NAME_RE.fullmatch(photo_name):
+        raise HTTPException(status_code=400, detail="Invalid Google photo reference")
+
+    if not settings.google_maps_api_key:
+        raise HTTPException(status_code=503, detail="Google Maps API key not configured")
+
+    width = max(64, min(max_width, 1600))
+    height = max(64, min(max_height, 1600))
+    ttl = max(60, min(ttl_seconds, _GOOGLE_PLACES_PHOTO_MAX_SIGNED_TTL_SECONDS))
+    signed_url = _build_signed_google_places_photo_url(
+        session_id=session_id,
+        name=photo_name,
+        max_width=width,
+        max_height=height,
+        ttl_seconds=ttl,
+    )
+    return {
+        "url": signed_url,
+        "expires_in_seconds": ttl,
+    }
+
+
 # =============================================================================
 # Trip Input Validation Endpoint
 # =============================================================================
 
 
 @app.post("/api/validate-trip-input", response_model=TripInputValidationResponse)
-@limiter.limit("15/minute")
+@limiter.limit("6/minute")
 async def validate_trip_input(request: Request, req: TripInputValidationRequest):
     """
     Validate a trip input (origin or destination).
@@ -725,13 +945,18 @@ async def validate_trip_input(request: Request, req: TripInputValidationRequest)
     """
     try:
         session_id = get_session_from_request(request)
-        # Tier 11.1: Use async validation with non-blocking retries
-        result = await validate_input_async(req.value, req.field_type, session_id=session_id)
+        with spend_guard_scope(session_id):
+            # Tier 11.1: Use async validation with non-blocking retries
+            result = await validate_input_async(req.value, req.field_type, session_id=session_id)
         return TripInputValidationResponse(
             corrected_values=result.corrected_values,
             is_valid=result.is_valid,
             reason=result.reason,
         )
+    except SpendLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429, detail=str(exc), headers={"Retry-After": "60"}
+        ) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -1051,7 +1276,7 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
     - Session/chat/document data
     """
     _ = request
-    from sqlalchemy import delete
+    from sqlalchemy import delete, func, select
 
     from app.db_models import ResponseCache
     from app.planner.nodes.intent_router import _exploration_answer_cache
@@ -1063,6 +1288,23 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
     from app.services.specialist_cache import clear_memory_cache as clear_specialist_memory
     from app.services.tile_cache import clear_memory_cache as clear_tile_memory
     from app.tile_service.google_places_provider import _enrich_mem
+
+    l2_before_by_type: Dict[str, int] = {}
+    l2_before_total = 0
+    try:
+        grouped = await db.execute(
+            select(ResponseCache.cache_type, func.count())
+            .select_from(ResponseCache)
+            .group_by(ResponseCache.cache_type)
+        )
+        for cache_type, count in grouped.all():
+            key = str(cache_type or "unknown")
+            value = int(count or 0)
+            l2_before_by_type[key] = value
+            l2_before_total += value
+    except Exception:
+        l2_before_by_type = {}
+        l2_before_total = 0
 
     unsplash_memory_before = int(get_unsplash_memory_stats().get("entries", 0))
 
@@ -1100,6 +1342,12 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
     total_l2 = sum(int(value) for value in l2_cleared.values())
     return {
         "timestamp": datetime.utcnow().isoformat(),
+        "before": {
+            "l2": {
+                "response_cache_total": l2_before_total,
+                "response_cache_by_type": l2_before_by_type,
+            }
+        },
         "cleared": {
             "l1": l1_cleared,
             "l2": l2_cleared,
@@ -1341,7 +1589,7 @@ async def admin_all_cache_stats(  # noqa: ARG001
 
 
 @app.post("/api/graph_plan/stream")
-@limiter.limit("20/minute;120/hour")
+@limiter.limit("6/minute;30/hour")
 async def graph_plan_stream_endpoint(
     request: Request,
     req: GraphPlanRequest,
@@ -1390,6 +1638,14 @@ async def graph_plan_stream_endpoint(
     # --- Generate request ID and compute today_iso ---
     request_id = generate_request_id()
     today_iso = compute_today_iso()
+    client_request_id = request.headers.get("X-Client-Request-Id")
+    client_attempt = request.headers.get("X-Client-Attempt")
+    logger.info(
+        "[graph_plan/stream] rid=%s attempt=%s generated_request_id=%s",
+        client_request_id,
+        client_attempt,
+        request_id,
+    )
 
     # --- Sanitize and prepare session state ---
     session_state = _prepare_graph_plan_session_state(req, today_iso=today_iso)
@@ -1671,9 +1927,40 @@ async def get_specialist_enrichment(
 
     # For local_expert: check if travel_intelligence has been populated by Phase B
     if section.specialist_type == "local_expert":
+        status_blob = section.local_expert_enrichment or {}
+        enrichment_state = ""
+        error_code = None
+        if isinstance(status_blob, dict):
+            enrichment_state = str(status_blob.get("state") or "").lower().strip()
+            error_code = status_blob.get("error_code")
+
+        if enrichment_state == "ready":
+            return SpecialistEnrichmentResponse(
+                section_id=section_id,
+                status="ready",
+                data=section.model_dump(),
+            )
+
+        if enrichment_state == "failed":
+            return SpecialistEnrichmentResponse(
+                section_id=section_id,
+                status="failed",
+                error_code=error_code,
+            )
+
+        if enrichment_state == "pending":
+            return JSONResponse(
+                status_code=202,
+                content={"status": "pending", "section_id": section_id, "retry_after_ms": 1500},
+            )
+
+        # Backward compatibility for documents that predate local_expert_enrichment.
         ti = section.travel_intelligence or {}
         if not ti or not any(v for v in ti.values() if v):
-            return JSONResponse(status_code=202, content={"status": "pending"})
+            return JSONResponse(
+                status_code=202,
+                content={"status": "pending", "section_id": section_id, "retry_after_ms": 1500},
+            )
         return SpecialistEnrichmentResponse(
             section_id=section_id,
             status="ready",
@@ -1866,7 +2153,7 @@ async def patch_plan_document(
 
 
 @app.post("/api/document/tiles/{branch_id}", response_model=PlanDocumentResponse)
-@limiter.limit("60/minute")
+@limiter.limit("12/minute")
 async def fetch_tiles_for_branch(
     request: Request,
     branch_id: str,
@@ -1949,7 +2236,8 @@ async def fetch_tiles_for_branch(
         activity_settings=ti.activity_settings,
     )
 
-    tiles_response = search_tiles(tiles_request)
+    with spend_guard_scope(session_id):
+        tiles_response = search_tiles(tiles_request)
 
     _debug_info("TILES", f"search_tiles returned {len(tiles_response.tiles)} tiles")
     for t in tiles_response.tiles:
@@ -1987,7 +2275,7 @@ async def fetch_tiles_for_branch(
 
 
 @app.post("/api/tiles/refresh", response_model=TileRefreshResponse)
-@limiter.limit("15/minute")
+@limiter.limit("6/minute")
 async def refresh_tiles(
     request: Request,
     body: TileRefreshRequest,
@@ -2046,7 +2334,8 @@ async def refresh_tiles(
     )
 
     # Fetch fresh tiles (cache will miss due to changed settings hash)
-    tiles_response = search_tiles(tiles_request)
+    with spend_guard_scope(session_id):
+        tiles_response = search_tiles(tiles_request)
 
     # Update document with new tiles
     if tiles_response.tiles:
@@ -2080,7 +2369,7 @@ class FillDayRequest(BaseModel):
 
 
 @app.post("/api/document/fill-day")
-@limiter.limit("30/minute")
+@limiter.limit("8/minute")
 async def fill_day_endpoint(
     request: Request,
     body: FillDayRequest,
@@ -2104,6 +2393,34 @@ async def fill_day_endpoint(
     destination = ti.destination
     if not destination:
         raise HTTPException(status_code=400, detail="No destination set")
+
+    async def _enrich_generated_tiles_with_places(
+        generated_tiles: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Best-effort Places enrichment for fill-day generated activities."""
+        if not generated_tiles or not settings.google_maps_api_key:
+            return generated_tiles
+        try:
+            from app.tile_service.google_places_provider import enrich_activities_with_places
+
+            async def _run_enrichment() -> list[dict[str, Any]]:
+                with spend_guard_scope(session_id):
+                    result = await enrich_activities_with_places(
+                        generated_tiles,
+                        destination=destination,
+                        path_label="fill_day",
+                    )
+                return result or generated_tiles
+
+            # Keep fill-day UX responsive: never block day-card return on slow Places calls.
+            enriched = await asyncio.wait_for(_run_enrichment(), timeout=1.5)
+            return enriched or generated_tiles
+        except asyncio.TimeoutError:
+            logger.warning("[FILL-DAY] Places enrichment timed out; using original tiles")
+            return generated_tiles
+        except Exception as exc:
+            logger.warning("[FILL-DAY] Places enrichment failed; using original tiles: %s", exc)
+            return generated_tiles
 
     # Find target day card
     day_card_idx = next(
@@ -2409,14 +2726,15 @@ async def fill_day_endpoint(
         from app.services.experience_generator import generate_experience_tiles_for_day
 
         budget_int = int(ti.budget) if ti.budget else None
-        tiles = await generate_experience_tiles_for_day(
-            destination=destination,
-            categories=categories,
-            month=month,
-            day_number=body.day_number,
-            budget=budget_int,
-            tiles_per_day=1,
-        )
+        with spend_guard_scope(session_id):
+            tiles = await generate_experience_tiles_for_day(
+                destination=destination,
+                categories=categories,
+                month=month,
+                day_number=body.day_number,
+                budget=budget_int,
+                tiles_per_day=1,
+            )
 
         # Tag fill-day tiles so the builder won't redistribute them
         for tile in tiles:
@@ -2442,6 +2760,8 @@ async def fill_day_endpoint(
             if deduped:  # Only apply dedup when at least one tile survives
                 tiles = deduped
 
+        tiles = await _enrich_generated_tiles_with_places(tiles)
+
         if not tiles:
             return {
                 "day_number": body.day_number,
@@ -2465,17 +2785,20 @@ async def fill_day_endpoint(
         from app.services.experience_generator import generate_experience_tiles_for_day
 
         budget_int = int(ti.budget) if ti.budget else None
-        tiles = await generate_experience_tiles_for_day(
-            destination=destination,
-            categories=None,  # day_number rotation picks the category
-            month=month,
-            day_number=body.day_number,
-            budget=budget_int,
-            tiles_per_day=1,
-        )
+        with spend_guard_scope(session_id):
+            tiles = await generate_experience_tiles_for_day(
+                destination=destination,
+                categories=None,  # day_number rotation picks the category
+                month=month,
+                day_number=body.day_number,
+                budget=budget_int,
+                tiles_per_day=1,
+            )
 
         for tile in tiles:
             tile.setdefault("meta", {})["pinned_day"] = body.day_number
+
+        tiles = await _enrich_generated_tiles_with_places(tiles)
 
         if not tiles:
             return {
@@ -2824,6 +3147,77 @@ async def remove_block(
 # Insert Activity Block Endpoint (Browse Activities Sheet)
 # =============================================================================
 
+_POI_TYPE_ALIASES: dict[str, str] = {
+    "culture": "cultural",
+    "cultural": "cultural",
+    "food": "food",
+    "nature": "nature",
+    "spa": "spa",
+    "shopping": "shopping",
+    "tours": "tours",
+    "attraction": "tours",
+    "cultural_attraction": "cultural",
+    "tourist_attraction": "tours",
+    "travel_agency": "tours",
+    "point_of_interest": "tours",
+    "museum": "cultural",
+    "art_gallery": "cultural",
+    "historical_landmark": "cultural",
+    "cultural_landmark": "cultural",
+    "monument": "cultural",
+    "plaza": "cultural",
+    "ruins": "cultural",
+    "fountain": "cultural",
+    "hindu_temple": "temples",
+    "temple": "temples",
+    "church": "cultural",
+    "place_of_worship": "cultural",
+    "restaurant": "food",
+    "cafe": "food",
+    "bar": "food",
+    "park": "nature",
+    "natural_feature": "nature",
+    "national_park": "nature",
+    "campground": "nature",
+    "shopping_mall": "shopping",
+    "market": "shopping",
+    "store": "shopping",
+    "clothing_store": "shopping",
+    "beauty_salon": "spa",
+    "gym": "spa",
+}
+
+
+def _canonical_poi_type_for_block(raw: Any) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    key = raw.strip().lower().replace(" ", "_")
+    if not key:
+        return None
+    mapped = _POI_TYPE_ALIASES.get(key)
+    if mapped:
+        return mapped
+    if any(token in key for token in ("culture", "cultural", "heritage")):
+        return "cultural"
+    if any(
+        token in key
+        for token in ("museum", "landmark", "historic", "monument", "plaza", "fountain")
+    ):
+        return "cultural"
+    if any(token in key for token in ("temple", "church", "worship", "mosque", "synagogue")):
+        return "temples"
+    if any(token in key for token in ("restaurant", "cafe", "bar", "bakery", "food", "meal")):
+        return "food"
+    if any(token in key for token in ("park", "garden", "nature", "zoo", "camp")):
+        return "nature"
+    if any(token in key for token in ("shop", "store", "market", "mall")):
+        return "shopping"
+    if any(token in key for token in ("spa", "wellness", "gym", "beauty")):
+        return "spa"
+    if any(token in key for token in ("tour", "point_of_interest", "visitor", "travel_agency")):
+        return "tours"
+    return None
+
 
 @app.post("/api/document/insert-activity-block")
 @limiter.limit("30/minute")
@@ -2891,6 +3285,11 @@ async def insert_activity_block(
         "id": tile.get("id") or block_id,
         "meta": {**(tile.get("meta") or {}), "pinned_day": body.day_number, "source": "browse_add"},
     }
+    map_type = (
+        _canonical_poi_type_for_block(tile.get("browse_category"))
+        or _canonical_poi_type_for_block(tile.get("category"))
+        or _canonical_poi_type_for_block((tile.get("meta") or {}).get("category"))
+    )
 
     new_block = DayBlock(
         id=block_id,
@@ -2906,6 +3305,9 @@ async def insert_activity_block(
         intensity=None,
         is_buffer=False,
         specialist_type=tile.get("browse_category") or tile.get("category") or None,
+        map_type=map_type,
+        activity_domain="tier2",
+        activity_provenance="user_browse_added",
         booked_tile=tile_with_meta,
         constraints=[],
         preference_status="user_preferred",
@@ -3035,7 +3437,11 @@ async def browse_activities_endpoint(
         doc_data = get_document_data(doc)
         stashed = doc_data.browseable_activities or []
         if stashed:
-            return {"tiles": stashed, "total": len(stashed), "source": "stashed"}
+            signed_stashed = _attach_signed_photo_urls_to_browse_tiles(
+                list(stashed),
+                session_id=session_id,
+            )
+            return {"tiles": signed_stashed, "total": len(signed_stashed), "source": "stashed"}
 
     # Resolve center from hotel_location if provided
     center = None
@@ -3045,13 +3451,18 @@ async def browse_activities_endpoint(
         if lat is not None and lng is not None:
             center = (float(lat), float(lng))
 
-    tiles = await browse_activities(
-        destination=body.destination,
-        center=center,
-        categories=body.categories,
-        date=body.date,
+    with spend_guard_scope(session_id):
+        tiles = await browse_activities(
+            destination=body.destination,
+            center=center,
+            categories=body.categories,
+            date=body.date,
+        )
+    signed_tiles = _attach_signed_photo_urls_to_browse_tiles(
+        list(tiles),
+        session_id=session_id,
     )
-    return {"tiles": tiles, "total": len(tiles), "source": "places"}
+    return {"tiles": signed_tiles, "total": len(signed_tiles), "source": "places"}
 
 
 # =============================================================================
@@ -3089,6 +3500,15 @@ async def expand_itinerary_endpoint(
     the injected session is closed. Instead, we create a fresh session inside
     the generator using the session factory.
     """
+    client_request_id = request.headers.get("X-Client-Request-Id")
+    client_attempt = request.headers.get("X-Client-Attempt")
+    logger.info(
+        "[expand-itinerary] rid=%s attempt=%s idempotency_key=%s",
+        client_request_id,
+        client_attempt,
+        req.idempotency_key,
+    )
+
     # DEBUG: Log received destination for diagnostics
     received_dest = req.trip_inputs.get("destination") if req.trip_inputs else "NO_TRIP_INPUTS"
     logger.info(f"[API expand-itinerary] Received destination: {received_dest}")
@@ -3098,7 +3518,8 @@ async def expand_itinerary_endpoint(
 
         async def duplicate_response():
             event = ExpandItineraryStreamEvent(
-                type="error", message="Duplicate request - itinerary generation already in progress"
+                type="done",
+                message="duplicate_noop",
             )
             yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 

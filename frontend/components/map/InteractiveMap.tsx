@@ -6,8 +6,8 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import {
   Anchor, Bed, Bike, Binoculars, Camera, Church, Compass, Dumbbell,
   Flower2, Landmark,   type LucideIcon,
-MapPin, Mountain, Music, Palmtree, Plane, ShoppingBag,
-  Snowflake, Sunset, Utensils, Waves, Wind,
+MapPin, Mountain, Music, Palmtree, Plane, Search, ShoppingBag,   Snowflake, Star,
+Sunset, Utensils, Waves, Wind,
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MapboxMap, { type ErrorEvent, Layer, type MapRef, Marker, NavigationControl, Source } from 'react-map-gl/mapbox';
@@ -44,7 +44,12 @@ export interface MapItem {
   coordinates: { lat: number; lng: number };
   dayNumber?: number;
   period?: 'morning' | 'afternoon' | 'evening';
-  source?: 'itinerary' | 'specialist';
+  source?: 'itinerary' | 'specialist' | 'browse';
+  intensity?: 'light' | 'moderate' | 'challenging';
+  duration?: string;
+  rating?: number;
+  reviewCount?: number;
+  priceLevel?: number;
 }
 
 export interface MapCenter {
@@ -88,7 +93,7 @@ interface PinConfig {
  */
 const PIN_CONFIG: Record<string, PinConfig> = {
   // ── Tier 1: Specialist types ──
-  diving:          { icon: Waves,       color: '#0ea5e9' }, // sky-500
+  diving:          { icon: Waves,       color: '#06b6d4' }, // cyan-500
   hiking:          { icon: Mountain,    color: '#10b981' }, // emerald-500
   skiing:          { icon: Snowflake,   color: '#3b82f6' }, // blue-500
   cycling:         { icon: Bike,        color: '#84cc16' }, // lime-500
@@ -99,16 +104,23 @@ const PIN_CONFIG: Record<string, PinConfig> = {
   // ── Tier 2: General activity categories ──
   yoga:            { icon: Flower2,     color: '#a855f7' }, // purple-500
   wellness:        { icon: Dumbbell,    color: '#8b5cf6' }, // violet-500
+  spa:             { icon: Flower2,     color: '#8b5cf6' }, // violet-500
   nightlife:       { icon: Music,       color: '#d946ef' }, // fuchsia-500
   cooking:         { icon: Utensils,    color: '#ec4899' }, // pink-500
   culture:         { icon: Church,      color: '#f43f5e' }, // rose-500
-  temples:         { icon: Landmark,    color: '#fb7185' }, // rose-400
+  cultural:        { icon: Church,      color: '#f43f5e' }, // rose-500
+  temples:         { icon: Landmark,    color: '#f43f5e' }, // rose-500
   food:            { icon: Utensils,    color: '#ef4444' }, // red-500
-  beach:           { icon: Palmtree,    color: '#34d399' }, // emerald-400
-  shopping:        { icon: ShoppingBag, color: '#f472b6' }, // pink-400
-  sightseeing:     { icon: Camera,      color: '#38bdf8' }, // sky-400
-  photography:     { icon: Camera,      color: '#7dd3fc' }, // sky-300
-  relaxation:      { icon: Sunset,      color: '#fbbf24' }, // amber-400
+  beach:           { icon: Palmtree,    color: '#10b981' }, // emerald-500
+  shopping:        { icon: ShoppingBag, color: '#ec4899' }, // pink-500
+  sightseeing:     { icon: Camera,      color: '#0ea5e9' }, // sky-500
+  photography:     { icon: Camera,      color: '#0ea5e9' }, // sky-500
+  relaxation:      { icon: Sunset,      color: '#eab308' }, // yellow-500
+  nature:          { icon: Palmtree,    color: '#22c55e' }, // green-500
+  tours:           { icon: Camera,      color: '#3b82f6' }, // blue-500
+  adventure:       { icon: Compass,     color: '#f97316' }, // orange-500
+  family:          { icon: Landmark,    color: '#f59e0b' }, // amber-500
+  activity:        { icon: Flower2,     color: '#a855f7' }, // purple-500
   // ── Logistics ──
   flight:          { icon: Plane,       color: '#60a5fa' }, // blue-400
   arrival:         { icon: Plane,       color: '#60a5fa' }, // blue-400
@@ -121,9 +133,61 @@ const PIN_CONFIG: Record<string, PinConfig> = {
 };
 
 const DEFAULT_PIN: PinConfig = { icon: MapPin, color: '#a1a1aa' }; // zinc-400
+const BROWSE_PIN: PinConfig = { icon: Search, color: '#f59e0b' }; // amber-500
+const CATEGORY_LABEL: Record<string, string> = {
+  cultural: 'Cultural',
+  food: 'Food',
+  nature: 'Nature',
+  spa: 'Spa',
+  tours: 'Tours',
+  adventure: 'Adventure',
+};
+const PRICE_LEVEL_LABEL: Record<number, string> = {
+  0: 'Free',
+  1: '$',
+  2: '$$',
+  3: '$$$',
+  4: '$$$$',
+};
+const INTENSITY_LABEL: Record<'light' | 'moderate' | 'challenging', string> = {
+  light: 'Easy',
+  moderate: 'Moderate',
+  challenging: 'Challenging',
+};
 
-function getPinConfig(type: string): PinConfig {
-  return PIN_CONFIG[type] ?? PIN_CONFIG[type.toLowerCase()] ?? DEFAULT_PIN;
+function normalizeTypeKey(type: string): string {
+  return (type || '').trim().toLowerCase();
+}
+
+function getPinConfig(type: string, source?: MapItem['source']): PinConfig {
+  const normalizedType = normalizeTypeKey(type);
+  const categoryPin = PIN_CONFIG[normalizedType];
+  if (source === 'browse') {
+    // Prefer category icon/color for consistency with day cards.
+    // Fallback to generic browse pin only when category type is unknown.
+    return categoryPin ?? BROWSE_PIN;
+  }
+  return categoryPin ?? DEFAULT_PIN;
+}
+
+function toTitleCase(value: string): string {
+  return value
+    .replace(/_/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function formatReviewCount(value: number): string {
+  return value >= 1000 ? `${Math.round(value / 1000)}K` : value.toLocaleString();
+}
+
+function getCategoryLabel(type: string, source?: MapItem['source']): string | null {
+  const normalized = normalizeTypeKey(type);
+  if (!normalized) return source === 'browse' ? 'Browse' : null;
+  const base = CATEGORY_LABEL[normalized] ?? toTitleCase(normalized);
+  return source === 'browse' ? `Browse ${base}` : base;
 }
 
 function normalizeMapCoordinates(
@@ -184,7 +248,7 @@ const MapMarkerItem = memo(function MapMarkerItem({
   // Subscribe to a boolean — only this marker re-renders on hover change
   const isStoreHovered = useUIStore((s) => s.hoveredActivityId === item.id);
   const isActive = item.id === activeItemId;
-  const pin = getPinConfig(item.type);
+  const pin = getPinConfig(item.type, item.source);
   const MarkerIcon = pin.icon;
   const markerBg = isActive ? '#10b981' : pin.color;
   const isDimmed =
@@ -194,6 +258,13 @@ const MapMarkerItem = memo(function MapMarkerItem({
   const isSpecialistPoi = item.source === 'specialist';
   const isHovered = isStoreHovered;
   const showTooltip = isActive || isHovered;
+  const categoryLabel = getCategoryLabel(item.type, item.source);
+  const priceLabel =
+    item.priceLevel != null ? PRICE_LEVEL_LABEL[item.priceLevel] : undefined;
+  const intensityLabel =
+    item.intensity != null ? INTENSITY_LABEL[item.intensity] : undefined;
+  const hasMeta =
+    !!categoryLabel || !!intensityLabel || !!item.duration || item.rating != null || !!priceLabel;
 
   return (
     <Marker
@@ -249,9 +320,45 @@ const MapMarkerItem = memo(function MapMarkerItem({
 
         {showTooltip && (
           <div className={`absolute top-full mt-2 left-1/2 -translate-x-1/2 z-[9999] bg-black/90 backdrop-blur-sm px-2.5 py-1.5 rounded-md ${DS.textSize.mini} text-white whitespace-nowrap pointer-events-none shadow-lg border border-white/10`}>
-            {item.dayNumber && <span className="text-emerald-400">Day {item.dayNumber} • </span>}
-            <span className="font-medium">{item.title}</span>
-            {!item.dayNumber && <span className="text-zinc-400 ml-1">· {item.type}</span>}
+            <div>
+              {item.dayNumber && <span className="text-emerald-400">Day {item.dayNumber} • </span>}
+              <span className="font-medium">{item.title}</span>
+            </div>
+            {hasMeta && (
+              <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-zinc-300">
+                {categoryLabel && <span>{categoryLabel}</span>}
+                {intensityLabel && (
+                  <>
+                    <span className="text-zinc-500">•</span>
+                    <span>{intensityLabel}</span>
+                  </>
+                )}
+                {item.duration && (
+                  <>
+                    <span className="text-zinc-500">•</span>
+                    <span>{item.duration}</span>
+                  </>
+                )}
+                {item.rating != null && (
+                  <>
+                    <span className="text-zinc-500">•</span>
+                    <span className="inline-flex items-center gap-0.5">
+                      <Star className="w-2.5 h-2.5 fill-current text-amber-400" />
+                      <span>
+                        {item.rating.toFixed(1)}
+                        {item.reviewCount != null && ` (${formatReviewCount(item.reviewCount)})`}
+                      </span>
+                    </span>
+                  </>
+                )}
+                {priceLabel && (
+                  <>
+                    <span className="text-zinc-500">•</span>
+                    <span>{priceLabel}</span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

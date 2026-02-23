@@ -120,7 +120,7 @@ export function useViewNavigation(): UseViewNavigationReturn {
   const hasTiles = Object.keys(tiles ?? {}).length > 0;
   const hasStrategyContent = (strategySections?.length ?? 0) > 0;
   const hasItinerary = (dayCards?.length ?? 0) > 0;
-  const hasDates = Boolean(tripInputs?.start_date);
+  const hasDates = Boolean(tripInputs?.start_date && tripInputs?.end_date);
 
   // Book is accessible when in a bookable state (S2 or S3)
   const inBookableState = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
@@ -262,7 +262,9 @@ export function useViewNavigationLight(): Pick<
   'navigateTo' | 'finalizePlan' | 'canViewPlan' | 'activeView'
 > {
   const storedActiveMode = useDocumentStore((s) => s.activeView ?? 'planning');
-  const hasDates = useDocumentStore((s) => Boolean(s.document?.trip_inputs?.start_date));
+  const hasDates = useDocumentStore((s) =>
+    Boolean(s.document?.trip_inputs?.start_date && s.document?.trip_inputs?.end_date)
+  );
   const isGenerating = useDocumentStore((s) => s.generation?.active === true);
   const isPlanFinalized = useDocumentStore((s) => s.isPlanFinalized);
   const hasTiles = useDocumentStore((s) => {

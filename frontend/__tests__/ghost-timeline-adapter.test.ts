@@ -59,7 +59,7 @@ describe('extractPOIsFromDayCards memo behavior', () => {
     expect(second[0]).toMatchObject<MapPOI>({
       id: 'act-1',
       title: 'Tulamben Dive',
-      type: 'activity',
+      type: 'diving',
       coordinates: { lat: -8.274, lng: 115.593 },
     });
   });
@@ -84,6 +84,47 @@ describe('extractPOIsFromDayCards memo behavior', () => {
     expect(first).toHaveLength(1);
     expect(first[0].title).toBe('Tulamben Dive');
     expect(second).toBe(first);
+  });
+
+  it('propagates metadata in strategy-section fallback POIs', () => {
+    const sections: StrategySection[] = [
+      {
+        id: 'strategy-yoga',
+        title: 'Yoga',
+        specialist_type: 'yoga',
+        principles: [],
+        must_dos: [],
+        optional_upgrades: [],
+        logistics_notes: [],
+        bullets: [],
+        content_added: [
+          {
+            title: 'Sunrise Flow',
+            day: 2,
+            coordinates: [100.5018, 13.7563],
+            intensity: 'moderate',
+            duration: '1.5h',
+            rating: 4.8,
+            review_count: 220,
+            price_level: 1,
+          } as unknown as NonNullable<StrategySection['content_added']>[number],
+        ],
+      },
+    ];
+
+    const pois = extractPOIsFromDayCards(undefined, sections, 'Bangkok', 'memo-fallback-meta');
+
+    expect(pois).toHaveLength(1);
+    expect(pois[0]).toMatchObject({
+      type: 'yoga',
+      source: 'specialist',
+      dayNumber: 2,
+      intensity: 'moderate',
+      duration: '1.5h',
+      rating: 4.8,
+      reviewCount: 220,
+      priceLevel: 1,
+    });
   });
 
   it('skips invalid day-card coordinates and falls back to strategy-section POIs', () => {
@@ -129,5 +170,75 @@ describe('extractPOIsFromDayCards memo behavior', () => {
     ]);
 
     expect(center).toEqual({ lat: 25.2048, lng: 55.2708, zoom: 10 });
+  });
+
+  it('derives type from tile metadata and prefers explicit provenance', () => {
+    const dayCards: DayCard[] = [
+      {
+        day_number: 3,
+        label: 'Day 3',
+        blocks: [
+          {
+            id: 'tier2-1',
+            period: 'morning',
+            activity_type: '',
+            specialist_type: 'yoga',
+            summary: 'Sunrise Yoga Session',
+            coordinates: { lat: 13.7563, lng: 100.5018 },
+            intensity: 'light',
+            duration: '1.5h',
+            rating: 4.7,
+            review_count: 144,
+            price_level: 2,
+            activity_domain: 'tier2',
+            activity_provenance: 'ai_suggested',
+            booked_tile: {
+              id: 'tile-yoga-1',
+              type: 'activity',
+              title: 'Sunrise Yoga Session',
+              currency: 'USD',
+              deeplink_url: 'https://example.com',
+              meta: {
+                category: 'yoga',
+              },
+            },
+          },
+          {
+            id: 'manual-food-3',
+            period: 'afternoon',
+            activity_type: '',
+            specialist_type: 'food',
+            summary: 'Canal Food Crawl',
+            coordinates: { lat: 13.759, lng: 100.505 },
+            activity_domain: 'tier2',
+            activity_provenance: 'user_browse_added',
+            booked_tile: {
+              id: 'tile-food-1',
+              type: 'activity',
+              title: 'Canal Food Crawl',
+              currency: 'USD',
+              deeplink_url: 'https://example.com',
+              meta: {
+                category: 'food',
+              },
+            },
+          },
+        ],
+      },
+    ];
+
+    const pois = extractPOIsFromDayCards(dayCards, undefined, 'Bangkok', 'memo-tier2-browse');
+
+    expect(pois).toHaveLength(2);
+    expect(pois[0]).toMatchObject({
+      type: 'yoga',
+      source: 'itinerary',
+      intensity: 'light',
+      duration: '1.5h',
+      rating: 4.7,
+      reviewCount: 144,
+      priceLevel: 2,
+    });
+    expect(pois[1]).toMatchObject({ type: 'food', source: 'browse' });
   });
 });

@@ -32,6 +32,26 @@ function buildSendRequestId(now: number): string {
   return `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function buildMessageSignature(
+  message: string,
+  selectedBranchId: string | null,
+  tripInputs: DocumentTripInputs | null | undefined,
+  suggestionClicked?: string
+): string {
+  return JSON.stringify({
+    m: message.trim().toLowerCase(),
+    s: suggestionClicked?.trim().toLowerCase() ?? null,
+    b: selectedBranchId,
+    d: tripInputs?.destination ?? null,
+    sd: tripInputs?.start_date ?? null,
+    ed: tripInputs?.end_date ?? null,
+    a: tripInputs?.adults ?? null,
+    c: tripInputs?.children ?? null,
+    o: tripInputs?.origin ?? null,
+    bg: tripInputs?.budget ?? null,
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -172,6 +192,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     budget: number | null;
     origin: string | null;
   } | null>(null);
+  const recentSendSignatureRef = useRef<{ signature: string; ts: number } | null>(null);
 
   // Loader hooks
   const delayedLoader = useDelayedLoader({ showDelay: 400, etaThreshold: 600 });
@@ -293,6 +314,28 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         return;
       }
 
+      const tripInputsSnapshot = useDocumentStore.getState().document?.trip_inputs;
+      const signature = buildMessageSignature(
+        trimmed,
+        selectedBranchId,
+        tripInputsSnapshot,
+        options?.suggestionClicked
+      );
+      const dedupeWindowMs = isGenerateTrigger ? 3500 : 1200;
+      const lastSignature = recentSendSignatureRef.current;
+      if (
+        lastSignature &&
+        lastSignature.signature === signature &&
+        now - lastSignature.ts < dedupeWindowMs
+      ) {
+        debugLog('[ChatPanel] Skipping - duplicate send signature', {
+          signature,
+          ageMs: now - lastSignature.ts,
+        });
+        return;
+      }
+      recentSendSignatureRef.current = { signature, ts: now };
+
       // Reset Smart Loader for new message
       setActiveStatus(null);
 
@@ -351,21 +394,38 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       });
 
       const currentTripInputs = useDocumentStore.getState().document?.trip_inputs;
+      const normalizedTripInputs = (() => {
+        if (!currentTripInputs) return currentTripInputs;
+        const categories = currentTripInputs.activity_settings?.categories ?? [];
+        if (categories.length > 0) return currentTripInputs;
+        return {
+          ...currentTripInputs,
+          activity_settings: {
+            ...(currentTripInputs.activity_settings ?? {}),
+            categories: [],
+            day_preferences: {},
+          },
+          booking_types: {
+            ...(currentTripInputs.booking_types ?? {}),
+            activities: 'off' as const,
+          },
+        };
+      })();
 
-      prevTripInputsRef.current = currentTripInputs ? {
-        start_date: currentTripInputs.start_date ?? null,
-        end_date: currentTripInputs.end_date ?? null,
-        adults: currentTripInputs.adults ?? null,
-        children: currentTripInputs.children ?? null,
-        budget: currentTripInputs.budget ?? null,
-        origin: currentTripInputs.origin ?? null,
+      prevTripInputsRef.current = normalizedTripInputs ? {
+        start_date: normalizedTripInputs.start_date ?? null,
+        end_date: normalizedTripInputs.end_date ?? null,
+        adults: normalizedTripInputs.adults ?? null,
+        children: normalizedTripInputs.children ?? null,
+        budget: normalizedTripInputs.budget ?? null,
+        origin: normalizedTripInputs.origin ?? null,
       } : null;
 
       const body: Parameters<typeof streamGraphPlan>[0] = {
         message: trimmed,
         session_state: sessionState ?? undefined,
         suggestion_clicked: options?.suggestionClicked,
-        trip_inputs: currentTripInputs ?? undefined,
+        trip_inputs: normalizedTripInputs ?? undefined,
       };
 
       if (isGenerateTrigger) {

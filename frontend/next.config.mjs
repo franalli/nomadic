@@ -31,13 +31,20 @@ const nextConfig = {
   async headers() {
     const isDev = process.env.NODE_ENV === 'development';
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const apiOrigin = (() => {
+      try {
+        return new URL(apiUrl).origin;
+      } catch {
+        return 'http://localhost:8000';
+      }
+    })();
     const csp = [
       "default-src 'self'",
       `script-src 'self' ${isDev ? "'unsafe-eval'" : ""} 'unsafe-inline'`,
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' https://*.unsplash.com https://images.unsplash.com https://plus.unsplash.com https://pics.avs.io https://places.googleapis.com https://api.mapbox.com https://*.mapbox.com data: blob:",
+      `img-src 'self' ${apiOrigin} https://*.unsplash.com https://images.unsplash.com https://plus.unsplash.com https://pics.avs.io https://places.googleapis.com https://api.mapbox.com https://*.mapbox.com data: blob:`,
       "font-src 'self'",
-      `connect-src 'self' https://*.mapbox.com ${apiUrl}`,
+      `connect-src 'self' https://*.mapbox.com ${apiOrigin}`,
       "worker-src 'self' blob:",
       "frame-src 'none'",
     ].join('; ');

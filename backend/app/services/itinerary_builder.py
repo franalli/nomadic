@@ -119,6 +119,9 @@ class DayBlockOutput(BaseModel):
     # Specialist metadata
     specialist_type: Optional[str] = None
     constraints: List[str] = Field(default_factory=list)
+    activity_domain: Optional[Literal["tier1", "tier2"]] = None
+    activity_provenance: Optional[Literal["ai_suggested", "user_browse_added"]] = None
+    map_type: Optional[str] = None  # Canonical map pin category (e.g., "food", "cycling")
 
     # Rich content
     image_url: Optional[str] = None
@@ -340,6 +343,80 @@ MAX_SAME_CATEGORY_PER_DAY = 2
 # Time-of-day slot order for complementarity scoring
 _TIME_SLOT_ORDER = {"morning": 0, "afternoon": 1, "evening": 2}
 
+# Canonical map-pin taxonomy shared with frontend pin config.
+_CANONICAL_POI_TYPES: set[str] = set(_TIER1_SPECIALIST_NAMES) | {
+    "yoga",
+    "wellness",
+    "spa",
+    "nightlife",
+    "cooking",
+    "culture",
+    "cultural",
+    "temples",
+    "food",
+    "beach",
+    "shopping",
+    "sightseeing",
+    "photography",
+    "relaxation",
+    "nature",
+    "tours",
+    "adventure",
+    "family",
+    "activity",
+}
+
+# Raw provider categories/types -> canonical map-pin category.
+_POI_TYPE_ALIASES: dict[str, str] = {
+    # Browse / Tier-2 canonical categories
+    "culture": "cultural",
+    "cultural": "cultural",
+    "food": "food",
+    "nature": "nature",
+    "shopping": "shopping",
+    "spa": "spa",
+    "tours": "tours",
+    "attraction": "tours",
+    "cultural_attraction": "cultural",
+    # Places primaryType families
+    "tourist_attraction": "tours",
+    "travel_agency": "tours",
+    "point_of_interest": "tours",
+    "museum": "cultural",
+    "art_gallery": "cultural",
+    "historical_landmark": "cultural",
+    "cultural_landmark": "cultural",
+    "monument": "cultural",
+    "plaza": "cultural",
+    "ruins": "cultural",
+    "fountain": "cultural",
+    "hindu_temple": "temples",
+    "temple": "temples",
+    "church": "cultural",
+    "place_of_worship": "cultural",
+    "synagogue": "cultural",
+    "mosque": "cultural",
+    "restaurant": "food",
+    "cafe": "food",
+    "bar": "food",
+    "bakery": "food",
+    "meal_takeaway": "food",
+    "meal_delivery": "food",
+    "park": "nature",
+    "natural_feature": "nature",
+    "national_park": "nature",
+    "campground": "nature",
+    "zoo": "nature",
+    "botanical_garden": "nature",
+    "shopping_mall": "shopping",
+    "market": "shopping",
+    "store": "shopping",
+    "clothing_store": "shopping",
+    "department_store": "shopping",
+    "beauty_salon": "spa",
+    "gym": "spa",
+}
+
 
 def _parse_duration_hours(duration_str: Optional[str], default: float = 3.0) -> float:
     """Parse '4h' → 4.0, '1.5h' → 1.5. Falls back to default."""
@@ -367,6 +444,13 @@ class ItineraryBuilder:
     def __init__(self):
         """Initialize builder with empty preferences."""
         self.preferences: Optional[PreferenceOverrideInput] = None
+        # Defaults let unit tests call internal phases directly without build().
+        self.destination: str = ""
+        self._warnings: List[str] = []
+        self._nofly_buffer_days: int = 0
+        self._day_preferences: Dict[str, int] = {}
+        # None = no category filter, set() = user explicitly cleared categories.
+        self._active_categories: Optional[set[str]] = None
 
     def _normalize_activity_id(self, activity: ActivityBlock) -> str:
         """Generate consistent ID for matching across frontend/backend."""
@@ -468,6 +552,7 @@ class ItineraryBuilder:
             )
             if early_conflicts:
                 resolutions = self._generate_resolutions(early_conflicts, len(days))
+                partial_days = self._annotate_activity_axes(partial_days)
                 _debug(
                     f"[ItineraryBuilder] ⚠️ BuilderConflict detected: "
                     f"{len(early_conflicts)} conflicts, "
@@ -558,6 +643,7 @@ class ItineraryBuilder:
             # Phase 6.75: FINAL sort - ensure chronological order after ALL phases
             # Critical: Phases 5.5, 5.25, and 6 add blocks AFTER _distribute_activities sort
             days = self._sort_blocks_chronologically(days)
+            days = self._annotate_activity_axes(days)
 
             # Phase 7: Detect post-placement conflicts (overflow)
             conflicts = self._detect_temporal_conflicts(days)
@@ -1999,6 +2085,16 @@ class ItineraryBuilder:
                 coords = c
             elif isinstance(c, list) and len(c) == 2:
                 coords = {"lat": c[1], "lng": c[0]}  # [lng, lat] → {lat, lng}
+        source_agent = (tile.get("source_agent") or "").strip().lower()
+        explicit_price_level = tile.get("price_level")
+        if isinstance(explicit_price_level, int) and 0 <= explicit_price_level <= 4:
+            block_price_level = explicit_price_level
+        elif source_agent == "experience_generator":
+            # LLM-generated Tier 2 tiles have only USD estimates; derive display tier.
+            block_price_level = _price_estimate_to_level(tile.get("price_estimate"))
+        else:
+            # Logistics/Places backfill should not invent "$$" when upstream price is unknown.
+            block_price_level = None
         return DayBlockOutput(
             id=tile.get("id", f"exp_block_{day_number}_{count}"),
             period=period_map.get(time_of_day, "afternoon"),
@@ -2015,11 +2111,7 @@ class ItineraryBuilder:
             booking_category="activity",
             rating=tile.get("rating"),
             review_count=tile.get("user_ratings_count") or tile.get("review_count"),
-            price_level=(
-                tile.get("price_level")
-                if tile.get("price_level") is not None
-                else _price_estimate_to_level(tile.get("price_estimate"))
-            ),
+            price_level=block_price_level,
             google_place_id=tile.get("google_place_id") or tile.get("place_id"),
             deeplink=tile.get("deeplink") or tile.get("maps_uri"),
             coordinates=coords,
@@ -2652,6 +2744,7 @@ class ItineraryBuilder:
                         review_count=tile.get("review_count"),
                         price_level=tile.get("price_level"),
                         coordinates=tile.get("coordinates"),
+                        specialist_type=tile.get("specialist_type") or tile.get("category") or None,
                         preference_status="user_preferred",
                         booking_category="activity",
                         booked_tile=tile,
@@ -3042,6 +3135,144 @@ class ItineraryBuilder:
             )
 
         _debug(f"[ItineraryBuilder] 🔄 Final sort applied to {len(days)} days")
+        return days
+
+    @staticmethod
+    def _is_user_browse_block(block: DayBlockOutput) -> bool:
+        if block.activity_provenance == "user_browse_added":
+            return True
+        tile = block.booked_tile if isinstance(block.booked_tile, dict) else {}
+        meta = tile.get("meta") if isinstance(tile.get("meta"), dict) else {}
+        for raw_source in (meta.get("source"), tile.get("source")):
+            if isinstance(raw_source, str) and raw_source.strip().lower() in (
+                "browse_add",
+                "user_browse_added",
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _normalize_map_type_key(value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip().lower().replace(" ", "_")
+        return normalized or None
+
+    @classmethod
+    def _canonical_map_type(cls, raw: Any) -> Optional[str]:
+        key = cls._normalize_map_type_key(raw)
+        if not key:
+            return None
+        if key in _POI_TYPE_ALIASES:
+            return _POI_TYPE_ALIASES[key]
+        if key in _CANONICAL_POI_TYPES:
+            return key
+        # Pattern fallback for uncatalogued Google Places primaryType values.
+        if any(token in key for token in ("culture", "cultural", "heritage")):
+            return "cultural"
+        if any(
+            token in key
+            for token in ("museum", "landmark", "historic", "monument", "plaza", "fountain")
+        ):
+            return "cultural"
+        if any(token in key for token in ("temple", "church", "worship", "mosque", "synagogue")):
+            return "temples"
+        if any(token in key for token in ("restaurant", "cafe", "bar", "bakery", "food", "meal")):
+            return "food"
+        if any(token in key for token in ("park", "garden", "nature", "zoo", "camp")):
+            return "nature"
+        if any(token in key for token in ("shop", "store", "market", "mall")):
+            return "shopping"
+        if any(token in key for token in ("spa", "wellness", "gym", "beauty")):
+            return "spa"
+        if any(token in key for token in ("tour", "point_of_interest", "visitor", "travel_agency")):
+            return "tours"
+        return None
+
+    @classmethod
+    def _map_type_from_booked_tile(cls, tile: dict[str, Any]) -> Optional[str]:
+        meta = tile.get("meta") if isinstance(tile.get("meta"), dict) else {}
+
+        for candidate in (
+            meta.get("map_type"),
+            tile.get("map_type"),
+            tile.get("browse_category"),
+            tile.get("category"),
+            meta.get("category"),
+        ):
+            canonical = cls._canonical_map_type(candidate)
+            if canonical:
+                return canonical
+
+        tags = tile.get("tags")
+        if isinstance(tags, list):
+            for tag in tags:
+                canonical = cls._canonical_map_type(tag)
+                if canonical:
+                    return canonical
+
+        return None
+
+    @classmethod
+    def _resolve_block_map_type(cls, block: DayBlockOutput) -> Optional[str]:
+        canonical_direct = cls._canonical_map_type(block.map_type)
+        if canonical_direct:
+            return canonical_direct
+
+        canonical_specialist = cls._canonical_map_type(block.specialist_type)
+        if canonical_specialist:
+            return canonical_specialist
+
+        tile = block.booked_tile if isinstance(block.booked_tile, dict) else {}
+        from_tile = cls._map_type_from_booked_tile(tile)
+        if from_tile:
+            return from_tile
+
+        # Last resort: only accept activity_type if it already matches taxonomy.
+        return cls._canonical_map_type(block.activity_type)
+
+    def _annotate_activity_axes(self, days: List[DayCardOutput]) -> List[DayCardOutput]:
+        non_activity_types = {
+            "arrival",
+            "departure",
+            "check-in",
+            "check-out",
+            "check_in",
+            "check_out",
+            "free_day",
+            "rest_day",
+            "buffer",
+            "decompression_buffer",
+        }
+
+        for day in days:
+            for block in day.blocks:
+                if block.is_buffer:
+                    block.activity_domain = None
+                    block.activity_provenance = None
+                    block.map_type = None
+                    continue
+
+                block_type = (block.activity_type or "").strip().lower()
+                if block_type in non_activity_types:
+                    block.activity_domain = None
+                    block.activity_provenance = None
+                    block.map_type = None
+                    continue
+
+                if block.activity_domain is None:
+                    specialist = (block.specialist_type or "").strip().lower()
+                    block.activity_domain = (
+                        "tier1" if specialist in _TIER1_SPECIALIST_NAMES else "tier2"
+                    )
+
+                if block.activity_provenance is None:
+                    block.activity_provenance = (
+                        "user_browse_added" if self._is_user_browse_block(block) else "ai_suggested"
+                    )
+
+                block.map_type = self._resolve_block_map_type(block)
+
         return days
 
     # =========================================================================

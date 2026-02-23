@@ -39,6 +39,8 @@ import {
   SPECIALIST_STYLE_CLASSES,
 } from './StrategyHeroUtils';
 
+type EnrichmentUiState = 'idle' | 'loading' | 'pending' | 'ready' | 'failed';
+
 // =============================================================================
 // Main Component Props
 // =============================================================================
@@ -91,31 +93,108 @@ export function StrategyHero({
 
   // Enriched section data for local_expert fetch-on-open
   const [enrichedSection, setEnrichedSection] = useState<StrategySection | null>(null);
+  const [enrichmentUiState, setEnrichmentUiState] = useState<EnrichmentUiState>('idle');
+  const [enrichmentErrorCode, setEnrichmentErrorCode] = useState<string | null>(null);
+  const [enrichmentRetryNonce, setEnrichmentRetryNonce] = useState(0);
   const displaySection = enrichedSection ?? section;
+  const hasTravelIntelligence = Boolean(
+    displaySection.travel_intelligence &&
+    Object.keys(displaySection.travel_intelligence).length > 0
+  );
 
   // Clear enriched cache when the underlying section changes (e.g. new graph response)
   useEffect(() => {
     setEnrichedSection(null);
+    setEnrichmentUiState('idle');
+    setEnrichmentErrorCode(null);
   }, [section.id]);
 
-  // Fetch-on-open: load local_expert enrichment when sheet opens and travel_intelligence is empty
+  // Fetch-on-open: load local_expert enrichment when sheet opens and travel_intelligence is empty.
+  // Poll while pending and expose terminal failed state with retry.
   useEffect(() => {
     if (!isSheetOpen) return;
     if (section.specialist_type !== 'local_expert') return;
-    const ti = section.travel_intelligence;
-    if (ti && Object.keys(ti).length > 0) return; // already enriched
+    if (hasTravelIntelligence) {
+      setEnrichmentUiState('ready');
+      return;
+    }
 
     let cancelled = false;
-    getSpecialistEnrichment(section.id).then((result) => {
-      if (cancelled) return;
-      if (result?.status === 'ready' && result.data) {
-        setEnrichedSection(result.data as unknown as StrategySection);
+    const maxPendingMs = 75_000;
+    const startedAt = Date.now();
+
+    const run = async () => {
+      setEnrichmentUiState('loading');
+      setEnrichmentErrorCode(null);
+      let transientErrors = 0;
+      let pendingAttempts = 0;
+
+      while (!cancelled) {
+        let result: Awaited<ReturnType<typeof getSpecialistEnrichment>> = null;
+        try {
+          result = await getSpecialistEnrichment(section.id);
+        } catch {
+          transientErrors += 1;
+          if (transientErrors >= 3) {
+            setEnrichmentUiState('failed');
+            setEnrichmentErrorCode('network_error');
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+          continue;
+        }
+        if (cancelled) return;
+        transientErrors = 0;
+
+        if (!result) {
+          setEnrichmentUiState('failed');
+          setEnrichmentErrorCode('not_found');
+          return;
+        }
+
+        if (result.status === 'ready' && result.data) {
+          setEnrichedSection(result.data as unknown as StrategySection);
+          setEnrichmentUiState('ready');
+          return;
+        }
+
+        if (result.status === 'failed') {
+          setEnrichmentUiState('failed');
+          setEnrichmentErrorCode(result.error_code || 'failed');
+          return;
+        }
+
+        if (Date.now() - startedAt >= maxPendingMs) {
+          setEnrichmentUiState('failed');
+          setEnrichmentErrorCode('timeout');
+          return;
+        }
+
+        setEnrichmentUiState('pending');
+        pendingAttempts += 1;
+        const suggestedWait = result.retry_after_ms ?? 1500;
+        const waitMs = Math.max(2000, Math.min(suggestedWait + pendingAttempts * 150, 5000));
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+    };
+
+    run().catch(() => {
+      if (!cancelled) {
+        setEnrichmentUiState('failed');
+        setEnrichmentErrorCode('network_error');
       }
     });
+
     return () => {
       cancelled = true;
     };
-  }, [isSheetOpen, section.id, section.specialist_type, section.travel_intelligence]);
+  }, [hasTravelIntelligence, isSheetOpen, section.id, section.specialist_type, enrichmentRetryNonce]);
+
+  const handleRetryEnrichment = () => {
+    setEnrichmentUiState('idle');
+    setEnrichmentErrorCode(null);
+    setEnrichmentRetryNonce((n) => n + 1);
+  };
 
   // Internal state for accordion expansion (used when not controlled)
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
@@ -153,6 +232,16 @@ export function StrategyHero({
       onExpandChange?.(false);
     }
   };
+
+  const shouldShowEnrichmentNotice =
+    section.specialist_type === 'local_expert' &&
+    !hasTravelIntelligence &&
+    (enrichmentUiState === 'loading' || enrichmentUiState === 'pending' || enrichmentUiState === 'failed');
+
+  const enrichmentErrorLabel =
+    enrichmentErrorCode === 'timeout'
+      ? 'Local intelligence timed out. You can retry now.'
+      : 'Local intelligence failed to load. You can retry now.';
 
   // --- RENDER: ACCORDION MODE ---
   if (variant === 'accordion') {
@@ -216,6 +305,25 @@ export function StrategyHero({
         </button>
         <BottomSheet open={isSheetOpen} onOpenChange={setIsSheetOpen} title={`${topicLabel} Strategy`} hint="Tap outside to close">
           <div className="space-y-6 pb-24">
+            {shouldShowEnrichmentNotice && (
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-300">
+                {(enrichmentUiState === 'loading' || enrichmentUiState === 'pending') && (
+                  <p>Loading local travel intelligence...</p>
+                )}
+                {enrichmentUiState === 'failed' && (
+                  <div className="flex items-center justify-between gap-3">
+                    <p>{enrichmentErrorLabel}</p>
+                    <button
+                      type="button"
+                      onClick={handleRetryEnrichment}
+                      className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             <CompactSheetContent section={displaySection} constraints={constraints} />
           </div>
         </BottomSheet>
@@ -282,6 +390,25 @@ export function StrategyHero({
     </button>
     <BottomSheet open={isSheetOpen} onOpenChange={setIsSheetOpen} title={`${topicLabel} Strategy`} hint="Tap to expand">
       <div className="space-y-6 pb-24">
+        {shouldShowEnrichmentNotice && (
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-300">
+            {(enrichmentUiState === 'loading' || enrichmentUiState === 'pending') && (
+              <p>Loading local travel intelligence...</p>
+            )}
+            {enrichmentUiState === 'failed' && (
+              <div className="flex items-center justify-between gap-3">
+                <p>{enrichmentErrorLabel}</p>
+                <button
+                  type="button"
+                  onClick={handleRetryEnrichment}
+                  className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <HeroSheetContent section={displaySection} constraints={constraints} heroImage={heroImage} />
       </div>
     </BottomSheet>
