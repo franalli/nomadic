@@ -310,9 +310,6 @@ function applyActivityCategoryDefaults(tripInputs: DocumentTripInputs): Document
       // Default behavior for untouched/new destinations.
       activitySettings.categories = [DEFAULT_ACTIVITY_CATEGORY];
     }
-  } else if (bookingTypes.activities === 'off') {
-    // Categories imply activities are enabled.
-    bookingTypes.activities = DEFAULT_BOOKING_TYPES.activities;
   }
 
   return {
@@ -1816,15 +1813,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       date_flex: responseTripInputs.date_flex ?? localTripInputs?.date_flex ?? false,
       date_window_start: responseTripInputs.date_window_start ?? localTripInputs?.date_window_start ?? null,
       date_window_end: responseTripInputs.date_window_end ?? localTripInputs?.date_window_end ?? null,
-      // Merge activity_settings: LOCAL takes priority for categories & day_preferences.
-      // The user's explicit sheet saves must survive graph-response overwrites.
+      // Merge activity_settings with backend-authoritative categories so planner/router
+      // updates replace local defaults (e.g., initial "cultural" seed).
       activity_settings: {
         ...responseTripInputs.activity_settings,
         ...localTripInputs?.activity_settings,
-        // Local categories win (user cleared via sheet → []). Fall back to response
-        // only when local is null/undefined (first load, no prior user action).
-        categories: localTripInputs?.activity_settings?.categories
-          ?? responseTripInputs.activity_settings?.categories ?? [],
+        categories: responseTripInputs.activity_settings?.categories
+          ?? localTripInputs?.activity_settings?.categories ?? [],
         skill_level: localTripInputs?.activity_settings?.skill_level
           ?? responseTripInputs.activity_settings?.skill_level ?? null,
         day_preferences: localTripInputs?.activity_settings?.day_preferences

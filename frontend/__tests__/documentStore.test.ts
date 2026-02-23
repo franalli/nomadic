@@ -15,6 +15,7 @@ vi.mock('@/state/chatStore', () => ({
 
 import { apiFetch } from '@/lib/api';
 import {
+  DEFAULT_BOOKING_TYPES,
   DEFAULT_TRIP_INPUTS,
   markSettingDirty,
   useDocumentStore,
@@ -408,6 +409,57 @@ describe('setFromPlanResponse', () => {
     useDocumentStore.getState().setFromPlanResponse(response);
 
     expect(useDocumentStore.getState().browseableActivities).toEqual([]);
+  });
+
+  it('prefers planner activity categories over local default categories', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: {
+          ...DEFAULT_TRIP_INPUTS,
+          destination: 'Lisbon',
+          booking_types: { ...DEFAULT_BOOKING_TYPES, activities: 'suggested' },
+          activity_settings: { categories: ['cultural'], skill_level: null },
+        },
+      }),
+    });
+
+    const response = makePatchResponse(2, {
+      trip_inputs: {
+        ...DEFAULT_TRIP_INPUTS,
+        destination: 'Lisbon',
+        booking_types: { ...DEFAULT_BOOKING_TYPES, activities: 'suggested' },
+        activity_settings: { categories: ['hiking'], skill_level: null },
+      },
+    });
+
+    useDocumentStore.getState().setFromPlanResponse(response);
+
+    expect(useDocumentStore.getState().document!.trip_inputs.activity_settings?.categories).toEqual([
+      'hiking',
+    ]);
+  });
+});
+
+describe('activity toggles', () => {
+  it('keeps activities off when categories are populated', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: {
+          ...DEFAULT_TRIP_INPUTS,
+          destination: 'Lisbon',
+          booking_types: { ...DEFAULT_BOOKING_TYPES, activities: 'suggested' },
+          activity_settings: { categories: ['yoga'], skill_level: null },
+        },
+      }),
+    });
+
+    useDocumentStore.getState().updateTripInputs({
+      booking_types: { ...DEFAULT_BOOKING_TYPES, activities: 'off' },
+    });
+
+    const tripInputs = useDocumentStore.getState().document!.trip_inputs;
+    expect(tripInputs.booking_types?.activities).toBe('off');
+    expect(tripInputs.activity_settings?.categories).toEqual(['yoga']);
   });
 });
 

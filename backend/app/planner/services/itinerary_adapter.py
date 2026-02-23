@@ -43,7 +43,7 @@ def build_itinerary_from_state(state: GraphState) -> Optional[ItineraryResult]:
     # - activities=on/suggested with categories    -> categories list
     if activities_off:
         activity_categories: list[str] | None = []
-    elif raw_categories is not None:
+    elif raw_categories:
         activity_categories = raw_categories
     else:
         activity_categories = None

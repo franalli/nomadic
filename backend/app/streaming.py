@@ -1285,7 +1285,7 @@ async def generate_ndjson(
             # so the builder applies no category filter (place all activities).
             if activities_off:
                 activity_categories: list[str] | None = []
-            elif raw_categories is not None:
+            elif raw_categories:
                 activity_categories = raw_categories
             else:
                 activity_categories = None
