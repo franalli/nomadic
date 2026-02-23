@@ -1,7 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Building2, ChevronDown, Loader2, Plane } from 'lucide-react';
+import { Building2, ChevronDown, Compass, Lightbulb, Plane } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -148,9 +148,8 @@ export function PlanFullDensityView({
   );
   const localExpertSectionId = localExpertSection?.id ?? null;
   const localExpertHasTI = hasTravelIntelligence(localExpertSection);
-  const localExpertEnrichment = localExpertEnrichmentState(localExpertSection);
-  const localExpertReady = localExpertEnrichment === 'ready';
-  const isTravelIntelPending = localExpertEnrichment === 'pending';
+  const localExpertSectionEnrichment = localExpertEnrichmentState(localExpertSection);
+  const localExpertReady = localExpertSectionEnrichment === 'ready';
   const localExpertSectionRef = useRef<StrategySection | null>(null);
   const [enrichedLocalExpertSection, setEnrichedLocalExpertSection] = useState<StrategySection | null>(null);
   const effectiveStrategySections = useMemo(() => {
@@ -166,7 +165,16 @@ export function PlanFullDensityView({
     () => buildDestinationIntel(effectiveStrategySections),
     [effectiveStrategySections]
   );
+  const effectiveLocalExpertSection = useMemo(
+    () => effectiveStrategySections.find((s) => s.specialist_type === 'local_expert'),
+    [effectiveStrategySections]
+  );
+  const isTravelIntelPending = localExpertEnrichmentState(effectiveLocalExpertSection) === 'pending';
   const hasDestinationIntel = intelCategories.length > 0;
+  const travelIntelSectionCount = intelCategories.length;
+  const travelAdviceLabel = isTravelIntelPending
+    ? 'Travel Advice'
+    : `Travel Advice (${travelIntelSectionCount})`;
   const showRowTwoChips = hasDestinationIntel || (hasItineraryContent && (flightCount > 0 || stayCount > 0));
 
   useEffect(() => {
@@ -392,7 +400,7 @@ export function PlanFullDensityView({
                   type="button"
                   aria-expanded={intelExpanded}
                   aria-controls="destination-intel-panel"
-                  aria-busy={isAnyRegenerating ? true : undefined}
+                  aria-busy={isAnyRegenerating || isTravelIntelPending ? true : undefined}
                   onClick={() => setIntelExpanded(v => !v)}
                   className={cn(
                     subduedTogglePillClass,
@@ -400,11 +408,14 @@ export function PlanFullDensityView({
                     isAnyRegenerating && 'opacity-70'
                   )}
                 >
-                  <span className="truncate">Travel Advice</span>
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <Lightbulb className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{travelAdviceLabel}</span>
+                  </span>
                   <span className="flex items-center gap-1 shrink-0">
                     {isTravelIntelPending && (
-                      <Loader2
-                        className="w-3 h-3 animate-spin text-emerald-500"
+                      <Compass
+                        className="w-3 h-3 compass-spin text-emerald-500"
                         aria-label="Travel advice is loading"
                       />
                     )}
