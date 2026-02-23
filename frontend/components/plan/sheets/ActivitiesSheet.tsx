@@ -34,6 +34,9 @@ interface ActivitiesSheetProps {
   // Module state
   enabled: boolean;
   settings: ActivitySettings;
+  /** True when activity_settings has been explicitly saved at least once.
+   *  When false, inferred categories from day cards are shown as initial selection. */
+  hasExplicitSettings?: boolean;
   // Prerequisites
   hasDestination: boolean;
   // Actions
@@ -251,6 +254,7 @@ function ActivitiesSheetInner({
   onOpenChange,
   enabled,
   settings,
+  hasExplicitSettings = false,
   hasDestination,
   onToggle,
   onSaveSettings,
@@ -281,8 +285,11 @@ function ActivitiesSheetInner({
     return Object.fromEntries(normalizedEntries);
   }, [settings.day_preferences]);
   const hasItinerary = (dayCards?.length ?? 0) > 0;
+  // Only fall back to inferred categories when the user has never explicitly
+  // saved activity settings. Once saved (even with empty categories []),
+  // respect the user's choice — don't re-infer from day cards.
   const effectiveInitialCategories =
-    normalizedSettingCategories.length > 0 ? normalizedSettingCategories : inferredCategories;
+    hasExplicitSettings ? normalizedSettingCategories : inferredCategories;
   const effectiveInitialDayPreferences = hasItinerary
     ? Object.fromEntries(
         effectiveInitialCategories.map((cat) => [cat, inferredDayPreferences[cat] ?? normalizedSettingDayPreferences[cat] ?? 0])

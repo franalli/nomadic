@@ -199,6 +199,7 @@ export function LandingSheets({
         }}
         enabled={true}
         settings={tripInputs.activity_settings || { categories: [], skill_level: null }}
+        hasExplicitSettings={!!tripInputs.activity_settings}
         hasDestination={hasDestination}
         onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
         onSaveSettings={async (settings) => {

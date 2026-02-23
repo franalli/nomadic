@@ -185,6 +185,7 @@ export function ChatModuleSheets({
         onOpenChange={setActivitiesSheetOpen}
         enabled={isBookingEnabled(bookingTypes?.activities)}
         settings={activitySettings || { categories: [], skill_level: null }}
+        hasExplicitSettings={!!activitySettings}
         hasDestination={hasDestination}
         onToggle={(enabled) => {
           if (onUpdateBookingTypes) {

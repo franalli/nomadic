@@ -286,7 +286,8 @@ export function PlanFullDensityView({
 
   const subduedTogglePillClass = cn(
     'inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-sm whitespace-nowrap transition-colors',
-    'border-zinc-600/50 bg-zinc-900/40 text-zinc-400 hover:bg-zinc-800/50',
+    'border-zinc-300 dark:border-white/15 bg-zinc-100 dark:bg-white/[0.06]',
+    'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/10',
   );
 
   // Measure the spacer height so the map top-aligns with Day 1.
@@ -410,12 +411,12 @@ export function PlanFullDensityView({
               <div
                 id="destination-intel-panel"
                 aria-labelledby="destination-intel-trigger"
-                className="mt-2 rounded-xl border border-zinc-700/30 bg-zinc-800/40"
+                className="mt-2 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900/40"
               >
                 <div className="max-h-[280px] space-y-3 overflow-y-auto px-3 py-3">
                   {intelCategories.map((category) => (
                     <div key={category.key} className="space-y-1">
-                      <p className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+                      <p className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
                         <span>{category.icon}</span>
                         <span>{category.label}</span>
                       </p>
@@ -423,7 +424,7 @@ export function PlanFullDensityView({
                         {category.items.map((item) => (
                           <li
                             key={`${category.key}-${item}`}
-                            className="text-sm leading-relaxed text-zinc-400"
+                            className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400"
                           >
                             {item}
                           </li>
@@ -436,9 +437,9 @@ export function PlanFullDensityView({
             )}
 
             {hasDestinationIntel && isAnyRegenerating && (
-              <div className="mt-2 flex items-center gap-2 rounded-lg border border-zinc-700/40 bg-zinc-900/60 px-3 py-2">
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-zinc-900/60 px-3 py-2">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-zinc-600 dark:text-zinc-400">
                   {isRegenUpdating ? 'Updating itinerary...' : 'Updating plan...'}
                 </p>
               </div>
