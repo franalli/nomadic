@@ -370,10 +370,8 @@ frontend/
 │   │   ├── PlanDensityViews.tsx            # Ghost, bridge, and mirror-loader density views
 │   │   ├── PlanFullDensityView.tsx         # Full-density view (map + specialists + timeline)
 │   │   ├── PlanHeader.tsx
-│   │   ├── PlanSpecialistsSection.tsx      # Specialists section for full-density view
 │   │   ├── PlanTimelineSection.tsx         # Timeline section with DnD wiring for full-density view
 │   │   ├── planStateHelpers.ts
-│   │   ├── StrategyConstraintBar.tsx       # Trip DNA constraint pill bar (validated/violated rules)
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
 │   │   ├── TimelineThread.tsx
 │   │   ├── TripHealthBar.tsx
@@ -485,7 +483,6 @@ frontend/
 ├── lib/                        # Utility functions
 │   ├── animation-config.ts     # Progressive disclosure timing constants
 │   ├── api.ts                  # API client
-│   ├── chipStyles.ts           # Chip styling utilities
 │   ├── contentPolicyGuard.ts   # Content policy validation
 │   ├── date-utils.ts           # Date formatting/parsing utilities
 │   ├── dayIntensity.ts         # Day intensity scoring (relaxed/balanced/packed) from DayBlock hours
@@ -610,5 +607,5 @@ docs/
 2. **7-Node LangGraph** - Backend planner uses exactly 7 nodes (see `plan_graph_analysis.md`)
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
-5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. New deps: `@dnd-kit/core`, `@dnd-kit/utilities`.
+5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. Dependency: `@dnd-kit/core`.
 6. **Agent Specs Canonical Source** - `.claude/agents/*` are canonical specialist specs; `.codex/agents/*` are wrappers that reference those canonical files.

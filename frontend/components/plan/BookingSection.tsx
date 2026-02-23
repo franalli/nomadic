@@ -370,7 +370,7 @@ export function BookingSection({
             )}
           </div>
 
-          {/* Stays tiles — controlled by 🏨 Stays pill in StrategyConstraintBar */}
+          {/* Stays tiles */}
           {isExpanded && (
             <div className="px-6 pb-4 space-y-4">
               {stayTiles.length > 0 ? (
@@ -400,7 +400,7 @@ export function BookingSection({
             </div>
           )}
 
-          {/* Flights tiles — controlled by ✈️ Flights pill in StrategyConstraintBar */}
+          {/* Flights tiles */}
           {flightsExpanded && (
             <div className="px-6 pb-4 space-y-4">
               {flightTiles.length > 0 ? (

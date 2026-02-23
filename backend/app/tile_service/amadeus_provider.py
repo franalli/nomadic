@@ -95,11 +95,12 @@ class AmadeusFlightProvider(Provider):
         if self._client is None:
             # AmadeusClient._instance is set by get_instance() during startup.
             # Access it directly here since we're in a sync context (thread pool).
-            # We never write _instance — that's get_instance()'s job.
+            # Fallback writes _instance only when get_instance() hasn't run yet.
             instance = AmadeusClient._instance
             if instance is None:
-                # Fallback: create a new client (singleton may not be initialized yet)
+                # Fallback: create and register for lifecycle cleanup
                 instance = AmadeusClient()
+                AmadeusClient._instance = instance
             self._client = instance
         return self._client
 
@@ -278,11 +279,12 @@ class AmadeusHotelProvider(Provider):
         if self._client is None:
             # AmadeusClient._instance is set by get_instance() during startup.
             # Access it directly here since we're in a sync context (thread pool).
-            # We never write _instance — that's get_instance()'s job.
+            # Fallback writes _instance only when get_instance() hasn't run yet.
             instance = AmadeusClient._instance
             if instance is None:
-                # Fallback: create a new client (singleton may not be initialized yet)
+                # Fallback: create and register for lifecycle cleanup
                 instance = AmadeusClient()
+                AmadeusClient._instance = instance
             self._client = instance
         return self._client
 

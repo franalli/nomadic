@@ -81,7 +81,7 @@ describe('useLandingDerived plan view gate', () => {
             start_date: '2026-03-01',
             end_date: '2026-03-07',
           },
-          docPlanViewState: 'S0_BOOTSTRAP',
+          docPlanViewState: 'S2_STRATEGY_READY',
           docStrategySections: [LOCAL_EXPERT_SECTION],
           hasEverHadPlan: true,
           hasBranchesReady: true,

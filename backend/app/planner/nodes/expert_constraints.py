@@ -285,6 +285,10 @@ class LocalExpertOutput(BaseModel):
 #
 # Adding cities is optional — the LLM handles any destination without hints.
 # Only add entries when specific safety/cultural constraints are critical.
+#
+# Hard Rule 11 exception: These are curated medical/cultural safety constraints
+# (dress codes, altitude warnings, decompression buffers). LLM-generated safety
+# data introduces hallucination risk. Kept as static data by design.
 
 LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
     "dubai": {

@@ -593,7 +593,7 @@ When backend populates `constraints_validated` and `constraint_violations`:
 
 **Visibility:** Only shows when `engineConstraints.length > 0` (niche specialist constraints exist).
 
-**Implementation:** `frontend/components/plan/StrategyConstraintBar.tsx` (rendered via `PlanSpecialistsSection`)
+**Implementation:** `frontend/components/plan/PlanFullDensityView.tsx` (row-two toggle chips for Flights/Stays/Travel Intel)
 
 ### Inline Constraint Badge Colors
 
@@ -662,7 +662,7 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | GhostSlot | `plan/timeline/blocks/GhostSlot.tsx` | Dashed-border CTA slot; `border-dashed border-zinc-300 dark:border-white/10` pattern |
 | LogisticsBlock | `plan/timeline/blocks/LogisticsBlock.tsx` | Flight/transfer timeline block; glass `dark:bg-zinc-900/50` pattern |
 | MapErrorBoundary | `map/MapErrorBoundary.tsx` | Map error fallback; raw zinc pattern (`bg-zinc-100 dark:bg-zinc-900`, `text-zinc-500`) |
-| StrategyConstraintBar | `plan/StrategyConstraintBar.tsx` | Subdued toggle pills (Section 29.1); `bg-zinc-100 dark:bg-white/[0.06] border-zinc-300 dark:border-white/15` |
+| PlanFullDensityView | `plan/PlanFullDensityView.tsx` | Subdued toggle pills (Section 29.1); `bg-zinc-100 dark:bg-white/[0.06] border-zinc-300 dark:border-white/15` |
 | PreferenceAttributionBadge | `plan/timeline/blocks/PreferenceAttributionBadge.tsx` | Inline badge for user-preferred/ai-override tile states; `bg-emerald-500/15 text-emerald-600 dark:text-emerald-400` |
 | FreeDayCard | `plan/timeline/blocks/FreeDayCard.tsx` | Section 28.8 + constraint-buffer variant (Section 29.4); uses `DS.actions.primary` for CTA |
 
@@ -2621,10 +2621,9 @@ Updates to Section 6 — new components discovered in audit:
 | `DraggableBlock` | `plan/timeline/DraggableBlock.tsx` | None | Wraps any `DayBlock`; `Lock` icon guard when block has no `id`; `z-10` for Lock badge |
 | `FreeDayCard` | `plan/timeline/blocks/FreeDayCard.tsx` | `DS.actions.primary` | Dashed-border empty day; specialist chip picker; see Section 28.8 |
 | `StrategyHeroAccordion` | `plan/stages/StrategyHeroAccordion.tsx` | `DS.textSize.*` | Collapsible accordion variant of StrategyHero; specialist colors via `SPECIALIST_STYLE_CLASSES` |
-| `StrategyConstraintBar` | `plan/StrategyConstraintBar.tsx` | None (raw pattern) | Trip DNA constraint pills; priority coloring (red/amber/zinc); `hover:text-zinc-900 dark:hover:text-zinc-200` on Details toggle |
 | `S2AgentCard` | `plan/stages/S2AgentCard.tsx` | `DS.textSize.*` | Legacy specialist card with topic CSS vars; `shadow-card` on card, `hover:shadow-soft` on hover |
 | `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Density switcher; `bg-emerald-500 rounded-full animate-pulse` for live indicator dot |
-| `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (raw pattern) | Full-density itinerary layout; subdued toggle pills for Specialists/Flights/Stays and sticky desktop map column |
+| `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (raw pattern) | Full-density itinerary layout; subdued toggle pills for Flights/Stays/Travel Intel and sticky desktop map column |
 | `TimelineThread` | `plan/TimelineThread.tsx` | `DS.textSize.*` | Day-thread renderer; constraint/status chips with light/dark contrast pairs and unschedulable overlays |
 | `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
 
@@ -2765,9 +2764,9 @@ These patterns appear in production code and are now documented to prevent futur
 
 ---
 
-### 29.1 Subdued Toggle Pills (StrategyConstraintBar)
+### 29.1 Subdued Toggle Pills (PlanFullDensityView Row-Two Chips)
 
-Small rounded-full toggle pills for collapsing/expanding sub-sections (Stays, Flights, Specialists). These are NOT selection pills — they toggle visibility, not select a value.
+Small rounded-full toggle pills for collapsing/expanding sub-sections (Stays, Flights, Destination Travel Intel). These are NOT selection pills — they toggle visibility, not select a value.
 
 | Property | Light Mode | Dark Mode |
 |----------|-----------|-----------|
@@ -2793,7 +2792,7 @@ Small rounded-full toggle pills for collapsing/expanding sub-sections (Stays, Fl
 </button>
 ```
 
-**Implementation:** `frontend/components/plan/StrategyConstraintBar.tsx`, `frontend/components/plan/PlanFullDensityView.tsx`
+**Implementation:** `frontend/components/plan/PlanFullDensityView.tsx`
 
 ---
 

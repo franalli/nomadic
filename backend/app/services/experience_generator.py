@@ -90,8 +90,11 @@ async def clear_experience_db_cache(db: AsyncSession) -> int:
         result = await db.execute(
             delete(ResponseCache).where(ResponseCache.cache_type == "experience")
         )
+        result_single = await db.execute(
+            delete(ResponseCache).where(ResponseCache.cache_type == "experience_single")
+        )
         await db.commit()
-        deleted = result.rowcount
+        deleted = result.rowcount + result_single.rowcount
         return deleted
     except Exception as e:
         logger.warning(f"[EXPERIENCE] Clear L2 failed: {e}")

@@ -834,7 +834,7 @@ const getShortLabel = (c) =>
 )}
 ```
 
-**File:** `frontend/components/plan/StrategyConstraintBar.tsx`
+**File:** `frontend/components/plan/PlanFullDensityView.tsx`
 
 ### Architecture (Consolidated)
 ```
@@ -1772,11 +1772,9 @@ useSessionHydration() runs
 | --- | --- |
 | `StrategyStageRenderer` | Data density computation, conditional rendering, single renderer for all modes. Heavy computation and effects are delegated to `useStrategyStageOrchestration`. |
 | `useStrategyStageOrchestration` | Hook centralising all heavy computation, state, and effects for `StrategyStageRenderer` (keeps renderer under ~300 lines). Owns `DataDensity` computation, ghost timeline generation, map POI extraction, constraint validation sets, and fill-day guard refs. |
-| `PlanFullDensityView` | Full-density view (map + specialists + timeline). Receives all props from `StrategyStageRenderer` and renders the 60/40 desktop map layout. Trip alerts are now rendered in specialist/timeline surfaces; `TripAlertBanner` is no longer injected here. |
+| `PlanFullDensityView` | Full-density view (map + timeline + booking/intel controls). Receives all props from `StrategyStageRenderer`, renders the 60/40 desktop map layout, owns the row-two toggle chips (Flights, Stays, Destination Travel Intel), and fetches/polls Local Expert enrichment for the destination intel panel. |
 | `PlanDensityViews` | Ghost, bridge, and mirror-loader density views (`PlanGhostDensityView`, `PlanBridgeDensityView`, `PlanMirrorLoader`). |
-| `PlanSpecialistsSection` | Specialists section for full-density view — renders strategy cards, constraint bar, and regeneration overlay. |
 | `PlanTimelineSection` | Timeline section for full-density view — handles DnD wrapping (`ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`), skeleton loading, and regeneration overlay. |
-| `StrategyConstraintBar` | Trip DNA constraint pill bar — shows blocking/strong niche-specialist constraints with validated/violated visual state. Only shown for `NICHE_SPECIALIST_IDS` entries, not `local_expert`/`general`. |
 | `useBookingDrawerState` | Hook managing booking drawer open/close state and the fill-day API call triggered when a tile is added to a specific day via the drawer. Extracted from `StrategyStageRenderer`. |
 | `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
 | `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack/StrategyHero) |
@@ -1799,14 +1797,14 @@ useSessionHydration() runs
 | `ChatMessageRenderer` | Renders individual chat messages: system ack lines, user bubbles with SystemReceipt, assistant bubbles with markdown/specialist deep links/streaming pulse/retry button (extracted from ChatPanel) |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
-| `BookingSection` | Renders booking tiles when available |
+| `BookingSection` | Renders booking tiles when available; supports controlled expand/collapse for stays and flights from `PlanFullDensityView` row-two toggle chips |
 | `NextStepBar` | CTA bar — accepts `nextAction` prop, early-returns null for `expand_itinerary` (handled by auto-expand), renders only for `finalize_plan` action. Currently `getNextAction()` never returns `finalize_plan`, so NextStepBar does not render in practice. |
 | `OriginPromptCard` | Inline prompt to set origin (shown in S2 when destination+dates set but no origin, 2+ specialists) |
 | `ItineraryProgressIndicator` | Progress indicator for multi-specialist auto-trigger itinerary generation |
 | `BookingDrawer` | Side sheet for tile browsing, triggered by FreeDayCard "Browse" or GhostSlot clicks. Supports `pinnedDayNumber` for per-day tile placement via fill-day API |
 | `TripHealthBar` | Compact inventory bar showing tile counts (hotels, flights, activities) for General/Local Expert sections in `S2StrategyView` |
 | `useItineraryGeneration` | Hook extracted from `NomadicLanding` encapsulating the full expand-itinerary flow: `proceedWithItineraryGeneration` (NDJSON streaming), auto-trigger logic for multi-specialist trips (Path A), `handleExpandToItinerary` (validation-gated expand), and `handleSelectNights`. Before POSTing `/api/expand-itinerary`, it normalizes `trip_inputs`: empty activity categories are sent as `categories=[] + booking_types.activities='off'` so builder semantics match sheet intent. Returns `{proceedWithItineraryGeneration, handleExpandToItinerary, handleSelectNights, hasItineraryContent}`. |
-| `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. `planViewState` is backend-authoritative when present; frontend fallback derivation is only used when backend state is absent. Pure computation — no side effects. |
+| `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. `planViewState` is backend-authoritative whenever present; when absent, frontend fallback only emits `S1_FRAMING` during active generation (otherwise `S0_BOOTSTRAP`). Pure computation — no side effects. |
 | `useLandingEffects` | Hook extracted from `NomadicLanding` grouping side effects unrelated to itinerary generation: destination image fetching, `hasEverHadPlan` detection, topic tracking for mobile badges, specialist deep link handling. State is owned by the parent and passed in as params + setters. |
 | `specialist-colors.ts` | SSoT for specialist-to-color text class mappings (`SPECIALIST_TEXT_COLOR: Record<string, string>`). Used by `DragPreviewCard` and `ActivityMiniCard` for specialist label badges. Hue assignments match the DS constraint-priority palette. |
 | `useMapSync` | Zustand store (`frontend/hooks/useMapSync.ts`) for map↔timeline two-way sync. State: `visibleDayNumber` (set by TimelineThread scroll observer), `scrollTargetDayNumber` (set by InteractiveMap pin click), `highlightedCardId`. Actions: `setVisibleDayNumber()`, `requestScrollTo(dayNumber, itemId)`. Not persisted — resets on mount. |
@@ -1832,6 +1830,9 @@ useSessionHydration() runs
 - `features-section` -- marketing features section
 - `components/chat/HoldToDeleteButton.tsx` -- moved to `components/plan/timeline/blocks/HoldToDeleteButton.tsx`
 - `SuggestionClickEvent` (schema) / `/api/suggestions/click` (endpoint) -- suggestion-click analytics removed
+- `PlanSpecialistsSection` -- removed; destination intel controls moved into `PlanFullDensityView`
+- `StrategyConstraintBar` -- removed; row-two toggle chips now live directly in `PlanFullDensityView`
+- `TripAlertBanner` -- removed from plan surfaces
 
 ### TimelineVariant Mapping
 

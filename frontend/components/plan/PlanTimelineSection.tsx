@@ -65,7 +65,7 @@ export function PlanTimelineSection({
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to remove block';
       debugLog('[removeBlock] error:', msg);
-      toast(msg.includes('VERSION_CONFLICT') ? 'Version conflict — please retry' : msg, { type: 'error' });
+      toast(msg.includes('VERSION_CONFLICT') ? 'Version conflict — please retry' : 'Could not update timeline — try again', { type: 'error' });
     }
   }, [removeBlock, toast]);
 

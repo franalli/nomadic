@@ -118,6 +118,7 @@ from app.schemas import (  # noqa: E402
 )
 from app.services.spend_guard import (  # noqa: E402
     SpendLimitExceeded,
+    reserve_places_spend_or_raise,
     spend_guard_scope,
 )
 from app.services.unsplash import (  # noqa: E402
@@ -850,6 +851,14 @@ async def proxy_google_places_photo(
     )
     if not sig or not secrets.compare_digest(sig, expected_sig):
         raise HTTPException(status_code=403, detail="Invalid signed photo URL")
+
+    try:
+        with spend_guard_scope(session_id):
+            reserve_places_spend_or_raise(source="google_places_photo:proxy")
+    except SpendLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429, detail=str(exc), headers={"Retry-After": "60"}
+        ) from exc
 
     upstream_url = f"https://places.googleapis.com/v1/{photo_name}/media"
     params = {
@@ -3201,10 +3210,19 @@ def _canonical_poi_type_for_block(raw: Any) -> str | None:
         return "cultural"
     if any(
         token in key
-        for token in ("museum", "landmark", "historic", "monument", "plaza", "fountain")
+        for token in (
+            "museum",
+            "landmark",
+            "historic",
+            "monument",
+            "plaza",
+            "fountain",
+            "mosque",
+            "synagogue",
+        )
     ):
         return "cultural"
-    if any(token in key for token in ("temple", "church", "worship", "mosque", "synagogue")):
+    if any(token in key for token in ("temple", "church", "worship")):
         return "temples"
     if any(token in key for token in ("restaurant", "cafe", "bar", "bakery", "food", "meal")):
         return "food"

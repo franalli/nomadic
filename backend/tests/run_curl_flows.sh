@@ -304,6 +304,16 @@ fi
 $F4_OK && PASS=$((PASS+1)) && echo "  ══ Flow 4 PASS ══" || echo "  ══ Flow 4 FAIL ══"
 
 # =============================================================================
+# Refresh session before Flow 5 — Flows 1-4 use 7 requests on the same session,
+# which exhausts the 6/minute rate limit. A fresh session gets a new bucket.
+rm -f "$COOKIE_JAR"
+COOKIE_JAR=$(mktemp)
+INIT_CODE=$(curl -s -o "$RESP" -w "%{http_code}" -c "$COOKIE_JAR" \
+  http://localhost:8000/api/document)
+CSRF=$(grep csrf "$COOKIE_JAR" | awk '{print $NF}')
+echo ""
+echo "Session refreshed for Flows 5-6 (csrf=${CSRF:0:8}...)"
+
 echo ""
 echo "═══ Flow 5: Settings change mid-flow ═══"
 R5A=$(post '{"message":"I want to go to Bali for a week starting March 15"}')

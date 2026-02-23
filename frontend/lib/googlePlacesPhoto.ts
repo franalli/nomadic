@@ -1,3 +1,5 @@
+import { apiFetch } from './api';
+
 const GOOGLE_PLACES_PHOTO_NAME_RE = /^places\/[A-Za-z0-9_-]+\/photos\/[A-Za-z0-9_-]+$/;
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -68,11 +70,7 @@ export async function getSignedGooglePlacesPhotoProxyUrl(
       max_height: String(height),
       ttl_seconds: '300',
     });
-    const res = await fetch(`${API_BASE}/api/media/google-places-photo-url?${params.toString()}`, {
-      method: 'GET',
-      credentials: 'include',
-      cache: 'no-store',
-    });
+    const res = await apiFetch(`/api/media/google-places-photo-url?${params.toString()}`);
     if (!res.ok) return undefined;
 
     const payload = await res.json() as SignedGooglePlacesPhotoResponse;

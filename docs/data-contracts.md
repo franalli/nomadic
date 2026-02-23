@@ -19,6 +19,8 @@
 | ------ | -------------------------- | --------------------------------------- | ---------------------------- | ----------------------------- |
 | POST   | `/api/validate-trip-input` | LLM-based origin/destination validation | `TripInputValidationRequest` | `TripInputValidationResponse` |
 | POST   | `/api/destination-image`   | Unsplash banner image for destination   | `DestinationImageRequest`    | `DestinationImageResponse`    |
+| GET    | `/api/media/google-places-photo-url` | Issue short-lived signed URL for Places photo proxy | Query params: `name`, `max_width?`, `max_height?`, `ttl_seconds?` | `{url, expires_in_seconds}` |
+| GET    | `/api/media/google-places-photo` | Session-bound Google Places photo proxy (signed) | Query params: `name`, `max_width?`, `max_height?`, `exp`, `sig` | Image bytes (`image/*`) |
 
 ### Tiles & Suggestions
 
@@ -106,6 +108,7 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests are
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
 | **Heavy (stream)**       | `graph_plan/stream`                                                                                                      | 20/min, 120/hr                                  |
 | **Heavy (builder-only)** | `expand-itinerary`                                                                                                       | 20/min (no LLM — frontend mutex prevents abuse) |
+| **Media proxy**          | `media/google-places-photo`, `media/google-places-photo-url`                                                           | 120/min (proxy), 240/min (signed URL)           |
 | **Medium**               | `validate-trip-input`, `destination-image`, `tiles/refresh`                                                              | 15/min                                          |
 | **Medium-Low**           | `document/fill-day`                                                                                                      | 30/min                                          |
 | **Light**                | `document` (GET+PATCH), `document/tiles/{branch_id}`, `chat`, `chat/last`, `session`, `tiles/click`, `document/validate-arrangement` | 60/min                                          |
@@ -123,6 +126,7 @@ Keyed by session cookie → IP fallback. CORS preflight (`OPTIONS`) requests are
 - **Session middleware:** Skips `/health` (no session cookie overhead on health checks). Max 10 new sessions per IP per hour
 - **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP (thread-safe slot reserve/release). SSE state extracted to `backend/app/sse_state.py` to break circular import between `main.py` and `lifespan.py`
 - **Fill-day/session ordering:** `/api/document/fill-day` waits until no active graph SSE stream exists for that session
+- **Places photo spend guard:** `/api/media/google-places-photo` reserves Google Places spend via `spend_guard_scope`; when session budget is exceeded it returns HTTP 429 with `Retry-After: 60`
 - **Frontend CSP:** Configured in `next.config.mjs` — `unsafe-eval` allowed in dev only
 
 ### Config Settings (`backend/app/config.py`)

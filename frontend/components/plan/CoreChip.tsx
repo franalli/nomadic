@@ -72,7 +72,7 @@ export const CoreChip = memo(function CoreChip({
 
         // === DEFAULT VARIANT (for normal page backgrounds) ===
         // Compact sizing for non-hero contexts
-        !isOnImage && 'inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full border text-sm',
+        !isOnImage && 'inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full border text-sm shadow-none hover:shadow-none',
 
         // === DEFAULT VARIANT (for normal page backgrounds) ===
         !isOnImage && hasValue && 'border-[var(--chip-active-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)] font-semibold',

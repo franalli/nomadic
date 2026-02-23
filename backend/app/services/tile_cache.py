@@ -228,6 +228,7 @@ async def set_cached_tiles(
         logger.info(f"[TILE_CACHE] Wrote: {cache_key} ({len(tiles)} tiles)")
     except OperationalError as e:
         logger.warning(f"[TILE_CACHE] L2 write failed (DB error): {e}")
+        await db.rollback()
     except Exception as e:
         logger.error(f"[TILE_CACHE] Write error: {e}")
         await db.rollback()

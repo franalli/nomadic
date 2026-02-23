@@ -52,7 +52,7 @@ frontend/
                      CoreChip, UnifiedChipRow, TripHealthBar, TripSummaryPills,
                      ItineraryProgressIndicator, OriginPromptCard,
                      DestinationMapPlaceholder, PlanDensityViews, PlanFullDensityView,
-                     PlanSpecialistsSection, PlanTimelineSection, StrategyConstraintBar,
+                     PlanTimelineSection,
                      BrowseActivitiesSheet, useBookingDrawerState, useStrategyStageOrchestration
       booking/     → BookingDrawer, CategorySection, CheckoutSidebar
       modals/      → AlternativesModal
@@ -87,7 +87,7 @@ frontend/
   types/           → chat.ts, document.ts, generated.ts, hooks.ts, loader.ts,
                      plan-envelope.ts, sheets.ts, summary.ts, tile.ts
   lib/             → design-system.ts, api.ts, animation-config.ts, streamParser.ts,
-                     chipStyles.ts, tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
+                     tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
                      specialists.ts, utils.ts, contentPolicyGuard.ts,
                      ghost-timeline-adapter.ts, fillDayGuards.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts,

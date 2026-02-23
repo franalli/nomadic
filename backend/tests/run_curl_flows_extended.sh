@@ -483,14 +483,14 @@ T1_END=$(python3 -c "import time; print(int(time.time()*1000))")
 T1_MS=$((T1_END - T1_START))
 echo "  ⏱  Turn 1 latency: ${T1_MS}ms"
 
-# Extract structural fingerprint (section count + specialist types + content count)
-# Exact titles vary across LLM calls even with cache, so compare structure not content
+# Extract structural fingerprint (section count + specialist types).
+# content_added counts are NOT included — they depend on downstream LLM nodes
+# (architect, itinerary builder) which are non-deterministic even on cache hit.
 FINGERPRINT_1=$(extract_from_sse_document "strategy_sections" | python3 -c "
 import sys, json
 sections = json.load(sys.stdin)
 types = sorted(s.get('specialist_type', '?') for s in sections)
-counts = sorted(len(s.get('content_added', [])) for s in sections)
-print(f'{len(sections)}|{\"|\".join(types)}|{\"|\".join(str(c) for c in counts)}')
+print(f'{len(sections)}|{\"|\".join(types)}')
 " 2>/dev/null || echo "")
 echo "  Fingerprint 1: $FINGERPRINT_1"
 
@@ -510,8 +510,7 @@ FINGERPRINT_2=$(extract_from_sse_document "strategy_sections" | python3 -c "
 import sys, json
 sections = json.load(sys.stdin)
 types = sorted(s.get('specialist_type', '?') for s in sections)
-counts = sorted(len(s.get('content_added', [])) for s in sections)
-print(f'{len(sections)}|{\"|\".join(types)}|{\"|\".join(str(c) for c in counts)}')
+print(f'{len(sections)}|{\"|\".join(types)}')
 " 2>/dev/null || echo "")
 echo "  Fingerprint 2: $FINGERPRINT_2"
 

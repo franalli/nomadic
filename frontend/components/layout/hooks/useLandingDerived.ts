@@ -106,7 +106,7 @@ export function useLandingDerived({
   docCanExpand,
   destinationImageUrl,
   isGenerating,
-  hasEverHadPlan,
+  hasEverHadPlan: _hasEverHadPlan,
   userRequestedGeneration,
   uiGeneration,
   localPendingTopics,
@@ -184,47 +184,21 @@ export function useLandingDerived({
   const hasDayCardsReady = (docDayCards?.length ?? 0) > 0;
 
   const planViewState: PlanViewState = useMemo(() => {
-    // Hard gate: right-side plan view stays closed until destination + full dates are set.
+    // Hard gate: plan view stays closed until destination + full dates are set.
     if (!hasPlanPrerequisites) {
       return 'S0_BOOTSTRAP';
     }
 
-    // Backend is authoritative for non-bootstrap states.
-    // Bootstrap can be treated as "no authoritative plan yet" so local loading
-    // heuristics can still drive the framing state during first generation.
-    if (backendPlanViewState && backendPlanViewState !== 'S0_BOOTSTRAP') {
+    // Backend is authoritative for plan view state.
+    if (backendPlanViewState) {
       return backendPlanViewState;
     }
 
-    // Before user clicks "Build Plan", stay in Setup mode
-    if (!hasEverHadPlan && !userRequestedGeneration && !hasTilesReady) {
-      return 'S0_BOOTSTRAP';
-    }
-
-    // During generation, show loading state
+    // Backend state not yet received — show loading during active generation.
     if (isGenerating && userRequestedGeneration) return 'S1_FRAMING';
 
-    // Derive fallback when backend has not sent plan_view_state yet.
-    if (hasEverHadPlan) {
-      if (hasTilesReady) return 'S2_STRATEGY_READY';
-      return hasStrategyContent ? 'S2_STRATEGY_READY' : 'S2_BLOCKED';
-    }
-
-    // User requested generation but plan not ready yet
-    if (userRequestedGeneration) {
-      return 'S1_FRAMING';
-    }
-
     return 'S0_BOOTSTRAP';
-  }, [
-    hasPlanPrerequisites,
-    backendPlanViewState,
-    isGenerating,
-    hasStrategyContent,
-    hasEverHadPlan,
-    userRequestedGeneration,
-    hasTilesReady,
-  ]);
+  }, [hasPlanPrerequisites, backendPlanViewState, isGenerating, userRequestedGeneration]);
 
   // Merge pending topics: backend + local optimistic
   const mergedPendingTopics = useMemo(() => {

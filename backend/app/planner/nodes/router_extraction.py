@@ -324,6 +324,9 @@ Respond with valid JSON matching this schema:
 
 
 # Extended prompt for full field extraction (used when we need dates/destination too)
+# Hard Rule 11 exception: Few-shot city normalization examples and IATA hints in the
+# prompt below improve LLM extraction accuracy. These are prompt instructions, not
+# logic branches — the LLM handles any destination without them.
 ROUTER_EXTRACTION_PROMPT = (
     """You are an intent classifier AND field extractor \
 for a travel planning assistant.
