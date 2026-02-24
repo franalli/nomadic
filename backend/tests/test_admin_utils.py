@@ -40,7 +40,7 @@ class TestGetPlannerDebugInfo:
 
     def test_contains_required_keys(self):
         result = get_planner_debug_info()
-        required = {"version", "build_id", "cache_schema", "prompt_hash", "graph_nodes"}
+        required = {"version", "build_id", "cache_schema", "prompt_hash", "architecture", "tools"}
         assert required.issubset(result.keys())
 
     def test_version_is_string(self):
@@ -59,10 +59,10 @@ class TestGetPlannerDebugInfo:
         result = get_planner_debug_info()
         assert result["prompt_hash"] == PROMPT_BUNDLE_HASH
 
-    def test_graph_nodes_is_list(self):
+    def test_tools_is_list(self):
         result = get_planner_debug_info()
-        assert isinstance(result["graph_nodes"], list)
-        assert len(result["graph_nodes"]) > 0
+        assert isinstance(result["tools"], list)
+        assert len(result["tools"]) == 6
 
 
 class TestGetGraphStats:
@@ -74,19 +74,20 @@ class TestGetGraphStats:
 
     def test_contains_required_keys(self):
         result = get_graph_stats()
-        assert "nodes" in result
-        assert "edges" in result
+        assert "architecture" in result
+        assert "tools" in result
+        assert "middleware" in result
         assert "version" in result
 
-    def test_nodes_is_int(self):
+    def test_tools_is_int(self):
         result = get_graph_stats()
-        assert isinstance(result["nodes"], int)
-        assert result["nodes"] > 0
+        assert isinstance(result["tools"], int)
+        assert result["tools"] == 6
 
-    def test_edges_is_int(self):
+    def test_middleware_is_int(self):
         result = get_graph_stats()
-        assert isinstance(result["edges"], int)
-        assert result["edges"] > 0
+        assert isinstance(result["middleware"], int)
+        assert result["middleware"] == 4
 
     def test_version_is_string(self):
         result = get_graph_stats()

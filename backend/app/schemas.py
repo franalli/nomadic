@@ -270,11 +270,12 @@ class SuggestionChip(BaseModel):
 class GraphPlanRequest(BaseModel):
     """Request schema for graph-based planning entrypoint."""
 
-    message: str
+    message: str = Field(max_length=2000)
     trip_inputs: dict = Field(default_factory=dict)
     session_state: dict | None = None
     document_id: str | None = Field(
         default=None,
+        max_length=200,
         description="Optional document ID for persistence and optimistic concurrency",
     )
     expected_version: int | None = Field(
@@ -283,6 +284,7 @@ class GraphPlanRequest(BaseModel):
     )
     thread_id: str | None = Field(
         default=None,
+        max_length=200,
         description="Optional thread ID for conversation tracking",
     )
     reset: bool = Field(
@@ -293,7 +295,9 @@ class GraphPlanRequest(BaseModel):
         ),
     )
     ui_phase: Optional[Literal["bootstrap", "expanded"]] = None  # "chips-only" vs "full planner"
-    suggestion_clicked: Optional[str] = None  # Text of clicked suggestion chip (enables LQA echo)
+    suggestion_clicked: Optional[str] = Field(
+        default=None, max_length=500
+    )  # Text of clicked suggestion chip (enables LQA echo)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -984,7 +988,7 @@ class TripInputValidationRequest(BaseModel):
     """Request to validate a trip input (origin or destination)."""
 
     field_type: Literal["origin", "destination"]
-    value: str
+    value: str = Field(max_length=200)
 
 
 class TripInputValidationResponse(BaseModel):
@@ -1097,9 +1101,9 @@ class SpecialistEnrichmentResponse(BaseModel):
 class BrowseActivitiesRequest(BaseModel):
     """Request to browse activities via Google Places for a free/buffer day."""
 
-    destination: str
+    destination: str = Field(max_length=200)
     day_number: Optional[int] = None
-    date: Optional[str] = None
+    date: Optional[str] = Field(default=None, max_length=50)
     hotel_location: Optional[Dict[str, float]] = None  # {"lat": ..., "lng": ...}
     categories: List[str] = Field(
         default_factory=lambda: ["cultural", "food", "nature", "tours"],

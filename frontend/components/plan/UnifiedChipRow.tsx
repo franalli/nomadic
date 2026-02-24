@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * UnifiedChipRow - "Cockpit" Layout
  *
@@ -16,8 +18,6 @@
  * - Semantic grouping: "what you're planning" vs "what we'll search for"
  * - "Cockpit" aesthetic - all instruments readable at ≥380px panel width
  */
-
-'use client';
 
 import {
   Calendar,

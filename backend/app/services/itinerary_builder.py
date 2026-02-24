@@ -25,7 +25,12 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from app.debug_utils import _debug, _debug_itinerary
-from app.planner.specialist_registry import ALL_CONSTRAINT_ALIASES
+from app.planner.specialist_registry import (
+    ALL_CONSTRAINT_ALIASES,
+    get_cross_domain_buffer_days,
+    get_cross_domain_target_specialists,
+    get_nofly_buffer_days,
+)
 from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES as _TIER1_SPECIALIST_NAMES
 from app.planner.state import ConstraintSeverity
 
@@ -367,7 +372,8 @@ _CANONICAL_POI_TYPES: set[str] = set(_TIER1_SPECIALIST_NAMES) | {
 }
 
 # Raw provider categories/types -> canonical map-pin category.
-_POI_TYPE_ALIASES: dict[str, str] = {
+# Canonical source — also imported by main.py for insert-activity-block endpoint.
+POI_TYPE_ALIASES: dict[str, str] = {
     # Browse / Tier-2 canonical categories
     "culture": "cultural",
     "cultural": "cultural",
@@ -892,13 +898,14 @@ class ItineraryBuilder:
         # Check for diving no-fly buffer (with alias support)
         nofly_constraint = _find_constraint(constraints, "min_24h_buffer_after_dive")
         if nofly_constraint:
-            buffer_days = 1
+            buffer_days = get_nofly_buffer_days("diving")
             self._nofly_buffer_days = buffer_days
             _debug(f"[ItineraryBuilder] No-fly constraint found: rule={nofly_constraint.rule}")
 
         # Cross-domain check: diving + high-altitude activity conflict
         diving_present = "diving" in activities_by_specialist
-        altitude_activities = ["hiking", "trekking", "mountaineering", "skiing", "climbing"]
+        # Altitude specialists derived from diving's cross-domain blocks in specialist_registry
+        altitude_activities = get_cross_domain_target_specialists("diving")
         altitude_specialists_present = [
             spec for spec in altitude_activities if spec in activities_by_specialist
         ]
@@ -923,9 +930,10 @@ class ItineraryBuilder:
                 altitude_days = sum(
                     len(activities_by_specialist.get(spec, [])) for spec in altitude_activities
                 )
-                altitude_buffer = 1  # 24h buffer between diving and altitude
+                # Buffer days derived from diving's cross-domain constraint in registry
+                altitude_buffer = get_cross_domain_buffer_days("diving")
 
-                # Account for arrival/departure days
+                # Arrival + departure days are partial (scheduling convention)
                 usable_days = total_days - 2
 
                 # Calculate required days for diving + buffer + altitude activities
@@ -1074,7 +1082,8 @@ class ItineraryBuilder:
 
         # Determine primary specialist (priority: diving > hiking > skiing > other)
         primary_specialist = None
-        altitude_activities = ["hiking", "trekking", "mountaineering", "skiing", "climbing"]
+        # Altitude specialists derived from diving's cross-domain blocks in specialist_registry
+        altitude_activities = get_cross_domain_target_specialists("diving")
 
         if cross_domain_conflict and diving_present:
             # Diving takes priority in cross-domain conflicts
@@ -3228,8 +3237,8 @@ class ItineraryBuilder:
         key = cls._normalize_map_type_key(raw)
         if not key:
             return None
-        if key in _POI_TYPE_ALIASES:
-            return _POI_TYPE_ALIASES[key]
+        if key in POI_TYPE_ALIASES:
+            return POI_TYPE_ALIASES[key]
         if key in _CANONICAL_POI_TYPES:
             return key
         # Pattern fallback for uncatalogued Google Places primaryType values.

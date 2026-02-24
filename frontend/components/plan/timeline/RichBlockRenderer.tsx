@@ -15,6 +15,7 @@
  */
 
 import { useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { useDocumentStore } from '@/state/documentStore';
@@ -170,8 +171,9 @@ export function RichBlockRenderer({
   onRemoveBlock,
   isHighlighted,
 }: RichBlockRendererProps) {
-  const tiles = useDocumentStore((state) => state.document?.tiles);
-  const branches = useDocumentStore((state) => state.document?.branches);
+  const { tiles, branches } = useDocumentStore(
+    useShallow((state) => ({ tiles: state.document?.tiles, branches: state.document?.branches }))
+  );
   const selectedBranchId = useDocumentStore((state) => state.selectedBranchId);
   const selectedStayTile = useMemo(
     () => resolveSelectedStayTile(branches, selectedBranchId, tiles),

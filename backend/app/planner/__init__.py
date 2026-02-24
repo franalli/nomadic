@@ -6,7 +6,6 @@ This module exports the stable public API for the planner.
 External code should import from here, not from plan_graph.py directly.
 
 Usage:
-    from app.planner import run_turn, run_turn_streaming
     from app.planner import GraphState
     from app.planner import get_planner_debug_info
 """
@@ -46,16 +45,12 @@ from app.planner.test_mode import (
 
 # Type checking imports (no runtime cost)
 if TYPE_CHECKING:
-    from app.plan_graph import (
-        clear_all_caches,
-        run_turn,
-        run_turn_streaming,
-    )
     from app.planner.services.admin_utils import (
         CACHE_SCHEMA_VERSION,
         PLANNER_BUILD_ID,
         PROMPT_BUNDLE_HASH,
         checkpoint_stats,
+        clear_all_caches,
         clear_all_checkpoints,
         clear_response_caches,
         clear_session_checkpoint,
@@ -74,20 +69,14 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str):
-    """Lazy import for plan_graph and admin_utils exports to avoid circular imports."""
-    # Functions still in plan_graph.py
-    _PLAN_GRAPH_EXPORTS = {
-        "clear_all_caches",  # Kept in plan_graph (mutates global _graph)
-        "run_turn",
-        "run_turn_streaming",
-    }
-
-    # Functions extracted to admin_utils.py
+    """Lazy import for admin_utils and state_serde exports to avoid circular imports."""
+    # Functions in admin_utils.py
     _ADMIN_UTILS_EXPORTS = {
         "CACHE_SCHEMA_VERSION",
         "PLANNER_BUILD_ID",
         "PROMPT_BUNDLE_HASH",
         "checkpoint_stats",
+        "clear_all_caches",
         "clear_all_checkpoints",
         "clear_response_caches",
         "clear_session_checkpoint",
@@ -106,11 +95,6 @@ def __getattr__(name: str):
         "trip_plan_to_trip_inputs",
     }
 
-    if name in _PLAN_GRAPH_EXPORTS:
-        from app import plan_graph
-
-        return getattr(plan_graph, name)
-
     if name in _ADMIN_UTILS_EXPORTS:
         from app.planner.services import admin_utils
 
@@ -125,9 +109,6 @@ def __getattr__(name: str):
 
 
 __all__ = [
-    # Entry points
-    "run_turn",
-    "run_turn_streaming",
     # State types
     "GraphState",
     # State models

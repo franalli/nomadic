@@ -11,6 +11,7 @@ Usage:
 
 import asyncio
 import logging
+import threading
 import uuid
 from typing import List, Optional
 
@@ -26,6 +27,8 @@ from .models import SearchContext
 from .provider_base import Provider
 
 logger = logging.getLogger(__name__)
+
+_amadeus_singleton_lock = threading.Lock()
 
 
 def _normalize_city_for_amadeus(city: str) -> str:
@@ -93,15 +96,12 @@ class AmadeusFlightProvider(Provider):
     def _get_client(self) -> AmadeusClient:
         """Get or create the Amadeus client (uses singleton)."""
         if self._client is None:
-            # AmadeusClient._instance is set by get_instance() during startup.
-            # Access it directly here since we're in a sync context (thread pool).
-            # Fallback writes _instance only when get_instance() hasn't run yet.
-            instance = AmadeusClient._instance
-            if instance is None:
-                # Fallback: create and register for lifecycle cleanup
-                instance = AmadeusClient()
-                AmadeusClient._instance = instance
-            self._client = instance
+            with _amadeus_singleton_lock:
+                instance = AmadeusClient._instance
+                if instance is None:
+                    instance = AmadeusClient()
+                    AmadeusClient._instance = instance
+                self._client = instance
         return self._client
 
     def search(self, ctx: SearchContext) -> List[Tile]:
@@ -277,15 +277,12 @@ class AmadeusHotelProvider(Provider):
     def _get_client(self) -> AmadeusClient:
         """Get or create the Amadeus client (uses singleton)."""
         if self._client is None:
-            # AmadeusClient._instance is set by get_instance() during startup.
-            # Access it directly here since we're in a sync context (thread pool).
-            # Fallback writes _instance only when get_instance() hasn't run yet.
-            instance = AmadeusClient._instance
-            if instance is None:
-                # Fallback: create and register for lifecycle cleanup
-                instance = AmadeusClient()
-                AmadeusClient._instance = instance
-            self._client = instance
+            with _amadeus_singleton_lock:
+                instance = AmadeusClient._instance
+                if instance is None:
+                    instance = AmadeusClient()
+                    AmadeusClient._instance = instance
+                self._client = instance
         return self._client
 
     def search(self, ctx: SearchContext) -> List[Tile]:

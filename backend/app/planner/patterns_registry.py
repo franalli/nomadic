@@ -1,7 +1,7 @@
 """
 Centralized regex/keyword pattern registries for the planner.
 
-Imported by intent_router.py and trip_architect.py.
+Imported by router_extraction.py and planner tools.
 Keep pattern order intact — TRAVELER_PATTERNS is order-sensitive (most specific first).
 """
 

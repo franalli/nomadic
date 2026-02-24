@@ -304,6 +304,7 @@ _GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 # _geocode_lock guards async reads/writes to prevent TOCTOU races in multi-worker prod.
 _geocode_cache: dict[str, tuple[float, float] | None] = {}
 _geocode_lock = asyncio.Lock()
+_geocode_thread_lock = Lock()
 
 
 async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
@@ -383,13 +384,16 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
 def _geocode_destination(dest: str) -> tuple[float, float] | None:
     """Sync version of geocoder (used by tile_service/service.py sync path).
 
-    No lock needed here — sync path runs in a single thread (no concurrent writes).
+    Uses _geocode_thread_lock to guard _geocode_cache against concurrent
+    sync-path access. Note: the async path uses a separate asyncio.Lock;
+    GIL provides atomicity for simple dict ops across both paths.
     """
     key = dest.lower().strip()
     path = "geocode"
-    if key in _geocode_cache:
-        record_google_places_usage(path, "cache_hit", cache="geocode")
-        return _geocode_cache[key]
+    with _geocode_thread_lock:
+        if key in _geocode_cache:
+            record_google_places_usage(path, "cache_hit", cache="geocode")
+            return _geocode_cache[key]
     record_google_places_usage(path, "cache_miss", cache="geocode")
 
     if _is_places_circuit_open(path):
@@ -423,10 +427,12 @@ def _geocode_destination(dest: str) -> tuple[float, float] | None:
             if results:
                 loc = results[0]["geometry"]["location"]
                 coords: tuple[float, float] = (loc["lat"], loc["lng"])
-                _geocode_cache[key] = coords
+                with _geocode_thread_lock:
+                    _geocode_cache[key] = coords
                 record_google_places_usage(path, "success", mode="geocode")
                 return coords
-            _geocode_cache[key] = None
+            with _geocode_thread_lock:
+                _geocode_cache[key] = None
             record_google_places_usage(path, "empty", mode="geocode")
     except SpendLimitExceeded as exc:
         record_google_places_usage(path, "error", reason="spend_cap", mode="geocode")

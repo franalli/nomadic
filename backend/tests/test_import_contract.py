@@ -17,9 +17,9 @@ BANNED_IMPORT_PATTERNS = [
     r"import\s+app\.plan_graph",
 ]
 
-# Directories/files allowed to import directly from plan_graph_v2
+# Directories/files allowed to import directly from plan_graph
 ALLOWLIST_PATHS = [
-    # The planner package itself can import from plan_graph_v2
+    # The planner package itself can import from plan_graph
     "backend/app/planner/",
     # Tests can import directly (for now)
     "backend/tests/",
@@ -146,18 +146,6 @@ class TestPlannerFacadeExports:
 
         assert planner is not None
 
-    def test_facade_exports_run_turn(self):
-        """run_turn should be exported from facade."""
-        from app.planner import run_turn
-
-        assert callable(run_turn)
-
-    def test_facade_exports_run_turn_streaming(self):
-        """run_turn_streaming should be exported from facade."""
-        from app.planner import run_turn_streaming
-
-        assert run_turn_streaming is not None
-
     def test_facade_exports_graph_state(self):
         """GraphState should be exported from facade."""
         from app.planner import GraphState
@@ -195,14 +183,12 @@ class TestPlannerFacadeExports:
         from app import planner
 
         expected_exports = [
-            "run_turn",
-            "run_turn_streaming",
             "GraphState",
             "get_planner_debug_info",
             "is_test_mode",
             # State models
-            "GraphState",
             "TripPlan",
+            "clear_all_caches",
         ]
 
         for export in expected_exports:

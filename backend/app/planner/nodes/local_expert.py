@@ -570,6 +570,247 @@ def _build_section_from_cached_output(destination: str, response: LocalExpertOut
 
 
 # =============================================================================
+# Shared Phase B enrichment closure — used by both the local_expert node
+# and the get_local_intel tool to avoid duplicated LLM/cache/persist logic.
+# =============================================================================
+
+
+def build_enrichment_closure(
+    destination: str,
+    start_date: str | None,
+    end_date: str | None,
+    adults: int,
+    children: int,
+    session_id: str = "",
+) -> object:
+    """Build the Phase B enrichment async callable.
+
+    Returns an async function that, when awaited, runs the local expert LLM
+    enrichment and persists travel_intelligence to the DB. Both the
+    ``local_expert`` graph node and the ``get_local_intel`` agent tool call
+    this factory so the enrichment logic lives in exactly one place.
+
+    Parameters
+    ----------
+    destination : str
+        Target destination (e.g. "Bali").
+    start_date, end_date : str | None
+        Trip date range (ISO-8601 or None).
+    adults, children : int
+        Traveler counts.
+    session_id : str
+        Session token for DB persistence. Empty string skips DB writes.
+    """
+    # Build the prompt from snapshotted values — closure is fully self-contained
+    prompts_dir = Path(__file__).parent.parent.parent / "prompts" / "specialists"
+    prompt_file = prompts_dir / "local_expert.txt"
+
+    if prompt_file.exists():
+        system_prompt = prompt_file.read_text()
+    else:
+        system_prompt = """You are a local logistics expert. Provide:
+1. Constraints: Opening hours, booking requirements, seasonal considerations
+2. Recommendations: Transit passes, efficiency tips, cultural notes
+Output as JSON with "constraints" and "recommendations" arrays."""
+
+    constraint_context = _get_constraint_context(destination)
+    if constraint_context:
+        system_prompt += constraint_context
+
+    system_prompt += (
+        "\n\nRespond ONLY with valid JSON (no markdown fences, no commentary) "
+        f"matching this schema:\n{_LOCAL_EXPERT_SCHEMA_JSON}"
+    )
+
+    user_context = (
+        f"Destination: {destination}\n"
+        f"Dates: {start_date or 'Not specified'} to {end_date or 'Not specified'}\n"
+        f"Travelers: {adults} adults" + (f", {children} children" if children else "")
+    )
+
+    # Snapshot all values so the closure captures only immutable strings/ints
+    _system_prompt = system_prompt
+    _user_context = user_context
+    _destination = destination
+    _session_id = session_id or ""
+
+    async def _enrich() -> None:
+        """Background LLM enrichment — writes travel_intelligence to DB."""
+        destination_key = (_destination or "").strip().lower()
+
+        async with _active_enrichment_lock:
+            if destination_key and destination_key in _active_destination_enrichments:
+                logger.debug(
+                    "LOCAL_EXPERT Phase B: in-flight dedupe HIT for %s — skipping",
+                    _destination,
+                )
+                return
+            if destination_key:
+                _active_destination_enrichments.add(destination_key)
+
+        try:
+            # Destination-scoped cache check (L1 memory -> L2 response_cache)
+            from app.db import _get_async_session_factory
+            from app.services.specialist_cache import get_cached_specialist_output
+
+            async_session_factory = _get_async_session_factory()
+            cached_payload = None
+            try:
+                async with async_session_factory() as cache_db:
+                    cached_payload = await get_cached_specialist_output(
+                        cache_db,
+                        topic="local_expert",
+                        destination=_destination,
+                        start_date=None,
+                        end_date=None,
+                        skill_level=None,
+                        day_pref=None,
+                    )
+            except Exception as cache_err:
+                logger.debug("LOCAL_EXPERT Phase B cache lookup failed (non-fatal): %s", cache_err)
+
+            if cached_payload:
+                try:
+                    response = LocalExpertOutput.model_validate(cached_payload)
+                    response = _enrich_legacy_lists(response)
+                    if _has_rich_local_expert_output(response):
+                        logger.debug("LOCAL_EXPERT Phase B cache HIT for %s", _destination)
+                        if _session_id:
+                            await _persist_travel_intelligence(
+                                _session_id,
+                                response,
+                                enrichment_state="ready",
+                            )
+                        return
+                    logger.debug(
+                        "LOCAL_EXPERT Phase B cache BYPASS for %s: sparse payload",
+                        _destination,
+                    )
+                except ValidationError:
+                    logger.debug("LOCAL_EXPERT Phase B cache payload invalid — falling back to LLM")
+
+            llm = get_llm_by_model(
+                settings.local_expert_model,
+                temperature=0.3,
+                max_retries=0,
+                max_tokens=8000,
+            )
+            logger.debug("LOCAL_EXPERT Phase B: calling LLM (%s)...", settings.local_expert_model)
+
+            raw = await asyncio.wait_for(
+                llm.ainvoke(
+                    [
+                        SystemMessage(content=_system_prompt),
+                        HumanMessage(content=_user_context),
+                    ]
+                ),
+                timeout=60,
+            )
+            logger.debug("LOCAL_EXPERT Phase B: LLM call completed")
+
+            content = extract_json_content(raw)
+            if not content:
+                if _session_id:
+                    await _persist_travel_intelligence(
+                        _session_id,
+                        None,
+                        enrichment_state="failed",
+                        error_code="parse_error",
+                    )
+                logger.debug("LOCAL_EXPERT Phase B: LLM returned empty content — marked failed")
+                return
+
+            response = LocalExpertOutput.model_validate_json(content)
+            response = _enrich_legacy_lists(response)
+
+            # Best-effort cache write for future destination-scoped reuse.
+            from app.services.specialist_cache import set_cached_specialist_output
+
+            try:
+                async with async_session_factory() as cache_db:
+                    await set_cached_specialist_output(
+                        cache_db,
+                        topic="local_expert",
+                        destination=_destination,
+                        start_date=None,
+                        end_date=None,
+                        output=response.model_dump(),
+                        skill_level=None,
+                        day_pref=None,
+                    )
+                logger.debug("LOCAL_EXPERT Phase B cache WRITE for %s", _destination)
+            except Exception as cache_err:
+                logger.debug("LOCAL_EXPERT Phase B cache write failed (non-fatal): %s", cache_err)
+
+            token_usage = extract_token_usage(raw, model=settings.local_expert_model)
+            if token_usage:
+                from app.debug_utils import calculate_llm_cost
+
+                _p = token_usage.get("prompt_tokens", 0)
+                _c = token_usage.get("completion_tokens", 0)
+                _cost = calculate_llm_cost(settings.local_expert_model, _p, _c)
+                logger.debug(
+                    "LOCAL_EXPERT Phase B: p=%d c=%d tot=%d $%.4f (%s)",
+                    _p,
+                    _c,
+                    _p + _c,
+                    _cost,
+                    settings.local_expert_model,
+                )
+
+            if _session_id:
+                await _persist_travel_intelligence(
+                    _session_id,
+                    response,
+                    enrichment_state="ready",
+                )
+                logger.debug(
+                    "LOCAL_EXPERT Phase B: travel_intelligence persisted for session %s",
+                    _session_id,
+                )
+            else:
+                logger.debug("LOCAL_EXPERT Phase B: no session_id — skipping DB persist")
+
+        except asyncio.CancelledError:
+            logger.debug("LOCAL_EXPERT Phase B: enrichment task cancelled")
+        except (ValidationError, json.JSONDecodeError, asyncio.TimeoutError, ValueError) as e:
+            import traceback
+
+            from app.debug_utils import _debug_error
+
+            _debug_error(f"LOCAL_EXPERT Phase B parse/timeout error: {e}\n{traceback.format_exc()}")
+            if _session_id:
+                error_code = "timeout" if isinstance(e, asyncio.TimeoutError) else "parse_error"
+                await _persist_travel_intelligence(
+                    _session_id,
+                    None,
+                    enrichment_state="failed",
+                    error_code=error_code,
+                )
+            logger.debug("LOCAL_EXPERT Phase B: non-fatal LLM error: %s", type(e).__name__)
+        except Exception as e:
+            import traceback
+
+            from app.debug_utils import _debug_error
+
+            _debug_error(f"LOCAL_EXPERT Phase B unexpected error: {e}\n{traceback.format_exc()}")
+            if _session_id:
+                await _persist_travel_intelligence(
+                    _session_id,
+                    None,
+                    enrichment_state="failed",
+                    error_code="llm_error",
+                )
+            logger.debug("LOCAL_EXPERT Phase B: non-fatal unexpected error: %s", type(e).__name__)
+        finally:
+            if destination_key:
+                async with _active_enrichment_lock:
+                    _active_destination_enrichments.discard(destination_key)
+
+    return _enrich
+
+
+# =============================================================================
 # Local Expert Node
 # =============================================================================
 
@@ -804,229 +1045,15 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     if settings.local_expert_use_llm:
         # Snapshot all values needed by the background closure — no live state capture
         _session_id = state.metadata.get("session_id")
-        _b_destination = plan.destination
-        _b_start_date = plan.start_date
-        _b_end_date = plan.end_date
-        _b_adults = plan.adults
-        _b_children = plan.children
 
-        # Build the prompt for the background LLM call
-        prompts_dir = Path(__file__).parent.parent.parent / "prompts" / "specialists"
-        prompt_file = prompts_dir / "local_expert.txt"
-
-        if prompt_file.exists():
-            system_prompt = prompt_file.read_text()
-        else:
-            system_prompt = """You are a local logistics expert. Provide:
-1. Constraints: Opening hours, booking requirements, seasonal considerations
-2. Recommendations: Transit passes, efficiency tips, cultural notes
-Output as JSON with "constraints" and "recommendations" arrays."""
-
-        # Inject known constraints as grounding context
-        constraint_context = _get_constraint_context(_b_destination)
-        if constraint_context:
-            system_prompt += constraint_context
-
-        system_prompt += (
-            "\n\nRespond ONLY with valid JSON (no markdown fences, no commentary) "
-            f"matching this schema:\n{_LOCAL_EXPERT_SCHEMA_JSON}"
+        _enrich = build_enrichment_closure(
+            destination=plan.destination,
+            start_date=plan.start_date,
+            end_date=plan.end_date,
+            adults=plan.adults,
+            children=plan.children,
+            session_id=_session_id or "",
         )
-
-        user_context = (
-            f"Destination: {_b_destination}\n"
-            f"Dates: {_b_start_date or 'Not specified'} to {_b_end_date or 'Not specified'}\n"
-            f"Travelers: {_b_adults} adults" + (f", {_b_children} children" if _b_children else "")
-        )
-
-        # Snapshot prompt strings so the closure is self-contained
-        _system_prompt = system_prompt
-        _user_context = user_context
-
-        async def _enrich() -> None:
-            """Background LLM enrichment — writes travel_intelligence to DB."""
-            destination_key = (_b_destination or "").strip().lower()
-
-            async with _active_enrichment_lock:
-                if destination_key and destination_key in _active_destination_enrichments:
-                    log(
-                        "LOCAL_EXPERT",
-                        f"Phase B: in-flight dedupe HIT for {_b_destination} — skipping duplicate run",
-                    )
-                    return
-                if destination_key:
-                    _active_destination_enrichments.add(destination_key)
-
-            try:
-                # Destination-scoped cache check (L1 memory -> L2 response_cache) to avoid
-                # repeated heavy local_expert enrichment calls across turns/sessions.
-                from app.db import _get_async_session_factory
-                from app.services.specialist_cache import get_cached_specialist_output
-
-                async_session_factory = _get_async_session_factory()
-                cached_payload = None
-                try:
-                    async with async_session_factory() as cache_db:
-                        cached_payload = await get_cached_specialist_output(
-                            cache_db,
-                            topic="local_expert",
-                            destination=_b_destination,
-                            # Destination-scoped key: don't include dates/skill/day_pref
-                            # so repeated destination queries reuse enrichment.
-                            start_date=None,
-                            end_date=None,
-                            skill_level=None,
-                            day_pref=None,
-                        )
-                except Exception as cache_err:
-                    log("LOCAL_EXPERT", f"Phase B cache lookup failed (non-fatal): {cache_err}")
-
-                if cached_payload:
-                    try:
-                        response = LocalExpertOutput.model_validate(cached_payload)
-                        response = _enrich_legacy_lists(response)
-                        if _has_rich_local_expert_output(response):
-                            log("LOCAL_EXPERT", f"Phase B cache HIT for {_b_destination}")
-                            if _session_id:
-                                await _persist_travel_intelligence(
-                                    _session_id,
-                                    response,
-                                    enrichment_state="ready",
-                                )
-                                log(
-                                    "LOCAL_EXPERT",
-                                    f"Phase B: cached travel_intelligence persisted for session {_session_id}",
-                                )
-                            return
-                        log(
-                            "LOCAL_EXPERT",
-                            f"Phase B cache BYPASS for {_b_destination}: sparse payload",
-                        )
-                    except ValidationError:
-                        # Cache schema drift should not fail enrichment; fall back to LLM.
-                        log("LOCAL_EXPERT", "Phase B cache payload invalid — falling back to LLM")
-
-                llm = get_llm_by_model(
-                    settings.local_expert_model,
-                    temperature=0.3,
-                    max_retries=0,
-                    max_tokens=8000,
-                )
-                log("LOCAL_EXPERT", f"Phase B: calling LLM ({settings.local_expert_model})...")
-
-                raw = await asyncio.wait_for(
-                    llm.ainvoke(
-                        [
-                            SystemMessage(content=_system_prompt),
-                            HumanMessage(content=_user_context),
-                        ]
-                    ),
-                    timeout=60,
-                )
-                log("LOCAL_EXPERT", "Phase B: LLM call completed")
-
-                content = extract_json_content(raw)
-                if not content:
-                    if _session_id:
-                        await _persist_travel_intelligence(
-                            _session_id,
-                            None,
-                            enrichment_state="failed",
-                            error_code="parse_error",
-                        )
-                    log("LOCAL_EXPERT", "Phase B: LLM returned empty content — marked failed")
-                    return
-
-                response = LocalExpertOutput.model_validate_json(content)
-                response = _enrich_legacy_lists(response)
-
-                # Best-effort cache write for future destination-scoped reuse.
-                from app.services.specialist_cache import set_cached_specialist_output
-
-                try:
-                    async with async_session_factory() as cache_db:
-                        await set_cached_specialist_output(
-                            cache_db,
-                            topic="local_expert",
-                            destination=_b_destination,
-                            start_date=None,
-                            end_date=None,
-                            output=response.model_dump(),
-                            skill_level=None,
-                            day_pref=None,
-                        )
-                    log("LOCAL_EXPERT", f"Phase B cache WRITE for {_b_destination}")
-                except Exception as cache_err:
-                    log("LOCAL_EXPERT", f"Phase B cache write failed (non-fatal): {cache_err}")
-
-                token_usage = extract_token_usage(raw, model=settings.local_expert_model)
-                if token_usage:
-                    from app.debug_utils import calculate_llm_cost
-
-                    _p = token_usage.get("prompt_tokens", 0)
-                    _c = token_usage.get("completion_tokens", 0)
-                    _cost = calculate_llm_cost(settings.local_expert_model, _p, _c)
-                    log(
-                        "LOCAL_EXPERT",
-                        f"Phase B: p={_p} c={_c} tot={_p + _c} "
-                        f"${_cost:.4f} ({settings.local_expert_model})",
-                    )
-
-                if _session_id:
-                    await _persist_travel_intelligence(
-                        _session_id,
-                        response,
-                        enrichment_state="ready",
-                    )
-                    log(
-                        "LOCAL_EXPERT",
-                        f"Phase B: travel_intelligence persisted for session {_session_id}",
-                    )
-                else:
-                    log(
-                        "LOCAL_EXPERT",
-                        "Phase B: no session_id in metadata — skipping DB persist",
-                    )
-
-            except asyncio.CancelledError:
-                # Background tasks may be cancelled on shutdown — log and exit cleanly
-                logger.debug("LOCAL_EXPERT Phase B: enrichment task cancelled")
-            except (ValidationError, json.JSONDecodeError, asyncio.TimeoutError, ValueError) as e:
-                import traceback
-
-                from app.debug_utils import _debug_error
-
-                _debug_error(
-                    f"LOCAL_EXPERT Phase B parse/timeout error: {e}\n{traceback.format_exc()}"
-                )
-                if _session_id:
-                    error_code = "timeout" if isinstance(e, asyncio.TimeoutError) else "parse_error"
-                    await _persist_travel_intelligence(
-                        _session_id,
-                        None,
-                        enrichment_state="failed",
-                        error_code=error_code,
-                    )
-                log("LOCAL_EXPERT", f"Phase B: non-fatal LLM error: {type(e).__name__}")
-            except Exception as e:
-                import traceback
-
-                from app.debug_utils import _debug_error
-
-                _debug_error(
-                    f"LOCAL_EXPERT Phase B unexpected error: {e}\n{traceback.format_exc()}"
-                )
-                if _session_id:
-                    await _persist_travel_intelligence(
-                        _session_id,
-                        None,
-                        enrichment_state="failed",
-                        error_code="llm_error",
-                    )
-                log("LOCAL_EXPERT", f"Phase B: non-fatal unexpected error: {type(e).__name__}")
-            finally:
-                if destination_key:
-                    async with _active_enrichment_lock:
-                        _active_destination_enrichments.discard(destination_key)
 
         # Stash enrichment coroutine-factory in module-level dict so streaming.py can fire it
         # after db.commit() — avoids cancellation by the graph's asyncio.timeout() context

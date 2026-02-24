@@ -1,44 +1,32 @@
 """
-Nodes Package - 7-Node Architecture.
+Nodes Package - Planner Agent Architecture.
 
-This package contains the "Core + Specialist" architecture nodes:
+This package contains the planner execution nodes:
 
-1. IntentRouter       - LLM (Fast): Classifies intent, detects specialist hints
-2. TripArchitect      - LLM (Smart): The Core, manages TripPlan, calls tools
-3. VerticalSpecialist - LLM (Expert): Domain logic for diving/skiing/hiking
-4. LocalExpert        - LLM/Static: City logistics and tips (default fallback)
-5. LogisticsNode      - Data Fetcher: Flight fetching with safety logic
-6. ConstraintGuard    - Python: Deterministic validation
-7. Synthesizer        - LLM (Writer): Unified response generation
+- VerticalSpecialist - LLM (Expert): Domain logic for diving/skiing/hiking
+- LocalExpert        - LLM/Static: City logistics and tips
+- LogisticsNode      - Data Fetcher: Flight/hotel fetching with safety logic
+- ConstraintGuard    - Python: Deterministic validation
+- RouterExtraction   - LLM: Intent classification and field extraction
 
-Key Principles:
-- "Flights/Hotels are NOT Agents" - They are data fetchers (LogisticsNode + TileService)
-- "Diving IS an Agent" - It requires domain logic (VerticalSpecialist)
-- "Architect sees the whole picture" - Avoids context fracture
-- "Local Expert Fallback" - Generic trips always have content via LocalExpert
+Deleted nodes (replaced by create_agent + tools architecture):
+- IntentRouter (replaced by extract_trip_fields tool)
+- TripArchitect (replaced by planner agent)
+- Synthesizer (replaced by planner agent direct responses)
 """
 
 from app.planner.nodes.constraint_guard import ConstraintGuard, constraint_guard
-from app.planner.nodes.intent_router import IntentClassification, intent_router
 from app.planner.nodes.local_expert import local_expert
 from app.planner.nodes.logistics_node import logistics_node
-from app.planner.nodes.synthesizer import Synthesizer, synthesizer
-from app.planner.nodes.trip_architect import TripArchitect, trip_architect
 from app.planner.nodes.vertical_specialist import VerticalSpecialist, vertical_specialist
 
 __all__ = [
     # Node classes/schemas
-    "IntentClassification",  # Schema for LLM classification output
-    "TripArchitect",
     "VerticalSpecialist",
     "ConstraintGuard",
-    "Synthesizer",
-    # Node functions (for graph registration)
-    "intent_router",
-    "trip_architect",
+    # Node functions (used by tools)
     "vertical_specialist",
     "local_expert",
     "logistics_node",
     "constraint_guard",
-    "synthesizer",
 ]

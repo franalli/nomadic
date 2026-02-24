@@ -30,7 +30,7 @@ Before ANY code change, read the relevant SSoT doc:
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 
-- **7-node graph is law.** Backend emits `plan_view_state` — frontend reads it, never fabricates it (exception: `S1_DESTINATION_SET` is frontend-only).
+- **Single agent architecture is law.** Backend emits `plan_view_state` — frontend reads it, never fabricates it (exception: `S1_DESTINATION_SET` is frontend-only).
 - **TripPlan is the only state SSoT.** No parallel state objects on frontend.
 - **No hardcoded world data.** No location lists, city enums, airport codes, coordinate lookups.
 - **Single Renderer Pattern.** `StrategyStageRenderer` adapts to data density — never swap for separate view components.
@@ -45,7 +45,7 @@ frontend/
     animations/    → StartupSequence, Typewriter
     chat/          → ChatPanel, ChatSkeleton, SmartLoader,
                      SystemAckLine, SystemReceipt, TripStatusBar,
-                     HoldToDeleteButton, MobileChatInput,
+                     MobileChatInput,
                      ChatInputHandler, ChatMessageList, ChatSuggestionBar
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
                      PlanHeader, NextStepBar, planStateHelpers,
@@ -68,7 +68,7 @@ frontend/
       timeline/    → InlineDatePrompt, TimelineSkeleton,
                      DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot, ItineraryDndWrapper
         blocks/    → ActivityMiniCard, LogisticsBlock, SafetyBlock, GhostSlot,
-                     FreeDayCard, PreferenceAttributionBadge, types.ts
+                     FreeDayCard, HoldToDeleteButton, PreferenceAttributionBadge, types.ts
       tiles/       → SuggestionCard
     tiles/         → TileCard, MiniCard, TileDetailsModal, TaxesFeesTooltip
     ui/            → Shared UI primitives
@@ -77,7 +77,7 @@ frontend/
                      hooks/ (useSessionHydration, useBranchManager, useBranchState,
                              useTileSelection, useTripInputsEditor, useLocalBookingSettings)
     map/           → InteractiveMap, MapErrorBoundary, MapboxErrorSuppressor
-    providers/     → Providers (context wrappers)
+    providers/     → Providers (context wrappers) via `components/providers/Providers.tsx`
   state/           → documentStore.ts, chatStore.ts, uiStore.ts, mobileNavStore.ts
   hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
                      usePreferenceAutoRegen, useScrollCollapse, useSheetManager,

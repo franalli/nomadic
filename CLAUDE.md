@@ -2,11 +2,11 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** [describe focus]
-- **Secondary:** [secondary priority or "none"]
-- **Active work:** backend planner intent/constraints/logistics + itinerary/experience services, new `activity_browser.py` path, frontend strategy/timeline/chat/layout rendering, and SSoT doc alignment in `docs/*`
+- **Focus:** backend planner intent/constraints/logistics + itinerary/experience services
+- **Secondary:** none
+- **Active work:** backend planner agent + tools architecture, frontend strategy/timeline/chat/layout rendering, and SSoT doc alignment in `docs/*`
 - **Known broken:** none explicitly tracked in current working diff
-- **DO NOT touch this sprint:** 7-node graph invariant, `llm_factory.py` provider/model-routing contract, API/schema compatibility surfaces
+- **DO NOT touch this sprint:** `llm_factory.py` provider/model-routing contract, API/schema compatibility surfaces
 
 ---
 
@@ -15,12 +15,12 @@
 1. DO NOT refactor files beyond the scope of the current task
 2. DO NOT add new dependencies without explicit approval
 3. DO NOT rename, move, or restructure existing files or functions
-4. DO NOT create new LangGraph nodes — 7-node invariant is law (router, architect, specialist, local_expert, logistics, guard, synthesizer)
+4. DO NOT bypass the create_agent + tools architecture — all planner logic flows through agent tools and middleware, not standalone LangGraph nodes
 5. DO NOT touch mobile-specific components unless explicitly asked
 6. DO NOT modify API contracts or shared schemas without explicit approval
 7. LIMIT changes to ≤8 files per task unless approved
 8. NEVER do broad directory scans or read node_modules — reference specific files
-9. DO NOT modify Synthesizer model routing (`_MODEL_BY_COMPLEXITY`) without measuring quality impact
+9. DO NOT modify agent model selection (`ModelSelectionMiddleware` in `middleware.py`) without measuring quality impact
 10. ALL LLM construction via `get_llm_by_model()` from `llm_factory.py` — no direct `ChatOpenAI()` or `ChatGoogleGenerativeAI()` constructors in node/service code
 11. No hard-coded world data — never hard-code locations, airports, IATA codes, coordinates, airlines, or any potentially infinite dataset
 12. `TripPlan` is the sole SSoT for all trip state — no parallel state objects
@@ -80,7 +80,7 @@ These four docs override your assumptions. Read before generating code.
 
 | SSoT Doc                           | Governs                                | Rule                                                                  |
 | ---------------------------------- | -------------------------------------- | --------------------------------------------------------------------- |
-| `@docs/plan_graph_analysis.md`     | Backend architecture, node structure   | MUST verify plan against spec before writing planner code             |
+| `@docs/plan_graph_analysis.md`     | Backend architecture, agent + tools    | MUST verify plan against spec before writing planner code             |
 | `@docs/design-system.md`           | UI styling, tokens, component patterns | ALL React components use these tokens — no invented Tailwind values   |
 | `@docs/ux_unified_architecture.md` | View states, rendering logic, UX flow  | Never swap renderers — `StrategyStageRenderer` adapts by data density |
 | `@docs/data-contracts.md`          | API routes, schemas, state store       | Check before modifying API endpoints, schemas, or state shape         |
@@ -93,13 +93,33 @@ These four docs override your assumptions. Read before generating code.
 
 0. **Keep it simple** — no over-engineering
 1. **TripPlan is SSoT** — single source of truth for all trip state
-2. **Data over Agents** — flights/hotels are data fetchers (LogisticsNode), not agents
-3. **Domain Experts ARE Agents** — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing) use VerticalSpecialist; Tier 2 (Sailing/Cooking/Yoga) are lightweight tile filters
-4. **Architect sees the whole picture** — avoids context fracture
-5. **Safe Routing** — LLM-based intent classification via `settings.router_model`, no regex
-6. **Constraint Injector** — Specialist runs BEFORE Architect calls tools
-7. **One Voice** — Synthesizer ensures consistent tone across all nodes
+2. **Data over Agents** — flights/hotels are data fetchers (search_tiles tool), not agents
+3. **Domain Experts ARE Agents** — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing) use get_specialist_advice tool; Tier 2 (Sailing/Cooking/Yoga) are lightweight tile filters
+4. **Single Agent Architecture** — one `create_agent` planner with 6 tools replaces the old 7-node DAG. The agent decides tool order dynamically.
+5. **Safe Routing** — LLM-based intent classification via `extract_trip_fields` tool and `settings.router_model`, no regex
+6. **Middleware over Nodes** — State mutation, model upgrades, prompt injection, and chip generation happen in `AgentMiddleware` hooks, not standalone nodes
+7. **One Voice** — The planner agent generates responses directly; no separate synthesizer
 8. **Centralized LLM Factory** — `get_llm_by_model()` handles provider detection (OpenAI/Gemini), model-specific params, structured output retry. Models configured via `settings.*_model` env vars.
+
+### Agent Tools (6)
+
+| Tool | Wraps | Purpose |
+|------|-------|---------|
+| `extract_trip_fields` | `router_extraction.py` | Parse intent + trip fields from user message |
+| `get_local_intel` | `local_expert.py` | Trip Overview card + Phase B enrichment |
+| `get_specialist_advice` | `vertical_specialist.py` | Domain-specific strategy (diving, hiking, etc.) |
+| `search_tiles` | `logistics_node.py` | Flights, hotels, activities via TileService |
+| `validate_plan` | `constraint_guard.py` | Budget/temporal/safety constraint checks |
+| `build_itinerary` | `itinerary_builder.py` | Day-by-day schedule from tiles + constraints |
+
+### Middleware Stack (4)
+
+| Middleware | Hook | Purpose |
+|-----------|------|---------|
+| `ModelSelectionMiddleware` | `awrap_model_call` | Upgrades to planning model for complex turns |
+| `DynamicPromptMiddleware` | `awrap_model_call` | Injects live trip state into system prompt |
+| `TurnLifecycleMiddleware` | `abefore_agent`, `awrap_tool_call` | Resets turn meta, merges tool results into state |
+| `SuggestionChipMiddleware` | `aafter_model` | Template-based chip generation (no LLM) |
 
 ### Stack
 
@@ -128,8 +148,8 @@ cd backend && ruff check . --fix        # Lint + fix
 rm -f backend/test_plan_document_pytest.db*
 
 # Environment
-frontend/.env.local → NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN
-backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY
+frontend/.env.local → NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN, NEXT_PUBLIC_DEBUG_LOGS
+backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY, ROUTER_MODEL, SPECIALIST_MODEL, LOCAL_EXPERT_MODEL, GUARD_MODEL, SYNTHESIZER_*_MODEL, UNSPLASH_ACCESS_KEY, DEBUG, DEBUG_PLAN_MESSAGES, CLEAR_L2_ON_RESET
 cd backend && alembic upgrade head      # DB migrations
 docker compose up db --build            # Docker DB
 ```
@@ -156,7 +176,7 @@ docker compose up db --build            # Docker DB
 
 ## Performance Notes
 
-Synthesizer model routing in `_MODEL_BY_COMPLEXITY` — models configured via `settings.*_model` env vars. DO NOT modify routing logic without measuring quality impact. Prompt templates cached in-memory — restart server after modifying `backend/app/prompts/synthesizer.txt`.
+Agent model selection in `ModelSelectionMiddleware` — upgrades from fast model to planning model for complex turns (first full plan, 3+ tool calls). Models configured via `settings.*_model` env vars. DO NOT modify selection logic without measuring quality impact. System prompt rebuilt from live state each turn via `DynamicPromptMiddleware`.
 
 ---
 
@@ -173,7 +193,7 @@ Synthesizer model routing in `_MODEL_BY_COMPLEXITY` — models configured via `s
 
 - `/compact` after completing major features or switching focus areas
 - `/clear` when switching between frontend and backend work
-- Reference specific files (`@backend/app/planner/nodes/intent_router.py`), not directories
+- Reference specific files (`@backend/app/planner/agent.py`), not directories
 - Avoid reading entire directories, node_modules, or loading all spec docs at once
 
 ---

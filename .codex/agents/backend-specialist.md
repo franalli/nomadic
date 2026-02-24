@@ -1,13 +1,13 @@
 ---
 name: backend-specialist
 description: >
-  Delegate to this agent for ALL backend Python work: planner nodes, services,
-  state layers, LLM factory, structured output, caching, config/settings.
-  Triggers on: itinerary builder, constraint guard, synthesizer, router extraction,
-  specialist registry, response envelope, state serialization, LangGraph nodes,
-  FastAPI endpoints, tile service, caching, llm_factory,
+  Delegate to this agent for ALL backend Python work: planner agent, tools, middleware,
+  services, state layers, LLM factory, structured output, caching, config/settings.
+  Triggers on: itinerary builder, constraint guard, agent tools, middleware,
+  router extraction, specialist registry, response envelope, state serialization,
+  agent_runner, FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
-  patterns_registry, activity_browser, telemetry, or any file under backend/app/.
+  patterns_registry, activity_browser, spend_guard, telemetry, or any file under backend/app/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 metadata:
   source_agent: .claude/agents/backend-specialist.md

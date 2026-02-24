@@ -48,14 +48,13 @@ PLANNING mode evolves naturally based on what the user has provided. No artifici
 
 ### BOOKING Mode ("The Commitment")
 
-* **Goal:** Transaction + price comparison
+* **Goal:** Lock selections and open external booking pages
 * **Trigger:** User clicks "Proceed to Booking" (HARD gate - explicit action required)
 * **UI Shows:**
   * Read-only itinerary summary
-  * Price comparison across booking partners (Booking.com, Expedia, etc.)
-  * "Book Now" CTAs for each item
-  * Checkout flow with guest details + Stripe payment
-* **Tiles:** BOOKABLE with partner deeplinks
+  * Tile-level external booking actions (single `tile.deeplink_url` path)
+  * Placeholder copy for future comparison/checkout flow
+* **Tiles:** BOOKABLE via per-tile deeplinks (no partner comparison table yet)
 
 ---
 
@@ -462,7 +461,7 @@ User edits date chip → GENERATE_PLAN_TRIGGER sent → Full regeneration
 
 **Flow:**
 1. User sends chat message (e.g., "from rome", "add hiking")
-2. Backend graph runs (IntentRouter → LogisticsNode/Specialist → Synthesizer)
+2. Backend agent runs (extract_trip_fields → get_specialist_advice/search_tiles → response)
 3. Graph completes → SSE `onComplete` handler checks:
    - `hasItinerary = (day_cards?.length ?? 0) > 0`
    - `structureChanged = strategy_sections topics differ (not just tiles added)`
@@ -497,8 +496,8 @@ if (hasItinerary && structureChanged && !isSilentPlanGeneration) {
 - "tell me about diving" with dates → Graph builds itinerary → `GRAPH_BUILT` skip → No expand needed
 
 **Origin-only handling:**
-- "from rome" without destination → Sets origin, prompts for destination (IntentRouter)
-- "from rome" with destination → Sets origin, routes to LogisticsNode, fetches flights immediately
+- "from rome" without destination → Sets origin, prompts for destination (`extract_trip_fields`)
+- "from rome" with destination → Sets origin, then triggers immediate tile search (`search_tiles`)
 
 **FAB Suppression for Chat Changes:**
 Chat-originated changes update `trip_inputs` (e.g., origin from "from rome"). The chat auto-regeneration flow handles these changes automatically without manual user intervention.
@@ -599,16 +598,10 @@ if (expandInProgress || isStreamingResponse) {
 - Trip input changes trigger appropriate strategy based on changed fields
 
 **Backend cache invalidation:**
-When GENERATE_PLAN_NOW trigger is received, `intent_router.py` forces tile cache clear:
-```python
-# intent_router.py - on GENERATE_PLAN_NOW (Refresh button)
-elif is_generate_trigger:
-    state.intent = "booking"
-    # FORCE clear tiles on GENERATE_PLAN_NOW (Refresh button)
-    state.tiles = {}
-    state.metadata["tiles_destination"] = None
-    logger.info("[Router] 🔥 GENERATE_PLAN_NOW - forced tile cache clear")
-```
+Current backend does **not** clear `state.tiles` inside `extract_trip_fields` itself. On generate/question turns,
+`main.py` sanitizes request-side category merge behavior (`_sanitize_trip_inputs_for_category_merge`), while
+state clearing happens during middleware merge (`_merge_trip_fields`) when destination changes
+(`tiles`, `strategy_sections`, `day_cards`, and constraints are reset together).
 
 **Note:** Frontend does NOT clear tiles on destination change. Old tiles stay visible until backend returns new data after Refresh.
 
@@ -892,7 +885,8 @@ const getShortLabel = (c) =>
 └──────────────────────────────────────────────────┘
 ```
 
-### In BOOKING Mode: Price Comparison
+### In BOOKING Mode: Current Behavior (Single Deeplink)
+> **Note:** Partner price comparison rows below are a roadmap mock, not current implementation.
 ```
 ┌──────────────────────────────────────────────────┐
 │ 🏨 Accommodation • Day 1-7                       │
@@ -976,11 +970,12 @@ The backend dictates the Planning Phase based on data density. The primary funct
 
 **Primary envelope base logic (`_compute_plan_view_state`):**
 
-| Logic Check | State Output | Explanation |
+| Logic Check (evaluated in order) | State Output | Explanation |
 | --- | --- | --- |
+| Missing core fields (destination + start_date + end_date) | `S0_BOOTSTRAP` | **Blank slate.** Setup checklist until all core trip fields are set. |
 | `tiles` exist (any category non-empty) | `S2_STRATEGY_READY` | **Full logistics mode.** Dates set, real prices available. |
-| `specialist_content` exists (non-general/null sections) | `S2_STRATEGY_READY` | **Bridge State.** Strategy cards + ghost timeline before dates. |
-| Neither tiles nor specialist content | `S0_BOOTSTRAP` | **Blank slate.** Setup checklist, no specialist content. |
+| `specialist_content` exists (non-general/null sections) | `S2_STRATEGY_READY` | **Bridge State.** Strategy cards + ghost timeline. |
+| Fallthrough (core fields set, no tiles/specialist yet) | `S2_STRATEGY_READY` | **Awaiting data.** Plan view opens once destination + dates are known. |
 
 > **Note:** `_compute_plan_view_state()` still emits the base states (`S0_BOOTSTRAP`, `S2_STRATEGY_READY`). Stage-3 states are then resolved from itinerary output shape: `S3_ITINERARY_READY` (success/no conflicts), `S3_EDITING` (success/with conflicts), `S3_PARTIAL_CONFLICT` (failure/partial with conflicts). This applies to both graph shadow-builder output and NDJSON itinerary endpoints.
 
@@ -999,7 +994,7 @@ P1_ENRICHED → P2_LOGISTICS → BUILD ITINERARY → P3_FINALIZED
 
 **Conflict Resolution Flow (Chat-Driven):**
 
-When the builder fails (trip too short for all specialists), `response_envelope` stores `last_builder_success = False` + `last_builder_resolutions` in state metadata. On the next chat turn, the constraint guard re-surfaces the blocking violation (instead of suppressing it), and the synthesizer generates resolution suggestion chips (e.g., "Extend to Mar 12", "Remove hiking"). Partial `day_cards` (what CAN fit) auto-render at `S3_PARTIAL_CONFLICT` immediately.
+When the builder fails (trip too short for all specialists), `response_envelope` stores `last_builder_success = False` + `last_builder_resolutions` in state metadata. On the next chat turn, the constraint guard (via `validate_plan` tool) re-surfaces the blocking violation (instead of suppressing it), and `SuggestionChipMiddleware` generates resolution suggestion chips (e.g., "Extend to Mar 12", "Remove hiking"). Partial `day_cards` (what CAN fit) auto-render at `S3_PARTIAL_CONFLICT` immediately.
 
 **Invariant:** User is NEVER left with silently dropped activities. All conflicts are surfaced via suggestion chips with actionable resolutions.
 
@@ -1023,13 +1018,13 @@ Without this anchor, the UI shows only niche specialist content (e.g., diving co
 When a user says "diving in Bali tomorrow":
 
 ```
-IntentRouter detects: diving
+`extract_trip_fields` detects: diving
 Queue built: [local_expert, diving]  ← Local Expert FIRST
 
 Flow:
-1. Router → Local Expert (generates Trip Overview)
-2. Local Expert → Vertical Specialist (generates Diving Strategy)
-3. Specialist → Logistics (fetches tiles)
+1. `extract_trip_fields` → Local Expert (generate Trip Overview)
+2. Local Expert → Vertical Specialist (generate Diving Strategy)
+3. Specialist path → `search_tiles` (fetches logistics tiles)
 ```
 
 **Result:** UI shows TWO strategy cards:
@@ -1039,7 +1034,7 @@ Flow:
 ### Implementation
 
 ```python
-# In intent_router.py - ALWAYS prepend local_expert to specialist queue
+# In extract_trip_fields tool - ALWAYS prepend local_expert to specialist queue
 if specialist_hints:
     if "local_expert" not in specialist_hints:
         all_specialists = ["local_expert"] + specialist_hints
@@ -1350,19 +1345,14 @@ What else would you like to know?
 
 ### Suggestion Chips (Registry-Driven)
 
-Suggestion chips are generated by `generate_suggestions()` in `synthesizer.py`, which reads
-router capability registries (`SPECIALIST_KEYWORDS`, `QUESTION_TYPE_MAPPING`, `SuggestionPool`)
-and derives up to 3 executable suggestions based on current state. No hardcoded question-type
-mappings — adding a new question type to `SUGGESTABLE_QUESTION_TYPES` in `intent_router.py`
-automatically generates the corresponding chip.
+Suggestion chips are generated by `SuggestionChipMiddleware` in `middleware.py`, which runs
+after the agent's final model response (via `aafter_model` hook). The `_generate_chips_from_state()`
+function derives up to 3 template-based chips from current state fields — no LLM call needed.
 
-**Chip Metadata (`suggested_response_meta`):** Each chip has a parallel `SuggestionChipMeta` entry
-with `chip_type` (`"cta"` | `"follow_up"` | `"setting"`), `category`, and optional `icon` (Lucide name).
-The frontend uses metadata for CTA styling (emerald accent) with regex fallback for backward compatibility.
-Metadata is stored on `state.metadata["suggestion_chip_meta"]` during generation and passed through
-`response_envelope.py` as `suggested_response_meta`.
-
-**Structured Chips (`suggestion_chips`):** A parallel `SuggestionChip[]` array with action routing. Each chip includes `action_type` (`"send_message"` | `"open_pill"` | `"trigger_action"`) and `action_target` (e.g., `"dates"`, `"budget"`, `"travelers"`). The `PILL_ACTION_MAP` in `synthesizer.py` maps chip categories to actions: date chips open the date picker, booking chips open their respective sheets, and direct-flight preference chips can trigger `set_direct_flights_only` without sending chat text. Frontend `ChatPanel` reads `suggestion_chips` for action routing when available, falling back to `suggested_responses` + `suggested_response_meta` for backward compatibility.
+**Chip Structure:** Each chip is a dict with `message`, `action_type` (`"send_message"`),
+`action_target`, `chip_type` (`"cta"` | `"question"` | `"suggestion"` | `"info"`),
+`category`, and `icon` (Lucide name). Chips are stored in `persistent_meta.suggestion_chips`
+and passed through `response_envelope.py`.
 
 | State | Example Chips |
 |-------|---------------|
@@ -1377,9 +1367,8 @@ Metadata is stored on `state.metadata["suggestion_chip_meta"]` during generation
 | Day preference overflow | "Reduce {activity} to N days" (from `DAY_PREFERENCE_EXCEEDS_CAPACITY`) |
 
 **S2+ Plan Progression:** Once dates are set, chips shift from exploration questions to plan-refinement actions.
-`_build_plan_progression_suggestions()` checks which settings are unconfigured (hotel stars, flight preferences,
-activity categories) and generates corresponding chips at priority 4 — above exploration questions (P6) but below
-specialist cross-sell (P3). As preferences are set, those chips are removed and exploration questions backfill.
+`_generate_chips_from_state()` in `middleware.py` checks which trip fields are missing and generates
+corresponding chips. As preferences are set, those chips are replaced with next-step suggestions.
 
 ### Soft Transition → Planning (Priority Rule)
 
@@ -1412,12 +1401,12 @@ Exploration mode exits when user provides actionable parameters:
 
 ### Implementation Reference
 
-**Backend:** `intent_router.py` - `generate_comprehensive_answer()`, `_format_section_answer()`
+**Backend:** Agent planner generates responses directly; `extract_trip_fields` tool handles intent parsing.
 **State tracking:** `state.metadata["short_circuit_type"] = "exploration"` or `"soft_transition"`
 
 ### UI Components for Exploration → Planning Transition
 
-> **Note:** `ExplorationProgress` and `ReadyToPlanBanner` have been deleted from the codebase. The exploration-to-planning transition is now handled entirely by suggestion chips generated by the synthesizer (see chip state table above). Suggestion chips shift from exploration questions to plan-refinement actions once dates are set.
+> **Note:** `ExplorationProgress` and `ReadyToPlanBanner` have been deleted from the codebase. The exploration-to-planning transition is now handled entirely by suggestion chips generated by `SuggestionChipMiddleware` (see chip state table above). Suggestion chips shift from exploration questions to plan-refinement actions once dates are set.
 
 ---
 
@@ -1499,7 +1488,7 @@ User: "from Rome to Dubai tomorrow for two days"
   ↓
 Backend extracts: start_date=2024-02-01, trip_duration=2
   ↓
-Backend AUTO-ROUTES to LogisticsNode (no click needed)
+Backend AUTO-ROUTES to `search_tiles` tool (no click needed)
   ↓
 Frontend shows: Loading Skeleton ("Searching live availability...")
   ↓
@@ -1517,21 +1506,18 @@ const canViewPlan = hasDates || isGenerating;
 const canViewBook = isPlanFinalized && (hasTiles || inBookableState);
 ```
 
-**Backend (`plan_graph.py`):**
+**Backend (agent tools):**
 ```python
-# NOTE: Conceptual simplification. The actual implementation in plan_graph.py
-# handles additional cases including specialist dispatch, local expert rules,
-# and speculative intent routing.
-def route_after_architect(state: GraphState) -> str:
-    # If dates were just extracted, auto-trigger logistics search
-    if state.trip_inputs_changed and state.trip_plan.start_date:
-        return "logistics"  # AUTO-FETCH flights/hotels
-    return "synthesizer"
+# NOTE: Conceptual simplification. The agent decides tool order dynamically.
+# When dates are extracted via extract_trip_fields, the agent automatically
+# invokes search_tiles to fetch flights/hotels, then build_itinerary.
+# The agent's system prompt (via DynamicPromptMiddleware) includes current
+# trip state, enabling it to make contextual tool-calling decisions.
 ```
 
 ### Critical Invariants
 
-1. **Dates = Search Trigger:** Providing valid dates MUST automatically trigger the `LogisticsNode`. Do NOT wait for a secondary click.
+1. **Dates = Search Trigger:** Providing valid dates MUST automatically trigger `search_tiles`. Do NOT wait for a secondary click.
 2. **No Empty Plan:** If Plan tab is active but tiles are loading, display **Timeline Skeleton** + "Searching live availability..." state. Never show whitespace.
 3. **Finalize ≠ Search:** The "Finalize & Book" button is exclusively for **Transitioning to Checkout**. It is NOT for triggering search.
 
@@ -2058,7 +2044,7 @@ The standalone RefreshButton FAB has been removed. Regeneration is now handled b
 | --- | --- |
 | **Label** | "Finalize & Book" |
 | **Location** | Right Panel (Sticky Footer - "Command Island") |
-| **Visibility** | Renders when `nextAction` prop is `finalize_plan` |
+| **Visibility** | Currently does not render in production flow |
 | **Action** | Transitions to Checkout/Booking phase |
 | **Component** | `NextStepBar.tsx` |
 
@@ -2066,14 +2052,14 @@ The standalone RefreshButton FAB has been removed. Regeneration is now handled b
 - `NextStepBar` accepts a `nextAction` prop (from `getNextAction()`)
 - `getNextAction()` returns `'expand_itinerary'` for `S2_STRATEGY_READY`, `null` otherwise
 - NextStepBar filters out `expand_itinerary` (auto-expand handles it) and only renders for `finalize_plan`
-- In practice, NextStepBar renders when `finalize_plan` is passed as `nextAction`
+- Because `getNextAction()` never emits `finalize_plan` today, NextStepBar is currently unreachable in normal flow
 
 **Context Display:**
 - Left side shows "TIMELINE" label with date range (e.g., "Feb 5 — Feb 12")
 - Badge shows trip duration in days
 - Green emerald styling when ready
 
-**Invariant:** NextStepBar is the ONLY way to enter the Booking phase. It is a **HARD GATE**.
+**Invariant:** Do not treat NextStepBar as an active Booking gate until `getNextAction()` emits `finalize_plan`.
 
 #### Path A: Auto-Trigger for Multi-Specialist Trips
 
@@ -2138,7 +2124,7 @@ User: "Plan diving and hiking Bali March 1-5"
        ↓
 [Success] Timeline appears with constraint buffers
    OR
-[Conflict] Partial day_cards render at S3_PARTIAL_CONFLICT + resolution chips via synthesizer
+[Conflict] Partial day_cards render at S3_PARTIAL_CONFLICT + resolution chips via SuggestionChipMiddleware
 ```
 
 **UI Components:**
@@ -2151,7 +2137,7 @@ User: "Plan diving and hiking Bali March 1-5"
 2. **Inline Conflict Handling** (replaced former ConflictResolutionBanner)
    - Partial `day_cards` auto-render at `S3_PARTIAL_CONFLICT` showing what CAN fit
    - Blocking violations re-surface on next chat turn via `last_builder_success` metadata
-   - Synthesizer generates actionable resolution chips: "Extend to Mar 12", "Remove hiking"
+   - SuggestionChipMiddleware generates actionable resolution chips: "Extend to Mar 12", "Remove hiking"
    - **Unschedulable block styling:**
      - `opacity-60` with dashed amber border (`border-2 border-dashed border-amber-500/50`)
      - "Cannot schedule" warning badge with AlertTriangle icon
@@ -2923,7 +2909,7 @@ This section documents the mode-aware tile components used for suggestions and b
 | Component | Mode | Purpose | Location |
 |-----------|------|---------|----------|
 | `SuggestionCard` | PLANNING | AI-recommended tiles with reasoning | `components/plan/tiles/SuggestionCard.tsx` |
-| `TileCard` | BOOKING | Price comparison + partner CTAs | `components/tiles/TileCard.tsx` |
+| `TileCard` | BOOKING | Tile details + single external deeplink action | `components/tiles/TileCard.tsx` |
 
 #### B. SuggestionCard (PLANNING Mode)
 
@@ -2959,33 +2945,21 @@ Shows AI-suggested tiles with reasoning and action buttons.
 
 #### C. TileCard (BOOKING Mode)
 
-Shows tile with price comparison across booking partners.
+Shows tile details with a single booking deeplink.
 
 ```
 ┌────────────────────────────────────────────────────┐
 │ [Image]                             ✓ BOOKED       │
 │ Hotel Tugu Bali • 4.8★                             │
 │                                                    │
-│ $365                  from 3 partners              │
-│                                                    │
-│ ┌──────────────────────────────────────────────┐  │
-│ │ 🏢 Booking.com    $365  ★ BEST   [Book →]    │  │
-│ └──────────────────────────────────────────────┘  │
-│ ┌──────────────────────────────────────────────┐  │
-│ │ 🏢 Expedia        $375           [Book →]    │  │
-│ └──────────────────────────────────────────────┘  │
-│                                                    │
-│ [View Details]           [Add to Cart]            │
+│ [View Details]             [Book Now →]           │
 └────────────────────────────────────────────────────┘
 ```
 
 **Props:**
 - `tile: Tile` - The bookable tile
-- `partnerPrices?: PartnerPrice[]` - Multi-partner pricing
-- `isInCart?: boolean` - Cart state
 - `isBooked?: boolean` - Booking state (PLANNING mode: only true for `user_preferred` tiles; BOOKING mode: true when `booked_tile` exists)
-- `onBook?: (tile, partner) => void` - External booking redirect
-- `onCartToggle?: (tile) => void` - Cart toggle callback
+- `onBook?: (tile) => void` - External booking redirect (single tile deeplink flow)
 
 #### D. AlternativesModal (Change Selection)
 
@@ -3107,7 +3081,7 @@ const finalDayCards = hasGraphSentCards
 ```
 
 **View State Downgrade Protection:**
-Backend may return S2 for benign reasons (e.g., "from rome" only runs LogisticsNode). Previously this cleared day_cards. Now the frontend blocks S3→S2 downgrade when itinerary exists:
+Backend may return S2 for benign reasons (e.g., "from rome" only runs trip-field enrichment via `search_tiles`). Previously this cleared day_cards. Now the frontend blocks S3→S2 downgrade when itinerary exists:
 - `S3 → S2` with day_cards → **Blocked** (itinerary preserved)
 - `S3 → S0` (RESET) → **Allowed** (user explicit intent)
 - Destination/date change → **Tiles replaced**, day_cards cleared (clean slate)
@@ -3229,8 +3203,8 @@ interface CategorySectionProps {
 
 | Element | PLANNING Mode | BOOKING Mode |
 |---------|---------------|--------------|
-| **Status Badge** | "❤️ Preferred" (emerald) | "In Cart" (amber dot) |
-| **Non-preferred Badge** | Hidden | "Available" (gray dot) |
+| **Status Badge** | "❤️ Preferred" (emerald) | Cart traffic-light badge (`Available`, `In Cart`, `Booked`) |
+| **Non-preferred Badge** | Hidden | "Available" badge shown |
 | **Action Button (saved)** | "Preferred ❤️" | "Remove from Cart" |
 | **Action Button (unsaved)** | "Add to Trip ♡" | "Add to Cart" |
 
@@ -3242,12 +3216,12 @@ function StatusBadge({ status, mode }) {
     if (status === 'hold') return <div>❤️ Preferred</div>;
     return null;  // No badge for non-preferred in planning
   }
-  // Booking mode: Show traffic-light cart status
-  return <CartStatusBadge status={status} />;
+  // Booking mode: show traffic-light cart status
+  return <div>{/* inline dot + label badge ("Available" / "In Cart" / "Booked") */}</div>;
 }
 ```
 
-**Invariant:** Hearts (♡/❤️) in PLANNING mode, Cart badges in BOOKING mode. Never mixed.
+**Invariant:** Hearts (♡/❤️) are PLANNING preference signals; BOOKING mode uses cart status badges/actions.
 
 ---
 
@@ -3313,14 +3287,13 @@ Shows different content sections based on mode.
 interface TileDetailsModalProps {
   // ... existing props ...
   mode?: ViewMode;                    // 'planning' | 'booking'
-  partnerPrices?: PartnerPrice[];     // For booking mode
-  onBook?: (tile: Tile, partner: string) => void;
+  onBook?: (tile: Tile) => void;
 }
 ```
 
 **Behavior:**
 - PLANNING mode: Shows "Why this suggestion?" section with AI reasoning and "AI Pick" badge
-- BOOKING mode: Shows partner price comparison table with Book buttons for each partner
+- BOOKING mode: Uses single external booking action (no partner comparison matrix yet)
 
 ### 4. StrategyStageRenderer (Mode Prop)
 

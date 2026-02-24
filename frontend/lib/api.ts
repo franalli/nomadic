@@ -697,12 +697,21 @@ interface SSEErrorEvent {
 export interface SSENodeStatusEvent {
   type: 'node_status';
   data: {
+    /**
+     * Node or tool identifier.
+     *
+     * v1 graph nodes: router, specialist, local_expert, logistics, architect, guard, synthesizer
+     * v2 tool names:  extract_trip_fields, get_specialist_advice, get_local_intel,
+     *                 search_tiles, validate_plan, build_itinerary
+     *
+     * Both pipelines run in parallel (feature-flagged). Frontend must handle either set.
+     */
     node: string;
     status: 'started' | 'completed';
     label: string; // Human-readable label for UI (e.g., "Finding flights")
-    icon_key: string; // Icon identifier for frontend (e.g., "plane", "hiking")
+    icon_key: string; // Icon identifier for frontend (e.g., "plane", "search", "calendar")
     estimated_duration_ms: number;
-    // Strategy-specific fields (optional, only present for strategy_node)
+    // Strategy-specific fields (optional, only present for strategy_node / get_specialist_advice)
     stage?: number;
     tier?: 'outline' | 'section' | 'full';
     topic?: string;

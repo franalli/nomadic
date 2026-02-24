@@ -1,10 +1,6 @@
 # backend/tests/test_router_extraction.py
 """
-Unit tests for router_extraction.py — functions NOT already covered by test_router_utils.py.
-
-Existing coverage (do NOT duplicate):
-- _normalize_city_name: covered in test_router_utils.py TestNormalizeCityName
-- _validate_extraction: covered in test_router_utils.py TestValidateExtraction
+Unit tests for router_extraction.py.
 
 This file covers:
 - _parse_day_preferences: JSON day-count parsing with hallucination guard

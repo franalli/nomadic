@@ -242,26 +242,25 @@ Map panels use sticky positioning during timeline scroll (P3+ only).
 
 Two map panel configurations exist, rendered from `PlanFullDensityView` and `PlanDensityViews`:
 - **Bridge mode map** (`PlanBridgeDensityView`, S2, destination set): `w-[350px]`, `sticky top-4`, `h-[400px]`
-- **Full mode map** (`PlanFullDensityView`, S3, itinerary content): `w-[400px] max-w-[35vw]`, `sticky top-0 h-screen`
+- **Full mode map** (`PlanFullDensityView`, S3, itinerary content): `flex-1 min-w-[350px] self-stretch`, sticky viewport map with dynamic `top`/height offsets
 
 | Property | Bridge Mode (S2) | Full Mode (S3) | Mobile |
 |----------|-----------------|----------------|--------|
-| Map Width | `w-[350px]` | `w-[400px] max-w-[35vw]` | `100%` |
-| Map Height | `h-[400px]` | `h-screen` | `h-[300px]` |
+| Map Width | `w-[350px]` | `flex-1 min-w-[350px] self-stretch` | `100%` |
+| Map Height | `h-[400px]` | `calc(100vh - headerOffset)` | `h-[300px]` |
 | Content Width | N/A (map beside hero) | `flex-1`, min `720px`, max `900px` | `100%` |
-| Top offset | `sticky top-4` | `sticky top-0` | Non-sticky (inline) |
+| Top offset | `sticky top-4` | `sticky` with runtime `top: ${headerOffset}px` | Non-sticky (inline) |
 | Border | None | None | `border border-border/50` |
 | Corner | `rounded-xl overflow-hidden` | None (full-height) | `rounded-xl overflow-hidden` |
 
-**Why Fixed Map Width:**
-- 400px (full mode) provides sufficient spatial awareness without dominating content
-- Content area (720px min) ensures comfortable 2-column tile grid
-- 900px max maintains readability limit
-- Fixed width prevents layout shifts during zoom/interactions
+**Why Flexible Full-Mode Width:**
+- The desktop map column expands with available right-panel space while keeping a `min-w-[350px]` floor.
+- Content area still keeps a readable 720-900px clamp.
+- Sticky top/height are offset from header dynamics (`headerOffset`) to keep map and timeline aligned as the page scrolls.
 
 **Desktop Usage (Full Mode / S3):**
 ```tsx
-{/* Content + fixed map layout */}
+{/* Content + flexible map layout */}
 <div className="flex gap-6">
   <div
     className="flex-1 min-w-0"
@@ -269,8 +268,12 @@ Two map panel configurations exist, rendered from `PlanFullDensityView` and `Pla
   >
     {/* Content: Specialists → Tiles → Timeline */}
   </div>
-  <div className="w-[400px] max-w-[35vw] shrink-0">
-    <div className="sticky top-0 h-screen overflow-hidden">
+  <div className="flex-1 min-w-[350px] self-stretch">
+    <div style={{ height: mapSpacerHeight }} />
+    <div
+      className="sticky overflow-hidden"
+      style={{ top: `${headerOffset}px`, height: `calc(100vh - ${headerOffset}px)` }}
+    >
       <InteractiveMap className="h-full w-full" />
     </div>
   </div>
@@ -488,14 +491,33 @@ Each activity block in the S3 Itinerary View shows specialist attribution via co
 ```tsx
 // Static Tailwind class lookups per specialist type (JIT needs static strings)
 const borderAccentClass: Record<string, string> = {
+  browse: 'border-l-amber-500',
   diving: 'border-l-cyan-500',
   hiking: 'border-l-emerald-500',
   skiing: 'border-l-blue-500',
   cycling: 'border-l-lime-500',
   surfing: 'border-l-indigo-500',
+  boating: 'border-l-cyan-500',
   sailing: 'border-l-cyan-500',
   climbing: 'border-l-orange-500',
   wildlife_safari: 'border-l-amber-500',
+  yoga: 'border-l-purple-500',
+  wellness: 'border-l-violet-500',
+  spa: 'border-l-violet-500',
+  nightlife: 'border-l-fuchsia-500',
+  cooking: 'border-l-pink-500',
+  food: 'border-l-red-500',
+  culture: 'border-l-rose-500',
+  cultural: 'border-l-rose-500',
+  temples: 'border-l-rose-500',
+  sightseeing: 'border-l-sky-500',
+  photography: 'border-l-sky-500',
+  beach: 'border-l-emerald-500',
+  shopping: 'border-l-pink-500',
+  relaxation: 'border-l-yellow-500',
+  tours: 'border-l-blue-500',
+  nature: 'border-l-green-500',
+  adventure: 'border-l-orange-500',
 };
 
 <div
@@ -518,13 +540,15 @@ const borderAccentClass: Record<string, string> = {
 **Single Source of Truth:** `frontend/lib/specialists.ts`
 
 ```typescript
-import { getSpecialistColor, getSpecialistConfig, SPECIALIST_IDS } from '@/lib/specialists';
+import { getSpecialistConfig, SPECIALIST_IDS } from '@/lib/specialists';
 
-getSpecialistColor('diving')     // '#0EA5E9'
 getSpecialistConfig('diving')    // { id, displayName, icon, emoji, color, filterKeywords }
+getSpecialistConfig('diving').color // '#0EA5E9'
 getSpecialistConfig('boating')   // returns sailing config (backward compat)
 SPECIALIST_IDS                   // ['diving', 'hiking', 'skiing', 'cycling', 'surfing', 'climbing', 'sailing', 'wildlife_safari']
 ```
+
+> **Note:** `getSpecialistColor` is not exported. Access the color via `getSpecialistConfig(type).color`.
 
 **Text Color Classes:** `frontend/lib/specialist-colors.ts` exports `SPECIALIST_TEXT_COLOR` — a `Record<string, string>` of Tailwind text color classes for specialist label badges (e.g., `text-cyan-600 dark:text-cyan-400` for diving). Used by `DragPreviewCard` and `ActivityMiniCard` for specialist name coloring.
 
@@ -645,7 +669,9 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | ActivitiesSheet | `plan/sheets/ActivitiesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, same as Flights, `Stepper` from `ui/stepper.tsx` (day preference steppers) |
 | TripSettingsSheet | `plan/sheets/TripSettingsSheet.tsx` | BaseSheet, field rows for mobile settings relay |
 | DatesSheet | `plan/sheets/DatesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, raw glass pattern, raw Tactile pills |
-| ChatPanel | `chat/ChatPanel.tsx` | `DS.actions.primary`, raw Tactile pills (suggestion chips), Living Void pattern |
+| ChatPanel | `chat/ChatPanel.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (S0 hero terminal text) |
+| ChatInputBar | `chat/ChatInputBar.tsx` | Living Void pattern (emerald glow + pulse), Stop button (monochrome square) |
+| ChatSuggestionChips | `chat/ChatSuggestionChips.tsx` | Raw Tactile pills (suggestion chips), `Sparkles` icon (planning trigger), `SlidersHorizontal` icon (sheet actions) |
 | UnifiedChipRow | `plan/UnifiedChipRow.tsx` | `CoreChip` (CSS custom properties, not DS pills) |
 | Calendar | `ui/calendar.tsx` | Custom (see Calendar section) |
 | StrategyHero | `plan/stages/StrategyHero.tsx` | `DS.text.label`, `DS.text.body`, `DS.infoBox.container` (3 variants: `hero`, `compact`, `accordion`) |
@@ -655,10 +681,10 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | SuggestionCard | `plan/tiles/SuggestionCard.tsx` | Suggested card variant, neutral zinc rating treatment, emerald save state |
 | GatingBlocker | `plan/sheets/GatingBlocker.tsx` | Shared prerequisite-gating notice for module sheets (Flights/Stays/Activities). Raw infoBox pattern (`bg-zinc-50 dark:bg-white/[0.02]`), raw smallAction pattern buttons |
 | AlternativesModal | `plan/modals/AlternativesModal.tsx` | Sheet modal with neutral zinc rating stars and diff badges |
-| CategorySection | `plan/booking/CategorySection.tsx` | Booking status dots/text with dark-aware zinc/emerald states |
+| CategorySection | `plan/booking/CategorySection.tsx` | `DS.textSize.micro`, booking status dots/text with dark-aware zinc/emerald states |
 | TripHealthBar | `plan/TripHealthBar.tsx` | Compact inventory stats bar; `dark:bg-zinc-950/80 dark:border-white/10` glass pattern |
 | TripStatusBar | `chat/TripStatusBar.tsx` | Mobile-only dark status bar; `bg-zinc-900 border-b border-white/10`; no light mode |
-| NextStepBar | `plan/NextStepBar.tsx` | Command Island sticky CTA; `DS.actions.primary`, `DS.glowClass.action`, glass `dark:bg-zinc-900/95` |
+| NextStepBar | `plan/NextStepBar.tsx` | Command Island sticky CTA; `DS.text.label`, `DS.textSize.micro`, `DS.glowClass.action`, glass `dark:bg-zinc-900/95` |
 | GhostSlot | `plan/timeline/blocks/GhostSlot.tsx` | Dashed-border CTA slot; `border-dashed border-zinc-300 dark:border-white/10` pattern |
 | LogisticsBlock | `plan/timeline/blocks/LogisticsBlock.tsx` | Flight/transfer timeline block; glass `dark:bg-zinc-900/50` pattern |
 | MapErrorBoundary | `map/MapErrorBoundary.tsx` | Map error fallback; raw zinc pattern (`bg-zinc-100 dark:bg-zinc-900`, `text-zinc-500`) |
@@ -982,18 +1008,18 @@ The assistant is the **Infrastructure**. It should feel like part of the dashboa
         'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all',
         // Light: Solid Black (The Commander)
         'bg-zinc-900 text-white border border-zinc-900',
-        'shadow-card hover:shadow-soft hover:-translate-y-0.5',
+        'shadow-[0_2px_8px_rgba(10,14,18,0.06)] hover:shadow-[0_4px_12px_rgba(10,14,18,0.08)]',
         'hover:bg-zinc-800 hover:border-zinc-800',
         // Dark: Solid White (Maximum Contrast Signal)
         'dark:bg-white dark:text-zinc-950 dark:border-white',
-        'dark:shadow-[0_0_20px_-5px_rgba(255,255,255,0.3)]',
+        'dark:shadow-[0_0_10px_-6px_rgba(255,255,255,0.18)]',
         'dark:hover:bg-zinc-100'
       )
     : cn(
         'rounded-2xl rounded-bl-sm px-4 py-2.5 transition-all',
         // Light: Glass effect
         'bg-white/80 backdrop-blur-sm border border-zinc-200',
-        'shadow-card hover:shadow-soft hover:-translate-y-0.5',
+        'shadow-[0_2px_8px_rgba(10,14,18,0.06)] hover:shadow-[0_4px_12px_rgba(10,14,18,0.08)]',
         // Dark: Dark Glass (The System)
         'dark:bg-white/5 dark:backdrop-blur-sm',
         'dark:border-white/10 dark:shadow-none',
@@ -1003,7 +1029,7 @@ The assistant is the **Infrastructure**. It should feel like part of the dashboa
 }>
 ```
 
-> **Exception — White glow on user bubble (dark mode):** `dark:shadow-[0_0_20px_-5px_rgba(255,255,255,0.3)]` is applied only to the user bubble in `ChatMessageRenderer.tsx`. It is **not tokenized** (single usage, no DS token). Do not apply this glow to any other component.
+> **Exception — White glow on user bubble (dark mode):** `dark:shadow-[0_0_10px_-6px_rgba(255,255,255,0.18)]` is applied only to the user bubble in `ChatMessageRenderer.tsx`. It is **not tokenized** (single usage, no DS token). Do not apply this glow to any other component.
 
 ### Why This Works
 
@@ -1078,22 +1104,27 @@ Question chips are always visible (never suppressed). Post-planning, they route 
 - Planning trigger chips: Emerald highlight (`bg-emerald-50 border-2 border-emerald-500/40 text-emerald-700`) with `Sparkles` icon prefix
 
 ```tsx
-// Suggestion chips in ChatPanel
+// Suggestion chips in ChatSuggestionChips.tsx
 <button className={cn(
   'px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide',
+  'transition-all duration-150 active:scale-95',
   isPlanningTrigger ? [
     'bg-emerald-50 dark:bg-emerald-950/30',
     'border-2 border-emerald-500/40 dark:border-emerald-500/30',
     'text-emerald-700 dark:text-emerald-400',
-    'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
+    'hover:bg-emerald-100 hover:border-emerald-500',
+    'dark:hover:bg-emerald-900/40 dark:hover:border-emerald-400/50',
   ] : [
     'bg-white dark:bg-white/5',
     'border-2 border-zinc-200 dark:border-white/15',
     'text-zinc-600 dark:text-zinc-400',
+    'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
+    'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
   ]
 )}>
-  {isPlanningTrigger && <Sparkles className="w-3 h-3 mr-1.5 inline-block" />}
-  {suggestion}
+  {isSheetAction && <SlidersHorizontal className="w-3 h-3 mr-1.5 inline-block" />}
+  {isPlanningTrigger && !isSheetAction && <Sparkles className="w-3 h-3 mr-1.5 inline-block" />}
+  {chip.message}
 </button>
 ```
 
@@ -1687,7 +1718,7 @@ When the AI is generating a response, the user can interrupt the stream with a "
 
 ### Implementation Reference
 
-The stop button is implemented in `frontend/components/chat/ChatPanel.tsx`.
+The stop button is implemented in `frontend/components/chat/ChatInputBar.tsx`.
 
 ---
 
@@ -1750,7 +1781,7 @@ This creates a direct visual link: "What I typed → is being processed."
 
 ### Implementation Reference
 
-The Living Void is implemented in `frontend/components/chat/ChatPanel.tsx`.
+The Living Void is implemented in `frontend/components/chat/ChatInputBar.tsx`.
 
 ---
 
@@ -2235,7 +2266,7 @@ The `local_expert` specialist type maps to Neutral Gray in the DS specialist pal
 
 **BANNED:** `text-purple-600`, `bg-purple-50` for `local_expert`. Purple is not in the approved specialist palette.
 
-**Implementation:** `frontend/components/plan/stages/StrategyHero.tsx` `SPECIALIST_STYLE_CLASSES` map.
+**Implementation:** `frontend/components/plan/stages/StrategyHeroUtils.tsx` `SPECIALIST_STYLE_CLASSES` map.
 
 ---
 
@@ -2297,7 +2328,7 @@ The `local_expert` specialist type maps to Neutral Gray in the DS specialist pal
 - SystemReceipt: `frontend/components/chat/SystemReceipt.tsx`
 - SmartLoader: `frontend/components/chat/SmartLoader.tsx`
 - Integration: `frontend/components/chat/ChatPanel.tsx`
-- Backend telemetry: `backend/app/plan_graph.py` (emits `logic_reveal` events)
+- Backend telemetry: `backend/app/planner/plan_graph.py` <!-- REVIEW: `logic_reveal` events no longer found in codebase; verify if replaced or removed -->
 
 ---
 
@@ -2417,11 +2448,14 @@ All animation timings are centralized in `frontend/lib/animation-config.ts`:
 | `SPECIALIST_EXPAND` | 400ms | Height spring for card expansion |
 | `SPECIALIST_PULSE` | 1000ms | Pulse once to draw attention |
 | `SPECIALIST_STAGGER` | 500ms | Delay between card expansions |
-| `TILES_FADE` | 300ms | Opacity 0→1 fade in |
-| `SELECTIONS_SLIDE` | 250ms | Slide down from top |
-| `TIMELINE_FADE` | 500ms | Fade + scroll into view |
-| `MAP_SLIDE` | 400ms | Slide right→left (desktop) |
-| `MAP_STAGGER_DELAY` | 200ms | Delay after timeline starts |
+| `TILES_FADE` | 400ms | Opacity 0→1 fade in |
+| `SELECTIONS_SLIDE` | 250ms | Slide down from top (kept for non-streaming contexts) |
+| `TIMELINE_FADE` | 400ms | Opacity 0→1, easeOut |
+| `TIMELINE_DELAY` | 200ms | Group stagger: day cards appear 200ms after hero |
+| `MAP_FADE` | 400ms | Opacity 0→1 |
+| `MAP_DELAY` | 400ms | Group stagger: map appears 400ms after hero |
+| `MAP_SLIDE` | 400ms | Legacy alias (slide right→left) |
+| `MAP_STAGGER_DELAY` | 200ms | Legacy alias (delay after timeline starts) |
 | `MIN_LOADING` | 600ms | Minimum loading duration |
 | `SKELETON_CROSSFADE` | 300ms | Skeleton → real content |
 
@@ -2441,10 +2475,10 @@ SPRING_CONFIG = {
 
 | Transition | Element | Animation |
 |------------|---------|-----------|
-| P1 → P2 | Tiles section | Fade in (300ms) |
+| P1 → P2 | Tiles section | Fade in (400ms, `TILES_FADE`) |
 | P1 → P2 | NextStepBar | Slide up from bottom |
-| P2 → P3 | Timeline | Fade in + auto-scroll (500ms) |
-| P2 → P3 | Desktop map | Slide in from right (400ms, 200ms delay) |
+| P2 → P3 | Timeline | Fade in (400ms, `TIMELINE_FADE`) + auto-scroll (200ms delay, `TIMELINE_DELAY`) |
+| P2 → P3 | Desktop map | Fade in (400ms, `MAP_FADE`) with 400ms delay (`MAP_DELAY`) |
 
 ### Interaction-Based Reveals
 
@@ -2604,15 +2638,15 @@ Updates to Section 6 — new components discovered in audit:
 | `MiniCardSkeleton` | `tiles/MiniCard.tsx` | Custom skeleton colors | `bg-zinc-200/50 dark:bg-zinc-700/50` |
 | `TileDetailsModal` | `tiles/TileDetailsModal.tsx` | `DS.actions.primary`, `DS.text.*` | `shadow-card` for modal container |
 | `SuggestionCard` | `plan/tiles/SuggestionCard.tsx` | `DS.textSize.*` | `shadow-card hover:shadow-soft` |
-| `CategorySection` | `plan/booking/CategorySection.tsx` | None | `shadow-card hover:shadow-soft` for accordion card |
+| `CategorySection` | `plan/booking/CategorySection.tsx` | `DS.textSize.micro` | `shadow-card hover:shadow-soft` for accordion card |
 | `CheckoutSidebar` | `plan/booking/CheckoutSidebar.tsx` | None | `shadow-card` for summary card |
-| `StrategyHero` | `plan/stages/StrategyHero.tsx` | `DS.text.*`, `DS.infoBox` | Specialist colors from `SPECIALIST_STYLE_CLASSES` map |
+| `StrategyHero` | `plan/stages/StrategyHero.tsx` | `DS.text.*`, `DS.infoBox` | Specialist colors from `SPECIALIST_STYLE_CLASSES` map (in `StrategyHeroUtils.tsx`) |
 | `ActivityMiniCard` | `plan/timeline/blocks/ActivityMiniCard.tsx` | `DS.textSize.*` | `hover:shadow-soft` for card hover |
 | `UnifiedChipRow` | `plan/UnifiedChipRow.tsx` | `DS.textSize.*` | Constraint chips; disabled: `opacity-50 cursor-not-allowed` |
 | `MobileModeHeader` | `layout/MobileModeHeader.tsx` | `DS.textSize.*` | `shadow-card` for status pill |
 | `TripHealthBar` | `plan/TripHealthBar.tsx` | None (raw pattern) | Compact inventory bar; `bg-white dark:bg-zinc-950/80 border-zinc-200 dark:border-white/10` |
 | `TripStatusBar` | `chat/TripStatusBar.tsx` | None (raw pattern) | Mobile-only dark status bar; no light mode; `bg-zinc-900 border-white/10` |
-| `NextStepBar` | `plan/NextStepBar.tsx` | `DS.actions.primary`, `DS.glowClass.action` | Command Island; `shadow-card` for status pill, `shadow-soft` for island |
+| `NextStepBar` | `plan/NextStepBar.tsx` | `DS.text.label`, `DS.textSize.micro`, `DS.glowClass.action` | Command Island; `shadow-card` for status pill, `shadow-soft` for island |
 | `GhostSlot` | `plan/timeline/blocks/GhostSlot.tsx` | None (raw pattern) | Dashed CTA slot; `border-dashed border-zinc-300 dark:border-white/10` |
 | `LogisticsBlock` | `plan/timeline/blocks/LogisticsBlock.tsx` | None (raw pattern) | Flight/transfer block; `dark:bg-zinc-900/50 dark:border-white/[0.08]` glass pattern |
 | `MapErrorBoundary` | `map/MapErrorBoundary.tsx` | None (raw pattern) | Error fallback; `bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-white/10`, text: `text-zinc-500` |
@@ -2620,12 +2654,13 @@ Updates to Section 6 — new components discovered in audit:
 | `DroppableDay` | `plan/timeline/DroppableDay.tsx` | `SPRING_CONFIG.SLIDE` | Drop zone highlight; `ring-emerald-500/25` when `isOver`; see Section 28.7 |
 | `DraggableBlock` | `plan/timeline/DraggableBlock.tsx` | None | Wraps any `DayBlock`; `Lock` icon guard when block has no `id`; `z-10` for Lock badge |
 | `FreeDayCard` | `plan/timeline/blocks/FreeDayCard.tsx` | `DS.actions.primary` | Dashed-border empty day; specialist chip picker; see Section 28.8 |
-| `StrategyHeroAccordion` | `plan/stages/StrategyHeroAccordion.tsx` | `DS.textSize.*` | Collapsible accordion variant of StrategyHero; specialist colors via `SPECIALIST_STYLE_CLASSES` |
+| `StrategyHeroAccordion` | `plan/stages/StrategyHeroAccordion.tsx` | `DS.textSize.*` | Collapsible accordion variant of StrategyHero; specialist colors via `SPECIALIST_STYLE_CLASSES` (in `StrategyHeroUtils.tsx`) |
 | `S2AgentCard` | `plan/stages/S2AgentCard.tsx` | `DS.textSize.*` | Legacy specialist card with topic CSS vars; `shadow-card` on card, `hover:shadow-soft` on hover |
 | `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Density switcher; `bg-emerald-500 rounded-full animate-pulse` for live indicator dot |
 | `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (raw pattern) | Full-density itinerary layout; subdued toggle pills for Flights/Stays/Travel Intel and sticky desktop map column |
 | `TimelineThread` | `plan/TimelineThread.tsx` | `DS.textSize.*` | Day-thread renderer; constraint/status chips with light/dark contrast pairs and unschedulable overlays |
 | `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
+| `DestinationIntelCard` | `plan/DestinationIntelCard.tsx` | `DS` tokens | Collapsible destination overview card built from strategy sections |
 
 ---
 
@@ -2766,7 +2801,7 @@ These patterns appear in production code and are now documented to prevent futur
 
 ### 29.1 Subdued Toggle Pills (PlanFullDensityView Row-Two Chips)
 
-Small rounded-full toggle pills for collapsing/expanding sub-sections (Stays, Flights, Destination Travel Intel). These are NOT selection pills — they toggle visibility, not select a value.
+Small rounded toggle pills for collapsing/expanding sub-sections (Stays, Flights, Destination Travel Intel). These are NOT selection pills — they toggle visibility, not select a value.
 
 | Property | Light Mode | Dark Mode |
 |----------|-----------|-----------|
@@ -2774,15 +2809,15 @@ Small rounded-full toggle pills for collapsing/expanding sub-sections (Stays, Fl
 | Border | `border-zinc-300` | `dark:border-white/15` |
 | Text | `text-zinc-700` | `dark:text-zinc-300` |
 | Hover bg | `hover:bg-zinc-200` | `dark:hover:bg-white/10` |
-| Shape | `px-2.5 py-1 rounded-full text-xs whitespace-nowrap` | Same |
-| Transition | `transition-all duration-150` | Same |
+| Shape | `h-7 px-2.5 rounded-lg text-sm whitespace-nowrap` | Same |
+| Transition | `transition-colors` | Same |
 
-**Rule:** Border must be `dark:border-white/15` (not `/10`) to meet Tactile Rule. Use `transition-all duration-150` (not `transition-colors`) for scale/shadow inclusion.
+**Rule:** Border must be `dark:border-white/15` (not `/10`) to meet Tactile Rule. Use `h-7` for consistent row height across collapsible toggles.
 
 ```tsx
 <button
   className={cn(
-    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs whitespace-nowrap transition-all duration-150',
+    'inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-sm whitespace-nowrap transition-colors',
     'border-zinc-300 dark:border-white/15 bg-zinc-100 dark:bg-white/[0.06]',
     'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/10',
   )}

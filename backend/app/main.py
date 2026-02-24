@@ -82,7 +82,7 @@ from app.planner import (  # noqa: E402
     get_planner_debug_info,
     response_cache_stats,
 )
-from app.planner.nodes.router_category_sync import has_explicit_category_intent  # noqa: E402
+from app.planner.specialist_registry import has_explicit_category_intent  # noqa: E402
 from app.rate_limit import limiter as _shared_limiter  # noqa: E402
 from app.schemas import (  # noqa: E402
     ArrangementApplyRequest,
@@ -116,6 +116,7 @@ from app.schemas import (  # noqa: E402
     TripInputValidationRequest,
     TripInputValidationResponse,
 )
+from app.services.itinerary_builder import POI_TYPE_ALIASES as _POI_TYPE_ALIASES  # noqa: E402
 from app.services.spend_guard import (  # noqa: E402
     SpendLimitExceeded,
     reserve_places_spend_or_raise,
@@ -1288,7 +1289,6 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
     from sqlalchemy import delete, func, select
 
     from app.db_models import ResponseCache
-    from app.planner.nodes.intent_router import _exploration_answer_cache
     from app.planner.services.feasibility_service import _feasibility_cache
     from app.planner.services.iata_resolver import clear_iata_cache
     from app.services.activity_browser import _browse_cache
@@ -1325,7 +1325,6 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
         "feasibility_memory": _feasibility_cache.clear(),
         "browse_memory": _browse_cache.clear(),
         "places_enrichment_memory": _enrich_mem.clear(),
-        "exploration_answer_memory": _exploration_answer_cache.clear(),
         "iata_memory": clear_iata_cache(),
         "unsplash_memory": unsplash_memory_before,
     }
@@ -1682,6 +1681,7 @@ async def graph_plan_stream_endpoint(
             today_iso=today_iso,
             session_key=session_key,
             ip_key=ip_key,
+            request=request,
             release_sse_slot=_release_sse_slot,
             sanitize_trip_inputs_for_category_merge=_sanitize_trip_inputs_for_category_merge,
             merge_user_owned_trip_settings=_merge_user_owned_trip_settings,
@@ -3155,46 +3155,6 @@ async def remove_block(
 # =============================================================================
 # Insert Activity Block Endpoint (Browse Activities Sheet)
 # =============================================================================
-
-_POI_TYPE_ALIASES: dict[str, str] = {
-    "culture": "cultural",
-    "cultural": "cultural",
-    "food": "food",
-    "nature": "nature",
-    "spa": "spa",
-    "shopping": "shopping",
-    "tours": "tours",
-    "attraction": "tours",
-    "cultural_attraction": "cultural",
-    "tourist_attraction": "tours",
-    "travel_agency": "tours",
-    "point_of_interest": "tours",
-    "museum": "cultural",
-    "art_gallery": "cultural",
-    "historical_landmark": "cultural",
-    "cultural_landmark": "cultural",
-    "monument": "cultural",
-    "plaza": "cultural",
-    "ruins": "cultural",
-    "fountain": "cultural",
-    "hindu_temple": "temples",
-    "temple": "temples",
-    "church": "cultural",
-    "place_of_worship": "cultural",
-    "restaurant": "food",
-    "cafe": "food",
-    "bar": "food",
-    "park": "nature",
-    "natural_feature": "nature",
-    "national_park": "nature",
-    "campground": "nature",
-    "shopping_mall": "shopping",
-    "market": "shopping",
-    "store": "shopping",
-    "clothing_store": "shopping",
-    "beauty_salon": "spa",
-    "gym": "spa",
-}
 
 
 def _canonical_poi_type_for_block(raw: Any) -> str | None:

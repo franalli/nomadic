@@ -22,6 +22,7 @@ const LOADER_ETA_THRESHOLDS: Record<string, number> = {
   // Default threshold for unknown nodes
   default: 600,
 
+  // ── v1 graph node names ──
   // Always show for these operations (slow by nature)
   strategy_node: 0,      // 6000-8000ms - strategy planning
   plan_generation: 0,    // Full plan generation
@@ -38,6 +39,14 @@ const LOADER_ETA_THRESHOLDS: Record<string, number> = {
   required_fields_node: 800,
   validation_node: 1000,
   acknowledgment_node: 800,
+
+  // ── v2 tool names (run in parallel with v1 via feature flag) ──
+  extract_trip_fields: 800,   // Quick extraction, similar to required_fields_node
+  get_specialist_advice: 0,   // Slow — always show (maps to specialist)
+  get_local_intel: 0,         // Slow — always show (maps to local_expert)
+  search_tiles: 0,            // Slow — always show (maps to logistics)
+  validate_plan: 1000,        // Quick validation, similar to validation_node
+  build_itinerary: 0,         // Slow — always show (maps to itinerary_node)
 };
 
 /**
@@ -64,6 +73,7 @@ export function shouldShowLoaderForNode(nodeType: string, estimatedMs: number): 
  * Used to classify incoming node_status events.
  */
 const ACTION_TYPE_NODE_MAP: Record<string, LoaderActionType> = {
+  // ── v1 graph node names ──
   // Generate plan nodes
   strategy_node: 'generate_plan',
   plan_generation: 'generate_plan',
@@ -86,6 +96,15 @@ const ACTION_TYPE_NODE_MAP: Record<string, LoaderActionType> = {
 
   // Multi-city routing (part of generate_plan)
   multi_city_routing: 'generate_plan',
+
+  // ── v2 tool names (run in parallel with v1 via feature flag) ──
+  get_specialist_advice: 'generate_plan',
+  get_local_intel: 'generate_plan',
+  search_tiles: 'generate_plan',
+  build_itinerary: 'create_itinerary',
+  // Note: extract_trip_fields and validate_plan are quick operations
+  // that intentionally don't map to an action type (same as
+  // acknowledgment_node / validation_node in v1).
 };
 
 /**

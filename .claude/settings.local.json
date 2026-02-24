@@ -113,7 +113,12 @@
       "mcp__ide__getDiagnostics",
       "Bash(.venv/bin/ruff format)",
       "Bash(tee:*)",
-      "Bash(true:*)"
+      "Bash(true:*)",
+      "WebSearch",
+      "WebFetch(domain:forum.langchain.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:reference.langchain.com)",
+      "WebFetch(domain:changelog.langchain.com)"
     ],
     "deny": [],
     "ask": []

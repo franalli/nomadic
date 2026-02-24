@@ -2,6 +2,7 @@
 
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 import { useCallback, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { useDocumentStore } from '@/state/documentStore';
 import {
@@ -104,23 +105,27 @@ export function useViewNavigation(): UseViewNavigationReturn {
   // Store now uses two-mode system natively ('planning' | 'booking')
   const storedActiveMode = useDocumentStore((s) => s.activeView ?? 'planning');
   const setActiveView = useDocumentStore((s) => s.setActiveView);
-  const tiles = useDocumentStore((s) => s.document?.tiles);
-  const generation = useDocumentStore((s) => s.generation);
-  const strategySections = useDocumentStore((s) => s.document?.strategy_sections);
+
+  // Derived booleans — avoid selecting entire objects to prevent unnecessary re-renders
+  const hasTiles = useDocumentStore((s) => {
+    const t = s.document?.tiles;
+    if (!t) return false;
+    for (const _ in t) return true; // O(1) — early-exit on first own key
+    return false;
+  });
+  const isGenerating = useDocumentStore((s) => s.generation?.active === true);
+  const hasStrategyContent = useDocumentStore((s) => (s.document?.strategy_sections?.length ?? 0) > 0);
   const planViewState = useDocumentStore((s) => s.document?.plan_view_state);
-  const tripInputs = useDocumentStore((s) => s.document?.trip_inputs);
-  const dayCards = useDocumentStore((s) => s.document?.day_cards);
-  const isGenerating = generation?.active === true;
+  const hasItinerary = useDocumentStore((s) => (s.document?.day_cards?.length ?? 0) > 0);
+  // tripInputs is passed to computePlanningPhase — keep full object with shallow equality
+  const tripInputs = useDocumentStore(
+    useShallow((s) => s.document?.trip_inputs)
+  );
+  const hasDates = Boolean(tripInputs?.start_date && tripInputs?.end_date);
 
   // Plan finalization state
   const isPlanFinalized = useDocumentStore((s) => s.isPlanFinalized);
   const setFinalized = useDocumentStore((s) => s.setFinalized);
-
-  // === Computed State ===
-  const hasTiles = Object.keys(tiles ?? {}).length > 0;
-  const hasStrategyContent = (strategySections?.length ?? 0) > 0;
-  const hasItinerary = (dayCards?.length ?? 0) > 0;
-  const hasDates = Boolean(tripInputs?.start_date && tripInputs?.end_date);
 
   // Book is accessible when in a bookable state (S2 or S3)
   const inBookableState = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(

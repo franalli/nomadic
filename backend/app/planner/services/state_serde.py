@@ -14,7 +14,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    messages_from_dict,
+    messages_to_dict,
+)
 
 from app.planner.state import GraphState, TripPlan, TripSettings
 from app.schemas import (
@@ -180,6 +186,151 @@ def restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
 
 
 # =============================================================================
+# Agent State Serialization (create_agent path)
+# =============================================================================
+
+# Maximum messages to persist.  Keeps last N messages (default 20 = 10 turns)
+# while always preserving the first 2 messages (system + first human) for
+# context grounding.
+_DEFAULT_MAX_MESSAGES = 20
+
+
+def _agent_state_defaults() -> Dict[str, Any]:
+    """Return fresh default values for NomadicAgentState.
+
+    Must be a function (not a module-level dict) to avoid mutable default
+    aliasing -- callers that mutate the returned dict won't corrupt a
+    shared object.
+    """
+    return {
+        "trip_plan": {},
+        "trip_settings": {},
+        "tiles": {},
+        "strategy_sections": [],
+        "day_cards": [],
+        "constraints": [],
+        "turn_meta": {},
+        "persistent_meta": {},
+    }
+
+
+def _trim_messages(
+    messages: list[BaseMessage],
+    max_messages: int = _DEFAULT_MAX_MESSAGES,
+) -> list[BaseMessage]:
+    """Keep first 2 messages (system + first human) and last N to prevent token bloat.
+
+    If total messages <= max_messages, returns the full list unchanged.
+    Otherwise, returns [first_2] + [last (max_messages - 2)].
+    """
+    if len(messages) <= max_messages:
+        return list(messages)
+
+    # Always keep the first 2 for context grounding
+    head_count = min(2, len(messages))
+    head = messages[:head_count]
+    tail_count = max_messages - head_count
+    tail = messages[-tail_count:] if tail_count > 0 else []
+    return head + tail
+
+
+def serialize_agent_state(
+    state: Dict[str, Any],
+    max_messages: int = _DEFAULT_MAX_MESSAGES,
+) -> Dict[str, Any]:
+    """Serialize NomadicAgentState dict -> session_state dict for DB persistence.
+
+    Keeps last N message pairs (configurable) to prevent token bloat.
+    Uses LangChain's ``messages_to_dict`` for full-fidelity message
+    serialization (handles AIMessage.tool_calls, ToolMessage.tool_call_id,
+    SystemMessage, etc.).
+
+    All non-message fields (trip_plan, tiles, constraints, ...) are passed
+    through as-is since they are already plain dicts/lists inside
+    NomadicAgentState.
+    """
+    raw_messages: list = state.get("messages", [])
+
+    # Convert everything to BaseMessage first so trimming and
+    # serialization treat all messages uniformly and preserve order.
+    message_objects: list[BaseMessage] = []
+    for m in raw_messages:
+        if isinstance(m, BaseMessage):
+            message_objects.append(m)
+        elif isinstance(m, dict):
+            # Passthrough dict -- coerce to HumanMessage so it survives
+            # trim + messages_to_dict uniformly (preserves original order).
+            message_objects.append(HumanMessage(content=str(m.get("content", ""))))
+
+    trimmed = _trim_messages(message_objects, max_messages)
+    serialized_messages = messages_to_dict(trimmed)
+
+    result: Dict[str, Any] = {"messages": serialized_messages}
+
+    # Copy all non-message fields from state
+    for key in (
+        "trip_plan",
+        "trip_settings",
+        "tiles",
+        "strategy_sections",
+        "day_cards",
+        "constraints",
+        "turn_meta",
+        "persistent_meta",
+    ):
+        if key in state:
+            result[key] = state[key]
+
+    return result
+
+
+def restore_agent_state(session_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Deserialize session_state dict -> NomadicAgentState dict.
+
+    Returns a fresh state with default values if ``session_state`` is None.
+    Uses LangChain's ``messages_from_dict`` for full-fidelity message
+    deserialization.
+    """
+    if not session_state:
+        logger.debug("restore_agent_state: no session_state, returning defaults")
+        return {**_agent_state_defaults(), "messages": []}
+
+    # Restore messages -- single-pass to preserve interleaved order
+    raw_messages = session_state.get("messages", [])
+    restored_messages: list[BaseMessage] = []
+
+    for m in raw_messages:
+        if isinstance(m, BaseMessage):
+            restored_messages.append(m)
+        elif isinstance(m, dict) and "type" in m and "data" in m:
+            # Single LangChain-format dict -- deserialize immediately
+            # to preserve order relative to legacy dicts / BaseMessages.
+            restored_messages.extend(messages_from_dict([m]))
+        elif isinstance(m, dict):
+            # Legacy format from existing graph path: {"role": ..., "content": ...}
+            role = m.get("role", "assistant")
+            content = m.get("content", "")
+            if role == "human":
+                restored_messages.append(HumanMessage(content=content))
+            else:
+                restored_messages.append(AIMessage(content=content))
+
+    result: Dict[str, Any] = {"messages": restored_messages}
+
+    # Restore all non-message fields with fresh defaults
+    defaults = _agent_state_defaults()
+    for key, default in defaults.items():
+        if key == "messages":
+            continue
+        result[key] = session_state.get(key, default)
+
+    _migrate_legacy_agent_fields(session_state, result)
+    result["trip_settings"] = _normalize_agent_trip_settings(result.get("trip_settings", {}))
+
+    return result
+
+
+# =============================================================================
 # Private Helpers
 # =============================================================================
 
@@ -195,3 +346,149 @@ def _trip_plan_to_inputs_dict(trip_plan: TripPlan) -> Dict[str, Any]:
         "budget": trip_plan.budget,
         "origin": trip_plan.origin or "",
     }
+
+
+def _normalize_agent_trip_settings(raw_settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize legacy flat trip_settings keys into nested settings dicts."""
+    trip_settings = dict(raw_settings) if isinstance(raw_settings, dict) else {}
+
+    flight_settings = trip_settings.get("flight_settings", {})
+    flight_settings = dict(flight_settings) if isinstance(flight_settings, dict) else {}
+
+    hotel_settings = trip_settings.get("hotel_settings", {})
+    hotel_settings = dict(hotel_settings) if isinstance(hotel_settings, dict) else {}
+
+    activity_settings = trip_settings.get("activity_settings", {})
+    activity_settings = dict(activity_settings) if isinstance(activity_settings, dict) else {}
+
+    if "flight_direct_only" in trip_settings and "direct_only" not in flight_settings:
+        val = trip_settings.get("flight_direct_only")
+        if val is not None:
+            flight_settings["direct_only"] = bool(val)
+    if "flight_cabin_class" in trip_settings and "cabin_class" not in flight_settings:
+        val = trip_settings.get("flight_cabin_class")
+        if val is not None:
+            flight_settings["cabin_class"] = val
+
+    if "hotel_min_stars" in trip_settings and "min_stars" not in hotel_settings:
+        val = trip_settings.get("hotel_min_stars")
+        if val is not None:
+            hotel_settings["min_stars"] = val
+    if "hotel_amenities" in trip_settings and "amenities" not in hotel_settings:
+        val = trip_settings.get("hotel_amenities")
+        if val is not None:
+            hotel_settings["amenities"] = val
+    if "hotel_style" in trip_settings and "style" not in hotel_settings:
+        val = trip_settings.get("hotel_style")
+        if val is not None:
+            hotel_settings["style"] = val
+    if "hotel_location" in trip_settings and "location" not in hotel_settings:
+        val = trip_settings.get("hotel_location")
+        if val is not None:
+            hotel_settings["location"] = val
+
+    if "skill_level" in trip_settings and "skill_level" not in activity_settings:
+        val = trip_settings.get("skill_level")
+        if val is not None:
+            activity_settings["skill_level"] = val
+    if "activity_categories" in trip_settings and "categories" not in activity_settings:
+        val = trip_settings.get("activity_categories")
+        if val is not None:
+            activity_settings["categories"] = val
+
+    if flight_settings:
+        trip_settings["flight_settings"] = flight_settings
+    if hotel_settings:
+        trip_settings["hotel_settings"] = hotel_settings
+    if activity_settings:
+        trip_settings["activity_settings"] = activity_settings
+
+    for legacy_field in (
+        "skill_level",
+        "hotel_min_stars",
+        "hotel_style",
+        "hotel_amenities",
+        "hotel_location",
+        "flight_direct_only",
+        "flight_cabin_class",
+        "activity_categories",
+    ):
+        trip_settings.pop(legacy_field, None)
+
+    return trip_settings
+
+
+def _migrate_legacy_agent_fields(session_state: Dict[str, Any], result: Dict[str, Any]) -> None:
+    """Backfill create_agent state from legacy persisted graph fields."""
+    legacy_trip_inputs = session_state.get("trip_inputs", {})
+    if isinstance(legacy_trip_inputs, dict):
+        if not result.get("trip_plan"):
+            trip_plan: Dict[str, Any] = {}
+            for field in (
+                "destination",
+                "origin",
+                "origin_iata",
+                "destination_iata",
+                "start_date",
+                "end_date",
+                "adults",
+                "children",
+                "budget",
+                "currency",
+            ):
+                val = legacy_trip_inputs.get(field)
+                if val is not None:
+                    trip_plan[field] = val
+            categories = (
+                legacy_trip_inputs.get("activity_settings", {}).get("categories", [])
+                if isinstance(legacy_trip_inputs.get("activity_settings"), dict)
+                else []
+            )
+            if categories:
+                trip_plan["activity_categories"] = categories
+            if trip_plan:
+                result["trip_plan"] = trip_plan
+
+        if not result.get("trip_settings"):
+            trip_settings: Dict[str, Any] = {}
+            for settings_field in (
+                "booking_types",
+                "flight_settings",
+                "hotel_settings",
+                "activity_settings",
+                "transport_settings",
+                "date_flex",
+                "trip_duration",
+                "date_window_start",
+                "date_window_end",
+            ):
+                val = legacy_trip_inputs.get(settings_field)
+                if val is not None:
+                    trip_settings[settings_field] = val
+            if trip_settings:
+                result["trip_settings"] = trip_settings
+
+    legacy_meta = session_state.get("metadata", {})
+    if not isinstance(legacy_meta, dict):
+        return
+
+    if not result.get("tiles") and isinstance(legacy_meta.get("tiles"), dict):
+        result["tiles"] = legacy_meta.get("tiles", {})
+    if not result.get("strategy_sections") and isinstance(
+        legacy_meta.get("strategy_sections"), list
+    ):
+        result["strategy_sections"] = legacy_meta.get("strategy_sections", [])
+    if not result.get("day_cards") and isinstance(legacy_meta.get("day_cards"), list):
+        result["day_cards"] = legacy_meta.get("day_cards", [])
+    if not result.get("constraints") and isinstance(legacy_meta.get("constraints"), list):
+        result["constraints"] = legacy_meta.get("constraints", [])
+
+    if not result.get("trip_settings") and isinstance(legacy_meta.get("trip_settings"), dict):
+        result["trip_settings"] = legacy_meta.get("trip_settings", {})
+
+    persistent_meta = result.get("persistent_meta", {})
+    persistent_meta = dict(persistent_meta) if isinstance(persistent_meta, dict) else {}
+    for key in ("plan_view_state", "suggestion_chips", "suggestion_chip_meta", "session_id"):
+        if key not in persistent_meta and key in legacy_meta:
+            persistent_meta[key] = legacy_meta[key]
+    result["persistent_meta"] = persistent_meta

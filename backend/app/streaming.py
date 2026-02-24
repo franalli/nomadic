@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List
 
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.requests import Request
 
 from app.config import settings
 from app.crud_document import (
@@ -34,7 +35,7 @@ from app.graph_plan_utils import (
     truncate_assistant_message,
     validate_suggested_responses,
 )
-from app.planner import condense_long_message, run_turn_streaming
+from app.planner.services.admin_utils import condense_long_message
 from app.schemas import (
     AckUpdate,
     BookingStatus,
@@ -240,6 +241,7 @@ async def generate_sse(
     today_iso: str,
     session_key: str,
     ip_key: str,
+    request: Request,
     release_sse_slot: Callable[[str, str], Awaitable[None]],
     sanitize_trip_inputs_for_category_merge: Callable[[Dict[str, Any], str], Dict[str, Any]],
     merge_user_owned_trip_settings: Callable[..., None],
@@ -456,8 +458,23 @@ async def generate_sse(
             token_count = 0
             stream_start = asyncio.get_event_loop().time()
 
+            from app.planner.plan_graph import run_turn_streaming
+
+            doc_settings = session_state.pop("_doc_settings", None)
+            event_source = run_turn_streaming(
+                user_message=req.message,
+                session_state=session_state,
+                doc_settings=doc_settings,
+                session_id=session_id,
+            )
+
             with spend_guard_scope(session_id):
-                async for event in run_turn_streaming(req.message, session_state):
+                async for event in event_source:
+                    # Check for client disconnect
+                    if await request.is_disconnected():
+                        logger.info(f"[{request_id}] Client disconnected, cancelling stream")
+                        break
+
                     # Check if we've exceeded total stream timeout
                     elapsed = asyncio.get_event_loop().time() - stream_start
                     if elapsed > route_timeout_seconds:
@@ -482,6 +499,9 @@ async def generate_sse(
                         status = event["data"].get("status")
                         logger.debug(f"[{request_id}] Node status: {node} - {status}")
                         yield f"event: node_status\ndata: {json.dumps(event)}\n\n"
+                    elif event["type"] == "partial":
+                        # Forward partial data events (v2 emits these from tool results)
+                        yield f"event: partial\ndata: {json.dumps(event)}\n\n"
                     elif event["type"] == "complete":
                         logger.debug(f"[{request_id}] Stream complete after {token_count} tokens")
                         final_result = event["data"]
@@ -502,7 +522,7 @@ async def generate_sse(
             assistant_message = final_result.get("assistant_message", "")
             if len(assistant_message) > settings.assistant_msg_max_len:
                 try:
-                    assistant_message = await condense_long_message(
+                    assistant_message = condense_long_message(
                         assistant_message,
                         settings.assistant_msg_max_len,
                     )

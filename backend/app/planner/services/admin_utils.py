@@ -7,8 +7,6 @@ Supports:
 - Message utilities (condensing long messages)
 - Startup validation (prompts, templates)
 
-Note: clear_all_caches() remains in plan_graph.py (mutates global _graph).
-
 Extracted from plan_graph.py (Stage 7, Phase 3).
 """
 
@@ -38,16 +36,25 @@ def get_planner_debug_info() -> Dict[str, Any]:
         "build_id": PLANNER_BUILD_ID,
         "cache_schema": CACHE_SCHEMA_VERSION,
         "prompt_hash": PROMPT_BUNDLE_HASH,
-        "graph_nodes": ["router", "specialist", "architect", "guard", "synthesizer"],
+        "architecture": "create_agent",
+        "tools": [
+            "extract_trip_fields",
+            "get_specialist_advice",
+            "get_local_intel",
+            "search_tiles",
+            "validate_plan",
+            "build_itinerary",
+        ],
     }
 
 
 def get_graph_stats() -> Dict[str, Any]:
     """Return graph statistics."""
     return {
-        "nodes": 5,
-        "edges": 6,
-        "version": "1.0",
+        "architecture": "create_agent",
+        "tools": 6,
+        "middleware": 4,
+        "version": "2.0",
     }
 
 
@@ -150,3 +157,8 @@ def checkpoint_stats() -> Dict[str, Any]:
 def response_cache_stats() -> Dict[str, Any]:
     """Return response cache statistics."""
     return {"hits": 0, "misses": 0, "version": "1.0"}
+
+
+async def clear_all_caches() -> int:
+    """Clear all caches (response caches, validation caches, etc.)."""
+    return await clear_response_caches()

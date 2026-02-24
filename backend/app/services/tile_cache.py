@@ -180,9 +180,11 @@ async def get_cached_tiles(
 
     except OperationalError as e:
         # Database connection failed - degrade gracefully
+        await db.rollback()
         logger.warning(f"[TILE_CACHE] L2 unavailable (DB error): {e}")
         return None
     except Exception as e:
+        await db.rollback()
         logger.error(f"[TILE_CACHE] Unexpected error: {e}")
         return None
 

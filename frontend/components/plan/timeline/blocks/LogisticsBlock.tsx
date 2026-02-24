@@ -1,3 +1,5 @@
+'use client';
+
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
  * LogisticsBlock
@@ -7,8 +9,6 @@
  *
  * @see docs/ux_unified_architecture.md Section 10.C
  */
-
-'use client';
 
 import { DoorOpen, Key, type LucideIcon, PlaneLanding, PlaneTakeoff, Settings } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';

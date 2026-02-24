@@ -9,22 +9,26 @@
 'use client';
 
 import {
-  Brain, // router
+  Brain, // router / extract_trip_fields
   Building2, // architect
+  CalendarDays, // build_itinerary
   Loader2, // Default spinner
   type LucideIcon,
-  MapPin, // local_expert
+  MapPin, // local_expert / get_local_intel
   PenTool, // synthesizer
-  Plane, // logistics
-  Shield, // guard
-  Star, // specialist
+  Plane, // logistics / search_tiles
+  Search, // search_tiles (alt)
+  Shield, // guard / validate_plan
+  Star, // specialist / get_specialist_advice
 } from 'lucide-react';
 
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
-// Map backend 'icon_key' to Lucide components
+// Map backend 'icon_key' to Lucide components.
+// Covers both v1 graph node keys and v2 tool-based keys.
 const ICON_MAP: Record<string, LucideIcon> = {
+  // v1 icon keys
   brain: Brain,
   building: Building2,
   plane: Plane,
@@ -32,6 +36,9 @@ const ICON_MAP: Record<string, LucideIcon> = {
   pen: PenTool,
   star: Star,
   map: MapPin,
+  // v2 icon keys (tools may emit these)
+  search: Search,
+  calendar: CalendarDays,
 };
 
 export interface ActiveStatus {

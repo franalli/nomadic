@@ -1,3 +1,5 @@
+'use client';
+
 import { useDocumentTripInputs } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 

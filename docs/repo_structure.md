@@ -50,7 +50,7 @@ nomadic/
 
 ## Backend (`/backend`)
 
-Python FastAPI application with LangGraph-based trip planning.
+Python FastAPI application with single-agent trip planner.
 
 ```
 backend/
@@ -70,7 +70,6 @@ backend/
 │   ├── request_dedup.py        # Idempotency key cache for expand-itinerary (TTLCache, extracted from main.py)
 │   ├── streaming.py            # SSE + NDJSON streaming generators (extracted from main.py)
 │   ├── validation_cache.py     # Validation cache infrastructure (6 TTL caches, extracted from validation.py)
-│   ├── plan_graph.py           # LangGraph workflow definition
 │   ├── rate_limit.py           # Rate limiting configuration (extracted from main.py)
 │   ├── safety_snippets.json    # Safety-related content
 │   ├── schemas.py              # Pydantic request/response schemas
@@ -85,34 +84,48 @@ backend/
 │   │   ├── __init__.py
 │   │   └── session.py          # Session middleware
 │   │
-│   ├── planner/                # LangGraph trip planner (7-node architecture)
+│   ├── planner/                # Single-agent trip planner (create_agent + 6 tools + middleware)
 │   │   ├── __init__.py
+│   │   ├── agent.py            # create_agent() — builds the LangGraph agent with tools + middleware
+│   │   ├── agent_constants.py  # Agent configuration constants (model names, token limits, etc.)
 │   │   ├── hashing.py          # Hash utilities
 │   │   ├── llm_factory.py      # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
+│   │   ├── middleware.py        # AgentMiddleware stack (model selection, dynamic prompt, turn lifecycle, suggestion chips)
 │   │   ├── patterns_registry.py # Shared regex/keyword patterns (budget, travelers, settings)
+│   │   ├── plan_graph.py       # LangGraph workflow definition (streaming core, moved from app/plan_graph.py)
 │   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
 │   │   ├── test_mode.py        # Test mode utilities
 │   │   │
-│   │   ├── nodes/              # LangGraph nodes (7-node structure)
+│   │   ├── nodes/              # Domain logic modules (wrapped by agent tools)
 │   │   │   ├── __init__.py
 │   │   │   ├── constraint_guard.py         # Constraint validation
 │   │   │   ├── input_gate_config.py        # Input gate threshold constants (dates, travelers, budget)
 │   │   │   ├── input_gates.py              # Pre-routing input validation (5 gates: Date, Duration, Traveler, Budget, Destination)
-│   │   │   ├── intent_router.py            # Intent classification (main orchestration)
-│   │   │   │   ├── router_extraction.py        # LLM extraction & field validation (Stage 9A)
-│   │   │   ├── router_category_sync.py     # Tier 2 detection & actionable input (Stage 9B)
-│   │   │   ├── router_utils.py             # Shared router utilities (greetings, origin detection, destination context)
+│   │   │   ├── router_extraction.py        # LLM extraction & field validation
 │   │   │   ├── expert_constraints.py      # Local expert Pydantic schemas + LOCAL_EXPERT_CONSTRAINTS (constraint grounding injected into LLM prompt)
 │   │   │   ├── local_expert.py             # Local knowledge node
 │   │   │   ├── logistics_node.py           # Flights/hotels data fetcher
 │   │   │   ├── specialist_schemas.py  # Specialist Pydantic schemas
-│   │   │   ├── synthesizer.py         # Response synthesizer
-│   │   │   ├── trip_architect.py      # Main planning architect
 │   │   │   └── vertical_specialist.py # Domain experts (8 specialists, registry-driven)
+│   │   │
+│   │   ├── prompts/             # Agent prompt templates
+│   │   │   ├── __init__.py
+│   │   │   └── planner.py      # System prompt builder for the planner agent
+│   │   │
+│   │   ├── tools/               # Agent tool definitions (6 tools)
+│   │   │   ├── __init__.py
+│   │   │   ├── _parsing.py             # Shared tool argument parsing utilities
+│   │   │   ├── build_itinerary.py      # build_itinerary tool — day-by-day schedule from tiles + constraints
+│   │   │   ├── extract_trip_fields.py  # extract_trip_fields tool — parse intent + trip fields
+│   │   │   ├── get_local_intel.py      # get_local_intel tool — Trip Overview card + Phase B enrichment
+│   │   │   ├── get_specialist_advice.py # get_specialist_advice tool — domain-specific strategy
+│   │   │   ├── search_tiles.py         # search_tiles tool — flights, hotels, activities via TileService
+│   │   │   └── validate_plan.py        # validate_plan tool — budget/temporal/safety constraint checks
 │   │   │
 │   │   ├── services/
 │   │   │   ├── __init__.py
 │   │   │   ├── admin_utils.py       # Admin utility functions
+│   │   │   ├── agent_runner.py      # Agent execution runner (invokes the agent per turn)
 │   │   │   ├── feasibility_service.py # LLM-backed geographic feasibility checks (extracted from vertical_specialist.py)
 │   │   │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed)
 │   │   │   ├── itinerary_adapter.py # Thin bridge: GraphState → ItineraryBuilder
@@ -122,6 +135,7 @@ backend/
 │   │   │
 │   │   └── state/
 │   │       ├── __init__.py
+│   │       ├── agent_state.py # Agent-specific state schema (extends graph_state for agent turns)
 │   │       ├── graph_state.py   # Planner state schemas (renamed from schemas.py)
 │   │       └── typed_meta.py   # Typed metadata bridge (TurnMeta, get_trip_settings)
 │   │
@@ -148,6 +162,7 @@ backend/
 │   │   ├── regen_strategy.py        # Selective regeneration strategy computation
 │   │   ├── router_cache.py          # Thread-safe L1 cache for router extraction (context-aware)
 │   │   ├── specialist_cache.py      # Thread-safe L1+L2 cache for specialist LLM outputs
+│   │   ├── spend_guard.py           # Spend/budget guard logic
 │   │   ├── task_tracker.py          # Shared fire-and-forget background task tracker
 │   │   ├── tile_cache.py            # Thread-safe L1+L2 cache for tile provider data (24h TTL)
 │   │   ├── unsplash.py              # Unsplash image service (cooldown pruning on prefetch)
@@ -204,38 +219,39 @@ backend/
 │   ├── llm_stub.py                       # LLM mock for testing
 │   ├── run_curl_flows.sh                 # End-to-end curl flow tests
 │   ├── run_curl_flows_extended.sh        # Extended end-to-end curl flow tests
-│   ├── test_architecture.py              # Architecture tests
 │   ├── test_activity_browser.py          # Browse activities backend contract tests
+│   ├── test_activity_image_placeholder_mapping.py  # Activity image placeholder mapping tests
+│   ├── test_agent_multiturn.py           # Agent multi-turn conversation tests
 │   ├── test_conflict_resolution.py       # Conflict resolution & constraint alias tests
 │   ├── test_cross_domain_constraints.py  # Cross-domain constraint tests
 │   ├── test_demo_dataset.py              # Demo data tests
 │   ├── test_endpoint_contract.py         # Endpoint response contract tests
 │   ├── test_experience_generator.py      # Experience generator tests
 │   ├── test_fill_day_coordinates.py      # Fill-day coordinate + constraint mapping tests
+│   ├── test_google_places_circuit_breaker.py  # Google Places circuit breaker tests
 │   ├── test_google_places_enrichment.py  # Google Places enrichment/cache tests
+│   ├── test_google_places_photo_proxy.py # Google Places photo proxy tests
 │   ├── test_hash_ban.py                  # Hash ban tests
 │   ├── test_iata_resolver.py             # IATA resolver tests
 │   ├── test_import_contract.py           # Import contract tests
 │   ├── test_input_gates.py              # Input gate validation tests (5 gates + registry)
-│   ├── test_intent_router_settings.py    # IntentRouter extracted settings contract tests
 │   ├── test_itinerary_builder.py         # Itinerary builder tests
 │   ├── test_llm_feasibility.py           # LLM geographic feasibility tests
 │   ├── test_logistics_tier2.py           # Logistics Tier-2 generation, backfill pipeline, affinity sorting tests
 │   ├── test_main_trip_input_merge.py     # Document PATCH no-op dedupe + merge behavior tests
 │   ├── test_multi_specialist_integration.py  # Multi-specialist tests
 │   ├── test_plan_schema.py               # Plan schema tests
+│   ├── test_poi_category_canonicalization.py  # POI category canonicalization tests
 │   ├── test_regen_strategy.py            # Selective regen field hash + strategy tests
 │   ├── test_response_envelope.py         # Plan view state resolver + envelope contract tests
 │   ├── test_router_cache.py              # Router cache tests (context-dependency detection)
-│   ├── test_router_category_sync.py      # Router category merge-mode + prefetch metadata tests
-│   ├── test_routing.py                   # Routing tests
 │   ├── test_session_middleware.py        # Session middleware behavior tests
 │   ├── test_specialist_cache.py          # Specialist LLM cache tests (thread safety, L1/L2)
 │   ├── test_fill_day_constraints.py      # Fill-day constraint validation (Tier 1 placement gates)
+│   ├── test_specialist_enrichment_endpoint.py  # Specialist enrichment endpoint tests
 │   ├── test_specialist_structured.py     # Specialist structured output tests
-│   ├── test_stage2_integration.py        # Stage 2 integration tests
+│   ├── test_spend_guard.py              # Spend guard tests
 │   ├── test_stage11_day_preferences.py   # Stage 11 day preference tests
-│   ├── test_synthesizer_template_contract.py  # Synthesizer prompt + model-id contract tests
 │   ├── test_tile_cache.py                # Tile cache tests (L1/L2, thread safety)
 │   ├── test_typed_meta.py                # Typed metadata bridge tests
 │   ├── test_admin_utils.py               # Admin utility tests
@@ -253,22 +269,16 @@ backend/
 │   ├── test_local_expert.py             # Local expert node tests
 │   ├── test_logistics_helpers.py        # Logistics helper tests
 │   ├── test_streaming_helpers.py        # Streaming helper tests
-│   ├── test_synthesizer_grounding.py    # Synthesizer grounding tests
 │   ├── test_test_mode.py                # Test mode tests
 │   ├── test_tile_service.py             # Tile service tests
-│   ├── test_trip_architect.py           # Trip architect tests
 │   ├── test_vertical_specialist_node.py # Vertical specialist node tests
-│   ├── test_intent_router_bugs.py     # IntentRouter edge case regression tests
 │   ├── test_logistics_tile_scaling.py # Logistics tile scaling tests
 │   ├── test_post_arrangement_constraints.py  # Post-arrangement constraint recomputation tests
 │   ├── test_constraint_guard_merge.py # Constraint guard merge/dedup regression tests
-│   ├── test_graph_integration.py      # End-to-end graph integration tests
 │   ├── test_graph_plan_utils.py       # Graph plan helper contract tests
 │   ├── test_itinerary_builder_bugs.py # ItineraryBuilder edge case regression tests (D3 filter, D4 cap)
 │   ├── test_logistics_scaling.py      # Logistics provider scaling + cascade tests
-│   ├── test_router_category_bugs.py   # Router category gate regression tests (D6 stale-constraint purge)
 │   ├── test_router_extraction.py      # Router extraction schema/logic tests
-│   ├── test_router_utils.py           # Router utility helper tests
 │   ├── test_sse_state.py              # SSE connection state accounting tests
 │   ├── test_task_tracker.py           # Background task tracker lifecycle tests
 │   ├── test_unsplash_queries.py       # Unsplash query helper tests
@@ -363,6 +373,7 @@ frontend/
 │   │   ├── BookingSection.tsx
 │   │   ├── BrowseActivitiesSheet.tsx  # Bottom sheet for browsing categorized activity tiles (Tier 1 free days)
 │   │   ├── CoreChip.tsx
+│   │   ├── DestinationIntelCard.tsx   # Destination intelligence card
 │   │   ├── DestinationMapPlaceholder.tsx
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── NextStepBar.tsx
@@ -450,6 +461,7 @@ frontend/
 │   │   └── TileDetailsModal.tsx
 │   │
 │   └── ui/                     # Base UI components
+│       ├── ErrorBoundary.tsx       # Generic error boundary wrapper
 │       ├── ModalErrorBoundary.tsx  # Error boundary for modals/sheets (crash isolation)
 │       ├── bottom-sheet.tsx
 │       ├── button.tsx
@@ -492,6 +504,7 @@ frontend/
 │   ├── fillDayGuards.ts        # Fill-day client cooldown guard helpers
 │   ├── format-utils.ts         # Formatting utilities
 │   ├── ghost-timeline-adapter.ts  # Ghost timeline + MapPOI extraction (MapPOI.dayNumber added Stage 19)
+│   ├── googlePlacesPhoto.ts    # Google Places photo URL helpers
 │   ├── route-utils.ts          # generateRouteGeoJson() — GeoJSON LineString for map route (Stage 19)
 │   ├── showMutationToast.ts    # Toast helper with Undo CTA for drag/remove mutations
 │   ├── loaderConfig.ts         # Loader configuration
@@ -505,6 +518,7 @@ frontend/
 │   ├── summary.ts              # Summary utilities
 │   ├── tileSelectors.ts        # Tile selection logic
 │   ├── tileUtils.ts            # Tile utilities
+│   ├── travelIntel.ts          # Travel intelligence data helpers
 │   ├── popular-places.ts       # Static list of popular destination suggestions for landing input
 │   └── utils.ts                # General utilities (cn, etc.)
 │
@@ -537,13 +551,19 @@ frontend/
 │   ├── chat-suggestion-actions.test.ts
 │   ├── constraint-states.test.tsx
 │   ├── browse-activities-cache.test.ts
+│   ├── chat-suggestion-chips.test.tsx
 │   ├── documentStore.test.ts
 │   ├── fill-day-guards.test.ts
 │   ├── ghost-timeline-adapter.test.ts
+│   ├── google-places-photo.test.ts
+│   ├── itinerary-generation-dedupe.test.tsx
+│   ├── landing-derived.test.tsx
 │   ├── map-error-boundary.test.ts
 │   ├── plan-copy.test.tsx
+│   ├── placeholders.test.ts
 │   ├── rich-block-renderer.test.tsx
-│   └── streaming.test.ts
+│   ├── streaming.test.ts
+│   └── travel-intel.test.ts
 │
 ├── .prettierignore             # Prettier ignore patterns
 ├── .prettierrc.cjs             # Prettier configuration
@@ -604,7 +624,7 @@ docs/
 ## Key Architectural Notes
 
 1. **TripPlan is SSoT** - All trip state flows through `TripPlan` schema
-2. **7-Node LangGraph** - Backend planner uses exactly 7 nodes (see `plan_graph_analysis.md`)
+2. **Single Agent Architecture** - One `create_agent` planner with 6 tools replaces the old multi-node DAG. The agent decides tool order dynamically. Middleware handles state mutation, model upgrades, prompt injection, and chip generation. See `plan_graph_analysis.md`.
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
 5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. Dependency: `@dnd-kit/core`.

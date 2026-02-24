@@ -10,6 +10,7 @@ Adding a new specialist = 1 registry entry + 1 .txt prompt file.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -758,6 +759,41 @@ def get_nofly_buffer_hours(topic: str) -> int | None:
     return 24  # default fallback
 
 
+def get_nofly_buffer_days(topic: str) -> int:
+    """Return no-fly buffer in whole days (ceil of buffer_hours / 24), or 0 if none."""
+    hours = get_nofly_buffer_hours(topic)
+    if hours is None:
+        return 0
+    return max(1, -(-hours // 24))  # ceiling division
+
+
+def get_cross_domain_target_specialists(source_topic: str) -> list[str]:
+    """Return list of specialists blocked by cross-domain constraints from source_topic.
+
+    E.g., for diving this returns ["skiing", "hiking", "climbing"] — the altitude
+    specialists that require a buffer after diving.
+    """
+    cfg = SPECIALIST_REGISTRY.get(source_topic)
+    if not cfg:
+        return []
+    targets: list[str] = []
+    for xd in cfg.cross_domain_blocks:
+        targets.extend(xd.target_specialists)
+    return targets
+
+
+def get_cross_domain_buffer_days(source_topic: str) -> int:
+    """Return the cross-domain buffer in whole days for source_topic, or 0 if none.
+
+    Reads from the first cross_domain_block entry. For diving this is 24h -> 1 day.
+    """
+    cfg = SPECIALIST_REGISTRY.get(source_topic)
+    if not cfg or not cfg.cross_domain_blocks:
+        return 0
+    hours = cfg.cross_domain_blocks[0].buffer_hours
+    return max(1, -(-hours // 24))  # ceiling division
+
+
 def prompt_hash(topic: str) -> str:
     """8-char stable hash of prompt file content for cache key versioning.
 
@@ -923,3 +959,60 @@ _EXPECTED_SPECIALISTS = {
 assert set(SPECIALIST_REGISTRY.keys()) == _EXPECTED_SPECIALISTS, (
     f"Registry mismatch: expected {_EXPECTED_SPECIALISTS}, got {set(SPECIALIST_REGISTRY.keys())}"
 )
+
+
+# =============================================================================
+# Category intent detection
+# =============================================================================
+
+_CATEGORY_INTENT_PATTERNS = (
+    re.compile(r"\b(add|include|with|plus|also)\b"),
+    re.compile(r"\b(remove|drop|skip|without)\b"),
+    re.compile(r"\b(only|instead of|rather than|replace|swap)\b"),
+    re.compile(r"\b(more|another|extra)\b"),
+)
+
+
+def has_explicit_category_intent(
+    user_text: str,
+    router_output: Optional[dict] = None,
+) -> bool:
+    """Return True when this turn explicitly intends to mutate activity categories."""
+    text = (user_text or "").lower().strip()
+    if not text:
+        return False
+
+    # Check Tier 1 by registry, Tier 2 by common hints (fast path)
+    all_hints = TIER2_COMMON_HINTS | TIER1_SPECIALIST_NAMES
+    if any(re.search(rf"\b{re.escape(category)}\b", text) for category in all_hints):
+        return True
+
+    # LLM-extracted removals are authoritative category mutations.
+    # Example: "remove all cultural" may not include a known hint token in text.
+    if router_output:
+        removals = {
+            r.lower().strip()
+            for r in (router_output.get("removal_targets") or [])
+            if r and r.strip()
+        }
+        if removals:
+            return True
+
+    # LLM extraction may have found novel Tier 2 categories not in hints
+    extracted: set[str] = set()
+    if router_output:
+        extracted = {
+            c.lower() for c in (router_output.get("activity_categories") or []) if c and c.strip()
+        } | {
+            s.lower()
+            for s in (router_output.get("specialist_hints") or [])
+            if s and s.lower().strip() in TIER1_SPECIALIST_NAMES
+        }
+
+    if not extracted:
+        return False
+
+    if "?" not in text and len(text.split()) <= 3:
+        return True
+
+    return any(pattern.search(text) for pattern in _CATEGORY_INTENT_PATTERNS)

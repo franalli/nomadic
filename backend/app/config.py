@@ -93,9 +93,9 @@ class Settings(BaseSettings):
     # =============================================================================
     # Node Model Assignments (env-driven, matches .env)
     # =============================================================================
-    # intent_router, router_extraction, specialist feasibility
+    # extract_trip_fields tool, router_extraction, specialist feasibility
     router_model: str = os.getenv("ROUTER_MODEL", "gemini-2.5-flash")
-    # trip_architect LLM
+    # router_extraction field extraction LLM
     extraction_model: str = os.getenv("EXTRACTION_MODEL", "gemini-2.5-flash")
     # local_expert LLM — uses prompt-based JSON parsing (not function_calling)
     # to avoid Gemini $defs limitation

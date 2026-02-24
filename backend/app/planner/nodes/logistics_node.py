@@ -797,7 +797,7 @@ async def _fetch_hotels(
                 # Fallback to mock if Places returned nothing (quota, error, etc.)
                 if not hotel_tiles:
                     log("LOGISTICS", "GooglePlaces returned 0 hotels — using mock fallback")
-                    hotel_tiles = MockHotelProvider().search(ctx)
+                    hotel_tiles = await asyncio.to_thread(MockHotelProvider().search, ctx)
             elif settings.use_amadeus_provider:
                 log(
                     "LOGISTICS",
@@ -815,7 +815,7 @@ async def _fetch_hotels(
                     data="live providers disabled",
                 )
                 hotel_provider = MockHotelProvider()
-                hotel_tiles = hotel_provider.search(ctx)
+                hotel_tiles = await asyncio.to_thread(hotel_provider.search, ctx)
 
             _provider_ms = int((time.time() - _provider_t0) * 1000)
             _debug_log(f"Hotel provider ({provider}): {_provider_ms}ms, {len(hotel_tiles)} tiles")
@@ -911,11 +911,11 @@ async def _fetch_activities(
                 activity_tiles = await activity_provider.search_async(ctx)
                 if not activity_tiles:
                     log("LOGISTICS", "GooglePlaces returned 0 activities — using mock fallback")
-                    activity_tiles = MockActivityProvider().search(ctx)
+                    activity_tiles = await asyncio.to_thread(MockActivityProvider().search, ctx)
             else:
                 # Activities always use Mock (no Amadeus activities API)
                 activity_provider = MockActivityProvider()
-                activity_tiles = activity_provider.search(ctx)
+                activity_tiles = await asyncio.to_thread(activity_provider.search, ctx)
 
             # Convert to dicts and cache
             activity_dicts = [_tile_to_dict(tile) for tile in activity_tiles]
@@ -1120,10 +1120,10 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     # - Mixed Tier 1 + Tier 2 → generate experience tiles for Tier 2 categories
     # When no niche specialist:
     # - Pure Tier 2 selections → generate experience tiles (most important case)
-    from app.planner.nodes.intent_router import TIER1_SPECIALISTS
+    from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES
 
-    NICHE_SPECIALISTS = TIER1_SPECIALISTS
-    TIER1_CATEGORIES = TIER1_SPECIALISTS
+    NICHE_SPECIALISTS = TIER1_SPECIALIST_NAMES
+    TIER1_CATEGORIES = TIER1_SPECIALIST_NAMES
     executed = state.metadata.get("executed_strategy_topics", [])
     used_tier2_categories: set[str] = set()
     tier2_attempted = False

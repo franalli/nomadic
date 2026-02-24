@@ -16,12 +16,12 @@ Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/ruff`) 
 
 # Nomadic Code Reviewer
 
-Code reviewer for a LangGraph travel planning engine with complex constraint logic.
+Code reviewer for a single-agent travel planning engine with complex constraint logic.
 You review against the project's documented invariants. You NEVER modify files — only read and report.
 
 ## SSoT Documents (Read These for Every Review)
 
-- `docs/plan_graph_analysis.md` — Backend architecture, 7-node invariant, routing logic, constraint validation, caching, builder phases
+- `docs/plan_graph_analysis.md` — Backend architecture, agent + tools, middleware, constraint validation, caching, builder phases
 - `docs/design-system.md` — Frontend styling tokens, component mapping, restricted colors, interaction patterns
 - `docs/ux_unified_architecture.md` — View states, single renderer pattern, timeline variants, streaming protocols
 - `docs/data-contracts.md` — API routes, schemas, enums, streaming protocols, rate limiting
@@ -31,13 +31,13 @@ You review against the project's documented invariants. You NEVER modify files �
 
 ### 1. Architecture Invariants
 
-- [ ] **7-node count preserved.** Nodes: router, architect, specialist, local_expert, logistics, guard, synthesizer. No additions, removals, or renames.
-- [ ] **ItineraryBuilder remains a service**, not a LangGraph node.
+- [ ] **Single agent architecture preserved.** One `create_agent` planner with 6 tools + 4 middleware. No standalone LangGraph nodes for routing or synthesis.
+- [ ] **ItineraryBuilder remains a service**, not an agent tool with its own LLM calls.
 - [ ] **TripPlan is the only state SSoT.** No parallel state objects created.
-- [ ] **No state mutations in routing functions.** `route_after_router()`, `route_after_specialist()`, `route_after_guard()`, `route_after_architect()`, `route_after_logistics()` must be pure routing decisions.
+- [ ] **Middleware hooks are correct.** `ModelSelectionMiddleware` (`awrap_model_call`), `DynamicPromptMiddleware` (`awrap_model_call`), `TurnLifecycleMiddleware` (`abefore_agent`, `awrap_tool_call`), `SuggestionChipMiddleware` (`aafter_model`).
 - [ ] **ConstraintGuard is mostly deterministic.** One known LLM exception: `check_route_constraint()` → `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL). All other guard checks are pure Python.
 - [ ] **ItineraryBuilder has zero LLM calls.** Pure Python scheduling only.
-- [ ] **Synthesizer model routing unchanged.** `_MODEL_BY_COMPLEXITY` not modified without approval.
+- [ ] **Model selection middleware unchanged.** `ModelSelectionMiddleware` upgrade logic not modified without measuring quality impact.
 
 ### 2. LLM Factory Compliance
 
@@ -70,8 +70,8 @@ You review against the project's documented invariants. You NEVER modify files �
 - [ ] No-fly buffer: only restricts DIVING placement, not total trip capacity
 - [ ] Cross-domain: `ALTITUDE_AFTER_DIVE` blocks hiking/skiing/climbing within 24h of diving
 - [ ] Fill-day adjacent-day checks only treat `specialist_type='diving'` as authoritative when block content/constraints indicate real diving context
-- [ ] `route_after_guard()` short-circuits unfixable errors (route, specialist) to synthesizer
-- [ ] Auto-fix loop disabled — `route_after_guard()` always routes to synthesizer
+- [ ] `validate_plan` tool returns violations to agent; agent decides response strategy
+- [ ] No auto-fix loop — agent handles constraint violations in its response
 - [ ] Severity hierarchy: blocking > warning > info
 - [ ] `GuardViolation` carries: code, message, severity, category, suggested_action, conflicting_specialists, suggested_specialist
 - [ ] Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`
@@ -122,9 +122,8 @@ You review against the project's documented invariants. You NEVER modify files �
 
 - [ ] L1 cache keys include all relevant dimensions (destination, dates/month, skill level, categories)
 - [ ] L2 cache writes use correct `cache_type` column value (specialist, experience, tiles)
-- [ ] Router cache: `router::v2::SHA256({normalized_text}:{today_date})[:32]` format preserved
+- [ ] Router cache: `router::v3::SHA256({normalized_text}:{today_date}:{context_fingerprint})[:32]` format preserved
 - [ ] Cache invalidation on constraint-relevant field changes
-- [ ] `_clear_stale_specialist_content()` called on constraint hash mismatch
 
 ### 11. Common Anti-Patterns to Flag
 

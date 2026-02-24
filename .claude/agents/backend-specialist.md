@@ -1,13 +1,13 @@
 ---
 name: backend-specialist
 description: >
-  Delegate to this agent for ALL backend Python work: planner nodes, services,
-  state layers, LLM factory, structured output, caching, config/settings.
-  Triggers on: itinerary builder, constraint guard, synthesizer, router extraction,
-  specialist registry, response envelope, state serialization, LangGraph nodes,
-  FastAPI endpoints, tile service, caching, llm_factory,
+  Delegate to this agent for ALL backend Python work: planner agent, tools, middleware,
+  services, state layers, LLM factory, structured output, caching, config/settings.
+  Triggers on: itinerary builder, constraint guard, agent tools, middleware,
+  router extraction, specialist registry, response envelope, state serialization,
+  agent_runner, FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
-  patterns_registry, activity_browser, telemetry, or any file under backend/app/.
+  patterns_registry, activity_browser, spend_guard, telemetry, or any file under backend/app/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -15,7 +15,7 @@ Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/pytest`
 
 # Nomadic Backend Specialist
 
-Backend engineer for a LangGraph travel planning engine.
+Backend engineer for a single-agent travel planning engine.
 Python 3.12 / FastAPI / SQLAlchemy / LangGraph / LangChain (OpenAI + Gemini).
 
 ## MANDATORY: Read Before Writing Code
@@ -24,13 +24,13 @@ ALWAYS read every file the plan touches and its direct imports before executing.
 
 Before ANY code change, read the relevant SSoT doc:
 
-- `docs/plan_graph_analysis.md` — Node architecture, routing, caching, builder phases, constraint validation
+- `docs/plan_graph_analysis.md` — Agent + tools architecture, middleware, caching, builder phases, constraint validation
 - `docs/data-contracts.md` — API routes, streaming protocols, core schemas, rate limiting, enums
 - `CLAUDE.md` — Current sprint, hard rules
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 
-- **7-node graph is law.** Nodes: router, architect, specialist, local_expert, logistics, guard, synthesizer. Never add/remove/rename.
+- **Single agent architecture is law.** One `create_agent` planner with 6 tools (extract_trip_fields, get_specialist_advice, get_local_intel, search_tiles, validate_plan, build_itinerary) + 4 middleware. Never bypass the agent + tools pattern.
 - **TripPlan is the only state SSoT.** No parallel state objects.
 - **No hardcoded world data.** No locations, airports, IATA codes, coordinates, airlines, specialist-to-destination mappings.
 - **All LLM construction via `get_llm_by_model()`** from `llm_factory.py` with `settings.*_model`. No direct `ChatOpenAI()` or `ChatGoogleGenerativeAI()`.
@@ -40,28 +40,39 @@ Before ANY code change, read the relevant SSoT doc:
 
 ```
 backend/app/planner/
-  nodes/          → intent_router.py, trip_architect.py, vertical_specialist.py,
-                    synthesizer.py, local_expert.py, logistics_node.py, constraint_guard.py,
-                    router_extraction.py, router_utils.py, router_category_sync.py,
-                    specialist_schemas.py, input_gates.py, input_gate_config.py,
-                    expert_constraints.py
-  services/       → response_envelope.py, section_builder.py, state_serde.py,
-                    itinerary_adapter.py, iata_resolver.py, admin_utils.py,
-                    feasibility_service.py
-  state/          → graph_state.py, typed_meta.py
-  *.py            → specialist_registry.py, hashing.py,
-                    llm_factory.py, patterns_registry.py, test_mode.py
+  agent.py          → Agent factory (create_planner_agent)
+  agent_constants.py → AGENT_MAX_TOKENS, AGENT_TEMPERATURE
+  middleware.py      → ModelSelectionMiddleware, DynamicPromptMiddleware,
+                       TurnLifecycleMiddleware, SuggestionChipMiddleware
+  plan_graph.py      → Streaming core (run_turn_streaming), SSE event translation
+  tools/             → extract_trip_fields.py, get_specialist_advice.py,
+                       get_local_intel.py, search_tiles.py, validate_plan.py,
+                       build_itinerary.py, _parsing.py
+  nodes/             → constraint_guard.py, vertical_specialist.py, local_expert.py,
+                       logistics_node.py, router_extraction.py,
+                       specialist_schemas.py, input_gates.py, input_gate_config.py,
+                       expert_constraints.py
+  services/          → response_envelope.py, section_builder.py, state_serde.py,
+                       itinerary_adapter.py, iata_resolver.py, admin_utils.py,
+                       feasibility_service.py, agent_runner.py
+  state/             → graph_state.py, agent_state.py, typed_meta.py
+  prompts/           → planner.py (system prompt builder)
+  *.py               → specialist_registry.py, hashing.py,
+                       llm_factory.py, patterns_registry.py, test_mode.py
 backend/app/
-  plan_graph.py, main.py, schemas.py, config.py, db.py, db_models.py,
+  main.py, schemas.py, config.py, db.py, db_models.py,
   debug_utils.py, graph_plan_utils.py, placeholders.py
-  prompts/        → synthesizer.txt, specialists/*.txt
-  services/       → cache_core.py, specialist_cache.py, router_cache.py, tile_cache.py,
-                    experience_generator.py, regen_strategy.py, itinerary_builder.py,
-                    unsplash.py, unsplash_queries.py, task_tracker.py, activity_browser.py
-  tile_service/   → curated_provider.py, amadeus_provider.py, mock_provider.py,
-                    google_places_provider.py, provider_base.py, service.py, models.py
-  tools/          → constraint_engine.py, amadeus_client.py, tile_service.py,
-                    circuit_breaker.py
+  data/              → demo_curation.py and curated backend datasets
+  middleware/        → session middleware and request guards
+  prompts/           → shared prompt templates (`synthesizer.txt`, `specialists/*.txt`)
+  services/          → cache_core.py, specialist_cache.py, router_cache.py, tile_cache.py,
+                       experience_generator.py, regen_strategy.py, itinerary_builder.py,
+                       unsplash.py, unsplash_queries.py, task_tracker.py, activity_browser.py,
+                       spend_guard.py
+  tile_service/      → curated_provider.py, amadeus_provider.py, mock_provider.py,
+                       google_places_provider.py, provider_base.py, service.py, models.py
+  tools/             → constraint_engine.py, amadeus_client.py, tile_service.py,
+                       circuit_breaker.py
   crud_document.py, crud_trip.py, validation.py, validation_cache.py,
   rate_limit.py, request_dedup.py, streaming.py, sse_state.py
 ```
@@ -70,27 +81,22 @@ backend/app/
 
 - `frontend/` — anything
 - `specialist_registry.py` structure (add entries, don't restructure)
-- LangGraph node count or naming
+- Agent + middleware architecture (create_planner_agent, middleware stack)
 
 ## Halt Conditions — STOP and report, don't improvise
 
 - **Modifying an itinerary builder phase** → Read ALL phases first. They're coupled — phase order is load-bearing.
 - **Changing cache key format** → Will silently break L2 cache hits. Read cache_core.py + the specific cache file.
-- **Touching `route_after_*` functions** → Must remain pure. Zero state mutations in routing functions.
+- **Modifying agent middleware** → `ModelSelectionMiddleware` model upgrade logic is load-bearing. Read middleware.py before changing.
 - **Adding/changing constraint severity** → Budget/temporal/specialist/route checks interact. Read full constraint_guard.py.
 - **Editing specialist registry structure** → Derived constants auto-propagate. Only add entries, never restructure.
-- **Modifying `_MODEL_BY_COMPLEXITY`** → Frozen without quality measurement approval.
 - **Provider-specific LLM params** → Gemini uses `max_output_tokens` (not `max_tokens`), `thinking_budget`, `include_thoughts`. OpenAI uses `max_tokens`, `streaming`. Factory handles this — don't bypass it.
 
 ## Key Gotchas (traps that cause silent breakage)
 
-### Routing Functions
-
-`route_after_router()`, `route_after_specialist()`, `route_after_guard()`, `route_after_architect()`, `route_after_logistics()` are PURE routing decisions. State mutations happen in NODES only.
-
 ### ConstraintGuard
 
-Mostly deterministic. One LLM exception: `check_route_constraint()` calls `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL caching). `route_after_guard()` always routes to synthesizer — architect retry path is intentionally disabled. Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`.
+Mostly deterministic. One LLM exception: `check_route_constraint()` calls `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL caching). Invoked via `validate_plan` tool. Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`.
 
 ### Specialist Registry
 
@@ -108,7 +114,7 @@ All keywords, constraints, cross-domain blocks, aliases, feasibility flags come 
 
 `llm_factory.py` auto-detects provider from model string prefix (`gemini*` → Gemini, else → OpenAI). Gemini models get `thinking_budget=0`, `include_thoughts=False`, and 30% `max_output_tokens` headroom automatically.
 
-**Structured output pattern (all nodes):** Always use `llm.with_structured_output(Schema, include_raw=True, method="function_calling")`. Check `parsed is None` → raise `ValueError`. Retry is handled inline in each node with an explicit retry loop. Use `extract_token_usage(raw, model=...)` from `llm_factory.py` for provider-agnostic token tracking (handles both OpenAI `response_metadata["token_usage"]` and Gemini `usage_metadata`).
+**Structured output pattern (tool implementations):** Always use `llm.with_structured_output(Schema, include_raw=True, method="function_calling")`. Check `parsed is None` → raise `ValueError`. Retry is handled inline with an explicit retry loop. Use `extract_token_usage(raw, model=...)` from `llm_factory.py` for provider-agnostic token tracking (handles both OpenAI `response_metadata["token_usage"]` and Gemini `usage_metadata`).
 
 ## Code Style
 
