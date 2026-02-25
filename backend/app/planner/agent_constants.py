@@ -7,5 +7,5 @@ openai_plan_max_tokens / openai_plan_temperature which are tuned for
 structured-output extraction, not conversational tool calling.
 """
 
-AGENT_MAX_TOKENS: int = 4000
+AGENT_MAX_TOKENS: int = 1500
 AGENT_TEMPERATURE: float = 0.4

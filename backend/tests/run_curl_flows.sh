@@ -395,6 +395,14 @@ SUGG=$(extract_doc "suggested_responses")
 SUGG_CT=$(jlen "$SUGG")
 check_gte "suggested_responses ≥ 1" "$SUGG_CT" 1 || F=false
 
+CHIPS=$(extract_doc "suggestion_chips")
+CHIPS_CT=$(jlen "$CHIPS")
+check_gte "suggestion_chips ≥ 1" "$CHIPS_CT" 1 || F=false
+
+CHIP_META=$(extract_doc "suggested_response_meta")
+CHIP_META_CT=$(jlen "$CHIP_META")
+check_gte "suggested_response_meta ≥ 1" "$CHIP_META_CT" 1 || F=false
+
 else F=false; fi; else F=false; fi
 $F && _flow pass 3 || _flow fail 3
 echo ""

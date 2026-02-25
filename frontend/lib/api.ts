@@ -14,6 +14,7 @@ export interface BrowseTile {
   description?: string;
   image_url?: string | null;
   photo_name?: string | null;
+  duration?: string | null;
   rating?: number | null;
   review_count?: number | null;
   location_label?: string;

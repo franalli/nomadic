@@ -104,7 +104,7 @@ You review against the project's documented invariants. You NEVER modify files â
 
 ### 8. API Contract Compliance
 
-- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 20/min;120/hr for graph_plan/stream, 20/min for expand-itinerary, 30/min for fill-day; Medium: 10-15/min; Light: 60/min)
+- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 6/min;30/hr for graph_plan/stream, 20/min for expand-itinerary, 8/min for fill-day; Medium: 10-15/min; Light: 60/min)
 - [ ] Streaming: SSE for graph_plan, NDJSON for expand-itinerary
 - [ ] CSRF token required on unsafe methods (POST/PUT/PATCH/DELETE)
 - [ ] Body size limit: 512KB max

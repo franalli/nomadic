@@ -257,6 +257,11 @@ export function BrowseActivitiesSheet({
                         {tile.price_estimate}
                       </span>
                     )}
+                    {tile.duration && (
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                        {tile.duration}
+                      </span>
+                    )}
                     {tile.location_label && (
                       <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">
                         {tile.location_label}

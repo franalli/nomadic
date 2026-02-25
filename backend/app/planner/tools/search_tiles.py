@@ -11,11 +11,16 @@ State mutation happens in TurnLifecycleMiddleware, not here.
 from __future__ import annotations
 
 import asyncio
+import copy
+import hashlib
+import hmac
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
-from langchain_core.tools import tool
+from langchain_core.tools import InjectedToolArg, tool
 from langgraph.prebuilt import InjectedState
 from typing_extensions import Annotated
 
@@ -37,6 +42,9 @@ _NOFLY_CATEGORIES: frozenset[str] = frozenset(
     if cfg.has_nofly_buffer
     for alias in cfg.category_mappings
 )
+
+_GOOGLE_PLACES_PHOTO_NAME_RE = re.compile(r"^places/[A-Za-z0-9_-]+/photos/[A-Za-z0-9_-]+$")
+_GOOGLE_PLACES_PHOTO_MAX_SIGNED_TTL_SECONDS = 30 * 60
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +128,91 @@ def _has_diving_categories(categories: List[str]) -> bool:
     return bool(set(categories) & _NOFLY_CATEGORIES)
 
 
+def _media_proxy_signing_secret() -> str:
+    from app.config import settings
+
+    return (
+        settings.media_proxy_signing_key
+        or settings.admin_api_key
+        or settings.google_maps_api_secret
+        or settings.google_maps_api_key
+        or ""
+    ).strip()
+
+
+def _sign_google_places_photo_request(
+    *,
+    session_id: str,
+    name: str,
+    max_width: int,
+    max_height: int,
+    exp: int,
+) -> str:
+    payload = f"{session_id}\n{name}\n{max_width}\n{max_height}\n{exp}".encode("utf-8")
+    secret = _media_proxy_signing_secret().encode("utf-8")
+    return hmac.new(secret, payload, hashlib.sha256).hexdigest()
+
+
+def _build_signed_google_places_photo_url(
+    *,
+    session_id: str,
+    name: str,
+    max_width: int = 400,
+    max_height: int = 300,
+    ttl_seconds: int = 300,
+) -> str | None:
+    photo_name = (name or "").strip()
+    if not photo_name or not _GOOGLE_PLACES_PHOTO_NAME_RE.fullmatch(photo_name):
+        return None
+    if not session_id:
+        return None
+    if not _media_proxy_signing_secret():
+        return None
+
+    now = int(time.time())
+    ttl = max(60, min(ttl_seconds, _GOOGLE_PLACES_PHOTO_MAX_SIGNED_TTL_SECONDS))
+    exp = now + ttl
+    sig = _sign_google_places_photo_request(
+        session_id=session_id,
+        name=photo_name,
+        max_width=max_width,
+        max_height=max_height,
+        exp=exp,
+    )
+    return (
+        f"/api/media/google-places-photo?name={quote(photo_name, safe='')}&max_width={max_width}"
+        f"&max_height={max_height}&exp={exp}&sig={sig}"
+    )
+
+
+def _attach_signed_photo_urls_to_tiles(
+    tiles: List[Dict[str, Any]],
+    *,
+    session_id: str,
+    max_width: int = 400,
+    max_height: int = 300,
+) -> None:
+    for tile in tiles:
+        if not isinstance(tile, dict):
+            continue
+        meta = tile.get("meta")
+        meta_dict = meta if isinstance(meta, dict) else {}
+        photo_name = tile.get("photo_name") or meta_dict.get("photo_name")
+        if not isinstance(photo_name, str):
+            continue
+        signed = _build_signed_google_places_photo_url(
+            session_id=session_id,
+            name=photo_name,
+            max_width=max_width,
+            max_height=max_height,
+            ttl_seconds=300,
+        )
+        if not signed:
+            continue
+        tile["image_url"] = signed
+        tile["photo_name"] = photo_name
+
+
 # ---------------------------------------------------------------------------
 # Tool
 # ---------------------------------------------------------------------------
@@ -147,6 +240,7 @@ async def search_tiles(
     # and trip_settings from agent state so the LLM does not need to
     # echo back fields it already holds.
     state: Annotated[Optional[dict], InjectedState] = None,
+    runtime: Annotated[Any, InjectedToolArg()] = None,
 ) -> dict:
     """Search for flights, hotels, and activities. Requires destination and
     dates. Origin required for flights. Returns tile arrays with prices
@@ -164,6 +258,13 @@ async def search_tiles(
 
     t0 = time.time()
     categories = _parse_categories(activity_categories)
+    resolved_session_id = (session_id or "").strip()
+    if not resolved_session_id and runtime is not None:
+        runtime_config = getattr(runtime, "config", {}) or {}
+        if isinstance(runtime_config, dict):
+            configurable = runtime_config.get("configurable", {})
+            if isinstance(configurable, dict):
+                resolved_session_id = str(configurable.get("thread_id") or "").strip()
 
     # ALWAYS prefer state categories — LLM can hallucinate or echo stale values
     if state is not None:
@@ -562,6 +663,24 @@ async def search_tiles(
             flight_search_status = "skipped_no_origin"
         else:
             flight_search_status = "skipped_no_codes"
+
+    if resolved_session_id:
+        # Defensive copy: cached tile payloads may be shared objects.
+        # Never mutate cache-backed dicts with session-bound signed URLs.
+        hotel_dicts = copy.deepcopy(hotel_dicts)
+        activity_dicts = copy.deepcopy(activity_dicts)
+        _attach_signed_photo_urls_to_tiles(
+            hotel_dicts,
+            session_id=resolved_session_id,
+            max_width=400,
+            max_height=300,
+        )
+        _attach_signed_photo_urls_to_tiles(
+            activity_dicts,
+            session_id=resolved_session_id,
+            max_width=400,
+            max_height=300,
+        )
 
     # ---------------------------------------------------------------
     # Build summary

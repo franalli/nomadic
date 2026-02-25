@@ -147,6 +147,8 @@ async def build_itinerary(
         PreferenceOverrideInput,
     )
 
+    is_flex_dates = False
+
     # When InjectedState is available, fill in defaults from agent state
     if state is not None:
         trip_plan: dict[str, Any] = state.get("trip_plan", {})
@@ -154,6 +156,7 @@ async def build_itinerary(
         start_date = start_date or trip_plan.get("start_date", "")
         end_date = end_date or trip_plan.get("end_date", "")
         origin = origin or trip_plan.get("origin", "")
+        is_flex_dates = bool(trip_plan.get("date_flex"))
 
         # Pull tiles and constraints from state when not passed explicitly
         if tiles_json == "{}" and state.get("tiles"):
@@ -166,6 +169,16 @@ async def build_itinerary(
                 constraints_json = json.dumps(state["constraints"])
             except (TypeError, ValueError):
                 pass
+
+    if is_flex_dates:
+        return {
+            "success": False,
+            "day_cards": [],
+            "conflicts": [],
+            "activities_placed": 0,
+            "activities_dropped": 0,
+            "error": "Flexible dates enabled: itinerary generation requires fixed start and end dates",
+        }
 
     # Validate required fields
     if not destination or not start_date or not end_date:

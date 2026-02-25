@@ -15,10 +15,12 @@ Caching layers:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 
 from app.config import settings
@@ -53,6 +55,24 @@ L2_TTL_HOURS = settings.tile_cache_ttl_hours
 _browse_cache = MemoryCache(maxsize=L1_MAX_SIZE, ttl=L1_TTL_SECONDS)
 _browse_inflight_lock = asyncio.Lock()
 _browse_inflight_tasks: dict[str, asyncio.Task[list[dict[str, Any]]]] = {}
+
+_PRICE_BAND_TO_LEVEL: Dict[str, int] = {
+    "Free": 0,
+    "$": 1,
+    "$$": 2,
+    "$$$": 3,
+    "$$$$": 4,
+}
+
+
+class _BrowseEstimateItem(BaseModel):
+    id: str
+    duration_hours: float = Field(ge=0.5, le=8.0)
+    price_band: str = Field(pattern=r"^(Free|\$|\$\$|\$\$\$|\$\$\$\$)$")
+
+
+class _BrowseEstimateBatch(BaseModel):
+    items: List[_BrowseEstimateItem] = Field(default_factory=list)
 
 
 # _month_from_date imported from app.services.specialist_cache
@@ -134,6 +154,149 @@ def _price_level_to_range(price_level: Optional[int]) -> Optional[str]:
     """Map Google Places price_level (0-4) to human-readable range."""
     mapping = {0: "Free", 1: "$", 2: "$$", 3: "$$$", 4: "$$$$"}
     return mapping.get(price_level) if price_level is not None else None
+
+
+def _duration_hours_to_label(hours: float) -> str:
+    clamped = min(8.0, max(0.5, float(hours)))
+    rounded = round(clamped * 2.0) / 2.0
+    if float(rounded).is_integer():
+        whole = int(rounded)
+        return f"{whole} hour" if whole == 1 else f"{whole} hours"
+    return f"{rounded:.1f} hours"
+
+
+async def _enrich_tiles_with_llm(
+    destination: str,
+    categories: List[str],
+    tiles: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, str]] = []
+    for tile in tiles:
+        if not isinstance(tile, dict):
+            continue
+        if tile.get("duration") and tile.get("price_estimate"):
+            continue
+        tile_id = tile.get("id")
+        title = tile.get("title")
+        if not isinstance(tile_id, str) or not isinstance(title, str):
+            continue
+        candidates.append(
+            {
+                "id": tile_id,
+                "title": title,
+                "category": str(tile.get("category") or ""),
+                "subtitle": str(tile.get("subtitle") or ""),
+            }
+        )
+
+    if not candidates:
+        return tiles
+
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        from app.planner.llm_factory import get_llm_by_model
+
+        llm = get_llm_by_model(settings.router_model, temperature=0, max_tokens=900)
+        structured_llm = llm.with_structured_output(
+            _BrowseEstimateBatch,
+            include_raw=True,
+            method="function_calling",
+        )
+
+        prompt = (
+            "Estimate typical visit duration and budget band for each activity.\n"
+            "Output one item per id.\n"
+            "Rules:\n"
+            "- duration_hours: 0.5 to 8.0\n"
+            "- price_band: one of Free, $, $$, $$$, $$$$\n"
+            "- Use realistic, conservative tourist defaults for the destination.\n\n"
+            f"Destination: {destination}\n"
+            f"Categories: {', '.join(categories) if categories else 'general'}\n"
+            f"Items:\n{json.dumps(candidates, ensure_ascii=True)}"
+        )
+        estimates: List[_BrowseEstimateItem] = []
+        last_exc: Exception | None = None
+        for _attempt in range(2):
+            try:
+                result = await structured_llm.ainvoke(
+                    [
+                        SystemMessage(
+                            content=(
+                                "You are a travel activity estimator. "
+                                "Return structured estimates only."
+                            )
+                        ),
+                        HumanMessage(content=prompt),
+                    ]
+                )
+
+                if isinstance(result, dict) and "parsed" in result:
+                    parsed = result.get("parsed")
+                    if parsed is None:
+                        raise ValueError("Structured output returned parsed=None")
+                    if not isinstance(parsed, _BrowseEstimateBatch):
+                        raise ValueError(
+                            f"Unexpected structured output type: {type(parsed).__name__}"
+                        )
+                    estimates = parsed.items
+                elif isinstance(result, _BrowseEstimateBatch):
+                    estimates = result.items
+                else:
+                    raise ValueError(f"Unexpected structured output type: {type(result).__name__}")
+                break
+            except Exception as exc:  # noqa: PERF203
+                last_exc = exc
+                estimates = []
+                continue
+
+        if not estimates:
+            if last_exc is not None:
+                raise last_exc
+            return tiles
+
+        by_id = {item.id: item for item in estimates}
+        if not by_id:
+            return tiles
+
+        enriched_count = 0
+        for tile in tiles:
+            if not isinstance(tile, dict):
+                continue
+            tile_id = tile.get("id")
+            if not isinstance(tile_id, str):
+                continue
+            est = by_id.get(tile_id)
+            if est is None:
+                continue
+
+            if not tile.get("price_estimate"):
+                tile["price_estimate"] = est.price_band
+                enriched_count += 1
+            if tile.get("price_level") is None:
+                tile["price_level"] = _PRICE_BAND_TO_LEVEL.get(est.price_band)
+            if not tile.get("duration"):
+                tile["duration"] = _duration_hours_to_label(est.duration_hours)
+                enriched_count += 1
+
+            meta = tile.get("meta")
+            meta_dict = dict(meta) if isinstance(meta, dict) else {}
+            if meta_dict.get("duration_hours") is None:
+                meta_dict["duration_hours"] = round(float(est.duration_hours), 1)
+            if not meta_dict.get("price_band"):
+                meta_dict["price_band"] = est.price_band
+            tile["meta"] = meta_dict
+
+        if enriched_count:
+            logger.debug(
+                "[BROWSE] LLM enriched %d fields across %d tiles",
+                enriched_count,
+                len(tiles),
+            )
+    except Exception as exc:
+        logger.debug("[BROWSE] LLM enrichment skipped: %s", exc)
+
+    return tiles
 
 
 def _humanize_type(place_type: str) -> str:
@@ -369,6 +532,8 @@ async def _browse_activities_impl(
                 break
         if len(tiles) >= MAX_BROWSE_RESULTS:
             break
+
+    tiles = await _enrich_tiles_with_llm(destination, valid_categories, tiles)
 
     usage_after = get_google_places_usage_counters().get("browse", {})
     had_places_failures = (

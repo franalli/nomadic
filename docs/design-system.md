@@ -766,7 +766,7 @@ The range selection creates a **continuous pill with emerald caps and zinc bridg
 
 | Element | Specification |
 |---------|---------------|
-| **Font Family** | Geometric Sans (Inter, Geist) |
+| **Font Family** | Geometric Sans (Inter) |
 | **Numerical Mode** | `tabular-nums` — prevents layout jitter |
 | **Day Headers** | `text-[10px] font-bold uppercase tracking-widest` |
 | **Unselected Dates** | `font-medium` (500) |

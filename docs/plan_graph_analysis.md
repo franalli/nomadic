@@ -55,7 +55,7 @@ The agent dynamically decides tool order based on conversation context -- there 
 4. **TripPlan is the SSoT** -- Single Source of Truth for trip state
 5. **Middleware over Nodes** -- State mutation, model upgrades, prompt injection, and chip generation happen in `AgentMiddleware` hooks, not standalone nodes
 6. **One Voice** -- The planner agent generates responses directly; no separate synthesizer node
-7. **Centralized LLM Factory** -- `get_llm_by_model()` handles provider detection (OpenAI/Gemini), model-specific params. Models configured via `settings.*_model` env vars.
+7. **Centralized LLM Factory** -- `get_llm_by_model()` handles provider detection (OpenAI/Gemini), model-specific params, spend guard (`reserve_llm_spend_or_raise`). Models configured via `settings.*_model` env vars.
 8. **Safe Routing** -- LLM-based intent classification via `extract_trip_fields` tool and `settings.router_model`
 9. **Itinerary Synthesis** -- ItineraryBuilder is pure Python (no LLM) for deterministic scheduling
 
@@ -79,7 +79,7 @@ The agent dynamically decides tool order based on conversation context -- there 
 backend/app/planner/
 ├── __init__.py              # Facade exports (stable public API)
 ├── agent.py                 # Agent factory: create_planner_agent() using create_agent
-├── agent_constants.py       # Shared constants: AGENT_MAX_TOKENS=4000, AGENT_TEMPERATURE=0.4
+├── agent_constants.py       # Shared constants: AGENT_MAX_TOKENS=1500, AGENT_TEMPERATURE=0.4
 ├── hashing.py               # Stable hashing utilities (make_cache_key, field_hash)
 ├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing) + extract_token_usage(), resolve_schema_refs(), extract_json_content()
 ├── middleware.py             # 4 AgentMiddleware classes (model selection, dynamic prompt, turn lifecycle, suggestion chips)
@@ -177,7 +177,7 @@ def create_planner_agent(
     resolved_model = get_llm_by_model(
         settings.router_model,
         temperature=AGENT_TEMPERATURE,   # 0.4
-        max_tokens=AGENT_MAX_TOKENS,     # 4000
+        max_tokens=AGENT_MAX_TOKENS,     # 1500
     )
 
     tools = [
@@ -345,6 +345,8 @@ _TOOL_MERGERS = {
 - Activity day preferences from `activity_day_preferences` are JSON-parsed into `trip_settings.activity_settings.day_preferences`.
 - Setting `origin` automatically flips `trip_settings.booking_types.flights` from `off` to `suggested`.
 - `_merge_trip_fields` also runs a capacity pre-check for `day_preferences` and writes blocking violations to `turn_meta.validation_result` so constraints surface before a build attempt can complete.
+- Activity category changes (`activity_categories`) now clear existing activity tiles and `day_cards` when destination did not change, and set `turn_meta["tiles_replaced"] = True` so the frontend does a full tile replace on merge.
+- `date_flex=true` now clears stale `day_cards` when present, because flexible windows are planning-only and cannot produce concrete itineraries.
 - `_merge_*` mergers append structured `turn_steps` summaries into `turn_meta` (`trip_update`, `preference`, `tiles`, `specialist`, `local_intel`, `validation`, `itinerary`). `_build_complete_envelope()` uses these `turn_steps` for per-turn `ack_updates`.
 
 ### SuggestionChipMiddleware (`aafter_model`)
@@ -415,9 +417,15 @@ class RouterOutput(BaseModel):
     flight_direct_only: Optional[bool] = None
     flight_cabin_class: Optional[str] = None
 
+    # Multi-destination
+    multi_destination_detected: bool = False
+
     # Intent classification
     planning_intent: Optional[str] = None
     question_type: Optional[str] = None
+
+    # Date corrections applied by backend validation
+    date_auto_adjustments: List[Dict[str, str]] = []
 ```
 
 ### VerticalSpecialist (`vertical_specialist.py`)
@@ -442,7 +450,7 @@ City logistics concierge with Phase A/B architecture.
 
 ### LogisticsNode (`logistics_node.py`)
 
-Flight/hotel/activity fetching with safety logic. ~1764 lines.
+Flight/hotel/activity fetching with safety logic.
 
 **Provider cascade:** Google Places -> Mock in logistics_node; Curated -> Google Places -> Mock in tile_service/service.py.
 
@@ -463,7 +471,7 @@ Mostly deterministic validation. One LLM exception: `check_route_constraint()` c
 - `check_route_constraint()` -- Same-city error + unknown destination (LLM-backed)
 - `_check_cross_domain_from_sections()` -- Stateless section-driven cross-domain check
 
-**ConstraintGuard class** still exists and provides `check_all()` for the validate_plan tool.
+**ConstraintGuard class** still exists with `check_all()` for legacy graph-path invocations. The `validate_plan` tool calls the individual check functions directly (`check_budget_constraint`, `check_temporal_constraints`, `check_specialist_constraints`, `check_route_constraint`) rather than `ConstraintGuard.check_all()`.
 
 **Arrangement validation** (`validate_block_arrangement()`) for drag-and-drop reordering is also in this file.
 
@@ -488,7 +496,7 @@ Pre-routing input validation. 6 gates with fail-open exception handling.
 
 **Purpose:** Pure Python service that transforms specialist outputs into chronological, constraint-validated timeline. Supports multi-specialist trips with conflict resolution.
 
-**NOT an agent tool directly** -- called by the `build_itinerary` tool, from `format_result()` shadow mode, and from `/api/expand-itinerary`.
+**NOT an agent tool directly** -- called by the `build_itinerary` tool, from `_build_complete_envelope()` auto-build (shadow mode), and from `/api/expand-itinerary`.
 
 ### Algorithm Phases
 
@@ -498,23 +506,24 @@ Pre-routing input validation. 6 gates with fail-open exception handling.
 │                                                                  │
 │  1.    Day Skeleton - DayCard[] from dates                      │
 │  2.    Extract Specialist Content - Activities + constraints    │
+│  2.5   Enrich Activities from Tiles - Google Places data merge  │
 │  2a.   Constraint Merge - Priority resolution (BLOCKING>STRONG) │
 │  2b.   Early Conflict Detection - Irreconcilable check         │
 │  3.    Anchor Placement - Arrival/departure from flights       │
 │  4.    Buffer Injection - Safety blocks by severity            │
 │  5.    Activity Distribution - Round-robin interleaving        │
-│  5.24  Day Preference Capping - User activity count limits     │
-│  5.25  Preferred Activity Placement - Hearted tiles (2-pass)   │
+│        (includes day preference capping internally)            │
 │  5.5   Free Day Placeholders - Empty day handling              │
 │  5.55  Restore Browse-Pinned Tiles - User-added Google Places  │
 │  5.6   Experience Tile Placement - Tier 2 on free/spare days   │
+│  5.25  Preferred Activity Placement - Hearted tiles (2-pass)   │
 │  6.    Tile Matching - Hotels span all days, preferences weighted│
 │  6.5   Constraint Tagging - Inline constraints for frontend      │
 │  6.75  Chronological Sort - Final block ordering                 │
 │  7.    Temporal Conflict Detection - Post-placement overflow     │
 │                                                                  │
-│  Called from: build_itinerary tool + format_result() (shadow     │
-│              at S2) + /api/expand-itinerary                      │
+│  Called from: build_itinerary tool + _build_complete_envelope()  │
+│              (auto-build at S2) + /api/expand-itinerary          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -548,6 +557,10 @@ if total_activity_days > max_capacity:
     auto_truncate_proportionally()  # Silent trim, no conflict
 ```
 
+**Phase 2.5: Enrich Activities from Tiles**
+
+Cross-references specialist `content_added` activities with `search_tiles` results to inherit Google Places data (rating, coordinates, photo, price, deeplink). Matching strategy: normalized title exact match. Also stores `_matched_tile` on enriched activities so Phase 5 block construction can set `booked_tile` for frontend photo resolution.
+
 **Key Insight:** The no-fly buffer only restricts DIVING placement, not total capacity. Day 7 of an 8-day trip can have hiking activities even though diving is blocked (24h before flight). The buffer doesn't reduce total trip capacity -- it restricts which activities can go where.
 
 **Cross-Domain Trim Math:** For a trip with diving + altitude activities and a 24h buffer:
@@ -566,7 +579,7 @@ if total_activity_days > max_capacity:
 
 **Cross-Domain Clustering (Phase 4 -- `no_altitude_after_dive`):**
 
-When the `no_altitude_after_dive` constraint is present and both diving and altitude activities (hiking, trekking, mountaineering, skiing, climbing) exist, `_distribute_activities` bypasses round-robin and uses ordered clustering:
+When the `no_altitude_after_dive` constraint is present and both diving and altitude activities (hiking, skiing, climbing -- derived from diving's `cross_domain_blocks` in the registry) exist, `_distribute_activities` bypasses round-robin and uses ordered clustering:
 
 1. **Phase A:** All diving activities placed on earliest available days
 2. **Phase B:** One buffer/rest day inserted after last dive day
@@ -588,15 +601,15 @@ Day 8: Hike 3 (Sekumpul)
 Day 9: Departure
 ```
 
-**Phase 5.24: Day Preference Capping**
+**Day Preference Capping (internal to Phase 5)**
 
 **Hallucination Guard:** `_parse_day_preferences(raw, user_text)` rejects LLM-inferred day counts when the user message contains no digits -- the LLM is hallucinating counts from trip duration. Only explicit user statements like "3 days diving" produce valid preferences. Additionally, parsed preferences are scoped to categories mentioned this turn (`activity_categories + specialist_hints`) to prevent the LLM from hallucinating day counts for categories the user didn't reference.
 
-When `activity_day_preferences` are set (e.g., `{"diving": 3, "hiking": 2}`), the builder caps each specialist's activity list to the user-requested count BEFORE cross-domain clustering or round-robin. The cap is a maximum -- if only 2 diving activities exist but user asked for 3, all 2 are placed. Remaining specialists (without day preferences) fill leftover days via the existing distribution logic.
+When `activity_day_preferences` are set (e.g., `{"diving": 3, "hiking": 2}`), the builder caps each specialist's activity list to the user-requested count within Phase 5's `_distribute_activities`, BEFORE cross-domain clustering or round-robin. The cap is a maximum -- if only 2 diving activities exist but user asked for 3, all 2 are placed. Remaining specialists (without day preferences) fill leftover days via the existing distribution logic.
 
 **Phase 5.25: Preferred Activity Placement (Two-Pass)**
 
-After creating free day placeholders, the builder populates days with user-preferred activities (hearted tiles). Uses a two-pass strategy:
+Runs AFTER Phase 5.6 (experience tile placement). The builder populates remaining free slots with user-preferred activities (hearted tiles). Uses a two-pass strategy:
 
 1. **Pass 1 (Unified Slot Model):** Collects preferred tiles from `preferences.preferred_activity_ids`. **D3 category filter:** Before collecting, each tile is checked against `self._active_categories` (derived from `input_data.activity_categories`, set at `ItineraryBuilder.__init__`). If the user has explicitly set categories (`activity_categories is not None`) and a tile's category is not in the active set, it is skipped. Builds slot map (3 periods per day), places via round-robin on least-loaded days.
 2. **Pass 2 (Co-Schedule Fallback):** Tiles that couldn't fit in Pass 1 are deferred. Re-scans using `_day_remaining_capacity()` + `_time_slot_score()` for hour-based placement on specialist days with spare capacity.
@@ -636,6 +649,13 @@ Each specialist type has its own constraint generator:
 - User heart preferences passed via `PreferenceOverrideInput`
 - Preferred hotels get 1.5x score multiplier
 - Preference attribution badges: "user_preferred", "ai_selected", "ai_override"
+
+**Capacity Model:**
+
+- `DAY_CAPACITY_HOURS = 11.0` (24h - 8 sleep - 3 meals/transit - 2 reserve)
+- `MAX_BLOCKS_PER_DAY = 3`
+- `DEFAULT_EXPERIENCE_HOURS = 1.5` (default duration for experience tiles)
+- `MAX_SAME_CATEGORY_PER_DAY = 2` (prevents 3x yoga on one day)
 
 **Conflict Detection:**
 
@@ -867,7 +887,7 @@ Two parallel serialization paths:
 **Agent path (NomadicAgentState):**
 - `serialize_agent_state(state)` -- Agent state dict -> serializable dict (uses `messages_to_dict` for full-fidelity message serde)
 - `restore_agent_state(session_state)` -- Serialized dict -> agent state dict (uses `messages_from_dict` + legacy migration for `trip_inputs`/`metadata.tiles`/`metadata.strategy_sections` and flat `trip_settings` normalization)
-- `_trim_messages(messages, keep_last=20)` -- Keeps first 2 + last N messages for context window management
+- `_trim_messages(messages, max_messages=20)` -- Keeps first 2 + last N messages for context window management (default 20 = 10 turns)
 
 ---
 
@@ -883,10 +903,10 @@ Two parallel serialization paths:
 | Rule | Type | Severity | Cross-Domain |
 |------|------|----------|--------------|
 | `no_fly_24h` | temporal | blocking | flights |
-| `no_altitude_after_dive` | safety | blocking | hiking, trekking, mountaineering, skiing, climbing |
+| `no_altitude_after_dive` | safety | blocking | skiing, hiking, climbing |
 
 **Registry flags:** `has_geographic_constraint=True`, `has_nofly_buffer=True`, `min_days_needed=4`, `backfill_affinity_tags=["water", "outdoors"]`
-**Cross-domain blocks:** `ALTITUDE_AFTER_DIVE` -> skiing, hiking, climbing (24h buffer, blocking)
+**Cross-domain blocks:** `ALTITUDE_AFTER_DIVE` -> `("skiing", "hiking", "climbing")` (24h buffer, blocking)
 
 ### Hiking
 
@@ -897,7 +917,7 @@ Two parallel serialization paths:
 | `proper_footwear_required` | equipment | soft |
 | `altitude_acclimatization` | safety | strong |
 
-**Registry flags:** `has_altitude_buffer=True`
+**Registry flags:** `has_altitude_buffer=True`, `min_days_needed=3`, `backfill_affinity_tags=["outdoors", "culture"]`
 
 ### Skiing
 
@@ -906,11 +926,13 @@ Two parallel serialization paths:
 |------|------|----------|
 | `check_snow_conditions` | safety | blocking |
 
-**Registry flags:** `has_geographic_constraint=True`
+**Registry flags:** `has_geographic_constraint=True`, `min_days_needed=3`, `backfill_affinity_tags=["outdoors", "culture"]`
 
 ### Cycling
 
 No hardcoded constraints (LLM-generated only)
+
+**Registry flags:** `min_days_needed=3` (default), `backfill_affinity_tags=["outdoors", "culture"]`
 
 ### Surfing
 
@@ -921,6 +943,8 @@ No hardcoded constraints (LLM-generated only)
 | `reef_awareness` | safety | strong |
 | `skill_appropriate_breaks` | equipment | soft |
 
+**Registry flags:** `min_days_needed=3` (default), `backfill_affinity_tags=["water", "outdoors"]`
+
 ### Climbing
 
 **Constraints (from registry):**
@@ -929,11 +953,13 @@ No hardcoded constraints (LLM-generated only)
 | `altitude_acclimatization` | safety | strong |
 | `gear_check_required` | equipment | strong |
 
-**Registry flags:** `has_altitude_buffer=True`, `min_days_needed=3`
+**Registry flags:** `has_altitude_buffer=True`, `min_days_needed=3`, `backfill_affinity_tags=["outdoors", "culture"]`
 
 ### Sailing
 
 No hardcoded constraints (LLM-generated only)
+
+**Registry flags:** `min_days_needed=3` (default), `backfill_affinity_tags=["water", "outdoors"]`
 
 **Backward compat:** Keywords include old "boating" terms; `category_mappings` maps `"boating" -> "sailing"`.
 
@@ -944,7 +970,7 @@ No hardcoded constraints (LLM-generated only)
 |------|------|----------|
 | `guide_required` | safety | strong |
 
-**Registry flags:** `min_days_needed=3`
+**Registry flags:** `min_days_needed=3` (default), `backfill_affinity_tags=["outdoors", "culture"]`
 
 ---
 
@@ -1004,7 +1030,7 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 | Tile | `tile_cache.py` | 256 | 24h | 72h (env: TILE_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
 | Browse | `activity_browser.py` | 256 | 6h | 72h (env: TILE_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
 | Places Enrichment | `google_places_provider.py` | 2048 | 24h | 168h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v2::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups |
-| Router | `router_cache.py` | 500 | 1h | N/A | `router::v2::SHA256({text}:{date})[:32]` | NL extraction |
+| Router | `router_cache.py` | 500 | 1h | N/A | `router::v3::SHA256({normalized_text}:{today_date}:{context_fingerprint})[:32]` | NL extraction |
 
 **Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'experience_single'`, `'tiles'`). Browse and Places enrichment L2 entries use `cache_type='tiles'`.
 
@@ -1243,7 +1269,7 @@ Maps tools to partial event kinds:
 
 Builds the final complete event with document dict including `plan_view_state`, `tiles`, `strategy_sections`, `itinerary_day_cards`, `constraint_violations`, `constraints_validated`, `suggested_responses`, etc.
 
-When `destination`, `start_date`, and `end_date` are present and there are both strategy sections and tiles, `_build_complete_envelope()` auto-runs the builder if `build_itinerary` was not explicitly called in the turn and no blocking validation errors exist. This allows auto-expansion into `itinerary_day_cards` and populates `turn_meta.builder_result` with placement/conflict metrics.
+When `destination`, `start_date`, and `end_date` are present AND tiles exist (hotels or activities) AND `build_itinerary` was not already called this turn AND no blocking validation errors exist, `_build_complete_envelope()` auto-runs the builder. If strategy_sections are missing, it synthesizes minimal sections from tiles via `_build_strategy_sections()`. Additionally, if the user has explicitly requested activity categories but no activity tiles are loaded yet, the auto-build is skipped. This allows auto-expansion into `itinerary_day_cards` and populates `turn_meta.builder_result` with placement/conflict metrics.
 
 ### DB Session Ownership
 
@@ -1373,11 +1399,12 @@ The response envelope computes `plan_view_state` based on data richness:
 
 | View State            | Condition                                                                          | Data Richness                                |
 | --------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------- |
-| `S0_BOOTSTRAP`        | No tiles and no specialist content                                                 | Setup checklist, blank slate                 |
-| `S2_STRATEGY_READY`   | Has tiles OR has specialist strategy sections                                      | Strategy preview or full logistics dashboard |
+| `S0_BOOTSTRAP`        | Core fields missing, OR core fields set but no content (no tiles, no sections)     | Setup checklist, blank slate                 |
+| `S2_STRATEGY_READY`   | Has strategy sections, OR has tiles (hotels or activities)                         | Strategy preview or full logistics dashboard |
 | `S3_ITINERARY_READY`  | Builder succeeded -- day_cards exist and conflict count is 0                       | Full timeline with scheduled activities      |
 | `S3_EDITING`          | Builder succeeded -- day_cards exist and conflicts remain                          | Timeline visible with non-blocking conflicts |
 | `S3_PARTIAL_CONFLICT` | Builder failed with conflicts but returned partial day_cards                       | Partial timeline with unschedulable blocks   |
+| `S3_BLOCKED`          | Builder failed, no day_cards returned                                              | No timeline, blocked state                   |
 
 ---
 
@@ -1411,7 +1438,7 @@ Built by `_build_complete_envelope()` in `plan_graph.py` for the agent architect
     "trip_inputs": {...},
     "ready_to_generate": bool,
     "document": {
-        "plan_view_state": "S0_BOOTSTRAP" | "S2_STRATEGY_READY" | "S3_ITINERARY_READY" | "S3_EDITING" | "S3_PARTIAL_CONFLICT",
+        "plan_view_state": "S0_BOOTSTRAP" | "S2_STRATEGY_READY" | "S3_ITINERARY_READY" | "S3_EDITING" | "S3_PARTIAL_CONFLICT" | "S3_BLOCKED",
         "tiles": {...},           # Flattened ID-based map
         "strategy_sections": [...], # Agent cards data
         "itinerary_day_cards": [...] | null,  # ItineraryBuilder output (null until S2_STRATEGY_READY)

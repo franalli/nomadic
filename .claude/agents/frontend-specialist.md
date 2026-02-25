@@ -44,15 +44,17 @@ frontend/
   components/
     animations/    → StartupSequence, Typewriter
     chat/          → ChatPanel, ChatSkeleton, SmartLoader,
-                     TripStatusBar,
-                     MobileChatInput,
-                     ChatInputHandler, ChatMessageList, ChatSuggestionBar
+                     TripStatusBar, MobileChatInput,
+                     ChatInputBar, ChatInputHandler, ChatMessageList,
+                     ChatMessageRenderer, ChatModuleSheets,
+                     ChatSuggestionBar, ChatSuggestionChips,
+                     suggestion-actions.ts
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
                      PlanHeader, NextStepBar, planStateHelpers,
                      CoreChip, UnifiedChipRow, TripHealthBar, TripSummaryPills,
                      ItineraryProgressIndicator, OriginPromptCard,
-                     DestinationMapPlaceholder, PlanDensityViews, PlanFullDensityView,
-                     PlanTimelineSection,
+                     DestinationIntelCard, DestinationMapPlaceholder,
+                     PlanDensityViews, PlanFullDensityView, PlanTimelineSection,
                      BrowseActivitiesSheet, useBookingDrawerState, useStrategyStageOrchestration
       booking/     → BookingDrawer, CategorySection, CheckoutSidebar
       modals/      → AlternativesModal
@@ -66,7 +68,8 @@ frontend/
                      TravelersSheet, BudgetSheet, FlightsSheet, StaysSheet,
                      ActivitiesSheet, TripSettingsSheet, GatingBlocker
       timeline/    → InlineDatePrompt, TimelineSkeleton,
-                     DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot, ItineraryDndWrapper
+                     DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot,
+                     ItineraryDndWrapper, RichBlockRenderer, useTimelineFillDay
         blocks/    → ActivityMiniCard, LogisticsBlock, SafetyBlock, GhostSlot,
                      FreeDayCard, HoldToDeleteButton, PreferenceAttributionBadge, types.ts
       tiles/       → SuggestionCard
@@ -75,8 +78,11 @@ frontend/
     layout/        → SplitLayoutView, NomadicLanding, LandingHelpers, LandingSheets,
                      FloatingBuildButton, MobileSwipeLayout, MobileModeHeader,
                      hooks/ (useSessionHydration, useBranchManager, useBranchState,
+                             useItineraryGeneration, useLandingDerived, useLandingEffects,
                              useTileSelection, useTripInputsEditor, useLocalBookingSettings)
-    map/           → InteractiveMap, MapErrorBoundary, MapboxErrorSuppressor
+    map/           → InteractiveMap, MapErrorBoundary, MapboxErrorSuppressor,
+                     mapbox-error-handler.ts
+    nomadic/       → consent-manager, legal-page (legal/consent UI)
     providers/     → Providers (context wrappers) via `components/providers/Providers.tsx`
   state/           → documentStore.ts, chatStore.ts, uiStore.ts, mobileNavStore.ts
   hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
@@ -88,12 +94,13 @@ frontend/
                      plan-envelope.ts, sheets.ts, summary.ts, tile.ts
   lib/             → design-system.ts, api.ts, animation-config.ts, streamParser.ts,
                      tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
-                     specialists.ts, utils.ts, contentPolicyGuard.ts,
-                     ghost-timeline-adapter.ts, fillDayGuards.ts,
+                     specialist-colors.ts, specialists.ts, utils.ts,
+                     contentPolicyGuard.ts, ghost-timeline-adapter.ts, fillDayGuards.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
-                     popular-places.ts, route-utils.ts, showMutationToast.ts
+                     popular-places.ts, route-utils.ts, showMutationToast.ts,
+                     googlePlacesPhoto.ts, travelIntel.ts
   __tests__/       → Vitest tests
   public/          → Static assets (logos, marketing imagery)
   scripts/         → Frontend utility scripts (build/dev support)
@@ -180,7 +187,7 @@ After first user interaction, always show something: hero, cards, or full plan.
 - Destination change clears: chat, tiles, strategy, day_cards
 - `expandInProgress` mutex prevents preference-regen loops during expand
 - `_fillingDays` per-day mutex prevents concurrent fill-day on same day
-- `graphBuiltItinerary` → `expandPath = 'GRAPH_BUILT'` skips expand when graph already built day_cards
+- `graphBuiltItinerary` check in `useChatSse.ts` skips expand when graph response already includes day_cards
 
 ### Heart Preferences
 

@@ -447,7 +447,7 @@ def _geocode_destination(dest: str) -> tuple[float, float] | None:
 
 def _build_places_request(
     query: str,
-    included_type: str,
+    included_type: str | None,
     max_results: int,
     price_levels: list[str] | None = None,
     geo: tuple[float, float] | None = None,
@@ -458,6 +458,7 @@ def _build_places_request(
     Args:
         query: Text query string.
         included_type: Places API type (e.g. "lodging", "tourist_attraction").
+            None omits the filter, letting text relevance drive results.
         max_results: Maximum results to return (capped at 20).
         price_levels: Optional list of PRICE_LEVEL_* enum strings to filter by.
         geo: Optional (lat, lng) tuple for locationBias circle center.
@@ -466,10 +467,11 @@ def _build_places_request(
     api_key = settings.google_maps_api_key
     payload: dict = {
         "textQuery": query,
-        "includedType": included_type,
         "pageSize": min(max_results, 20),
         "languageCode": "en",
     }
+    if included_type:
+        payload["includedType"] = included_type
     if price_levels:
         payload["priceLevels"] = price_levels
     if geo:
@@ -511,7 +513,7 @@ def _parse_places_response(
 
 async def _call_places_api_async(
     query: str,
-    included_type: str,
+    included_type: str | None,
     max_results: int = 5,
     price_levels: list[str] | None = None,
     geo: tuple[float, float] | None = None,
@@ -602,7 +604,7 @@ async def _call_places_api_async(
 
 def _call_places_api(
     query: str,
-    included_type: str,
+    included_type: str | None,
     max_results: int = 5,
     price_levels: list[str] | None = None,
     geo: tuple[float, float] | None = None,
@@ -909,6 +911,15 @@ class GooglePlacesActivityProvider(Provider):
             return f"{' or '.join(categories[:3])} activities in {dest}"
         return f"tourist attractions and activities in {dest}"
 
+    def _has_categories(self, ctx: SearchContext) -> bool:
+        """True when the user selected explicit activity categories."""
+        act = ctx.activity_settings or {}
+        if hasattr(act, "model_dump"):
+            act = act.model_dump()
+        if isinstance(act, dict):
+            return bool(act.get("categories"))
+        return False
+
     async def search_async(self, ctx: SearchContext) -> List[Tile]:
         """Async search — use from async contexts (logistics_node) to avoid blocking the event loop."""
         dest = ctx.destination or "Somewhere"
@@ -918,9 +929,13 @@ class GooglePlacesActivityProvider(Provider):
             geo = (ctx.destination_lat, ctx.destination_lng)
         elif dest != "Somewhere":
             geo = await _geocode_destination_async(dest)
+        # When user categories are set, omit includedType so Google's text
+        # search handles relevance (nightclubs, bike tours, etc. aren't
+        # "tourist_attraction").  Keep the filter for the generic fallback.
+        type_filter = None if self._has_categories(ctx) else "tourist_attraction"
         places = await _call_places_api_async(
             query=self._make_query(ctx),
-            included_type="tourist_attraction",
+            included_type=type_filter,
             max_results=max_results,
             geo=geo,
             path_label="logistics",
@@ -936,9 +951,10 @@ class GooglePlacesActivityProvider(Provider):
             geo = (ctx.destination_lat, ctx.destination_lng)
         elif dest != "Somewhere":
             geo = _geocode_destination(dest)
+        type_filter = None if self._has_categories(ctx) else "tourist_attraction"
         places = _call_places_api(
             query=self._make_query(ctx),
-            included_type="tourist_attraction",
+            included_type=type_filter,
             max_results=max_results,
             geo=geo,
             path_label="logistics",
@@ -1438,9 +1454,8 @@ async def enrich_activities_with_places(
     t0 = time.time()
     semaphore = asyncio.Semaphore(_enrich_max_parallel())
 
-    # Cap enrichment to top 3 activities to reduce API spend; remaining
-    # activities keep their LLM-generated data as-is.
-    max_enrich = 3
+    # Enrich all provided activities; concurrency is controlled by semaphore.
+    max_enrich = len(activities)
     to_enrich = activities[:max_enrich]
     passthrough = activities[max_enrich:]
 

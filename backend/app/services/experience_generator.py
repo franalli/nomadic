@@ -827,8 +827,8 @@ async def _generate_experiences_impl(
             return _clamp_tile_durations(all_tiles)
 
         # Cache miss — generate NEW categories via LLM
-        # Structured output degrades >4 tiles; use per-category parallel above that.
-        MAX_BATCH_TILES = 4
+        # Structured output degrades >6 tiles; use per-category parallel above that.
+        MAX_BATCH_TILES = 6
         total_tiles = tiles_per_category * len(new_cats)
         logger.info(
             f"[EXPERIENCE] Generation: {len(new_cats)} categories, "
@@ -839,7 +839,7 @@ async def _generate_experiences_impl(
         start_t = time.time()
 
         if total_tiles <= MAX_BATCH_TILES:
-            # Small batch: single LLM call (fast for ≤4 tiles)
+            # Small batch: single LLM call (fast for ≤6 tiles)
             try:
                 max_tokens = min(200 * total_tiles, 2400)
                 llm = get_llm_by_model(

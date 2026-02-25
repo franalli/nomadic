@@ -5,7 +5,7 @@
  * Keeps backend simple (Record<string, Tile>), groups for UI.
  */
 
-import { debugLog } from '@/lib/debug';
+
 import type { Tile } from '@/types/tile';
 
 export interface TilesByType {
@@ -148,11 +148,6 @@ const FILL_DAY_SOURCE_AGENTS = new Set(['experience_generator', 'vertical_specia
  */
 export function isBookableActivityTile(tile: Tile): boolean {
   if (normalizeTileType(tile.type) !== 'activity') return true;
-  if (!tile.source_agent) {
-    if (process.env.NODE_ENV === 'development') {
-      debugLog(`[isBookableActivityTile] Untagged activity tile: ${tile.id} "${tile.title}"`);
-    }
-    return true;
-  }
+  if (!tile.source_agent) return true;
   return !FILL_DAY_SOURCE_AGENTS.has(tile.source_agent);
 }

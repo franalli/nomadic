@@ -94,7 +94,7 @@ These four docs override your assumptions. Read before generating code.
 0. **Keep it simple** — no over-engineering
 1. **TripPlan is SSoT** — single source of truth for all trip state
 2. **Data over Agents** — flights/hotels are data fetchers (search_tiles tool), not agents
-3. **Domain Experts ARE Agents** — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing) use get_specialist_advice tool; Tier 2 (Sailing/Cooking/Yoga) are lightweight tile filters
+3. **Domain Experts ARE Agents** — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing/Climbing/Sailing/Wildlife Safari) use get_specialist_advice tool; Tier 2 (Cooking/Yoga/Nightlife/etc.) are lightweight tile filters
 4. **Single Agent Architecture** — one `create_agent` planner with 6 tools replaces the old 7-node DAG. The agent decides tool order dynamically.
 5. **Safe Routing** — LLM-based intent classification via `extract_trip_fields` tool and `settings.router_model`, no regex
 6. **Middleware over Nodes** — State mutation, model upgrades, prompt injection, and chip generation happen in `AgentMiddleware` hooks, not standalone nodes
@@ -110,7 +110,7 @@ These four docs override your assumptions. Read before generating code.
 | `get_specialist_advice` | `vertical_specialist.py` | Domain-specific strategy (diving, hiking, etc.) |
 | `search_tiles` | `logistics_node.py` | Flights, hotels, activities via TileService |
 | `validate_plan` | `constraint_guard.py` | Budget/temporal/safety constraint checks |
-| `build_itinerary` | `itinerary_builder.py` | Day-by-day schedule from tiles + constraints |
+| `build_itinerary` | `services/itinerary_builder.py` | Day-by-day schedule from tiles + constraints |
 
 ### Middleware Stack (4)
 
@@ -125,7 +125,7 @@ These four docs override your assumptions. Read before generating code.
 
 - **Frontend:** Next.js 16, React 19, TypeScript, Tailwind, Zustand, Framer Motion, Mapbox GL
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy, Alembic, LangGraph, LangChain (OpenAI + Gemini)
-- **LLM Providers:** OpenAI (gpt-4o, gpt-4o-mini), Google (gemini-2.5-flash) — via `llm_factory.py`
+- **LLM Providers:** OpenAI (gpt-4o family), Google (gemini-2.5 family) — via `llm_factory.py`; models configured per `settings.*_model` env vars
 - **Testing:** Vitest (frontend), pytest (backend)
 - **Linting:** ESLint + Prettier (frontend), Ruff (backend)
 
@@ -149,7 +149,7 @@ rm -f backend/test_plan_document_pytest.db*
 
 # Environment
 frontend/.env.local → NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN, NEXT_PUBLIC_DEBUG_LOGS
-backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY, ROUTER_MODEL, SPECIALIST_MODEL, LOCAL_EXPERT_MODEL, GUARD_MODEL, SYNTHESIZER_*_MODEL, UNSPLASH_ACCESS_KEY, DEBUG, DEBUG_PLAN_MESSAGES, CLEAR_L2_ON_RESET
+backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY, ROUTER_MODEL, EXTRACTION_MODEL, SPECIALIST_MODEL, LOCAL_EXPERT_MODEL, GUARD_MODEL, SYNTHESIZER_PLANNING_MODEL, SYNTHESIZER_EXPLORATION_MODEL, EXPERIENCE_MODEL, IATA_RESOLVER_MODEL, UNSPLASH_ACCESS_KEY, GOOGLE_MAPS_API_KEY, DEBUG, DEBUG_PLAN_MESSAGES, CLEAR_L2_ON_RESET
 cd backend && alembic upgrade head      # DB migrations
 docker compose up db --build            # Docker DB
 ```

@@ -49,6 +49,7 @@ from app.schemas import (
     PlanViewState,
     ReadinessItem,
     StrategySection,
+    SuggestionChip,
     Tile,
 )
 from app.services.regen_strategy import (
@@ -109,6 +110,125 @@ def _flatten_request_preferences(preferences: Any) -> Dict[str, Any]:
     combined_ids.extend(preferences.preferred_activity_ids or [])
     combined_ids.extend(preferences.preferred_flight_ids or [])
     return {"preferred_tile_ids": _normalized_preference_ids(combined_ids)}
+
+
+def _get_trip_input_display_value(key: str, trip_inputs: Dict[str, Any]) -> str | None:
+    """Render a human-readable value for a Trip Input key."""
+    if not isinstance(trip_inputs, dict):
+        return None
+
+    def _as_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _format_number(value: Any) -> str | None:
+        if value is None:
+            return None
+        try:
+            n = float(value)
+        except (TypeError, ValueError):
+            return None
+        if n.is_integer():
+            return str(int(n))
+        return str(n)
+
+    if key == "destination":
+        v = trip_inputs.get("destination")
+        return str(v) if v else None
+
+    if key == "origin":
+        v = trip_inputs.get("origin")
+        return str(v) if v else None
+
+    if key == "dates":
+        start = trip_inputs.get("start_date")
+        end = trip_inputs.get("end_date")
+        if start and end:
+            return f"{start} – {end}"
+        if start:
+            return str(start)
+        return None
+
+    if key == "budget":
+        budget = _format_number(trip_inputs.get("budget"))
+        if budget is None:
+            return None
+        currency = str(trip_inputs.get("currency") or "USD")
+        return f"{currency} {budget}"
+
+    if key == "travelers":
+        adults = _as_int(trip_inputs.get("adults"))
+        children = _as_int(trip_inputs.get("children")) or 0
+        if adults is None:
+            return None
+        adult_label = "adult" if adults == 1 else "adults"
+        if children > 0:
+            child_label = "child" if children == 1 else "children"
+            return f"{adults} {adult_label}, {children} {child_label}"
+        return f"{adults} {adult_label}"
+
+    booking_types = trip_inputs.get("booking_types")
+    booking_types_dict = booking_types if isinstance(booking_types, dict) else {}
+    flight_settings = trip_inputs.get("flight_settings")
+    flight_settings_dict = flight_settings if isinstance(flight_settings, dict) else {}
+    hotel_settings = trip_inputs.get("hotel_settings")
+    hotel_settings_dict = hotel_settings if isinstance(hotel_settings, dict) else {}
+
+    if key == "flights":
+        if booking_types_dict.get("flights") is None:
+            return None
+        if flight_settings_dict.get("direct_only") is True:
+            return "Direct"
+        cabin_class = flight_settings_dict.get("cabin_class")
+        if isinstance(cabin_class, str) and cabin_class and cabin_class.lower() != "economy":
+            return cabin_class.replace("_", " ").title()
+        return "Enabled"
+
+    if key == "hotels":
+        if booking_types_dict.get("hotels") is None:
+            return None
+        min_stars = _as_int(hotel_settings_dict.get("min_stars"))
+        if min_stars is not None and min_stars > 0:
+            return f"{min_stars}+ stars"
+        return "Enabled"
+
+    if key == "booking_types.flights":
+        mode = booking_types_dict.get("flights")
+        if mode == "on":
+            return "Enabled"
+        if mode == "off":
+            return "Disabled"
+        if mode == "suggested":
+            return "Auto"
+        return None
+
+    if key == "flight_settings.direct_only":
+        direct = flight_settings_dict.get("direct_only")
+        if direct is True:
+            return "Direct flights only"
+        if direct is False:
+            return "Connections OK"
+        return None
+
+    if key == "flight_settings.cabin_class":
+        cabin_class = flight_settings_dict.get("cabin_class")
+        if isinstance(cabin_class, str) and cabin_class:
+            return cabin_class.replace("_", " ").title()
+        return None
+
+    if key == "hotel_settings.min_stars":
+        min_stars = _as_int(hotel_settings_dict.get("min_stars"))
+        if min_stars is None:
+            return None
+        if min_stars <= 0:
+            return "Any rating"
+        return f"{min_stars}+ stars"
+
+    return None
 
 
 def _conflicts_to_constraint_violations(
@@ -514,13 +634,17 @@ async def generate_sse(
 
                     # Convert graph-built day_cards for persistence
                     graph_day_cards_raw = graph_doc.get("itinerary_day_cards")
+                    is_flex_dates = bool(trip_inputs.get("date_flex"))
                     day_card_objs = None
                     persist_view_state = resolve_itinerary_document_view_state(
                         graph_doc.get("plan_view_state"),
                         graph_day_cards_raw,
                         graph_doc.get("constraint_violations", []),
                     )
-                    if graph_day_cards_raw:
+                    if is_flex_dates:
+                        # Flexible dates are planning-only; persist no concrete day cards.
+                        day_card_objs = []
+                    elif graph_day_cards_raw:
                         day_card_objs = [
                             DayCard(**dc) if isinstance(dc, dict) else dc
                             for dc in graph_day_cards_raw
@@ -656,6 +780,8 @@ async def generate_sse(
             response_document = document_data if document_data else PlanDocumentData()
             response_document.assistant_message = assistant_message
             response_document.suggested_responses = suggested_responses
+            response_document.suggested_response_meta = []
+            response_document.suggestion_chips = []
             response_document.ready_to_generate = ready_to_generate_now
 
             # --- Compute Plan State Envelope fields ---
@@ -825,16 +951,39 @@ async def generate_sse(
                     # Downgrade view state so frontend expand gate recognizes strategy-only state
                     response_document.plan_view_state = "S2_STRATEGY_READY"
 
-            # Copy suggestions from graph document (unfiltered by validator)
-            # The validator strips question marks but synthesizer chips are curated
-            graph_suggestions = graph_document.get("suggested_responses")
-            if graph_suggestions and not response_document.suggested_responses:
-                response_document.suggested_responses = graph_suggestions
+            # Copy structured suggestion chips from graph document.
+            graph_suggestion_chips = graph_document.get("suggestion_chips")
+            if isinstance(graph_suggestion_chips, list):
+                response_document.suggestion_chips = [
+                    SuggestionChip.model_validate(chip) if isinstance(chip, dict) else chip
+                    for chip in graph_suggestion_chips
+                    if isinstance(chip, dict) or isinstance(chip, SuggestionChip)
+                ]
 
-            # Copy suggestion chip metadata (progression hints etc)
+            # Prefer graph-curated text suggestions. Fallback to chip messages if text
+            # array is absent and chips were provided.
+            graph_suggestions = graph_document.get("suggested_responses")
+            if isinstance(graph_suggestions, list):
+                response_document.suggested_responses = graph_suggestions
+            elif response_document.suggestion_chips:
+                response_document.suggested_responses = [
+                    chip.message for chip in response_document.suggestion_chips if chip.message
+                ]
+
+            # Copy suggestion chip metadata (progression hints etc). If absent,
+            # synthesize from structured chips to keep arrays aligned.
             graph_chip_meta = graph_document.get("suggested_response_meta")
-            if graph_chip_meta:
+            if isinstance(graph_chip_meta, list):
                 response_document.suggested_response_meta = graph_chip_meta
+            elif response_document.suggestion_chips:
+                response_document.suggested_response_meta = [
+                    {
+                        "chip_type": chip.chip_type,
+                        "category": chip.category,
+                        "icon": chip.icon,
+                    }
+                    for chip in response_document.suggestion_chips
+                ]
 
             # Copy constraint validation state
             graph_constraints = graph_document.get("constraints_validated")
@@ -1198,6 +1347,22 @@ async def generate_ndjson(
             # Validate dates - require both start and end for multi-day trips
             start_date = trip_inputs_data.get("start_date")
             end_date = trip_inputs_data.get("end_date")
+            is_flex_dates = bool(trip_inputs_data.get("date_flex"))
+
+            # Guard: Flexible dates cannot generate a concrete itinerary.
+            if is_flex_dates:
+                _debug("❌ [expand-itinerary] EARLY RETURN: date_flex=true")
+                event = ExpandItineraryStreamEvent(
+                    type="error",
+                    message=json.dumps(
+                        {
+                            "error": "FLEX_DATES_NOT_SUPPORTED",
+                            "message": "Set fixed start and end dates to generate itinerary",
+                        }
+                    ),
+                )
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                return
 
             # Guard: Require both dates (S0_BOOTSTRAP has neither)
             if not start_date or not end_date:

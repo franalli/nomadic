@@ -464,12 +464,14 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
                 bt["activities"] = "suggested"
                 trip_settings["booking_types"] = bt
 
+    _cat_clear_updates: dict[str, Any] = {}
+
     # When activity categories changed via chat (without destination change),
     # clear stale day_cards and activity tiles so auto-build re-runs.
     if "activity_categories" in changed and not _destination_changed:
         _existing_tiles = dict(state.get("tiles", {}))
         _existing_tiles["activities"] = []
-        _cat_clear_updates: dict[str, Any] = {
+        _cat_clear_updates = {
             "day_cards": [],
             "tiles": _existing_tiles,
         }
@@ -483,8 +485,11 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
             len(_verify_tiles.get("activities", [])),
             len(_cat_clear_updates.get("day_cards", [])),
         )
-    else:
-        _cat_clear_updates = {}
+
+    # Flexible dates are planning-only; clear concrete itinerary cards.
+    if "date_flex" in changed and bool(trip_plan.get("date_flex")) and state.get("day_cards"):
+        _cat_clear_updates["day_cards"] = []
+        logger.info("[_merge_trip_fields] date_flex=true — cleared day_cards")
 
     updates: dict[str, Any] = {
         "trip_plan": trip_plan,
@@ -493,6 +498,9 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
     }
 
     turn_meta_updates: dict[str, Any] = {"fields_changed": sorted(changed)}
+    # Signal frontend to replace tiles when categories changed
+    if "tiles" in _cat_clear_updates:
+        turn_meta_updates["tiles_replaced"] = True
     step_entries: list[dict[str, str]] = []
 
     summary_parts: list[str] = []
@@ -1011,16 +1019,40 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
                     }
                 )
         if len(chips) < 3:
-            chips.append(
-                {
-                    "message": "Show me what needs to change",
-                    "action_type": "send_message",
-                    "action_target": None,
-                    "chip_type": "cta",
-                    "category": "fix_violation",
-                    "icon": "help-circle",
-                }
-            )
+            violation_type = violations[0].get("code", "") if violations else ""
+            if "DATE" in violation_type or "DURATION" in violation_type:
+                chips.append(
+                    _chip(
+                        "Adjust dates",
+                        "cta",
+                        "fix_violation",
+                        "calendar",
+                        action_type="open_pill",
+                        action_target="dates",
+                    )
+                )
+            elif "BUDGET" in violation_type or "SPEND" in violation_type:
+                chips.append(
+                    _chip(
+                        "Adjust budget",
+                        "cta",
+                        "fix_violation",
+                        "banknote",
+                        action_type="open_pill",
+                        action_target="budget",
+                    )
+                )
+            else:
+                chips.append(
+                    _chip(
+                        "Change activities",
+                        "cta",
+                        "fix_violation",
+                        "compass",
+                        action_type="open_pill",
+                        action_target="activities",
+                    )
+                )
         return chips[:3]
 
     # Post-itinerary: suggest refinements
@@ -1031,7 +1063,7 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
                 "message": "Show my full itinerary",
                 "action_type": "send_message",
                 "action_target": None,
-                "chip_type": "cta",
+                "chip_type": "follow_up",
                 "category": "itinerary",
                 "icon": "calendar",
             }
@@ -1042,7 +1074,7 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
                     "message": "Add an extra day for dropped activities",
                     "action_type": "send_message",
                     "action_target": None,
-                    "chip_type": "suggestion",
+                    "chip_type": "follow_up",
                     "category": "itinerary",
                     "icon": "plus-circle",
                 }
@@ -1053,7 +1085,7 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
                     "message": "Review safety constraints",
                     "action_type": "send_message",
                     "action_target": None,
-                    "chip_type": "info",
+                    "chip_type": "follow_up",
                     "category": "constraints",
                     "icon": "shield",
                 }
@@ -1062,6 +1094,52 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
 
     # Has tiles but no itinerary yet: suggest building
     if tiles and (tiles.get("flights") or tiles.get("hotels") or tiles.get("activities")):
+        origin = trip_plan.get("origin", "")
+        if dest and start_date and end_date and not categories:
+            chips.append(
+                _chip(
+                    "Choose activities",
+                    "cta",
+                    "core_fields",
+                    "compass",
+                    action_type="open_pill",
+                    action_target="activities",
+                )
+            )
+            if not origin:
+                chips.append(
+                    _chip(
+                        "Add departure city",
+                        "cta",
+                        "core_fields",
+                        "plane",
+                        action_type="open_pill",
+                        action_target="origin",
+                    )
+                )
+            else:
+                chips.append(
+                    _chip(
+                        "Set budget",
+                        "follow_up",
+                        "core_fields",
+                        "banknote",
+                        action_type="open_pill",
+                        action_target="budget",
+                    )
+                )
+            chips.append(
+                _chip(
+                    "Set travelers",
+                    "follow_up",
+                    "core_fields",
+                    "users",
+                    action_type="open_pill",
+                    action_target="travelers",
+                )
+            )
+            return chips[:3]
+
         if dest and start_date and end_date:
             chips.append(_chip("Build my itinerary", "cta", "progression", "calendar"))
         hotel_settings = trip_settings.get("hotel_settings", {})
@@ -1069,7 +1147,7 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
             chips.append(
                 _chip(
                     "5-star hotels only",
-                    "suggestion",
+                    "setting",
                     "preferences",
                     "star",
                     action_type="open_pill",
@@ -1077,11 +1155,11 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
                 )
             )
         flight_settings = trip_settings.get("flight_settings", {})
-        if not flight_settings.get("direct_only"):
+        if origin and not flight_settings.get("direct_only"):
             chips.append(
                 _chip(
                     "Direct flights only",
-                    "suggestion",
+                    "setting",
                     "preferences",
                     "plane",
                     action_type="trigger_action",
@@ -1092,7 +1170,7 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
             chips.append(
                 _chip(
                     "Browse activities",
-                    "suggestion",
+                    "follow_up",
                     "preferences",
                     "compass",
                     action_type="open_pill",
@@ -1134,37 +1212,88 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
                 "calendar",
             )
         )
-        chips.append(_chip("I'm flexible on dates", "suggestion", "date_prompt", "calendar"))
+        chips.append(_chip("I'm flexible on dates", "follow_up", "date_prompt", "calendar"))
         return chips[:3]
 
     # Has destination and dates but no activities
     if dest and start_date and not categories:
+        origin = trip_plan.get("origin", "")
         chips.append(
             _chip(
-                f"What activities in {dest}?",
-                "question",
+                "Choose activities",
+                "cta",
                 "core_fields",
                 "compass",
                 action_type="open_pill",
                 action_target="activities",
             )
         )
+        if not origin:
+            chips.append(
+                _chip(
+                    "Add departure city",
+                    "cta",
+                    "core_fields",
+                    "plane",
+                    action_type="open_pill",
+                    action_target="origin",
+                )
+            )
+        else:
+            chips.append(
+                _chip(
+                    "Set budget",
+                    "follow_up",
+                    "core_fields",
+                    "banknote",
+                    action_type="open_pill",
+                    action_target="budget",
+                )
+            )
         chips.append(
             _chip(
-                f"Local food and culture in {dest}",
-                "suggestion",
-                "specialist",
-                "utensils",
+                "Set travelers",
+                "follow_up",
+                "core_fields",
+                "users",
+                action_type="open_pill",
+                action_target="travelers",
             )
         )
-        chips.append(_chip("Surprise me", "suggestion", "core_fields", "sparkles"))
         return chips[:3]
 
-    # No destination
+    # No destination — open core field pills
     if not dest:
-        chips.append(_chip("Beach vacation", "suggestion", "destination_prompt", "sun"))
-        chips.append(_chip("Mountain adventure", "suggestion", "destination_prompt", "mountain"))
-        chips.append(_chip("City break in Europe", "suggestion", "destination_prompt", "building"))
+        chips.append(
+            _chip(
+                "Pick a destination",
+                "cta",
+                "core_fields",
+                "map-pin",
+                action_type="open_pill",
+                action_target="destination",
+            )
+        )
+        chips.append(
+            _chip(
+                "Choose dates first",
+                "follow_up",
+                "date_prompt",
+                "calendar",
+                action_type="open_pill",
+                action_target="dates",
+            )
+        )
+        chips.append(
+            _chip(
+                "Set travelers",
+                "follow_up",
+                "core_fields",
+                "users",
+                action_type="open_pill",
+                action_target="travelers",
+            )
+        )
         return chips[:3]
 
     # Specialist suggestions based on detected categories
@@ -1172,8 +1301,8 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
         for cat in categories[:2]:
             chips.append(
                 _chip(
-                    f"Tell me about {cat} in {dest}",
-                    "suggestion",
+                    f"Refine {cat} plan",
+                    "cta",
                     "specialist",
                     "compass",
                 )
@@ -1181,7 +1310,15 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
 
     # Local intel suggestion
     if dest and len(chips) < 3:
-        chips.append(_chip(f"Local tips for {dest}", "suggestion", "local_intel", "info"))
+        chips.append(_chip("Get local tips", "cta", "local_intel", "map-pin"))
+
+    # ── INVARIANT: every chip must be actionable ──────────────────────
+    chips = [
+        c
+        for c in chips
+        if c.get("action_type") in ("open_pill", "trigger_action")
+        or (c.get("action_type") == "send_message" and c.get("chip_type") in ("cta", "follow_up"))
+    ]
 
     return chips[:3]
 
@@ -1260,6 +1397,14 @@ class SuggestionChipMiddleware(AgentMiddleware):
         persistent_meta = dict(state_dict.get("persistent_meta", {}))
         persistent_meta["suggestion_chips"] = chips
         persistent_meta["suggestion_chip_texts"] = [c["message"] for c in chips]
+        persistent_meta["suggestion_chip_meta"] = [
+            {
+                "chip_type": c.get("chip_type", "follow_up"),
+                "category": c.get("category", ""),
+                "icon": c.get("icon"),
+            }
+            for c in chips
+        ]
 
         logger.debug(
             "[SuggestionChipMiddleware] Generated %d chips: %s",

@@ -1505,6 +1505,7 @@ class ItineraryBuilder:
 
         # Get available days (exclude buffer days that block all activities)
         available_day_indices = []
+
         for i, day in enumerate(days):
             # Skip arrival day for major activities
             if i == 0:
@@ -1989,11 +1990,7 @@ class ItineraryBuilder:
             for tile in tiles.values()
             if isinstance(tile, dict) and tile.get("type") == "activity"
         )
-
-        # Build Tier 2 label if user selected non-specialist categories
-        tier2_label = None
-        if tier2_categories:
-            tier2_label = " & ".join(c.title() for c in tier2_categories)
+        tier2_label = " & ".join(c.title() for c in (tier2_categories or [])) or None
 
         for i, day in enumerate(days):
             # Skip arrival day (first) and departure day (last)
@@ -2009,13 +2006,12 @@ class ItineraryBuilder:
             )
 
             if not has_activity:
-                # Label with Tier 2 categories if available
-                if tier2_label:
-                    summary = f"{tier2_label} Day - explore at your own pace"
-                    day_label = f"{tier2_label} Day"
-                else:
-                    summary = "Free Day - explore at your own pace"
-                    day_label = "Free Day"
+                summary = (
+                    f"{tier2_label} Day - explore at your own pace"
+                    if tier2_label
+                    else "Free Day - explore at your own pace"
+                )
+                day_label = "Free Day"
 
                 # Create FreeDay placeholder block
                 free_day_block = DayBlockOutput(
@@ -2033,9 +2029,8 @@ class ItineraryBuilder:
                 buffer_count = sum(1 for b in day.blocks if b.is_buffer)
                 day.blocks.insert(buffer_count, free_day_block)
 
-                # Update day label if generic
-                if day.label.startswith("Day "):
-                    day.label = day_label
+                # Empty day labels must reflect actual placed blocks.
+                day.label = day_label
 
         return days
 

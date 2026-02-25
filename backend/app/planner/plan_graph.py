@@ -230,7 +230,22 @@ def _build_complete_envelope(
 
     # Suggestion chips from SuggestionChipMiddleware
     suggestion_chips = persistent_meta.get("suggestion_chips", [])
+    if not isinstance(suggestion_chips, list):
+        suggestion_chips = []
     suggested_replies = [c.get("message", "") for c in suggestion_chips if isinstance(c, dict)]
+    suggestion_chip_meta = persistent_meta.get("suggestion_chip_meta", [])
+    if not isinstance(suggestion_chip_meta, list):
+        suggestion_chip_meta = []
+    if not suggestion_chip_meta:
+        suggestion_chip_meta = [
+            {
+                "chip_type": c.get("chip_type", "follow_up"),
+                "category": c.get("category", ""),
+                "icon": c.get("icon"),
+            }
+            for c in suggestion_chips
+            if isinstance(c, dict)
+        ]
 
     # Build trip_inputs from trip_plan + trip_settings
     trip_inputs: Dict[str, Any] = {}
@@ -241,6 +256,10 @@ def _build_complete_envelope(
         "destination_iata",
         "start_date",
         "end_date",
+        "date_flex",
+        "trip_duration",
+        "date_window_start",
+        "date_window_end",
         "adults",
         "children",
         "budget",
@@ -262,9 +281,25 @@ def _build_complete_envelope(
         if val:
             trip_inputs[settings_field] = val
 
+    is_flex_dates = bool(trip_plan.get("date_flex"))
+
+    if is_flex_dates and day_cards:
+        logger.info(
+            "[_build_complete_envelope] date_flex=true — suppressing %d day_cards",
+            len(day_cards),
+        )
+        day_cards = []
+        state["day_cards"] = []
+        if isinstance(turn_meta, dict):
+            turn_meta.pop("builder_result", None)
+            state["turn_meta"] = turn_meta
+
     # Determine ready_to_generate
     ready_to_generate = bool(
-        trip_plan.get("destination") and trip_plan.get("start_date") and trip_plan.get("end_date")
+        trip_plan.get("destination")
+        and trip_plan.get("start_date")
+        and trip_plan.get("end_date")
+        and not is_flex_dates
     )
 
     # Auto-build: if the agent didn't call build_itinerary but all conditions
@@ -273,7 +308,10 @@ def _build_complete_envelope(
     validation_result = turn_meta.get("validation_result", {})
     has_blocking_validation = validation_result.get("blocking_count", 0) > 0
     has_core = bool(
-        trip_plan.get("destination") and trip_plan.get("start_date") and trip_plan.get("end_date")
+        trip_plan.get("destination")
+        and trip_plan.get("start_date")
+        and trip_plan.get("end_date")
+        and not is_flex_dates
     )
     tools_called = turn_meta.get("tools_called", [])
 
@@ -296,6 +334,7 @@ def _build_complete_envelope(
             _safe_print(
                 f"\n[DIAG:AUTO_BUILD] === Envelope Build Decision ===\n"
                 f"  has_core: {has_core} (dest={trip_plan.get('destination')}, start={trip_plan.get('start_date')}, end={trip_plan.get('end_date')})\n"
+                f"  date_flex: {is_flex_dates}\n"
                 f"  day_cards_from_agent: {len(day_cards)}\n"
                 f"  has_blocking_validation: {has_blocking_validation}\n"
                 f"  tiles: hotels={len(tiles.get('hotels') or [])}, activities={len(tiles.get('activities') or [])}\n"
@@ -369,6 +408,39 @@ def _build_complete_envelope(
                         summary += f" · {dropped} activit{'y' if dropped == 1 else 'ies'} dropped"
                     turn_steps.append({"type": "itinerary", "summary": summary})
                     turn_meta["turn_steps"] = turn_steps
+                # SuggestionChipMiddleware runs before auto-build. Regenerate chips
+                # here against post-build state to avoid stale S2 chips on S3 turns.
+                try:
+                    from app.planner.middleware import _generate_chips_from_state
+
+                    _post_build_state = dict(state)
+                    _post_build_state["day_cards"] = day_cards
+                    _post_build_state["turn_meta"] = turn_meta
+                    post_build_chips = _generate_chips_from_state(_post_build_state)
+                    if post_build_chips:
+                        _pm_after_build = dict(state.get("persistent_meta", {}))
+                        _pm_after_build["suggestion_chips"] = post_build_chips
+                        _pm_after_build["suggestion_chip_texts"] = [
+                            c.get("message", "") for c in post_build_chips if isinstance(c, dict)
+                        ]
+                        _pm_after_build["suggestion_chip_meta"] = [
+                            {
+                                "chip_type": c.get("chip_type", "follow_up"),
+                                "category": c.get("category", ""),
+                                "icon": c.get("icon"),
+                            }
+                            for c in post_build_chips
+                            if isinstance(c, dict)
+                        ]
+                        state["persistent_meta"] = _pm_after_build
+                        persistent_meta = _pm_after_build
+                        suggestion_chips = post_build_chips
+                        suggested_replies = [
+                            c.get("message", "") for c in suggestion_chips if isinstance(c, dict)
+                        ]
+                        suggestion_chip_meta = _pm_after_build.get("suggestion_chip_meta", [])
+                except Exception as chips_exc:
+                    logger.debug("[auto-build] Post-build chip regeneration skipped: %s", chips_exc)
                 _safe_print(
                     f"[auto-build] Built {len(day_cards)} day cards for {trip_plan['destination']}"
                 )
@@ -571,7 +643,7 @@ def _build_complete_envelope(
         "assistant_message": assistant_message,
         "ready_to_generate": ready_to_generate,
         "suggested_responses": suggested_replies,
-        "suggested_response_meta": persistent_meta.get("suggestion_chip_meta", []),
+        "suggested_response_meta": suggestion_chip_meta,
         "suggestion_chips": suggestion_chips,
         "plan_view_state": plan_view_state,
         "strategy_sections": strategy_sections,
@@ -695,6 +767,12 @@ async def run_turn_streaming(
                 len(_verify_tiles.get("activities", [])),
                 len(state.get("day_cards", [])),
             )
+            # Signal frontend to REPLACE tiles, not merge additively.
+            # Without this, old activity tiles persist alongside new ones.
+            _turn_meta = state.get("turn_meta", {})
+            if isinstance(_turn_meta, dict):
+                _turn_meta["tiles_replaced"] = True
+                state["turn_meta"] = _turn_meta
 
     # Append the user message
     state["messages"].append(HumanMessage(content=user_message))
@@ -1017,6 +1095,76 @@ async def run_turn_streaming(
                     "captured" if final_state else "NONE",
                     len(result_state.get("messages", [])),
                 )
+
+        # ------------------------------------------------------------------
+        # Deterministic search fallback (W2 mitigation)
+        # If the LLM was supposed to call search_tiles but didn't, run it
+        # directly so auto-build has tiles to work with.
+        # ------------------------------------------------------------------
+        _fb_tools = result_state.get("turn_meta", {}).get("tools_called", [])
+        _fb_ts = result_state.get("trip_settings", {})
+        _fb_as = _fb_ts.get("activity_settings", {}) if isinstance(_fb_ts, dict) else {}
+        _fb_cats = _fb_as.get("categories", []) if isinstance(_fb_as, dict) else []
+        _fb_booking_types = _fb_ts.get("booking_types", {}) if isinstance(_fb_ts, dict) else {}
+        _fb_activities_off = (
+            isinstance(_fb_booking_types, dict)
+            and str(_fb_booking_types.get("activities", "")).lower() == "off"
+        )
+        _fb_tiles = result_state.get("tiles", {})
+        _fb_has_activities = (
+            bool(_fb_tiles.get("activities")) if isinstance(_fb_tiles, dict) else False
+        )
+        _fb_tp = result_state.get("trip_plan", {})
+        _fb_is_flex_dates = bool(_fb_tp.get("date_flex"))
+        _fb_has_core = bool(
+            _fb_tp.get("destination")
+            and _fb_tp.get("start_date")
+            and _fb_tp.get("end_date")
+            and not _fb_is_flex_dates
+        )
+
+        if (
+            _fb_cats
+            and not _fb_has_activities
+            and "search_tiles" not in _fb_tools
+            and _fb_has_core
+            and not _fb_activities_off
+        ):
+            logger.warning(
+                "[FALLBACK:SEARCH] LLM skipped search_tiles — running deterministic "
+                "fallback for categories=%s",
+                _fb_cats,
+            )
+            try:
+                from app.planner.tools.search_tiles import search_tiles
+
+                _fb_result = await search_tiles.coroutine(
+                    destination=_fb_tp.get("destination", ""),
+                    start_date=_fb_tp.get("start_date", ""),
+                    end_date=_fb_tp.get("end_date", ""),
+                    origin=_fb_tp.get("origin", ""),
+                    activity_categories=",".join(_fb_cats),
+                    session_id=session_id,
+                    state=result_state,
+                )
+                _fb_new_activities = _fb_result.get("activities", [])
+                if _fb_new_activities:
+                    _existing = result_state.get("tiles", {})
+                    if not isinstance(_existing, dict):
+                        _existing = {}
+                    _existing["activities"] = _fb_new_activities
+                    result_state["tiles"] = _existing
+                    # Signal frontend to replace tiles
+                    _fb_tm = result_state.get("turn_meta", {})
+                    _fb_tm["tiles_replaced"] = True
+                    _fb_tm.setdefault("tools_called", []).append("search_tiles")
+                    result_state["turn_meta"] = _fb_tm
+                    logger.info(
+                        "[FALLBACK:SEARCH] Injected %d activity tiles",
+                        len(_fb_new_activities),
+                    )
+            except Exception as exc:
+                logger.error("[FALLBACK:SEARCH] Failed: %s", exc)
 
         envelope = _build_complete_envelope(result_state, assistant_message, session_id=session_id)
 

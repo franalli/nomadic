@@ -1244,13 +1244,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
           executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
           pending_strategy_topics: currentDoc?.pending_strategy_topics ?? response.document.pending_strategy_topics,
-          // PATCH responses carry stale plan_view_state from DB blob.
-          // Never let a PATCH downgrade from S3 → S0/S2 — only SSE
-          // 'complete' events are authoritative for plan_view_state transitions.
+          // PATCH responses can be stale for plan_view_state. Preserve current
+          // S3 state when itinerary day_cards already exist.
           plan_view_state: (() => {
             const responsePVS = response.document.plan_view_state;
             const currentPVS = currentDoc?.plan_view_state;
-            if (currentPVS?.startsWith('S3_') && responsePVS && !responsePVS.startsWith('S3_')) {
+            const hasDayCards =
+              Array.isArray(currentDoc?.day_cards) && (currentDoc?.day_cards?.length ?? 0) > 0;
+            if (
+              hasDayCards
+              && currentPVS?.startsWith('S3_')
+              && responsePVS
+              && !responsePVS.startsWith('S3_')
+              && responsePVS !== 'S0_EMPTY'
+            ) {
               return currentPVS;
             }
             return responsePVS ?? currentPVS;
@@ -1322,12 +1329,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
               strategy_sections: currentDocRetry?.strategy_sections ?? retryResponse.document.strategy_sections,
               executed_strategy_topics: currentDocRetry?.executed_strategy_topics ?? retryResponse.document.executed_strategy_topics,
               pending_strategy_topics: currentDocRetry?.pending_strategy_topics ?? retryResponse.document.pending_strategy_topics,
-              // PATCH responses carry stale plan_view_state from DB blob.
-              // Never let a PATCH downgrade from S3 → S0/S2 (see primary path).
+              // PATCH responses can be stale for plan_view_state. Preserve current
+              // S3 state when itinerary day_cards already exist.
               plan_view_state: (() => {
                 const responsePVS = retryResponse.document.plan_view_state;
                 const currentPVS = currentDocRetry?.plan_view_state;
-                if (currentPVS?.startsWith('S3_') && responsePVS && !responsePVS.startsWith('S3_')) {
+                const hasDayCards =
+                  Array.isArray(currentDocRetry?.day_cards)
+                  && (currentDocRetry?.day_cards?.length ?? 0) > 0;
+                if (
+                  hasDayCards
+                  && currentPVS?.startsWith('S3_')
+                  && responsePVS
+                  && !responsePVS.startsWith('S3_')
+                  && responsePVS !== 'S0_EMPTY'
+                ) {
                   return currentPVS;
                 }
                 return responsePVS ?? currentPVS;
@@ -2214,9 +2230,37 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         tilesToMerge = envelope.tiles;
         debugLog(`[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (${destinationChanged ? 'destination changed' : datesChanged ? 'dates changed' : 'tiles_replaced flag'})`);
       } else if (Object.keys(envelope.tiles).length > 0) {
-        // Same destination + non-empty: MERGE with existing tiles (additive)
-        tilesToMerge = { ...currentDoc.tiles, ...envelope.tiles };
-        debugLog('[documentStore.mergeEnvelope] 🔄 Tiles: MERGED (same destination)');
+        // Same destination + non-empty: check if activity tile IDs changed
+        // (category change produces tiles with different ID hash)
+        const prevActivityIds = new Set(
+          Object.entries(currentDoc.tiles ?? {})
+            .filter(([, t]) => t.type === 'activity')
+            .map(([id]) => id)
+        );
+        const envelopeActivityIds = new Set(
+          Object.entries(envelope.tiles)
+            .filter(([, t]) => t.type === 'activity')
+            .map(([id]) => id)
+        );
+        // If envelope has activities that are ALL new (none overlap with existing),
+        // this is a category refresh — replace instead of merge
+        const hasNewActivities = envelopeActivityIds.size > 0;
+        const noOverlap = hasNewActivities && [...envelopeActivityIds].every(id => !prevActivityIds.has(id));
+        if (noOverlap && prevActivityIds.size > 0) {
+          // Category change: keep non-activity tiles from current, replace activities from envelope
+          const currentNonActivity: Record<string, Tile> = {};
+          for (const [id, tile] of Object.entries(currentDoc.tiles ?? {})) {
+            if (tile.type !== 'activity') {
+              currentNonActivity[id] = tile;
+            }
+          }
+          tilesToMerge = { ...currentNonActivity, ...envelope.tiles };
+          debugLog('[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED activities (category change detected)');
+        } else {
+          // Normal additive merge
+          tilesToMerge = { ...currentDoc.tiles, ...envelope.tiles };
+          debugLog('[documentStore.mergeEnvelope] 🔄 Tiles: MERGED (same destination)');
+        }
       } else {
         // Same destination + empty: SKIP (preserve existing)
         tilesToMerge = undefined;

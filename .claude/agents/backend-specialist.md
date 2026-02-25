@@ -61,7 +61,8 @@ backend/app/planner/
                        llm_factory.py, patterns_registry.py, test_mode.py
 backend/app/
   main.py, schemas.py, config.py, db.py, db_models.py,
-  debug_utils.py, graph_plan_utils.py, placeholders.py
+  debug_utils.py, graph_plan_utils.py, placeholders.py,
+  lifespan.py, analytics_routes.py
   data/              → demo_curation.py and curated backend datasets
   middleware/        → session middleware and request guards
   prompts/           → shared prompt templates (`synthesizer.txt`, `specialists/*.txt`)
@@ -69,10 +70,11 @@ backend/app/
                        experience_generator.py, regen_strategy.py, itinerary_builder.py,
                        unsplash.py, unsplash_queries.py, task_tracker.py, activity_browser.py,
                        spend_guard.py
-  tile_service/      → curated_provider.py, amadeus_provider.py, mock_provider.py,
+  tile_service/      → curated_provider.py, mock_provider.py,
                        google_places_provider.py, provider_base.py, service.py, models.py
-  tools/             → constraint_engine.py, amadeus_client.py, tile_service.py,
+  tools/             → constraint_engine.py, tile_service.py,
                        circuit_breaker.py
+  utils/             → tile_utils.py (tile-flattening utilities)
   crud_document.py, crud_trip.py, validation.py, validation_cache.py,
   rate_limit.py, request_dedup.py, streaming.py, sse_state.py
 ```

@@ -48,8 +48,6 @@ from app.planner.state.typed_meta import get_trip_settings
 
 logger = logging.getLogger(__name__)
 
-# Cache schema JSON at module load — generated once, reused on every call (~18KB, ~7K tokens)
-_LOCAL_EXPERT_SCHEMA_JSON: str = json.dumps(LocalExpertOutput.model_json_schema(), indent=2)
 
 # Module-level registry for pending Phase B enrichment coroutine-factories.
 # Keyed by session_id so streaming.py can retrieve and fire them after db.commit().
@@ -626,7 +624,7 @@ Output as JSON with "constraints" and "recommendations" arrays."""
 
     system_prompt += (
         "\n\nRespond ONLY with valid JSON (no markdown fences, no commentary) "
-        f"matching this schema:\n{_LOCAL_EXPERT_SCHEMA_JSON}"
+        "matching the OUTPUT FORMAT above."
     )
 
     user_context = (
@@ -700,7 +698,7 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                 settings.local_expert_model,
                 temperature=0.3,
                 max_retries=0,
-                max_tokens=8000,
+                max_tokens=5000,
             )
             logger.debug("LOCAL_EXPERT Phase B: calling LLM (%s)...", settings.local_expert_model)
 

@@ -930,10 +930,10 @@ The backend emits **planning phases** (not UI modes) based on data density:
 
 | Legacy State | Maps To | Reason |
 |--------------|---------|--------|
-| `S0_EMPTY` | *(falls through to default)* | Reset state (frontend-only, used for "start over" intent). Not handled by `normalizePlanViewState` -- stays as `S0_EMPTY`. |
+| `S0_EMPTY` | `P0_MINIMAL` | Reset state (frontend-only, used for "start over" intent). Handled by `normalizePlanViewState` — maps to `P0_MINIMAL`. |
 | `S0_BOOTSTRAP` | `P0_MINIMAL` | No data yet |
 | `S1_FRAMING` | `P0_MINIMAL` | Merged into P0 |
-| `S1_DESTINATION_SET` | *(falls through to default)* | Frontend-only state in `VIEW_STATE_ORDER` for downgrade protection. Not mapped by `normalizePlanViewState`. |
+| `S1_DESTINATION_SET` | *(falls through to default)* | Frontend-only state in `VIEW_STATE_ORDER` for downgrade protection. Not in `PlanViewState` type — not mapped by `normalizePlanViewState`. |
 | `S2_STRATEGY_READY` | `P1_ENRICHED` | Specialists have run |
 | `S2_BLOCKED` | `P1_ENRICHED` | Handled by data checks |
 | `S3_ITINERARY_READY` | `P3_FINALIZED` | Itinerary complete |
@@ -948,19 +948,21 @@ The backend emits **planning phases** (not UI modes) based on data density:
 We do not swap `SetupView` for `PlanView`. We use a single **`StrategyStageRenderer`** that adapts based on data density (`computeDataDensity()`).
 
 ```tsx
-<StrategyStageRenderer>
-  {/* SECTION 1: SPECIALISTS (via S2StrategyView) */}
-  <S2StrategyView ... />
+// StrategyStageRenderer delegates to density-specific views via useStrategyStageOrchestration:
+function StrategyStageRenderer({ state, viewModel, ... }) {
+  const o = useStrategyStageOrchestration({ state, viewModel, ... });
 
-  {/* SECTION 2: TILE BROWSER */}
-  {hasTiles && <BookingSection ... />}
-
-  {/* SECTION 3: TIMELINE (conditional on hasItineraryContent) */}
-  {hasItineraryContent && <TimelineThread variant={computeTimelineVariant(state)} />}
-</StrategyStageRenderer>
+  // planContent is a useMemo switching on o.stableDensity:
+  if (o.displayLogic.isShowingMirrorLoader) return <PlanMirrorLoader />;
+  if (o.stableDensity === 'empty')  return null;
+  if (o.stableDensity === 'ghost')  return <PlanGhostDensityView ... />;
+  if (o.stableDensity === 'bridge') return <PlanBridgeDensityView ... />;
+  // default: full density
+  return <PlanFullDensityView ... />;
+}
 ```
 
-> **Note:** The component file is `StrategyStageRenderer.tsx`, not `UnifiedStageRenderer`. There is no `UnifiedStageRenderer` component in the codebase.
+> **Note:** The component file is `StrategyStageRenderer.tsx`, not `UnifiedStageRenderer`. There is no `UnifiedStageRenderer` component in the codebase. The actual rendering is dispatched through four density-specific views (`PlanMirrorLoader`, `PlanGhostDensityView`, `PlanBridgeDensityView`, `PlanFullDensityView`), not by directly composing `S2StrategyView`, `BookingSection`, and `TimelineThread` inline. Those subcomponents are used internally by the density views (primarily `PlanFullDensityView`).
 
 ---
 
@@ -977,7 +979,7 @@ The backend dictates the Planning Phase based on data richness. `plan_graph.py` 
 | `specialist_content` exists (non-general/null sections) | `S2_STRATEGY_READY` | **Bridge State.** Strategy cards + ghost timeline. |
 | Fallthrough (core fields set, no tiles/specialist yet) | `S2_STRATEGY_READY` | **Awaiting data.** Plan view opens once destination + dates are known. |
 
-> **Note:** `_compute_plan_view_state()` still emits the base states (`S0_BOOTSTRAP`, `S2_STRATEGY_READY`). Stage-3 states are then resolved from itinerary output shape: `S3_ITINERARY_READY` (success/no conflicts), `S3_EDITING` (success/with conflicts), `S3_PARTIAL_CONFLICT` (failure/partial with conflicts). This applies to both graph shadow-builder output and NDJSON itinerary endpoints.
+> **Note:** `_build_complete_envelope()` computes the base states (`S0_BOOTSTRAP`, `S2_STRATEGY_READY`) inline. There is no standalone `_compute_plan_view_state()` function. Stage-3 states are resolved by `_compute_s3_view_state()` from builder metadata in `turn_meta`: `S3_ITINERARY_READY` (success/no conflicts), `S3_EDITING` (success/with conflicts), `S3_PARTIAL_CONFLICT` (failure/partial with day_cards), `S3_BLOCKED` (failure/no cards). This applies to both graph auto-builder output and NDJSON itinerary endpoints.
 
 ### Itinerary Generation State Transition
 
@@ -1264,7 +1266,7 @@ Otherwise returns `'default'` (the existing full-card layout).
 Drag-and-drop mutations on the itinerary are reversible via a depth-1 undo stack.
 
 **State (`documentStore.ts`):**
-- `UndoEntry`: `{ type: 'drag_move', label: string, previousDayCards: DayCard[], previousVersion: number, timestamp: number }`.
+- `UndoEntry`: `{ type: 'drag_move' | 'remove_block' | 'fill_day', label: string, previousDayCards: DayCard[], previousVersion: number, timestamp: number }`.
 - `setUndoEntry(entry)` / `clearUndoEntry()` manage the single slot.
 - `executeUndo()` calls `POST /api/document/restore-snapshot` with `previousDayCards` and `previousVersion`, then clears the entry.
 
@@ -1349,24 +1351,26 @@ Suggestion chips are generated by `SuggestionChipMiddleware` in `middleware.py`,
 after the agent's final model response (via `aafter_model` hook). The `_generate_chips_from_state()`
 function derives up to 3 template-based chips from current state fields — no LLM call needed.
 
-**Chip Structure:** Each chip is a dict with `message`, `action_type` (`"send_message"`),
-`action_target`, `chip_type` (`"cta"` | `"question"` | `"suggestion"` | `"info"`),
+**Chip Structure:** Each chip is a `SuggestionChip` (see `schemas.py`) with fields:
+`message`, `action_type` (`"send_message"` | `"open_pill"` | `"trigger_action"`),
+`action_target` (pill name, e.g. `"dates"`, `"activities"`, `"budget"`),
+`chip_type` (`"cta"` | `"follow_up"` | `"setting"`),
 `category`, and `icon` (Lucide name). Chips are stored in `persistent_meta.suggestion_chips`
 and passed through the complete-envelope assembly in `plan_graph.py`.
 
-| State | Example Chips |
-|-------|---------------|
-| No destination | "I want a beach vacation", "mountain adventure", "city break" |
-| Has destination, no dates | Concrete date ranges: "{Mon DD}-{DD}", "{Mon DD}-{DD}", "{Mon DD}-{DD}" (next weekend, next month week, mid-month week) |
-| Has destination, month detected | "{Month} 1-8", "{Month} 10-17", "I'm flexible on dates" |
-| S2+ (active plan, dates set) | "5-star hotels only", "Direct flights only", "What are must-do activities?" |
-| After specialist ran | Cross-sell other specialists, plan progression, question chips |
-| Budget blocking violation | "Increase budget to $X", "Find cheaper {category}", "Fewer activity days" |
-| Route violation | "Back to {destination}", "Different city", "Help me choose" |
-| Blocking violation | "Extend to {date}", "Add buffer day between activities", "Remove {specialist}" |
-| Day preference overflow | "Reduce {activity} to N days" (from `DAY_PREFERENCE_EXCEEDS_CAPACITY`) |
+**Actionability Invariant:** Every chip must either open a pill (`open_pill`), trigger a setting (`trigger_action`), or send a plan-modifying command (`send_message` with `chip_type` of `"cta"` or `"follow_up"`). No passive/informational chips — questions, "show me", and "surprise me" are prohibited.
 
-**S2+ Plan Progression:** Once dates are set, chips shift from exploration questions to plan-refinement actions.
+| State | Example Chips | Action Types |
+|-------|---------------|--------------|
+| No destination | "Pick a destination", "Choose dates first", "Set travelers" | `open_pill` → destination, dates, travelers |
+| Has destination, no dates | Concrete date ranges: "{Mon DD} - {Mon DD}", "{Mon DD} - {Mon DD}", "I'm flexible on dates" | `send_message` (CTA), `send_message` (follow_up) |
+| Dest + dates, no categories | "Choose activities", "Add departure city" / "Set budget", "Set travelers" | `open_pill` → activities, origin/budget, travelers |
+| Has tiles, no itinerary | "Build my itinerary", "5-star hotels only", "Direct flights only" | `send_message`, `open_pill` → stays, `trigger_action` |
+| After itinerary built | "Show my full itinerary", "Add an extra day for dropped activities", "Review safety constraints" | `send_message` (follow_up) |
+| Dest + categories | "Refine {category} plan", "Get local tips" | `send_message` (CTA) |
+| Blocking violation | Violation-specific fix from `suggested_action`, then type-specific pill: "Adjust dates" / "Adjust budget" / "Change activities" | `send_message` (CTA), `open_pill` → dates/budget/activities |
+
+**S2+ Plan Progression:** Once dates are set, chips shift from exploration pill-openers to plan-refinement actions.
 `_generate_chips_from_state()` in `middleware.py` checks which trip fields are missing and generates
 corresponding chips. As preferences are set, those chips are replaced with next-step suggestions.
 
@@ -2066,7 +2070,7 @@ The standalone RefreshButton FAB has been removed. Regeneration is now handled b
 For multi-specialist trips (diving + hiking, skiing + hiking, etc.), the itinerary generation **auto-triggers** when dates are set. This removes the need for a manual FAB click.
 
 **Auto-Trigger Conditions:**
-1. `plan_view_state === 'S2_STRATEGY_READY'` (strategy complete)
+1. `isStrategyReady(state)` returns true (normalizes to `P1_ENRICHED`, excludes `S2_BLOCKED`)
 2. `executed_strategy_topics.length >= 2` (multi-specialist)
 3. `hasDates === true` (start + end date set)
 4. `!isGenerating` (not currently generating)
@@ -2082,7 +2086,8 @@ export function shouldAutoTriggerItinerary(
   generation?: GenerationState | null,
   hasItineraryContent?: boolean
 ): boolean {
-  if (state !== 'S2_STRATEGY_READY') return false;
+  // Must be in strategy-ready state (S2 / P1_ENRICHED)
+  if (!isStrategyReady(state)) return false;  // normalizes via P1_ENRICHED
   if (isGenerating(generation)) return false;
   if (!hasDates) return false;
   if ((executedTopics?.length ?? 0) < 2) return false;

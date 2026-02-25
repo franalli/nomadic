@@ -7,21 +7,34 @@ This document provides a comprehensive overview of the Nomadic codebase structur
 ```
 nomadic/
 ├── .claude/                    # Claude Code configuration
-├── .codex/                     # Codex wrappers + skills
-│   ├── agents/                 # Wrapper specs pointing to canonical `.claude/agents/*`
-│   ├── plans/                  # SSoT planning documents (generated snapshots)
-│   └── skills/                 # Codex skills (SKILL.md per skill directory)
-│   └── commands/               # Custom slash commands (audit, verify-build, etc.)
+│   ├── agents/                 # Canonical agent specs
+│   │   ├── backend-specialist.md
+│   │   ├── code-reviewer.md
+│   │   └── frontend-specialist.md
+│   ├── commands/               # Custom slash commands
+│   │   ├── audit-code.md
+│   │   ├── clear-cache.md
+│   │   ├── clear-sprint.md
+│   │   ├── enforce-style.md
+│   │   ├── reassemble-docs.md
+│   │   ├── run-curl.md
+│   │   ├── update-docs.md
+│   │   └── verify-build.md
+│   ├── plans/                  # Planning documents (generated snapshots)
+│   │   ├── compiled-sauteeing-stroustrup.md
+│   │   └── majestic-tickling-crayon.md
+│   ├── settings.json           # Claude Code settings
+│   └── settings.local.json     # Local Claude Code settings
 ├── .codex/                     # Codex wrappers + skills
 │   ├── agents/                 # Wrapper specs pointing to canonical `.claude/agents/*`
 │   │   ├── backend-specialist.md
 │   │   ├── code-reviewer.md
 │   │   └── frontend-specialist.md
-│   └── plans/                  # SSoT planning documents (generated snapshots)
-│       ├── compiled-sauteeing-stroustrup.md
+│   └── skills/                 # Codex skills (SKILL.md per skill directory)
+│       ├── audit-code/SKILL.md
 │       ├── clear-cache/SKILL.md
 │       ├── clear-sprint/SKILL.md
-│       ├── clear-cache/SKILL.md
+│       ├── enforce-style/SKILL.md
 │       ├── reassemble-docs/SKILL.md
 │       ├── run-curl/SKILL.md
 │       ├── update-docs/SKILL.md
@@ -515,6 +528,7 @@ frontend/
 │   ├── tileUtils.ts            # Tile utilities
 │   ├── travelIntel.ts          # Travel intelligence data helpers
 │   ├── popular-places.ts       # Static list of popular destination suggestions for landing input
+│   ├── use-sync-external-store-shim.js  # useSyncExternalStore shim for SSR compatibility
 │   └── utils.ts                # General utilities (cn, etc.)
 │
 ├── public/
@@ -583,7 +597,7 @@ frontend/
 docs/
 ├── data-contracts.md           # API routes, schemas, state store contracts
 ├── design-system.md            # Frontend styling SSoT
-├── key_files/                  # Backend reference snapshots (prompts, nodes, services)
+├── key_files/                  # Reference snapshots of key source files (backend + frontend)
 ├── plan_graph_analysis.md      # Backend architecture SSoT
 ├── repo_structure.md           # This file
 └── ux_unified_architecture.md  # UX/view states SSoT
