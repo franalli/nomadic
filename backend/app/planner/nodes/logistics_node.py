@@ -988,15 +988,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     async_session_factory = _get_async_session_factory()
 
     # Scale activity fetch count by trip length (longer trips need more base tiles)
-    activity_max_results = 5  # default
-    if start_date and end_date:
-        try:
-            _sd = datetime.strptime(start_date, "%Y-%m-%d")
-            _ed = datetime.strptime(end_date, "%Y-%m-%d")
-            _trip_days = (_ed - _sd).days + 1
-            activity_max_results = min(max(5, _trip_days - 2), 10)
-        except ValueError:
-            pass
+    activity_max_results = 5  # Hard cap — UI shows 3-5 tiles, no need to over-fetch
 
     # Geocode destination once for locationBias (both hotels and activities share the result)
     dest_lat: float | None = None

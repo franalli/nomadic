@@ -479,16 +479,11 @@ def _build_places_request(
             "places.id,"
             "places.displayName,"
             "places.formattedAddress,"
-            "places.rating,"
-            "places.userRatingCount,"
-            "places.priceLevel,"
-            "places.priceRange,"
             "places.photos,"
             "places.location,"
             "places.editorialSummary,"
             "places.primaryType,"
-            "places.googleMapsUri,"
-            "places.websiteUri"
+            "places.googleMapsUri"
         ),
     }
     return payload, headers
@@ -822,7 +817,7 @@ class GooglePlacesHotelProvider(Provider):
             name = (place.get("displayName") or {}).get("text", f"Hotel in {dest}")
             address = place.get("formattedAddress", dest)
             rating = place.get("rating")
-            review_count = place.get("userRatingCount", 0)
+            review_count = place.get("userRatingCount")
             price_level = _parse_price_level(place.get("priceLevel"))
 
             photos = place.get("photos") or []
@@ -975,7 +970,7 @@ class GooglePlacesActivityProvider(Provider):
             name = (place.get("displayName") or {}).get("text", f"Activity in {dest}")
             address = place.get("formattedAddress", dest)
             rating = place.get("rating")
-            review_count = place.get("userRatingCount", 0)
+            review_count = place.get("userRatingCount")
             price_level = _parse_price_level(place.get("priceLevel"))
 
             photos = place.get("photos") or []
@@ -1050,15 +1045,12 @@ class GooglePlacesActivityProvider(Provider):
 # Activity Enrichment — ground LLM-generated activities with Google Places
 # =============================================================================
 
-# Lightweight field mask for enrichment (coordinates, photos, rating, price).
+# Lightweight field mask for enrichment (Pro tier — coordinates, photos, summary).
 _ENRICH_FIELD_MASK = (
     "places.id,"
     "places.displayName,"
     "places.location,"
     "places.photos,"
-    "places.rating,"
-    "places.userRatingCount,"
-    "places.priceLevel,"
     "places.editorialSummary,"
     "places.googleMapsUri,"
     "places.shortFormattedAddress"

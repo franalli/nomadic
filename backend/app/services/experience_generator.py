@@ -643,11 +643,15 @@ async def generate_experience_tiles_for_day(
         try:
             from app.tile_service.google_places_provider import enrich_activities_with_places
 
-            all_tiles = await enrich_activities_with_places(
-                all_tiles,
+            _cap = settings.google_places_enrichment_cap
+            to_enrich = all_tiles[:_cap]
+            keep_as_is = all_tiles[_cap:]
+            enriched = await enrich_activities_with_places(
+                to_enrich,
                 destination=destination,
                 path_label="tier2_enrich",
             )
+            all_tiles = enriched + keep_as_is
         except Exception as e:
             logger.warning("[EXPERIENCE] fill-day enrichment failed, using LLM data: %s", e)
 
@@ -916,11 +920,15 @@ async def _generate_experiences_impl(
             try:
                 from app.tile_service.google_places_provider import enrich_activities_with_places
 
-                new_tile_dicts = await enrich_activities_with_places(
-                    new_tile_dicts,
+                _cap = settings.google_places_enrichment_cap
+                to_enrich = new_tile_dicts[:_cap]
+                keep_as_is = new_tile_dicts[_cap:]
+                enriched = await enrich_activities_with_places(
+                    to_enrich,
                     destination=destination,
                     path_label="tier2_enrich",
                 )
+                new_tile_dicts = enriched + keep_as_is
             except Exception as e:
                 logger.warning("[EXPERIENCE] Places enrichment failed, using LLM data: %s", e)
 

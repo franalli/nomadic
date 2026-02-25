@@ -2414,12 +2414,15 @@ async def fill_day_endpoint(
 
             async def _run_enrichment() -> list[dict[str, Any]]:
                 with spend_guard_scope(session_id):
+                    _cap = settings.google_places_enrichment_cap
+                    to_enrich = generated_tiles[:_cap]
+                    keep_as_is = generated_tiles[_cap:]
                     result = await enrich_activities_with_places(
-                        generated_tiles,
+                        to_enrich,
                         destination=destination,
                         path_label="fill_day",
                     )
-                return result or generated_tiles
+                return (result + keep_as_is) or generated_tiles
 
             # Keep fill-day UX responsive: never block day-card return on slow Places calls.
             enriched = await asyncio.wait_for(_run_enrichment(), timeout=1.5)
