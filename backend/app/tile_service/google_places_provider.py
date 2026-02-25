@@ -22,6 +22,7 @@ from threading import Lock
 from typing import Any, Dict, List, Optional
 
 import httpx
+from cachetools import TTLCache
 from sqlalchemy import select, update
 
 from app.config import settings
@@ -302,7 +303,7 @@ _GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 # In-memory geocode cache to avoid repeat API calls for the same destination.
 # _geocode_lock guards async reads/writes to prevent TOCTOU races in multi-worker prod.
-_geocode_cache: dict[str, tuple[float, float] | None] = {}
+_geocode_cache: TTLCache = TTLCache(maxsize=1000, ttl=86400)
 _geocode_lock = asyncio.Lock()
 _geocode_thread_lock = Lock()
 
@@ -485,16 +486,11 @@ def _build_places_request(
             "places.id,"
             "places.displayName,"
             "places.formattedAddress,"
-            "places.rating,"
-            "places.userRatingCount,"
-            "places.priceLevel,"
-            "places.priceRange,"
             "places.photos,"
             "places.location,"
             "places.editorialSummary,"
             "places.primaryType,"
-            "places.googleMapsUri,"
-            "places.websiteUri"
+            "places.googleMapsUri"
         ),
     }
     return payload, headers
@@ -829,7 +825,6 @@ class GooglePlacesHotelProvider(Provider):
             address = place.get("formattedAddress", dest)
             rating = place.get("rating")
             review_count = place.get("userRatingCount", 0)
-            price_level = _parse_price_level(place.get("priceLevel"))
 
             photos = place.get("photos") or []
             photo_name = photos[0].get("name") if photos else None
@@ -842,27 +837,9 @@ class GooglePlacesHotelProvider(Provider):
             if loc.get("latitude") is not None and loc.get("longitude") is not None:
                 geo = Geo(lat=loc["latitude"], lng=loc["longitude"])
 
-            # Use priceRange if available for a more accurate estimate.
-            # priceRange.startPrice is a Money proto: units (int, major currency unit)
-            # + nanos (int, fractional part × 1e9). We only use it for USD — other
-            # currencies would need conversion. The startPrice represents the lower end
-            # of the hotel's price range; treating it as a per-night base is an
-            # approximation (Places API does not document it as strictly per-night).
-            price_range = place.get("priceRange") or {}
-            start_price_obj = price_range.get("startPrice") or {}
-            start_price_currency = start_price_obj.get("currencyCode", "USD")
-            start_price_units = start_price_obj.get("units")
-            if start_price_units is not None and start_price_currency == "USD":
-                try:
-                    nanos = int(start_price_obj.get("nanos") or 0)
-                    nightly = float(start_price_units) + nanos / 1e9
-                    price = round(
-                        nightly * max(nights, 1) * (1 + 0.05 * max(total_travelers - 2, 0)), 2
-                    )
-                except (ValueError, TypeError):
-                    price = _estimate_hotel_price(price_level, nights, total_travelers)
-            else:
-                price = _estimate_hotel_price(price_level, nights, total_travelers)
+            # Enterprise fields (priceLevel, priceRange) stripped from FieldMask
+            # to stay on Pro tier ($5/1k vs $32/1k). Use heuristic estimate.
+            price = _estimate_hotel_price(None, nights, total_travelers)
             tax_and_service = round(price * 0.12, 2)
             property_fee = round(nights * 15, 2)
             total_inclusive = round(price + tax_and_service + property_fee, 2)
@@ -896,7 +873,6 @@ class GooglePlacesHotelProvider(Provider):
                     availability_status="unknown",
                     meta={
                         "destination": dest,
-                        "price_level": price_level,
                         "nights": nights,
                         "adults": ctx.adults,
                         "children": ctx.children,
@@ -973,7 +949,25 @@ class GooglePlacesActivityProvider(Provider):
         """Build Tile objects from raw Places API results."""
         dest = ctx.destination or "Somewhere"
         dest_id = _dest_hash(dest)
+        # Include category hash in tile IDs so different category searches
+        # produce distinct IDs (prevents frontend false-dedup).
+        _act_settings = ctx.activity_settings or {}
+        if hasattr(_act_settings, "model_dump"):
+            _act_settings = _act_settings.model_dump()
+        _act_cats = _act_settings.get("categories", []) if isinstance(_act_settings, dict) else []
+        if _act_cats:
+            _cat_sig = _dest_hash("_".join(sorted(str(c).lower() for c in _act_cats)))
+            dest_id = f"{dest_id}_{_cat_sig}"
         total_travelers = (ctx.adults or 0) + (ctx.children or 0) or 2
+
+        # Extract user categories from ctx so tiles carry the semantic categories
+        # that produced them (fixes taxonomy mismatch: Google primaryType != user cats).
+        _user_cats: list[str] = []
+        _ctx_act = ctx.activity_settings or {}
+        if hasattr(_ctx_act, "model_dump"):
+            _ctx_act = _ctx_act.model_dump()
+        if isinstance(_ctx_act, dict):
+            _user_cats = [str(c).lower().strip() for c in _ctx_act.get("categories", []) if c]
 
         tiles: List[Tile] = []
         for i, place in enumerate(places):
@@ -982,7 +976,6 @@ class GooglePlacesActivityProvider(Provider):
             address = place.get("formattedAddress", dest)
             rating = place.get("rating")
             review_count = place.get("userRatingCount", 0)
-            price_level = _parse_price_level(place.get("priceLevel"))
 
             photos = place.get("photos") or []
             photo_name = photos[0].get("name") if photos else None
@@ -998,7 +991,8 @@ class GooglePlacesActivityProvider(Provider):
             if loc.get("latitude") is not None and loc.get("longitude") is not None:
                 geo = Geo(lat=loc["latitude"], lng=loc["longitude"])
 
-            price = _estimate_activity_price(price_level, total_travelers)
+            # Enterprise fields stripped from FieldMask — use heuristic estimate
+            price = _estimate_activity_price(None, total_travelers)
             tax_and_service = round(price * 0.08, 2)
             total_inclusive = round(price + tax_and_service, 2)
 
@@ -1031,11 +1025,11 @@ class GooglePlacesActivityProvider(Provider):
                     availability_status="unknown",
                     meta={
                         "destination": dest,
-                        "price_level": price_level,
                         "adults": ctx.adults,
                         "children": ctx.children,
                         "place_id": place_id,
                         "category": primary_type,
+                        "source_categories": _user_cats,
                         "photo_name": photo_name,
                     },
                     score=0.75 - 0.02 * i,
@@ -1062,9 +1056,6 @@ _ENRICH_FIELD_MASK = (
     "places.displayName,"
     "places.location,"
     "places.photos,"
-    "places.rating,"
-    "places.userRatingCount,"
-    "places.priceLevel,"
     "places.editorialSummary,"
     "places.googleMapsUri,"
     "places.shortFormattedAddress"
@@ -1231,24 +1222,17 @@ def _apply_place_to_activity(activity: dict, place: dict, title: str) -> dict:
     # Add metadata
     place_id = place.get("id", "")
     enriched["google_place_id"] = place_id
-    enriched["rating"] = place.get("rating")
-    enriched["user_ratings_count"] = place.get("userRatingCount")
     enriched["deeplink"] = (
         place.get("googleMapsUri") or f"https://www.google.com/maps/place/?q=place_id:{place_id}"
     )
 
-    # Store parsed price_level int (0-4) for frontend display ($ symbols).
-    # Also compute price_estimate for Tier 1 tiles that have no LLM price.
-    raw_price_level = place.get("priceLevel")
-    if raw_price_level is not None:
-        pl = _parse_price_level(raw_price_level)
-        enriched["price_level"] = pl
-        if enriched.get("price_estimate") is None:
-            # Assume 2 adults as a neutral baseline — enrichment has no traveler count
-            enriched["price_estimate"] = _estimate_activity_price(pl, travelers=2)
-            enriched["price_basis"] = "per_person"
-            enriched["currency"] = "USD"
-            enriched["is_estimate_only"] = True
+    # Enterprise fields (rating, priceLevel) stripped from enrichment FieldMask
+    # to stay on Pro tier. Provide heuristic price for tiles without LLM price.
+    if enriched.get("price_estimate") is None:
+        enriched["price_estimate"] = _estimate_activity_price(None, travelers=2)
+        enriched["price_basis"] = "per_person"
+        enriched["currency"] = "USD"
+        enriched["is_estimate_only"] = True
 
     # Store human-readable location label for detail views
     location_label = place.get("shortFormattedAddress")
@@ -1264,11 +1248,10 @@ def _apply_place_to_activity(activity: dict, place: dict, title: str) -> dict:
         enriched["editorial_summary"] = editorial
 
     logger.debug(
-        "[GOOGLE_PLACES] Enriched '%s' → place_id=%s coords=%s rating=%s",
+        "[GOOGLE_PLACES] Enriched '%s' → place_id=%s coords=%s",
         title,
         place_id,
         enriched.get("coordinates"),
-        enriched.get("rating"),
     )
     return enriched
 
@@ -1455,12 +1438,18 @@ async def enrich_activities_with_places(
     t0 = time.time()
     semaphore = asyncio.Semaphore(_enrich_max_parallel())
 
+    # Cap enrichment to top 3 activities to reduce API spend; remaining
+    # activities keep their LLM-generated data as-is.
+    max_enrich = 3
+    to_enrich = activities[:max_enrich]
+    passthrough = activities[max_enrich:]
+
     async def _enrich_with_limit(activity: dict) -> dict:
         async with semaphore:
             return await _enrich_single_activity(client, activity, destination, api_key, path)
 
     async with httpx.AsyncClient(timeout=5.0) as client:
-        coros = [_enrich_with_limit(activity) for activity in activities]
+        coros = [_enrich_with_limit(activity) for activity in to_enrich]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
 
     # On exception, keep original activity (graceful degradation)
@@ -1472,9 +1461,10 @@ async def enrich_activities_with_places(
                 i,
                 r,
             )
-            final.append(activities[i])
+            final.append(to_enrich[i])
         else:
             final.append(r)
+    final.extend(passthrough)
 
     enriched_count = sum(1 for r in final if r.get("google_place_id"))
     elapsed_ms = int((time.time() - t0) * 1000)

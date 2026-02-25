@@ -159,7 +159,8 @@ class TestSerializeAgentState:
         assert result["strategy_sections"] == state["strategy_sections"]
         assert result["day_cards"] == state["day_cards"]
         assert result["constraints"] == state["constraints"]
-        assert result["turn_meta"] == state["turn_meta"]
+        # turn_meta is per-turn state — intentionally NOT serialized
+        assert "turn_meta" not in result
         assert result["persistent_meta"] == state["persistent_meta"]
 
 

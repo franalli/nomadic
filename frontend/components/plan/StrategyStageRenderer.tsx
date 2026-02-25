@@ -77,12 +77,14 @@ interface StrategyStageRendererProps {
   onOpenFlightsSettings?: () => void;
 }
 
+const EMPTY_SAVED_TILE_IDS = new Set<string>();
+
 export function StrategyStageRenderer({
   state, viewModel, destinationCard, tiles = {}, generation,
   canGeneratePlan = false, fallbackTitle, hasDates = false,
   isExpandingItinerary = false, onBuildPlan: _onBuildPlan, onExpandToItinerary: _onExpand,
   onFinalizePlan: _onFinalize, isFinalizing: _isFinalizing = false, onRefineAssumptions,
-  savedTileIds = new Set(), onSaveTile, tripInputs, onOpenSheet,
+  savedTileIds = EMPTY_SAVED_TILE_IDS, onSaveTile, tripInputs, onOpenSheet,
   isCommitting = false, hasEverHadPlan: _hasEverHadPlan = false,
   isRegenerating = false, onSelectNights, mode: explicitMode,
   onOpenActivitySettings: _onOpenActivitySettings, onOpenStaysSettings, onOpenFlightsSettings,

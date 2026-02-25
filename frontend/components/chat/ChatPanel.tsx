@@ -78,6 +78,15 @@ function getChatStatusConfig(
   return { text: 'Your trip is taking shape', label: 'Refine Plan', indicator: 'pulse' };
 }
 
+// Stable empty array to avoid new [] identity on every render when not streaming
+const EMPTY_VISIBLE_MESSAGES: VisibleMessage[] = [];
+
+// Hoisted Framer Motion animation objects to avoid new object identity on every render
+const FADE_INITIAL = { opacity: 0 } as const;
+const FADE_ANIMATE = { opacity: 1 } as const;
+const FADE_EXIT = { opacity: 0 } as const;
+const FADE_TRANSITION = { duration: 0.3, ease: [0.4, 0, 0.2, 1] } as const;
+
 const MESSAGE_BURST_COOLDOWN_MS = 1000;
 const GENERATE_BURST_COOLDOWN_MS = 3000;
 
@@ -232,7 +241,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     // Chat store — messages + history
     const messages = useChatStore((s) => s.messages);
-    const addMessage = useChatStore((s) => s.addMessage);
     const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
     const loadHistory = useChatStore((s) => s.loadHistory);
     const filterMessages = useChatStore((s) => s.filterMessages);
@@ -336,41 +344,70 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         : 'min-h-[300px]';
 
     // ── Visible messages ──
-    const visibleMessages = useMemo(() =>
-      messages
-        .filter((m) => {
-          if (m.role === 'system' || m.displayMode === 'ack_line') return true;
-          if (!m.content || m.content.trim().length === 0) return false;
-          if (isGenerating && m.id === 'm0') return false;
-          return true;
-        })
-        .map((m) => {
-          if (hasBranches && m.id === 'm0') {
-            return { ...m, content: 'Edit constraints.' };
-          }
-          return m;
-        })
-        .map((m) => ({
-          ...m,
-          content: sanitizeContent(m.content),
-        }))
-        .flatMap((m): VisibleMessage[] => {
-          if (m.role === 'assistant') {
-            const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
-            if (paragraphs.length > 1) {
-              return paragraphs.map((paragraph, idx) => ({
-                ...m,
-                id: `${m.id}_p${idx}`,
-                content: paragraph.trim(),
-                _isPartOfSplit: true,
-                _isFirstPart: idx === 0,
-                _isLastPart: idx === paragraphs.length - 1,
-              }));
+    const streamingMessageId = chatSend.streamingMessageId;
+    const stableMessages = useMemo(
+      () => messages.filter((m) => m.id !== streamingMessageId),
+      [messages, streamingMessageId],
+    );
+
+    const visibleStable = useMemo(
+      () =>
+        stableMessages
+          .filter((m) => {
+            if (m.role === 'system' || m.displayMode === 'ack_line') return false;
+            if (!m.content || m.content.trim().length === 0) return false;
+            if (isGenerating && m.id === 'm0') return false;
+            return true;
+          })
+          .map((m) => {
+            if (hasBranches && m.id === 'm0') {
+              return { ...m, content: 'Edit constraints.' };
             }
-          }
-          return [m];
-        }),
-      [messages, isGenerating, hasBranches]
+            return m;
+          })
+          .map((m) => ({
+            ...m,
+            content: sanitizeContent(m.content),
+          }))
+          .flatMap((m): VisibleMessage[] => {
+            if (m.role === 'assistant') {
+              const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
+              if (paragraphs.length > 1) {
+                return paragraphs.map((paragraph, idx) => ({
+                  ...m,
+                  id: `${m.id}_p${idx}`,
+                  content: paragraph.trim(),
+                  _isPartOfSplit: true,
+                  _isFirstPart: idx === 0,
+                  _isLastPart: idx === paragraphs.length - 1,
+                }));
+              }
+            }
+            return [m];
+          }),
+      [stableMessages, isGenerating, hasBranches],
+    );
+
+    const streamingMessage = useMemo(
+      () => messages.find((m) => m.id === streamingMessageId) ?? null,
+      [messages, streamingMessageId],
+    );
+
+    const streamingVisible = useMemo(() => {
+      if (!streamingMessage) return EMPTY_VISIBLE_MESSAGES;
+      const sanitized = sanitizeContent(streamingMessage.content);
+      if (!sanitized || sanitized.trim().length === 0) return EMPTY_VISIBLE_MESSAGES;
+      return [
+        {
+          ...streamingMessage,
+          content: sanitized,
+        },
+      ];
+    }, [streamingMessage]);
+
+    const visibleMessages = useMemo(
+      () => [...visibleStable, ...streamingVisible],
+      [visibleStable, streamingVisible],
     );
 
     return (
@@ -390,10 +427,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             <AnimatePresence mode="wait">
               <motion.div
                 key="status-bar"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+                initial={FADE_INITIAL}
+                animate={FADE_ANIMATE}
+                exit={FADE_EXIT}
+                transition={FADE_TRANSITION}
                 className={cn(
                   'relative z-40 shrink-0',
                   '-mx-4 -mt-4 mb-2',
@@ -560,7 +597,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onUpdateActivitySettings={onUpdateActivitySettings}
           onOpenSheet={onOpenSheet}
           sendMessageCore={chatSend.sendMessageCore}
-          addMessage={addMessage}
           toast={toast}
           flightsSheetOpen={flightsSheetOpen}
           setFlightsSheetOpen={setFlightsSheetOpen}

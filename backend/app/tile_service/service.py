@@ -61,15 +61,13 @@ def _get_providers(ctx: SearchContext) -> List[Provider]:
     Provider routing strategy:
     1. Curated destination (demo curation enabled + destination in manifest)
     2. Google Places enabled
-    3. Amadeus enabled
-    4. Mock fallback
+    3. Mock fallback
 
     @see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
     """
     providers: List[Provider] = []
     use_demo_curation = _flag_enabled(getattr(settings, "use_demo_curation", False))
     use_google_places = _flag_enabled(getattr(settings, "use_google_places_provider", False))
-    use_amadeus = _flag_enabled(getattr(settings, "use_amadeus_provider", False))
     destination_key = (ctx.destination or "").strip().lower()
     has_curated_destination = bool(destination_key and destination_key in DEMO_MANIFEST)
 
@@ -97,24 +95,7 @@ def _get_providers(ctx: SearchContext) -> List[Provider]:
             providers.append(GooglePlacesActivityProvider())
         return providers
 
-    # 3. AMADEUS - real hotel names with placeholder images
-    if use_amadeus:
-        _debug(f"[PROVIDER] Using Amadeus for hotels: {ctx.destination}")
-
-        if "hotel" in ctx.verticals or not ctx.verticals:
-            from .amadeus_provider import AmadeusHotelProvider
-
-            providers.append(AmadeusHotelProvider())
-
-        # Flights and activities use Mock (Amadeus flights disabled for consistency)
-        if "flight" in ctx.verticals or not ctx.verticals:
-            providers.append(MockFlightProvider())
-        if "activity" in ctx.verticals or not ctx.verticals:
-            providers.append(MockActivityProvider())
-
-        return providers
-
-    # 4. MOCK FALLBACK - Development/offline mode
+    # 3. MOCK FALLBACK - Development/offline mode
     _debug(f"[PROVIDER] Using MockProviders for: {ctx.destination}")
 
     if "hotel" in ctx.verticals or not ctx.verticals:

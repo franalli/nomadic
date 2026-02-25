@@ -6,7 +6,7 @@ Create Date: 2026-02-02
 
 Adds cache_type column to response_cache table to support multiple cache types:
 - 'specialist': Vertical specialist LLM outputs (7 day TTL)
-- 'tiles': Tile data from Amadeus/curated providers (24h TTL)
+- 'tiles': Tile data from curated/mock providers (24h TTL)
 """
 
 from typing import Sequence, Union

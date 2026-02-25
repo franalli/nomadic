@@ -118,7 +118,10 @@
       "WebFetch(domain:forum.langchain.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:reference.langchain.com)",
-      "WebFetch(domain:changelog.langchain.com)"
+      "WebFetch(domain:changelog.langchain.com)",
+      "Bash(head:*)",
+      "Bash(/Users/franalli/Code/nomadic/backend/.venv/bin/python:*)",
+      "Bash(rm -f /Users/franalli/Code/nomadic/backend/test_plan_document_pytest.db* && cd /Users/franalli/Code/nomadic/backend && .venv/bin/ruff check . 2>&1)"
     ],
     "deny": [],
     "ask": []

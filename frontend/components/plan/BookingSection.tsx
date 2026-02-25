@@ -64,6 +64,8 @@ const CATEGORY_CONFIG = [
   { key: 'activities', emoji: '🤿', label: 'Activities', types: ['activity', 'experience', 'tour', 'attraction'] },
 ] as const;
 
+const EMPTY_SAVED_TILE_IDS = new Set<string>();
+
 interface BookingSectionProps {
   state: PlanViewState;
   tiles: Record<string, Tile> | Tile[];
@@ -122,7 +124,7 @@ export function BookingSection({
   generation,
 
   hasStrategyContent: _hasStrategyContent, // Deprecated: mode is now SSoT, not state
-  savedTileIds = new Set(),
+  savedTileIds = EMPTY_SAVED_TILE_IDS,
   onSaveTile,
   onRemoveTile,
   onOpenSheet,

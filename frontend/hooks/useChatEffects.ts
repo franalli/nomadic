@@ -139,7 +139,7 @@ export function useChatEffects(params: UseChatEffectsParams): void {
     if (messages.length > 0 && !isLoadingHistory) {
       scrollToBottom();
     }
-  }, [messages, isLoadingHistory, scrollToBottom]);
+  }, [messages.length, isLoadingHistory, scrollToBottom]);
 
   // Reset scroll tracking when user sends a message (starts loading)
   // Note: isUserScrolledUpRef is managed inside useChatScrolling via scrollToBottom(true)

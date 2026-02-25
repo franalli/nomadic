@@ -4,7 +4,7 @@ description: >
   Delegate to this agent for ALL backend Python work: planner agent, tools, middleware,
   services, state layers, LLM factory, structured output, caching, config/settings.
   Triggers on: itinerary builder, constraint guard, agent tools, middleware,
-  router extraction, specialist registry, response envelope, state serialization,
+  router extraction, specialist registry, state serialization,
   agent_runner, FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
   patterns_registry, activity_browser, spend_guard, telemetry, or any file under backend/app/.
@@ -52,7 +52,7 @@ backend/app/planner/
                        logistics_node.py, router_extraction.py,
                        specialist_schemas.py, input_gates.py, input_gate_config.py,
                        expert_constraints.py
-  services/          → response_envelope.py, section_builder.py, state_serde.py,
+  services/          → section_builder.py, state_serde.py,
                        itinerary_adapter.py, iata_resolver.py, admin_utils.py,
                        feasibility_service.py, agent_runner.py
   state/             → graph_state.py, agent_state.py, typed_meta.py
@@ -97,6 +97,8 @@ backend/app/
 ### ConstraintGuard
 
 Mostly deterministic. One LLM exception: `check_route_constraint()` calls `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL caching). Invoked via `validate_plan` tool. Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`.
+
+`DAY_PREFERENCE_EXCEEDS_CAPACITY` is now checked in two places: middleware merge pre-flight and `validate_plan`. If you update the capacity formula, update both paths together.
 
 ### Specialist Registry
 

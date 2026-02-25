@@ -13,10 +13,9 @@ State mutation happens in TurnLifecycleMiddleware, not here.
 import logging
 import time
 from datetime import UTC, datetime
-from typing import Any, Dict, List
+from typing import Annotated, Any, Dict, List
 
-from langchain.tools import ToolRuntime
-from langchain_core.tools import tool
+from langchain_core.tools import InjectedToolArg, tool
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ async def get_local_intel(
     end_date: str = "",
     travelers: str = "2 adults",
     session_id: str = "",
-    runtime: ToolRuntime | None = None,
+    runtime: Annotated[Any, InjectedToolArg()] = None,
 ) -> dict:
     """Get local travel intelligence for a destination. Returns a Trip
     Overview strategy card with images, constraints, and cultural tips.

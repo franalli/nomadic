@@ -72,9 +72,7 @@ class DeleteLastMessageResponse(BaseModel):
     messages: List[ChatMessageResponse]  # Remaining messages after deletion
 
 
-TileProvider = Literal[
-    "expedia", "booking", "google_places", "amadeus", "curated", "mock", "unknown"
-]
+TileProvider = Literal["expedia", "booking", "google_places", "curated", "mock", "unknown"]
 
 
 class Tile(BaseModel):
@@ -219,6 +217,12 @@ class ExpandItineraryRequest(BaseModel):
     force_full_rebuild: bool = Field(
         default=False,
         description="Force full itinerary rebuild, bypassing selective regeneration",
+    )
+    # When set, re-search activity tiles for these categories before building.
+    # Used by activity pill changes at S3 to swap stale tiles without an agent turn.
+    refresh_activity_categories: Optional[List[str]] = Field(
+        default=None,
+        description="Re-search activity tiles for these categories before building itinerary",
     )
 
 
@@ -538,7 +542,7 @@ class StrategySection(BaseModel):
     impact_areas: List[str] = Field(default_factory=list)  # ["Schedule", "Location", "Gear"]
 
     # Technical log data for "System Log" display
-    constraints_applied: List[Dict[str, str]] = Field(default_factory=list)
+    constraints_applied: List[Dict[str, Any]] = Field(default_factory=list)
     # Each dict: {"rule": "min_24h_buffer_after_dive", "type": "safety", "reason": "..."}
 
     content_added: List[Dict[str, Any]] = Field(default_factory=list)

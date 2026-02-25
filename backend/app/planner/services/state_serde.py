@@ -267,7 +267,10 @@ def serialize_agent_state(
 
     result: Dict[str, Any] = {"messages": serialized_messages}
 
-    # Copy all non-message fields from state
+    # Copy all non-message fields from state.
+    # NOTE: turn_meta is intentionally excluded — it is per-turn state
+    # reset by TurnLifecycleMiddleware.abefore_agent each turn.
+    # Cross-turn data lives in persistent_meta.
     for key in (
         "trip_plan",
         "trip_settings",
@@ -275,7 +278,6 @@ def serialize_agent_state(
         "strategy_sections",
         "day_cards",
         "constraints",
-        "turn_meta",
         "persistent_meta",
     ):
         if key in state:
@@ -326,6 +328,32 @@ def restore_agent_state(session_state: Optional[Dict[str, Any]]) -> Dict[str, An
 
     _migrate_legacy_agent_fields(session_state, result)
     result["trip_settings"] = _normalize_agent_trip_settings(result.get("trip_settings", {}))
+
+    # Keep planner logic (trip_plan.activity_categories) aligned with user-owned
+    # settings coming from document/session snapshots.
+    trip_plan = result.get("trip_plan", {})
+    trip_settings = result.get("trip_settings", {})
+    if isinstance(trip_plan, dict) and isinstance(trip_settings, dict):
+        booking_types = trip_settings.get("booking_types", {})
+        activities_toggle = (
+            booking_types.get("activities", "off") if isinstance(booking_types, dict) else "off"
+        )
+        activity_settings = trip_settings.get("activity_settings", {})
+        categories = (
+            activity_settings.get("categories", []) if isinstance(activity_settings, dict) else []
+        )
+        normalized_categories = [
+            str(category).strip().lower()
+            for category in categories
+            if isinstance(category, str) and category.strip()
+        ]
+        if (
+            activities_toggle != "off"
+            and normalized_categories
+            and not trip_plan.get("activity_categories")
+        ):
+            trip_plan["activity_categories"] = normalized_categories
+            result["trip_plan"] = trip_plan
 
     return result
 

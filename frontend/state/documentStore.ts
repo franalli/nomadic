@@ -536,6 +536,13 @@ let _pendingEnvelope: EnvelopeUpdate | null = null;
 let _rafId: number | null = null;
 /** When true, mergeEnvelope skips buffering and runs the actual merge inline. */
 let _bypassRAF = false;
+let _pendingEnvelopeGeneration: number | null = null;
+let _bufferGeneration = 0;
+
+export function nextEnvelopeBufferGeneration(): number {
+  _bufferGeneration += 1;
+  return _bufferGeneration;
+}
 
 function shouldUseRafEnvelopeBuffering(): boolean {
   if (typeof globalThis.requestAnimationFrame !== 'function') {
@@ -765,7 +772,7 @@ type DocumentState = {
   setFromPlanResponse: (response: PlanDocumentResponse) => void;
 
   // Merge partial envelope update (used for streaming updates)
-  mergeEnvelope: (envelope: EnvelopeUpdate) => void;
+  mergeEnvelope: (envelope: EnvelopeUpdate, generation?: number) => void;
 
   // Restore trip inputs from a snapshot (used when undoing a message)
   restoreTripInputs: (tripInputs: DocumentTripInputs) => void;
@@ -1237,7 +1244,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
           executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
           pending_strategy_topics: currentDoc?.pending_strategy_topics ?? response.document.pending_strategy_topics,
-          plan_view_state: response.document.plan_view_state ?? currentDoc?.plan_view_state,
+          // PATCH responses carry stale plan_view_state from DB blob.
+          // Never let a PATCH downgrade from S3 → S0/S2 — only SSE
+          // 'complete' events are authoritative for plan_view_state transitions.
+          plan_view_state: (() => {
+            const responsePVS = response.document.plan_view_state;
+            const currentPVS = currentDoc?.plan_view_state;
+            if (currentPVS?.startsWith('S3_') && responsePVS && !responsePVS.startsWith('S3_')) {
+              return currentPVS;
+            }
+            return responsePVS ?? currentPVS;
+          })(),
           // Also preserve tiles which may come from graph
           tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
             ? currentDoc.tiles
@@ -1247,6 +1264,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           ...mergedPatchDocument,
           trip_inputs: applyActivityCategoryDefaults(mergedPatchDocument.trip_inputs),
         };
+
+        // === FULL DIAGNOSTIC — REMOVE AFTER FIX ===
+        debugLog(
+          '[DIAG:PATCH_MERGE]',
+          `response.plan_view_state: ${response.document.plan_view_state}`,
+          `currentDoc.plan_view_state: ${currentDoc?.plan_view_state}`,
+          `MERGED plan_view_state: ${mergedPatchDocument.plan_view_state}`,
+          `response.day_cards: ${response.document.day_cards?.length ?? 0}`,
+          `currentDoc.day_cards: ${currentDoc?.day_cards?.length ?? 0}`,
+          `MERGED day_cards: ${mergedPatchDocument.day_cards?.length ?? 0}`,
+          `response.tiles: ${Object.keys(response.document.tiles ?? {}).length}`,
+          `MERGED tiles: ${Object.keys(mergedPatchDocument.tiles ?? {}).length}`,
+        );
+        // === END DIAGNOSTIC ===
 
         set({
           version: response.version,
@@ -1291,7 +1322,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
               strategy_sections: currentDocRetry?.strategy_sections ?? retryResponse.document.strategy_sections,
               executed_strategy_topics: currentDocRetry?.executed_strategy_topics ?? retryResponse.document.executed_strategy_topics,
               pending_strategy_topics: currentDocRetry?.pending_strategy_topics ?? retryResponse.document.pending_strategy_topics,
-              plan_view_state: retryResponse.document.plan_view_state ?? currentDocRetry?.plan_view_state,
+              // PATCH responses carry stale plan_view_state from DB blob.
+              // Never let a PATCH downgrade from S3 → S0/S2 (see primary path).
+              plan_view_state: (() => {
+                const responsePVS = retryResponse.document.plan_view_state;
+                const currentPVS = currentDocRetry?.plan_view_state;
+                if (currentPVS?.startsWith('S3_') && responsePVS && !responsePVS.startsWith('S3_')) {
+                  return currentPVS;
+                }
+                return responsePVS ?? currentPVS;
+              })(),
               tiles: currentDocRetry?.tiles && Object.keys(currentDocRetry.tiles).length > 0
                 ? currentDocRetry.tiles
                 : retryResponse.document.tiles,
@@ -1577,7 +1617,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         ...currentDoc,        // Keep existing frontend state
         ...response.document, // Apply PATCH updates (trip_inputs, branches, etc.)
         // Explicitly preserve fields that SSE sets but DB doesn't store:
-        plan_view_state: response.document.plan_view_state ?? currentDoc?.plan_view_state,
+        // PATCH responses carry stale plan_view_state from DB blob.
+        // Never let a PATCH downgrade from S3 → S0/S2 (see commitTripInputs).
+        plan_view_state: (() => {
+          const responsePVS = response.document.plan_view_state;
+          const currentPVS = currentDoc?.plan_view_state;
+          if (currentPVS?.startsWith('S3_') && responsePVS && !responsePVS.startsWith('S3_')) {
+            return currentPVS;
+          }
+          return responsePVS ?? currentPVS;
+        })(),
         strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
         executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
         tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
@@ -1884,6 +1933,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       debugLog('[documentStore.setFromPlanResponse] 🔄 Tiles: REPLACED (tiles_replaced flag)');
     }
 
+    // === FULL DIAGNOSTIC — LAYER 12: TILE DELTA ===
+    const _prevActivityTiles = Object.entries(currentDoc?.tiles ?? {})
+      .filter(([, t]) => (t as Record<string, unknown>)?.type === 'activity')
+      .map(([id, t]) => `${id}:${((t as Record<string, unknown>)?.title as string)?.slice(0, 25)}`);
+    const _newActivityTiles = Object.entries(mergedTiles ?? {})
+      .filter(([, t]) => (t as Record<string, unknown>)?.type === 'activity')
+      .map(([id, t]) => `${id}:${((t as Record<string, unknown>)?.title as string)?.slice(0, 25)}`);
+    debugLog('[DIAG:TILE_DELTA]',
+      `before: ${JSON.stringify(_prevActivityTiles)}`,
+      `after: ${JSON.stringify(_newActivityTiles)}`,
+      `changed: ${JSON.stringify(_prevActivityTiles) !== JSON.stringify(_newActivityTiles)}`,
+    );
+    // === END DIAGNOSTIC ===
+
     // ============================================================
     // DAY CARDS — graph-sent cards always win
     // ============================================================
@@ -1994,24 +2057,41 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     });
   },
 
-  mergeEnvelope: (envelope: EnvelopeUpdate) => {
+  mergeEnvelope: (envelope: EnvelopeUpdate, generation?: number) => {
+    if (generation !== undefined && generation !== _bufferGeneration) {
+      // Ignore stale stream updates from a previous send cycle.
+      return;
+    }
+
     // === RAF BUFFERING (Layer 1 jank reduction) ===
     // Buffer consecutive SSE events and flush once per paint frame.
     // This collapses tiles/strategy/view_state/day_cards arriving in the same
     // ~16ms window into a single setState call instead of 4–6 separate renders.
     if (!_bypassRAF && shouldUseRafEnvelopeBuffering()) {
-      _pendingEnvelope = _pendingEnvelope
-        ? deepMergeEnvelopes(_pendingEnvelope, envelope)
-        : { ...envelope };
+      const generationChanged =
+        generation !== undefined &&
+        _pendingEnvelopeGeneration !== null &&
+        generation !== _pendingEnvelopeGeneration;
+
+      if (!_pendingEnvelope || generationChanged) {
+        _pendingEnvelope = { ...envelope };
+      } else {
+        _pendingEnvelope = deepMergeEnvelopes(_pendingEnvelope, envelope);
+      }
+      if (generation !== undefined) {
+        _pendingEnvelopeGeneration = generation;
+      }
 
       if (!_rafId) {
         _rafId = globalThis.requestAnimationFrame(() => {
           const merged = _pendingEnvelope!;
+          const mergedGeneration = _pendingEnvelopeGeneration ?? undefined;
           _pendingEnvelope = null;
+          _pendingEnvelopeGeneration = null;
           _rafId = null;
           _bypassRAF = true;
           try {
-            get().mergeEnvelope(merged);
+            get().mergeEnvelope(merged, mergedGeneration);
           } finally {
             _bypassRAF = false;
           }
@@ -2705,8 +2785,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       globalThis.cancelAnimationFrame(_rafId);
     }
     _pendingEnvelope = null;
+    _pendingEnvelopeGeneration = null;
     _rafId = null;
     _bypassRAF = false;
+    _bufferGeneration = 0;
     _userDirtySettings.clear();
     _flushHashBySendCycle.clear();
     _fetchDocumentAbortController?.abort();

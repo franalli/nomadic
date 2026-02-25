@@ -24,6 +24,7 @@ from sqlalchemy import select, update
 from app.config import settings
 from app.planner.hashing import make_cache_key
 from app.services.cache_core import MemoryCache, l2_upsert
+from app.services.specialist_cache import _month_from_date
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,7 @@ _browse_inflight_lock = asyncio.Lock()
 _browse_inflight_tasks: dict[str, asyncio.Task[list[dict[str, Any]]]] = {}
 
 
-def _month_from_date(date: Optional[str]) -> str:
-    return date[:7] if date and len(date) >= 7 else "unknown"
+# _month_from_date imported from app.services.specialist_cache
 
 
 def _cache_key(

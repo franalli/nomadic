@@ -49,6 +49,7 @@ def main():
         port=settings.backend_port,
         reload=not is_prod,
         log_level=log_level,
+        h11_max_incomplete_event_size=1_048_576,  # 1 MB h11 incomplete event buffer
     )
 
 

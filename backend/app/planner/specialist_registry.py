@@ -632,7 +632,7 @@ TIER2_COMMON_HINTS: frozenset[str] = frozenset(
         "photography",
         "sailing",
         "wellness",
-        "culture",
+        "cultural",
         "music",
         "wine",
         "food",
@@ -674,6 +674,8 @@ TIER2_CATEGORY_ALIASES: dict[str, str] = {
     "snorkeling": "diving",
     "spa": "wellness",
     "spas": "wellness",
+    "culture": "cultural",
+    "cuisine": "food",
 }
 
 # Merged view: Tier 1 category_mappings + Tier 2 display aliases
@@ -982,8 +984,8 @@ def has_explicit_category_intent(
     if not text:
         return False
 
-    # Check Tier 1 by registry, Tier 2 by common hints (fast path)
-    all_hints = TIER2_COMMON_HINTS | TIER1_SPECIALIST_NAMES
+    # Check Tier 1 by registry, Tier 2 by common hints + aliases (fast path)
+    all_hints = TIER2_COMMON_HINTS | TIER1_SPECIALIST_NAMES | frozenset(TIER2_CATEGORY_ALIASES)
     if any(re.search(rf"\b{re.escape(category)}\b", text) for category in all_hints):
         return True
 

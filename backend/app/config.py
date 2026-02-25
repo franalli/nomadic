@@ -147,8 +147,6 @@ class Settings(BaseSettings):
     database_url: str = os.getenv("DATABASE_URL", "")
 
     # external APIs
-    openai_api_key: str | None = None
-    google_api_key: str | None = None
     unsplash_access_key: str | None = os.getenv("UNSPLASH_ACCESS_KEY")
     unsplash_request_timeout_seconds: float = float(
         os.getenv("UNSPLASH_REQUEST_TIMEOUT_SECONDS", "2.5")
@@ -234,10 +232,6 @@ class Settings(BaseSettings):
     # Google Places Text Search billable-call estimate (USD).
     spend_guard_places_estimated_call_usd: float = float(
         os.getenv("SPEND_GUARD_PLACES_ESTIMATED_CALL_USD", "0.017")
-    )
-    # Amadeus billable-call estimate (USD).
-    spend_guard_amadeus_estimated_call_usd: float = float(
-        os.getenv("SPEND_GUARD_AMADEUS_ESTIMATED_CALL_USD", "0.01")
     )
 
     # Validation cache settings
@@ -379,22 +373,9 @@ class Settings(BaseSettings):
         return self.langsmith_prod_sample_rate if self.is_prod else self.langsmith_dev_sample_rate
 
     # =============================================================================
-    # Amadeus API Configuration
+    # Demo curation configuration
     # =============================================================================
-    amadeus_api_key: str | None = os.getenv("AMADEUS_API_KEY")
-    amadeus_api_secret: str | None = os.getenv("AMADEUS_API_SECRET")
-    amadeus_base_url: str = os.getenv("AMADEUS_BASE_URL", "https://test.api.amadeus.com")
-
-    # Feature flags for Amadeus integration
-    use_amadeus_provider: bool = os.getenv("USE_AMADEUS_PROVIDER", "false").lower() == "true"
     use_demo_curation: bool = os.getenv("USE_DEMO_CURATION", "false").lower() == "true"
-
-    # Rate limiting and circuit breaker
-    amadeus_requests_per_minute: int = int(os.getenv("AMADEUS_REQUESTS_PER_MINUTE", "30"))
-    amadeus_circuit_breaker_threshold: int = int(
-        os.getenv("AMADEUS_CIRCUIT_BREAKER_THRESHOLD", "5")
-    )
-    amadeus_circuit_breaker_timeout: int = int(os.getenv("AMADEUS_CIRCUIT_BREAKER_TIMEOUT", "60"))
 
     # =============================================================================
     # Google Places API Configuration
@@ -418,6 +399,18 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# =============================================================================
+# Shared Model Pricing Table (per 1M tokens, USD)
+# =============================================================================
+# Single source of truth consumed by spend_guard.py and debug_utils.py.
+MODEL_PRICING_PER_1M: dict[str, dict[str, float]] = {
+    "gpt-4o": {"prompt": 2.50, "completion": 10.00},
+    "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
+    "gemini-2.5-flash": {"prompt": 0.15, "completion": 0.60},
+    "gemini-2.5-pro": {"prompt": 1.25, "completion": 5.00},
+    "gemini-3-flash-preview": {"prompt": 0.50, "completion": 3.00},
+}
 
 
 # =============================================================================

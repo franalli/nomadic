@@ -37,8 +37,13 @@ function Sheet({ open = false, onOpenChange, children }: SheetProps) {
     [onOpenChange]
   );
 
+  const contextValue = React.useMemo(
+    () => ({ open, onOpenChange: handleOpenChange }),
+    [open, handleOpenChange]
+  );
+
   return (
-    <SheetContext.Provider value={{ open, onOpenChange: handleOpenChange }}>
+    <SheetContext.Provider value={contextValue}>
       {children}
     </SheetContext.Provider>
   );

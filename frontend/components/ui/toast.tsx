@@ -27,6 +27,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -307,8 +308,10 @@ export function ToastProvider({ children }: ToastProviderProps) {
     []
   );
 
+  const contextValue = useMemo(() => ({ toast, dismiss }), [toast, dismiss]);
+
   return (
-    <ToastContext.Provider value={{ toast, dismiss }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
       <ToastContainer toasts={toasts} onDismiss={dismiss} />
     </ToastContext.Provider>

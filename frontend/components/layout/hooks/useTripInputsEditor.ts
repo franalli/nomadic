@@ -524,6 +524,8 @@ export function useTripInputsEditor(
     [tripInputs.destination, commitTripInputs, onToast]
   );
 
+  const clearValidationError = useCallback(() => setValidationError(null), []);
+
   const resetDraft = useCallback(() => {
     setTripInputsDraft(toTripInputsDraft(DEFAULT_TRIP_INPUTS));
     setEditingField(null);
@@ -557,7 +559,7 @@ export function useTripInputsEditor(
     pendingDestination,
     // Inline validation error
     validationError,
-    clearValidationError: () => setValidationError(null),
+    clearValidationError,
     // State setters
     setTripInputsDraft,
     setEditingField,

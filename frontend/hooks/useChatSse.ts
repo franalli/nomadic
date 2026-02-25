@@ -11,7 +11,7 @@
  * No JSX — pure side-effect hook.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { isBootstrap } from '@/components/plan/planStateHelpers';
 import { useActionLoader } from '@/hooks/useActionLoader';
@@ -68,7 +68,6 @@ export interface ChatSseRefs {
     budget: number | null;
     origin: string | null;
   } | null>;
-  lastUserMsgIdRef: React.MutableRefObject<string | null>;
 }
 
 export interface ChatSseCallbacks {
@@ -111,6 +110,7 @@ export interface ExecuteStreamParams {
   streamingMsgId: string;
   isSilentPlanGeneration: boolean;
   selectedBranchId: string | null;
+  envelopeGeneration: number;
   triggerContext: TriggerContext | null;
   delayedLoader: ReturnType<typeof useDelayedLoader>;
   actionLoader: ReturnType<typeof useActionLoader>;
@@ -128,7 +128,6 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
     prevSpecialistTypesRef,
     prevTileTypesRef,
     prevTripInputsRef,
-    lastUserMsgIdRef,
   } = refs;
 
   const {
@@ -149,6 +148,17 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
     onAutoExpandItinerary,
   } = callbacks;
 
+  const reconcileTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (reconcileTimerRef.current) {
+        clearTimeout(reconcileTimerRef.current);
+        reconcileTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const executeStream = useCallback(
     (params: ExecuteStreamParams): Promise<void> => {
       const {
@@ -156,12 +166,18 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
         streamingMsgId,
         isSilentPlanGeneration,
         selectedBranchId,
+        envelopeGeneration,
         triggerContext,
         delayedLoader,
         actionLoader,
       } = params;
 
       return new Promise<void>((resolve) => {
+        if (reconcileTimerRef.current) {
+          clearTimeout(reconcileTimerRef.current);
+          reconcileTimerRef.current = null;
+        }
+
         abortStreamRef.current = streamGraphPlan(body, {
           onToken: (token: string) => {
             setHasReceivedFirstToken(true);
@@ -222,11 +238,11 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const p = data.payload as any;
               if (data.kind === 'strategy_sections') {
-                store.mergeEnvelope({ strategy_sections: p });
+                store.mergeEnvelope({ strategy_sections: p }, envelopeGeneration);
               } else if (data.kind === 'tiles') {
-                store.mergeEnvelope({ tiles: p });
+                store.mergeEnvelope({ tiles: p }, envelopeGeneration);
               } else if (data.kind === 'trip_inputs') {
-                store.mergeEnvelope({ trip_inputs: p });
+                store.mergeEnvelope({ trip_inputs: p }, envelopeGeneration);
               }
             } catch (partialError) {
               debugLog('[SSE] Partial merge failed (will reconcile on complete):', partialError);
@@ -451,18 +467,6 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               if (isReadyToGenerate) {
                 updateMessageId(streamingMsgId, `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}`);
               }
-
-              if (lastUserMsgIdRef.current && doc.ack_updates && doc.ack_updates.length > 0) {
-                const userMsgId = lastUserMsgIdRef.current;
-                updateMessage(userMsgId, {
-                  ackStatus: doc.ack_status || 'applied',
-                  ackUpdates: doc.ack_updates,
-                });
-              } else if (lastUserMsgIdRef.current) {
-                updateMessage(lastUserMsgIdRef.current, {
-                  ackStatus: 'no_change',
-                });
-              }
             }
 
             // Reconcile from persisted document when stream payload looks incomplete
@@ -476,29 +480,18 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               (expectsDayCards && !responseHasDayCards);
 
             if (needsReconcile) {
-              void (async () => {
-                const maxAttempts = 3;
-                for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-                  try {
-                    const fresh = await useDocumentStore.getState().fetchDocument();
-                    if (!fresh) return;
-                    const hasStrategy = (fresh.strategy_sections?.length ?? 0) > 0;
-                    const hasDayCards = (fresh.day_cards?.length ?? 0) > 0;
-                    if (hasStrategy && (!expectsDayCards || hasDayCards)) {
-                      debugLog(
-                        `[ChatPanel] ✅ Reconciled from /api/document on attempt ${attempt}` +
-                        ` (strategy=${fresh.strategy_sections?.length ?? 0}, day_cards=${fresh.day_cards?.length ?? 0})`
-                      );
-                      return;
-                    }
-                  } catch (reconcileError) {
-                    debugLog('[ChatPanel] Reconcile fetch failed:', reconcileError);
-                  }
-                  if (attempt < maxAttempts) {
-                    await new Promise((resolveReconcile) => setTimeout(resolveReconcile, 500 * attempt));
-                  }
+              const reconcileTimer = setTimeout(async () => {
+                if (isSendingRef.current) return;
+                try {
+                  await useDocumentStore.getState().fetchDocument();
+                } catch {
+                  debugLog('[ChatPanel] Reconcile fetch failed');
                 }
-              })();
+                if (reconcileTimerRef.current === reconcileTimer) {
+                  reconcileTimerRef.current = null;
+                }
+              }, 1500);
+              reconcileTimerRef.current = reconcileTimer;
             }
 
             setIsLoading(false);
@@ -513,6 +506,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             delayedLoader.reset();
             actionLoader.reset();
             setTriggerContext(null);
+            if (reconcileTimerRef.current) {
+              clearTimeout(reconcileTimerRef.current);
+              reconcileTimerRef.current = null;
+            }
             console.error('Failed to plan trip', error);
 
             if (!isSilentPlanGeneration) {
@@ -537,7 +534,6 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
       prevSpecialistTypesRef,
       prevTileTypesRef,
       prevTripInputsRef,
-      lastUserMsgIdRef,
       setHasReceivedFirstToken,
       setNodeStatus,
       setStreamingMessageId,

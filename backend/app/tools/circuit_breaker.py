@@ -1,7 +1,7 @@
 """Circuit breaker and rate limiter for external API resilience.
 
-Extracted from amadeus_client.py. These are reusable patterns for any external
-API client (Amadeus, Unsplash, etc.).
+Extracted from legacy provider code. These are reusable patterns for any external
+API client (Google Places, Unsplash, etc.).
 """
 
 import asyncio

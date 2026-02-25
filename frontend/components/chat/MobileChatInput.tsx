@@ -101,6 +101,7 @@ function MobileChatInputInner({
           <textarea
             ref={inputRef}
             disabled={isProcessing}
+            aria-label="Chat message"
             className="w-full h-full bg-transparent text-zinc-900 dark:text-white pl-5 pr-2 py-3 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
             placeholder={placeholder}
             value={input}

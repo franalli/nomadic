@@ -72,8 +72,8 @@ Media type: `text/event-stream`. Events:
 | ------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `token`       | `{type: "token", data: "..."}`                                                          | Streaming text chunk                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `node_status` | `{type: "node_status", data: {node, status: "started"\|"completed", label, icon_key, estimated_duration_ms}}` | Node/tool processing progress. Current backend payload contains only `node`, `status`, `label`, `icon_key`, `estimated_duration_ms`. In the agent architecture, `node` can be a tool name (`extract_trip_fields`, `get_specialist_advice`, `get_local_intel`, `search_tiles`, `validate_plan`, `build_itinerary`). |
-| `complete`    | `{type: "complete", data: {document, session_state, version, ...}}`                     | Full response envelope. `document` includes `day_cards` (when builder ran), `suggested_responses`, `suggested_response_meta`, `suggestion_chips` (structured chips with action routing), `constraints_validated`, `constraint_violations`, `tiles_replaced` -- all passed through from graph output. When `day_cards` are present: `plan_view_state=S3_ITINERARY_READY` if conflict count is 0, `S3_EDITING` if conflicts exist, and `S3_PARTIAL_CONFLICT` on partial-failure path with returned day cards. **`observability`** subfield currently emits `tokens`, `today_iso`, and `ready_to_generate_now`. Optional frontend fields such as `extraction_confidence`, `short_circuit_type`, `llm_calls_made`, `cache_hits`, and `confidence_routing` are reserved and not populated by backend today. |
-| `partial`     | `{type: "partial", data: {kind: "strategy_sections"\|"tiles"\|"trip_inputs", payload: unknown}}` | Progressive render before `complete`. In the agent architecture, emitted when tool results are available: `extract_trip_fields` -> `trip_inputs`; `get_specialist_advice`/`get_local_intel` -> `strategy_sections`; `search_tiles` -> `tiles` (ID-keyed tile map, matching `document.tiles`). Frontend merges via `store.mergeEnvelope()`. Errors must not crash stream -- wrapped defensively. `complete` event reconciles any differences. |
+| `complete`    | `{type: "complete", data: {document, session_state, version, ...}}`                     | Full response envelope. `document` includes `itinerary_day_cards`, `suggested_responses`, `suggested_response_meta`, `suggestion_chips` (structured chips with action routing), `constraints_validated`, `constraint_violations`, `tiles_replaced`, and `ack_status`/`ack_updates`/`applied_updates`. When `day_cards` are present: `plan_view_state=S3_ITINERARY_READY` if conflict count is 0, `S3_EDITING` if conflicts exist, and `S3_PARTIAL_CONFLICT` on partial-failure path with returned day cards. **`observability`** subfield currently emits `tokens`, `today_iso`, and `ready_to_generate_now`. Optional frontend fields such as `extraction_confidence`, `short_circuit_type`, `llm_calls_made`, `cache_hits`, and `confidence_routing` are reserved and not populated by backend today. |
+| `partial`     | `{type: "partial", data: {kind: "strategy_sections"\|"tiles"\|"trip_inputs", payload: unknown}}` | Progressive render before `complete`. In the agent architecture, emitted when tool results are available: `extract_trip_fields` -> `trip_inputs`; `get_specialist_advice`/`get_local_intel` -> `strategy_sections`; `search_tiles` -> `tiles` (ID-keyed tile map, matching `document.tiles`). Frontend merges via `store.mergeEnvelope(envelope, generation)` so stale events from prior send cycles are ignored. Errors must not crash stream -- wrapped defensively. `complete` event reconciles any differences. |
 | `error`       | `{type: "error", message: "..."}`                                                       | Error details                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### NDJSON (`/api/expand-itinerary`)
@@ -170,7 +170,7 @@ Source: `backend/app/schemas.py`, `backend/app/planner/state/agent_state.py`
 
 ### NomadicAgentState (`backend/app/planner/state/agent_state.py`)
 
-Extends LangChain's `AgentState` (which provides `messages` with `add_messages` reducer). All extra fields use `NotRequired`:
+Extends LangChain's `AgentState` (which provides `messages` with `add_messages` reducer). Shared fields use `Annotated` reducers to support concurrent parallel tool updates.
 
 ```
 NomadicAgentState (extends AgentState)
@@ -215,10 +215,10 @@ PlanDocumentData
   |     |-- id, type (flight|hotel|activity), title, subtitle?, image_url?
   |     |-- partner, partner_product_id, deeplink_url
   |     |-- price_estimate?, live_price?, currency, price_basis?, is_estimate_only?
-  |     |-- price_display? (NOT on Pydantic model -- injected at response time by response_envelope)
+  |     |-- price_display? (NOT on Pydantic model -- injected at response time by complete envelope assembly)
   |     |-- rating?, review_count?, location_label?, geo: {lat, lng}?
   |     |-- tags[], availability_status? (available|low|unknown|not_available), meta?, score?, source?, source_agent?
-  |     |-- provider (expedia|booking|google_places|amadeus|curated|mock|unknown), cancel_policy_summary?
+  |     |-- provider (expedia|booking|google_places|curated|mock|unknown), cancel_policy_summary?
   |     '-- total_inclusive?, tax_and_service_fee?, property_fee?, is_refundable?
   |
   |-- strategy_sections: StrategySection[]
@@ -232,7 +232,8 @@ PlanDocumentData
   |     |-- local_expert_enrichment?: Dict (Phase A/B lifecycle: {state: 'pending'|'ready'|'failed', error_code?})
   |     |-- must_dos[], optional_upgrades[], logistics_notes[], tradeoffs_summary?
   |     |-- content_blocks[], booking_artifacts, impact_areas[]
-  |     |-- constraints_applied[], content_added[], bullets[]
+  |     |-- constraints_applied[] (structured dict payload, accepts non-string values)
+  |     |-- content_added[], bullets[]
   |     '-- destination_gallery[{label, image_url}], trip_summary?
   |
   |-- day_cards: DayCard[]
@@ -278,7 +279,7 @@ PlanDocumentData
   |-- itinerary_overview, itinerary_assumptions
   |-- applied_updates[], undo_snapshot, update_provenance
   |-- browseable_activities: Tile[] (Tier-1-suppressed Google Places tiles for Browse Activities sheet; stashed by logistics_node)
-  |-- ack_status, ack_updates[]
+  |-- ack_status, ack_updates[]  # ack_status: applied | rejected | no_change
   |-- origin_just_set
   |-- tiles_replaced (bool: frontend should REPLACE tiles, not merge additively)
   |-- user_pinned_tiles: {tile_id -> {tile, source, category, preferred_day}} (Browse->Add persistence)
@@ -379,7 +380,7 @@ Hydration guards:
 | `ReadinessKey`     | origin, destination, start_date, end_date, travelers, budget       | Constraint completeness                                                                                                                                                                                                         |
 | `BookingState`     | idle, loading, ready, error                                        | Per-tab booking status                                                                                                                                                                                                          |
 | `TileType`         | flight, hotel, activity                                            | Tile category                                                                                                                                                                                                                   |
-| `TileProvider`     | expedia, booking, google_places, amadeus, curated, mock, unknown   | Booking/data partner (expanded to track all tile data sources)                                                                                                                                                                  |
+| `TileProvider`     | expedia, booking, google_places, curated, mock, unknown   | Booking/data partner (expanded to track all tile data sources)                                                                                                                                                                  |
 | `PartnerPrice`     | `{partner, price, currency, url?, logo?, isBestPrice?}`            | Frontend-only (`frontend/types/tile.ts`): partner pricing entry for multi-partner price comparison on TileCard / TileDetailsModal. Not on Pydantic model. |
 | `AckStatus`        | applied, partial, no_change, needs_clarification, failed, rejected | Update acknowledgement status. `rejected` used for route violations (e.g., same-city error). Backend Literal does NOT include `pending`; frontend types (`chat.ts`, `plan-envelope.ts`) add `pending` as a frontend-only value. |
 
@@ -414,7 +415,7 @@ Source: `frontend/state/documentStore.ts` (Zustand)
 | Action                                                             | Purpose                                                                                                                                 |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `setFromPlanResponse()`                                            | Merge backend GraphPlanResponse into store (destination lock, S3-safe view state guard including lateral S3 transitions, tile/section merge, image URL sanitization) |
-| `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization) plus root-level `generation` merge from envelope. Uses RAF-batched buffering when available (`globalThis.requestAnimationFrame`) and not in test mode (`NODE_ENV=test` or `VITEST=true`). Consecutive SSE events in the same frame are deep-merged and flushed as one setState call. Module-level `_pendingEnvelope` + `_rafId` state, with `_bypassRAF=true` during flush to prevent recursion. |
+| `mergeEnvelope()`                                                  | Streaming update: tiles, sections, day_cards, plan_view_state (with downgrade protection + image URL sanitization) plus root-level `generation` merge from envelope. Uses RAF-batched buffering when available (`globalThis.requestAnimationFrame`) and not in test mode (`NODE_ENV=test` or `VITEST=true`). Consecutive SSE events in the same frame are deep-merged and flushed as one setState call. Buffering is generation-scoped (`_pendingEnvelopeGeneration`/`_bufferGeneration`) so stale SSE partials from previous send cycles are dropped. Module-level `_pendingEnvelope` + `_rafId` state, with `_bypassRAF=true` during flush to prevent recursion. |
 | `updateTripInputs()`                                               | Sync local trip input update (no API call). Runs `applyActivityCategoryDefaults()` normalization: if categories are empty and activities are not explicitly off, seeds default category (`cultural`); if activities are off with empty categories, clears stale `day_preferences`. |
 | `commitTripInputs()`                                               | Async PATCH with optimistic update + rollback (handles 409 retry, 404 graceful). Filters no-op `trip_inputs` fields before PATCH using `_lastPatchedTripInputs` as baseline (not live zustand state -- `updateTripInputs()` already mutated it); if empty after filtering, skips network write and returns success. Successful commits update `_lastPatchedTripInputs` and clear matching keys from `_userDirtySettings`. Both optimistic and response/409-retry document merges re-run `applyActivityCategoryDefaults()` before writing store state. |
 | `ensureSettingsFlushed()`                                          | Flush only **dirty** settings before graph run (prevents overwriting backend-derived values). Per-send-cycle payload hash dedupe skips duplicate flush PATCHes for the same request cycle. |

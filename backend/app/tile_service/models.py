@@ -32,7 +32,7 @@ class SearchContext(BaseModel):
     response_mode: Optional[str] = None
 
     # Pre-resolved IATA codes (from iata_resolver in planner graph).
-    # Used by Amadeus providers; falls back to hardcoded lookup if absent.
+    # Used by flight providers; falls back to LLM lookup if absent.
     origin_iata: Optional[str] = None
     destination_iata: Optional[str] = None
 

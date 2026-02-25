@@ -464,6 +464,75 @@ def _check_cross_domain_from_sections(
     return violations
 
 
+def check_day_preference_capacity(
+    start_date: Optional[str],
+    end_date: Optional[str],
+    day_prefs: Dict[str, int],
+    strategy_sections: Optional[List[Dict[str, Any]]] = None,
+    activity_categories: Optional[List[str]] = None,
+) -> List[GuardViolation]:
+    """Check that requested activity day counts fit within trip duration.
+
+    Computes max no-fly buffer from strategy_sections (preferred) or
+    activity_categories (fallback), then validates total_requested <= effective days.
+
+    Returns at most one GuardViolation: DAY_PREFERENCE_EXCEEDS_CAPACITY.
+    """
+    if not day_prefs or not start_date or not end_date:
+        return []
+
+    try:
+        start = datetime.fromisoformat(start_date)
+        end = datetime.fromisoformat(end_date)
+        total_days = (end - start).days + 1
+        usable = max(0, total_days - 2)  # arrival + departure
+
+        # Compute max buffer from active specialists
+        max_buffer = 0
+        if strategy_sections:
+            for section in strategy_sections:
+                topic = section.get("specialist_type") if isinstance(section, dict) else None
+                if topic:
+                    config = get_config(topic)
+                    if config and config.has_nofly_buffer:
+                        hours = get_nofly_buffer_hours(topic) or 24
+                        max_buffer = max(max_buffer, hours // 24)
+
+        # Fallback: check activity_categories if no buffer from strategy_sections
+        if not max_buffer and activity_categories:
+            for cat in activity_categories:
+                cat_name = str(cat).strip().lower()
+                if cat_name:
+                    config = get_config(cat_name)
+                    if config and config.has_nofly_buffer:
+                        hours = get_nofly_buffer_hours(cat_name) or 24
+                        max_buffer = max(max_buffer, hours // 24)
+
+        effective = max(0, usable - max_buffer)
+        total_requested = sum(day_prefs.values())
+
+        if total_requested > effective:
+            return [
+                GuardViolation(
+                    code="DAY_PREFERENCE_EXCEEDS_CAPACITY",
+                    message=(
+                        f"Requested {total_requested} activity days but only "
+                        f"{effective} available ({max_buffer} buffer day(s) required)"
+                    ),
+                    severity="blocking",
+                    category="capacity",
+                    suggested_action=(
+                        f"Extend trip by {total_requested - effective} day(s) "
+                        f"or reduce activity days"
+                    ),
+                )
+            ]
+    except (ValueError, TypeError):
+        pass
+
+    return []
+
+
 async def check_route_constraint(plan: TripPlan) -> List[GuardViolation]:
     """
     Check route validity (Logic Guards).
@@ -696,7 +765,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
             start = datetime.fromisoformat(state.trip_plan.start_date)
             end = datetime.fromisoformat(state.trip_plan.end_date)
             total_days = (end - start).days + 1
-            usable_days = total_days - 2  # arrival + departure
+            usable_days = max(0, total_days - 2)  # arrival + departure
 
             for section in persistent.strategy_sections:
                 topic = section.get("specialist_type")
@@ -744,46 +813,20 @@ async def constraint_guard(state: GraphState) -> GraphState:
     # =========================================================================
     settings = get_trip_settings(state)
     day_prefs = settings.activity_settings.day_preferences
-    if day_prefs and state.trip_plan.start_date and state.trip_plan.end_date:
-        try:
-            start = datetime.fromisoformat(state.trip_plan.start_date)
-            end = datetime.fromisoformat(state.trip_plan.end_date)
-            total_days = (end - start).days + 1
-            usable = total_days - 2  # arrival + departure
-
-            # Recompute max buffer from active specialists (independent of loop above)
-            max_buffer = 0
-            for section in persistent.strategy_sections:
-                topic = section.get("specialist_type")
-                config = get_config(topic) if topic else None
-                if config and config.has_nofly_buffer:
-                    hours = get_nofly_buffer_hours(topic) or 24
-                    max_buffer = max(max_buffer, hours // 24)
-
-            effective = usable - max_buffer
-            total_requested = sum(day_prefs.values())
-
-            if total_requested > effective:
-                violations.append(
-                    GuardViolation(
-                        code="DAY_PREFERENCE_EXCEEDS_CAPACITY",
-                        message=(
-                            f"Requested {total_requested} activity days but only "
-                            f"{effective} available ({max_buffer} buffer day(s) required)"
-                        ),
-                        severity="blocking",
-                        category="capacity",
-                        suggested_action=f"Extend trip by {total_requested - effective} days",
-                    )
-                )
-                has_blocking = True
-                log(
-                    "CONSTRAINT",
-                    f"FAIL DAY_PREFERENCE_EXCEEDS_CAPACITY (blocking) - "
-                    f"requested {total_requested} > {effective} effective days",
-                )
-        except Exception as e:
-            log("GUARD", f"Day preference capacity check error (non-fatal): {e}")
+    if day_prefs:
+        day_pref_violations = check_day_preference_capacity(
+            start_date=state.trip_plan.start_date,
+            end_date=state.trip_plan.end_date,
+            day_prefs=day_prefs,
+            strategy_sections=persistent.strategy_sections,
+        )
+        for v in day_pref_violations:
+            violations.append(v)
+            has_blocking = True
+            log(
+                "CONSTRAINT",
+                f"FAIL {v.code} (blocking) - {v.message}",
+            )
 
     # =========================================================================
     # Multi-Specialist Aggregate Capacity Check
@@ -796,7 +839,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
             start = datetime.fromisoformat(state.trip_plan.start_date)
             end = datetime.fromisoformat(state.trip_plan.end_date)
             total_days = (end - start).days + 1
-            usable_days = total_days - 2
+            usable_days = max(0, total_days - 2)
 
             total_activities = 0
             active_specialist_names: list[str] = []

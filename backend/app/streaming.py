@@ -111,91 +111,6 @@ def _flatten_request_preferences(preferences: Any) -> Dict[str, Any]:
     return {"preferred_tile_ids": _normalized_preference_ids(combined_ids)}
 
 
-def _get_trip_input_display_value(ui_key: str, trip_inputs: dict) -> str | None:
-    """
-    Get human-readable display value for a UI key from trip_inputs.
-
-    Maps canonical UI keys to their corresponding trip_inputs values
-    and formats them for display in collapsible message summaries.
-    """
-    # Map UI key to trip_inputs field(s)
-    if ui_key == "destination":
-        return trip_inputs.get("destination")
-    elif ui_key == "origin":
-        return trip_inputs.get("origin")
-    elif ui_key == "dates":
-        start = trip_inputs.get("start_date")
-        end = trip_inputs.get("end_date")
-        if start and end:
-            return f"{start} – {end}"
-        elif start:
-            return start
-        return None
-    elif ui_key == "budget":
-        budget = trip_inputs.get("budget")
-        currency = trip_inputs.get("currency", "USD")
-        return f"{currency} {budget}" if budget else None
-    elif ui_key == "travelers":
-        adults = trip_inputs.get("adults")
-        children = trip_inputs.get("children", 0)
-        if adults:
-            parts = [f"{adults} adult{'s' if adults != 1 else ''}"]
-            if children:
-                parts.append(f"{children} child{'ren' if children != 1 else ''}")
-            return ", ".join(parts)
-        return None
-    elif ui_key == "flights":
-        if trip_inputs.get("booking_types", {}).get("flights"):
-            flight_settings = trip_inputs.get("flight_settings", {})
-            parts = []
-            if flight_settings.get("direct_only"):
-                parts.append("Direct")
-            cabin = flight_settings.get("cabin_class", "economy")
-            if cabin != "economy":
-                parts.append(cabin.title())
-            return " · ".join(parts) if parts else "Enabled"
-        return None
-    elif ui_key == "hotels":
-        if trip_inputs.get("booking_types", {}).get("hotels"):
-            hotel_settings = trip_inputs.get("hotel_settings", {})
-            stars = hotel_settings.get("min_stars", 0)
-            return f"{stars}+ stars" if stars else "Enabled"
-        return None
-    # =========================================================================
-    # Settings keys (dotted notation from NL command extraction)
-    # =========================================================================
-    elif ui_key == "booking_types.flights":
-        toggle = trip_inputs.get("booking_types", {}).get("flights")
-        return {"off": "Disabled", "suggested": "Auto", "on": "Enabled"}.get(toggle)
-    elif ui_key == "booking_types.hotels":
-        toggle = trip_inputs.get("booking_types", {}).get("hotels")
-        return {"off": "Disabled", "suggested": "Auto", "on": "Enabled"}.get(toggle)
-    elif ui_key == "booking_types.activities":
-        toggle = trip_inputs.get("booking_types", {}).get("activities")
-        return {"off": "Disabled", "suggested": "Auto", "on": "Enabled"}.get(toggle)
-    elif ui_key == "booking_types.ground_transport":
-        toggle = trip_inputs.get("booking_types", {}).get("ground_transport")
-        return {"off": "Disabled", "suggested": "Auto", "on": "Enabled"}.get(toggle)
-    elif ui_key == "flight_settings.direct_only":
-        direct = trip_inputs.get("flight_settings", {}).get("direct_only")
-        return "Direct flights only" if direct else "Connections OK"
-    elif ui_key == "flight_settings.cabin_class":
-        cabin = trip_inputs.get("flight_settings", {}).get("cabin_class")
-        return cabin.replace("_", " ").title() if cabin else None
-    elif ui_key == "flight_settings.round_trip":
-        round_trip = trip_inputs.get("flight_settings", {}).get("round_trip")
-        return "Round trip" if round_trip else "One way"
-    elif ui_key == "hotel_settings.min_stars":
-        stars = trip_inputs.get("hotel_settings", {}).get("min_stars")
-        if stars is not None:
-            return f"{stars}+ stars" if stars > 0 else "Any rating"
-        return None
-    elif ui_key == "activity_settings.skill_level":
-        level = trip_inputs.get("activity_settings", {}).get("skill_level")
-        return level.title() if level else None
-    return None
-
-
 def _conflicts_to_constraint_violations(
     conflicts: List[Any], resolutions: List[Any] | None = None
 ) -> List[Dict[str, Any]]:
@@ -743,47 +658,6 @@ async def generate_sse(
             response_document.suggested_responses = suggested_responses
             response_document.ready_to_generate = ready_to_generate_now
 
-            # --- Set change tracking fields for UI receipts ---
-            session_metadata = updated_session_state.get("metadata", {})
-            response_document.applied_updates = session_metadata.get("turn_applied_fields", [])
-            response_document.update_provenance = session_metadata.get("update_provenance")
-            if response_document.applied_updates:
-                response_document.undo_snapshot = session_metadata.get("prev_trip_inputs_snapshot")
-
-            # --- Build detailed ack_updates for collapsible messages UI ---
-            ack_updates = []
-            for ui_key in response_document.applied_updates:
-                value = _get_trip_input_display_value(ui_key, trip_inputs)
-                if value:
-                    ack_updates.append(AckUpdate(field=ui_key, to=value))
-            response_document.ack_updates = ack_updates
-
-            # --- Check for blocking route violations (Logic Guards) ---
-            # Route errors (SAME_CITY_ERROR, UNKNOWN_DESTINATION_ERROR) trigger "rejected" status
-            constraint_violations = session_metadata.get("constraint_violations", [])
-            route_violation = next(
-                (
-                    v
-                    for v in constraint_violations
-                    if v.get("category") == "route" and v.get("severity") == "blocking"
-                ),
-                None,
-            )
-
-            # Set ack_status based on violations or applied updates
-            if route_violation:
-                # Logic Guard rejection - use amber UI pattern (DS Section 20)
-                response_document.ack_status = "rejected"
-                response_document.ack_updates = [
-                    AckUpdate(field="route", to=route_violation.get("code", "INVALID_ROUTE"))
-                ]
-            elif ack_updates:
-                response_document.ack_status = "applied"
-            elif response_document.applied_updates:
-                response_document.ack_status = "partial"
-            else:
-                response_document.ack_status = "no_change"
-
             # --- Compute Plan State Envelope fields ---
             # Get ui_phase from request (defaults to "bootstrap")
             response_document.ui_phase = req.ui_phase or "bootstrap"
@@ -861,6 +735,14 @@ async def generate_sse(
             # --- Graph Output Processing ---
             # Graph generates strategy_sections, plan_view_state, and executed_topics
             graph_document = final_result.get("document", {})
+            response_document.ack_status = graph_document.get("ack_status", "no_change")
+            graph_ack_updates = graph_document.get("ack_updates")
+            response_document.ack_updates = (
+                [au if isinstance(au, AckUpdate) else AckUpdate(**au) for au in graph_ack_updates]
+                if graph_ack_updates
+                else []
+            )
+
             graph_strategy_sections = graph_document.get("strategy_sections", [])
 
             # Compute plan_view_state based on actual state (tiles/destination/dates)
@@ -1082,22 +964,6 @@ async def generate_ndjson(
                 )
             )
 
-            # Guard: Require at least one strategy section
-            # (no specialists = nothing to schedule)
-            if not strategy_sections_data:
-                _debug("❌ [expand-itinerary] EARLY RETURN: No strategy sections")
-                event = ExpandItineraryStreamEvent(
-                    type="error",
-                    message=json.dumps(
-                        {
-                            "error": "NO_STRATEGY",
-                            "message": "Ask about activities before generating itinerary",
-                        }
-                    ),
-                )
-                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
-                return
-
             # =================================================================
             # SELECTIVE REGENERATION: Detect strategy based on changed fields
             # =================================================================
@@ -1177,6 +1043,96 @@ async def generate_ndjson(
                         f"📊 [expand-itinerary] Using DB tiles ({len(tiles_data)}) "
                         f"— no frontend tiles provided"
                     )
+
+            # ── Activity tile refresh ───────────────────────────────────
+            # When the user changes activity categories via the pill at S3,
+            # the frontend passes refresh_activity_categories so we re-search
+            # for matching tiles without an agent turn (zero LLM calls).
+            tiles_refreshed = False
+            if req.refresh_activity_categories is not None:
+                _debug(
+                    f"🔄 [expand-itinerary] Refreshing activity tiles for "
+                    f"categories={req.refresh_activity_categories}"
+                )
+                event = ExpandItineraryStreamEvent(
+                    type="progress",
+                    stage="itinerary",
+                    message="Searching for activities...",
+                    pct=15,
+                )
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+                try:
+                    from app.schemas import TilesSearchRequest as TilesReq
+
+                    activity_settings = trip_inputs_data.get("activity_settings", {})
+                    tile_req = TilesReq(
+                        destination=trip_inputs_data.get("destination"),
+                        origin=trip_inputs_data.get("origin"),
+                        start_date=trip_inputs_data.get("start_date"),
+                        end_date=trip_inputs_data.get("end_date"),
+                        adults=trip_inputs_data.get("adults"),
+                        children=trip_inputs_data.get("children"),
+                        verticals=["activity"],
+                        activity_settings={
+                            **activity_settings,
+                            "categories": req.refresh_activity_categories,
+                        },
+                    )
+                    from app.tile_service.service import search_tiles as tile_search
+
+                    tile_result = await asyncio.to_thread(tile_search, tile_req)
+
+                    # Replace activity tiles, keep hotels + flights
+                    new_activity_tiles = {
+                        t.id: t.model_dump() for t in tile_result.tiles if t.type == "activity"
+                    }
+                    tiles_data = {
+                        tid: t
+                        for tid, t in tiles_data.items()
+                        if not (isinstance(t, dict) and t.get("type") == "activity")
+                    }
+                    tiles_data.update(new_activity_tiles)
+                    tiles_refreshed = True
+                    _debug(
+                        f"✅ [expand-itinerary] Refreshed: {len(new_activity_tiles)} "
+                        f"activity tiles for {req.refresh_activity_categories}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Activity tile refresh failed: {e}")
+                    # Fall through to builder with existing tiles
+
+            # Synthesize strategy sections from tiles when none exist.
+            # Tier 2 categories (food, culture, etc.) skip the specialist
+            # pipeline so strategy_sections_data will be empty.  The builder
+            # needs *some* sections to schedule tiles into days.
+            if not strategy_sections_data:
+                _debug("⚠️ [expand-itinerary] No strategy sections — synthesizing from tiles")
+                try:
+                    from app.planner.tools.build_itinerary import _build_strategy_sections
+
+                    synth_tiles: Dict[str, list] = {}
+                    for _tid, _tdata in tiles_data.items():
+                        _td = _tdata if isinstance(_tdata, dict) else _tdata.model_dump()
+                        _ttype = _td.get("type", "activity")
+                        synth_tiles.setdefault(f"{_ttype}s", []).append(_td)
+                    strategy_sections_data = _build_strategy_sections(synth_tiles, [])
+                except Exception as _synth_err:
+                    logger.warning("[expand-itinerary] Strategy synthesis failed: %s", _synth_err)
+
+            if not strategy_sections_data:
+                _debug("❌ [expand-itinerary] EARLY RETURN: No strategy sections and no tiles")
+                event = ExpandItineraryStreamEvent(
+                    type="error",
+                    message=json.dumps(
+                        {
+                            "error": "NO_STRATEGY",
+                            "message": "Ask about activities before generating itinerary",
+                        }
+                    ),
+                )
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                return
 
             tiles_count = len(tiles_data)
             _debug(
@@ -1453,6 +1409,10 @@ async def generate_ndjson(
                 plan_envelope["constraint_violations"] = _conflicts_to_constraint_violations(
                     itinerary_result.conflicts, itinerary_result.resolutions
                 )
+            # Include refreshed tiles in envelope so frontend replaces stale ones
+            if tiles_refreshed:
+                plan_envelope["tiles"] = tiles_data
+                plan_envelope["tiles_replaced"] = True
 
             # Emit envelope update
             _debug(
@@ -1489,11 +1449,23 @@ async def generate_ndjson(
                         for dc in plan_envelope["day_cards"]
                     ]
 
+                # Persist refreshed tiles alongside day_cards so session
+                # restoration has the correct activity set.
+                tiles_for_db = None
+                if tiles_refreshed:
+                    from app.schemas import Tile as TileSchema
+
+                    tiles_for_db = {
+                        tid: TileSchema(**t) if isinstance(t, dict) else t
+                        for tid, t in tiles_data.items()
+                    }
+
                 await apply_planner_update(
                     db,
                     doc=doc,
                     trip_context_id=trip_context_id,
                     trip_inputs=trip_inputs_obj,
+                    tiles=tiles_for_db,
                     # ViewModel fields for session restoration — always persist state
                     plan_view_state=new_plan_view_state,
                     day_cards=day_card_objs,

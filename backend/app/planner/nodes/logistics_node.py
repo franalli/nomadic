@@ -5,15 +5,14 @@ Placed AFTER Specialist nodes (reads constraints) and BEFORE Architect.
 This is the "Fetch & Polish" pattern for demo-ready data.
 
 Provider routing strategy (consistent with tile_service):
-1. Google Places enabled → GooglePlacesProvider (real names + photos, overrides Amadeus)
-2. Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
-3. Fallback → MockProviders
+1. Google Places enabled → GooglePlacesProvider (real names + photos)
+2. Fallback → MockProviders
 
 @see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
 
 Key responsibilities:
-1. Fetch hotels/activities from providers (google_places → amadeus → mock)
-2. Fetch flights from curated data or mock (amadeus flights disabled)
+1. Fetch hotels/activities from providers (google_places → mock)
+2. Fetch flights from curated data or mock
 3. Sanitize garbage test carriers (XX -> Emirates)
 4. Apply 24h no-fly safety logic for diving trips
 5. Store results in state.tiles for frontend display
@@ -273,7 +272,7 @@ async def _resolve_tier2_experience_tiles(
 async def logistics_node(state: GraphState) -> GraphState:
     """
     Logistics Node:
-    1. Fetches raw flights from Amadeus (or backup).
+    1. Fetches raw flights from curated data or mock providers.
     2. Sanitizes carrier names for a pro look.
     3. Applies 24h safety logic if no-fly constraints exist.
     """
@@ -515,7 +514,7 @@ async def logistics_node(state: GraphState) -> GraphState:
             f"Using curated flights for {plan.destination}",
             data=f"{len(curated_flights)} options",
         )
-        raw_flights = _curated_to_amadeus_format(curated_flights, plan.end_date or plan.start_date)
+        raw_flights = _curated_to_flight_tiles(curated_flights, plan.end_date or plan.start_date)
         flight_source = "curated"
         _debug_log(f"Curated flights: {[f.get('carrier_name') for f in curated_flights]}")
     else:
@@ -578,7 +577,7 @@ async def logistics_node(state: GraphState) -> GraphState:
             option = {
                 "id": offer["id"],
                 "type": "flight",
-                "partner": "curated" if flight_source == "curated" else "amadeus",
+                "partner": "curated" if flight_source == "curated" else "mock",
                 "partner_product_id": offer["id"],
                 "title": f"{carrier_info['name']} - {stops_label}",
                 "subtitle": f"Departs {dep_time_str.split('T')[1][:5]} • {duration_clean}",
@@ -798,16 +797,6 @@ async def _fetch_hotels(
                 if not hotel_tiles:
                     log("LOGISTICS", "GooglePlaces returned 0 hotels — using mock fallback")
                     hotel_tiles = await asyncio.to_thread(MockHotelProvider().search, ctx)
-            elif settings.use_amadeus_provider:
-                log(
-                    "LOGISTICS",
-                    f"Using Amadeus for hotels in {plan.destination}",
-                    data="real hotel names",
-                )
-                from app.tile_service.amadeus_provider import AmadeusHotelProvider
-
-                hotel_provider = AmadeusHotelProvider()
-                hotel_tiles = await hotel_provider.search_async(ctx)
             else:
                 log(
                     "LOGISTICS",
@@ -913,7 +902,7 @@ async def _fetch_activities(
                     log("LOGISTICS", "GooglePlaces returned 0 activities — using mock fallback")
                     activity_tiles = await asyncio.to_thread(MockActivityProvider().search, ctx)
             else:
-                # Activities always use Mock (no Amadeus activities API)
+                # Activities always use Mock (no live API)
                 activity_provider = MockActivityProvider()
                 activity_tiles = await asyncio.to_thread(activity_provider.search, ctx)
 
@@ -933,9 +922,8 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     Search for hotels and activities with L1+L2 caching.
 
     Provider routing strategy (consistent with tile_service):
-    1. Google Places enabled → GooglePlacesProvider (real names + photos, overrides Amadeus)
-    2. Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
-    3. Fallback → MockProviders
+    1. Google Places enabled → GooglePlacesProvider (real names + photos)
+    2. Fallback → MockProviders
 
     Caching strategy:
     - Check cache before provider calls
@@ -970,15 +958,13 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     dest_key = plan.destination.lower().strip() if plan.destination else ""
     if settings.use_google_places_provider:
         provider = "google_places"
-    elif settings.use_amadeus_provider:
-        provider = "amadeus"
     else:
         provider = "mock"
 
     log(
         "LOGISTICS",
         f"[TILE_CASCADE] destination={dest_key} provider={provider}",
-        data=f"gp={settings.use_google_places_provider} amadeus={settings.use_amadeus_provider}",
+        data=f"gp={settings.use_google_places_provider}",
     )
 
     start_date = str(plan.start_date) if plan.start_date else ""
@@ -1064,7 +1050,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     )
 
     # Post-fetch hotel star filter (curated provider filters at search time,
-    # but mock/Amadeus/cached tiles need post-fetch filtering)
+    # but mock/cached tiles need post-fetch filtering)
     min_stars = 0
     if isinstance(hotel_settings, dict):
         min_stars = hotel_settings.get("min_stars", 0) or 0
@@ -1666,12 +1652,12 @@ def _calculate_diving_safety(flight_time_str: str) -> tuple[str, bool]:
         return f"⚠️ Risky: Only {int(buffer_hours)}h buffer", False
 
 
-def _curated_to_amadeus_format(curated_flights: List[Dict], date_str: str) -> List[Dict]:
+def _curated_to_flight_tiles(curated_flights: List[Dict], date_str: str) -> List[Dict]:
     """
-    Convert curated flight data to Amadeus-like dict format.
+    Convert curated flight data to flight tile dict format consumed by the UI.
 
     Curated flights have: carrier_code, carrier_name, departure_time, duration, price
-    We need to convert to Amadeus format for unified processing.
+    Curated values are normalized to the same tile shape as mock and API-derived flights.
     """
     try:
         base_date = date_str[:10] if date_str else "2026-03-20"

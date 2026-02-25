@@ -24,36 +24,36 @@ class TestTileCacheKeyGeneration:
 
     def test_basic_key(self):
         """Test basic cache key format."""
-        key = _tile_cache_key("amadeus", "hotel", "Bali", "2025-03-01", "2025-03-14")
-        assert key == "tile::v2::amadeus::hotel::bali::2025-03-01::2025-03-14"
+        key = _tile_cache_key("mock", "hotel", "Bali", "2025-03-01", "2025-03-14")
+        assert key == "tile::v2::mock::hotel::bali::2025-03-01::2025-03-14"
 
     def test_normalized_destination(self):
         """Test destination normalization (lowercase, stripped)."""
-        key1 = _tile_cache_key("amadeus", "hotel", "  BALI  ", "2025-03-01", "2025-03-14")
-        key2 = _tile_cache_key("amadeus", "hotel", "bali", "2025-03-01", "2025-03-14")
+        key1 = _tile_cache_key("mock", "hotel", "  BALI  ", "2025-03-01", "2025-03-14")
+        key2 = _tile_cache_key("mock", "hotel", "bali", "2025-03-01", "2025-03-14")
         assert key1 == key2
 
     def test_different_providers_different_keys(self):
         """Test that different providers produce different keys."""
-        key_amadeus = _tile_cache_key("amadeus", "hotel", "Bali", "2025-03-01", "2025-03-14")
+        key_mock = _tile_cache_key("mock", "hotel", "Bali", "2025-03-01", "2025-03-14")
         key_curated = _tile_cache_key("curated", "hotel", "Bali", "2025-03-01", "2025-03-14")
-        assert key_amadeus != key_curated
+        assert key_mock != key_curated
 
     def test_different_types_different_keys(self):
         """Test that different tile types produce different keys."""
-        key_hotel = _tile_cache_key("amadeus", "hotel", "Bali", "2025-03-01", "2025-03-14")
-        key_activity = _tile_cache_key("amadeus", "activity", "Bali", "2025-03-01", "2025-03-14")
+        key_hotel = _tile_cache_key("mock", "hotel", "Bali", "2025-03-01", "2025-03-14")
+        key_activity = _tile_cache_key("mock", "activity", "Bali", "2025-03-01", "2025-03-14")
         assert key_hotel != key_activity
 
     def test_different_dates_different_keys(self):
         """Test that different dates produce different keys."""
-        key1 = _tile_cache_key("amadeus", "hotel", "Bali", "2025-03-01", "2025-03-14")
-        key2 = _tile_cache_key("amadeus", "hotel", "Bali", "2025-03-15", "2025-03-28")
+        key1 = _tile_cache_key("mock", "hotel", "Bali", "2025-03-01", "2025-03-14")
+        key2 = _tile_cache_key("mock", "hotel", "Bali", "2025-03-15", "2025-03-28")
         assert key1 != key2
 
     def test_empty_destination_fallback(self):
         """Test fallback for empty/None destination."""
-        key = _tile_cache_key("amadeus", "hotel", "", "2025-03-01", "2025-03-14")
+        key = _tile_cache_key("mock", "hotel", "", "2025-03-01", "2025-03-14")
         assert "unknown" in key
 
 
@@ -217,7 +217,7 @@ class TestL2DatabaseCache:
         from app.services.tile_cache import get_cached_tiles, set_cached_tiles
 
         # Clean up stale test data from previous runs
-        cache_key = _tile_cache_key("amadeus", "hotel", "TestCity", "2025-03-01", "2025-03-14")
+        cache_key = _tile_cache_key("mock", "hotel", "TestCity", "2025-03-01", "2025-03-14")
         await async_db_session.execute(
             delete(ResponseCache).where(ResponseCache.cache_key == cache_key)
         )
@@ -226,7 +226,7 @@ class TestL2DatabaseCache:
 
         # Miss
         result1 = await get_cached_tiles(
-            async_db_session, "amadeus", "hotel", "TestCity", "2025-03-01", "2025-03-14"
+            async_db_session, "mock", "hotel", "TestCity", "2025-03-01", "2025-03-14"
         )
         assert result1 is None
 
@@ -240,7 +240,7 @@ class TestL2DatabaseCache:
         ]
         await set_cached_tiles(
             async_db_session,
-            "amadeus",
+            "mock",
             "hotel",
             "TestCity",
             "2025-03-01",
@@ -253,7 +253,7 @@ class TestL2DatabaseCache:
 
         # Hit (L1)
         result2 = await get_cached_tiles(
-            async_db_session, "amadeus", "hotel", "TestCity", "2025-03-01", "2025-03-14"
+            async_db_session, "mock", "hotel", "TestCity", "2025-03-01", "2025-03-14"
         )
         assert result2 is not None
         assert len(result2) == 2
@@ -274,7 +274,7 @@ class TestL2DatabaseCache:
         from app.services.tile_cache import get_cached_tiles, set_cached_tiles
 
         # Clean up stale test data
-        cache_key = _tile_cache_key("amadeus", "hotel", "PersistCity", "2025-04-01", "2025-04-14")
+        cache_key = _tile_cache_key("mock", "hotel", "PersistCity", "2025-04-01", "2025-04-14")
         await async_db_session.execute(
             delete(ResponseCache).where(ResponseCache.cache_key == cache_key)
         )
@@ -285,7 +285,7 @@ class TestL2DatabaseCache:
         tiles = [{"id": "persist-test", "type": "hotel"}]
         await set_cached_tiles(
             async_db_session,
-            "amadeus",
+            "mock",
             "hotel",
             "PersistCity",
             "2025-04-01",
@@ -298,7 +298,7 @@ class TestL2DatabaseCache:
 
         # Should hit L2
         result = await get_cached_tiles(
-            async_db_session, "amadeus", "hotel", "PersistCity", "2025-04-01", "2025-04-14"
+            async_db_session, "mock", "hotel", "PersistCity", "2025-04-01", "2025-04-14"
         )
         assert result is not None
         assert result[0]["id"] == "persist-test"

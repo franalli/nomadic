@@ -1,5 +1,23 @@
+import path from 'node:path';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  webpack: (config) => {
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      'use-sync-external-store/shim/with-selector.js': path.resolve(
+        process.cwd(),
+        'lib/use-sync-external-store-shim.js'
+      ),
+    };
+
+    return config;
+  },
+  turbopack: {
+    resolveAlias: {
+      'use-sync-external-store/shim/with-selector.js': './lib/use-sync-external-store-shim.js',
+    },
+  },
   reactStrictMode: true,
   images: {
     // Enable remote patterns for external images (Unsplash placeholders, partner images)

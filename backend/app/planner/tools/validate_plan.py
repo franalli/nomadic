@@ -197,9 +197,39 @@ async def validate_plan(
     except Exception as exc:
         logger.warning("[validate_plan] Constraint guard failed: %s", exc)
 
-    # 5. Route validation (same-city + place existence -- LLM-backed, cached)
+    # 5. Route validation (same-city + place existence)
+    # Skip the LLM-backed place existence check when search_tiles already
+    # returned results — Google Places confirming hotels/activities for a
+    # destination is proof it exists.  Saves ~1s per turn.
+    has_real_tiles = False
+    if tiles:
+        for cat in ("hotels", "activities"):
+            cat_tiles = tiles.get(cat, [])
+            if isinstance(cat_tiles, list) and len(cat_tiles) > 0:
+                has_real_tiles = True
+                break
     try:
-        route_violations = await check_route_constraint(plan)
+        if has_real_tiles:
+            # Only run same-city check (pure logic, no LLM)
+            route_violations = []
+            origin_str = (plan.origin or "").lower().strip()
+            dest_str = (plan.destination or "").lower().strip()
+            if origin_str and dest_str and origin_str == dest_str:
+                route_violations.append(
+                    GuardViolation(
+                        code="SAME_CITY_ERROR",
+                        message=f"Origin and destination cannot be the same ({plan.destination})",
+                        severity="blocking",
+                        category="route",
+                        suggested_action="Please choose a different destination",
+                    )
+                )
+            logger.debug(
+                "[validate_plan] Skipped place existence check (tiles loaded for %s)",
+                plan.destination,
+            )
+        else:
+            route_violations = await check_route_constraint(plan)
         for v in route_violations:
             entry = v.to_dict()
             if v.severity == "blocking":
@@ -209,7 +239,41 @@ async def validate_plan(
     except Exception as exc:
         logger.warning("[validate_plan] Route validation failed: %s", exc)
 
-    # 6. Build result
+    # 6. Day preference capacity check
+    if state is not None:
+        trip_settings_val: dict[str, Any] = state.get("trip_settings", {})
+        activity_settings_val: dict[str, Any] = trip_settings_val.get("activity_settings", {})
+        day_prefs: dict[str, int] = activity_settings_val.get("day_preferences", {})
+
+        if day_prefs:
+            from app.planner.nodes.constraint_guard import check_day_preference_capacity
+
+            # Prefer strategy_sections; fall back to activity_categories
+            strategy_secs: list = state.get("strategy_sections", [])
+            cats_fallback: list[str] | None = None
+            if not strategy_secs:
+                # Build fallback from LLM parameter or trip_plan
+                if activity_categories:
+                    cats_fallback = [
+                        c.strip().lower() for c in activity_categories.split(",") if c.strip()
+                    ]
+                if not cats_fallback:
+                    tp: dict[str, Any] = state.get("trip_plan", {})
+                    cats_fallback = tp.get("activity_categories", [])
+
+            day_pref_violations = check_day_preference_capacity(
+                start_date=start_date,
+                end_date=end_date,
+                day_prefs=day_prefs,
+                strategy_sections=strategy_secs if strategy_secs else None,
+                activity_categories=cats_fallback,
+            )
+            for v in day_pref_violations:
+                entry = v.to_dict()
+                entry["field"] = "end_date"
+                violations.append(entry)
+
+    # 7. Build result
     all_issues = violations + warnings
     blocking_count = sum(1 for v in all_issues if v.get("severity") == "blocking")
     is_valid = blocking_count == 0

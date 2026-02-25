@@ -45,7 +45,7 @@ The agent dynamically decides tool order based on conversation context -- there 
 | Middleware           | 4     | ModelSelectionMiddleware, DynamicPromptMiddleware, TurnLifecycleMiddleware, SuggestionChipMiddleware                         |
 | Library Modules      | 5     | router_extraction.py, vertical_specialist.py, local_expert.py, logistics_node.py, constraint_guard.py (now wrapped by tools, no longer standalone graph nodes) |
 
-> **Note:** `ItineraryBuilder` is a pure Python **service** (not a tool or node). It is called by the `build_itinerary` tool and from both `format_result()` in `response_envelope.py` (via `itinerary_adapter.py`, shadow mode at S2_STRATEGY_READY) and the `/api/expand-itinerary` endpoint.
+> **Note:** `ItineraryBuilder` is a pure Python **service** (not a tool or node). It is called by the `build_itinerary` tool and from both `_build_complete_envelope()` (graph shadow mode) and the `/api/expand-itinerary` endpoint.
 
 ### Design Principles
 
@@ -108,7 +108,6 @@ backend/app/planner/
 │   ├── feasibility_service.py # Specialist feasibility checks
 │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed with state caching)
 │   ├── itinerary_adapter.py # Thin bridge: GraphState -> ItineraryBuilder
-│   ├── response_envelope.py # Formats GraphState -> frontend response (trip inputs, sections, itinerary)
 │   ├── section_builder.py   # Strategy section CRUD (upsert, anchor sort, builders)
 │   └── state_serde.py       # State serialization: GraphState <-> session_state + NomadicAgentState <-> agent state
 ├── state/
@@ -233,7 +232,7 @@ async def run_agent_turn(
 |------|-------|---------|-------------------|
 | `extract_trip_fields` | `router_extraction.py` | Parse intent + trip fields from user message | Yes |
 | `get_specialist_advice` | `vertical_specialist.py` | Domain-specific strategy (diving, hiking, etc.) | No (explicit params) |
-| `search_tiles` | `logistics_node.py` | Flights, hotels, activities via provider cascade | No (explicit params) |
+| `search_tiles` | `logistics_node.py` | Flights, hotels, activities via provider cascade | Yes |
 | `get_local_intel` | `local_expert.py` | Trip Overview card + Phase B enrichment | No (explicit params) |
 | `validate_plan` | `constraint_guard.py` + `input_gates.py` | Budget/temporal/safety constraint checks | Yes |
 | `build_itinerary` | `itinerary_builder.py` | Day-by-day schedule from tiles + constraints | Yes |
@@ -250,19 +249,22 @@ Wraps `generate_specialist_output_llm()` from `vertical_specialist.py`. Runs fea
 
 **`search_tiles`** (`tools/search_tiles.py`)
 
-Wraps logistics_node.py helpers. Fetches flights/hotels/activities from provider cascade (Google Places -> Amadeus -> Mock). Applies no-fly buffer. Uses `_NOFLY_CATEGORIES` frozenset from registry. Hotels and activities fetched in parallel via `asyncio.gather()`.
+Wraps logistics_node.py helpers. Fetches flights/hotels/activities from provider cascade (Google Places -> Mock). Applies no-fly buffer. Uses `_NOFLY_CATEGORIES` frozenset from registry. Hotels and activities fetched in parallel via `asyncio.gather()`.
 
 **`get_local_intel`** (`tools/get_local_intel.py`)
 
 Wraps local_expert Phase A (instant skeleton). Builds Trip Overview card from static constraint data. Stashes Phase B enrichment closure in `_pending_enrichments` dict for fire-and-forget after DB commit. `session_id` is resolved from explicit tool args first, then from `runtime.config.configurable.thread_id` so Phase B enrichments key by real session token when the LLM omits `session_id`. Returns section + constraints + gallery_images + enrichment_status.
+Prompt policy should keep this tool explicit: it is intended for user-visible local-info questions (food, safety, transport, culture), not routine planning steps.
 
 **`validate_plan`** (`tools/validate_plan.py`)
 
 Wraps constraint_guard checks + input_gates. Uses `InjectedState` for auto-populating trip fields and tiles/constraints. Runs 6 gate checks (Date, Duration, Traveler, Budget, Destination, MessageLength) + 4 guard checks (budget, temporal, specialist, route). Returns valid/violations/warnings/blocking_count.
+Also runs day-preference capacity checks from `trip_settings.activity_settings.day_preferences` and returns blocking `DAY_PREFERENCE_EXCEEDS_CAPACITY` when user-requested activity days exceed available trip days after no-fly-buffer adjustments.
 
 **`build_itinerary`** (`tools/build_itinerary.py`)
 
 Wraps `ItineraryBuilder.build()`. Uses `InjectedState`. Parses tiles/constraints JSON via shared `_parsing.py` helpers, builds strategy sections from tiles, constructs `ItineraryBuilderInput`, delegates to builder. Returns success/day_cards/conflicts/activities_placed/dropped.
+When the user message already contains destination, dates, and activity intent, planner routing expects an automatic chain through extract/specialist/tiles/validation/build in a single turn (unless validation blocks completion).
 
 ### InjectedState Pattern
 
@@ -339,12 +341,18 @@ _TOOL_MERGERS = {
 - `reset_budget` clears `trip_plan.budget`.
 - `reset_hotel` clears hotel constraints (`min_stars=0`, `amenities=[]`).
 - Extracted preference fields persist to nested `trip_settings` sub-dicts (`flight_settings`, `hotel_settings`, `activity_settings`) instead of legacy flat keys.
+- `_merge_trip_fields` now auto-derives `trip_plan.end_date` when missing from `start_date + duration_days`.
+- Activity day preferences from `activity_day_preferences` are JSON-parsed into `trip_settings.activity_settings.day_preferences`.
+- Setting `origin` automatically flips `trip_settings.booking_types.flights` from `off` to `suggested`.
+- `_merge_trip_fields` also runs a capacity pre-check for `day_preferences` and writes blocking violations to `turn_meta.validation_result` so constraints surface before a build attempt can complete.
+- `_merge_*` mergers append structured `turn_steps` summaries into `turn_meta` (`trip_update`, `preference`, `tiles`, `specialist`, `local_intel`, `validation`, `itinerary`). `_build_complete_envelope()` uses these `turn_steps` for per-turn `ack_updates`.
 
 ### SuggestionChipMiddleware (`aafter_model`)
 
 Generates template-based suggestion chips (no LLM) after the final model response (when last message is AIMessage with no tool_calls).
 
 Uses `_generate_chips_from_state()` which inspects current state to produce contextually relevant chips.
+`SuggestionChipMiddleware` stores chip payloads in `persistent_meta["suggestion_chips"]`, which `_build_complete_envelope()` mirrors into the complete event.
 
 ---
 
@@ -436,7 +444,7 @@ City logistics concierge with Phase A/B architecture.
 
 Flight/hotel/activity fetching with safety logic. ~1764 lines.
 
-**Provider cascade:** Google Places -> Amadeus -> Mock (3-tier in logistics_node, 4-tier with Curated in tile_service/service.py).
+**Provider cascade:** Google Places -> Mock in logistics_node; Curated -> Google Places -> Mock in tile_service/service.py.
 
 **Key features:**
 - Separate cache key hashes for hotels/activities/flights
@@ -621,7 +629,7 @@ Each specialist type has its own constraint generator:
 
 - `total_activities_input`: Activities fed into distribution
 - `total_activities_placed`: Activities actually placed on timeline (excludes buffers, logistics, free days)
-- Drop ratio (`1 - placed/input`) stored in `state.metadata["last_builder_drop_ratio"]` for guard suppression and suggestion-chip telemetry
+- Drop ratio (`1 - placed/input`) is captured in `turn_meta['builder_result']` (via `success`, `placed`, and `dropped` counters) for guard suppression and suggestion-chip telemetry
 
 **Preference Weighting:**
 
@@ -730,7 +738,7 @@ Pydantic structured output is used for LLM calls that need **guaranteed schema e
 | **extract_trip_fields** (via `router_extraction.py`) | Yes | `settings.router_model` (via `llm_factory`) | `RouterOutput` | Intent + field extraction in one call |
 | **get_specialist_advice** (via `vertical_specialist.py`) | Yes (function_calling, flattened schema) | `settings.specialist_model` (via `llm_factory`) | `LLMSpecialistOutput` via `_SPECIALIST_FLAT_SCHEMA` | LLM-first with fallback |
 | **get_local_intel** (via `local_expert.py`) | Yes (prompt-based) | `settings.local_expert_model` (via `llm_factory`) | `LocalExpertOutput` | Prompt-based JSON; no function_calling |
-| **search_tiles** (via `logistics_node.py`) | No | N/A | N/A | API calls only (Google Places, Amadeus) |
+| **search_tiles** (via `logistics_node.py`) | No | N/A | N/A | API/provider calls only (Curated, Google Places, Mock) |
 | **validate_plan** (via `constraint_guard.py`) | No | `settings.guard_model` (place validation only) | N/A | Mostly deterministic |
 | **build_itinerary** (via `itinerary_builder.py`) | No | N/A | N/A | Pure Python scheduling |
 | **Planner Agent** | No | `settings.router_model` / `settings.synthesizer_planning_model` | N/A | Free-form natural language responses |
@@ -764,20 +772,21 @@ The agent's runtime state, extending LangChain's `AgentState` with trip planning
 ```python
 class NomadicAgentState(AgentState):
     """Agent state with trip planning extensions."""
-    # All fields are NotRequired -- only messages is required (from AgentState)
-    trip_plan: NotRequired[dict]          # TripPlan as dict
-    trip_settings: NotRequired[dict]      # TripSettings as dict
-    tiles: NotRequired[dict]              # {"flights": [], "hotels": [], "activities": []}
-    strategy_sections: NotRequired[list]  # Strategy section dicts
+    # Fields with possible parallel updates use Annotated reducers.
+    # Dict/list fields merge by reducer; scalar metadata follows last-write rules.
+    trip_plan: Annotated[dict, _merge_dicts]           # TripPlan as dict
+    trip_settings: Annotated[dict, _merge_dicts]       # TripSettings as dict
+    tiles: Annotated[dict, _merge_dicts]               # {"flights": [], "hotels": [], "activities": []}
+    strategy_sections: Annotated[list, _merge_strategy_sections]  # Strategy section dicts
     day_cards: NotRequired[list]          # Itinerary day card dicts
-    constraints: NotRequired[list]        # Constraint violation dicts
-    turn_meta: NotRequired[dict]          # Per-turn metadata (reset each turn)
-    persistent_meta: NotRequired[dict]    # Cross-turn metadata
+    constraints: Annotated[list, _merge_constraints]    # Constraint dicts
+    turn_meta: Annotated[dict, _merge_turn_meta]       # Per-turn metadata (reset each turn)
+    persistent_meta: Annotated[dict, _merge_dicts]      # Cross-turn metadata
 ```
 
 ### GraphState (Legacy, used by library modules)
 
-The old unified state model. Still used internally by surviving library modules (constraint_guard, vertical_specialist, etc.) and by the response_envelope.
+The old unified state model. Still used internally by surviving library modules (constraint_guard, vertical_specialist, etc.) during service migrations.
 
 ```python
 class GraphState(BaseModel):
@@ -959,10 +968,18 @@ No hardcoded constraints (LLM-generated only)
 | Capacity   | Day preference count > effective days (`DAY_PREFERENCE_EXCEEDS_CAPACITY`)          | blocking     |                                 |
 | Capacity   | Multi-specialist aggregate exceeds capacity (`MULTI_SPECIALIST_CAPACITY_EXCEEDED`) | warning      |                                 |
 
+`DAY_PREFERENCE_EXCEEDS_CAPACITY` is now computed by `check_day_preference_capacity()` and considers:
+- requested totals from `day_preferences`
+- usable trip days as `max(0, total_days - 2)` (arrival/departure removed)
+- active no-fly buffers from strategy sections (or activity category fallback)
+- effective capacity as `max(0, usable_days - max_buffer)`
+
+This check is executed in both `validate_plan` and `_merge_trip_fields()` so blocking preference-capacity issues can surface before user-visible itinerary build completion.
+
 **Multi-Specialist Aggregate Capacity Check:** Sums activity counts across ALL active specialists. Individual specialist checks may pass, but combined they can exceed timeline capacity (`effective_days * 2` specialist activities max, since specialist activities are 3-5h each). Accounts for cross-domain buffer days. Fires when `len(active_specialists) >= 2` and `total_activities > max_capacity`.
 
 **Builder-Aware Suppression:**
-When the ItineraryBuilder persists a constraint rule (e.g., `no_fly_buffer`) and succeeds (`state.metadata["last_builder_success"] == True`) with acceptable drop ratio (`last_builder_drop_ratio < 0.5`), the guard suppresses duplicate violations on the next turn -- the builder is already enforcing the constraint via clustering. If the builder **failed** OR dropped >=50% of activities, the violation is re-surfaced so the agent can generate resolution chips.
+When the ItineraryBuilder persists a constraint rule (e.g., `no_fly_buffer`) and succeeds (`turn_meta["builder_result"]["success"] == True`) with acceptable drop ratio (from `builder_result`), the guard suppresses duplicate violations on the next turn — the builder is already enforcing the constraint via clustering. If the builder **failed** or dropped too much volume, the violation is re-surfaced so the agent can generate resolution chips.
 
 **Deleted checks (handled by specialist LLM feasibility):**
 
@@ -1124,7 +1141,7 @@ User-configurable settings (`activity_settings`, `hotel_settings`, `flight_setti
 | Layer          | File                                                 | What it does                                                                                                                                                                                 |
 | -------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Emission       | `state_serde.py` `trip_plan_to_trip_inputs()`        | Settings fields **omitted** from TripPlan conversion                                                                                                                                         |
-| Restoration    | `response_envelope.py` `_build_trip_inputs_with_settings()` | Reads typed `TripSettings` via `get_trip_settings(state)` and serializes sub-models into output `trip_inputs`                                                                                |
+| Restoration    | `state_serde.py` + `plan_graph.py` complete envelope assembly | Reads typed `TripSettings` via `get_trip_settings(state)` and serializes sub-models into output `trip_inputs`                                                                                |
 | Input merge    | `streaming.py` (SSE endpoint)                        | `_USER_OWNED_SETTINGS` guard -- document baseline wins for settings fields                                                                                                                   |
 | Output persist | `crud_document.py` `apply_planner_update()`          | Strips settings from graph output before `merge_trip_inputs()`                                                                                                                               |
 
@@ -1226,6 +1243,8 @@ Maps tools to partial event kinds:
 
 Builds the final complete event with document dict including `plan_view_state`, `tiles`, `strategy_sections`, `itinerary_day_cards`, `constraint_violations`, `constraints_validated`, `suggested_responses`, etc.
 
+When `destination`, `start_date`, and `end_date` are present and there are both strategy sections and tiles, `_build_complete_envelope()` auto-runs the builder if `build_itinerary` was not explicitly called in the turn and no blocking validation errors exist. This allows auto-expansion into `itinerary_day_cards` and populates `turn_meta.builder_result` with placement/conflict metrics.
+
 ### DB Session Ownership
 
 `generate_sse()` in `streaming.py` creates and owns its own DB session via `_get_async_session_factory()` (not injected by caller). The streaming generator is fully self-contained.
@@ -1243,31 +1262,28 @@ tile_service/
 ├── service.py                # search_tiles() orchestrator
 ├── provider_base.py          # Provider ABC + BookableProvider ABC
 ├── mock_provider.py          # Mock providers for development
-├── amadeus_provider.py       # Amadeus API (disabled by default)
 ├── google_places_provider.py # Google Places API (hotels + activities; async-first)
 └── curated_provider.py       # Curated content for hero destinations
 ```
 
 ### Provider Routing Consistency
 
-The `search_tiles` tool (via logistics_node) uses a 3-tier cascade while `tile_service/service.py` retains the full 4-tier cascade:
+The `search_tiles` tool (via logistics_node) and `tile_service/service.py` both use a 3-tier cascade:
 
 **`search_tiles` tool routing (3-tier via logistics_node):**
 
 | Priority | Condition                            | Hotels                    | Activities                    |
 | -------- | ------------------------------------ | ------------------------- | ----------------------------- |
 | 1        | `USE_GOOGLE_PLACES_PROVIDER=true`    | GooglePlacesHotelProvider | GooglePlacesActivityProvider  |
-| 2        | `USE_AMADEUS_PROVIDER=true`          | AmadeusHotelProvider      | MockActivityProvider          |
-| 3        | Fallback (offline/dev)               | MockHotelProvider         | MockActivityProvider          |
+| 2        | Fallback (offline/dev)               | MockHotelProvider         | MockActivityProvider          |
 
-**`tile_service/service.py` routing (4-tier):**
+**`tile_service/service.py` routing (3-tier):**
 
 | Priority | Condition                            | Hotels                    | Activities                    |
 | -------- | ------------------------------------ | ------------------------- | ----------------------------- |
 | 1        | Curated destination                  | CuratedProvider           | CuratedProvider               |
 | 2        | `USE_GOOGLE_PLACES_PROVIDER=true`    | GooglePlacesHotelProvider | GooglePlacesActivityProvider  |
-| 3        | `USE_AMADEUS_PROVIDER=true`          | AmadeusHotelProvider      | MockActivityProvider          |
-| 4        | Fallback (offline/dev)               | MockHotelProvider         | MockActivityProvider          |
+| 3        | Fallback (offline/dev)               | MockHotelProvider         | MockActivityProvider          |
 
 ### Settings-Aware Tile Filtering
 
@@ -1385,7 +1401,7 @@ Events emitted to frontend for UI updates.
 
 ## Result Format
 
-Built by `_build_complete_envelope()` in `plan_graph.py` for the agent architecture, and by `format_result()` in `response_envelope.py` for the legacy path.
+Built by `_build_complete_envelope()` in `plan_graph.py` for the agent architecture.
 
 ```python
 {
@@ -1401,6 +1417,9 @@ Built by `_build_complete_envelope()` in `plan_graph.py` for the agent architect
         "itinerary_day_cards": [...] | null,  # ItineraryBuilder output (null until S2_STRATEGY_READY)
         "constraints_validated": [...] | null,
         "constraint_violations": [...] | null,
+        "ack_status": "applied" | "rejected" | "no_change",
+        "ack_updates": [{"field": str, "to": str}],
+        "applied_updates": [...],
     },
 }
 ```

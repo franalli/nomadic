@@ -36,6 +36,8 @@ const TileThumbnail = memo(function TileThumbnail({ tile }: { tile: Tile }) {
   );
 });
 
+const EMPTY_SAVED_TILE_IDS = new Set<string>();
+
 interface CategorySectionProps {
   /** Emoji for the category */
   emoji: string;
@@ -113,7 +115,7 @@ export function CategorySection({
   emoji,
   label,
   items,
-  savedTileIds = new Set(),
+  savedTileIds = EMPTY_SAVED_TILE_IDS,
   onSaveTile,
   onTileClick,
   defaultExpanded = true,

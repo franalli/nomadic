@@ -288,15 +288,29 @@ function ActivitiesSheetInner({
   // If saved categories exist, use them. Otherwise:
   // - If user explicitly saved (even with []), respect that choice.
   // - If user never saved, infer from day cards for initial display.
-  const effectiveInitialCategories =
-    normalizedSettingCategories.length > 0
-      ? normalizedSettingCategories
-      : (hasExplicitSettings ? [] : inferredCategories);
-  const effectiveInitialDayPreferences = hasItinerary
-    ? Object.fromEntries(
-        effectiveInitialCategories.map((cat) => [cat, inferredDayPreferences[cat] ?? normalizedSettingDayPreferences[cat] ?? 0])
-      )
-    : normalizedSettingDayPreferences;
+  const effectiveInitialCategories = useMemo(
+    () =>
+      normalizedSettingCategories.length > 0
+        ? normalizedSettingCategories
+        : (hasExplicitSettings ? normalizedSettingCategories : inferredCategories),
+    [normalizedSettingCategories, hasExplicitSettings, inferredCategories]
+  );
+  const effectiveInitialDayPreferences = useMemo(
+    () => (hasItinerary
+      ? Object.fromEntries(
+          effectiveInitialCategories.map((cat) => [
+            cat,
+            inferredDayPreferences[cat] ?? normalizedSettingDayPreferences[cat] ?? 0,
+          ])
+        )
+      : normalizedSettingDayPreferences),
+    [
+      hasItinerary,
+      effectiveInitialCategories,
+      inferredDayPreferences,
+      normalizedSettingDayPreferences,
+    ]
+  );
   const [localEnabled, setLocalEnabled] = useState(enabled);
   const [localCategories, setLocalCategories] = useState<string[]>(
     effectiveInitialCategories

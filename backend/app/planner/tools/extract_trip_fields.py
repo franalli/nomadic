@@ -81,7 +81,7 @@ class TripFieldsResult(BaseModel):
     # Metadata
     fields_changed: List[str] = Field(default_factory=list)
     date_auto_adjustments: List[Dict[str, str]] = Field(default_factory=list)
-    token_usage: Dict[str, int] = Field(default_factory=dict)
+    token_usage: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -215,19 +215,18 @@ async def extract_trip_fields(
         _classify_and_extract_with_llm,
     )
 
-    # When InjectedState is available, prefer it over the explicit params
-    # so the LLM does not have to pass current trip context manually.
+    # When InjectedState is available, ALWAYS use state values for current_*
+    # fields. The LLM may echo user-message values as current_* args, which
+    # breaks change detection (e.g. destination "Bali" vs current "Bali").
     if state is not None:
         trip_plan: dict[str, Any] = state.get("trip_plan", {})
-        current_destination = current_destination or trip_plan.get("destination", "")
-        current_origin = current_origin or trip_plan.get("origin", "")
-        current_start_date = current_start_date or trip_plan.get("start_date", "")
-        current_end_date = current_end_date or trip_plan.get("end_date", "")
-        current_adults = current_adults if current_adults != 1 else trip_plan.get("adults", 1)
-        current_children = (
-            current_children if current_children != 0 else trip_plan.get("children", 0)
-        )
-        current_budget = current_budget if current_budget != 0 else trip_plan.get("budget", 0) or 0
+        current_destination = trip_plan.get("destination", "")
+        current_origin = trip_plan.get("origin", "")
+        current_start_date = trip_plan.get("start_date", "")
+        current_end_date = trip_plan.get("end_date", "")
+        current_adults = trip_plan.get("adults", 1)
+        current_children = trip_plan.get("children", 0)
+        current_budget = trip_plan.get("budget", 0) or 0
 
     # 1. Build lightweight state proxy for context fingerprinting
     state_proxy = _build_state_proxy(

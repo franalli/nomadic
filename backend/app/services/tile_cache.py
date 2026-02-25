@@ -14,13 +14,13 @@ Usage:
     )
 
     # In logistics_node.py
-    cached = await get_cached_tiles(db, "amadeus", "hotel", dest, start, end)
+    cached = await get_cached_tiles(db, "mock", "hotel", dest, start, end)
     if cached:
         return cached
 
     # After provider call
     tiles_dicts = [serialize_tile(t) for t in tiles]
-    await set_cached_tiles(db, "amadeus", "hotel", dest, start, end, tiles_dicts)
+    await set_cached_tiles(db, "mock", "hotel", dest, start, end, tiles_dicts)
 """
 
 import logging
@@ -63,7 +63,7 @@ def _tile_cache_key(
     tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]
 
     Key components:
-    - provider: "google_places", "amadeus", "mock"
+    - provider: "google_places", "curated", "mock"
     - tile_type: "hotel", "activity"
     - destination: normalized lowercase, stripped
     - start_date, end_date: YYYY-MM-DD format
@@ -119,7 +119,7 @@ async def get_cached_tiles(
 
     Args:
         db: Async database session
-        provider: Provider name ("google_places", "amadeus", "mock")
+        provider: Provider name ("google_places", "curated", "mock")
         tile_type: Tile type ("hotel", "activity")
         destination: Trip destination
         start_date: Trip start date (YYYY-MM-DD)

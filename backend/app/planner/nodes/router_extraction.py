@@ -25,6 +25,7 @@ from app.planner.llm_factory import get_llm_by_model
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
+    TIER2_CATEGORY_ALIASES,
     TIER2_COMMON_HINTS,
 )
 from app.planner.state import GraphState
@@ -398,6 +399,7 @@ Include all matching specialists (use CANONICAL lowercase names):
 Extract any activity categories the user mentions or implies.
 Tier 2 is OPEN-ENDED — accept ANY recreational activity, not just a fixed list.
 Use short canonical lowercase forms (e.g., "horseback riding" not "horseback riding lessons").
+IMPORTANT: Use "cultural" (not "culture"), "food" (not "cuisine"), "tours" (not "tourist_attraction").
 
 Common categories: """
     + _TIER2_EXAMPLES_CSV
@@ -406,11 +408,12 @@ But also accept: pottery, meditation, birdwatching, fishing, paragliding, horseb
 
 Examples:
 - "I want to party" → ["nightlife"]
-- "explore local cuisine" → ["cooking", "food"]
+- "explore local cuisine" → ["food", "cooking"]
 - "relaxing trip with spa" → ["yoga", "wellness"]
 - "diving and cooking" → ["cooking"] (diving goes in specialist_hints, not here)
-- "temple tours and wine tasting" → ["temples", "wine"]
+- "temple tours and wine tasting" → ["tours", "wine"]
 - "horseback riding and pottery class" → ["horseback riding", "pottery"]
+- "local food and culture in Rome" → ["food", "cultural"]
 
 Do NOT include Tier 1 specialist activities ("""
     + _SPECIALIST_NAMES_CSV
@@ -1034,9 +1037,14 @@ def _populate_trip_plan_from_router_output(
     if allow_category_updates and (
         router_output.activity_categories or router_output.specialist_hints
     ):
-        # Tier 1 validated by registry; Tier 2 is open-ended — accept any reasonable string
+        # Tier 1 validated by registry; Tier 2 is open-ended — accept any reasonable string.
+        # Apply alias normalization (e.g. "culture" → "cultural") so LLM drift
+        # doesn't create duplicate categories.
         validated = [
-            c.lower().strip().replace("_", " ")
+            TIER2_CATEGORY_ALIASES.get(
+                c.lower().strip().replace("_", " "),
+                c.lower().strip().replace("_", " "),
+            )
             for c in router_output.activity_categories
             if c.strip() and len(c.strip()) <= 40
         ]

@@ -1,3 +1,5 @@
+'use client';
+
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 import { Minus, Plus } from 'lucide-react';
 import * as React from 'react';

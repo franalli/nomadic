@@ -13,9 +13,10 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
 import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
+import { triggerRegeneration } from '@/hooks/usePreferenceAutoRegen';
+import { debugLog } from '@/lib/debug';
 import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
-import type { AckUpdate , ChatMessage } from '@/types/chat';
 import type {
   ActivitySettings,
   BookingTypes,
@@ -53,7 +54,6 @@ interface ChatModuleSheetsProps {
 
   // Core actions
   sendMessageCore: (messageText: string, options?: { suggestionClicked?: string }) => Promise<void>;
-  addMessage: (msg: ChatMessage) => void;
   toast: (message: string) => void;
 
   // Open state (controlled from parent)
@@ -74,7 +74,8 @@ export function ChatModuleSheets({
   flightSettings,
   hotelSettings,
   activitySettings,
-  planViewState,
+  // planViewState read from store at save time (prop may be stale after PATCH)
+  planViewState: _planViewState,
   origin,
   hasDestination,
   hasDates,
@@ -84,7 +85,6 @@ export function ChatModuleSheets({
   onUpdateActivitySettings,
   onOpenSheet,
   sendMessageCore,
-  addMessage,
   toast,
   flightsSheetOpen,
   setFlightsSheetOpen,
@@ -159,15 +159,13 @@ export function ChatModuleSheets({
             onUpdateHotelSettings(settings);
           }
           toast('Stay preferences saved');
-          const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
-            planViewState ?? ''
-          );
-          if (isActive) {
-            const updates: AckUpdate[] = [];
-            if (settings.min_stars) updates.push({ field: 'hotels', to: `${settings.min_stars}+ stars` });
-            if (updates.length > 0) {
-              addMessage({ id: `sys_ack_${Date.now()}`, role: 'system', content: '', displayMode: 'ack_line', ackStatus: 'applied', ackUpdates: updates });
-            }
+          // Read CURRENT planViewState from store (prop may be stale after PATCH)
+          const currentStaysPVS = useDocumentStore.getState().document?.plan_view_state;
+          const isS3Stays = ['S3_ITINERARY_READY', 'S3_EDITING'].includes(currentStaysPVS ?? '');
+          const isS2Stays = currentStaysPVS === 'S2_STRATEGY_READY';
+          if (isS3Stays) {
+            triggerRegeneration(true);
+          } else if (isS2Stays) {
             sendMessageCore(GENERATE_PLAN_TRIGGER);
           }
         }}
@@ -196,7 +194,6 @@ export function ChatModuleSheets({
         }}
         onSaveSettings={async (settings) => {
           setActivityUserSaved(true);
-          const prevDayPrefs = activitySettings?.day_preferences || {};
           const prevCats = new Set(activitySettings?.categories || []);
           const newCats = new Set(settings.categories || []);
 
@@ -252,33 +249,34 @@ export function ChatModuleSheets({
           });
 
           toast('Activity preferences saved');
-          const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
-            planViewState ?? ''
+          // === FULL DIAGNOSTIC — REMOVE AFTER FIX ===
+          const _diagDoc = useDocumentStore.getState().document;
+          const _diagPVS = _diagDoc?.plan_view_state;
+          const _diagTiles = _diagDoc?.tiles ? Object.keys(_diagDoc.tiles) : [];
+          const _diagActivityTiles = _diagTiles.filter(k => k.includes('activity'));
+          const _diagDayCards = _diagDoc?.day_cards?.length ?? 0;
+          debugLog(
+            '[DIAG:ACTIVITY_SAVE]',
+            `plan_view_state: ${_diagPVS}`,
+            `isS3: ${['S3_ITINERARY_READY', 'S3_EDITING'].includes(_diagPVS ?? '')}`,
+            `isS2: ${_diagPVS === 'S2_STRATEGY_READY'}`,
+            `saved_categories: ${JSON.stringify(settings.categories)}`,
+            `tiles_total: ${_diagTiles.length}`,
+            `activity_tiles: ${_diagActivityTiles.length} ${JSON.stringify(_diagActivityTiles)}`,
+            `day_cards: ${_diagDayCards}`,
+            `will_trigger_path: ${['S3_ITINERARY_READY', 'S3_EDITING'].includes(_diagPVS ?? '') ? 'triggerRegeneration' : _diagPVS === 'S2_STRATEGY_READY' ? 'GENERATE_PLAN_NOW' : 'NONE'}`,
           );
-          if (isActive) {
-            const newDayPrefs = settings.day_preferences || {};
-            const updates: AckUpdate[] = [];
-            for (const cat of newCats) {
-              if (!prevCats.has(cat)) {
-                updates.push({ field: cat, to: 'added' });
-              }
-            }
-            for (const cat of prevCats) {
-              if (!newCats.has(cat)) {
-                updates.push({ field: cat, to: 'removed' });
-              }
-            }
-            for (const [topic, newVal] of Object.entries(newDayPrefs)) {
-              const prevVal = prevDayPrefs[topic];
-              if (prevVal !== undefined && prevVal !== newVal) {
-                updates.push({ field: topic, to: `${newVal} days`, from_value: `${prevVal} days` });
-              } else if (prevVal === undefined) {
-                updates.push({ field: topic, to: `${newVal} days` });
-              }
-            }
-            if (updates.length > 0) {
-              addMessage({ id: `sys_ack_${Date.now()}`, role: 'system', content: '', displayMode: 'ack_line', ackStatus: 'applied', ackUpdates: updates });
-            }
+          // === END DIAGNOSTIC ===
+          // Read CURRENT planViewState from store (prop may be stale after PATCH)
+          const currentPVS = useDocumentStore.getState().document?.plan_view_state;
+          const isS3Activities = ['S3_ITINERARY_READY', 'S3_EDITING'].includes(currentPVS ?? '');
+          const isS2Activities = currentPVS === 'S2_STRATEGY_READY';
+          if (isS3Activities) {
+            // Deterministic rebuild — re-search activity tiles + rebuild itinerary.
+            // No agent, no LLM, ~2-3s instead of ~15s.
+            const cats = settings.categories?.length ? settings.categories : undefined;
+            triggerRegeneration(true, cats);
+          } else if (isS2Activities) {
             sendMessageCore(GENERATE_PLAN_TRIGGER);
           }
         }}

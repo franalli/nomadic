@@ -38,10 +38,29 @@ let cleanupFn: (() => void) | null = null;
 
 // ─── Core regeneration logic ─────────────────────────────────────────────────
 
-async function triggerRegeneration(): Promise<void> {
-  // Race condition guards
-  if (useDocumentStore.getState().isRegenerating) return;
-  if (useDocumentStore.getState().expandInProgress) return;
+export async function triggerRegeneration(
+  forceFullRebuild = false,
+  refreshActivityCategories?: string[],
+): Promise<void> {
+  // === FULL DIAGNOSTIC — LAYER 10: REGEN ENTRY ===
+  debugLog(
+    '[DIAG:REGEN_ENTRY]',
+    `forceFullRebuild: ${forceFullRebuild}`,
+    `refreshActivityCategories: ${JSON.stringify(refreshActivityCategories)}`,
+    `isRegenerating: ${useDocumentStore.getState().isRegenerating}`,
+    `expandInProgress: ${useDocumentStore.getState().expandInProgress}`,
+  );
+  // === END DIAGNOSTIC ===
+
+  // Race condition guards — single getState() for atomicity
+  const { isRegenerating: alreadyRegenerating, expandInProgress: alreadyExpanding } =
+    useDocumentStore.getState();
+  if (alreadyRegenerating || alreadyExpanding) {
+    // === DIAGNOSTIC ===
+    debugLog('[DIAG:REGEN_BLOCKED] already running — skipping');
+    // === END DIAGNOSTIC ===
+    return;
+  }
 
   // Abort any in-flight regen before starting a new one
   abortRef?.abort();
@@ -83,6 +102,15 @@ async function triggerRegeneration(): Promise<void> {
       }
     }
 
+    // === FULL DIAGNOSTIC — LAYER 11: EXPAND REQUEST ===
+    debugLog('[DIAG:EXPAND_REQ]', `body=${JSON.stringify({
+      force_full_rebuild: forceFullRebuild,
+      refresh_activity_categories: refreshActivityCategories,
+      tiles_count: Object.keys(document?.tiles ?? {}).length,
+      strategy_sections_count: document?.strategy_sections?.length,
+    })}`);
+    // === END DIAGNOSTIC ===
+
     const response = await apiFetch('/api/expand-itinerary', {
       method: 'POST',
       signal,
@@ -96,8 +124,14 @@ async function triggerRegeneration(): Promise<void> {
           preferred_activity_ids: activityIds,
           preferred_flight_ids: flightIds,
         },
+        ...(forceFullRebuild ? { force_full_rebuild: true } : {}),
+        ...(refreshActivityCategories ? { refresh_activity_categories: refreshActivityCategories } : {}),
       }),
     });
+
+    // === DIAGNOSTIC ===
+    debugLog('[DIAG:EXPAND_RES]', `status=${response.status}`, `ok=${response.ok}`);
+    // === END DIAGNOSTIC ===
 
     if (!response.ok) {
       throw new Error(`API error: ${response.status}`);

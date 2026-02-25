@@ -27,6 +27,17 @@ if _debug_mode != "full":
     warnings.filterwarnings("ignore")
     logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
 
+
+class _PhotoProxyLogFilter(logging.Filter):
+    """Suppress noisy access logs for the Google Places photo proxy endpoints."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return "/api/media/google-places-photo" not in msg
+
+
+logging.getLogger("uvicorn.access").addFilter(_PhotoProxyLogFilter())
+
 from fastapi import Depends, FastAPI, HTTPException, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
@@ -117,6 +128,9 @@ from app.schemas import (  # noqa: E402
     TripInputValidationResponse,
 )
 from app.services.itinerary_builder import POI_TYPE_ALIASES as _POI_TYPE_ALIASES  # noqa: E402
+from app.services.itinerary_builder import (  # noqa: E402
+    _price_estimate_to_level,
+)
 from app.services.spend_guard import (  # noqa: E402
     SpendLimitExceeded,
     reserve_places_spend_or_raise,
@@ -538,32 +552,7 @@ def _first_trip_anchor_coordinates(doc_data: PlanDocumentData) -> Dict[str, floa
     return None
 
 
-def _price_estimate_to_level(price_estimate: float | str | None) -> int | None:
-    """Bucket a per-person dollar estimate into a Google Places price_level (0-4).
-
-    Accepts:
-    - float/int: dollar amount bucketed by range
-    - str: Browse tile string markers ("Free", "$", "$$", "$$$", "$$$$")
-    - None: returns None
-
-    Used as a fallback when enrichment doesn't return a Places priceLevel
-    (common for experience-generator Tier 2 tiles and Browse tiles).
-    """
-    if price_estimate is None:
-        return None
-    if isinstance(price_estimate, str):
-        str_map = {"Free": 0, "$": 1, "$$": 2, "$$$": 3, "$$$$": 4}
-        return str_map.get(price_estimate)
-    p = float(price_estimate)
-    if p == 0:
-        return 0
-    if p < 30:
-        return 1
-    if p < 75:
-        return 2
-    if p < 150:
-        return 3
-    return 4
+# _price_estimate_to_level imported from app.services.itinerary_builder
 
 
 def _resolve_fill_day_block_constraints(tile_specialist: str, meta: Dict[str, Any]) -> List[str]:

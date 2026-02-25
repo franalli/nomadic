@@ -53,6 +53,20 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         f"planner_build_id={PLANNER_BUILD_ID}, cache_schema_version={CACHE_SCHEMA_VERSION}"
     )
 
+    # Log spend guard state (counters start at $0 on every boot)
+    from app.config import settings
+    from app.services.spend_guard import get_spend_guard_snapshot
+
+    sg = get_spend_guard_snapshot()
+    logger.info(
+        "[Startup] SpendGuard counters reset to $%.2f "
+        "(enabled=%s, session_cap=$%.2f, global_cap=$%.2f)",
+        sg["global_spend_usd"],
+        settings.spend_guard_enabled,
+        settings.spend_guard_session_daily_cap_usd,
+        settings.spend_guard_global_daily_cap_usd,
+    )
+
     # Prewarm validation cache
     validation_count = await prewarm_cache()
     _debug(f"[Validation] Pre-warmed cache with {validation_count} entries")
@@ -114,14 +128,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     _sync_engine.dispose()
     logger.info("[Shutdown] Disposed sync DB engine")
 
-    # 3. Close Amadeus HTTP client
-    from app.tools.amadeus_client import AmadeusClient
-
-    if AmadeusClient._instance is not None:
-        await AmadeusClient._instance.close()
-        logger.info("[Shutdown] Closed Amadeus HTTP client")
-
-    # 4. Cancel unsplash in-flight fetch tasks (before closing HTTP client)
+    # 3. Cancel unsplash in-flight fetch tasks (before closing HTTP client)
     from app.services.unsplash import (
         _inflight_fetches,
         _inflight_fetches_lock,

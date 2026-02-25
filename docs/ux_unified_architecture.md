@@ -964,11 +964,11 @@ We do not swap `SetupView` for `PlanView`. We use a single **`StrategyStageRende
 
 ---
 
-## III. Backend State Logic (`response_envelope.py`)
+## III. Backend State Logic (`plan_graph.py`)
 
-The backend dictates the Planning Phase based on data density. The primary function is `_compute_plan_view_state()` in `response_envelope.py`.
+The backend dictates the Planning Phase based on data richness. `plan_graph.py` computes `plan_view_state` in `_build_complete_envelope()`, using `_compute_s3_view_state()` for final S3 sub-states.
 
-**Primary envelope base logic (`_compute_plan_view_state`):**
+**Primary envelope base logic (`_build_complete_envelope`):**
 
 | Logic Check (evaluated in order) | State Output | Explanation |
 | --- | --- | --- |
@@ -994,7 +994,7 @@ P1_ENRICHED → P2_LOGISTICS → BUILD ITINERARY → P3_FINALIZED
 
 **Conflict Resolution Flow (Chat-Driven):**
 
-When the builder fails (trip too short for all specialists), `response_envelope` stores `last_builder_success = False` + `last_builder_resolutions` in state metadata. On the next chat turn, the constraint guard (via `validate_plan` tool) re-surfaces the blocking violation (instead of suppressing it), and `SuggestionChipMiddleware` generates resolution suggestion chips (e.g., "Extend to Mar 12", "Remove hiking"). Partial `day_cards` (what CAN fit) auto-render at `S3_PARTIAL_CONFLICT` immediately.
+When the builder fails (trip too short or route/constraint issues), middleware/guard state is recorded in `turn_meta.validation_result` and `turn_meta.builder_result` and reflected in the same-turn complete envelope (`ack_status`, `ack_updates`, partial `itinerary_day_cards` where possible). On the next chat turn, `validate_plan` reruns violations and `SuggestionChipMiddleware` generates actionable chips (e.g., "Extend to Mar 12", "Remove hiking"). Partial `day_cards` (what CAN fit) can render at `S3_PARTIAL_CONFLICT` immediately.
 
 **Invariant:** User is NEVER left with silently dropped activities. All conflicts are surfaced via suggestion chips with actionable resolutions.
 
@@ -1352,7 +1352,7 @@ function derives up to 3 template-based chips from current state fields — no L
 **Chip Structure:** Each chip is a dict with `message`, `action_type` (`"send_message"`),
 `action_target`, `chip_type` (`"cta"` | `"question"` | `"suggestion"` | `"info"`),
 `category`, and `icon` (Lucide name). Chips are stored in `persistent_meta.suggestion_chips`
-and passed through `response_envelope.py`.
+and passed through the complete-envelope assembly in `plan_graph.py`.
 
 | State | Example Chips |
 |-------|---------------|
@@ -1402,7 +1402,7 @@ Exploration mode exits when user provides actionable parameters:
 ### Implementation Reference
 
 **Backend:** Agent planner generates responses directly; `extract_trip_fields` tool handles intent parsing.
-**State tracking:** `state.metadata["short_circuit_type"] = "exploration"` or `"soft_transition"`
+**State tracking:** `turn_meta["short_circuit_type"]` is derived from routing context before envelope assembly.
 
 ### UI Components for Exploration → Planning Transition
 
@@ -1672,7 +1672,7 @@ plan_documents.document (JSONB)
 |-------|--------------|------------------|--------|
 | `trip_inputs` | ✅ Yes | ✅ Yes | User input / LLM extraction |
 | `branches` | ✅ Yes | ✅ Yes | Graph plan generation |
-| `tiles` | ✅ Yes | ✅ Yes | Amadeus/Curated providers |
+| `tiles` | ✅ Yes | ✅ Yes | Curated/Google Places/Mock providers |
 | `strategy_sections` | ✅ Yes | ✅ Yes | Specialist nodes |
 | `day_cards` | ✅ Yes | ✅ Yes | Itinerary builder |
 | `plan_view_state` | ✅ Yes | ✅ Yes | State machine (backend-authoritative on hydration) |
@@ -1780,7 +1780,7 @@ useSessionHydration() runs
 | `ChatMessageList` | Scrollable message list renderer — owns scroll container div and all message rendering. Extracted from ChatPanel. |
 | `ChatInputHandler` | Thin wrapper around `ChatInputBar` converting ChatPanel-level callbacks to form-submit signatures. Extracted from ChatPanel. |
 | `ChatSuggestionBar` | Thin wrapper around `ChatSuggestionChips` for ChatPanel integration. Extracted from ChatPanel. |
-| `ChatMessageRenderer` | Renders individual chat messages: system ack lines, user bubbles with SystemReceipt, assistant bubbles with markdown/specialist deep links/streaming pulse/retry button (extracted from ChatPanel) |
+| `ChatMessageRenderer` | Renders individual chat messages: user bubbles and assistant bubbles with markdown/specialist deep links/streaming pulse/retry button (extracted from ChatPanel) |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available; supports controlled expand/collapse for stays and flights from `PlanFullDensityView` row-two toggle chips |
@@ -2136,7 +2136,7 @@ User: "Plan diving and hiking Bali March 1-5"
 
 2. **Inline Conflict Handling** (replaced former ConflictResolutionBanner)
    - Partial `day_cards` auto-render at `S3_PARTIAL_CONFLICT` showing what CAN fit
-   - Blocking violations re-surface on next chat turn via `last_builder_success` metadata
+   - Blocking violations re-surface on next chat turn via `turn_meta.builder_result` metadata
    - SuggestionChipMiddleware generates actionable resolution chips: "Extend to Mar 12", "Remove hiking"
    - **Unschedulable block styling:**
      - `opacity-60` with dashed amber border (`border-2 border-dashed border-amber-500/50`)
@@ -3331,7 +3331,7 @@ Both first-time requests (`logistics_node`) and regeneration (`tile_service`) us
 | Priority | Provider | Data Quality | Use Case |
 |----------|----------|--------------|----------|
 | 1 | **CuratedProvider** | 4K images, hand-picked hotels, accurate prices | Hero destinations (Dubai, Rome, Chamonix) |
-| 2 | **AmadeusProvider** | Real hotel names, chain codes, coordinates | Live data with placeholder images |
+| 2 | **GooglePlacesProvider** | Real place names, photos, ratings, coordinates | Live data for hotels and activities |
 | 3 | **MockProvider** | Generic data, Unsplash images | Development fallback |
 
 ### Provider Files
@@ -3340,7 +3340,7 @@ Both first-time requests (`logistics_node`) and regeneration (`tile_service`) us
 backend/app/tile_service/
 ├── service.py            # Provider routing orchestrator
 ├── curated_provider.py   # Hero destination content (DEMO_MANIFEST)
-├── amadeus_provider.py   # Amadeus API integration (real hotel names)
+├── google_places_provider.py  # Google Places integration (real names/photos)
 ├── mock_provider.py      # Mock data with Unsplash images
 └── provider_base.py      # Provider ABC interface
 ```
@@ -3357,9 +3357,9 @@ def get_providers(destination: str) -> List[Provider]:
     if dest_key in DEMO_MANIFEST:
         return [CuratedProvider(dest_key)]
 
-    # 2. AMADEUS SECOND - Real hotel names, placeholder images
-    if settings.use_amadeus_provider:
-        return [AmadeusHotelProvider(), AmadeusFlightProvider()]
+    # 2. GOOGLE PLACES SECOND - Real place names, photos, ratings
+    if settings.use_google_places_provider:
+        return [GooglePlacesHotelProvider(), MockFlightProvider(), GooglePlacesActivityProvider()]
 
     # 3. MOCK FALLBACK - Development/offline mode
     return [MockHotelProvider(), MockFlightProvider(), MockActivityProvider()]
@@ -3367,7 +3367,7 @@ def get_providers(destination: str) -> List[Provider]:
 
 ### Provider Comparison
 
-| Aspect | CuratedProvider | AmadeusProvider | MockProvider |
+| Aspect | CuratedProvider | GooglePlacesProvider | MockProvider |
 |--------|-----------------|-----------------|--------------|
 | **Hotel Names** | Hand-picked (e.g., "Atlantis The Royal") | Real API data (e.g., "Hilton Dubai Creek") | Generic (e.g., "Mock Hotel 1") |
 | **Images** | Hand-picked Unsplash URLs | Auto-generated Unsplash | Auto-generated Unsplash |
@@ -3382,7 +3382,7 @@ def get_providers(destination: str) -> List[Provider]:
 | Provider | Image Source | How |
 |----------|--------------|-----|
 | **Curated** | Hand-picked Unsplash URLs in DEMO_MANIFEST | `hotel.get("image")` |
-| **Amadeus** | Auto-generated Unsplash via placeholder | `get_placeholder_image(category, seed)` |
+| **Google Places** | Place photo URL (with deterministic fallback placeholder) | Google Places provider + `get_placeholder_image(category, seed)` fallback |
 | **Mock** | Auto-generated Unsplash via placeholder | `get_placeholder_image(category, seed)` |
 
 ```python
@@ -3421,8 +3421,8 @@ Each entry includes:
 
 | Flow | Hotels | Activities | Flights |
 |------|--------|------------|---------|
-| First Request (logistics_node) | Curated → Amadeus → Mock | Curated → Mock | Curated → Mock |
-| Regeneration (tile_service) | Curated → Amadeus → Mock | Curated → Mock | Curated → Mock |
+| First Request (logistics_node) | Curated → Google Places → Mock | Curated → Google Places → Mock | Curated → Mock |
+| Regeneration (tile_service) | Curated → Google Places → Mock | Curated → Google Places → Mock | Curated → Mock |
 
 **Invariant:** Both flows use identical routing logic, ensuring tiles have consistent data regardless of how they were fetched.
 
@@ -3439,7 +3439,7 @@ This section provides a quick reference for how the key systems are wired across
 | `backend/app/tile_service/service.py:47-107` | Tile regeneration | `_get_providers()` - 3-tier cascade |
 | `backend/app/planner/nodes/logistics_node.py` | First-time fetch | Same 3-tier cascade |
 | `backend/app/tile_service/curated_provider.py` | Hero destinations | Dubai, Rome, Chamonix |
-| `backend/app/tile_service/amadeus_provider.py` | Real hotel names | Placeholder images fallback |
+| `backend/app/tile_service/google_places_provider.py` | Real hotel/activity names | Place photos and ratings |
 | `backend/app/tile_service/mock_provider.py` | Development fallback | Auto-generated Unsplash |
 
 ### Mode-Aware UI Components

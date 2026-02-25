@@ -459,9 +459,11 @@ describe('RichBlockRenderer activity hierarchy', () => {
         id: 'activity_tile_5',
         type: 'activity',
         title: 'Roman Forum',
-        price_estimate: '$$',
         currency: 'USD',
         deeplink_url: 'https://example.com/activity_tile_5',
+        meta: {
+          price_estimate: '$$',
+        },
       },
     });
 

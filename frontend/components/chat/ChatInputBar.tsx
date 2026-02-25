@@ -74,6 +74,7 @@ export function ChatInputBar({
           <textarea
             ref={inputRef}
             disabled={isInputDisabledByPlanState}
+            aria-label="Chat message"
             className="w-full bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-4 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
             placeholder={
               isInputDisabledByPlanState

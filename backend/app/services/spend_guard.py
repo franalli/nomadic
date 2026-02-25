@@ -16,17 +16,9 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from threading import Lock
 
-from app.config import settings
+from app.config import MODEL_PRICING_PER_1M, settings
 
 logger = logging.getLogger(__name__)
-
-# Per-1M token pricing (USD), aligned with debug_utils.py.
-_MODEL_PRICING_PER_1M = {
-    "gpt-4o": {"prompt": 2.50, "completion": 10.00},
-    "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
-    "gemini-2.5-flash": {"prompt": 0.15, "completion": 0.60},
-    "gemini-2.5-pro": {"prompt": 1.25, "completion": 5.00},
-}
 
 _session_id_ctx: ContextVar[str | None] = ContextVar("spend_guard_session_id", default=None)
 
@@ -34,7 +26,7 @@ _spend_lock = Lock()
 _spend_day_key = datetime.now(UTC).date().isoformat()
 _session_spend_usd: dict[str, float] = {}
 _global_spend_usd = 0.0
-_provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0, "amadeus": 0.0}
+_provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0}
 
 
 class SpendLimitExceeded(RuntimeError):
@@ -82,7 +74,6 @@ def _rollover_if_needed() -> None:
     _session_spend_usd.clear()
     _provider_spend_usd["llm"] = 0.0
     _provider_spend_usd["places"] = 0.0
-    _provider_spend_usd["amadeus"] = 0.0
     _global_spend_usd = 0.0
 
 
@@ -150,7 +141,7 @@ def _reserve_or_raise(
 
 
 def _estimate_llm_call_usd(model: str, max_tokens: int | None = None) -> float:
-    pricing = _MODEL_PRICING_PER_1M.get(model)
+    pricing = MODEL_PRICING_PER_1M.get(model)
     if not pricing:
         return max(0.0, float(settings.spend_guard_llm_unknown_model_estimated_call_usd))
 
@@ -193,20 +184,6 @@ def reserve_places_spend_or_raise(
     )
 
 
-def reserve_amadeus_spend_or_raise(
-    *,
-    session_id: str | None = None,
-    source: str = "amadeus",
-) -> None:
-    estimated = max(0.0, float(settings.spend_guard_amadeus_estimated_call_usd))
-    _reserve_or_raise(
-        provider="amadeus",
-        estimated_usd=estimated,
-        session_id=session_id,
-        source=source,
-    )
-
-
 def clear_spend_guard_counters() -> None:
     """Reset in-memory spend counters (tests/admin maintenance)."""
     global _spend_day_key
@@ -217,7 +194,6 @@ def clear_spend_guard_counters() -> None:
         _session_spend_usd.clear()
         _provider_spend_usd["llm"] = 0.0
         _provider_spend_usd["places"] = 0.0
-        _provider_spend_usd["amadeus"] = 0.0
         _global_spend_usd = 0.0
 
 

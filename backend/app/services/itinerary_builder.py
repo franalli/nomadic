@@ -544,6 +544,9 @@ class ItineraryBuilder:
             # Phase 2: Extract activities and constraints from all specialists
             activities, constraints = self._extract_specialist_content(input_data.strategy_sections)
 
+            # Phase 2.5: Enrich specialist activities with Google Places tile data
+            activities = self._enrich_activities_from_tiles(activities, input_data.tiles)
+
             # Phase 2a: Merge constraints with priority
             merged_constraints = self._merge_constraints(constraints)
 
@@ -826,6 +829,88 @@ class ItineraryBuilder:
         )
 
         return activities_by_specialist, all_constraints
+
+    def _enrich_activities_from_tiles(
+        self,
+        activities_by_specialist: Dict[str, List[ActivityBlock]],
+        tiles: Dict[str, Any],
+    ) -> Dict[str, List[ActivityBlock]]:
+        """Phase 2.5: Cross-reference specialist content_added activities with
+        search_tiles results to inherit Google Places data (rating, coordinates,
+        photo, price, deeplink).
+
+        Matching strategy: normalized title exact match.  Both sources describe
+        the same well-known venues (e.g. "Roman Forum") so this is sufficient.
+
+        Also stores ``_matched_tile`` on enriched activities so Phase 5 block
+        construction can set ``booked_tile`` for frontend photo resolution.
+        """
+        # Build lookup from activity tiles: normalized_title → tile dict
+        activity_tiles = [
+            t for t in tiles.values() if isinstance(t, dict) and t.get("type") == "activity"
+        ]
+        if not activity_tiles:
+            return activities_by_specialist
+
+        tile_by_title: Dict[str, Dict[str, Any]] = {}
+        for tile in activity_tiles:
+            key = _normalize_title_key(tile.get("title"))
+            if key and key not in tile_by_title:
+                tile_by_title[key] = tile
+
+        enriched_count = 0
+        for _specialist, activities in activities_by_specialist.items():
+            for activity in activities:
+                key = _normalize_title_key(activity.title)
+                tile = tile_by_title.get(key)
+                if tile is None:
+                    continue
+
+                meta = tile.get("meta") or {}
+                geo = tile.get("geo") or {}
+
+                if activity.rating is None and tile.get("rating") is not None:
+                    activity.rating = tile["rating"]
+
+                if activity.user_ratings_count is None:
+                    activity.user_ratings_count = tile.get("review_count") or tile.get(
+                        "user_ratings_count"
+                    )
+
+                if activity.price_level is None:
+                    pl = meta.get("price_level") or tile.get("price_level")
+                    if pl is not None:
+                        activity.price_level = pl
+                    elif tile.get("price_estimate") is not None:
+                        activity.price_level = _price_estimate_to_level(tile["price_estimate"])
+
+                if activity.coordinates is None:
+                    if isinstance(geo, dict) and geo.get("lat") and geo.get("lng"):
+                        activity.coordinates = [geo["lng"], geo["lat"]]
+
+                if activity.google_place_id is None:
+                    activity.google_place_id = meta.get("place_id") or tile.get("google_place_id")
+
+                if activity.deeplink is None:
+                    activity.deeplink = tile.get("deeplink_url") or tile.get("deeplink")
+
+                if activity.image_url is None:
+                    activity.image_url = tile.get("image_url")
+
+                if activity.tile_id is None:
+                    activity.tile_id = tile.get("id")
+
+                # Store matched tile for Phase 5 booked_tile assignment
+                activity._matched_tile = tile  # type: ignore[attr-defined]
+                enriched_count += 1
+
+        if enriched_count > 0:
+            total = sum(len(a) for a in activities_by_specialist.values())
+            _debug_itinerary(
+                f"🔗 Phase 2.5: Enriched {enriched_count}/{total} activities from tiles"
+            )
+
+        return activities_by_specialist
 
     def _merge_constraints(self, constraints: List[Dict[str, Any]]) -> List[MergedConstraint]:
         """Merge constraints from all specialists with priority."""
@@ -1504,6 +1589,7 @@ class ItineraryBuilder:
 
                     is_user_preferred = getattr(activity, "is_user_preferred", False)
                     preference_status = "user_preferred" if is_user_preferred else None
+                    matched_tile = getattr(activity, "_matched_tile", None)
                     block = DayBlockOutput(
                         id=f"act_{spec}_{day_idx}_{len(day.blocks)}",
                         period=periods[period_ptr % len(periods)],
@@ -1520,6 +1606,9 @@ class ItineraryBuilder:
                         price_level=activity.price_level,
                         google_place_id=activity.google_place_id,
                         deeplink=activity.deeplink,
+                        booked_tile=matched_tile,
+                        requires_booking=bool(matched_tile),
+                        booking_category="activity" if matched_tile else None,
                     )
                     if activity.coordinates:
                         block.coordinates = {
@@ -1574,6 +1663,7 @@ class ItineraryBuilder:
 
                     is_user_preferred = getattr(activity, "is_user_preferred", False)
                     preference_status = "user_preferred" if is_user_preferred else None
+                    matched_tile = getattr(activity, "_matched_tile", None)
                     block = DayBlockOutput(
                         id=f"act_{spec}_{day_idx}_{len(day.blocks)}",
                         period=periods[period_ptr % len(periods)],
@@ -1590,6 +1680,9 @@ class ItineraryBuilder:
                         price_level=activity.price_level,
                         google_place_id=activity.google_place_id,
                         deeplink=activity.deeplink,
+                        booked_tile=matched_tile,
+                        requires_booking=bool(matched_tile),
+                        booking_category="activity" if matched_tile else None,
                     )
                     if activity.coordinates:
                         block.coordinates = {
@@ -1674,6 +1767,7 @@ class ItineraryBuilder:
                     if best_day_idx is not None:
                         day = days[best_day_idx]
                         is_user_preferred = getattr(activity, "is_user_preferred", False)
+                        matched_tile = getattr(activity, "_matched_tile", None)
                         block = DayBlockOutput(
                             id=f"act_{spec}_{best_day_idx}_{len(day.blocks)}",
                             period=periods[period_ptr % len(periods)],
@@ -1690,6 +1784,9 @@ class ItineraryBuilder:
                             price_level=activity.price_level,
                             google_place_id=activity.google_place_id,
                             deeplink=activity.deeplink,
+                            booked_tile=matched_tile,
+                            requires_booking=bool(matched_tile),
+                            booking_category="activity" if matched_tile else None,
                         )
                         if activity.coordinates:
                             block.coordinates = {
@@ -1787,6 +1884,7 @@ class ItineraryBuilder:
                 # Determine preference status for attribution badge
                 is_user_preferred = getattr(activity, "is_user_preferred", False)
                 preference_status = "user_preferred" if is_user_preferred else None
+                matched_tile = getattr(activity, "_matched_tile", None)
 
                 # Create block with preference attribution
                 block = DayBlockOutput(
@@ -1806,6 +1904,9 @@ class ItineraryBuilder:
                     price_level=activity.price_level,
                     google_place_id=activity.google_place_id,
                     deeplink=activity.deeplink,
+                    booked_tile=matched_tile,
+                    requires_booking=bool(matched_tile),
+                    booking_category="activity" if matched_tile else None,
                 )
 
                 if activity.coordinates:
@@ -2244,10 +2345,14 @@ class ItineraryBuilder:
                     or ""
                 ).lower()
                 tile_tags = {tag.lower() for tag in t.get("tags") or []}
+                tile_source_cats = {
+                    c.lower() for c in (t.get("meta") or {}).get("source_categories", [])
+                }
                 category_match = (
                     not tile_cat
                     or tile_cat in self._active_categories
                     or bool(tile_tags & self._active_categories)
+                    or bool(tile_source_cats & self._active_categories)
                 )
                 if category_match:
                     filtered.append(t)
@@ -2270,12 +2375,35 @@ class ItineraryBuilder:
             )
         )
 
+        # Cross-source dedup: collect normalized titles from ALL existing
+        # blocks (e.g. specialist content_added from Phase 2) so we don't
+        # place a duplicate tile for the same venue.
+        existing_titles: set[str] = set()
+        for day in days:
+            for block in day.blocks:
+                title = getattr(block, "summary", None)
+                if title:
+                    existing_titles.add(_normalize_title_key(title))
+
+        pre_dedup_count = len(experience_tiles)
+        experience_tiles = [
+            t
+            for t in experience_tiles
+            if _normalize_title_key(t.get("title")) not in existing_titles
+        ]
+        cross_removed = pre_dedup_count - len(experience_tiles)
+        if cross_removed > 0:
+            _debug_itinerary(
+                f"📅 Phase 5.6: {len(experience_tiles)} tiles after cross-source dedup "
+                f"(removed {cross_removed} duplicates vs existing blocks)"
+            )
+
         # Deduplicate by normalised title — the experience generator can
         # produce tiles with different IDs but identical titles.
         seen_titles: set[str] = set()
         deduped: list[dict] = []
         for t in experience_tiles:
-            title_key = (t.get("title") or "").strip().lower()
+            title_key = _normalize_title_key(t.get("title"))
             if title_key and title_key in seen_titles:
                 continue
             if title_key:

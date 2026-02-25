@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import date, timedelta
 from typing import Any, Callable
 
 from langchain.agents.middleware.types import (
@@ -254,6 +255,22 @@ def _normalize_trip_settings(raw_settings: dict[str, Any]) -> dict[str, Any]:
     return trip_settings
 
 
+def _short_date(iso_date: str) -> str:
+    """Format YYYY-MM-DD as 'Mon D'; pass through on parse failure."""
+    try:
+        from datetime import datetime
+
+        return datetime.strptime(iso_date, "%Y-%m-%d").strftime("%b %-d")
+    except (TypeError, ValueError):
+        return str(iso_date)
+
+
+def _get_turn_steps(turn_meta: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return a mutable list of turn step entries."""
+    raw_steps = turn_meta.get("turn_steps", [])
+    return list(raw_steps) if isinstance(raw_steps, list) else []
+
+
 def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     """Merge extract_trip_fields result into the trip_plan dict.
 
@@ -269,6 +286,8 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
     # This prevents Pydantic default values (e.g. hotel_amenities=[]) from
     # overwriting existing state when the user didn't mention them.
     changed = set(result.get("fields_changed", []))
+    raw_turn_meta = state.get("turn_meta", {})
+    existing_steps = _get_turn_steps(raw_turn_meta) if isinstance(raw_turn_meta, dict) else []
 
     # Detect destination change -- if the user switches destination, all
     # strategy_sections, tiles, day_cards, and constraints from the old
@@ -298,6 +317,21 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
             value = result.get(field)
             if value is not None:
                 trip_plan[field] = value
+
+    # Derive end_date from start_date + duration_days when end_date is missing
+    if (
+        trip_plan.get("start_date")
+        and trip_plan.get("duration_days")
+        and not trip_plan.get("end_date")
+    ):
+        try:
+            from datetime import datetime, timedelta
+
+            sd = datetime.strptime(trip_plan["start_date"], "%Y-%m-%d")
+            ed = sd + timedelta(days=trip_plan["duration_days"] - 1)
+            trip_plan["end_date"] = ed.strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            pass
 
     # Category removals are case-insensitive.
     removal_targets = {
@@ -344,6 +378,20 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
     hotel_settings = dict(hotel_settings) if isinstance(hotel_settings, dict) else {}
     activity_settings = trip_settings.get("activity_settings", {})
     activity_settings = dict(activity_settings) if isinstance(activity_settings, dict) else {}
+
+    # Merge activity day preferences (e.g., {"hiking": 4, "diving": 2})
+    raw_day_prefs = result.get("activity_day_preferences")
+    if raw_day_prefs and isinstance(raw_day_prefs, str):
+        try:
+            parsed_prefs = json.loads(raw_day_prefs)
+            if isinstance(parsed_prefs, dict):
+                existing_prefs = activity_settings.get("day_preferences", {})
+                if not isinstance(existing_prefs, dict):
+                    existing_prefs = {}
+                existing_prefs.update({k.lower().strip(): int(v) for k, v in parsed_prefs.items()})
+                activity_settings["day_preferences"] = existing_prefs
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
 
     # Keep activity categories mirrored in trip_settings for trip_inputs envelopes.
     if "activity_categories" in trip_plan:
@@ -394,7 +442,133 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
     if activity_settings:
         trip_settings["activity_settings"] = activity_settings
 
-    updates: dict[str, Any] = {"trip_plan": trip_plan, "trip_settings": trip_settings}
+    # Auto-upgrade flights to "suggested" when origin is newly set
+    origin_just_set = False
+    if "origin" in changed and trip_plan.get("origin"):
+        bt = trip_settings.get("booking_types", {})
+        if not isinstance(bt, dict):
+            bt = {}
+        if bt.get("flights", "off") == "off":
+            bt["flights"] = "suggested"
+            trip_settings["booking_types"] = bt
+            origin_just_set = True
+
+    # Auto-upgrade activities to "suggested" when categories are explicitly set.
+    if "activity_categories" in changed:
+        categories = trip_plan.get("activity_categories", [])
+        if isinstance(categories, list) and categories:
+            bt = trip_settings.get("booking_types", {})
+            if not isinstance(bt, dict):
+                bt = {}
+            if bt.get("activities", "off") == "off":
+                bt["activities"] = "suggested"
+                trip_settings["booking_types"] = bt
+
+    # When activity categories changed via chat (without destination change),
+    # clear stale day_cards and activity tiles so auto-build re-runs.
+    if "activity_categories" in changed and not _destination_changed:
+        _existing_tiles = dict(state.get("tiles", {}))
+        _existing_tiles["activities"] = []
+        _cat_clear_updates: dict[str, Any] = {
+            "day_cards": [],
+            "tiles": _existing_tiles,
+        }
+        logger.info(
+            "[_merge_trip_fields] Categories changed to %s — cleared day_cards + activity tiles",
+            trip_plan.get("activity_categories", []),
+        )
+        _verify_tiles = _cat_clear_updates.get("tiles", {})
+        logger.info(
+            "[GUARD:TILE_CLEAR:MW] activities_after=%d day_cards_after=%d",
+            len(_verify_tiles.get("activities", [])),
+            len(_cat_clear_updates.get("day_cards", [])),
+        )
+    else:
+        _cat_clear_updates = {}
+
+    updates: dict[str, Any] = {
+        "trip_plan": trip_plan,
+        "trip_settings": trip_settings,
+        **_cat_clear_updates,
+    }
+
+    turn_meta_updates: dict[str, Any] = {"fields_changed": sorted(changed)}
+    step_entries: list[dict[str, str]] = []
+
+    summary_parts: list[str] = []
+    if "destination" in changed and trip_plan.get("destination"):
+        summary_parts.append(str(trip_plan.get("destination")))
+
+    if "start_date" in changed or "end_date" in changed:
+        start = trip_plan.get("start_date")
+        end = trip_plan.get("end_date")
+        if start and end:
+            summary_parts.append(f"{_short_date(start)}-{_short_date(end)}")
+        elif start:
+            summary_parts.append(f"from {_short_date(start)}")
+
+    if "adults" in changed or "children" in changed:
+        adults = trip_plan.get("adults")
+        children = trip_plan.get("children", 0)
+        traveler_parts: list[str] = []
+        if adults is not None:
+            traveler_parts.append(f"{adults} adult{'s' if adults != 1 else ''}")
+        if children:
+            traveler_parts.append(f"{children} child{'ren' if children != 1 else ''}")
+        if traveler_parts:
+            summary_parts.append(", ".join(traveler_parts))
+
+    if "budget" in changed:
+        budget = trip_plan.get("budget")
+        if isinstance(budget, (int, float)):
+            summary_parts.append(f"${int(budget):,} budget")
+
+    if "origin" in changed and trip_plan.get("origin"):
+        summary_parts.append(f"from {trip_plan.get('origin')}")
+
+    if "activity_categories" in changed:
+        categories = trip_plan.get("activity_categories", [])
+        if isinstance(categories, list) and categories:
+            summary_parts.append(", ".join(str(cat) for cat in categories))
+
+    if summary_parts:
+        step_entries.append({"type": "trip_update", "summary": " · ".join(summary_parts)})
+
+    settings_parts: list[str] = []
+    if "hotel_min_stars" in changed:
+        stars = hotel_settings.get("min_stars")
+        if isinstance(stars, (int, float)) and stars > 0:
+            settings_parts.append(f"{int(stars)}-star hotels")
+        elif stars == 0:
+            settings_parts.append("any hotel rating")
+    if "flight_direct_only" in changed:
+        settings_parts.append(
+            "direct flights only" if flight_settings.get("direct_only") else "connections allowed"
+        )
+    if "flight_cabin_class" in changed:
+        cabin = flight_settings.get("cabin_class")
+        if cabin:
+            settings_parts.append(f"{str(cabin).replace('_', ' ')} class")
+    if "skill_level" in changed:
+        level = activity_settings.get("skill_level")
+        if level:
+            settings_parts.append(f"{level} skill level")
+    if settings_parts:
+        step_entries.append({"type": "preference", "summary": " · ".join(settings_parts)})
+
+    if _destination_changed and trip_plan.get("destination"):
+        step_entries.append(
+            {
+                "type": "destination_change",
+                "summary": f"Switched to {trip_plan.get('destination')}",
+            }
+        )
+
+    if step_entries:
+        turn_meta_updates["turn_steps"] = existing_steps + step_entries
+
+    if origin_just_set:
+        turn_meta_updates["origin_just_set"] = True
 
     # When destination changed, clear stale data from the previous destination.
     if _destination_changed:
@@ -406,6 +580,42 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
             "[_merge_trip_fields] Destination changed -- cleared stale strategy_sections, "
             "tiles, day_cards, and constraints",
         )
+
+    # Auto-run day preference capacity check after extraction.
+    # This runs deterministically in middleware (no agent decision needed)
+    # so constraint violations surface reliably in the SSE complete event.
+    day_prefs = activity_settings.get("day_preferences", {})
+    if (
+        isinstance(day_prefs, dict)
+        and day_prefs
+        and trip_plan.get("start_date")
+        and trip_plan.get("end_date")
+    ):
+        from app.planner.nodes.constraint_guard import check_day_preference_capacity
+
+        day_pref_violations = check_day_preference_capacity(
+            start_date=trip_plan["start_date"],
+            end_date=trip_plan["end_date"],
+            day_prefs=day_prefs,
+            activity_categories=trip_plan.get("activity_categories", []),
+        )
+        if day_pref_violations:
+            v = day_pref_violations[0]
+            violation = v.to_dict()
+            violation["field"] = "end_date"
+            turn_meta_updates["validation_result"] = {
+                "valid": False,
+                "violations": [violation],
+                "warnings": [],
+                "blocking_count": 1,
+            }
+            logger.info(
+                "[_merge_trip_fields] DAY_PREFERENCE_EXCEEDS_CAPACITY: %s",
+                v.message,
+            )
+
+    if turn_meta_updates:
+        updates["turn_meta"] = turn_meta_updates
 
     return updates
 
@@ -423,7 +633,21 @@ def _merge_tiles(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any
         if new_tiles is not None:
             tiles[category] = new_tiles
 
-    return {"tiles": tiles}
+    updates: dict[str, Any] = {"tiles": tiles}
+    turn_meta = dict(state.get("turn_meta", {}))
+    steps = _get_turn_steps(turn_meta)
+    counts: list[str] = []
+    for category in ("flights", "hotels", "activities"):
+        category_tiles = result.get(category, [])
+        count = len(category_tiles) if isinstance(category_tiles, list) else 0
+        if count > 0:
+            counts.append(f"{count} {category}")
+    if counts:
+        steps.append({"type": "tiles", "summary": "Found " + " · ".join(counts)})
+        turn_meta["turn_steps"] = steps
+        updates["turn_meta"] = turn_meta
+
+    return updates
 
 
 def _merge_specialist(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
@@ -457,6 +681,20 @@ def _merge_specialist(state: dict[str, Any], result: dict[str, Any]) -> dict[str
                 existing_constraints.append(c)
                 existing_ids.add(cid)
         updates["constraints"] = existing_constraints
+
+    topic = str(result.get("topic", "") or "").strip()
+    pretty_topic = topic.replace("_", " ").title() if topic else "Specialist"
+    constraint_count = len(result.get("constraints", []) or [])
+    specialist_summary = f"{pretty_topic} expert consulted"
+    if constraint_count > 0:
+        specialist_summary += (
+            f" · {constraint_count} constraint{'s' if constraint_count != 1 else ''}"
+        )
+    turn_meta = dict(state.get("turn_meta", {}))
+    steps = _get_turn_steps(turn_meta)
+    steps.append({"type": "specialist", "summary": specialist_summary})
+    turn_meta["turn_steps"] = steps
+    updates["turn_meta"] = turn_meta
 
     return updates
 
@@ -505,18 +743,46 @@ def _merge_local_intel(state: dict[str, Any], result: dict[str, Any]) -> dict[st
                 existing_ids.add(cid)
         updates["constraints"] = existing_constraints
 
+    turn_meta = dict(state.get("turn_meta", {}))
+    steps = _get_turn_steps(turn_meta)
+    steps.append({"type": "local_intel", "summary": "Local knowledge loaded"})
+    turn_meta["turn_steps"] = steps
+    updates["turn_meta"] = turn_meta
+
     return updates
 
 
 def _merge_validation(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     """Store validate_plan violations/warnings in turn_meta."""
     turn_meta = dict(state.get("turn_meta", {}))
+    violations = result.get("violations", []) or []
+    blocking_count = result.get("blocking_count", 0)
     turn_meta["validation_result"] = {
         "valid": result.get("valid", False),
-        "violations": result.get("violations", []),
+        "violations": violations,
         "warnings": result.get("warnings", []),
-        "blocking_count": result.get("blocking_count", 0),
+        "blocking_count": blocking_count,
     }
+    turn_meta["has_blocking_violations"] = bool(blocking_count > 0)
+    turn_meta["constraint_violations"] = violations
+
+    steps = _get_turn_steps(turn_meta)
+    if blocking_count > 0 and violations:
+        messages = [
+            str(v.get("message", "")).strip()
+            for v in violations[:2]
+            if isinstance(v, dict) and str(v.get("message", "")).strip()
+        ]
+        steps.append(
+            {
+                "type": "validation",
+                "summary": "Validation failed" + (f" · {' · '.join(messages)}" if messages else ""),
+            }
+        )
+    elif result.get("valid"):
+        steps.append({"type": "validation", "summary": "Validation passed"})
+    turn_meta["turn_steps"] = steps
+
     return {"turn_meta": turn_meta}
 
 
@@ -536,6 +802,19 @@ def _merge_itinerary(state: dict[str, Any], result: dict[str, Any]) -> dict[str,
         "conflicts": result.get("conflicts", []),
         "warnings": result.get("warnings", []),
     }
+    steps = _get_turn_steps(turn_meta)
+    day_count = len(day_cards or [])
+    dropped = int(result.get("activities_dropped", 0) or 0)
+    if result.get("success"):
+        itinerary_summary = (
+            f"Built {day_count}-day itinerary" if day_count > 0 else "Built itinerary"
+        )
+        if dropped > 0:
+            itinerary_summary += f" · {dropped} activit{'y' if dropped == 1 else 'ies'} dropped"
+        steps.append({"type": "itinerary", "summary": itinerary_summary})
+    elif day_count > 0:
+        steps.append({"type": "itinerary", "summary": f"Built partial {day_count}-day itinerary"})
+    turn_meta["turn_steps"] = steps
     updates["turn_meta"] = turn_meta
     return updates
 
@@ -641,13 +920,10 @@ class TurnLifecycleMiddleware(AgentMiddleware):
         # Build state update from tool result
         state_updates: dict[str, Any] = {}
 
-        # Update turn_meta counters
-        turn_meta = dict(state_dict.get("turn_meta", {}))
-        turn_meta["tool_call_count"] = turn_meta.get("tool_call_count", 0) + 1
-        tools_called = list(turn_meta.get("tools_called", []))
-        tools_called.append(tool_name)
-        turn_meta["tools_called"] = tools_called
-        state_updates["turn_meta"] = turn_meta
+        # Update turn_meta counters — return ONLY the delta for this tool
+        # call.  The _merge_turn_meta reducer concatenates tools_called
+        # lists and derives tool_call_count from len(combined).
+        state_updates["turn_meta"] = {"tools_called": [tool_name]}
 
         # Parse and merge tool-specific result (skip error ToolMessages)
         merger = _TOOL_MERGERS.get(tool_name)
@@ -670,9 +946,8 @@ class TurnLifecycleMiddleware(AgentMiddleware):
                     )
 
         logger.debug(
-            "[TurnLifecycleMiddleware] Tool %s complete (call #%d), state keys updated: %s",
+            "[TurnLifecycleMiddleware] Tool %s complete, state keys updated: %s",
             tool_name,
-            turn_meta["tool_call_count"],
             list(state_updates.keys()),
         )
 
@@ -710,6 +985,7 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
     turn_meta: dict[str, Any] = state.get("turn_meta", {})
     constraints: list = state.get("constraints", [])
     day_cards: list = state.get("day_cards", [])
+    trip_settings: dict[str, Any] = state.get("trip_settings", {})
 
     chips: list[dict[str, Any]] = []
     dest = trip_plan.get("destination", "")
@@ -787,103 +1063,146 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
     # Has tiles but no itinerary yet: suggest building
     if tiles and (tiles.get("flights") or tiles.get("hotels") or tiles.get("activities")):
         if dest and start_date and end_date:
+            chips.append(_chip("Build my itinerary", "cta", "progression", "calendar"))
+        hotel_settings = trip_settings.get("hotel_settings", {})
+        if not hotel_settings.get("min_stars"):
             chips.append(
-                {
-                    "message": "Build my itinerary",
-                    "action_type": "send_message",
-                    "action_target": None,
-                    "chip_type": "cta",
-                    "category": "progression",
-                    "icon": "calendar",
-                }
+                _chip(
+                    "5-star hotels only",
+                    "suggestion",
+                    "preferences",
+                    "star",
+                    action_type="open_pill",
+                    action_target="stays",
+                )
             )
-        if tiles.get("hotels"):
+        flight_settings = trip_settings.get("flight_settings", {})
+        if not flight_settings.get("direct_only"):
             chips.append(
-                {
-                    "message": "Show me hotel options",
-                    "action_type": "send_message",
-                    "action_target": None,
-                    "chip_type": "suggestion",
-                    "category": "tiles",
-                    "icon": "building",
-                }
+                _chip(
+                    "Direct flights only",
+                    "suggestion",
+                    "preferences",
+                    "plane",
+                    action_type="trigger_action",
+                    action_target="set_direct_flights_only",
+                )
             )
-        if tiles.get("flights"):
+        if len(chips) < 3:
             chips.append(
-                {
-                    "message": "Compare flight options",
-                    "action_type": "send_message",
-                    "action_target": None,
-                    "chip_type": "suggestion",
-                    "category": "tiles",
-                    "icon": "plane",
-                }
+                _chip(
+                    "Browse activities",
+                    "suggestion",
+                    "preferences",
+                    "compass",
+                    action_type="open_pill",
+                    action_target="activities",
+                )
             )
         return chips[:3]
 
-    # Has destination but missing dates or other core fields
+    # Has destination but missing dates
     if dest and not start_date:
+        today = date.today()
+        # Next weekend
+        days_to_sat = (5 - today.weekday()) % 7 or 7
+        sat = today + timedelta(days=days_to_sat)
+        wk1_start = sat
+        wk1_end = sat + timedelta(days=6)
+        # Next month, first full week
+        first_of_next = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+        wk2_start = first_of_next
+        wk2_end = first_of_next + timedelta(days=6)
+        # Mid next month
+
+        def _fmt(d: date) -> str:
+            return d.strftime("%b %-d")
+
         chips.append(
-            {
-                "message": f"When are you planning to visit {dest}?",
-                "action_type": "send_message",
-                "action_target": None,
-                "chip_type": "question",
-                "category": "core_fields",
-                "icon": "calendar",
-            }
+            _chip(
+                f"{_fmt(wk1_start)} - {_fmt(wk1_end)}",
+                "cta",
+                "date_prompt",
+                "calendar",
+            )
         )
-    elif dest and start_date and not categories:
         chips.append(
-            {
-                "message": f"What activities interest you in {dest}?",
-                "action_type": "send_message",
-                "action_target": None,
-                "chip_type": "question",
-                "category": "core_fields",
-                "icon": "compass",
-            }
+            _chip(
+                f"{_fmt(wk2_start)} - {_fmt(wk2_end)}",
+                "cta",
+                "date_prompt",
+                "calendar",
+            )
         )
-    elif not dest:
+        chips.append(_chip("I'm flexible on dates", "suggestion", "date_prompt", "calendar"))
+        return chips[:3]
+
+    # Has destination and dates but no activities
+    if dest and start_date and not categories:
         chips.append(
-            {
-                "message": "Where would you like to go?",
-                "action_type": "send_message",
-                "action_target": None,
-                "chip_type": "question",
-                "category": "core_fields",
-                "icon": "map-pin",
-            }
+            _chip(
+                f"What activities in {dest}?",
+                "question",
+                "core_fields",
+                "compass",
+                action_type="open_pill",
+                action_target="activities",
+            )
         )
+        chips.append(
+            _chip(
+                f"Local food and culture in {dest}",
+                "suggestion",
+                "specialist",
+                "utensils",
+            )
+        )
+        chips.append(_chip("Surprise me", "suggestion", "core_fields", "sparkles"))
+        return chips[:3]
+
+    # No destination
+    if not dest:
+        chips.append(_chip("Beach vacation", "suggestion", "destination_prompt", "sun"))
+        chips.append(_chip("Mountain adventure", "suggestion", "destination_prompt", "mountain"))
+        chips.append(_chip("City break in Europe", "suggestion", "destination_prompt", "building"))
+        return chips[:3]
 
     # Specialist suggestions based on detected categories
     if dest and categories:
         for cat in categories[:2]:
             chips.append(
-                {
-                    "message": f"Tell me about {cat} in {dest}",
-                    "action_type": "send_message",
-                    "action_target": None,
-                    "chip_type": "suggestion",
-                    "category": "specialist",
-                    "icon": "compass",
-                }
+                _chip(
+                    f"Tell me about {cat} in {dest}",
+                    "suggestion",
+                    "specialist",
+                    "compass",
+                )
             )
 
     # Local intel suggestion
     if dest and len(chips) < 3:
-        chips.append(
-            {
-                "message": f"What should I know about {dest}?",
-                "action_type": "send_message",
-                "action_target": None,
-                "chip_type": "suggestion",
-                "category": "local_intel",
-                "icon": "info",
-            }
-        )
+        chips.append(_chip(f"Local tips for {dest}", "suggestion", "local_intel", "info"))
 
     return chips[:3]
+
+
+def _chip(
+    message: str,
+    chip_type: str,
+    category: str,
+    icon: str,
+    action_type: str = "send_message",
+    action_target: str | None = None,
+) -> dict[str, Any]:
+    """Helper to build a suggestion chip payload."""
+    return {
+        "message": message,
+        "action_type": action_type,
+        "action_target": action_target,
+        "chip_type": chip_type,
+        "category": category,
+        "icon": icon,
+    }
 
 
 class SuggestionChipMiddleware(AgentMiddleware):

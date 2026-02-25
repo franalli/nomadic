@@ -25,7 +25,7 @@ from typing import Any, Dict, Optional
 from rich.console import Console
 from rich.theme import Theme
 
-from app.config import settings
+from app.config import MODEL_PRICING_PER_1M, settings
 
 # =============================================================================
 # DEBUG MODE CONFIGURATION
@@ -121,12 +121,7 @@ class RequestMetrics:
 # =============================================================================
 
 
-MODEL_PRICING = {  # Per 1M tokens (USD)
-    "gpt-4o": {"prompt": 2.50, "completion": 10.00},
-    "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
-    "gemini-2.5-flash": {"prompt": 0.15, "completion": 0.60},
-    "gemini-2.5-pro": {"prompt": 1.25, "completion": 5.00},
-}
+MODEL_PRICING = MODEL_PRICING_PER_1M
 
 
 def calculate_llm_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:

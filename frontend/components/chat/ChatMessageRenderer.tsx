@@ -10,9 +10,6 @@ import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
 import { cn } from '@/lib/utils';
 import type { ChatMessage } from '@/types/chat';
 
-import { SystemAckLine } from './SystemAckLine';
-import { SystemReceipt } from './SystemReceipt';
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -204,24 +201,8 @@ function ChatMessageRendererInner({
   const spacingClass = isSplitMessage && !isFirstPart ? '-mt-1.5' : '';
 
   const isUserMessage = m.role === 'user';
-
-  // Check if this user message has ack updates (for SystemReceipt display)
-  const hasAckUpdates = isUserMessage && m.ackUpdates && m.ackUpdates.length > 0;
-
-  // Render system ack line for system messages or ack_line displayMode
-  if (m.role === 'system' || m.displayMode === 'ack_line') {
-    return (
-      <div
-        className={cn('message-enter', getMessageDelayClass(idx))}
-      >
-        <SystemAckLine
-          status={m.ackStatus || 'applied'}
-          updates={m.ackUpdates}
-          isPending={m.ackStatus === 'pending'}
-        />
-      </div>
-    );
-  }
+  const isInlineReceipt = m.displayMode === 'ack_line' || m.role === 'system';
+  if (isInlineReceipt) return null;
 
   return (
     <div
@@ -234,7 +215,6 @@ function ChatMessageRendererInner({
     >
       {/* Message container */}
       <div className="inline-block relative max-w-[85%]">
-        {/* "Command & Receipt" pattern: User message + SystemReceipt below */}
         {isUserMessage ? (
           <div className="flex flex-col items-end">
             {/* The Commander (User Bubble) */}
@@ -254,13 +234,6 @@ function ChatMessageRendererInner({
             >
               {m.content}
             </div>
-            {/* The System Receipt - DS Section 19 */}
-            {hasAckUpdates && (
-              <SystemReceipt
-                ackStatus={m.ackStatus || 'applied'}
-                ackUpdates={m.ackUpdates || []}
-              />
-            )}
           </div>
         ) : (
           /* Assistant message */
@@ -318,8 +291,6 @@ function areChatMessagePropsEqual(
     prev.message.content === next.message.content &&
     prev.message.role === next.message.role &&
     prev.message.displayMode === next.message.displayMode &&
-    prev.message.ackUpdates === next.message.ackUpdates &&
-    prev.message.ackStatus === next.message.ackStatus &&
     prev.message._isPartOfSplit === next.message._isPartOfSplit &&
     prev.message._isFirstPart === next.message._isFirstPart &&
     prev.message._isLastPart === next.message._isLastPart &&

@@ -44,7 +44,7 @@ frontend/
   components/
     animations/    → StartupSequence, Typewriter
     chat/          → ChatPanel, ChatSkeleton, SmartLoader,
-                     SystemAckLine, SystemReceipt, TripStatusBar,
+                     TripStatusBar,
                      MobileChatInput,
                      ChatInputHandler, ChatMessageList, ChatSuggestionBar
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,

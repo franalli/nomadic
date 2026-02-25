@@ -148,33 +148,34 @@ export function useLandingDerived({
   ]);
 
   // Destination card (from backend or derive locally)
-  const destinationCard = hasDestination
-    ? {
-        ...(docDestinationCard ?? {
-          title: tripInputs.destination ?? '',
-          subtitle: (() => {
-            const parts: string[] = [];
-            if (tripInputs.origin) {
-              parts.push(`${tripInputs.origin} → ${tripInputs.destination ?? ''}`);
+  const destinationCard = useMemo(() => {
+    if (!hasDestination) return undefined;
+    return {
+      ...(docDestinationCard ?? {
+        title: tripInputs.destination ?? '',
+        subtitle: (() => {
+          const parts: string[] = [];
+          if (tripInputs.origin) {
+            parts.push(`${tripInputs.origin} → ${tripInputs.destination ?? ''}`);
+          }
+          if (tripInputs.start_date) {
+            const date = parseISODateLocal(tripInputs.start_date);
+            if (date) {
+              const formatted = date.toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+              });
+              parts.push(formatted);
             }
-            if (tripInputs.start_date) {
-              const date = parseISODateLocal(tripInputs.start_date);
-              if (date) {
-                const formatted = date.toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                });
-                parts.push(formatted);
-              }
-            }
-            return parts.length > 0
-              ? parts.join(' · ')
-              : `Trip to ${tripInputs.destination ?? ''}`;
-          })(),
-        }),
-        image_url: destinationImageUrl ?? docDestinationCard?.image_url ?? undefined,
-      }
-    : undefined;
+          }
+          return parts.length > 0
+            ? parts.join(' · ')
+            : `Trip to ${tripInputs.destination ?? ''}`;
+        })(),
+      }),
+      image_url: destinationImageUrl ?? docDestinationCard?.image_url ?? undefined,
+    };
+  }, [hasDestination, docDestinationCard, tripInputs.destination, tripInputs.origin, tripInputs.start_date, destinationImageUrl]);
 
   // Plan View State
   const backendPlanViewState = docPlanViewState;

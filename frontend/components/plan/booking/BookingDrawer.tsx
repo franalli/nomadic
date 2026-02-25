@@ -19,6 +19,8 @@ import { isBookableActivityTile, normalizeTileType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
+const EMPTY_SAVED_TILE_IDS = new Set<string>();
+
 interface BookingDrawerProps {
   /** Category to filter tiles by */
   category: 'hotel' | 'flight' | 'activity' | null;
@@ -66,7 +68,7 @@ function filterTilesByCategory(tiles: Record<string, Tile>, category: 'hotel' | 
 export function BookingDrawer({
   category,
   tiles = {},
-  savedTileIds = new Set(),
+  savedTileIds = EMPTY_SAVED_TILE_IDS,
   onSave,
   onClose,
   onOpenStaysSettings,

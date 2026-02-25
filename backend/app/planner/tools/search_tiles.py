@@ -2,7 +2,7 @@
 search_tiles tool -- wraps logistics_node tile fetching pipeline.
 
 Fetches flights, hotels, and activities from the tile provider cascade
-(Google Places -> Amadeus -> Mock). Applies no-fly buffer for diving
+(Google Places -> Mock). Applies no-fly buffer for diving
 activities. Returns tile arrays with prices and images.
 
 State mutation happens in TurnLifecycleMiddleware, not here.
@@ -13,13 +13,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
+from typing_extensions import Annotated
 
 from app.planner.nodes.logistics_node import (
     _calculate_diving_safety,
-    _curated_to_amadeus_format,
+    _curated_to_flight_tiles,
     _get_mock_flights,
 )
 from app.planner.specialist_registry import SPECIALIST_REGISTRY
@@ -125,9 +127,9 @@ def _has_diving_categories(categories: List[str]) -> bool:
 
 @tool
 async def search_tiles(
-    destination: str,
-    start_date: str,
-    end_date: str,
+    destination: str = "",
+    start_date: str = "",
+    end_date: str = "",
     origin: str = "",
     adults: int = 2,
     children: int = 0,
@@ -140,6 +142,11 @@ async def search_tiles(
     destination_iata: str = "",
     origin_iata: str = "",
     session_id: str = "",
+    # InjectedState -- auto-populated when running inside create_agent;
+    # invisible to the LLM's tool-calling schema.  Provides trip_plan
+    # and trip_settings from agent state so the LLM does not need to
+    # echo back fields it already holds.
+    state: Annotated[Optional[dict], InjectedState] = None,
 ) -> dict:
     """Search for flights, hotels, and activities. Requires destination and
     dates. Origin required for flights. Returns tile arrays with prices
@@ -157,6 +164,30 @@ async def search_tiles(
 
     t0 = time.time()
     categories = _parse_categories(activity_categories)
+
+    # ALWAYS prefer state categories — LLM can hallucinate or echo stale values
+    if state is not None:
+        _act_settings = state.get("trip_settings", {}).get("activity_settings", {})
+        if isinstance(_act_settings, dict):
+            _state_cats = _act_settings.get("categories", [])
+            if _state_cats:
+                _override = [str(c).lower().strip() for c in _state_cats if c]
+                if _override != categories:
+                    logger.info(
+                        "[GUARD:SEARCH_CATS] Overriding LLM categories %s -> state %s",
+                        categories,
+                        _override,
+                    )
+                categories = _override
+
+    # Also fill in other state fields if LLM omitted them
+    if state is not None:
+        _tp = state.get("trip_plan", {})
+        destination = destination or _tp.get("destination", "")
+        start_date = start_date or _tp.get("start_date", "")
+        end_date = end_date or _tp.get("end_date", "")
+        origin = origin or _tp.get("origin", "")
+
     apply_nofly = _has_diving_categories(categories)
 
     # Validate required fields
@@ -205,8 +236,6 @@ async def search_tiles(
     # ---------------------------------------------------------------
     if settings.use_google_places_provider:
         provider = "google_places"
-    elif settings.use_amadeus_provider:
-        provider = "amadeus"
     else:
         provider = "mock"
 
@@ -287,11 +316,6 @@ async def search_tiles(
                 tiles = await gp.search_async(ctx)
                 if not tiles:
                     tiles = MockHotelProvider().search(ctx)
-            elif settings.use_amadeus_provider:
-                from app.tile_service.amadeus_provider import AmadeusHotelProvider
-
-                hp = AmadeusHotelProvider()
-                tiles = await hp.search_async(ctx)
             else:
                 tiles = MockHotelProvider().search(ctx)
         except Exception as exc:
@@ -327,6 +351,10 @@ async def search_tiles(
 
     async def _fetch_activities_standalone() -> List[Dict[str, Any]]:
         """Fetch activities from provider with L2 cache."""
+        # Build cache variant from categories so different category sets
+        # produce distinct cache entries (mirrors hotel_cache_variant pattern).
+        activity_cache_variant = "cats_" + "_".join(sorted(categories)) if categories else ""
+
         try:
             async_session_factory = _get_async_session_factory()
             async with async_session_factory() as db:
@@ -337,6 +365,7 @@ async def search_tiles(
                     destination,
                     start_date,
                     end_date,
+                    activity_cache_variant,
                 )
                 if cached:
                     logger.debug("[search_tiles] Activities cache HIT: %d", len(cached))
@@ -354,7 +383,15 @@ async def search_tiles(
                 gp = GooglePlacesActivityProvider()
                 tiles = await gp.search_async(ctx)
                 if not tiles:
-                    tiles = MockActivityProvider().search(ctx)
+                    if categories and provider != "mock":
+                        logger.warning(
+                            "[search_tiles] Google Places returned 0 activities for "
+                            "categories=%s in %s — no mock fallback",
+                            categories,
+                            destination,
+                        )
+                    else:
+                        tiles = MockActivityProvider().search(ctx)
             else:
                 tiles = MockActivityProvider().search(ctx)
         except Exception as exc:
@@ -381,6 +418,7 @@ async def search_tiles(
                         start_date,
                         end_date,
                         dicts,
+                        activity_cache_variant,
                     )
             except Exception as exc:
                 logger.warning("[search_tiles] Activity cache write failed: %s", exc)
@@ -396,6 +434,23 @@ async def search_tiles(
         logger.error("[search_tiles] Parallel fetch failed: %s", exc)
         hotel_dicts = []
         activity_dicts = []
+
+    # Regression guard: log what was requested vs returned
+    if categories:
+        _returned_cats: set[str] = set()
+        for _t in activity_dicts:
+            if isinstance(_t, dict):
+                _cat = (_t.get("meta") or {}).get("category", "")
+                if _cat:
+                    _returned_cats.add(_cat.lower())
+        logger.info(
+            "[GUARD:TILE_SEARCH] requested=%s returned_categories=%s "
+            "returned_count=%d hotel_count=%d",
+            categories,
+            sorted(_returned_cats),
+            len(activity_dicts),
+            len(hotel_dicts),
+        )
 
     # Post-fetch hotel star filter
     if hotel_stars > 0:
@@ -422,7 +477,7 @@ async def search_tiles(
             flight_source = "mock"
 
             if curated_flights:
-                raw_flights = _curated_to_amadeus_format(curated_flights, end_date or start_date)
+                raw_flights = _curated_to_flight_tiles(curated_flights, end_date or start_date)
                 flight_source = "curated"
             else:
                 raw_flights = _get_mock_flights(end_date or start_date)
@@ -466,7 +521,7 @@ async def search_tiles(
                         {
                             "id": offer["id"],
                             "type": "flight",
-                            "partner": ("curated" if flight_source == "curated" else "amadeus"),
+                            "partner": ("curated" if flight_source == "curated" else "mock"),
                             "partner_product_id": offer["id"],
                             "title": f"{carrier_info['name']} - {stops_label}",
                             "subtitle": (

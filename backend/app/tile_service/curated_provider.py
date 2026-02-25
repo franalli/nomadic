@@ -2,7 +2,7 @@
 Curated Provider - Serves curated content for hero destinations.
 
 This provider returns high-quality, pre-verified tiles for demo destinations
-while optionally fetching live flight prices from Amadeus to prove the engine is real.
+including curated flights, hotels, and activities.
 
 Usage:
     provider = CuratedProvider("dubai")
@@ -70,7 +70,7 @@ class CuratedProvider(Provider):
     Strategy:
     - Hotels: Always use curated content (4K images, accurate logic hooks)
     - Activities: Use curated content filtered by specialist type
-    - Flights: Fetch LIVE from Amadeus (proves engine is real)
+    - Flights: Use curated flight data for demo destinations
     """
 
     name = "curated"

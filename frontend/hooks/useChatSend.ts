@@ -16,7 +16,7 @@ import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { type streamGraphPlan } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
-import { useDocumentStore } from '@/state/documentStore';
+import { nextEnvelopeBufferGeneration, useDocumentStore } from '@/state/documentStore';
 import type { ChatMessage } from '@/types/chat';
 import type {
   DocumentBranch,
@@ -107,8 +107,6 @@ export interface UseChatSendResult {
   isSendingRef: React.MutableRefObject<boolean>;
   autoExpandTimeoutRef: React.MutableRefObject<NodeJS.Timeout | null>;
   abortStreamRef: React.MutableRefObject<(() => void) | null>;
-  lastUserMsgIdRef: React.MutableRefObject<string | null>;
-  lastSystemEventIdRef: React.MutableRefObject<string | null>;
   focusTimeoutRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
 
   // Functions
@@ -180,8 +178,6 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
   const abortStreamRef = useRef<(() => void) | null>(null);
   const autoExpandTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const focusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastUserMsgIdRef = useRef<string | null>(null);
-  const lastSystemEventIdRef = useRef<string | null>(null);
   const prevSpecialistTypesRef = useRef<Set<string>>(new Set());
   const prevTileTypesRef = useRef<Set<string>>(new Set());
   const prevTripInputsRef = useRef<{
@@ -193,6 +189,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     origin: string | null;
   } | null>(null);
   const recentSendSignatureRef = useRef<{ signature: string; ts: number } | null>(null);
+  const envelopeGenerationRef = useRef(0);
 
   // Loader hooks
   const delayedLoader = useDelayedLoader({ showDelay: 400, etaThreshold: 600 });
@@ -206,7 +203,6 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     prevSpecialistTypesRef,
     prevTileTypesRef,
     prevTripInputsRef,
-    lastUserMsgIdRef,
   };
 
   const { executeStream } = useChatSse(sseRefs, {
@@ -266,14 +262,24 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         return;
       }
 
-      // MUTATION GATE: Wait for in-flight mutations (fill-day, drag-drop) to settle
+      // MUTATION GATE: Wait for in-flight mutations (fill-day, drag-drop) to settle.
       if (useDocumentStore.getState().hasPendingMutations()) {
-        const maxWait = 10_000;
-        const poll = 100;
-        const start = Date.now();
-        while (useDocumentStore.getState().hasPendingMutations() && Date.now() - start < maxWait) {
-          await new Promise(r => setTimeout(r, poll));
-        }
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const settle = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            unsub();
+            resolve();
+          };
+          const timeout = setTimeout(settle, 5_000);
+          const unsub = useDocumentStore.subscribe((state) => {
+            if (!state.hasPendingMutations()) settle();
+          });
+          // Close race window between outer check and subscribe
+          if (!useDocumentStore.getState().hasPendingMutations()) settle();
+        });
       }
 
       const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER || trimmed.toLowerCase() === 'build plan';
@@ -283,14 +289,14 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       debugLog('[ChatPanel] sendMessageCore called', {
         message: trimmed.slice(0, 50),
         isGenerateTrigger,
-        isLoading,
+        isSending: isSendingRef.current,
         request_id: requestId,
         destination: useDocumentStore.getState().document?.trip_inputs?.destination,
       });
 
       const guardReason = getSendBurstGuardReason({
         isGenerateTrigger,
-        isLoading,
+        isLoading: isSendingRef.current,
         now,
         lastMessageSentAt: lastMessageSentAtRef.current,
         lastGenerateClickedAt: lastGenerateClickedAtRef.current,
@@ -307,11 +313,6 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         lastGenerateClickedAtRef.current = now;
       } else {
         lastMessageSentAtRef.current = now;
-      }
-
-      if (isLoading) {
-        debugLog('[ChatPanel] Skipping - loading');
-        return;
       }
 
       const tripInputsSnapshot = useDocumentStore.getState().document?.trip_inputs;
@@ -339,10 +340,11 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       // Reset Smart Loader for new message
       setActiveStatus(null);
 
-      setTriggerContext({
+      const nextTriggerContext: TriggerContext = {
         isGeneratePlanTrigger: isGenerateTrigger,
         isConstraintChange: hasBranches && !isGenerateTrigger,
-      });
+      };
+      setTriggerContext(nextTriggerContext);
 
       if (isGenerateTrigger) {
         setGenerateTriggered(true);
@@ -352,26 +354,14 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       const isSilentPlanGeneration = isGenerateTrigger;
 
       const userMsgId = `u_${Date.now()}`;
-      if (isGenerateTrigger && !isSilentPlanGeneration) {
-        const systemEventId = `sys_${Date.now()}`;
-        addMessage({
-          id: systemEventId,
-          role: 'system',
-          content: '',
-          displayMode: 'ack_line',
-          ackStatus: 'pending',
-        });
-        lastSystemEventIdRef.current = systemEventId;
-      } else if (!isSilentPlanGeneration) {
+      if (!isSilentPlanGeneration) {
         const userMessage: ChatMessage = {
           id: userMsgId,
           role: 'user',
           content: trimmed,
           classification: 'constraint',
-          ackStatus: 'pending',
         };
         addMessage(userMessage);
-        lastUserMsgIdRef.current = userMsgId;
         onUserMessageSubmit?.(trimmed);
       }
       setSuggestedResponses([]);
@@ -405,10 +395,6 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
             categories: [],
             day_preferences: {},
           },
-          booking_types: {
-            ...(currentTripInputs.booking_types ?? {}),
-            activities: 'off' as const,
-          },
         };
       })();
 
@@ -436,18 +422,20 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
           hasTripInputs: !!body.trip_inputs,
         });
       }
+      envelopeGenerationRef.current = nextEnvelopeBufferGeneration();
 
       await executeStream({
         body,
         streamingMsgId,
         isSilentPlanGeneration,
         selectedBranchId,
-        triggerContext,
+        envelopeGeneration: envelopeGenerationRef.current,
+        triggerContext: nextTriggerContext,
         delayedLoader,
         actionLoader,
       });
     },
-    [isLoading, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, delayedLoader, actionLoader, triggerContext, hasBranches, onUserMessageSubmit, toast, executeStream, setActiveStatus, setGenerateTriggered]
+    [onGeneratePlanStart, selectedBranchId, sessionState, addMessage, delayedLoader, actionLoader, hasBranches, onUserMessageSubmit, toast, executeStream, setActiveStatus, setGenerateTriggered]
   );
 
   const addAssistantMessage = useCallback((message: string) => {
@@ -495,8 +483,6 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     isSendingRef,
     autoExpandTimeoutRef,
     abortStreamRef,
-    lastUserMsgIdRef,
-    lastSystemEventIdRef,
     focusTimeoutRef,
 
     // Functions

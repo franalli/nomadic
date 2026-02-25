@@ -185,8 +185,39 @@ async def build_itinerary(
     # Build tile ID map for the builder
     tile_id_map = flatten_tiles_to_id_map(tiles_by_category)
 
-    # Build strategy sections from tiles
-    strategy_sections = _build_strategy_sections(tiles_by_category, constraints)
+    # Prefer real strategy_sections from agent state (specialist data with
+    # constraints, metadata, durations). Only synthesize minimal sections
+    # as fallback when state has none.
+    strategy_sections = None
+    if state is not None:
+        _state_sections = state.get("strategy_sections", [])
+        if _state_sections and isinstance(_state_sections, list) and len(_state_sections) > 0:
+            strategy_sections = _state_sections
+            logger.debug(
+                "[build_itinerary] Using %d real strategy_sections from state",
+                len(strategy_sections),
+            )
+
+    if not strategy_sections:
+        strategy_sections = _build_strategy_sections(tiles_by_category, constraints)
+        logger.debug(
+            "[build_itinerary] Synthesized %d minimal strategy_sections from tiles",
+            len(strategy_sections),
+        )
+
+    # Log which path was taken for debugging
+    _section_types = [
+        s.get("specialist_type", "?") for s in strategy_sections if isinstance(s, dict)
+    ]
+    _has_real_constraints = any(
+        len(s.get("constraints_applied", [])) > 0 for s in strategy_sections if isinstance(s, dict)
+    )
+    logger.info(
+        "[GUARD:BUILD_SECTIONS] source=%s types=%s has_constraints=%s",
+        "state" if state and state.get("strategy_sections") else "synthesized",
+        _section_types,
+        _has_real_constraints,
+    )
 
     # Build preferences if any IDs provided
     hotel_ids = _parse_id_list(preferred_hotel_ids)
@@ -198,6 +229,22 @@ async def build_itinerary(
             preferred_activity_ids=activity_ids,
         )
 
+    # Pass activity categories from state so the builder's D3 category
+    # filter can suppress off-category tiles
+    _builder_activity_categories = None
+    if state is not None:
+        _act_settings = state.get("trip_settings", {}).get("activity_settings", {})
+        if isinstance(_act_settings, dict):
+            _builder_cats = _act_settings.get("categories", [])
+            if _builder_cats:
+                _builder_activity_categories = _builder_cats
+
+    if _builder_activity_categories:
+        logger.info(
+            "[GUARD:BUILD_CATS] passing activity_categories=%s to builder",
+            _builder_activity_categories,
+        )
+
     # Construct builder input
     builder_input = ItineraryBuilderInput(
         start_date=start_date,
@@ -207,6 +254,7 @@ async def build_itinerary(
         destination=destination,
         origin=origin or None,
         preferences=preferences,
+        activity_categories=_builder_activity_categories,
     )
 
     # Run the builder

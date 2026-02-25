@@ -2,6 +2,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 
 import { apiFetch, clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
@@ -190,18 +192,39 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     resetDraft,
   } = options;
 
-  // PERF: Select only the sub-fields actually read (trip_inputs.origin for flight fetch,
-  // trip_inputs settings for change detection). Avoids re-render on every document mutation.
-  const tripInputsOrigin = useDocumentStore((s) => s.document?.trip_inputs?.origin);
-  const tripInputsHotelSettings = useDocumentStore((s) => s.document?.trip_inputs?.hotel_settings);
-  const tripInputsFlightSettings = useDocumentStore((s) => s.document?.trip_inputs?.flight_settings);
-  const tripInputsActivitySettings = useDocumentStore((s) => s.document?.trip_inputs?.activity_settings);
-  const fetchDocument = useDocumentStore((s) => s.fetchDocument);
-  const selectTile = useDocumentStore((s) => s.selectTile);
-  const deselectTile = useDocumentStore((s) => s.deselectTile);
-  const hasAllRequiredFields = useDocumentStore((s) => s.hasAllRequiredFields);
-  const resetDocumentStore = useDocumentStore((s) => s.reset);
-  const setFromPlanResponse = useDocumentStore((s) => s.setFromPlanResponse);
+  // Actions (stable refs — never trigger rerenders, 1 subscription)
+  const { fetchDocument, selectTile, deselectTile, hasAllRequiredFields,
+          resetDocumentStore, setFromPlanResponse } =
+    useDocumentStore(useShallow((s) => ({
+      fetchDocument: s.fetchDocument,
+      selectTile: s.selectTile,
+      deselectTile: s.deselectTile,
+      hasAllRequiredFields: s.hasAllRequiredFields,
+      resetDocumentStore: s.reset,
+      setFromPlanResponse: s.setFromPlanResponse,
+    })));
+
+  // Reactive data (settings + origin + regenerating, 1 subscription)
+  // JSON equality for settings objects — small objects, negligible cost
+  const { tripInputsOrigin, tripInputsHotelSettings, tripInputsFlightSettings,
+          tripInputsActivitySettings, isRegenerating } =
+    useStoreWithEqualityFn(
+      useDocumentStore,
+      (s) => ({
+        tripInputsOrigin: s.document?.trip_inputs?.origin,
+        tripInputsHotelSettings: s.document?.trip_inputs?.hotel_settings,
+        tripInputsFlightSettings: s.document?.trip_inputs?.flight_settings,
+        tripInputsActivitySettings: s.document?.trip_inputs?.activity_settings,
+        isRegenerating: s.isRegenerating,
+      }),
+      (a, b) =>
+        a.tripInputsOrigin === b.tripInputsOrigin &&
+        a.isRegenerating === b.isRegenerating &&
+        JSON.stringify(a.tripInputsHotelSettings) === JSON.stringify(b.tripInputsHotelSettings) &&
+        JSON.stringify(a.tripInputsFlightSettings) === JSON.stringify(b.tripInputsFlightSettings) &&
+        JSON.stringify(a.tripInputsActivitySettings) === JSON.stringify(b.tripInputsActivitySettings)
+    );
+
   const resetChat = useChatStore((state) => state.resetChat);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -251,12 +274,6 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * True from when user submits until results are displayed.
    */
   const [isGenerating, setIsGenerating] = useState(false);
-
-  /**
-   * Regeneration state from document store.
-   * Managed by usePreferenceAutoRegen hook wired up at NomadicLanding.tsx level.
-   */
-  const isRegenerating = useDocumentStore((s) => s.isRegenerating);
 
   /**
    * Plan status is always 'ready' since regeneration is now automatic via auto-expand.
@@ -703,7 +720,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   /**
    * Auto-fetch missing flights when tiles are loaded but flights are empty.
    * This handles the case where curated content (hotels/activities) is loaded
-   * but live flights need to be fetched from Amadeus.
+   * but flights need to be fetched separately.
    */
   useEffect(() => {
     let cancelled = false;

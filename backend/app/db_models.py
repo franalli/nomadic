@@ -220,7 +220,7 @@ class ResponseCache(Base):
 
     Cache types:
     - 'specialist': Vertical specialist LLM outputs (7 day TTL)
-    - 'tiles': Tile data from Amadeus/curated providers (24h TTL)
+    - 'tiles': Tile data from curated/mock providers (24h TTL)
 
     Key formats:
     - specialist: "specialist:{topic}:{destination}:{month}:{duration}"

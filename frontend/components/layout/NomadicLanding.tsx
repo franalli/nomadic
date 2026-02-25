@@ -3,6 +3,7 @@
 import { Compass, Loader2, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 
 import { StartupSequence } from '@/components/animations/StartupSequence';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
@@ -76,16 +77,10 @@ export function NomadicLanding() {
     }))
   );
 
-  // Trip inputs + commit state
-  const { storeTripInputs, isCommitting } = useDocumentStore(
-    useShallow((s) => ({
-      storeTripInputs: s.document?.trip_inputs,
-      isCommitting: s.isCommitting,
-    }))
-  );
-
-  // Plan document data (for rendering)
+  // Reactive document data (trip inputs + plan rendering fields merged into one selector)
   const {
+    storeTripInputs,
+    isCommitting,
     docPlanState,
     docDestinationCard,
     docPlanViewState,
@@ -100,9 +95,10 @@ export function NomadicLanding() {
     docItineraryAssumptions,
     docNeedsRefresh,
     docCanExpand,
-    preferredTileIds,
   } = useDocumentStore(
     useShallow((s) => ({
+      storeTripInputs: s.document?.trip_inputs,
+      isCommitting: s.isCommitting,
       docPlanState: s.document?.plan_state,
       docDestinationCard: s.document?.destination_card,
       docPlanViewState: s.document?.plan_view_state,
@@ -117,8 +113,16 @@ export function NomadicLanding() {
       docItineraryAssumptions: s.document?.itinerary_assumptions,
       docNeedsRefresh: s.document?.needs_refresh,
       docCanExpand: s.document?.can_expand_to_itinerary,
-      preferredTileIds: s.preferredTileIds,
     }))
+  );
+
+  // preferredTileIds is a Set — useShallow uses Object.is() which always
+  // returns false for new Set references even with identical contents.
+  // Custom equality compares Set contents instead.
+  const preferredTileIds = useStoreWithEqualityFn(
+    useDocumentStore,
+    (s) => s.preferredTileIds,
+    (a, b) => a.size === b.size && [...a].every((id) => b.has(id)),
   );
 
   // ─── Shared hooks ────────────────────────────────────────────────────────

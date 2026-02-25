@@ -7,18 +7,21 @@ This document provides a comprehensive overview of the Nomadic codebase structur
 ```
 nomadic/
 ├── .claude/                    # Claude Code configuration
-│   ├── agents/                 # Specialist agent specs (backend, frontend, code-reviewer)
+├── .codex/                     # Codex wrappers + skills
+│   ├── agents/                 # Wrapper specs pointing to canonical `.claude/agents/*`
+│   ├── plans/                  # SSoT planning documents (generated snapshots)
+│   └── skills/                 # Codex skills (SKILL.md per skill directory)
 │   └── commands/               # Custom slash commands (audit, verify-build, etc.)
 ├── .codex/                     # Codex wrappers + skills
 │   ├── agents/                 # Wrapper specs pointing to canonical `.claude/agents/*`
 │   │   ├── backend-specialist.md
 │   │   ├── code-reviewer.md
 │   │   └── frontend-specialist.md
-│   └── skills/                 # Codex skills (SKILL.md per skill directory)
-│       ├── audit-code/SKILL.md
+│   └── plans/                  # SSoT planning documents (generated snapshots)
+│       ├── compiled-sauteeing-stroustrup.md
 │       ├── clear-cache/SKILL.md
 │       ├── clear-sprint/SKILL.md
-│       ├── enforce-style/SKILL.md
+│       ├── clear-cache/SKILL.md
 │       ├── reassemble-docs/SKILL.md
 │       ├── run-curl/SKILL.md
 │       ├── update-docs/SKILL.md
@@ -129,7 +132,6 @@ backend/
 │   │   │   ├── feasibility_service.py # LLM-backed geographic feasibility checks (extracted from vertical_specialist.py)
 │   │   │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed)
 │   │   │   ├── itinerary_adapter.py # Thin bridge: GraphState → ItineraryBuilder
-│   │   │   ├── response_envelope.py # Response envelope builder for plan state
 │   │   │   ├── section_builder.py   # Strategy section CRUD
 │   │   │   └── state_serde.py       # State serialization/deserialization
 │   │   │
@@ -174,18 +176,16 @@ backend/
 │   │
 │   ├── tile_service/           # Tile data providers
 │   │   ├── __init__.py
-│   │   ├── amadeus_provider.py       # Amadeus API integration
 │   │   ├── curated_provider.py       # Curated content provider
 │   │   ├── google_places_provider.py # Google Places API integration (sync + async; Hotels + Activities)
 │   │   ├── mock_provider.py          # Mock data for testing
 │   │   ├── models.py                 # Tile models
 │   │   ├── provider_base.py          # Base provider class
-│   │   └── service.py                # Tile service orchestrator (4-tier cascade: Curated → Google Places → Amadeus → Mock)
+│   │   └── service.py                # Tile service orchestrator (3-tier cascade: Curated → Google Places → Mock)
 │   │
 │   └── tools/                  # LangGraph tools
 │       ├── __init__.py
-│       ├── amadeus_client.py   # Amadeus API client
-│       ├── circuit_breaker.py  # Circuit breaker + rate limiter for external APIs (extracted from amadeus_client.py)
+│       ├── circuit_breaker.py  # Circuit breaker + rate limiter for external APIs
 │       ├── constraint_engine.py # Constraint processing
 │       └── tile_service.py     # Tile service tool
 │
@@ -218,7 +218,6 @@ backend/
 │   ├── conftest.py                       # Pytest fixtures
 │   ├── llm_stub.py                       # LLM mock for testing
 │   ├── run_curl_flows.sh                 # End-to-end curl flow tests
-│   ├── run_curl_flows_extended.sh        # Extended end-to-end curl flow tests
 │   ├── test_activity_browser.py          # Browse activities backend contract tests
 │   ├── test_activity_image_placeholder_mapping.py  # Activity image placeholder mapping tests
 │   ├── test_agent_multiturn.py           # Agent multi-turn conversation tests
@@ -243,7 +242,6 @@ backend/
 │   ├── test_plan_schema.py               # Plan schema tests
 │   ├── test_poi_category_canonicalization.py  # POI category canonicalization tests
 │   ├── test_regen_strategy.py            # Selective regen field hash + strategy tests
-│   ├── test_response_envelope.py         # Plan view state resolver + envelope contract tests
 │   ├── test_router_cache.py              # Router cache tests (context-dependency detection)
 │   ├── test_session_middleware.py        # Session middleware behavior tests
 │   ├── test_specialist_cache.py          # Specialist LLM cache tests (thread safety, L1/L2)
@@ -255,7 +253,6 @@ backend/
 │   ├── test_tile_cache.py                # Tile cache tests (L1/L2, thread safety)
 │   ├── test_typed_meta.py                # Typed metadata bridge tests
 │   ├── test_admin_utils.py               # Admin utility tests
-│   ├── test_amadeus_client.py            # Amadeus client tests
 │   ├── test_cache_core.py                # Cache core tests
 │   ├── test_constraint_engine.py         # Constraint engine tests
 │   ├── test_itinerary_adapter.py         # Itinerary adapter tests
@@ -335,8 +332,6 @@ frontend/
 │   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
 │   │   ├── MobileChatInput.tsx
 │   │   ├── SmartLoader.tsx
-│   │   ├── SystemAckLine.tsx
-│   │   ├── SystemReceipt.tsx
 │   │   ├── TripStatusBar.tsx
 │   │   └── suggestion-actions.ts     # Shared trigger_action handler (avoids circular import)
 │   │

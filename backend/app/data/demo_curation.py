@@ -4,10 +4,10 @@ Demo Curation - Golden Path Content for Hero Destinations.
 This module provides curated, high-quality content for demo destinations.
 The strategy:
 - Hero Destinations (Dubai, Rome, Chamonix): Use curated content for flawless demo
-- All Other Cities: Fall back to live Amadeus API
+- All Other Cities: Fall back to mock or live providers
 
 Exports:
-- CARRIER_MAP: Sanitize Amadeus test codes (XX, YY) to real airlines (Emirates, FlyDubai)
+- CARRIER_MAP: Map carrier codes to real airline names and logos
 - DEMO_MANIFEST: Curated content for hero destinations
 - get_curated_content(): Helper to fetch curated content by destination
 
@@ -21,9 +21,9 @@ Usage:
 from typing import Any, Dict, List, Optional
 
 # =============================================================================
-# CARRIER MAP - Sanitize Amadeus Test Codes to Real Airlines
+# CARRIER MAP - Map Carrier Codes to Real Airlines
 # =============================================================================
-# Maps generic/test carrier codes to Real Airlines for the demo
+# Maps carrier codes to real airline names and logos for the demo
 CARRIER_MAP: Dict[str, Dict[str, str]] = {
     # Major Airlines
     "SV": {"name": "Saudia", "logo": "SV"},
@@ -38,7 +38,7 @@ CARRIER_MAP: Dict[str, Dict[str, str]] = {
     "EZY": {"name": "easyJet", "logo": "U2"},  # easyJet uses U2 for logos
     "U2": {"name": "easyJet", "logo": "U2"},
     "FZ": {"name": "FlyDubai", "logo": "FZ"},
-    # Force Amadeus Test Codes to real airlines
+    # Map test/generic codes to real airlines
     "XX": {"name": "Emirates", "logo": "EK"},
     "YY": {"name": "FlyDubai", "logo": "FZ"},
     "6X": {"name": "Rex Airlines", "logo": "ZL"},

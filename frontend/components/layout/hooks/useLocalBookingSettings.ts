@@ -2,6 +2,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import {
   areActivitiesDuplicate,
@@ -87,11 +88,13 @@ export function useLocalBookingSettings(
   storeTripInputs: DocumentTripInputs | null | undefined,
   onToast: (message: string, type?: ToastType) => void
 ): UseLocalBookingSettingsReturn {
-  // PERF: Only subscribe to truthiness of document (not full object).
-  // Prevents re-render on every document mutation when we only need to know if it exists.
-  const hasDocument = useDocumentStore((s) => !!s.document);
-  const commitTripInputs = useDocumentStore((s) => s.commitTripInputs);
-  const updateTripInputs = useDocumentStore((s) => s.updateTripInputs);
+  // Single subscription: boolean + stable action refs (useShallow comparison is cheap)
+  const { hasDocument, commitTripInputs, updateTripInputs } =
+    useDocumentStore(useShallow((s) => ({
+      hasDocument: !!s.document,
+      commitTripInputs: s.commitTripInputs,
+      updateTripInputs: s.updateTripInputs,
+    })));
 
   // Local state for booking settings - initialize from store if available, else defaults
   const [localBookingTypes, setLocalBookingTypes] = useState<BookingTypes>(

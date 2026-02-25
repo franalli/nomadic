@@ -266,25 +266,30 @@ export function useViewNavigationLight(): Pick<
   UseViewNavigationReturn,
   'navigateTo' | 'finalizePlan' | 'canViewPlan' | 'activeView'
 > {
-  const storedActiveMode = useDocumentStore((s) => s.activeView ?? 'planning');
-  const hasDates = useDocumentStore((s) =>
-    Boolean(s.document?.trip_inputs?.start_date && s.document?.trip_inputs?.end_date)
+  // Actions (stable refs — never trigger rerenders)
+  const { setActiveView, setFinalized } = useDocumentStore(
+    useShallow((s) => ({ setActiveView: s.setActiveView, setFinalized: s.setFinalized }))
   );
-  const isGenerating = useDocumentStore((s) => s.generation?.active === true);
-  const isPlanFinalized = useDocumentStore((s) => s.isPlanFinalized);
-  const hasTiles = useDocumentStore((s) => {
-    const tiles = s.document?.tiles;
-    if (!tiles) return false;
-    for (const _ in tiles) return true; // O(1) — early-exit on first own key
-    return false;
-  });
-  const inBookableState = useDocumentStore((s) =>
-    ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
-      s.document?.plan_view_state ?? ''
-    )
-  );
-  const setActiveView = useDocumentStore((s) => s.setActiveView);
-  const setFinalized = useDocumentStore((s) => s.setFinalized);
+
+  // Derived booleans (all primitives — useShallow comparison is cheap)
+  const { storedActiveMode, hasDates, isGenerating, isPlanFinalized, hasTiles, inBookableState } =
+    useDocumentStore(
+      useShallow((s) => ({
+        storedActiveMode: s.activeView ?? 'planning',
+        hasDates: Boolean(s.document?.trip_inputs?.start_date && s.document?.trip_inputs?.end_date),
+        isGenerating: s.generation?.active === true,
+        isPlanFinalized: s.isPlanFinalized,
+        hasTiles: (() => {
+          const t = s.document?.tiles;
+          if (!t) return false;
+          for (const _ in t) return true;
+          return false;
+        })(),
+        inBookableState: ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
+          s.document?.plan_view_state ?? ''
+        ),
+      }))
+    );
 
   const canViewBooking = isPlanFinalized && (hasTiles || inBookableState);
   const canViewPlan = hasDates || isGenerating;

@@ -7,7 +7,7 @@ from app.planner.nodes.logistics_node import (
     _cached_tier2_tiles_for_categories,
     _calculate_diving_safety,
     _compute_tiles_per_category,
-    _curated_to_amadeus_format,
+    _curated_to_flight_tiles,
     _fallback_tier2_tiles,
     _get_mock_flights,
     _has_nofly_constraints,
@@ -509,11 +509,11 @@ class TestTier2GenerationKey:
 
 
 # ===========================================================================
-# 7. _curated_to_amadeus_format
+# 7. _curated_to_flight_tiles
 # ===========================================================================
 
 
-class TestCuratedToAmadeusFormat:
+class TestCuratedToFlightTiles:
     def test_converts_single_flight(self):
         curated = [
             {
@@ -525,7 +525,7 @@ class TestCuratedToAmadeusFormat:
                 "price": 450,
             }
         ]
-        result = _curated_to_amadeus_format(curated, "2026-03-15")
+        result = _curated_to_flight_tiles(curated, "2026-03-15")
 
         assert len(result) == 1
         flight = result[0]
@@ -542,7 +542,7 @@ class TestCuratedToAmadeusFormat:
             {"carrier_code": "EK", "departure_time": "08:00", "duration": "PT5H", "price": 300},
             {"carrier_code": "BA", "departure_time": "18:00", "duration": "PT7H", "price": 550},
         ]
-        result = _curated_to_amadeus_format(curated, "2026-04-01")
+        result = _curated_to_flight_tiles(curated, "2026-04-01")
         assert len(result) == 2
         assert result[0]["itineraries"][0]["segments"][0]["carrierCode"] == "EK"
         assert result[1]["itineraries"][0]["segments"][0]["carrierCode"] == "BA"
@@ -551,13 +551,13 @@ class TestCuratedToAmadeusFormat:
         curated = [
             {"carrier_code": "SQ", "departure_time": "14:00", "duration": "PT8H", "price": 600}
         ]
-        result = _curated_to_amadeus_format(curated, "2026-12-25")
+        result = _curated_to_flight_tiles(curated, "2026-12-25")
         departure_at = result[0]["itineraries"][0]["segments"][0]["departure"]["at"]
         assert departure_at.startswith("2026-12-25T")
 
     def test_defaults_for_missing_fields(self):
         curated = [{}]
-        result = _curated_to_amadeus_format(curated, "2026-03-15")
+        result = _curated_to_flight_tiles(curated, "2026-03-15")
         flight = result[0]
         # Should use defaults without raising
         assert flight["price"]["total"] == "0"
@@ -571,7 +571,7 @@ class TestCuratedToAmadeusFormat:
             {"carrier_code": "QF", "departure_time": "09:00", "duration": "PT4H", "price": 200}
         ]
         # date_str with full ISO timestamp - should take first 10 chars
-        result = _curated_to_amadeus_format(curated, "2026-03-15T14:30:00+00:00")
+        result = _curated_to_flight_tiles(curated, "2026-03-15T14:30:00+00:00")
         departure_at = result[0]["itineraries"][0]["segments"][0]["departure"]["at"]
         assert departure_at.startswith("2026-03-15T")
 
@@ -579,7 +579,7 @@ class TestCuratedToAmadeusFormat:
         curated = [
             {"carrier_code": "QF", "departure_time": "09:00", "duration": "PT4H", "price": 200}
         ]
-        result = _curated_to_amadeus_format(curated, "")
+        result = _curated_to_flight_tiles(curated, "")
         departure_at = result[0]["itineraries"][0]["segments"][0]["departure"]["at"]
         assert departure_at.startswith("2026-03-20T")  # fallback date
 

@@ -36,7 +36,7 @@ class Provider(ABC):
 # =============================================================================
 #
 # This section defines the interface for providers that support booking execution.
-# Currently a placeholder for when real provider APIs (Expedia, Amadeus, Booking.com)
+# Currently a placeholder for when real provider APIs (Expedia, Booking.com, etc.)
 # are integrated.
 #
 # KEY DESIGN DECISIONS:
@@ -47,7 +47,6 @@ class Provider(ABC):
 #
 # WHEN IMPLEMENTING REAL PROVIDERS:
 # - Expedia: Uses affiliate API, typically redirect-based booking
-# - Amadeus: Direct API booking with payment tokenization
 # - Booking.com: Affiliate program with deep links or API booking
 # - Viator (activities): API booking with confirmation codes
 #
@@ -64,7 +63,7 @@ class BookingFlowType(str, Enum):
 
     EMBEDDED: Booking happens entirely within our app via API calls.
               We handle payment collection and pass to provider.
-              Example: Amadeus direct booking, Stripe-integrated providers
+              Example: Stripe-integrated providers
 
     HYBRID: Initial search/hold is API-based, but payment redirects to partner.
             Example: Some OTAs allow API hold but require redirect for payment
@@ -134,7 +133,7 @@ class BookingSession:
 
     # Provider-specific data needed for confirmation
     # IMPORTANT: This may contain sensitive data - do not expose to frontend
-    # Example: {"amadeus_order_id": "xxx", "pnr": "ABC123"}
+    # Example: {"order_id": "xxx", "pnr": "ABC123"}
     provider_data: Dict[str, Any] = field(default_factory=dict)
 
     # Price at time of booking initiation (may differ from tile estimate)
@@ -255,17 +254,17 @@ class BookableProvider(Provider):
     8. Implement rate limiting and retry logic
     9. Log all booking attempts for audit trail
 
-    EXAMPLE REAL IMPLEMENTATION (Amadeus):
+    EXAMPLE REAL IMPLEMENTATION:
     ```python
-    class AmadeusProvider(BookableProvider):
+    class ExampleProvider(BookableProvider):
         flow_type = BookingFlowType.EMBEDDED
 
         async def initiate_booking(self, tile, traveler, payment_intent):
-            # 1. Create Amadeus order with traveler details
+            # 1. Create order with traveler details
             # 2. Get price confirmation (may differ from estimate)
             # 3. Create payment intent with Stripe
             # 4. Return session with payment form config
-            order = await self.amadeus_client.create_order(...)
+            order = await self.client.create_order(...)
             return BookingSession(
                 session_id=order.id,
                 status=BookingStatus.PENDING_PAYMENT,

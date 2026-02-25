@@ -117,7 +117,7 @@ class TestGetProviders:
             ),
         ):
             mock_settings.use_demo_curation = True
-            mock_settings.use_amadeus_provider = False
+            mock_settings.use_google_places_provider = False
 
             # Patch the import inside _get_providers
             with patch.dict(
@@ -130,20 +130,20 @@ class TestGetProviders:
         assert "CuratedProvider" in provider_types
         assert "MockFlightProvider" in provider_types
 
-    def test_amadeus_fallback(self) -> None:
-        """use_demo_curation=False, use_amadeus=True -> Amadeus + MockFlight + MockActivity."""
+    def test_google_places_fallback(self) -> None:
+        """use_demo_curation=False, use_google_places_provider=True -> GooglePlaces + MockFlight + GooglePlacesActivity."""
 
         ctx = self._make_ctx(destination="barcelona")
 
         with patch("app.tile_service.service.settings") as mock_settings:
             mock_settings.use_demo_curation = False
-            mock_settings.use_amadeus_provider = True
+            mock_settings.use_google_places_provider = True
             providers = _get_providers(ctx)
 
         provider_types = [type(p).__name__ for p in providers]
-        assert "AmadeusHotelProvider" in provider_types
+        assert "GooglePlacesHotelProvider" in provider_types
         assert "MockFlightProvider" in provider_types
-        assert "MockActivityProvider" in provider_types
+        assert "GooglePlacesActivityProvider" in provider_types
 
     def test_mock_fallback(self) -> None:
         """Both flags False -> MockHotel + MockFlight + MockActivity."""
@@ -152,7 +152,7 @@ class TestGetProviders:
 
         with patch("app.tile_service.service.settings") as mock_settings:
             mock_settings.use_demo_curation = False
-            mock_settings.use_amadeus_provider = False
+            mock_settings.use_google_places_provider = False
             providers = _get_providers(ctx)
 
         provider_types = [type(p).__name__ for p in providers]
@@ -166,7 +166,7 @@ class TestGetProviders:
 
         with patch("app.tile_service.service.settings") as mock_settings:
             mock_settings.use_demo_curation = False
-            mock_settings.use_amadeus_provider = False
+            mock_settings.use_google_places_provider = False
             providers = _get_providers(ctx)
 
         provider_types = [type(p).__name__ for p in providers]
@@ -180,7 +180,7 @@ class TestGetProviders:
 
         with patch("app.tile_service.service.settings") as mock_settings:
             mock_settings.use_demo_curation = False
-            mock_settings.use_amadeus_provider = False
+            mock_settings.use_google_places_provider = False
             providers = _get_providers(ctx)
 
         provider_types = [type(p).__name__ for p in providers]

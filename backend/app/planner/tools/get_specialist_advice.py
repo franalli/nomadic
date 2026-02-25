@@ -20,6 +20,25 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Severity mapping (module-level constant)
+# ---------------------------------------------------------------------------
+# Maps constraint_type values (which may be type-like or severity-like)
+# to the canonical 3-tier severity hierarchy: blocking > strong > soft.
+_TYPE_SEVERITY_MAP: dict[str, str] = {
+    "safety": "blocking",
+    "medical": "blocking",
+    "equipment": "soft",
+    "timing": "soft",
+    "temporal": "soft",
+    "cultural": "info",
+    "booking_window": "soft",
+    # Already severity-like values pass through:
+    "blocking": "blocking",
+    "strong": "strong",
+    "soft": "soft",
+}
+
 
 # ---------------------------------------------------------------------------
 # Result schema
@@ -240,12 +259,23 @@ async def get_specialist_advice(
 
             # Map constraints
             for c in llm_output.constraints:
+                # LLMConstraint has no severity field — derive from constraint_type.
+                # constraint_type values are severity-like ("blocking", "strong", "soft")
+                # OR type-like ("safety", "medical", "equipment", "timing", etc.).
+                _mapped_severity = _TYPE_SEVERITY_MAP.get(c.constraint_type.lower(), "soft")
+                logger.debug(
+                    "[specialist] Constraint %s: type=%s severity=%s (raw=%s)",
+                    c.constraint_id,
+                    c.constraint_type,
+                    _mapped_severity,
+                    getattr(c, "severity", "N/A"),
+                )
                 constraints.append(
                     {
                         "constraint_id": c.constraint_id,
                         "type": c.constraint_type,
                         "rule": c.constraint_id,
-                        "severity": c.constraint_type,
+                        "severity": _mapped_severity,
                         "applies_to_categories": c.applies_to_categories,
                         "buffer_hours": c.buffer_hours,
                         "reason": c.reason,
