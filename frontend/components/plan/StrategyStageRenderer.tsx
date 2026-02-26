@@ -43,8 +43,8 @@ export type { DataDensity };
 export { computeDataDensity };
 
 export function computeTimelineVariant(state: PlanViewState): TimelineVariant {
-  if (state === 'S3_ITINERARY_READY') return 'real';
-  if (state === 'S3_EDITING' || state === 'S2_STRATEGY_READY') return 'draft';
+  if (state === 'S3_ITINERARY_READY' || state === 'P3_FINALIZED') return 'real';
+  if (state === 'S3_EDITING' || state === 'S2_STRATEGY_READY' || state === 'P3_EDITING' || state === 'P1_ENRICHED') return 'draft';
   return 'ghost';
 }
 

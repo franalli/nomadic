@@ -1,13 +1,12 @@
 'use client';
 
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
+import { BOOKABLE_STATES } from '@/components/plan/planStateHelpers';
 import { useDocumentStore } from '@/state/documentStore';
 import {
-  computePlanningPhase,
-  computePlanningProgress,
   type PlanningPhase,
   type ViewMode,
 } from '@/types/plan-envelope';
@@ -74,188 +73,6 @@ function legacyToMode(view: ViewName): ViewMode {
 }
 
 /**
- * Map new ViewMode to legacy ViewName.
- * For backward compatibility, we map 'planning' to 'plan' when dates exist,
- * otherwise to 'setup'.
- */
-function modeToLegacy(mode: ViewMode, hasDates: boolean): ViewName {
-  if (mode === 'booking') return 'book';
-  return hasDates ? 'plan' : 'setup';
-}
-
-/**
- * useViewNavigation
- *
- * Centralized navigation logic for the two-mode system (PLANNING + BOOKING).
- *
- * Two-Mode System:
- * - PLANNING: Evolves naturally based on user inputs
- *   - Early phase: Input gathering + specialist cards
- *   - Late phase: Day-by-day itinerary + map (when dates are set)
- * - BOOKING: Transaction mode with price comparison
- *
- * Unlock Rules:
- * - PLANNING: Always accessible (default mode)
- * - BOOKING: Unlocked when plan is finalized AND has tiles/content
- *
- * @see docs/ux_unified_architecture.md for full specification
- */
-export function useViewNavigation(): UseViewNavigationReturn {
-  // === Store Selectors ===
-  // Store now uses two-mode system natively ('planning' | 'booking')
-  const storedActiveMode = useDocumentStore((s) => s.activeView ?? 'planning');
-  const setActiveView = useDocumentStore((s) => s.setActiveView);
-
-  // Derived booleans — avoid selecting entire objects to prevent unnecessary re-renders
-  const hasTiles = useDocumentStore((s) => {
-    const t = s.document?.tiles;
-    if (!t) return false;
-    for (const _ in t) return true; // O(1) — early-exit on first own key
-    return false;
-  });
-  const isGenerating = useDocumentStore((s) => s.generation?.active === true);
-  const hasStrategyContent = useDocumentStore((s) => (s.document?.strategy_sections?.length ?? 0) > 0);
-  const planViewState = useDocumentStore((s) => s.document?.plan_view_state);
-  const hasItinerary = useDocumentStore((s) => (s.document?.day_cards?.length ?? 0) > 0);
-  // tripInputs is passed to computePlanningPhase — keep full object with shallow equality
-  const tripInputs = useDocumentStore(
-    useShallow((s) => s.document?.trip_inputs)
-  );
-  const hasDates = Boolean(tripInputs?.start_date && tripInputs?.end_date);
-
-  // Plan finalization state
-  const isPlanFinalized = useDocumentStore((s) => s.isPlanFinalized);
-  const setFinalized = useDocumentStore((s) => s.setFinalized);
-
-  // Book is accessible when in a bookable state (S2 or S3)
-  const inBookableState = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
-    planViewState ?? ''
-  );
-
-  // === Two-Mode System ===
-
-  // Store now uses two-mode system natively
-  const activeMode: ViewMode = storedActiveMode;
-
-  // Planning phase tracking
-  const planningPhase = useMemo<PlanningPhase>(
-    () =>
-      computePlanningPhase(
-        tripInputs,
-        hasItinerary,
-        isPlanFinalized // For now, use finalization as proxy for "ready to book"
-      ),
-    [tripInputs, hasItinerary, isPlanFinalized]
-  );
-
-  // Progress percentage
-  const planningProgress = useMemo(
-    () => computePlanningProgress(planningPhase),
-    [planningPhase]
-  );
-
-  // Booking mode is unlocked when:
-  // 1. Plan is finalized (explicit user action)
-  // 2. AND has content (tiles or bookable state)
-  const canViewBooking = isPlanFinalized && (hasTiles || inBookableState);
-
-  // Unlock state with reasons
-  const unlockState = useMemo<ViewUnlockState>(
-    () => ({
-      planning: {
-        unlocked: true, // PLANNING is always accessible
-        reason: null,
-      },
-      booking: {
-        unlocked: canViewBooking,
-        reason: canViewBooking
-          ? null
-          : !isPlanFinalized
-            ? 'Finalize your plan to unlock booking'
-            : 'Generate a plan to see booking options',
-      },
-    }),
-    [canViewBooking, isPlanFinalized]
-  );
-
-  // Navigate to a mode
-  const navigateToMode = useCallback(
-    (mode: ViewMode): boolean => {
-      // Guard: Don't allow jumping to Booking without finalization
-      if (mode === 'booking' && !canViewBooking) return false;
-      // Guard: Lock Booking during active generation
-      if (mode === 'booking' && isGenerating) return false;
-
-      // Store uses two-mode system natively
-      setActiveView(mode);
-      return true;
-    },
-    [canViewBooking, isGenerating, setActiveView]
-  );
-
-  // === Legacy API (for backward compatibility) ===
-
-  // Check if user has progressed past Setup (dates + content)
-  const hasLeftSetup = hasDates && (hasTiles || hasStrategyContent || inBookableState);
-
-  // Legacy unlock rules
-  const canViewSetup = !hasDates;
-  const canViewPlan = hasDates || isGenerating;
-  const canViewBook = canViewBooking;
-
-  // Legacy navigate function - converts old three-mode to new two-mode
-  const navigateTo = useCallback(
-    (view: ViewName): boolean => {
-      // Convert legacy view to new mode
-      const mode = legacyToMode(view);
-
-      // Guard: Don't allow jumping to Booking without finalization
-      if (mode === 'booking' && !canViewBook) return false;
-      // Guard: Lock Booking during active generation
-      if (mode === 'booking' && isGenerating) return false;
-
-      setActiveView(mode);
-      return true;
-    },
-    [canViewBook, isGenerating, setActiveView]
-  );
-
-  // Finalization actions
-  const finalizePlan = useCallback(() => {
-    setFinalized(true);
-  }, [setFinalized]);
-
-  const unfinalizePlan = useCallback(() => {
-    setFinalized(false);
-  }, [setFinalized]);
-
-  return {
-    // === Two-Mode System (New) ===
-    activeMode,
-    navigateToMode,
-    canViewBooking,
-    unlockState,
-    planningPhase,
-    planningProgress,
-
-    // === Common State ===
-    isGenerating,
-    isPlanFinalized,
-    finalizePlan,
-    unfinalizePlan,
-
-    // === Legacy API ===
-    // Convert new mode back to legacy format for backward compatibility
-    activeView: modeToLegacy(storedActiveMode, hasDates),
-    navigateTo,
-    canViewSetup,
-    canViewPlan,
-    canViewBook,
-    hasLeftSetup,
-  };
-}
-
-/**
  * useViewNavigationLight
  *
  * Lightweight version for components that only need nav actions + basic derived state.
@@ -285,9 +102,7 @@ export function useViewNavigationLight(): Pick<
           for (const _ in t) return true;
           return false;
         })(),
-        inBookableState: ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
-          s.document?.plan_view_state ?? ''
-        ),
+        inBookableState: BOOKABLE_STATES.has(s.document?.plan_view_state ?? ''),
       }))
     );
 

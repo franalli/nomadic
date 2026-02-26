@@ -156,17 +156,23 @@ const VIEW_STATE_ORDER: Record<string, number> = {
   // Stage 0 - Bootstrap/Setup
   S0_EMPTY: 0,
   S0_BOOTSTRAP: 0,
+  P0_MINIMAL: 0,
   // Stage 1 - Framing
   S1_DESTINATION_SET: 1,
   S1_FRAMING: 1,
-  // Stage 2 - Strategy
+  // Stage 2 - Strategy / P1
   S2_BLOCKED: 1.5,  // Blocked is less than ready
   S2_STRATEGY_READY: 2,
-  // Stage 3 - Itinerary
+  P1_ENRICHED: 2,
+  // Stage 3 - Itinerary / P2-P3
+  P2_LOGISTICS: 2.5,
   S3_BLOCKED: 2.5,
+  P3_BLOCKED: 2.5,
   S3_EDITING: 2.5,
+  P3_EDITING: 2.5,
   S3_PARTIAL_CONFLICT: 2.5,  // Conflict state (has partial day_cards)
   S3_ITINERARY_READY: 3,
+  P3_FINALIZED: 3,
 };
 
 const isS3ViewState = (state: string | null | undefined): boolean => Boolean(state?.startsWith('S3_'));

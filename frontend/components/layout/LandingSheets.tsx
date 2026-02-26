@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 
+import { PLAN_ACTIVE_STATES } from '@/components/plan/planStateHelpers';
 import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { BudgetSheet } from '@/components/plan/sheets/BudgetSheet';
 import { DatesSheet } from '@/components/plan/sheets/DatesSheet';
@@ -106,9 +107,7 @@ export function LandingSheets({
             closeSheet();
             addToast(`Origin: ${value}`, 'confirmation');
             // Trigger flight fetch via graph pipeline when plan is active
-            const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
-              planViewState
-            );
+            const isActive = PLAN_ACTIVE_STATES.has(planViewState);
             if (isActive) {
               onSendMessage(GENERATE_PLAN_TRIGGER);
             }
@@ -232,9 +231,7 @@ export function LandingSheets({
             closeSheet();
             addToast('Activity preferences saved', 'confirmation');
             // Trigger plan regeneration if plan is active
-            const isActive = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(
-              planViewState
-            );
+            const isActive = PLAN_ACTIVE_STATES.has(planViewState);
             if (isActive) {
               onSendMessage(GENERATE_PLAN_TRIGGER);
             }

@@ -13,7 +13,7 @@ import {
   useState,
 } from 'react';
 
-import { isBootstrap, isFraming } from '@/components/plan/planStateHelpers';
+import { isBootstrap, isFraming, ITINERARY_STATES } from '@/components/plan/planStateHelpers';
 import { UnifiedChipRow } from '@/components/plan/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
 import { useChatEffects } from '@/hooks/useChatEffects';
@@ -72,7 +72,7 @@ function getChatStatusConfig(
     if (!dateRange) return { text: 'When would you like to go?', label: 'Set Dates', indicator: 'blink' };
     return { text: 'Ready to build your plan', label: 'Generating Plan', indicator: 'blink' };
   }
-  if (planViewState && ['S3_ITINERARY_READY', 'S3_EDITING', 'P3_FINALIZED', 'P3_EDITING'].includes(planViewState)) {
+  if (planViewState && ITINERARY_STATES.has(planViewState)) {
     return { text: 'Itinerary complete', label: 'Ready', indicator: 'check' };
   }
   return { text: 'Your trip is taking shape', label: 'Refine Plan', indicator: 'pulse' };

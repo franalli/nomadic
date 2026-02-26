@@ -116,6 +116,8 @@ export type FlightSettings = {
 export type HotelSettings = {
   min_stars: number; // 1-5, 0 = no minimum
   amenities: string[]; // e.g., ['wifi', 'pool', 'parking']
+  style?: string; // e.g., 'boutique', 'resort', 'hostel'
+  location?: string; // e.g., 'beachfront', 'city center', 'near airport'
 };
 
 // Activity-specific search settings
