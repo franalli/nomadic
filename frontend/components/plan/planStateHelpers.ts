@@ -18,19 +18,18 @@ export type { GenerationState };
 
 /** States where booking actions are available */
 export const BOOKABLE_STATES: ReadonlySet<string> = new Set([
-  "S3_FINALIZED", "P3_FINALIZED",
+  "S3_ITINERARY_READY", "P3_FINALIZED",
 ]);
 
 /** States where a plan is actively being worked on */
 export const PLAN_ACTIVE_STATES: ReadonlySet<string> = new Set([
-  "S1_ENRICHED", "S2_LOGISTICS", "S3_BLOCKED", "S3_EDITING", "S3_FINALIZED",
-  "S2_STRATEGY_READY", "S3_ITINERARY_READY",
+  "S2_STRATEGY_READY", "S2_BLOCKED", "S3_ITINERARY_READY", "S3_BLOCKED", "S3_EDITING", "S3_PARTIAL_CONFLICT",
   "P0_MINIMAL", "P1_ENRICHED", "P2_LOGISTICS", "P3_BLOCKED", "P3_EDITING", "P3_FINALIZED",
 ]);
 
 /** States where itinerary data is expected to exist */
 export const ITINERARY_STATES: ReadonlySet<string> = new Set([
-  "S3_BLOCKED", "S3_EDITING", "S3_FINALIZED", "S3_ITINERARY_READY",
+  "S3_BLOCKED", "S3_EDITING", "S3_ITINERARY_READY", "S3_PARTIAL_CONFLICT",
   "P3_BLOCKED", "P3_EDITING", "P3_FINALIZED",
 ]);
 

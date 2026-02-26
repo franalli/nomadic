@@ -42,14 +42,18 @@ _places_http_client: httpx.AsyncClient | None = None
 _places_client_lock = asyncio.Lock()
 
 
-async def _get_places_http_client(timeout: float = 5.0) -> httpx.AsyncClient:
-    """Return a shared httpx client, creating lazily if needed."""
+async def _get_places_http_client() -> httpx.AsyncClient:
+    """Return a shared httpx client, creating lazily if needed.
+
+    Timeouts are set per-request, not on the client, since geocode (3s)
+    and search (5s) have different requirements.
+    """
     global _places_http_client
     if _places_http_client is not None and not _places_http_client.is_closed:
         return _places_http_client
     async with _places_client_lock:
         if _places_http_client is None or _places_http_client.is_closed:
-            _places_http_client = httpx.AsyncClient(timeout=timeout)
+            _places_http_client = httpx.AsyncClient()
         return _places_http_client
 
 
@@ -362,10 +366,11 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
     try:
         reserve_places_spend_or_raise(source="google_places:geocode")
         record_google_places_usage(path, "request", mode="geocode")
-        client = await _get_places_http_client(timeout=3.0)
+        client = await _get_places_http_client()
         resp = await client.get(
             _GEOCODE_URL,
             params={"address": dest, "key": api_key},
+            timeout=3.0,
         )
         data = resp.json() if resp.status_code == 200 else {}
         results = data.get("results", [])
@@ -563,8 +568,8 @@ async def _call_places_api_async(
     record_google_places_usage(path, "request", included_type=included_type)
     try:
         reserve_places_spend_or_raise(source=f"google_places:{path}")
-        client = await _get_places_http_client(timeout=5.0)
-        response = await client.post(_PLACES_SEARCH_URL, json=payload, headers=headers)
+        client = await _get_places_http_client()
+        response = await client.post(_PLACES_SEARCH_URL, json=payload, headers=headers, timeout=5.0)
         body = response.json() if response.status_code == 200 else {}
         places = _parse_places_response(response.status_code, response.text, body)
         elapsed = int((time.time() - t0) * 1000)
