@@ -37,6 +37,30 @@ from .provider_base import Provider
 
 logger = logging.getLogger(__name__)
 
+# ── Shared httpx client (connection reuse) ────────────────────────────────
+_places_http_client: httpx.AsyncClient | None = None
+_places_client_lock = asyncio.Lock()
+
+
+async def _get_places_http_client(timeout: float = 5.0) -> httpx.AsyncClient:
+    """Return a shared httpx client, creating lazily if needed."""
+    global _places_http_client
+    if _places_http_client is not None and not _places_http_client.is_closed:
+        return _places_http_client
+    async with _places_client_lock:
+        if _places_http_client is None or _places_http_client.is_closed:
+            _places_http_client = httpx.AsyncClient(timeout=timeout)
+        return _places_http_client
+
+
+async def close_places_http_client() -> None:
+    """Close the shared httpx client (call during app shutdown)."""
+    global _places_http_client
+    if _places_http_client and not _places_http_client.is_closed:
+        await _places_http_client.aclose()
+        _places_http_client = None
+
+
 # Explicit Google Places usage labels for telemetry.
 _PLACES_PATH_LABELS = {"browse", "tier1_enrich", "tier2_enrich", "logistics", "geocode"}
 _PLACES_COUNTER_FIELDS = (
@@ -339,38 +363,38 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
     try:
         reserve_places_spend_or_raise(source="google_places:geocode")
         record_google_places_usage(path, "request", mode="geocode")
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(
-                _GEOCODE_URL,
-                params={"address": dest, "key": api_key},
-            )
-            data = resp.json() if resp.status_code == 200 else {}
-            results = data.get("results", [])
-            if resp.status_code == 429 or resp.status_code >= 500:
-                _record_places_circuit_failure(path, status_code=resp.status_code)
-                if resp.status_code == 429:
-                    record_google_places_usage(path, "quota", mode="geocode")
-                else:
-                    record_google_places_usage(
-                        path,
-                        "error",
-                        mode="geocode",
-                        status=resp.status_code,
-                    )
-                return None
-            _record_places_circuit_success(path)
-            if results:
-                loc = results[0]["geometry"]["location"]
-                coords: tuple[float, float] = (loc["lat"], loc["lng"])
-                async with _geocode_lock:
-                    _geocode_cache[key] = coords
-                record_google_places_usage(path, "success", mode="geocode")
-                logger.debug("[GOOGLE_PLACES] Geocoded '%s' → %s", dest, coords)
-                return coords
-            # Destination not found (empty results) — cache None to avoid retrying bad input
+        client = await _get_places_http_client(timeout=3.0)
+        resp = await client.get(
+            _GEOCODE_URL,
+            params={"address": dest, "key": api_key},
+        )
+        data = resp.json() if resp.status_code == 200 else {}
+        results = data.get("results", [])
+        if resp.status_code == 429 or resp.status_code >= 500:
+            _record_places_circuit_failure(path, status_code=resp.status_code)
+            if resp.status_code == 429:
+                record_google_places_usage(path, "quota", mode="geocode")
+            else:
+                record_google_places_usage(
+                    path,
+                    "error",
+                    mode="geocode",
+                    status=resp.status_code,
+                )
+            return None
+        _record_places_circuit_success(path)
+        if results:
+            loc = results[0]["geometry"]["location"]
+            coords: tuple[float, float] = (loc["lat"], loc["lng"])
             async with _geocode_lock:
-                _geocode_cache[key] = None
-            record_google_places_usage(path, "empty", mode="geocode")
+                _geocode_cache[key] = coords
+            record_google_places_usage(path, "success", mode="geocode")
+            logger.debug("[GOOGLE_PLACES] Geocoded '%s' → %s", dest, coords)
+            return coords
+        # Destination not found (empty results) — cache None to avoid retrying bad input
+        async with _geocode_lock:
+            _geocode_cache[key] = None
+        record_google_places_usage(path, "empty", mode="geocode")
     except SpendLimitExceeded as exc:
         record_google_places_usage(path, "error", reason="spend_cap", mode="geocode")
         logger.warning("[GOOGLE_PLACES][%s] Spend guard blocked geocode: %s", path, exc)
@@ -541,49 +565,49 @@ async def _call_places_api_async(
     record_google_places_usage(path, "request", included_type=included_type)
     try:
         reserve_places_spend_or_raise(source=f"google_places:{path}")
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(_PLACES_SEARCH_URL, json=payload, headers=headers)
-            body = response.json() if response.status_code == 200 else {}
-            places = _parse_places_response(response.status_code, response.text, body)
-            elapsed = int((time.time() - t0) * 1000)
-            if response.status_code == 429 or response.status_code >= 500:
-                _record_places_circuit_failure(path, status_code=response.status_code)
-            else:
-                _record_places_circuit_success(path)
-            if places:
+        client = await _get_places_http_client(timeout=5.0)
+        response = await client.post(_PLACES_SEARCH_URL, json=payload, headers=headers)
+        body = response.json() if response.status_code == 200 else {}
+        places = _parse_places_response(response.status_code, response.text, body)
+        elapsed = int((time.time() - t0) * 1000)
+        if response.status_code == 429 or response.status_code >= 500:
+            _record_places_circuit_failure(path, status_code=response.status_code)
+        else:
+            _record_places_circuit_success(path)
+        if places:
+            record_google_places_usage(
+                path,
+                "success",
+                included_type=included_type,
+                results=len(places),
+            )
+            logger.info(
+                "[GOOGLE_PLACES] %s search: query='%s' results=%d latency=%dms",
+                included_type,
+                query,
+                len(places),
+                elapsed,
+            )
+        else:
+            if response.status_code == 429:
+                record_google_places_usage(path, "quota", included_type=included_type)
+            elif response.status_code >= 400:
                 record_google_places_usage(
                     path,
-                    "success",
+                    "error",
                     included_type=included_type,
-                    results=len(places),
-                )
-                logger.info(
-                    "[GOOGLE_PLACES] %s search: query='%s' results=%d latency=%dms",
-                    included_type,
-                    query,
-                    len(places),
-                    elapsed,
+                    status=response.status_code,
                 )
             else:
-                if response.status_code == 429:
-                    record_google_places_usage(path, "quota", included_type=included_type)
-                elif response.status_code >= 400:
-                    record_google_places_usage(
-                        path,
-                        "error",
-                        included_type=included_type,
-                        status=response.status_code,
-                    )
-                else:
-                    record_google_places_usage(path, "empty", included_type=included_type)
-                logger.warning(
-                    "[GOOGLE_PLACES] %s search EMPTY: query='%s' status=%d latency=%dms",
-                    included_type,
-                    query,
-                    response.status_code,
-                    elapsed,
-                )
-            return places
+                record_google_places_usage(path, "empty", included_type=included_type)
+            logger.warning(
+                "[GOOGLE_PLACES] %s search EMPTY: query='%s' status=%d latency=%dms",
+                included_type,
+                query,
+                response.status_code,
+                elapsed,
+            )
+        return places
     except SpendLimitExceeded as exc:
         record_google_places_usage(path, "error", included_type=included_type, reason="spend_cap")
         logger.warning("[GOOGLE_PLACES][%s] Spend guard blocked call: %s", path, exc)

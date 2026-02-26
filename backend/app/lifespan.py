@@ -153,6 +153,12 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     await close_unsplash_http_client()
     logger.info("[Shutdown] Closed Unsplash HTTP client")
 
+    # 5b. Close Google Places HTTP client
+    from app.tile_service.google_places_provider import close_places_http_client
+
+    await close_places_http_client()
+    logger.info("[Shutdown] Closed Google Places HTTP client")
+
     # 6. Clear pending enrichments dict
     from app.planner.nodes.local_expert import _pending_enrichments, _pending_lock
 
