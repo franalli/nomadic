@@ -326,9 +326,8 @@ def _get_photo_url(photo_name: str) -> Optional[str]:
 _GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 # In-memory geocode cache to avoid repeat API calls for the same destination.
-# _geocode_lock guards async reads/writes to prevent TOCTOU races in multi-worker prod.
+# Single threading.Lock is safe here — critical sections are microsecond dict ops.
 _geocode_cache: TTLCache = TTLCache(maxsize=1000, ttl=86400)
-_geocode_lock = asyncio.Lock()
 _geocode_thread_lock = Lock()
 
 
@@ -345,7 +344,7 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
     key = dest.lower().strip()
     path = "geocode"
 
-    async with _geocode_lock:
+    with _geocode_thread_lock:
         if key in _geocode_cache:
             record_google_places_usage(path, "cache_hit", cache="geocode")
             return _geocode_cache[key]
@@ -386,13 +385,13 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
         if results:
             loc = results[0]["geometry"]["location"]
             coords: tuple[float, float] = (loc["lat"], loc["lng"])
-            async with _geocode_lock:
+            with _geocode_thread_lock:
                 _geocode_cache[key] = coords
             record_google_places_usage(path, "success", mode="geocode")
             logger.debug("[GOOGLE_PLACES] Geocoded '%s' → %s", dest, coords)
             return coords
         # Destination not found (empty results) — cache None to avoid retrying bad input
-        async with _geocode_lock:
+        with _geocode_thread_lock:
             _geocode_cache[key] = None
         record_google_places_usage(path, "empty", mode="geocode")
     except SpendLimitExceeded as exc:
@@ -410,8 +409,7 @@ def _geocode_destination(dest: str) -> tuple[float, float] | None:
     """Sync version of geocoder (used by tile_service/service.py sync path).
 
     Uses _geocode_thread_lock to guard _geocode_cache against concurrent
-    sync-path access. Note: the async path uses a separate asyncio.Lock;
-    GIL provides atomicity for simple dict ops across both paths.
+    access (same lock shared by async path for microsecond dict ops).
     """
     key = dest.lower().strip()
     path = "geocode"

@@ -11,6 +11,7 @@
 
 import { Ticket } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { Stepper } from '@/components/ui/stepper';
 import { Switch } from '@/components/ui/switch';
@@ -261,7 +262,7 @@ function ActivitiesSheetInner({
   onOpenDestination,
 }: ActivitiesSheetProps) {
   const { toast } = useToast();
-  const dayCards = useDocumentStore((s) => s.document?.day_cards);
+  const dayCards = useDocumentStore(useShallow((s) => s.document?.day_cards));
   const inferredCategories = useMemo(() => inferCategoriesFromDayCards(dayCards), [dayCards]);
   const inferredDayPreferences = useMemo(() => inferDayPreferencesFromDayCards(dayCards), [dayCards]);
   const normalizedSettingCategories = useMemo(

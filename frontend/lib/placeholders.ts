@@ -155,26 +155,3 @@ export function placeholderImageForTile(tile: TilePlaceholderInput): string {
   const index = hash % images.length;
   return `https://images.unsplash.com/${images[index]}?w=400&h=300&fit=crop&auto=format`;
 }
-
-type BranchPlaceholderInput = {
-  id?: string;
-  destination?: string | null;
-  index?: number;
-};
-
-/**
- * Get deterministic placeholder hero images for a branch.
- * Same branch always gets the same images.
- */
-export function placeholderImagesForBranch(branch: BranchPlaceholderInput): string[] {
-  const seed = branch.id || branch.destination || `branch-${branch.index ?? 0}`;
-  const hash = hashCode(seed);
-  const images = PLACEHOLDER_IMAGES.destination;
-
-  // Return 3 different images based on hash
-  return [
-    `https://images.unsplash.com/${images[hash % images.length]}?w=1600&h=900&fit=crop&auto=format`,
-    `https://images.unsplash.com/${images[(hash + 1) % images.length]}?w=900&h=600&fit=crop&auto=format`,
-    `https://images.unsplash.com/${images[(hash + 2) % images.length]}?w=900&h=600&fit=crop&auto=format`,
-  ];
-}

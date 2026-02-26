@@ -26,6 +26,7 @@
 
 import { Lock, Package } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
@@ -144,7 +145,7 @@ export function BookingSection({
   onToggleFlights: _onToggleFlights,
 }: BookingSectionProps) {
   // FIX: Live subscription to tiles - ensures updates even if parent doesn't re-render
-  const storeTiles = useDocumentStore((s) => s.document?.tiles);
+  const storeTiles = useDocumentStore(useShallow((s) => s.document?.tiles));
   const tiles = storeTiles ?? propTiles;
 
   // Auto-collapse in S3 — hotels are already visible as check-in/check-out blocks in the timeline

@@ -10,10 +10,6 @@
  * @see docs/ux_unified_architecture.md - Progressive Disclosure
  */
 
-// Material Design standard easing: fast start, long gentle tail.
-// Use instead of spring physics for content reveals.
-export const EASE_STANDARD = [0.4, 0, 0.2, 1] as const;
-
 // Timing constants in milliseconds
 export const REVEAL_TIMING = {
   // Specialist cards

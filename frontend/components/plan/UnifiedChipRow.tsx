@@ -30,6 +30,7 @@ import {
   Users,
 } from 'lucide-react';
 import { memo, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { DS } from '@/lib/design-system';
@@ -554,7 +555,7 @@ function UnifiedChipRowInner({
 }: UnifiedChipRowProps) {
   const isDesktop = useIsDesktop();
   const isMobile = !isDesktop;
-  const dayCards = useDocumentStore((s) => s.document?.day_cards);
+  const dayCards = useDocumentStore(useShallow((s) => s.document?.day_cards));
   const inferredActivityCategories = useMemo(
     () => inferCategoriesFromDayCards(dayCards),
     [dayCards]

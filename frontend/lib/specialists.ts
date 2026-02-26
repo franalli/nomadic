@@ -98,9 +98,6 @@ const SPECIALIST_REGISTRY: Record<string, SpecialistConfig> = {
 /** All specialist IDs */
 export const SPECIALIST_IDS = Object.keys(SPECIALIST_REGISTRY);
 
-/** Niche specialists (alias — excludes local_expert/general which aren't in registry) */
-export const NICHE_SPECIALIST_IDS = SPECIALIST_IDS;
-
 /** Color lookup with backward-compat aliases */
 const SPECIALIST_COLORS: Record<string, string> = {
   local_expert: '#6B7280',
