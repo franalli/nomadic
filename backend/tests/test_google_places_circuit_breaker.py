@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -21,39 +21,25 @@ class _FakeResponse:
         return self._payload
 
 
-class _AsyncQuotaClient:
+class _FakeQuotaClient:
+    """Fake httpx client that returns 429 and counts calls."""
+
     calls = 0
-
-    def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
-        _ = args, kwargs
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN001
-        return False
 
     async def post(self, *args, **kwargs):  # noqa: ANN002, ANN003
         _ = args, kwargs
-        _AsyncQuotaClient.calls += 1
+        _FakeQuotaClient.calls += 1
         return _FakeResponse(status_code=429, text="quota exceeded")
 
 
-class _AsyncSuccessClient:
+class _FakeSuccessClient:
+    """Fake httpx client that returns success and counts calls."""
+
     calls = 0
-
-    def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
-        _ = args, kwargs
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN001
-        return False
 
     async def post(self, *args, **kwargs):  # noqa: ANN002, ANN003
         _ = args, kwargs
-        _AsyncSuccessClient.calls += 1
+        _FakeSuccessClient.calls += 1
         return _FakeResponse(
             status_code=200,
             payload={"places": [{"id": "gp_1", "displayName": {"text": "Beach"}}]},
@@ -66,13 +52,13 @@ def _reset_state():
 
     provider.clear_google_places_circuit_breaker()
     clear_spend_guard_counters()
-    _AsyncQuotaClient.calls = 0
-    _AsyncSuccessClient.calls = 0
+    _FakeQuotaClient.calls = 0
+    _FakeSuccessClient.calls = 0
     yield
     provider.clear_google_places_circuit_breaker()
     clear_spend_guard_counters()
-    _AsyncQuotaClient.calls = 0
-    _AsyncSuccessClient.calls = 0
+    _FakeQuotaClient.calls = 0
+    _FakeSuccessClient.calls = 0
 
 
 @pytest.mark.asyncio
@@ -85,7 +71,10 @@ async def test_places_circuit_opens_and_short_circuits(monkeypatch: pytest.Monke
     monkeypatch.setattr(settings, "google_places_circuit_breaker_open_seconds", 120)
     monkeypatch.setattr(settings, "spend_guard_enabled", False)
 
-    with patch("app.tile_service.google_places_provider.httpx.AsyncClient", _AsyncQuotaClient):
+    fake_client = _FakeQuotaClient()
+    mock_get_client = AsyncMock(return_value=fake_client)
+
+    with patch.object(provider, "_get_places_http_client", mock_get_client):
         result_1 = await provider._call_places_api_async(
             query="beaches in bali",
             included_type="tourist_attraction",
@@ -106,7 +95,7 @@ async def test_places_circuit_opens_and_short_circuits(monkeypatch: pytest.Monke
     assert result_1 == []
     assert result_2 == []
     assert result_3 == []
-    assert _AsyncQuotaClient.calls == 2
+    assert _FakeQuotaClient.calls == 2
     state = provider.get_google_places_circuit_breaker_state()
     assert state["browse"]["open"] is True
 
@@ -124,7 +113,10 @@ async def test_places_spend_guard_blocks_second_call_without_hitting_api(
     monkeypatch.setattr(settings, "spend_guard_global_daily_cap_usd", 10.0)
     monkeypatch.setattr(settings, "spend_guard_places_estimated_call_usd", 0.02)
 
-    with patch("app.tile_service.google_places_provider.httpx.AsyncClient", _AsyncSuccessClient):
+    fake_client = _FakeSuccessClient()
+    mock_get_client = AsyncMock(return_value=fake_client)
+
+    with patch.object(provider, "_get_places_http_client", mock_get_client):
         with spend_guard_scope("session-places"):
             result_1 = await provider._call_places_api_async(
                 query="museums in rome",
@@ -140,4 +132,4 @@ async def test_places_spend_guard_blocks_second_call_without_hitting_api(
 
     assert len(result_1) == 1
     assert result_2 == []
-    assert _AsyncSuccessClient.calls == 1
+    assert _FakeSuccessClient.calls == 1
