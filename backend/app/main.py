@@ -1655,12 +1655,6 @@ async def graph_plan_stream_endpoint(
     session_key = f"session:{session_id}"
     ip_key = f"ip:{client_ip}"
 
-    limit_scope = await _try_acquire_sse_slot(session_key, ip_key)
-    if limit_scope == "session":
-        return JSONResponse(429, {"detail": "Too many concurrent streams for this session"})
-    if limit_scope == "ip":
-        return JSONResponse(429, {"detail": "Too many concurrent streams from this IP"})
-
     return StreamingResponse(
         generate_sse(
             session_id=session_id,
@@ -1671,6 +1665,7 @@ async def graph_plan_stream_endpoint(
             session_key=session_key,
             ip_key=ip_key,
             request=request,
+            try_acquire_sse_slot=_try_acquire_sse_slot,
             release_sse_slot=_release_sse_slot,
             sanitize_trip_inputs_for_category_merge=_sanitize_trip_inputs_for_category_merge,
             merge_user_owned_trip_settings=_merge_user_owned_trip_settings,
