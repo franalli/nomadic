@@ -111,17 +111,20 @@ class RateLimiter:
 
     async def acquire(self):
         """Wait until a request can be made."""
-        async with self._lock:
-            now = time.time()
-            # Remove old requests outside the window
-            cutoff = now - self.window_seconds
-            self._request_times = [t for t in self._request_times if t > cutoff]
+        while True:
+            async with self._lock:
+                now = time.time()
+                # Remove old requests outside the window
+                cutoff = now - self.window_seconds
+                self._request_times = [t for t in self._request_times if t > cutoff]
 
-            if len(self._request_times) >= self.max_requests:
-                # Wait until oldest request expires
+                if len(self._request_times) < self.max_requests:
+                    self._request_times.append(time.time())
+                    return
+
+                # Calculate wait outside lock to avoid blocking other callers
                 wait_time = self._request_times[0] + self.window_seconds - now
-                if wait_time > 0:
-                    logger.debug(f"Rate limit reached, waiting {wait_time:.2f}s")
-                    await asyncio.sleep(wait_time)
 
-            self._request_times.append(time.time())
+            if wait_time > 0:
+                logger.debug(f"Rate limit reached, waiting {wait_time:.2f}s")
+                await asyncio.sleep(wait_time)

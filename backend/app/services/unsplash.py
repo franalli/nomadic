@@ -752,7 +752,7 @@ async def prefetch_destination_images(
         # Store in DB (activity-aware key prevents collisions)
         if db:
             try:
-                db_activities = None if activities else activities
+                db_activities = activities if activities else None
                 await _save_all_variants_to_db(db, destination, images, db_activities)
             except Exception as e:
                 logger.warning(f"[UNSPLASH] DB save failed: {e}")
