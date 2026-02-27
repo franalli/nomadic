@@ -26,7 +26,6 @@
 
 import { Lock, Package } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
-import { useShallow } from 'zustand/react/shallow';
 
 import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
@@ -41,7 +40,6 @@ import { getActiveSpecialists } from '@/lib/specialist-utils';
 import { activityMatchesSpecialist as registryMatch } from '@/lib/specialists';
 import { getTotalTileCount, isBookableActivityTile, normalizeTileType, selectTilesByType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
-import { useDocumentStore } from '@/state/documentStore';
 import type { GenerationState, PlanViewState, StrategySection, ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { PartnerPrice,Tile  } from '@/types/tile';
@@ -144,9 +142,7 @@ export function BookingSection({
   flightsExpanded = false,
   onToggleFlights: _onToggleFlights,
 }: BookingSectionProps) {
-  // FIX: Live subscription to tiles - ensures updates even if parent doesn't re-render
-  const storeTiles = useDocumentStore(useShallow((s) => s.document?.tiles));
-  const tiles = storeTiles ?? propTiles;
+  const tiles = propTiles;
 
   // Auto-collapse in S3 — hotels are already visible as check-in/check-out blocks in the timeline
   const hasItinerary = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
@@ -178,21 +174,39 @@ export function BookingSection({
     return tileArray.filter(t => savedTileIds.has(t.id));
   }, [tileArray, savedTileIds]);
 
-  // Calculate total from saved tiles
-  const checkoutTotal = useMemo(() => {
-    return savedTiles.reduce((sum, t) => sum + (t.total_inclusive ?? t.price_estimate ?? 0), 0);
-  }, [savedTiles]);
-
   // Extract active specialists for contextual headers
   const activeSpecialists = useMemo(() => {
     return getActiveSpecialists(strategySections);
   }, [strategySections]);
 
+  const checkoutCurrencyCodes = useMemo(() => {
+    return savedTiles.map((t) => t.currency?.trim().toUpperCase() ?? '');
+  }, [savedTiles]);
+  const hasUnknownCheckoutCurrency = checkoutCurrencyCodes.some((currency) => currency.length === 0);
+  const checkoutCurrencies = useMemo(() => {
+    return new Set(checkoutCurrencyCodes.filter((currency) => currency.length > 0));
+  }, [checkoutCurrencyCodes]);
+  const hasMixedCheckoutCurrencies = checkoutCurrencies.size > 1;
+  const hasCheckoutCurrencyIssue = hasMixedCheckoutCurrencies || hasUnknownCheckoutCurrency;
+
   // Get currency from first saved tile or first tile
   const checkoutCurrency = useMemo(() => {
-    const tile = savedTiles[0] || tileArray[0];
-    return tile?.currency || 'USD';
-  }, [savedTiles, tileArray]);
+    const firstKnownSavedCurrency = checkoutCurrencyCodes.find((currency) => currency.length > 0);
+    if (firstKnownSavedCurrency) return firstKnownSavedCurrency;
+
+    const fallbackCurrency = tileArray[0]?.currency?.trim().toUpperCase();
+    return fallbackCurrency && fallbackCurrency.length > 0 ? fallbackCurrency : 'USD';
+  }, [checkoutCurrencyCodes, tileArray]);
+
+  // Calculate total from saved tiles; avoid mixed-currency sums
+  const checkoutTotal = useMemo(() => {
+    if (hasCheckoutCurrencyIssue) return 0;
+    return savedTiles.reduce((sum, t) => {
+      const tileCurrency = t.currency?.trim().toUpperCase();
+      if (!tileCurrency || tileCurrency !== checkoutCurrency) return sum;
+      return sum + (t.total_inclusive ?? t.price_estimate ?? 0);
+    }, 0);
+  }, [savedTiles, checkoutCurrency, hasCheckoutCurrencyIssue]);
 
   // Apply filters and sorting to tiles
   const applyFilters = useCallback((tilesToFilter: Tile[]): Tile[] => {
@@ -235,6 +249,9 @@ export function BookingSection({
 
     return result;
   }, [filters]);
+
+  const filteredStayTiles = useMemo(() => applyFilters(stayTiles), [applyFilters, stayTiles]);
+  const filteredFlightTiles = useMemo(() => applyFilters(flightTiles), [applyFilters, flightTiles]);
 
   // Get max price for current category (for filter presets) - hidden for demo
   // const maxPriceInCategory = useMemo(() => {
@@ -328,31 +345,27 @@ export function BookingSection({
     }
     return grouped;
   }, [tileArray, activeSpecialists]);
-
-  // GAP 4 FIX: Hide entire section when no tiles exist
-  // This prevents showing an empty tab bar or placeholder noise
-  // Specialist cards + map fill the right panel instead
-  // NOTE: Must be AFTER all hook declarations to satisfy Rules of Hooks
-  if (totalTiles === 0) {
-    return null;
-  }
+  const filteredActivityTiles = useMemo(
+    () => applyFilters(tilesByCategory.activities ?? []),
+    [applyFilters, tilesByCategory]
+  );
 
   // PLANNING mode: Show S2-style preview regardless of S2/S3 state
   // Mode is the SSoT for UI variant, not state. See docs/ux_unified_architecture.md
-  if (effectiveMode === 'planning' && totalTiles > 0 && !isGenerating(generation)) {
+  if (effectiveMode === 'planning' && totalTiles > 0) {
     return (
       <ModalErrorBoundary>
         <div id="booking-section">
           <div className="px-6 pt-0 pb-1">
             {savedTileIds.size > 0 && (
-              <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full ${DS.textSize.micro} font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 mt-2`}>
+              <span className={cn('mt-2 inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 font-medium text-primary', DS.textSize.micro)}>
                 {savedTileIds.size} in trip
               </span>
             )}
             {/* Section-level lock message - only show if dates are NOT set */}
             {/* @see docs/ux_unified_architecture.md Section XII - Tiles-first logic */}
             {!hasDates && (
-              <p className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Lock className="h-3 w-3" />
                 <span>
                   Booking links unlock after you{' '}
@@ -360,7 +373,7 @@ export function BookingSection({
                     <button
                       type="button"
                       onClick={() => onOpenSheet('dates')}
-                      className="text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 dark:hover:text-emerald-400 underline underline-offset-2"
+                      className="text-primary underline underline-offset-2 hover:text-primary/80"
                     >
                       set trip dates
                     </button>
@@ -378,7 +391,7 @@ export function BookingSection({
             <div className="px-6 pb-4 space-y-4">
               {stayTiles.length > 0 ? (
                 <>
-                  {applyFilters(stayTiles).slice(0, 6).map((tile) => (
+                  {filteredStayTiles.slice(0, 6).map((tile) => (
                     <SuggestionCard
                       key={tile.id}
                       tile={tile}
@@ -391,14 +404,14 @@ export function BookingSection({
                       variant="compact"
                     />
                   ))}
-                  {applyFilters(stayTiles).length > 6 && (
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-2">
-                      +{applyFilters(stayTiles).length - 6} more stays available
+                  {filteredStayTiles.length > 6 && (
+                    <p className="pt-2 text-xs text-muted-foreground">
+                      +{filteredStayTiles.length - 6} more stays available
                     </p>
                   )}
                 </>
               ) : (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2">No stays found yet.</p>
+                <p className="py-2 text-xs text-muted-foreground">No stays found yet.</p>
               )}
             </div>
           )}
@@ -408,7 +421,7 @@ export function BookingSection({
             <div className="px-6 pb-4 space-y-4">
               {flightTiles.length > 0 ? (
                 <>
-                  {applyFilters(flightTiles).slice(0, 6).map((tile) => (
+                  {filteredFlightTiles.slice(0, 6).map((tile) => (
                     <SuggestionCard
                       key={tile.id}
                       tile={tile}
@@ -420,14 +433,43 @@ export function BookingSection({
                       variant="compact"
                     />
                   ))}
-                  {applyFilters(flightTiles).length > 6 && (
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-2">
-                      +{applyFilters(flightTiles).length - 6} more flights available
+                  {filteredFlightTiles.length > 6 && (
+                    <p className="pt-2 text-xs text-muted-foreground">
+                      +{filteredFlightTiles.length - 6} more flights available
                     </p>
                   )}
                 </>
               ) : (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2">No flights found yet.</p>
+                <p className="py-2 text-xs text-muted-foreground">No flights found yet.</p>
+              )}
+            </div>
+          )}
+
+          {/* Activities tiles */}
+          {isExpanded && (
+            <div className="px-6 pb-4 space-y-4">
+              {filteredActivityTiles.length > 0 ? (
+                <>
+                  {filteredActivityTiles.slice(0, 6).map((tile) => (
+                    <SuggestionCard
+                      key={tile.id}
+                      tile={tile}
+                      reasoning={tile.meta?.reasoning as string | undefined}
+                      isSaved={savedTileIds.has(tile.id)}
+                      onSave={handleSaveClick}
+                      onViewAlternatives={() => handleViewAlternatives(tile)}
+                      onDetailsClick={handleDetailsClick}
+                      variant="compact"
+                    />
+                  ))}
+                  {filteredActivityTiles.length > 6 && (
+                    <p className="pt-2 text-xs text-muted-foreground">
+                      +{filteredActivityTiles.length - 6} more activities available
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="py-2 text-xs text-muted-foreground">No activities found yet.</p>
               )}
             </div>
           )}
@@ -462,7 +504,7 @@ export function BookingSection({
     const message = totalTiles > 0 ? 'Refreshing deals…' : 'Searching deals…';
     return (
       <div id="booking-section" className="px-4 py-2 space-y-4 animate-in fade-in duration-500">
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">{message}</p>
+        <p className="text-xs text-muted-foreground">{message}</p>
         <MiniCardSkeleton />
         <MiniCardSkeleton />
         <MiniCardSkeleton />
@@ -474,7 +516,7 @@ export function BookingSection({
   if (state.startsWith('S2_')) {
     return (
       <div id="booking-section" className="px-4 py-2">
-        <p className="text-xs text-zinc-400 dark:text-zinc-500">
+        <p className="text-xs text-muted-foreground/80">
           Booking options appear after itinerary.
         </p>
       </div>
@@ -488,9 +530,9 @@ export function BookingSection({
       return (
         <div id="booking-section" className="flex items-center justify-center h-64">
           <div className="text-center">
-            <Package className="w-12 h-12 text-zinc-300 dark:text-zinc-600 mx-auto mb-3" />
-            <p className="text-zinc-500 dark:text-zinc-400">No booking options available yet.</p>
-            <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-1">
+            <Package className="mx-auto mb-3 h-12 w-12 text-muted-foreground/60" />
+            <p className="text-muted-foreground">No booking options available yet.</p>
+            <p className="mt-1 text-sm text-muted-foreground/80">
               Generate an itinerary to see bookable options.
             </p>
           </div>
@@ -508,13 +550,13 @@ export function BookingSection({
               {/* Header */}
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Your Trip Options</h2>
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+                  <h2 className="text-xl font-semibold text-foreground">Your Trip Options</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
                     {totalTiles} options found • Add items to your trip
                   </p>
                 </div>
                 {savedTileIds.size > 0 && (
-                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
+                  <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
                     {savedTileIds.size} in trip
                   </span>
                 )}
@@ -544,29 +586,47 @@ export function BookingSection({
                 currency={checkoutCurrency}
                 onRemoveTile={handleRemoveTile}
                 onCheckout={onCheckout}
-                checkoutDisabled={savedTiles.length === 0}
-                checkoutDisabledReason={savedTiles.length === 0 ? 'Add items to your trip first' : undefined}
+                checkoutDisabled={savedTiles.length === 0 || hasCheckoutCurrencyIssue || !onCheckout}
+                checkoutDisabledReason={
+                  savedTiles.length === 0
+                    ? 'Add items to your trip first'
+                    : hasMixedCheckoutCurrencies
+                      ? 'Checkout supports one currency at a time'
+                    : hasUnknownCheckoutCurrency
+                      ? 'Some selections are missing currency'
+                    : !onCheckout
+                      ? 'Checkout is unavailable right now'
+                      : undefined
+                }
               />
             </div>
           </div>
 
           {/* Mobile: Fixed Checkout Footer */}
-          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-sm border-t border-zinc-200 dark:border-white/10 p-4 pb-[env(safe-area-inset-bottom)] flex items-center justify-between">
+          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 flex items-center justify-between border-t border-border bg-background/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm">
             <div className="flex flex-col">
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">Est. Total</span>
+              <span className="text-xs text-muted-foreground">Est. Total</span>
               <span className="font-bold text-lg">
-                {checkoutCurrency === 'USD' ? '$' : checkoutCurrency === 'EUR' ? '€' : checkoutCurrency === 'GBP' ? '£' : checkoutCurrency}
-                {checkoutTotal.toLocaleString()}
+                {hasMixedCheckoutCurrencies ? (
+                  'Multiple currencies'
+                ) : hasUnknownCheckoutCurrency ? (
+                  'Currency unavailable'
+                ) : (
+                  <>
+                    {checkoutCurrency === 'USD' ? '$' : checkoutCurrency === 'EUR' ? '€' : checkoutCurrency === 'GBP' ? '£' : checkoutCurrency}
+                    {checkoutTotal.toLocaleString()}
+                  </>
+                )}
               </span>
             </div>
             <button
               onClick={onCheckout}
-              disabled={savedTiles.length === 0}
+              disabled={savedTiles.length === 0 || hasCheckoutCurrencyIssue || !onCheckout}
               className={cn(
                 'px-6 py-3 rounded-lg font-semibold text-sm transition-colors',
-                savedTiles.length > 0
-                  ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-soft'
-                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 cursor-not-allowed'
+                savedTiles.length > 0 && !hasCheckoutCurrencyIssue && onCheckout
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-soft'
+                  : 'bg-muted text-muted-foreground cursor-not-allowed'
               )}
             >
               Checkout

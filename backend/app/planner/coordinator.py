@@ -28,6 +28,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from app.config import settings
 from app.planner.hashing import stable_hash
 from app.planner.schemas.coordinator_schemas import (
     ChangeType,
@@ -53,6 +54,13 @@ _CHANGE_DETECTION_KEYS = (
     "day_cards",
     "persistent_meta",
 )
+
+# Human-readable labels for partial parallel failures surfaced in ack_updates.
+_FAILURE_LABELS = {
+    "search_tiles": "Flights & hotels temporarily unavailable",
+    "dispatch_specialists": "Some specialist advice unavailable",
+    "local_intel": "Local knowledge temporarily unavailable",
+}
 
 
 # =============================================================================
@@ -525,12 +533,21 @@ def plan_turn(
 
     # Tile search
     if _needs_tile_refresh(classifier) and has_destination and has_dates:
+        tile_types = _tile_refresh_types(classifier)
+        # No activity tiles yet + user has categories → force-include activities
+        # so the first "dates added" turn doesn't skip the activity pipeline.
+        if "activities" not in tile_types:
+            existing_tiles = state.get("tiles", {})
+            if not existing_tiles.get("activities"):
+                act_settings = state.get("trip_settings", {}).get("activity_settings", {})
+                if isinstance(act_settings, dict) and act_settings.get("categories"):
+                    tile_types = [*tile_types, "activities"]
         # Tiles can run in parallel with specialists when both are needed
         parallel_with = StepType.DISPATCH_SPECIALISTS if dispatch_list else None
         steps.append(
             ExecutionStep(
                 step_type=StepType.SEARCH_TILES,
-                params={"tile_types": _tile_refresh_types(classifier)},
+                params={"tile_types": tile_types},
                 parallel_with=parallel_with,
             )
         )
@@ -603,12 +620,20 @@ def _compute_dispatch_list(
     # Targeted change — only dispatch affected specialists
     if classifier.affects:
         # Classifier told us exactly which to re-dispatch
-        return sorted(
+        affected_tier1 = sorted(
             {
                 _norm_topic(t)
                 for t in classifier.affects
                 if _norm_topic(t) in TIER1_SPECIALIST_NAMES and _norm_topic(t) not in removed_topics
             }
+        )
+        if affected_tier1:
+            return affected_tier1
+        # classifier.affects contained only Tier 2 topics — fall through to
+        # the activity-change fallback so new Tier 1 categories still dispatch.
+        logger.debug(
+            "[coordinator] affects=%s had no Tier 1 — falling through to activity fallback",
+            classifier.affects,
         )
 
     # Fallback: if change_type targets activity changes, dispatch relevant ones
@@ -734,10 +759,10 @@ def build_brief(
             if zone:
                 other_zones[other_topic] = zone
 
-    # Budget allocation: activities get 30% of total budget (per
-    # BUDGET_ALLOCATIONS), then split equally among active specialists.
+    # Budget allocation uses configured activity share,
+    # then splits equally among active specialists.
     budget_total = trip_plan.get("budget")
-    activities_share = 0.30  # matches constraint_guard BUDGET_ALLOCATIONS
+    activities_share = settings.budget_allocation_activities
     active_count = max(1, len(other_plans) + 1)  # +1 for this specialist
     budget_pct = activities_share / active_count
 
@@ -1132,6 +1157,20 @@ def _apply_classifier_to_state(
                 classifier.activity_day_preferences,
             )
 
+    # Activities per day (density preference)
+    if classifier.activities_per_day is not None:
+        clamped = max(1, min(classifier.activities_per_day, 5))
+        old_apd = activity_settings.get("activities_per_day")
+        if old_apd != clamped:
+            activity_settings["activities_per_day"] = clamped
+            fields_changed.append("activities_per_day")
+            turn_steps.append(
+                {
+                    "type": "activities_per_day",
+                    "summary": f"activities_per_day set to {clamped}",
+                }
+            )
+
     # Skill level
     if classifier.skill_level:
         old_skill_level = activity_settings.get("skill_level")
@@ -1286,6 +1325,8 @@ async def _dispatch_specialists_parallel(
         return {}
 
     existing_plans: Dict[str, Any] = state.get("specialist_plans", {})
+    # NOTE: build_brief() reads only trip_plan + trip_settings from state.
+    # If it gains new state key reads, update _pre_change_briefs snapshot in execute_turn().
     pre_change_briefs = state.get("_pre_change_briefs")
     pre_change_state = (
         {
@@ -1515,6 +1556,20 @@ async def _search_tiles(
     # Limit fetched verticals by requested tile types.
     settings_for_search = dict(trip_settings) if isinstance(trip_settings, dict) else {}
     booking_types = dict(settings_for_search.get("booking_types", {}))
+
+    # Always include activities when Tier 2 categories exist — plan_turn() may
+    # exclude them for date_change (assuming specialists handle content), but
+    # Tier 2 categories (yoga, nightlife, tours) have no specialist and rely
+    # on logistics_node's experience generator.
+    if "activities" not in requested_types:
+        activity_settings = trip_settings.get("activity_settings", {})
+        categories = set(
+            activity_settings.get("categories", []) if isinstance(activity_settings, dict) else []
+        )
+        tier2_cats = categories - TIER1_SPECIALIST_NAMES
+        if tier2_cats:
+            requested_types.add("activities")
+
     if "flights" not in requested_types:
         booking_types["flights"] = "off"
     if "activities" not in requested_types:
@@ -1613,11 +1668,13 @@ async def _search_tiles(
 # ---------------------------------------------------------------------------
 
 
-async def _run_local_intel(state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Run local expert Phase A (instant skeleton). Phase 2 placeholder.
+async def _run_local_intel(
+    state: Dict[str, Any],
+    session_id: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Run local expert Phase A (instant skeleton) + stash Phase B enrichment.
 
-    Returns a strategy section dict or None. The full local expert with
-    Phase B enrichment is wired in Phase 4.
+    Returns a strategy section dict or None.
     """
     trip_plan: Dict[str, Any] = state.get("trip_plan", {})
     destination = trip_plan.get("destination")
@@ -1669,11 +1726,41 @@ async def _run_local_intel(state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             principles=[c["desc"] for c in warning_constraints[:4]],
         )
 
-        # Mark enrichment as ready (Phase B enrichment deferred to Phase 4)
-        section["local_expert_enrichment"] = {
-            "state": "ready",
-            "error_code": None,
-        }
+        # Phase B: stash enrichment closure so streaming.py fires it after db.commit()
+        from app.config import settings as _settings
+
+        if _settings.local_expert_use_llm and session_id:
+            from app.planner.nodes.local_expert import (
+                _MAX_PENDING_ENRICHMENTS,
+                _pending_enrichments,
+                _pending_lock,
+                build_enrichment_closure,
+            )
+
+            _enrich = build_enrichment_closure(
+                destination=destination,
+                start_date=trip_plan.get("start_date"),
+                end_date=trip_plan.get("end_date"),
+                adults=trip_plan.get("adults", 1),
+                children=trip_plan.get("children", 0),
+                session_id=session_id,
+            )
+            async with _pending_lock:
+                if len(_pending_enrichments) >= _MAX_PENDING_ENRICHMENTS:
+                    _oldest = next(iter(_pending_enrichments))
+                    _pending_enrichments.pop(_oldest)
+                    logger.warning("[coordinator] Evicting stale enrichment for %s", _oldest)
+                _pending_enrichments[session_id] = (_enrich, time.monotonic())
+            section["local_expert_enrichment"] = {
+                "state": "pending",
+                "error_code": None,
+            }
+            logger.debug("[coordinator] Phase B: enrichment stashed for %s", session_id)
+        else:
+            section["local_expert_enrichment"] = {
+                "state": "ready",
+                "error_code": None,
+            }
 
         return section
 
@@ -1729,6 +1816,12 @@ async def _build_itinerary(
         else:
             activity_categories = categories or None
 
+        activities_per_day = (
+            activity_settings.get("activities_per_day")
+            if isinstance(activity_settings, dict)
+            else None
+        )
+
         builder_input = ItineraryBuilderInput(
             start_date=start_date,
             end_date=end_date,
@@ -1737,6 +1830,7 @@ async def _build_itinerary(
             destination=destination,
             origin=trip_plan.get("origin"),
             activity_categories=activity_categories,
+            activities_per_day=activities_per_day,
         )
 
         builder = ItineraryBuilder()
@@ -1811,7 +1905,6 @@ def _normalize_state_for_chips(state: Dict[str, Any]) -> Dict[str, Any]:
     chip_state = dict(state)
     chip_state.setdefault("persistent_meta", {})
     chip_state.setdefault("day_cards", state.get("day_cards") or [])
-    chip_state.setdefault("constraints", [])
     if not isinstance(chip_state.get("trip_plan"), dict):
         chip_state["trip_plan"] = {}
     if not isinstance(chip_state.get("trip_settings"), dict):
@@ -1997,11 +2090,6 @@ def _build_envelope(
     # Surface partial parallel failures as ack_updates
     partial_failures = turn_meta.get("partial_failures", [])
     if isinstance(partial_failures, list) and partial_failures:
-        _FAILURE_LABELS = {
-            "search_tiles": "Flights & hotels temporarily unavailable",
-            "dispatch_specialists": "Some specialist advice unavailable",
-            "local_intel": "Local knowledge temporarily unavailable",
-        }
         for step_name in partial_failures:
             label = _FAILURE_LABELS.get(step_name, f"{step_name} temporarily unavailable")
             ack_updates.append({"field": "partial_failure", "to": label})
@@ -2018,11 +2106,14 @@ def _build_envelope(
         (v for v in constraint_violations if isinstance(v, dict) and v.get("category") == "route"),
         None,
     )
+    has_field_changes = any(u.get("field") != "partial_failure" for u in ack_updates)
     if route_violation:
         ack_status = "rejected"
         ack_updates = [{"field": "route", "to": route_violation.get("code", "INVALID_ROUTE")}]
-    elif ack_updates:
+    elif has_field_changes:
         ack_status = "applied"
+    elif partial_failures:
+        ack_status = "partial"
     else:
         ack_status = "no_change"
 
@@ -2201,7 +2292,7 @@ async def _execute_step(
         }
 
     if step_type == StepType.LOCAL_INTEL:
-        section = await _run_local_intel(state)
+        section = await _run_local_intel(state, session_id=session_id)
         if section:
             sections = list(state.get("strategy_sections", []))
             sections = [
@@ -2450,7 +2541,7 @@ async def execute_turn(
         for group in sequential_groups:
             if len(group) == 1:
                 step = group[0]
-                label, icon, duration = _step_status_info(step)
+                label, icon, duration = _step_status_info(step, state, classifier)
                 node_name = _step_node_name(step)
                 if node_name:
                     yield _node_status(node_name, "started", label, icon, duration)
@@ -2470,7 +2561,7 @@ async def execute_turn(
             else:
                 # Parallel group
                 for step in group:
-                    label, icon, duration = _step_status_info(step)
+                    label, icon, duration = _step_status_info(step, state, classifier)
                     node_name = _step_node_name(step)
                     if node_name:
                         yield _node_status(node_name, "started", label, icon, duration)
@@ -2486,7 +2577,7 @@ async def execute_turn(
                     yield step_event
 
                 for step in group:
-                    label, icon, duration = _step_status_info(step)
+                    label, icon, duration = _step_status_info(step, state, classifier)
                     node_name = _step_node_name(step)
                     if node_name:
                         yield _node_status(node_name, "completed", label, icon, duration)
@@ -2539,18 +2630,67 @@ async def execute_turn(
         yield {"type": "error", "message": str(exc)}
 
 
-def _step_status_info(step: ExecutionStep) -> tuple[str, str, int]:
-    """Return (label, icon, estimated_duration_ms) for a step type."""
-    _STATUS_MAP: Dict[StepType, tuple[str, str, int]] = {
-        StepType.SHORT_CIRCUIT: ("Processing...", "zap", 100),
-        StepType.DISPATCH_SPECIALISTS: ("Consulting specialists...", "star", 3000),
-        StepType.SEARCH_TILES: ("Searching flights & hotels...", "search", 2000),
-        StepType.BUILD_ITINERARY: ("Building itinerary...", "calendar", 200),
-        StepType.GENERATE_RESPONSE: ("Writing response...", "message-square", 800),
-        StepType.LOCAL_INTEL: ("Loading local knowledge...", "building", 50),
-        StepType.CLASSIFY: ("Reading your message...", "brain", 300),
-    }
-    return _STATUS_MAP.get(step.step_type, ("Processing...", "circle", 500))
+def _step_status_info(
+    step: ExecutionStep,
+    state: Optional[Dict[str, Any]] = None,
+    classifier: Optional[ClassifierOutput] = None,
+) -> tuple[str, str, int]:
+    """Return (label, icon, estimated_duration_ms) for a step — context-aware."""
+    dest = ""
+    if state:
+        dest = (state.get("trip_plan") or {}).get("destination", "") or ""
+
+    st = step.step_type
+
+    if st == StepType.CLASSIFY:
+        return ("Reading your message...", "brain", 300)
+
+    if st == StepType.SHORT_CIRCUIT:
+        return ("Processing...", "zap", 100)
+
+    if st == StepType.DISPATCH_SPECIALISTS:
+        if classifier and classifier.affects:
+            names = ", ".join(a.replace("_", " ") for a in classifier.affects[:2])
+            return (f"Consulting {names} specialist...", "star", 3000)
+        return ("Consulting specialists...", "star", 3000)
+
+    if st == StepType.SEARCH_TILES:
+        settings = (state or {}).get("trip_settings", {})
+        booking = settings.get("booking_types", {})
+        cats = settings.get("activity_settings", {}).get("categories", [])
+        parts: list[str] = []
+        if booking.get("hotels") != "off":
+            parts.append("hotels")
+        if booking.get("flights") not in ("off", None):
+            parts.append("flights")
+        if cats:
+            parts.extend(cats[:2])
+        search_str = " & ".join(parts) if parts else "options"
+        loc = f" in {dest}" if dest else ""
+        return (f"Finding {search_str}{loc}...", "search", 2000)
+
+    if st == StepType.LOCAL_INTEL:
+        loc = f" {dest}" if dest else ""
+        return (f"Loading{loc} travel intelligence...", "building", 50)
+
+    if st == StepType.BUILD_ITINERARY:
+        plan = (state or {}).get("trip_plan", {})
+        start = plan.get("start_date")
+        end = plan.get("end_date")
+        if start and end:
+            try:
+                s = datetime.strptime(start, "%Y-%m-%d")
+                e = datetime.strptime(end, "%Y-%m-%d")
+                days = (e - s).days + 1
+                return (f"Building {days}-day itinerary...", "calendar", 200)
+            except ValueError:
+                pass
+        return ("Building itinerary...", "calendar", 200)
+
+    if st == StepType.GENERATE_RESPONSE:
+        return ("Writing response...", "message-square", 800)
+
+    return ("Processing...", "circle", 500)
 
 
 def _step_node_name(step: ExecutionStep) -> Optional[str]:

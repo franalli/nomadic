@@ -13,7 +13,7 @@
  */
 
 import { Calendar, DollarSign, MapPin, Plane, Users } from 'lucide-react';
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useEffect, useRef } from 'react';
 
 import { formatDateRangeForPills } from '@/lib/format-utils';
 import { cn } from '@/lib/utils';
@@ -91,11 +91,16 @@ function TripSettingsSheetInner({
 }: TripSettingsSheetProps) {
   const { destination, origin, start_date, end_date, adults, children, budget, currency } = tripInputs;
 
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
+
   const openField = useCallback(
     (sheet: SheetType) => {
       onOpenChange(false); // Close this sheet first
       // Small delay to let close animation finish before opening next
-      setTimeout(() => onOpenSheet(sheet), 200);
+      setTimeout(() => { if (mountedRef.current) onOpenSheet(sheet); }, 200);
     },
     [onOpenChange, onOpenSheet]
   );

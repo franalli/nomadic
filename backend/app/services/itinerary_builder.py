@@ -293,6 +293,7 @@ class ItineraryBuilderInput:
     preferences: Optional[PreferenceOverrideInput] = None  # User heart preferences
     activity_categories: Optional[List[str]] = None  # User-selected categories from pills
     activity_day_preferences: Optional[Dict[str, int]] = None  # {"diving": 3, "hiking": 2}
+    activities_per_day: Optional[int] = None  # Target activities per day (e.g., 2 for "2 a day")
     # Browse tiles explicitly added by user (source="browse_add") — survive graph re-runs
     user_pinned_tiles: Optional[Dict[str, Any]] = None  # tile_id → {tile, preferred_day, source}
 
@@ -455,6 +456,7 @@ class ItineraryBuilder:
         self._warnings: List[str] = []
         self._nofly_buffer_days: int = 0
         self._day_preferences: Dict[str, int] = {}
+        self._activities_per_day: int = 1
         # None = no category filter, set() = user explicitly cleared categories.
         self._active_categories: Optional[set[str]] = None
 
@@ -491,6 +493,7 @@ class ItineraryBuilder:
         self._warnings: List[str] = []
         self._nofly_buffer_days: int = 0
         self._day_preferences = input_data.activity_day_preferences or {}
+        self._activities_per_day: int = max(1, min(input_data.activities_per_day or 1, 5))
         # Active categories for Phase 5.25 preferred-tile category filter.
         # None means "no filter" (user didn't specify categories).
         # set() means "user explicitly cleared all categories — skip all".
@@ -2459,28 +2462,33 @@ class ItineraryBuilder:
                 free_day_indices.append(i)
 
         placed_on_free = 0
+        target_per_day = self._activities_per_day
         for day_idx in free_day_indices:
             if not unplaced:
                 break
             day = days[day_idx]
             day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
 
-            tile = unplaced.pop(0)
-            block = self._experience_tile_to_block(tile, day.day_number, 0)
-            day.blocks.append(block)
-            placed_on_free += 1
-
-            # Place second tile on same free day if available, fits, and under category cap
-            if unplaced:
-                tile2 = unplaced[0]
-                t1_hours = (tile.get("meta") or {}).get("duration_hours", DEFAULT_EXPERIENCE_HOURS)
-                t2_hours = (tile2.get("meta") or {}).get("duration_hours", DEFAULT_EXPERIENCE_HOURS)
-                t2_cat = (tile2.get("meta") or {}).get("category", "experience")
-                cat_ok = self._category_count_on_day(day, t2_cat) < MAX_SAME_CATEGORY_PER_DAY
-                if t1_hours + t2_hours <= DAY_CAPACITY_HOURS and cat_ok:
-                    block2 = self._experience_tile_to_block(unplaced.pop(0), day.day_number, 1)
-                    day.blocks.append(block2)
-                    placed_on_free += 1
+            placed_today = 0
+            used_hours = 0.0
+            while unplaced and placed_today < target_per_day:
+                tile = unplaced[0]
+                t_hours = (tile.get("meta") or {}).get("duration_hours", DEFAULT_EXPERIENCE_HOURS)
+                if used_hours + t_hours > DAY_CAPACITY_HOURS:
+                    break
+                t_cat = (tile.get("meta") or {}).get("category", "experience")
+                if (
+                    placed_today > 0
+                    and self._category_count_on_day(day, t_cat) >= MAX_SAME_CATEGORY_PER_DAY
+                ):
+                    break
+                block = self._experience_tile_to_block(
+                    unplaced.pop(0), day.day_number, placed_today
+                )
+                day.blocks.append(block)
+                used_hours += t_hours
+                placed_today += 1
+                placed_on_free += 1
 
         # Update day labels for free days that got experience tiles
         for day_idx in free_day_indices:

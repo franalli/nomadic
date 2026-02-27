@@ -13,7 +13,7 @@
 #   7   Settings change — 2-turn NL extraction (min_stars)
 #   8   Bare destination — minimal input, no error
 #   9   Build itinerary — 2-turn with GENERATE_PLAN_NOW trigger
-#   10  Destination change — stale data cleared by _merge_trip_fields
+#   10  Destination change — stale data cleared by coordinator field-merge logic
 #   11  Cache survival — L2 specialist cache persists across session reset
 #   12  Google Places cascade — non-curated destination (conditional)
 #
@@ -474,7 +474,7 @@ fi
 # Turn 1: destination + dates. Turn 2: origin city.
 # Validates that session_state.trip_plan survives across turns and that
 # setting origin flips booking_types.flights from "off" to "suggested"
-# (per _merge_trip_fields in middleware.py).
+# (per coordinator field-merge logic).
 if should_run 6; then
 echo ""
 echo "═══ Flow 6: Origin Detection — 2-Turn ═══"
@@ -506,7 +506,7 @@ fi
 DEST2=$(extract_top "session_state.trip_plan.destination")
 check_not_empty "Turn 2: destination preserved from Turn 1" "$DEST2" || F=false
 
-# Origin → flights flipped to "suggested" (middleware.py _merge_trip_fields)
+# Origin → flights flipped to "suggested" (coordinator field-merge logic)
 FLIGHTS=$(extract_top "session_state.trip_settings.booking_types.flights")
 if [ -n "$FLIGHTS" ] && [ "$FLIGHTS" != "off" ]; then
   echo "  ✓ flights enabled after origin (=$FLIGHTS)"; PASS=$((PASS+1))
@@ -525,7 +525,7 @@ fi
 # =============================================================================
 # Turn 1: destination. Turn 2: "5-star hotels only."
 # Validates extract_trip_fields writes hotel_min_stars →
-# trip_settings.hotel_settings.min_stars (via _merge_trip_fields).
+# trip_settings.hotel_settings.min_stars (via coordinator field-merge logic).
 if should_run 7; then
 echo ""
 echo "═══ Flow 7: Settings Change — 2-Turn ═══"
@@ -633,8 +633,8 @@ fi
 #  FLOW 10: Destination Change — Stale Data Cleared
 # =============================================================================
 # Turn 1: Bali + diving. Turn 2: "let's go to Lisbon instead."
-# _merge_trip_fields clears strategy_sections, tiles, day_cards, constraints
-# when destination changes (middleware.py).
+# Coordinator field-merge logic clears strategy_sections, tiles, day_cards,
+# constraints when destination changes.
 if should_run 10; then
 echo ""
 echo "═══ Flow 10: Destination Change — Stale Data Cleared ═══"
@@ -655,20 +655,20 @@ DEST=$(extract_top "session_state.trip_plan.destination")
 DEST_LC=$(echo "$DEST" | tr '[:upper:]' '[:lower:]')
 check_contains "Destination changed to Lisbon" "$DEST_LC" "lisbon" || F=false
 
-# After _merge_trip_fields clears stale data, session_state.strategy_sections
+# After coordinator field-merge clears stale data, session_state.strategy_sections
 # should be [] (cleared) or contain NEW Lisbon sections — but NOT Bali diving.
 # The agent MAY call specialist again for Lisbon, or may not if no Tier 1 category.
 STRAT_CT=$(jlen "$(extract_top "session_state.strategy_sections")")
 echo "  ℹ  Turn 2: $STRAT_CT strategy sections (should be 0 or Lisbon-only)"
 
-# Key proof: tiles should be cleared/replaced. _merge_trip_fields sets tiles={}
+# Key proof: tiles should be cleared/replaced. Coordinator field-merge sets tiles={}
 # then agent may call search_tiles for Lisbon.
 TILES_RAW=$(extract_top "session_state.tiles")
 HAS_BALI_TILES=$(echo "$TILES_RAW" | python3 -c "
 import sys,json
 try:
     t=json.load(sys.stdin)
-    # If tiles is empty dict or any non-empty dict, _merge_trip_fields cleared properly.
+    # If tiles is empty dict or any non-empty dict, coordinator field-merge cleared properly.
     # It's a bug only if tiles from Bali survived unchanged.
     print('ok')
 except: print('ok')

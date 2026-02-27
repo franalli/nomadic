@@ -31,6 +31,7 @@ import { EMPTY_TILE_SELECTION, selectionsToTileSelection, useTileSelection } fro
  * This ensures the plan is fully generated with strategy content when branches appear.
  */
 const GENERATING_MIN_DURATION_MS = 5000;
+const MAX_MISSING_FLIGHT_RETRIES = 2;
 
 /**
  * Options for the useBranchManager hook.
@@ -307,10 +308,35 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   } | null>(null);
 
   /**
-   * Flag to track if tiles refresh is in progress.
-   * Prevents concurrent refresh requests.
+   * Tracks settings-triggered refresh progress.
    */
-  const isRefreshingRef = useRef(false);
+  const isSettingsRefreshingRef = useRef(false);
+
+  /**
+   * Tracks auto-flight refresh progress.
+   */
+  const isFlightsRefreshingRef = useRef(false);
+
+  /**
+   * Monotonic sequence used to discard stale settings refresh responses.
+   */
+  const refreshSeqRef = useRef(0);
+
+  /**
+   * Reactive tick bumped whenever a refresh settles.
+   * Used to retrigger effects that depend on non-reactive refresh refs.
+   */
+  const [settingsRefreshTick, setSettingsRefreshTick] = useState(0);
+
+  /**
+   * Tracks branches where missing flights were already auto-fetched.
+   */
+  const fetchedMissingFlightsRef = useRef<Set<string>>(new Set());
+
+  /**
+   * Bounded retries for missing-flight auto-fetch per branch.
+   */
+  const missingFlightRetryCountRef = useRef<Record<string, number>>({});
 
   // ─────────────────────────────────────────────────────────────────────────
   // Computed Values
@@ -332,6 +358,12 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    */
   const handleClearContext = useCallback(() => {
     branchState.abortTilesFetch();
+    prevSettingsRef.current = null;
+    isSettingsRefreshingRef.current = false;
+    isFlightsRefreshingRef.current = false;
+    refreshSeqRef.current = 0;
+    fetchedMissingFlightsRef.current.clear();
+    missingFlightRetryCountRef.current = {};
 
     // Clear any pending generating state
     if (generatingTimerRef.current) {
@@ -481,6 +513,11 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       const hasBranchesInResult = result.branches.length > 0;
       const isCurrentlyGenerating = generatingStartTimeRef.current !== null;
 
+      if (generatingTimerRef.current) {
+        clearTimeout(generatingTimerRef.current);
+        generatingTimerRef.current = null;
+      }
+
       // If generating and got branches, apply minimum loading time
       if (isCurrentlyGenerating && hasBranchesInResult) {
         const elapsed = Date.now() - generatingStartTimeRef.current!;
@@ -489,6 +526,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         if (remaining > 0) {
           // Schedule delayed display
           generatingTimerRef.current = setTimeout(() => {
+            generatingTimerRef.current = null;
             finalizeGenerating(result);
           }, remaining);
           return;
@@ -499,10 +537,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       if (isCurrentlyGenerating && !hasBranchesInResult) {
         setIsGenerating(false);
         generatingStartTimeRef.current = null;
-        if (generatingTimerRef.current) {
-          clearTimeout(generatingTimerRef.current);
-          generatingTimerRef.current = null;
-        }
+        generatingTimerRef.current = null;
       }
 
       // Apply result immediately
@@ -580,15 +615,20 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   // Effects
   // ─────────────────────────────────────────────────────────────────────────
 
+  const abortTilesFetchOnUnmountRef = useRef(branchState.abortTilesFetch);
+  useEffect(() => {
+    abortTilesFetchOnUnmountRef.current = branchState.abortTilesFetch;
+  }, [branchState.abortTilesFetch]);
+
   /**
    * Cleanup tiles fetch on unmount.
    * Prevents memory leaks and state updates after unmount.
    */
   useEffect(
     () => () => {
-      branchState.abortTilesFetch();
+      abortTilesFetchOnUnmountRef.current();
     },
-    [branchState]
+    []
   );
 
   /**
@@ -670,30 +710,87 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     // Update ref before triggering refresh
     prevSettingsRef.current = currentSettings;
 
-    // If no changes or already refreshing, skip
-    if (changedVerticals.length === 0 || isRefreshingRef.current) {
+    // If no changes, skip
+    if (changedVerticals.length === 0) {
       return () => { cancelled = true; };
     }
 
     // Trigger tile refresh for changed verticals
-    isRefreshingRef.current = true;
+    const refreshSeq = ++refreshSeqRef.current;
+    const requestSettings = currentSettings;
+    isSettingsRefreshingRef.current = true;
 
     refreshTiles(selectedBranchId, changedVerticals)
       .then((response) => {
         if (cancelled) return;
+        if (refreshSeq !== refreshSeqRef.current) {
+          debugLog('[settings refresh] Ignored stale refresh response', {
+            selectedBranchId,
+            changedVerticals,
+            refreshSeq,
+            latestSeq: refreshSeqRef.current,
+          });
+          return;
+        }
+
+        const latestTripInputs = useDocumentStore.getState().document?.trip_inputs;
+        const latestSettings = {
+          hotel_settings: latestTripInputs?.hotel_settings,
+          flight_settings: latestTripInputs?.flight_settings,
+          activity_settings: latestTripInputs?.activity_settings,
+        };
+
+        if (JSON.stringify(latestSettings) !== JSON.stringify(requestSettings)) {
+          debugLog('[settings refresh] Ignored response after settings changed again', {
+            selectedBranchId,
+            changedVerticals,
+          });
+          return;
+        }
         // Update tiles map with refreshed tiles
         const newTilesMap: Record<string, Tile> = {};
         for (const tile of response.tiles) {
           newTilesMap[tile.id] = tile;
         }
         branchState.setTilesMap((prev) => ({ ...prev, ...newTilesMap }));
+
+        const refreshedStayIds = response.tiles
+          .filter((tile) => tile.type === 'hotel' || tile.type === 'stay' || tile.type === 'accommodation')
+          .map((tile) => tile.id);
+        const refreshedFlightIds = response.tiles
+          .filter((tile) => tile.type === 'flight')
+          .map((tile) => tile.id);
+        const refreshedActivityIds = response.tiles
+          .filter((tile) =>
+            tile.type === 'activity' ||
+            tile.type === 'experience' ||
+            tile.type === 'tour' ||
+            tile.type === 'attraction'
+          )
+          .map((tile) => tile.id);
+
+        branchState.setBranches((prevBranches) =>
+          prevBranches.map((branch) => {
+            if (branch.id !== selectedBranchId) return branch;
+            const nextTiles = { ...(branch.tiles ?? {}) };
+            if (changedVerticals.includes('hotel')) nextTiles.stays = refreshedStayIds;
+            if (changedVerticals.includes('flight')) nextTiles.flights = refreshedFlightIds;
+            if (changedVerticals.includes('activity')) nextTiles.activities = refreshedActivityIds;
+            return { ...branch, tiles: nextTiles };
+          })
+        );
       })
       .catch((error) => {
         if (cancelled) return;
         console.error('Failed to refresh tiles after settings change:', error);
       })
       .finally(() => {
-        isRefreshingRef.current = false;
+        if (refreshSeq === refreshSeqRef.current) {
+          isSettingsRefreshingRef.current = false;
+          if (!cancelled) {
+            setSettingsRefreshTick((tick) => tick + 1);
+          }
+        }
       });
 
     return () => { cancelled = true; };
@@ -704,18 +801,14 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     tripInputsActivitySettings,
     branchState.selectedBranchId,
     branchState.setTilesMap,
+    branchState.setBranches,
     isGenerating,
+    settingsRefreshTick,
   ]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Auto-fetch missing flights
   // ─────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Ref to track if we've already attempted to fetch missing flights for this branch.
-   * Prevents infinite fetch loops.
-   */
-  const fetchedMissingFlightsRef = useRef<Set<string>>(new Set());
 
   /**
    * Auto-fetch missing flights when tiles are loaded but flights are empty.
@@ -739,12 +832,17 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     }
 
     // Skip if currently generating or refreshing
-    if (isGenerating || isRefreshingRef.current) {
+    if (isGenerating || isSettingsRefreshingRef.current || isFlightsRefreshingRef.current) {
       return () => { cancelled = true; };
     }
 
     // Skip if we already attempted to fetch flights for this branch
     if (fetchedMissingFlightsRef.current.has(selectedBranchId)) {
+      return () => { cancelled = true; };
+    }
+
+    const retryCount = missingFlightRetryCountRef.current[selectedBranchId] ?? 0;
+    if (retryCount >= MAX_MISSING_FLIGHT_RETRIES) {
       return () => { cancelled = true; };
     }
 
@@ -762,17 +860,16 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       return () => { cancelled = true; };
     }
 
-    // Mark this branch as attempted
-    fetchedMissingFlightsRef.current.add(selectedBranchId);
-
     // Fetch missing flights
     debugLog('[useBranchManager] Auto-fetching missing flights for branch:', selectedBranchId);
-    isRefreshingRef.current = true;
+    isFlightsRefreshingRef.current = true;
+    let shouldRetry = false;
 
     refreshTiles(selectedBranchId, ['flight'])
       .then((response) => {
         if (cancelled) return;
-        if (response.tiles.length > 0) {
+        const fetchedFlights = response.tiles.filter((t) => t.type === 'flight');
+        if (fetchedFlights.length > 0) {
           // Update tiles map with fetched flights
           const newTilesMap: Record<string, Tile> = {};
           for (const tile of response.tiles) {
@@ -788,21 +885,35 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
                 ...b,
                 tiles: {
                   ...b.tiles,
-                  flights: response.tiles.filter((t) => t.type === 'flight').map((t) => t.id),
+                  flights: fetchedFlights.map((t) => t.id),
                 },
               };
             })
           );
 
+          fetchedMissingFlightsRef.current.add(selectedBranchId);
+          delete missingFlightRetryCountRef.current[selectedBranchId];
           debugLog('[useBranchManager] Fetched', response.tiles.length, 'flight tiles');
+        } else {
+          fetchedMissingFlightsRef.current.delete(selectedBranchId);
+          const nextRetry = (missingFlightRetryCountRef.current[selectedBranchId] ?? 0) + 1;
+          missingFlightRetryCountRef.current[selectedBranchId] = nextRetry;
+          shouldRetry = nextRetry < MAX_MISSING_FLIGHT_RETRIES;
         }
       })
       .catch((error) => {
         if (cancelled) return;
+        fetchedMissingFlightsRef.current.delete(selectedBranchId);
+        const nextRetry = (missingFlightRetryCountRef.current[selectedBranchId] ?? 0) + 1;
+        missingFlightRetryCountRef.current[selectedBranchId] = nextRetry;
+        shouldRetry = nextRetry < MAX_MISSING_FLIGHT_RETRIES;
         console.error('[useBranchManager] Failed to fetch missing flights:', error);
       })
       .finally(() => {
-        isRefreshingRef.current = false;
+        isFlightsRefreshingRef.current = false;
+        if (cancelled || shouldRetry) {
+          setSettingsRefreshTick((tick) => tick + 1);
+        }
       });
 
     return () => { cancelled = true; };
@@ -815,6 +926,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     branchState.setBranches,
     tripInputsOrigin,
     isGenerating,
+    settingsRefreshTick,
   ]);
 
   // ─────────────────────────────────────────────────────────────────────────

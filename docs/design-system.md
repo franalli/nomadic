@@ -55,6 +55,15 @@ import { DS } from '@/lib/design-system';
 | `DS.pills.shape` | px-4 py-2 rounded-lg text-sm | Same | Base pill structure |
 | `DS.pills.shapeFull` | px-4 py-2 rounded-full text-sm | Same | Rounded pill structure |
 
+### Segments (Shared-Border Controls)
+
+| Token | Light Mode | Dark Mode | Use For |
+|-------|------------|-----------|---------|
+| `DS.segments.container` | 2px black border, zinc-100 border separators | white/15 border with soft glow | Shared-border segmented groups |
+| `DS.segments.segment` | White bg, dark text, `rounded-md` as needed | White/5 bg, glass dark text | Individual segment button shell |
+| `DS.segments.segmentActive` | Emerald-500/15 bg, emerald text, `font-semibold` | White bg, black text, `font-semibold` | Active segment |
+| `DS.segments.segmentInactive` | Light border-2, hover-to-dark text/edge | Glass fill + white hover edge | Inactive segment |
+
 > **Note:** `rounded-lg` is overridden in `tailwind.config.mts` from the Tailwind default of `0.5rem` (8px) to `0.75rem` (12px). All `rounded-lg` usage in this system resolves to 12px.
 
 ### The Tactile Rule (IMPORTANT)
@@ -670,11 +679,15 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | TripSettingsSheet | `plan/sheets/TripSettingsSheet.tsx` | BaseSheet, field rows for mobile settings relay |
 | DatesSheet | `plan/sheets/DatesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, raw glass pattern, raw Tactile pills |
 | ChatPanel | `chat/ChatPanel.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (S0 hero terminal text) |
-| ChatInputBar | `chat/ChatInputBar.tsx` | Living Void pattern (emerald glow + pulse), Stop button (monochrome square) |
+| ChatMessageList | `chat/ChatMessageList.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (terminal status text) |
+| ChatInputBar | `chat/ChatInputBar.tsx` | `DS.glowClass.sm`, `DS.glowClass.md`, Living Void pattern (emerald glow + pulse), Stop button (monochrome square) |
+| MobileChatInput | `chat/MobileChatInput.tsx` | `DS.glowClass.mobileInputSm`, `DS.glowClass.mobileInputMd`, `DS.glowClass.lg` |
+| SmartLoader | `chat/SmartLoader.tsx` | `DS.textSize.micro` (mutating status line with dynamic Lucide icon) |
 | ChatSuggestionChips | `chat/ChatSuggestionChips.tsx` | Raw Tactile pills (suggestion chips), `Sparkles` icon (planning trigger), `SlidersHorizontal` icon (sheet actions) |
+| BrowseActivitiesSheet | `plan/BrowseActivitiesSheet.tsx` | `DS.pills.shapeFull`, `DS.pills.active`, `DS.pills.inactive`, `DS.infoBox.container` |
 | UnifiedChipRow | `plan/UnifiedChipRow.tsx` | `CoreChip` (CSS custom properties, not DS pills) |
 | Calendar | `ui/calendar.tsx` | Custom (see Calendar section) |
-| StrategyHero | `plan/stages/StrategyHero.tsx` | `DS.text.label`, `DS.text.body`, `DS.infoBox.container` (3 variants: `hero`, `compact`, `accordion`) |
+| StrategyHero | `plan/stages/StrategyHero.tsx` | `DS.textSize.nano`, `DS.textSize.micro` directly; child sheets (`StrategyHeroCompactSheet`, `StrategyHeroHeroSheet`, `StrategyHeroAccordion`) use `DS.text.label`, `DS.text.body`, `DS.infoBox.container`. 3 variants: `hero`, `compact`, `accordion` |
 | Stepper (shared) | `ui/stepper.tsx` | Raw DS.stepper pattern (sm/default size variants) |
 | TileCard | `tiles/TileCard.tsx` | Raw glass card pattern, rating stars use neutral zinc scale |
 | MiniCard | `tiles/MiniCard.tsx` | Compact glass card pattern, rating stars use neutral zinc scale |
@@ -688,9 +701,9 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | GhostSlot | `plan/timeline/blocks/GhostSlot.tsx` | Dashed-border CTA slot; `border-dashed border-zinc-300 dark:border-white/10` pattern |
 | LogisticsBlock | `plan/timeline/blocks/LogisticsBlock.tsx` | Flight/transfer timeline block; glass `dark:bg-zinc-900/50` pattern |
 | MapErrorBoundary | `map/MapErrorBoundary.tsx` | Map error fallback; raw zinc pattern (`bg-zinc-100 dark:bg-zinc-900`, `text-zinc-500`) |
-| PlanFullDensityView | `plan/PlanFullDensityView.tsx` | Subdued toggle pills (Section 29.1); `bg-zinc-100 dark:bg-white/[0.06] border-zinc-300 dark:border-white/15` |
+| PlanFullDensityView | `plan/PlanFullDensityView.tsx` | Subdued toggle pills (Section 32.1); `bg-zinc-100 dark:bg-white/[0.06] border-zinc-300 dark:border-white/15` |
 | PreferenceAttributionBadge | `plan/timeline/blocks/PreferenceAttributionBadge.tsx` | Inline badge for user-preferred/ai-override tile states; `bg-emerald-500/15 text-emerald-600 dark:text-emerald-400` |
-| FreeDayCard | `plan/timeline/blocks/FreeDayCard.tsx` | Section 28.8 + constraint-buffer variant (Section 29.4); uses `DS.actions.primary` for CTA |
+| FreeDayCard | `plan/timeline/blocks/FreeDayCard.tsx` | Section 31.8 + constraint-buffer variant (Section 32.4); uses `DS.actions.primary` for CTA |
 
 **Out of DS scope:** `consent-manager.tsx`, `legal-page.tsx` — follows shadcn/prose tokens.
 
@@ -2103,111 +2116,35 @@ The Reset button allows users to start over with a fresh planning session. It mu
 
 ---
 
-## 19. Z-Index Layering Tiers
+## 19. Custom Tailwind Extensions
 
-All z-index values must snap to one of the defined tiers. Do NOT use arbitrary z-index values outside this table.
+Custom tokens defined in `frontend/tailwind.config.mts` beyond the DS object. These are available as standard Tailwind classes.
 
-| Tier | z-index | Elements |
-|------|---------|----------|
-| **Map / Base** | `z-0` | Mapbox canvas, page background |
-| **Sticky headers** | `z-10` | Scroll-following panel headers, sticky section titles |
-| **Floating buttons** | `z-20` | FloatingBuildButton, FABs within content area |
-| **Overlay controls** | `z-30` | Chat status bar overlays, in-content overlays |
-| **Sheets / Drawers** | `z-40` to `z-50` | NextStepBar (`z-40`), bottom sheets backdrop (`z-[1200]`), sheet panel (`z-[1201]`) |
-| **Modals** | `z-50` | Desktop dialog overlays, full-screen modals |
-| **Toasts** | `z-[9999]` | System toast notifications (always on top) |
+### Border Radius Overrides
 
-**Rule:** Sheet/dialog portals use `z-[1200]`/`z-[1201]` pair (backdrop below, panel above) to avoid conflicts with DatesSheet and BaseSheet which also portal to `document.body`.
+| Token | Value | Notes |
+|-------|-------|-------|
+| `rounded-lg` | `0.75rem` (12px) | Overrides Tailwind default of `0.5rem` (8px) |
+| `rounded-md` | `0.5rem` (8px) | Explicitly set to preserve Tailwind default |
 
-**Collision check:** If two elements share the same z-tier and can overlap, the later DOM element wins. Use explicit `z-*` assignments to enforce intended stacking.
+### Custom Font Families
 
----
+| Token | Stack | Use For |
+|-------|-------|---------|
+| `font-sans` | Inter, system sans-serif | Default body text |
+| `font-heading` | Playfair Display, Georgia, serif | Decorative headings |
+| `font-display` | Space Grotesk, Inter, system sans-serif | Display text, hero elements |
+| `font-mono` | JetBrains Mono, system monospace | Code, terminal status text |
 
-## 20. Icon Sizing Tiers
+### Custom Font Sizes
 
-Use consistent icon sizes based on context. Do NOT use arbitrary pixel sizes.
+| Token | Size / Line Height | Use For |
+|-------|-------------------|---------|
+| `text-display` | 3.5rem / 1.05, -0.04em | Hero display text |
+| `text-h2` | 2rem / 1.2, -0.02em | Section headings |
+| `text-h3` | 1.375rem / 1.3 | Sub-section headings |
 
-| Context | Size Classes | When to Use |
-|---------|-------------|-------------|
-| **Inline with text** | `w-4 h-4` (16px) | Text-adjacent icons in body copy, list items |
-| **Buttons with label** | `w-4 h-4` or `w-[18px] h-[18px]` | Primary/secondary action buttons with text |
-| **Icon-only buttons** | `w-5 h-5` (20px) | Close X, arrow buttons, icon-only controls |
-| **Feature / hero** | `w-6 h-6` (24px) or larger | Section icons, specialist badges, card icons |
-| **Navigation** | `w-5 h-5` or `w-6 h-6` | Tab bar icons, nav controls |
-| **Micro / badge** | `w-3 h-3` or `w-3.5 h-3.5` | Inside compact chips, badge icons |
-| **Map markers** | `w-8 h-8` or `w-10 h-10` | Mapbox custom markers |
-
-**Code pattern:**
-```tsx
-// Inline with text
-<MapPin className="w-4 h-4 shrink-0" />
-// Icon-only button
-<X className="w-5 h-5" />
-// Feature icon
-<Sparkles className="w-6 h-6" />
-```
-
----
-
-## 21. Disabled & Loading State Patterns
-
-### Disabled State
-
-Disabled interactive elements must be visually distinct and non-interactive.
-
-| Property | Value |
-|----------|-------|
-| **Opacity** | `opacity-50` |
-| **Cursor** | `cursor-not-allowed` |
-| **Pointer events** | `pointer-events-none` |
-
-```tsx
-// Standard disabled pattern
-<button
-  disabled={!canSave}
-  className={cn(
-    canSave ? DS.actions.primary : DS.actions.primaryDisabled,
-    !canSave && 'cursor-not-allowed'
-  )}
->
-  Save
-</button>
-
-// Section disabled overlay (e.g. FlightsSheet when toggle is off)
-<div className={cn(
-  'transition-opacity',
-  !enabled && 'opacity-50 pointer-events-none'
-)}>
-  {/* preferences content */}
-</div>
-```
-
-**Note:** `DS.actions.primaryDisabled` already includes `cursor-not-allowed`. Disabled sections use `opacity-50 pointer-events-none` as a div-level overlay pattern — do NOT add `disabled` to individual child elements inside the overlay.
-
-### Loading / Skeleton State
-
-Skeleton placeholders use `animate-pulse` with zinc backgrounds.
-
-| Element | Light Mode | Dark Mode |
-|---------|------------|-----------|
-| **Skeleton bg** | `bg-zinc-200` | `bg-zinc-800` |
-| **Skeleton animation** | `animate-pulse` | Same |
-| **Spinner (action)** | `Loader2` Lucide icon, `animate-spin` | Same |
-| **Spinner color** | Inherits button text color | Same |
-
-```tsx
-// Skeleton block
-<div className="h-4 w-32 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
-
-// Action spinner
-<Loader2 className="w-4 h-4 animate-spin" />
-```
-
-**Implementation:** `frontend/components/ui/skeleton.tsx` uses `bg-muted animate-pulse` — acceptable because `muted` resolves to zinc in both theme modes via CSS variables.
-
----
-
-## 22. Metadata Badge Pattern
+### Metadata Badge Pattern
 
 Small inline metadata tags (activity categories, feature badges, status indicators) use this pattern throughout the app. These are NOT the same as selection pills (DS.pills).
 
@@ -2228,15 +2165,15 @@ Small inline metadata tags (activity categories, feature badges, status indicato
 
 **Contrast note:** `text-zinc-500` on `bg-zinc-100` = ~5.7:1 in light mode (passes WCAG AA). `text-zinc-400` on `bg-zinc-800/50` = ~4.6:1 in dark mode (passes WCAG AA).
 
-**Do NOT use `bg-muted text-muted-foreground`** — these are shadcn CSS variable tokens that bypass DS zinc scale enforcement. Always use explicit zinc classes.
+**Do NOT use `bg-muted text-muted-foreground`** -- these are shadcn CSS variable tokens that bypass DS zinc scale enforcement. Always use explicit zinc classes.
 
 ---
 
-## 23. Shadcn Token Prohibition
+## 20. Shadcn Token Prohibition
 
 Several shadcn/Radix CSS variable tokens exist in the codebase (`bg-muted`, `text-muted-foreground`, `text-foreground`, `bg-card`, `text-card-foreground`, `bg-secondary`, etc.). These tokens are permitted ONLY in:
 
-- `frontend/components/ui/` (shadcn primitive components — button, card, sheet, etc.)
+- `frontend/components/ui/` (shadcn primitive components -- button, card, sheet, etc.)
 - `frontend/components/nomadic/consent-manager.tsx` and `legal-page.tsx`
 
 **All other components MUST use explicit DS zinc tokens.**
@@ -2255,7 +2192,7 @@ Several shadcn/Radix CSS variable tokens exist in the codebase (`bg-muted`, `tex
 
 ---
 
-## 24. Specialist Icon Color Map (Local Expert Correction)
+## 21. Specialist Icon Color Map (Local Expert Correction)
 
 The `local_expert` specialist type maps to Neutral Gray in the DS specialist palette (`#6B7280` = approximately `zinc-500`). It does NOT use purple tones.
 
@@ -2270,7 +2207,7 @@ The `local_expert` specialist type maps to Neutral Gray in the DS specialist pal
 
 ---
 
-## 19. Chat Interaction: Command + Response
+## 22. Chat Interaction: Command + Response
 
 **Core Philosophy:** Never hide the user's intent. The chat is the **Audit Log** of the trip construction.
 
@@ -2298,7 +2235,7 @@ The `local_expert` specialist type maps to Neutral Gray in the DS specialist pal
 - Single-line container: icon + text, left-aligned as assistant placeholder
 - No glass bubble, no scrolling log
 
-**Icon:** Dynamic Lucide icon mapped from backend `icon_key` (Brain, Building2, Plane, Shield, PenTool, Star, MapPin). Defaults to `Loader2` spinner.
+**Icon:** Dynamic Lucide icon mapped from backend `icon_key` (Brain, Building2, Plane, Shield, PenTool, Star, MapPin, Search, CalendarDays). Defaults to `Loader2` spinner.
 - Icon color: `text-zinc-500 dark:text-emerald-500 animate-pulse`
 
 **Text:**
@@ -2327,11 +2264,11 @@ The `local_expert` specialist type maps to Neutral Gray in the DS specialist pal
 ### Implementation Reference
 - SmartLoader: `frontend/components/chat/SmartLoader.tsx`
 - Integration: `frontend/components/chat/ChatPanel.tsx`
-- Backend telemetry: `backend/app/planner/plan_graph.py` <!-- REVIEW: `logic_reveal` events no longer found in codebase; verify if replaced or removed -->
+- Backend graph: `backend/app/streaming.py` + `backend/app/planner/coordinator.py` (coordinator step status streamed via SSE `node_status`)
 
 ---
 
-## 20. NextStepBar CTA States (Command Island)
+## 23. NextStepBar CTA States (Command Island)
 
 The NextStepBar ("Command Island") is a sticky footer CTA that appears when the plan is ready to finalize. It only renders for the `finalize_plan` action; `expand_itinerary` is handled by auto-expand in ChatPanel.
 
@@ -2376,7 +2313,7 @@ The NextStepBar ("Command Island") is a sticky footer CTA that appears when the 
 
 ---
 
-## 20.5 Plan Regeneration Triggers
+## 23.5 Plan Regeneration Triggers
 
 There is no standalone "Refresh" button. Plan regeneration is triggered automatically or via existing CTAs:
 
@@ -2396,7 +2333,7 @@ There is no standalone "Refresh" button. Plan regeneration is triggered automati
 
 ---
 
-## 21. Logic Guards (Amber Rejection Pattern)
+## 24. Logic Guards (Amber Rejection Pattern)
 
 **Core Philosophy:** The Architect does not crash; it rejects invalid parameters and asks for correction. We use the **"Reject & Correct"** pattern.
 
@@ -2432,7 +2369,7 @@ There is no standalone "Refresh" button. Plan regeneration is triggered automati
 
 ---
 
-## 22. Animation & Progressive Disclosure
+## 25. Animation & Progressive Disclosure
 
 **Core Philosophy:** UI elements appear at the right moment with coordinated animations. State transitions (P0→P3) and user interactions (first heart, build click) trigger reveals.
 
@@ -2514,7 +2451,7 @@ SPRING_CONFIG = {
 
 ---
 
-## 23. Disabled & Loading State Standards
+## 26. Disabled & Loading State Standards
 
 ### Disabled State Pattern
 
@@ -2553,7 +2490,7 @@ All disabled interactive elements (buttons, inputs, toggles, sections) use this 
 
 ---
 
-## 24. Shadow Elevation Tiers
+## 27. Shadow Elevation Tiers
 
 All elevated surfaces use the custom shadow tokens from `tailwind.config.mts`. Raw Tailwind shadow classes (`shadow-sm`, `shadow-md`, `shadow-lg`, `shadow-xl`, `shadow-2xl`) are reserved for specific documented cases only.
 
@@ -2584,7 +2521,7 @@ All elevated surfaces use the custom shadow tokens from `tailwind.config.mts`. R
 
 ---
 
-## 25. Z-Index Layering
+## 28. Z-Index Layering
 
 Components must use this z-index tier system to prevent collisions:
 
@@ -2608,7 +2545,7 @@ Components must use this z-index tier system to prevent collisions:
 
 ---
 
-## 26. Icon Sizing Tiers
+## 29. Icon Sizing Tiers
 
 All Lucide React icons must use one of these standard sizes:
 
@@ -2625,7 +2562,7 @@ All Lucide React icons must use one of these standard sizes:
 
 ---
 
-## 27. Component Mapping Additions
+## 30. Component Mapping Additions
 
 Updates to Section 6 — new components discovered in audit:
 
@@ -2647,25 +2584,26 @@ Updates to Section 6 — new components discovered in audit:
 | `GhostSlot` | `plan/timeline/blocks/GhostSlot.tsx` | None (raw pattern) | Dashed CTA slot; `border-dashed border-zinc-300 dark:border-white/10` |
 | `LogisticsBlock` | `plan/timeline/blocks/LogisticsBlock.tsx` | None (raw pattern) | Flight/transfer block; `dark:bg-zinc-900/50 dark:border-white/[0.08]` glass pattern |
 | `MapErrorBoundary` | `map/MapErrorBoundary.tsx` | None (raw pattern) | Error fallback; `bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-white/10`, text: `text-zinc-500` |
-| `DragPreviewCard` | `plan/timeline/DragPreviewCard.tsx` | `SPRING_CONFIG.BOUNCE` | Custom elevated shadow; `ring-emerald-500/30` accent ring; see Section 28.6 |
-| `DroppableDay` | `plan/timeline/DroppableDay.tsx` | `SPRING_CONFIG.SLIDE` | Drop zone highlight; `ring-emerald-500/25` when `isOver`; see Section 28.7 |
+| `DragPreviewCard` | `plan/timeline/DragPreviewCard.tsx` | `SPRING_CONFIG.BOUNCE` | Custom elevated shadow; `ring-emerald-500/30` accent ring; see Section 31.6 |
+| `DroppableDay` | `plan/timeline/DroppableDay.tsx` | `SPRING_CONFIG.SLIDE` | Drop zone highlight; `ring-emerald-500/25` when `isOver`; see Section 31.7 |
 | `DraggableBlock` | `plan/timeline/DraggableBlock.tsx` | None | Wraps any `DayBlock`; `Lock` icon guard when block has no `id`; `z-10` for Lock badge |
-| `FreeDayCard` | `plan/timeline/blocks/FreeDayCard.tsx` | `DS.actions.primary` | Dashed-border empty day; specialist chip picker; see Section 28.8 |
+| `FreeDayCard` | `plan/timeline/blocks/FreeDayCard.tsx` | `DS.actions.primary` | Dashed-border empty day; specialist chip picker; see Section 31.8 |
 | `StrategyHeroAccordion` | `plan/stages/StrategyHeroAccordion.tsx` | `DS.textSize.*` | Collapsible accordion variant of StrategyHero; specialist colors via `SPECIALIST_STYLE_CLASSES` (in `StrategyHeroUtils.tsx`) |
 | `S2AgentCard` | `plan/stages/S2AgentCard.tsx` | `DS.textSize.*` | Legacy specialist card with topic CSS vars; `shadow-card` on card, `hover:shadow-soft` on hover |
 | `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Density switcher; `bg-emerald-500 rounded-full animate-pulse` for live indicator dot |
 | `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (raw pattern) | Full-density itinerary layout; subdued toggle pills for Flights/Stays/Travel Intel and sticky desktop map column |
 | `TimelineThread` | `plan/TimelineThread.tsx` | `DS.textSize.*` | Day-thread renderer; constraint/status chips with light/dark contrast pairs and unschedulable overlays |
 | `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
+| `InlineDatePrompt` | `plan/timeline/InlineDatePrompt.tsx` | `DS.actions.primary` | Inline CTA to set dates within timeline |
 | `DestinationIntelCard` | `plan/DestinationIntelCard.tsx` | `DS` tokens | Collapsible destination overview card built from strategy sections |
 
 ---
 
-## 28. Undocumented Component Surface Patterns
+## 31. Undocumented Component Surface Patterns
 
 Canonical styling for components not covered by the primary token tables (Sections 2–5). Use these as the reference when adding new components of the same type.
 
-### 28.1 Compact Inventory Bar (TripHealthBar)
+### 31.1 Compact Inventory Bar (TripHealthBar)
 
 A horizontal stats bar shown at the top of the S2 strategy view.
 
@@ -2683,7 +2621,7 @@ A horizontal stats bar shown at the top of the S2 strategy view.
 
 **Rule:** This surface uses `bg-zinc-950/80` (not `bg-zinc-900`) in dark mode, matching the glass compact bar spec.
 
-### 28.2 Mobile-Only Dark Status Bar (TripStatusBar)
+### 31.2 Mobile-Only Dark Status Bar (TripStatusBar)
 
 A fixed-position status bar visible only on mobile. Renders exclusively in dark mode.
 
@@ -2696,7 +2634,7 @@ A fixed-position status bar visible only on mobile. Renders exclusively in dark 
 
 **Rule:** This component has no light mode. It is gated by mobile layout context. Do NOT add a `bg-white` light variant.
 
-### 28.3 Dashed-Border CTA Slot (GhostSlot)
+### 31.3 Dashed-Border CTA Slot (GhostSlot)
 
 A placeholder slot in the timeline that invites the user to fill empty days.
 
@@ -2709,7 +2647,7 @@ A placeholder slot in the timeline that invites the user to fill empty days.
 | Hover | `hover:border-zinc-400 hover:bg-zinc-50` | `dark:hover:border-white/20 dark:hover:bg-white/[0.04]` |
 | Border radius | `rounded-xl` | Same |
 
-### 28.4 Map Error Fallback (MapErrorBoundary)
+### 31.4 Map Error Fallback (MapErrorBoundary)
 
 The fallback UI displayed when the Mapbox component throws an error.
 
@@ -2723,7 +2661,7 @@ The fallback UI displayed when the Mapbox component throws an error.
 
 **Rule:** `text-muted-foreground` and other shadcn semantic tokens are PROHIBITED here. Use explicit zinc classes.
 
-### 28.5 Flight/Transfer Timeline Block (LogisticsBlock)
+### 31.5 Flight/Transfer Timeline Block (LogisticsBlock)
 
 Inline timeline block for flight segments and transfers.
 
@@ -2736,7 +2674,7 @@ Inline timeline block for flight segments and transfers.
 | Label text | `text-xs text-zinc-500` | `dark:text-zinc-400` |
 | Value text | `text-sm font-medium text-zinc-900` | `dark:text-white` |
 
-### 28.6 Drag Preview Card (DragPreviewCard)
+### 31.6 Drag Preview Card (DragPreviewCard)
 
 Floating ghost shown during drag-and-drop reorder in the itinerary. Uses elevated glass + emerald ring.
 
@@ -2755,7 +2693,7 @@ Floating ghost shown during drag-and-drop reorder in the itinerary. Uses elevate
 
 **Rule:** Always `pointer-events-none`. Uses `SPRING_CONFIG.BOUNCE` for scale-in animation. Never use `shadow-card` or `shadow-soft` here — the custom elevated shadow is intentional for "lifted off canvas" effect.
 
-### 28.7 Droppable Day Zone (DroppableDay)
+### 31.7 Droppable Day Zone (DroppableDay)
 
 Drop target highlight applied to a day container during drag-and-drop.
 
@@ -2768,7 +2706,7 @@ Drop target highlight applied to a day container during drag-and-drop.
 
 **Rule:** Uses `closestCorners` collision detection. Minimum `min-h-[80px]` to ensure droppable hit area even on empty days. `transition-all duration-200` for smooth state transitions.
 
-### 28.8 Free Day Card (FreeDayCard)
+### 31.8 Free Day Card (FreeDayCard)
 
 Empty day placeholder with specialist chip picker and "Generate Activities" CTA.
 
@@ -2790,13 +2728,13 @@ Empty day placeholder with specialist chip picker and "Generate Activities" CTA.
 
 ---
 
-## 29. Undocumented Patterns (Discovered via Audit)
+## 32. Undocumented Patterns (Discovered via Audit)
 
 These patterns appear in production code and are now documented to prevent future divergence.
 
 ---
 
-### 29.1 Subdued Toggle Pills (PlanFullDensityView Row-Two Chips)
+### 32.1 Subdued Toggle Pills (PlanFullDensityView Row-Two Chips)
 
 Small rounded toggle pills for collapsing/expanding sub-sections (Stays, Flights, Destination Travel Intel). These are NOT selection pills — they toggle visibility, not select a value.
 
@@ -2828,7 +2766,7 @@ Small rounded toggle pills for collapsing/expanding sub-sections (Stays, Flights
 
 ---
 
-### 29.2 Settings Gear Button (Logistics / Tile Overlay)
+### 32.2 Settings Gear Button (Logistics / Tile Overlay)
 
 Compact gear button overlaid on card content (LogisticsBlock, TileCard). Always positioned `absolute top-2 right-2`.
 
@@ -2856,7 +2794,7 @@ Compact gear button overlaid on card content (LogisticsBlock, TileCard). Always 
 
 ---
 
-### 29.3 Status Dot (TripHealthBar)
+### 32.3 Status Dot (TripHealthBar)
 
 Small indicator dot showing inventory/readiness state.
 
@@ -2882,7 +2820,7 @@ Small indicator dot showing inventory/readiness state.
 
 ---
 
-### 29.4 Constraint-Buffer Card (FreeDayCard variant)
+### 32.4 Constraint-Buffer Card (FreeDayCard variant)
 
 Shown when all user-selected activity types are blocked by adjacent constraints. Distinct from the normal FreeDayCard — no chips, no auto-generate CTA.
 
@@ -2899,7 +2837,7 @@ Shown when all user-selected activity types are blocked by adjacent constraints.
 
 ---
 
-### 29.5 Disabled Section Overlay Pattern
+### 32.5 Disabled Section Overlay Pattern
 
 When a sheet section is inactive (e.g., flight/stay preferences when toggle is off), the entire section uses an opacity + pointer-events overlay rather than disabling individual elements.
 

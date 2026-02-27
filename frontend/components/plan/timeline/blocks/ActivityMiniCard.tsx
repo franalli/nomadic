@@ -312,6 +312,19 @@ const CATEGORY_LABEL: Record<string, string> = {
   nature: 'Nature',
   spa: 'Spa',
   adventure: 'Adventure',
+  yoga: 'Yoga',
+  nightlife: 'Nightlife',
+  cooking: 'Cooking',
+  shopping: 'Shopping',
+  temples: 'Temples',
+  beach: 'Beach',
+  hiking: 'Hiking',
+  diving: 'Diving',
+  surfing: 'Surfing',
+  skiing: 'Skiing',
+  cycling: 'Cycling',
+  climbing: 'Climbing',
+  sailing: 'Sailing',
 };
 
 const CATEGORY_ALIAS: Record<string, string> = {
@@ -330,6 +343,7 @@ const CATEGORY_ALIAS: Record<string, string> = {
   plaza: 'cultural',
   ruins: 'cultural',
   fountain: 'cultural',
+  performing_arts_theater: 'cultural',
   hindu_temple: 'temples',
   temple: 'temples',
   church: 'cultural',
@@ -348,6 +362,7 @@ const CATEGORY_ALIAS: Record<string, string> = {
   campground: 'nature',
   zoo: 'nature',
   botanical_garden: 'nature',
+  aquarium: 'nature',
   shopping_mall: 'shopping',
   market: 'shopping',
   store: 'shopping',
@@ -355,6 +370,20 @@ const CATEGORY_ALIAS: Record<string, string> = {
   department_store: 'shopping',
   beauty_salon: 'spa',
   gym: 'spa',
+  wellness_center: 'spa',
+  // Google Places yoga/nightlife/cooking types
+  yoga_studio: 'yoga',
+  yoga_center: 'yoga',
+  night_club: 'nightlife',
+  casino: 'nightlife',
+  bowling_alley: 'nightlife',
+  cooking_class: 'cooking',
+  cooking_school: 'cooking',
+  amusement_park: 'adventure',
+  water_park: 'adventure',
+  hiking_area: 'hiking',
+  ski_resort: 'skiing',
+  beach: 'beach',
 };
 
 function toCategoryKey(value: unknown): string | null {
@@ -375,6 +404,9 @@ function canonicalCategoryKey(value: unknown): string | null {
   if (/(park|garden|nature|zoo|camp)/.test(key)) return 'nature';
   if (/(shop|store|market|mall)/.test(key)) return 'shopping';
   if (/(spa|wellness|gym|beauty)/.test(key)) return 'spa';
+  if (/(yoga)/.test(key)) return 'yoga';
+  if (/(nightlife|night_club|casino|bowling)/.test(key)) return 'nightlife';
+  if (/(cooking|culinary)/.test(key)) return 'cooking';
   if (/(tour|point_of_interest|visitor|travel_agency)/.test(key)) return 'tours';
   return null;
 }
@@ -543,7 +575,7 @@ export function ActivityMiniCard({
   ).join(' · ');
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5" data-block-id={block.id}>
     <div
       className={cn(
         'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-l-4 transition-colors duration-150',

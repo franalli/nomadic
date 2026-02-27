@@ -38,7 +38,7 @@ import { useSheetManager } from '@/hooks/useSheetManager';
 import { useViewNavigationLight } from '@/hooks/useViewNavigation';
 import { debugLog } from '@/lib/debug';
 import { DS } from '@/lib/design-system';
-import { formatDateForDisplay } from '@/lib/utils';
+import { cn, formatDateForDisplay } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import { useMobileNavStore } from '@/state/mobileNavStore';
@@ -77,10 +77,16 @@ export function NomadicLanding() {
     }))
   );
 
-  // Reactive document data (trip inputs + plan rendering fields merged into one selector)
+  // Reactive document data
+  const { storeTripInputs, isCommitting } = useDocumentStore(
+    useShallow((s) => ({
+      storeTripInputs: s.document?.trip_inputs,
+      isCommitting: s.isCommitting,
+    }))
+  );
+
+  // Plan rendering fields (split from trip-input slice to reduce shallow-compare churn)
   const {
-    storeTripInputs,
-    isCommitting,
     docPlanState,
     docDestinationCard,
     docPlanViewState,
@@ -97,8 +103,6 @@ export function NomadicLanding() {
     docCanExpand,
   } = useDocumentStore(
     useShallow((s) => ({
-      storeTripInputs: s.document?.trip_inputs,
-      isCommitting: s.isCommitting,
       docPlanState: s.document?.plan_state,
       docDestinationCard: s.document?.destination_card,
       docPlanViewState: s.document?.plan_view_state,
@@ -130,7 +134,9 @@ export function NomadicLanding() {
   const { activeSheet, openSheet, closeSheet } = useSheetManager();
   const { navigateTo, finalizePlan, canViewPlan, activeView } = useViewNavigationLight();
   const chatPanelRef = useRef<ChatPanelHandle | null>(null);
-  useEffect(() => startPreferenceAutoRegen(), []);
+  useEffect(() => {
+    return startPreferenceAutoRegen();
+  }, []);
 
   // ─── Local state ─────────────────────────────────────────────────────────
 
@@ -245,15 +251,12 @@ export function NomadicLanding() {
     hasBranchesReady,
   });
 
-  // Keep right-side plan view closed until destination + full date range are present.
-  const hasPlanViewPrerequisites = hasDestination && hasStartDate && hasEndDate;
-
   // Compute data density for adaptive layout
-  const dataDensity: DataDensity = hasPlanViewPrerequisites
+  const dataDensity: DataDensity = hasDestination
     ? computeDataDensity(
         planViewState ?? 'S0_BOOTSTRAP',
         planViewModel.strategy_sections,
-        docTiles ?? {}
+        tiles
       )
     : 'empty';
 
@@ -324,6 +327,10 @@ export function NomadicLanding() {
     setIsResettingSession(true);
     debugLog('[handleStartNewSession] Reset triggered');
     try {
+      if (finalizeTimerRef.current) {
+        clearTimeout(finalizeTimerRef.current);
+        finalizeTimerRef.current = null;
+      }
       storeReset();
       useChatStore.getState().resetChat();
       setUiGeneration(null);
@@ -348,7 +355,7 @@ export function NomadicLanding() {
       resetCooldownUntilRef.current = Date.now() + RESET_BUTTON_COOLDOWN_MS;
       setIsResettingSession(false);
     }
-  }, [branchManagerStartNewSession, closeSheet, storeReset, isDesktop, mobileNavReset]);
+  }, [branchManagerStartNewSession, closeSheet, finalizeTimerRef, storeReset, isDesktop, mobileNavReset]);
 
   const handleSaveTilePreference = useCallback(
     (tile: Tile) => { toggleTilePreference(tile.id); },
@@ -404,6 +411,10 @@ export function NomadicLanding() {
   }, []);
 
   const handleFinalizePlan = useCallback(() => {
+    if (finalizeTimerRef.current) {
+      clearTimeout(finalizeTimerRef.current);
+      finalizeTimerRef.current = null;
+    }
     setIsFinalizing(true);
     finalizeTimerRef.current = setTimeout(() => {
       finalizeTimerRef.current = null;
@@ -559,7 +570,10 @@ export function NomadicLanding() {
                 size="sm"
                 onClick={handleStartNewSession}
                 disabled={isResettingSession}
-                className={`${DS.textSize.micro} font-bold uppercase tracking-widest text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-500 dark:hover:bg-white/5 dark:hover:text-white disabled:opacity-60 disabled:pointer-events-none`}
+                className={cn(
+                  DS.textSize.micro,
+                  'font-bold uppercase tracking-widest text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-60'
+                )}
               >
                 {isResettingSession ? (
                   <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />

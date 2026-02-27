@@ -108,7 +108,11 @@ function normalizeActionTarget(
 function resolveChipAction(chip: SuggestionChip): ResolvedChipAction {
   // Pre-plan date chips are executable prompts (e.g., "Feb 27-01"),
   // so clicking should run extraction, not open the date sheet.
-  if (chip.category === 'date_prompt' || chip.category === 'date_contextual') {
+  // Respect explicit open_pill chips (e.g., "Set dates" → dates sheet).
+  if (
+    (chip.category === 'date_prompt' || chip.category === 'date_contextual') &&
+    chip.action_type !== 'open_pill'
+  ) {
     return {
       actionType: 'send_message',
       actionTarget: null,

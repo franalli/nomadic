@@ -4,8 +4,7 @@ Tests for IATA airport code resolver in app.planner.services.iata_resolver.
 Covers:
 - Cached code reuse from state (no LLM call)
 - LLM-backed resolution when codes are missing
-- Markdown fence stripping from LLM responses
-- Graceful handling of LLM failures, empty responses, invalid JSON
+- Graceful handling of LLM failures, None parsed output
 - State mutation (codes written back to trip_plan)
 """
 
@@ -15,7 +14,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.planner.services.iata_resolver import clear_iata_cache, resolve_iata_codes
+from app.planner.services.iata_resolver import (
+    IataResponse,
+    clear_iata_cache,
+    resolve_iata_codes,
+)
 from app.planner.state import GraphState, TripPlan
 
 
@@ -30,12 +33,16 @@ def _make_state(
     return GraphState(trip_plan=tp)
 
 
-def _mock_llm_response(content: str) -> AsyncMock:
-    """Return a mock LLM whose ainvoke returns the given content string."""
-    mock_llm = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.content = content
-    mock_llm.ainvoke = AsyncMock(return_value=mock_result)
+def _mock_llm_structured(codes: dict) -> MagicMock:
+    """Return a mock LLM whose with_structured_output().ainvoke() returns parsed IataResponse."""
+    parsed = IataResponse(**codes)
+    structured_result = {"parsed": parsed, "raw": MagicMock()}
+
+    mock_structured_llm = AsyncMock()
+    mock_structured_llm.ainvoke = AsyncMock(return_value=structured_result)
+
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output = MagicMock(return_value=mock_structured_llm)
     return mock_llm
 
 
@@ -78,7 +85,7 @@ class TestLLMResolution:
     @pytest.mark.asyncio
     async def test_resolves_both_codes(self):
         state = _make_state()
-        mock_llm = _mock_llm_response('{"origin": "SFO", "destination": "DPS"}')
+        mock_llm = _mock_llm_structured({"origin": "SFO", "destination": "DPS"})
         with patch(
             "app.planner.services.iata_resolver.get_llm_by_model",
             return_value=mock_llm,
@@ -90,7 +97,7 @@ class TestLLMResolution:
     @pytest.mark.asyncio
     async def test_resolves_only_missing_origin(self):
         state = _make_state(destination_iata="DPS")
-        mock_llm = _mock_llm_response('{"origin": "JFK"}')
+        mock_llm = _mock_llm_structured({"origin": "JFK"})
         with patch(
             "app.planner.services.iata_resolver.get_llm_by_model",
             return_value=mock_llm,
@@ -102,7 +109,7 @@ class TestLLMResolution:
     @pytest.mark.asyncio
     async def test_resolves_only_missing_destination(self):
         state = _make_state(origin_iata="SFO")
-        mock_llm = _mock_llm_response('{"destination": "NRT"}')
+        mock_llm = _mock_llm_structured({"destination": "NRT"})
         with patch(
             "app.planner.services.iata_resolver.get_llm_by_model",
             return_value=mock_llm,
@@ -114,7 +121,7 @@ class TestLLMResolution:
     @pytest.mark.asyncio
     async def test_sets_codes_on_state(self):
         state = _make_state()
-        mock_llm = _mock_llm_response('{"origin": "LAX", "destination": "CDG"}')
+        mock_llm = _mock_llm_structured({"origin": "LAX", "destination": "CDG"})
         with patch(
             "app.planner.services.iata_resolver.get_llm_by_model",
             return_value=mock_llm,
@@ -124,44 +131,16 @@ class TestLLMResolution:
         assert state.trip_plan.destination_iata == "CDG"
 
 
-class TestMarkdownFenceStripping:
-    """LLM sometimes wraps JSON in markdown code fences."""
-
-    @pytest.mark.asyncio
-    async def test_strips_json_fence(self):
-        fenced = '```json\n{"origin": "SFO", "destination": "DPS"}\n```'
-        state = _make_state()
-        mock_llm = _mock_llm_response(fenced)
-        with patch(
-            "app.planner.services.iata_resolver.get_llm_by_model",
-            return_value=mock_llm,
-        ):
-            origin, dest = await resolve_iata_codes("San Francisco", "Bali", state)
-        assert origin == "SFO"
-        assert dest == "DPS"
-
-    @pytest.mark.asyncio
-    async def test_strips_plain_fence(self):
-        fenced = '```\n{"origin": "JFK", "destination": "LHR"}\n```'
-        state = _make_state()
-        mock_llm = _mock_llm_response(fenced)
-        with patch(
-            "app.planner.services.iata_resolver.get_llm_by_model",
-            return_value=mock_llm,
-        ):
-            origin, dest = await resolve_iata_codes("New York", "London", state)
-        assert origin == "JFK"
-        assert dest == "LHR"
-
-
 class TestErrorHandling:
     """Graceful degradation when LLM fails or returns garbage."""
 
     @pytest.mark.asyncio
     async def test_llm_exception_returns_empty_strings(self):
         state = _make_state()
-        mock_llm = AsyncMock()
-        mock_llm.ainvoke = AsyncMock(side_effect=Exception("API timeout"))
+        mock_structured_llm = AsyncMock()
+        mock_structured_llm.ainvoke = AsyncMock(side_effect=Exception("API timeout"))
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output = MagicMock(return_value=mock_structured_llm)
         with patch(
             "app.planner.services.iata_resolver.get_llm_by_model",
             return_value=mock_llm,
@@ -171,21 +150,14 @@ class TestErrorHandling:
         assert dest == ""
 
     @pytest.mark.asyncio
-    async def test_empty_llm_response_returns_existing(self):
+    async def test_parsed_none_returns_empty_strings(self):
+        """When structured output returns None for parsed, return empty strings."""
         state = _make_state()
-        mock_llm = _mock_llm_response("")
-        with patch(
-            "app.planner.services.iata_resolver.get_llm_by_model",
-            return_value=mock_llm,
-        ):
-            origin, dest = await resolve_iata_codes("San Francisco", "Bali", state)
-        assert origin == ""
-        assert dest == ""
-
-    @pytest.mark.asyncio
-    async def test_invalid_json_returns_empty_strings(self):
-        state = _make_state()
-        mock_llm = _mock_llm_response("not json at all")
+        structured_result = {"parsed": None, "raw": MagicMock()}
+        mock_structured_llm = AsyncMock()
+        mock_structured_llm.ainvoke = AsyncMock(return_value=structured_result)
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output = MagicMock(return_value=mock_structured_llm)
         with patch(
             "app.planner.services.iata_resolver.get_llm_by_model",
             return_value=mock_llm,
@@ -212,7 +184,7 @@ class TestSharedCacheReuse:
     async def test_shared_l1_cache_reuses_codes_across_states(self):
         first_state = _make_state()
         second_state = _make_state()
-        mock_llm = _mock_llm_response('{"origin": "SFO", "destination": "DPS"}')
+        mock_llm = _mock_llm_structured({"origin": "SFO", "destination": "DPS"})
 
         with patch(
             "app.planner.services.iata_resolver.get_llm_by_model",
@@ -244,8 +216,8 @@ class TestSharedCacheReuse:
         first_state = _make_state()
         second_state = _make_state()
 
-        first_llm = _mock_llm_response('{"origin": "SJC", "destination": "LHR"}')
-        second_llm = _mock_llm_response('{"origin": "SJO", "destination": "OSL"}')
+        first_llm = _mock_llm_structured({"origin": "SJC", "destination": "LHR"})
+        second_llm = _mock_llm_structured({"origin": "SJO", "destination": "OSL"})
 
         with patch(
             "app.planner.services.iata_resolver.get_llm_by_model",

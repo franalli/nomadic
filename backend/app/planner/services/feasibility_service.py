@@ -7,7 +7,6 @@ Extracted from vertical_specialist.py to reduce node file size.
 """
 
 import asyncio
-import json
 from typing import Tuple
 
 from pydantic import BaseModel
@@ -29,7 +28,7 @@ async def _check_feasibility_llm(topic: str, destination: str) -> FeasibilityChe
     """
     LLM determines if activity is geographically possible.
 
-    Uses GPT-4o-mini for fast, cheap checks (~$0.0001, ~200ms).
+    Uses structured output for reliable parsing (no manual JSON stripping).
     Falls open on error (assumes possible) to avoid false negatives.
     """
     from app.debug_utils import _debug_log
@@ -43,6 +42,10 @@ async def _check_feasibility_llm(topic: str, destination: str) -> FeasibilityChe
             max_tokens=100,
         )
 
+        structured_llm = llm.with_structured_output(
+            FeasibilityCheck, include_raw=True, method="function_calling"
+        )
+
         prompt = f"""Is {topic} activity possible in {destination}?
 
 Rules:
@@ -51,27 +54,18 @@ Rules:
 - Hiking requires terrain suitable for walking trails
 - Surfing requires ocean waves
 
-Be strict. Landlocked cities cannot have diving. Alpine towns without coast cannot have diving.
+Be strict. Landlocked cities cannot have diving. Alpine towns without coast cannot have diving."""
 
-Respond JSON only: {{"possible": true/false, "reason": "brief"}}"""
+        result = await structured_llm.ainvoke(prompt)
+        parsed = result["parsed"]
+        if parsed is None:
+            raise ValueError(f"Structured output returned None for {topic} in {destination}")
 
-        response = await llm.ainvoke(prompt)
-        content = response.content.strip()
-
-        # Parse JSON response
-        # Handle potential markdown code blocks
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-            content = content.strip()
-
-        result = FeasibilityCheck(**json.loads(content))
         _debug_log(
             f"[FEASIBILITY_LLM] {topic} in {destination}: "
-            f"possible={result.possible}, reason={result.reason}"
+            f"possible={parsed.possible}, reason={parsed.reason}"
         )
-        return result
+        return parsed
 
     except Exception as e:
         _debug_log(f"[FEASIBILITY_LLM] Error checking {topic} in {destination}: {e}")

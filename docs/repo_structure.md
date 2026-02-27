@@ -11,7 +11,7 @@ nomadic/
 │   │   ├── backend-specialist.md
 │   │   ├── code-reviewer.md
 │   │   └── frontend-specialist.md
-│   ├── commands/               # Custom slash commands
+│   ├── skills/                 # Codex skill command mappings
 │   │   ├── audit-code.md
 │   │   ├── clear-cache.md
 │   │   ├── clear-sprint.md
@@ -20,9 +20,6 @@ nomadic/
 │   │   ├── run-curl.md
 │   │   ├── update-docs.md
 │   │   └── verify-build.md
-│   ├── plans/                  # Planning documents (generated snapshots)
-│   │   ├── compiled-sauteeing-stroustrup.md
-│   │   └── majestic-tickling-crayon.md
 │   ├── settings.json           # Claude Code settings
 │   └── settings.local.json     # Local Claude Code settings
 ├── .codex/                     # Codex wrappers + skills
@@ -58,15 +55,14 @@ nomadic/
 ├── docker-compose.yml          # Docker configuration
 ├── prompt_token_counts.json    # Prompt/token analysis output
 ├── README.md                   # Project readme
-├── render.yaml                 # Render deployment config
-└── temp_graph.txt              # Temporary graph debug artifact
+└── render.yaml                 # Render deployment config
 ```
 
 ---
 
 ## Backend (`/backend`)
 
-Python FastAPI application with single-agent trip planner.
+Python FastAPI application with a coordinator-driven trip planner.
 
 ```
 backend/
@@ -100,59 +96,47 @@ backend/
 │   │   ├── __init__.py
 │   │   └── session.py          # Session middleware
 │   │
-│   ├── planner/                # Single-agent trip planner (create_agent + 6 tools + middleware)
+│   ├── planner/                # Coordinator-driven planner package
 │   │   ├── __init__.py
-│   │   ├── agent.py            # create_agent() — builds the LangGraph agent with tools + middleware
-│   │   ├── agent_constants.py  # Agent configuration constants (model names, token limits, etc.)
+│   │   ├── chip_generator.py   # Suggestion chip generator extracted from legacy middleware
+│   │   ├── conversationalist.py # Single-LLM response generator for coordinator path
+│   │   ├── coordinator.py      # Deterministic turn planner + step execution + envelope builder
 │   │   ├── hashing.py          # Hash utilities
 │   │   ├── llm_factory.py      # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
-│   │   ├── middleware.py        # AgentMiddleware stack (model selection, dynamic prompt, turn lifecycle, suggestion chips)
 │   │   ├── patterns_registry.py # Shared regex/keyword patterns (budget, travelers, settings)
-│   │   ├── plan_graph.py       # LangGraph workflow definition (streaming core, moved from app/plan_graph.py)
 │   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
 │   │   ├── test_mode.py        # Test mode utilities
 │   │   │
-│   │   ├── nodes/              # Domain logic modules (wrapped by agent tools)
+│   │   ├── schemas/            # Coordinator protocol schemas
+│   │   │   ├── __init__.py
+│   │   │   └── coordinator_schemas.py  # ChangeType, ClassifierOutput, TripBrief, SpecialistPlan, ReplanRequest, ExecutionPlan
+│   │   │
+│   │   ├── nodes/              # Domain logic modules called by coordinator
 │   │   │   ├── __init__.py
 │   │   │   ├── constraint_guard.py         # Constraint validation
 │   │   │   ├── input_gate_config.py        # Input gate threshold constants (dates, travelers, budget)
-│   │   │   ├── input_gates.py              # Pre-routing input validation (5 gates: Date, Duration, Traveler, Budget, Destination)
-│   │   │   ├── router_extraction.py        # LLM extraction & field validation
-│   │   │   ├── expert_constraints.py      # Local expert Pydantic schemas + LOCAL_EXPERT_CONSTRAINTS (constraint grounding injected into LLM prompt)
-│   │   │   ├── local_expert.py             # Local knowledge node
-│   │   │   ├── logistics_node.py           # Flights/hotels data fetcher
-│   │   │   ├── specialist_schemas.py  # Specialist Pydantic schemas
-│   │   │   └── vertical_specialist.py # Domain experts (8 specialists, registry-driven)
-│   │   │
-│   │   ├── prompts/             # Agent prompt templates
-│   │   │   ├── __init__.py
-│   │   │   └── planner.py      # System prompt builder for the planner agent
-│   │   │
-│   │   ├── tools/               # Agent tool definitions (6 tools)
-│   │   │   ├── __init__.py
-│   │   │   ├── _parsing.py             # Shared tool argument parsing utilities
-│   │   │   ├── build_itinerary.py      # build_itinerary tool — day-by-day schedule from tiles + constraints
-│   │   │   ├── extract_trip_fields.py  # extract_trip_fields tool — parse intent + trip fields
-│   │   │   ├── get_local_intel.py      # get_local_intel tool — Trip Overview card + Phase B enrichment
-│   │   │   ├── get_specialist_advice.py # get_specialist_advice tool — domain-specific strategy
-│   │   │   ├── search_tiles.py         # search_tiles tool — flights, hotels, activities via TileService
-│   │   │   └── validate_plan.py        # validate_plan tool — budget/temporal/safety constraint checks
+│   │   │   ├── input_gates.py              # Pre-routing input validation
+│   │   │   ├── router_extraction.py        # LLM extraction + change classification
+│   │   │   ├── expert_constraints.py        # Local expert schema + grounded constraints
+│   │   │   ├── local_expert.py             # Local knowledge section generation
+│   │   │   ├── logistics_node.py           # Flights/hotels/activity fetching
+│   │   │   ├── specialist_schemas.py       # Specialist Pydantic schemas
+│   │   │   └── vertical_specialist.py      # Tier 1 specialist planning
 │   │   │
 │   │   ├── services/
 │   │   │   ├── __init__.py
 │   │   │   ├── admin_utils.py       # Admin utility functions
-│   │   │   ├── agent_runner.py      # Agent execution runner (invokes the agent per turn)
-│   │   │   ├── feasibility_service.py # LLM-backed geographic feasibility checks (extracted from vertical_specialist.py)
+│   │   │   ├── feasibility_service.py # LLM-backed geographic feasibility checks
 │   │   │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed)
 │   │   │   ├── itinerary_adapter.py # Thin bridge: GraphState → ItineraryBuilder
-│   │   │   ├── section_builder.py   # Strategy section CRUD
+│   │   │   ├── section_builder.py   # Strategy section builders/fallbacks
 │   │   │   └── state_serde.py       # State serialization/deserialization
 │   │   │
 │   │   └── state/
 │   │       ├── __init__.py
-│   │       ├── agent_state.py # Agent-specific state schema (extends graph_state for agent turns)
-│   │       ├── graph_state.py   # Planner state schemas (renamed from schemas.py)
-│   │       └── typed_meta.py   # Typed metadata bridge (TurnMeta, get_trip_settings)
+│   │       ├── agent_state.py       # NomadicAgentState schema + reducers
+│   │       ├── graph_state.py       # Shared planner state schemas
+│   │       └── typed_meta.py        # Typed metadata bridge (TurnMeta, get_trip_settings)
 │   │
 │   ├── prompts/                # LLM prompt templates
 │   │   ├── synthesizer.txt
@@ -485,6 +469,7 @@ frontend/
 │
 ├── hooks/                      # Custom React hooks
 │   ├── useActionLoader.ts
+│   ├── useActivityColorMap.ts
 │   ├── useChatEffects.ts         # ChatPanel side effects (scroll, focus, ready-to-generate; extracted from ChatPanel)
 │   ├── useChatScrolling.ts       # Chat scroll container, auto-scroll, collapse header (extracted from ChatPanel)
 │   ├── useChatSend.ts            # Chat send orchestration + SSE lifecycle (extracted from ChatPanel)
@@ -503,6 +488,7 @@ frontend/
 ├── lib/                        # Utility functions
 │   ├── animation-config.ts     # Progressive disclosure timing constants
 │   ├── api.ts                  # API client
+│   ├── activityHighlighter.ts  # Chat activity-name highlighter (markdown protocol + longest-match)
 │   ├── contentPolicyGuard.ts   # Content policy validation
 │   ├── date-utils.ts           # Date formatting/parsing utilities
 │   ├── dayIntensity.ts         # Day intensity scoring (relaxed/balanced/packed) from DayBlock hours
@@ -513,7 +499,6 @@ frontend/
 │   ├── format-utils.ts         # Formatting utilities
 │   ├── ghost-timeline-adapter.ts  # Ghost timeline + MapPOI extraction (MapPOI.dayNumber added Stage 19)
 │   ├── googlePlacesPhoto.ts    # Google Places photo URL helpers
-│   ├── route-utils.ts          # generateRouteGeoJson() — GeoJSON LineString for map route (Stage 19)
 │   ├── showMutationToast.ts    # Toast helper with Undo CTA for drag/remove mutations
 │   ├── loaderConfig.ts         # Loader configuration
 │   ├── loaderCopyConfig.ts     # Loader copy text
@@ -633,7 +618,7 @@ docs/
 ## Key Architectural Notes
 
 1. **TripPlan is SSoT** - All trip state flows through `TripPlan` schema
-2. **Single Agent Architecture** - One `create_agent` planner with 6 tools replaces the old multi-node DAG. The agent decides tool order dynamically. Middleware handles state mutation, model upgrades, prompt injection, and chip generation. See `plan_graph_analysis.md`.
+2. **Coordinator Architecture** - `coordinator.execute_turn()` plans deterministic step execution (`classify` → `dispatch_specialists` → `local_intel` → `search_tiles` → `build_itinerary` → `generate_response`) and coordinates all planning state transitions. See `plan_graph_analysis.md`.
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
 5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. Dependency: `@dnd-kit/core`.

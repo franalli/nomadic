@@ -6,7 +6,9 @@ description: >
   Triggers on: UI components, DS tokens, plan rendering, chat panel, sheets/modals,
   pill chips, timeline blocks, tile cards, Framer Motion, Mapbox, mobile layout,
   ghost timeline, content policy guard, loader states, fill-day flow,
-  preference auto-regen, stream parser, browse activities, or any file under frontend/.
+  preference auto-regen, stream parser, browse activities, booking drawer,
+  undo stack, drag-and-drop, travel intelligence, consent/legal,
+  or any file under frontend/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 metadata:
   source_agent: .claude/agents/frontend-specialist.md

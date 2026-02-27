@@ -834,13 +834,21 @@ class TestFallbackTier2Tiles:
         titles = {t["title"] for t in result}
         assert titles == {"Yoga Retreat", "Cooking Class"}
 
-    def test_no_matching_tiles_returns_all(self):
+    def test_no_matching_tiles_returns_retagged(self):
         tiles = [
             {"tags": ["nature"], "title": "Forest Walk", "subtitle": ""},
             {"tags": ["adventure"], "title": "Zipline", "subtitle": ""},
         ]
         result = _fallback_tier2_tiles(tiles, {"yoga"})
-        assert result == tiles
+        assert len(result) == 2
+        assert {t["title"] for t in result} == {"Forest Walk", "Zipline"}
+        # Retagged tiles have source_categories and fallback flag
+        for t in result:
+            assert t["meta"]["source_categories"] == ["yoga"]
+            assert t["meta"]["fallback_retagged"] is True
+        # Originals are not mutated
+        assert "meta" not in tiles[0]
+        assert "meta" not in tiles[1]
 
     def test_empty_existing_tiles(self):
         result = _fallback_tier2_tiles([], {"yoga"})

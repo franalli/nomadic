@@ -67,12 +67,11 @@ const ALL_CATEGORIES = [
   { value: 'photography', label: 'Photography', icon: '📸' },
 ];
 
-// Skill level options
-const SKILL_OPTIONS = [
-  { value: 'beginner', label: 'Beginner', description: 'Easy activities, no experience needed' },
-  { value: 'intermediate', label: 'Intermediate', description: 'Some experience helpful' },
-  { value: 'advanced', label: 'Advanced', description: 'Challenging activities for experienced' },
-];
+const PACE_OPTIONS = [
+  { value: 1, label: 'Relaxed' },
+  { value: 2, label: 'Moderate' },
+  { value: 3, label: 'Packed' },
+] as const;
 
 const NON_ACTIVITY_TYPES = new Set([
   'arrival', 'departure', 'check-in', 'check-out', 'check_in', 'check_out',
@@ -299,10 +298,12 @@ function ActivitiesSheetInner({
   const effectiveInitialDayPreferences = useMemo(
     () => (hasItinerary
       ? Object.fromEntries(
-          effectiveInitialCategories.map((cat) => [
-            cat,
-            inferredDayPreferences[cat] ?? normalizedSettingDayPreferences[cat] ?? 0,
-          ])
+          effectiveInitialCategories
+            .map((cat) => [
+              cat,
+              inferredDayPreferences[cat] ?? normalizedSettingDayPreferences[cat],
+            ] as const)
+            .filter((entry): entry is [string, number] => entry[1] != null && entry[1] > 0)
         )
       : normalizedSettingDayPreferences),
     [
@@ -316,9 +317,11 @@ function ActivitiesSheetInner({
   const [localCategories, setLocalCategories] = useState<string[]>(
     effectiveInitialCategories
   );
-  const [localSkillLevel, setLocalSkillLevel] = useState<string | null>(settings.skill_level || null);
   const [localDayPreferences, setLocalDayPreferences] = useState<Record<string, number>>(
     effectiveInitialDayPreferences
+  );
+  const [localPace, setLocalPace] = useState<number | null>(
+    settings.activities_per_day ?? null
   );
   const wasOpenRef = useRef(false);
 
@@ -330,11 +333,11 @@ function ActivitiesSheetInner({
     if (open && !wasOpenRef.current) {
       setLocalEnabled(enabled);
       setLocalCategories(effectiveInitialCategories);
-      setLocalSkillLevel(settings.skill_level || null);
       setLocalDayPreferences(effectiveInitialDayPreferences);
+      setLocalPace(settings.activities_per_day ?? null);
     }
     wasOpenRef.current = open;
-  }, [open, enabled, effectiveInitialCategories, effectiveInitialDayPreferences, settings.skill_level]);
+  }, [open, enabled, effectiveInitialCategories, effectiveInitialDayPreferences, settings.activities_per_day]);
 
   // Handle toggle (commits immediately)
   const handleToggle = useCallback(
@@ -360,12 +363,13 @@ function ActivitiesSheetInner({
     );
     onSaveSettings({
       categories: localCategories,
-      skill_level: localSkillLevel,
+      skill_level: null,
       day_preferences: cleanedDayPreferences,
+      activities_per_day: localPace,
     });
     toast('Activity preferences saved');
     onOpenChange(false);
-  }, [localCategories, localSkillLevel, localDayPreferences, onSaveSettings, toast, onOpenChange]);
+  }, [localCategories, localDayPreferences, localPace, onSaveSettings, toast, onOpenChange]);
 
   // Toggle category — when adding, seed day_preferences with a default of 1
   const toggleCategory = useCallback((category: string) => {
@@ -460,6 +464,33 @@ function ActivitiesSheetInner({
             !localEnabled && 'opacity-50 pointer-events-none'
           )}
         >
+          {/* Pace — activities per day (generation target) */}
+          <div>
+            <h3 className={cn(DS.text.label, 'mb-3')}>Pace</h3>
+            <div className="grid grid-cols-3 rounded-xl border border-zinc-200 dark:border-white/10 overflow-hidden">
+              {PACE_OPTIONS.map((option) => {
+                const isSelected = localPace === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setLocalPace(isSelected ? null : option.value)}
+                    className={cn(
+                      'flex flex-col items-center py-3 text-sm transition-colors',
+                      'border-l border-zinc-200 dark:border-white/10 first:border-l-0',
+                      isSelected
+                        ? 'bg-emerald-500/15 text-emerald-400 font-semibold'
+                        : 'text-zinc-400 hover:bg-white/5'
+                    )}
+                  >
+                    <span>{option.label}</span>
+                    <span className="text-xs opacity-60">{option.value}/day</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Activity Categories — single flat grid */}
           <div>
             <div className="grid grid-cols-2 gap-2">
@@ -503,7 +534,7 @@ function ActivitiesSheetInner({
                 Days per activity
               </h3>
               <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2">
-                Set 0 for no preference
+                Leave at 0 for no preference
               </p>
               <div className="space-y-1">
                 {localCategories.map((catValue) => {
@@ -531,58 +562,6 @@ function ActivitiesSheetInner({
             </div>
           )}
 
-          {/* Skill Level */}
-          <div>
-            <h3 className={cn(DS.text.label, 'mb-3')}>
-              Skill level
-            </h3>
-            <div className="space-y-2">
-              {SKILL_OPTIONS.map((option) => {
-                const isSelected = localSkillLevel === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setLocalSkillLevel(option.value)}
-                    className={cn(
-                      'w-full flex flex-col items-start px-4 py-3.5 rounded-lg',
-                      'transition-all duration-150 text-left',
-                      isSelected
-                        // Selected: Strong ring for emphasis
-                        ? 'bg-zinc-900 text-white border-2 border-transparent shadow-md dark:bg-white dark:text-black dark:border-transparent'
-                        // Inactive: Glass Fill
-                        : cn(
-                            'bg-white border-2 border-zinc-200',
-                            'hover:border-zinc-900 hover:bg-zinc-50',
-                            // Dark: Glass substance
-                            'dark:bg-white/5 dark:border-2 dark:border-white/15',
-                            'dark:hover:bg-white/10 dark:hover:border-white/40'
-                          )
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'text-sm font-semibold',
-                        isSelected
-                          ? 'text-white dark:text-black'
-                          : 'text-zinc-600 dark:text-zinc-400'
-                      )}
-                    >
-                      {option.label}
-                    </span>
-                    <span className={cn(
-                      'text-xs',
-                      isSelected
-                        ? 'text-zinc-300 dark:text-zinc-600'
-                        : 'text-zinc-500 dark:text-zinc-500'
-                    )}>
-                      {option.description}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </div>
       </div>
     </BaseSheet>

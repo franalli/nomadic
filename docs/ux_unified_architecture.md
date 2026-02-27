@@ -20,7 +20,7 @@ The application uses **two modes** instead of three phases. This simplifies the 
 
 PLANNING mode evolves naturally based on what the user has provided. No artificial gates or confusing transitions.
 
-#### Phase 1: Initial Input (Destination Only)
+#### Stage 1: Initial Input (Destination Only)
 * **Trigger:** User mentions destination (e.g., "I want to go to Bali")
 * **UI Shows:**
   * Hero image of destination
@@ -29,7 +29,7 @@ PLANNING mode evolves naturally based on what the user has provided. No artifici
   * Map with static destination pin (POIs from specialists deferred)
 * **Tiles:** HIDDEN (no prices without dates)
 
-#### Phase 2: After Dates Added
+#### Stage 2: After Dates Added
 * **Trigger:** User provides dates (e.g., "April 15-25")
 * **UI Shows:**
   * Day-by-day itinerary auto-generates
@@ -39,7 +39,7 @@ PLANNING mode evolves naturally based on what the user has provided. No artifici
   * "Proceed to Booking" button appears at bottom
 * **Tiles:** VISIBLE as suggestions (not for booking yet)
 
-#### Phase 3: Refinement
+#### Stage 3: Refinement
 * **User Can:**
   * Modify suggestions ("Change hotel")
   * Adjust itinerary via chat
@@ -102,33 +102,33 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 **Pre-Generation (P0-P2): No Map - Tiles get full width**
 ```
 ┌─────────────────────────────────────────────────┐
-│  SECTION 1: Specialist Strategy Cards           │  ← Phase 1+
+│  SECTION 1: Specialist Strategy Cards           │  ← Stage 1+
 │  (Collapsed by default, expandable)             │
 ├─────────────────────────────────────────────────┤
-│  SECTION 2: Tile Browser (full width)           │  ← Phase 2+
+│  SECTION 2: Tile Browser (full width)           │  ← Stage 2+
 │  Hotels, Flights, Activities with heart actions │
 │  Heart = preference signal for AI weighting     │
 │  Component: BookingSection.tsx                  │
 ├─────────────────────────────────────────────────┤
-│  Build Itinerary CTA                           │  ← Shows when dates set
+│  Build Itinerary CTA                           │  ← Stage 2+
 │  Triggers itinerary generation                 │
 │  Component: StrategyStageRenderer.tsx          │
 └─────────────────────────────────────────────────┘
 ```
 
-**Post-Generation (P3+) - Desktop: Content + Fixed Map Sidebar**
+**Post-Generation (P3+) - Desktop: Content + Flex Map Sidebar**
 ```
 ┌─────────────────────────────────┬──────────────┐
 │  LEFT COLUMN (flex-1)           │  RIGHT       │
-│  min: 720px, max: 900px         │  fixed 400px │
-│  ┌────────────────────────────┐ │  max: 35vw   │
+│  min: 480px, max: 800px         │  flex-1      │
+│  ┌────────────────────────────┐ │  min: 350px  │
 │  │ SECTION 1: Specialists     │ │  ┌─────────┐ │
 │  │ (Collapsed cards)          │ │  │         │ │
 │  ├────────────────────────────┤ │  │   MAP   │ │
 │  │ SECTION 2: Tile Browser    │ │  │  sticky │ │
-│  │ (Hotels, Flights, etc.)    │ │  │  top-20 │ │
-│  ├────────────────────────────┤ │  │  400px  │ │
-│  │ SECTION 3: Timeline        │ │  │  height │ │
+│  │ (Hotels, Flights, etc.)    │ │  │top-align│ │
+│  ├────────────────────────────┤ │  │  100vh  │ │
+│  │ SECTION 3: Timeline        │ │  │-header  │ │
 │  │ (Day cards + activities)   │ │  │         │ │
 │  └────────────────────────────┘ │  └─────────┘ │
 └─────────────────────────────────┴──────────────┘
@@ -169,19 +169,21 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 
 | Phase | Desktop (>1024px) | Mobile (<1024px) |
 |-------|-------------------|------------------|
-| With Destination (full mode) | Fixed 400px width (max 35vw), sticky `top-0`, full viewport height (`h-screen`), destination pin centered | 300px height, inline before timeline (only when POIs exist) |
-| With Destination (bridge mode) | Fixed 350px width, sticky `top-4`, 400px height, destination pin or POIs | Hidden |
+| With Destination (full mode) | Flex column (min 350px), sticky top aligned with Day 1, height `calc(100vh - headerOffset)`, destination pin centered | 300px height, inline before timeline (only when POIs exist) |
+| With Destination (bridge mode) | Same flex column layout, destination pin or POIs | Hidden |
 | No Destination | Hidden | Hidden |
 
 **Map Content:**
 - Map centered on POIs via `calculateMapCenter()` (zoom derived from POI spread)
-- Falls back to world view (`lat: 20, lng: 0, zoom: 2`) when no POIs available
+- Falls back to world view (`lat: 0, lng: 0, zoom: 2`) when no valid map center is available
 - Falls back to `DestinationMapPlaceholder` in bridge mode when no POIs found
-- **POI Pins:** Activity markers from `extractPOIsFromSections()` in `ghost-timeline-adapter.ts`
-  - Extracts coordinates from strategy section tiles and activities
+- **POI Pins:** Activity markers from `extractPOIsFromDayCards()` with fallback to `extractPOIsFromSections()` in `ghost-timeline-adapter.ts`
+  - Prefers day-card coordinates, then falls back to strategy-section activity pins in bridge mode
+  - Extracts coordinates from strategy section tiles and activities (`[lng, lat]` transformed to `{ lat, lng }`)
   - **Destination fallback chain:** `effectiveTripInputs?.destination ?? destinationCard?.title`
   - POI format: `{ lat, lng }` object (not array)
   - All POI coordinates validated via `_normalizeMapCoordinates()` (rejects non-finite or out-of-range values)
+  - Proximity outlier filtering removes pins outside a ~200km radius of the median centroid (`_filterProximityOutliers`) to suppress hallucinated coordinates.
 
 ### Scroll Behavior
 - **Strategy Cards:** Collapsed by default, user can expand
@@ -293,12 +295,12 @@ All animations use Framer Motion with `AnimatePresence` for enter/exit:
 
 ### Implementation Notes
 - No `subView` state - tab navigation removed entirely
-- `StrategyStageRenderer.tsx` uses conditional layout:
+- `StrategyStageRenderer.tsx` delegates layout to `PlanFullDensityView.tsx`:
   - **No Destination:** Single column `<div className="flex flex-col w-full">`
-  - **With Destination (Desktop):** Content (flex-1, min 720px, max 900px) + Map (fixed 400px, max 35vw)
+  - **With Destination (Desktop):** Content (flex-1, min 480px, max 800px) + Map (flex-1, min 350px, sticky with `calc(100vh - headerOffset)`)
   - **With Destination (Mobile):** Single column with inline map (300px height, shown after itinerary)
-- Desktop map visibility controlled by `showDesktopMap = isDesktop && fullModeMapItems.length > 0` (shows when POIs exist from day_cards or strategy sections)
-- Mobile map only shows when `hasItineraryContent && fullModePOIs.length > 0` (not just destination pin)
+- Desktop map visibility controlled by `showDesktopMap = isDesktop && (fullModeMapItems.length > 0 || destinationCenter !== null)` (shows when POIs exist from day_cards/strategy sections or when a destination center coordinate is available)
+- Mobile map only shows when `hasItineraryContent && (fullModePOIs.length > 0 || destinationCenter !== null)` (requires itinerary content plus either POIs or a destination center coordinate)
 - Timeline section conditionally renders when `hasItineraryContent === true`
 - Mode prop threads through TimelineThread → ActivityMiniCard for Book button visibility
 - Preference attribution uses `preferredTileIds` to show "You preferred this" badge
@@ -461,7 +463,7 @@ User edits date chip → GENERATE_PLAN_TRIGGER sent → Full regeneration
 
 **Flow:**
 1. User sends chat message (e.g., "from rome", "add hiking")
-2. Backend agent runs (extract_trip_fields → get_specialist_advice/search_tiles → response)
+2. Backend coordinator runs (classify_change → specialist/tile steps → response)
 3. Graph completes → SSE `onComplete` handler checks:
    - `hasItinerary = (day_cards?.length ?? 0) > 0`
    - `structureChanged = strategy_sections topics differ (not just tiles added)`
@@ -907,39 +909,23 @@ const getShortLabel = (c) =>
 
 ---
 
-## I.C Planning Phases (Progressive Density)
+## I.C Plan State Density (Progressive Density)
 
-The backend emits **planning phases** (not UI modes) based on data density:
+Backend rendering is single-source-of-truth via `plan_view_state` and a small compatibility shim:
 
-### Planning Phase Progression
+### Plan State Progression
 
-| Phase | Data State | UI Shows | Chat Status Header |
-|-------|-----------|----------|--------------------|
-| `P0_MINIMAL` | Destination only, no specialists | Hero image, empty timeline | "Your trip is taking shape" · REFINE PLAN |
-| `P1_ENRICHED` | Specialists run, strategy sections present | Strategy cards, ghost timeline | "Your trip is taking shape" · REFINE PLAN |
-| `P2_LOGISTICS` | Tiles fetched, suggestions available | Tile browser + strategy cards | "Your trip is taking shape" · REFINE PLAN |
-| `P3_FINALIZED` | Itinerary validated, ready to book | Complete itinerary, "Proceed to Booking" | "Itinerary complete" · READY |
+| Backend state | Data State | UI Shows | Chat Status Header |
+|---|---|---|---|
+| `S0_BOOTSTRAP` | Core fields incomplete (destination + dates not both set) | Hero image, empty timeline | "Your trip is taking shape" · REFINE PLAN |
+| `S2_STRATEGY_READY` | Strategy exists, no itinerary yet | Strategy cards, bridge timeline | "Your trip is taking shape" · REFINE PLAN |
+| `S2_BLOCKED` | Strategy exists but build path blocked | Bridge view with blocker messaging | "Your trip is taking shape" · REFINE PLAN |
+| `S3_ITINERARY_READY` | Builder success, no conflicts | Full schedule + tile-rich plan | "Itinerary complete" · READY |
+| `S3_EDITING` | Builder success with constraints | Draft schedule + constraint banner | "Your trip is taking shape" · REFINE PLAN |
+| `S3_PARTIAL_CONFLICT` | Partial schedule from failed build | Partial draft schedule + conflict notes | "Your trip is taking shape" · REFINE PLAN |
+| `S3_BLOCKED` | Builder failed, no valid day cards | Strategy preview + actionable suggestions | "Your trip is taking shape" · REFINE PLAN |
 
-> **Note:** `P2_LOGISTICS` is defined in the `PlanViewState` type but never emitted by the backend or used in rendering logic. The frontend's `computeDataDensity()` function determines rendering based on data availability (tiles, specialist content), not on P2 explicitly. `P2.5_PREFERENCE` was a conceptual phase and does not exist in code.
-
-### Legacy Mapping (Coexistence)
-
-> **NOTE:** The S0-S3 states coexist with P0-P3 for pragmatic reasons.
-> Backend emits S* states; frontend maps them to P* for rendering decisions.
-> This avoids a large migration while keeping the mental model clear.
-
-| Legacy State | Maps To | Reason |
-|--------------|---------|--------|
-| `S0_EMPTY` | `P0_MINIMAL` | Reset state (frontend-only, used for "start over" intent). Handled by `normalizePlanViewState` — maps to `P0_MINIMAL`. |
-| `S0_BOOTSTRAP` | `P0_MINIMAL` | No data yet |
-| `S1_FRAMING` | `P0_MINIMAL` | Merged into P0 |
-| `S1_DESTINATION_SET` | *(falls through to default)* | Frontend-only state in `VIEW_STATE_ORDER` for downgrade protection. Not in `PlanViewState` type — not mapped by `normalizePlanViewState`. |
-| `S2_STRATEGY_READY` | `P1_ENRICHED` | Specialists have run |
-| `S2_BLOCKED` | `P1_ENRICHED` | Handled by data checks |
-| `S3_ITINERARY_READY` | `P3_FINALIZED` | Itinerary complete |
-| `S3_EDITING` | `P3_EDITING` | User editing itinerary |
-| `S3_BLOCKED` | `P3_BLOCKED` | Itinerary blocked |
-| `S3_PARTIAL_CONFLICT` | `P3_BLOCKED` | Partial timeline with unschedulable blocks. Emitted by backend itinerary build paths on partial-failure results. |
+> **Note:** `S0_EMPTY` and `S1_DESTINATION_SET` are frontend-only guard states (`S0_EMPTY` for reset intent; `S1_DESTINATION_SET` for fallback ordering). The API never emits them.
 
 ---
 
@@ -966,136 +952,68 @@ function StrategyStageRenderer({ state, viewModel, ... }) {
 
 ---
 
-## III. Backend State Logic (`plan_graph.py`)
+## III. Backend State Logic (`coordinator.py` + `/api/expand-itinerary`)
 
-The backend dictates the Planning Phase based on data richness. `plan_graph.py` computes `plan_view_state` in `_build_complete_envelope()`, using `_compute_s3_view_state()` for final S3 sub-states.
+The backend dictates Planning Phase based on data richness. For `/api/graph_plan/stream`, coordinator `_build_envelope()` computes `plan_view_state`. For `/api/expand-itinerary`, NDJSON events emit Stage 3 states from builder outcomes.
 
-**Primary envelope base logic (`_build_complete_envelope`):**
+**Primary envelope base logic (evaluated in order):**
 
 | Logic Check (evaluated in order) | State Output | Explanation |
 | --- | --- | --- |
-| Missing core fields (destination + start_date + end_date) | `S0_BOOTSTRAP` | **Blank slate.** Setup checklist until all core trip fields are set. |
-| `tiles` exist (any category non-empty) | `S2_STRATEGY_READY` | **Full logistics mode.** Dates set, real prices available. |
-| `specialist_content` exists (non-general/null sections) | `S2_STRATEGY_READY` | **Bridge State.** Strategy cards + ghost timeline. |
-| Fallthrough (core fields set, no tiles/specialist yet) | `S2_STRATEGY_READY` | **Awaiting data.** Plan view opens once destination + dates are known. |
+| Missing core fields (destination + start_date + end_date), or `date_flex=true` | `S0_BOOTSTRAP` | **Blank slate.** Setup checklist until all core trip fields are set. |
+| `day_cards` exist | `S3_*` (via `_compute_coordinator_s3_state`) | **Itinerary built.** Sub-state depends on builder success/conflicts. |
+| `strategy_sections` exist | `S2_STRATEGY_READY` | **Bridge State.** Strategy cards + ghost timeline. |
+| `tiles` exist (hotels or activities non-empty) | `S2_STRATEGY_READY` | **Full logistics mode.** Tiles loaded (may have been auto-built into day_cards above). |
+| Fallthrough (core fields set, no tiles/specialist yet) | `S0_BOOTSTRAP` | **Awaiting data.** Frontend stays closed to avoid showing an empty plan panel. |
 
-> **Note:** `_build_complete_envelope()` computes the base states (`S0_BOOTSTRAP`, `S2_STRATEGY_READY`) inline. There is no standalone `_compute_plan_view_state()` function. Stage-3 states are resolved by `_compute_s3_view_state()` from builder metadata in `turn_meta`: `S3_ITINERARY_READY` (success/no conflicts), `S3_EDITING` (success/with conflicts), `S3_PARTIAL_CONFLICT` (failure/partial with day_cards), `S3_BLOCKED` (failure/no cards). This applies to both graph auto-builder output and NDJSON itinerary endpoints.
+> **Note:** Coordinator `_build_envelope()` computes base states (`S0_BOOTSTRAP`, `S2_STRATEGY_READY`) inline. Stage-3 states are resolved by `_compute_coordinator_s3_state()` from builder metadata in `turn_meta`: `S3_ITINERARY_READY` (success/no conflicts), `S3_EDITING` (success/with conflicts), `S3_PARTIAL_CONFLICT` (failure/partial with day_cards), `S3_BLOCKED` (failure/no cards). NDJSON itinerary endpoints emit the same Stage 3 variants.
 
 ### Itinerary Generation State Transition
 
 When the user has dates and tiles, clicking "BUILD ITINERARY" triggers the `ItineraryBuilder` service:
 
 ```
-P1_ENRICHED → P2_LOGISTICS → BUILD ITINERARY → P3_FINALIZED
-                                    │
-                          ItineraryBuilder.build()
-                                    │
-                          ┌─── Success → day_cards rendered (S3_ITINERARY_READY)
-                          └─── Conflict → partial day_cards rendered (S3_PARTIAL_CONFLICT)
+S2_STRATEGY_READY → BUILD ITINERARY → S3_* outcomes
+                            │
+                  ItineraryBuilder.build()
+                            │
+                ┌───────────┴─────────────────────────────────┐
+                ├─ Success/no conflicts → S3_ITINERARY_READY
+                ├─ Success/with conflicts → S3_EDITING
+                ├─ Partial schedule only → S3_PARTIAL_CONFLICT
+                └─ No schedule → S3_BLOCKED
 ```
 
 **Conflict Resolution Flow (Chat-Driven):**
 
-When the builder fails (trip too short or route/constraint issues), middleware/guard state is recorded in `turn_meta.validation_result` and `turn_meta.builder_result` and reflected in the same-turn complete envelope (`ack_status`, `ack_updates`, partial `itinerary_day_cards` where possible). On the next chat turn, `validate_plan` reruns violations and `SuggestionChipMiddleware` generates actionable chips (e.g., "Extend to Mar 12", "Remove hiking"). Partial `day_cards` (what CAN fit) can render at `S3_PARTIAL_CONFLICT` immediately.
+When the builder fails (trip too short or route/constraint issues), coordinator records state in `turn_meta.builder_result` (and validation payloads when present) and reflects it in the same-turn complete envelope (`ack_status`, `ack_updates`, partial `itinerary_day_cards` where possible). Suggestion chips are generated from current state via `chip_generator._generate_chips_from_state()`. Partial `day_cards` (what CAN fit) can render at `S3_PARTIAL_CONFLICT` immediately.
 
 **Invariant:** User is NEVER left with silently dropped activities. All conflicts are surfaced via suggestion chips with actionable resolutions.
 
 ---
 
-## III.A Local Expert Always First (Trip DNA Anchor)
+## III.A Local Expert Trip-DNA Anchor
 
-**CRITICAL INVARIANT:** The Local Expert node MUST always run FIRST, regardless of whether niche specialists (diving, hiking, skiing) are also active.
+**CRITICAL INVARIANT:** When local intel is emitted, the `local_expert` section is inserted at index `0` in `strategy_sections`.
 
 ### Rationale
 
-The Local Expert generates the "Trip Overview" card (Trip DNA) which provides:
-1. **Destination Context:** Vibes, culture, local tips
-2. **Visual Anchor:** Images for the Magazine Layout (Vibe Grid)
-3. **Trip Parameters:** Destination, Dates, Travelers summary
+The Local Expert "Trip Overview" card is the right-panel anchor:
+1. Destination context (vibe, local tips)
+2. Trip framing (destination, dates, travelers)
+3. Stable first-card scan order before niche specialist detail
 
-Without this anchor, the UI shows only niche specialist content (e.g., diving constraints) without the broader destination context.
+### Coordinator behavior
 
-### Specialist Queue Pattern
-
-When a user says "diving in Bali tomorrow":
-
-```
-`extract_trip_fields` detects: diving
-Queue built: [local_expert, diving]  ← Local Expert FIRST
-
-Flow:
-1. `extract_trip_fields` → Local Expert (generate Trip Overview)
-2. Local Expert → Vertical Specialist (generate Diving Strategy)
-3. Specialist path → `search_tiles` (fetches logistics tiles)
-```
-
-**Result:** UI shows TWO strategy cards:
-1. **Trip Overview** (general): Bali destination vibes, local tips
-2. **Diving Strategy** (niche): Safety constraints, dive site recommendations
-
-### Implementation
-
-```python
-# In extract_trip_fields tool - ALWAYS prepend local_expert to specialist queue
-if specialist_hints:
-    if "local_expert" not in specialist_hints:
-        all_specialists = ["local_expert"] + specialist_hints
-    else:
-        all_specialists = ["local_expert"] + [s for s in specialist_hints if s != "local_expert"]
-
-    state.pending_specialists = all_specialists[1:]  # Rest of queue
-    state.active_specialist = all_specialists[0]     # Should be "local_expert"
-```
+- `plan_turn()` schedules `LOCAL_INTEL` for initial plans, destination/date changes, and Tier 1 add/remove activity turns.
+- `_execute_step(StepType.LOCAL_INTEL)` upserts the section and inserts it first.
+- Specialist sections can be added/updated in the same turn, but `local_expert` remains the top card when present.
 
 ### Invariants
 
-1. **Local Expert runs before ANY niche specialist** - even if user only mentions "diving"
-2. **Multi-specialist batch processing** - all niche specialists are processed in a single graph entry via `_merge_specialist_into_state()` loop (no graph re-entry per specialist)
-3. **Trip Overview card is NEVER missing** - this is the visual anchor for the right panel
-
-### Multi-Specialist Display
-
-When multiple specialists run (e.g., "diving and hiking in Bali"), the frontend renders:
-
-**Strategy Card Stack:**
-```
-┌─────────────────────────────────────────┐
-│ 🏝️ Local Expert • 5 Rules              │ ← Always first (Trip DNA anchor)
-├─────────────────────────────────────────┤
-│ 🤿 Diving • 3 Rules                     │ ← Specialist 1
-├─────────────────────────────────────────┤
-│ 🥾 Hiking • 2 Rules                     │ ← Specialist 2
-└─────────────────────────────────────────┘
-```
-
-**Staggered Auto-Expand Animation:**
-- T+0ms: Diving card slides in, auto-expands (2.5s)
-- T+2.5s: Diving card collapses
-- T+3.0s: Hiking card slides in, auto-expands (2.5s)
-- T+5.5s: Hiking card collapses
-
-**Key:** Stagger animations - don't expand both simultaneously (visual chaos).
-
-**Timeline Color-Coding:**
-
-Each activity block shows a 4px colored left-border indicating its specialist source:
-
-| Specialist | Border Color | Hex |
-|------------|--------------|-----|
-| `local_expert` | Neutral Gray | `#6B7280` |
-| `diving` | Ocean Blue | `#0EA5E9` |
-| `hiking` | Forest Green | `#10B981` |
-| `skiing` | Snow Blue | `#3B82F6` |
-| `cycling` | Lime | `#84CC16` |
-| `surfing` | Indigo | `#6366F1` |
-| `climbing` | Orange | `#F97316` |
-| `sailing` | Cyan | `#06B6D4` |
-| `wildlife_safari` | Amber | `#D97706` |
-
-**Visual Treatment:**
-- 4px colored left-border on each block
-- Icon color matches specialist
-- Card background remains neutral white
+1. Local Expert card remains the first strategy card when emitted.
+2. Strategy updates never duplicate `local_expert` sections (upsert by `specialist_type`).
+3. Trip-DNA context remains available without client-side section reordering.
 
 ---
 
@@ -1182,9 +1100,9 @@ Highlight fades after 2 seconds
 
 Replaced fragile string-matching `getMarkerIcon()`/`getMarkerColor()` helpers with an exact-key `PIN_CONFIG: Record<string, {icon: LucideIcon, color: string}>` lookup object (`getPinConfig(type)` function). Colors are hex strings (not Tailwind classes) to survive JIT tree-shaking. Covers all 8 Tier 1 specialist types, Tier 2 categories, and logistics types. `DEFAULT_PIN` fallback is `MapPin` with zinc-400 (`#a1a1aa`).
 
-**Route GeoJSON (`route-utils.ts`):**
+**Route overlay status:**
 
-`generateRouteGeoJson(dayCards, visibleDay)` in `frontend/lib/route-utils.ts` produces a GeoJSON `FeatureCollection` with a `LineString` connecting the first-coordinate block of each day, filtered to days up to `visibleDay`. Passed to `InteractiveMap` as `routeGeoJson` prop. Memoised in `PlanFullDensityView` using `useMemo([dayCards, visibleDay])`.
+`frontend/lib/route-utils.ts` was removed. `InteractiveMap` still supports an optional `routeGeoJson` prop, but current plan views do not generate or pass route geometry.
 
 **Fly-to on day highlight (`InteractiveMap.tsx`):**
 - When `highlightedDay` changes, the map computes the average `lat`/`lng` of all pins for that day and calls `map.flyTo()` with `zoom: 13` (single pin) or `zoom: 11` (multiple pins).
@@ -1193,10 +1111,17 @@ Replaced fragile string-matching `getMarkerIcon()`/`getMarkerColor()` helpers wi
 **Marker click debounce (`InteractiveMap.tsx`):**
 - `lastClickRef` enforces a 500ms debounce between marker clicks to prevent rapid-fire scroll requests.
 
+**Mapbox runtime error suppression (`mapbox-error-handler.ts`):**
+- Mapbox-specific message patterns are suppressed directly (`errorCb`, `sku_token`, `mapbox-gl`).
+- Generic null-reference errors are suppressed only when the `Error.stack` includes Mapbox sources, so non-Mapbox app bugs still surface.
+
 **ResizeObserver (`InteractiveMap.tsx`):**
 - A `ResizeObserver` on the map container calls `map.resize()` to tell Mapbox to remeasure when the container size changes (e.g., panel open/close transitions).
 
 `InteractiveMap.tsx` validates all coordinates internally via `normalizeMapCoordinates()` (rejects non-finite, out-of-range, or missing values). `ghost-timeline-adapter.ts` applies equivalent validation via `_normalizeMapCoordinates()` when extracting POIs from strategy sections.
+
+**Fallback center (`InteractiveMap.tsx`):**
+- If no valid destination center or map items are available, map initial view falls back to world view (`lat=0`, `lng=0`, `zoom=2`).
 
 **Data Sources:**
 - `DayCard.blocks[].coordinates` - Itinerary locations (with `dayNumber` propagated to `MapPOI`)
@@ -1206,7 +1131,7 @@ Replaced fragile string-matching `getMarkerIcon()`/`getMarkerColor()` helpers wi
 
 1. **Map updates on scroll** - `IntersectionObserver` in `TimelineThread` tracks visible day headers → `useMapSync.setVisibleDayNumber()`
 2. **Click triggers scroll** - `onMarkerClick` → `useMapSync.requestScrollTo()` → `TimelineThread` scrollIntoView + 2s highlight ring
-3. **Route only in PLAN mode** - `generateRouteGeoJson` returns null when no `dayCards`; `InteractiveMap` skips layer when prop is null
+3. **Route overlay optional** - `InteractiveMap` only renders route layer when `routeGeoJson` is provided; current plan flow omits it
 4. **Fly-to suppressed during user interaction** - `isUserInteractingRef` prevents jarring fly-to during manual pan/zoom
 5. **Coordinate validation** - Both `InteractiveMap` and `ghost-timeline-adapter` validate coordinates before rendering (finite, |lat|<=90, |lng|<=180)
 6. **PIN_CONFIG exact-key lookup** - No string-contains matching; unknown types fall back to `DEFAULT_PIN` (`MapPin`, zinc-400)
@@ -1215,7 +1140,7 @@ Replaced fragile string-matching `getMarkerIcon()`/`getMarkerColor()` helpers wi
 
 ---
 
-## III.C Constraint Badge Deduplication (Stage 17A)
+## III.C Constraint Badge Deduplication
 
 When the same constraint appears on multiple blocks in the same day (e.g., the 24h no-fly rule referenced by both an activity and a logistics block), showing the full badge on every block creates visual noise.
 
@@ -1238,7 +1163,7 @@ When the same constraint appears on multiple blocks in the same day (e.g., the 2
 
 ---
 
-## III.D Compact Day Variant (Stage 17B)
+## III.D Compact Day Variant
 
 Days with a single short activity render in a compact horizontal layout to reduce scroll length.
 
@@ -1261,7 +1186,7 @@ Otherwise returns `'default'` (the existing full-card layout).
 
 ---
 
-## III.E Depth-1 Undo Stack (Stage 18A)
+## III.E Depth-1 Undo Stack
 
 Drag-and-drop mutations on the itinerary are reversible via a depth-1 undo stack.
 
@@ -1347,31 +1272,30 @@ What else would you like to know?
 
 ### Suggestion Chips (Registry-Driven)
 
-Suggestion chips are generated by `SuggestionChipMiddleware` in `middleware.py`, which runs
-after the agent's final model response (via `aafter_model` hook). The `_generate_chips_from_state()`
-function derives up to 3 template-based chips from current state fields — no LLM call needed.
+Suggestion chips are generated by `chip_generator._generate_chips_from_state()` during coordinator complete-envelope assembly. The function derives up to 3 template-based chips from current state fields — no LLM call needed.
 
 **Chip Structure:** Each chip is a `SuggestionChip` (see `schemas.py`) with fields:
 `message`, `action_type` (`"send_message"` | `"open_pill"` | `"trigger_action"`),
 `action_target` (pill name, e.g. `"dates"`, `"activities"`, `"budget"`),
 `chip_type` (`"cta"` | `"follow_up"` | `"setting"`),
 `category`, and `icon` (Lucide name). Chips are stored in `persistent_meta.suggestion_chips`
-and passed through the complete-envelope assembly in `plan_graph.py`.
+and passed through coordinator `_build_envelope()` into the complete SSE event.
 
 **Actionability Invariant:** Every chip must either open a pill (`open_pill`), trigger a setting (`trigger_action`), or send a plan-modifying command (`send_message` with `chip_type` of `"cta"` or `"follow_up"`). No passive/informational chips — questions, "show me", and "surprise me" are prohibited.
 
 | State | Example Chips | Action Types |
 |-------|---------------|--------------|
 | No destination | "Pick a destination", "Choose dates first", "Set travelers" | `open_pill` → destination, dates, travelers |
-| Has destination, no dates | Concrete date ranges: "{Mon DD} - {Mon DD}", "{Mon DD} - {Mon DD}", "I'm flexible on dates" | `send_message` (CTA), `send_message` (follow_up) |
+| Has destination, no dates | "{Mon DD} - {Mon DD}", "{Mon DD} - {Mon DD}", "Set dates" | `send_message` (CTA), `open_pill` → dates |
 | Dest + dates, no categories | "Choose activities", "Add departure city" / "Set budget", "Set travelers" | `open_pill` → activities, origin/budget, travelers |
-| Has tiles, no itinerary | "Build my itinerary", "5-star hotels only", "Direct flights only" | `send_message`, `open_pill` → stays, `trigger_action` |
-| After itinerary built | "Show my full itinerary", "Add an extra day for dropped activities", "Review safety constraints" | `send_message` (follow_up) |
+| Has tiles, no itinerary | "Build my itinerary", "Browse activities", "Refine {cat} plan" / "Get local tips" | `send_message` (CTA/follow_up), `open_pill` → activities |
+| After itinerary built (builder just ran) | "Show my full itinerary", "Add an extra day for dropped activities", "Review safety constraints" | `send_message` (follow_up) |
+| Itinerary exists (steady state) | "Add a {cat} activity", "Browse activities", "Change my hotel" / "Review safety constraints" | `send_message` (follow_up), `open_pill` → activities/stays |
 | Dest + categories | "Refine {category} plan", "Get local tips" | `send_message` (CTA) |
 | Blocking violation | Violation-specific fix from `suggested_action`, then type-specific pill: "Adjust dates" / "Adjust budget" / "Change activities" | `send_message` (CTA), `open_pill` → dates/budget/activities |
 
 **S2+ Plan Progression:** Once dates are set, chips shift from exploration pill-openers to plan-refinement actions.
-`_generate_chips_from_state()` in `middleware.py` checks which trip fields are missing and generates
+`_generate_chips_from_state()` in `chip_generator.py` checks which trip fields are missing and generates
 corresponding chips. As preferences are set, those chips are replaced with next-step suggestions.
 
 ### Soft Transition → Planning (Priority Rule)
@@ -1405,12 +1329,12 @@ Exploration mode exits when user provides actionable parameters:
 
 ### Implementation Reference
 
-**Backend:** Agent planner generates responses directly; `extract_trip_fields` tool handles intent parsing.
+**Backend:** Coordinator generates responses via `conversationalist.py`; `router_extraction.classify_change()` handles intent + change parsing.
 **State tracking:** `turn_meta["short_circuit_type"]` is derived from routing context before envelope assembly.
 
 ### UI Components for Exploration → Planning Transition
 
-> **Note:** `ExplorationProgress` and `ReadyToPlanBanner` have been deleted from the codebase. The exploration-to-planning transition is now handled entirely by suggestion chips generated by `SuggestionChipMiddleware` (see chip state table above). Suggestion chips shift from exploration questions to plan-refinement actions once dates are set.
+> **Note:** `ExplorationProgress` and `ReadyToPlanBanner` have been deleted from the codebase. The exploration-to-planning transition is now handled entirely by suggestion chips generated by `chip_generator.py` (see chip state table above). Suggestion chips shift from exploration questions to plan-refinement actions once dates are set.
 
 ---
 
@@ -1510,13 +1434,12 @@ const canViewPlan = hasDates || isGenerating;
 const canViewBook = isPlanFinalized && (hasTiles || inBookableState);
 ```
 
-**Backend (agent tools):**
+**Backend (coordinator steps):**
 ```python
-# NOTE: Conceptual simplification. The agent decides tool order dynamically.
-# When dates are extracted via extract_trip_fields, the agent automatically
-# invokes search_tiles to fetch flights/hotels, then build_itinerary.
-# The agent's system prompt (via DynamicPromptMiddleware) includes current
-# trip state, enabling it to make contextual tool-calling decisions.
+# Coordinator plan_turn() builds deterministic step order from classifier output.
+# With destination + dates present, SEARCH_TILES and BUILD_ITINERARY steps
+# are scheduled as needed; DISPATCH_SPECIALISTS is added for Tier 1 topics.
+# Conversational response is streamed in GENERATE_RESPONSE.
 ```
 
 ### Critical Invariants
@@ -1614,7 +1537,7 @@ plan_documents.document (JSONB)
 │   ├── budget: float                       # 5000
 │   ├── currency: string                    # "USD"
 │   ├── hotel_settings: HotelSettings       # { min_stars, amenities, ... }
-│   └── activity_settings: ActivitySettings # { categories, skill_level }
+│   └── activity_settings: ActivitySettings # { categories, activities_per_day }
 ├── branches: List[DocumentBranch]          # ✅ PERSISTED
 │   └── [branch]
 │       ├── id: string                      # UUID
@@ -1632,7 +1555,7 @@ plan_documents.document (JSONB)
 │ ─── ViewModel Fields (Refresh Survival) ─────────────────
 │
 ├── plan_view_state: PlanViewState          # ✅ PERSISTED
-│   # S0_BOOTSTRAP | S1_FRAMING | S2_STRATEGY_READY | S3_ITINERARY_READY | ...
+│   # S0_BOOTSTRAP | S2_STRATEGY_READY | S2_BLOCKED | S3_* (S3_ITINERARY_READY / EDITING / PARTIAL_CONFLICT / BLOCKED)
 ├── strategy_sections: List[StrategySection] # ✅ PERSISTED
 │   └── [section]
 │       ├── specialist_type: string         # "diving" | "hiking" | "general"
@@ -1762,13 +1685,13 @@ useSessionHydration() runs
 | --- | --- |
 | `StrategyStageRenderer` | Data density computation, conditional rendering, single renderer for all modes. Heavy computation and effects are delegated to `useStrategyStageOrchestration`. |
 | `useStrategyStageOrchestration` | Hook centralising all heavy computation, state, and effects for `StrategyStageRenderer` (keeps renderer under ~300 lines). Owns `DataDensity` computation, ghost timeline generation, map POI extraction, constraint validation sets, and fill-day guard refs. |
-| `PlanFullDensityView` | Full-density view (map + timeline + booking/intel controls). Receives all props from `StrategyStageRenderer`, renders the 60/40 desktop map layout, owns the row-two toggle chips (Flights, Stays, Destination Travel Intel), and fetches/polls Local Expert enrichment for the destination intel panel. |
+| `PlanFullDensityView` | Full-density view (map + timeline + booking/intel controls). Receives all props from `StrategyStageRenderer`, renders the flex desktop map layout (content: flex-1 min 480px max 800px; map: flex-1 min 350px), owns the row-two toggle chips (Flights, Stays, Destination Travel Intel), and fetches/polls Local Expert enrichment for the destination intel panel. |
 | `PlanDensityViews` | Ghost, bridge, and mirror-loader density views (`PlanGhostDensityView`, `PlanBridgeDensityView`, `PlanMirrorLoader`). |
-| `PlanTimelineSection` | Timeline section for full-density view — handles DnD wrapping (`ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`), skeleton loading, and regeneration overlay. |
+| `PlanTimelineSection` | Timeline section for full-density view — handles DnD wrapping (`ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`), skeleton loading, regeneration overlay, and wraps `TimelineThread` in `ErrorBoundary` for crash isolation. |
 | `useBookingDrawerState` | Hook managing booking drawer open/close state and the fill-day API call triggered when a tile is added to a specific day via the drawer. Extracted from `StrategyStageRenderer`. |
 | `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
 | `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack/StrategyHero) |
-| `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts`. Accepts three optional render props for DnD injection: `blockWrapper?: (block: DayBlock, dayNumber: number, children: ReactNode) => ReactNode` (wraps each block — only applied when `useRichBlocks=true`); `dayWrapper?: (dayNumber: number, children: ReactNode) => ReactNode` (wraps the block-list container for activity days only — **not** applied to free/empty days); `freeDayDropSlot?: (dayNumber: number) => ReactNode` (renders a drop zone inside `FreeDayCard` between the subtitle and chips — preferred for free days to avoid highlighting the entire card). All three default to identity no-ops. **Stage 19 map sync:** `IntersectionObserver` on `scrollContainerRef` tracks visible day headers → `useMapSync.setVisibleDayNumber()`. Listens to `scrollTargetDayNumber` → `scrollIntoView()` + 2s highlight ring. **Stage 17A:** `getConstraintDisplayModes(block)` deduplicates constraint badges per render pass — passes `constraintDisplayModes` Map to `ActivityMiniCard`. **Stage 17B:** `getDayVariant(card)` returns `'compact'` for single-block non-logistics days. |
+| `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts`. Accepts three optional render props for DnD injection: `blockWrapper?: (block: DayBlock, dayNumber: number, children: ReactNode) => ReactNode` (wraps each block — only applied when `useRichBlocks=true`); `dayWrapper?: (dayNumber: number, children: ReactNode) => ReactNode` (wraps the block-list container for activity days only — **not** applied to free/empty days); `freeDayDropSlot?: (dayNumber: number) => ReactNode` (renders a drop zone inside `FreeDayCard` between the subtitle and chips — preferred for free days to avoid highlighting the entire card). All three default to identity no-ops. **Map sync:** `IntersectionObserver` on `scrollContainerRef` tracks visible day headers → `useMapSync.setVisibleDayNumber()`. Listens to `scrollTargetDayNumber` → `scrollIntoView()` + 2s highlight ring. **Constraint dedup:** `getConstraintDisplayModes(block)` deduplicates constraint badges per render pass — passes `constraintDisplayModes` Map to `ActivityMiniCard`. **Compact days:** `getDayVariant(card)` returns `'compact'` for single-block non-logistics days. |
 | `ItineraryDndWrapper` | `@dnd-kit/core` `DndContext` wrapper (`closestCorners`, `PointerSensor` with 8px activation distance). Orchestrates drag state, calls `validateArrangement()` then `applyArrangement()` on drop, applies store update via `mergeEnvelope` + `setState({version})`. Uses `claimMutation`/`releaseMutation` for the store mutation gate. Shows `DragOverlay` with `DragPreviewCard`. **Undo on drag:** Before applying arrangement, captures `previousDayCards` + `previousVersion` snapshot, sets `documentStore.setUndoEntry({ type: 'drag_move', label, previousDayCards, previousVersion })`, and calls `showMutationToast(label, toast)` to display an Undo CTA. Mounts `useUndoStack` for auto-expire side effect (clears `undoEntry` after 8s). |
 | `DraggableBlock` | Wraps each block with `useDraggable`. Locked blocks (`arrival`/`departure`/`check-in`/`check-out`/`is_buffer`) show a `Lock` icon and disable drag. When `block.id` is absent, renders a plain passthrough (no drag handle). Applies `opacity-30 scale-95` while dragging. |
 | `DroppableDay` | Wraps activity-day block lists with `useDroppable` (`id: "day-{dayNumber}"`). Two-div structure: outer div (`ref={setNodeRef}`, `min-h-[80px]`) owns the hit area; inner div owns ring + highlight styles. Highlights with `ring-1 ring-emerald-500/25 bg-emerald-500/[0.04]` when dragging over. Not used for free/empty days — those use `FreeDayDropSlot` instead. |
@@ -1781,10 +1704,12 @@ useSessionHydration() runs
 | `useChatEffects` | Hook centralising ChatPanel side effects: scroll-on-load, ready-to-generate detection, input focus, node-status → activeStatus mapping, history loading. Extracted from ChatPanel. |
 | `useChatScrolling` | Hook managing scroll container ref, auto-scroll-to-bottom, user-scrolled-up detection, and mobile setup header collapse. Extracted from ChatPanel. |
 | `useChatSse` | Hook owning the `streamGraphPlan` call and all SSE callbacks (`onToken`, `onNodeStatus`, `onPartial`, `onComplete`, `onError`). Extracted from ChatPanel. Returns `executeStream` function. No JSX. |
-| `ChatMessageList` | Scrollable message list renderer — owns scroll container div and all message rendering. Extracted from ChatPanel. |
+| `ChatMessageList` | Scrollable message list renderer — owns scroll container div and all message rendering. Includes assistant color-map data from `useActivityColorMap` so known activity mentions can be visually emphasized. |
 | `ChatInputHandler` | Thin wrapper around `ChatInputBar` converting ChatPanel-level callbacks to form-submit signatures. Extracted from ChatPanel. |
 | `ChatSuggestionBar` | Thin wrapper around `ChatSuggestionChips` for ChatPanel integration. Extracted from ChatPanel. |
-| `ChatMessageRenderer` | Renders individual chat messages: user bubbles and assistant bubbles with markdown/specialist deep links/streaming pulse/retry button (extracted from ChatPanel) |
+| `ChatMessageRenderer` | Renders individual chat messages: user bubbles and assistant bubbles with markdown/specialist deep links/streaming pulse/retry button and color-marked activity mentions. |
+| `useActivityColorMap` | Hook (`frontend/hooks/useActivityColorMap.ts`) that builds activity-name → specialist color hints from tiles/day cards/strategy sections for chat highlighting. |
+| `activityHighlighter` | Utility (`frontend/lib/activityHighlighter.ts`) that wraps recognized activity-name substrings in `activity-color:` markdown links using longest-match-first processing while preserving existing links. |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available; supports controlled expand/collapse for stays and flights from `PlanFullDensityView` row-two toggle chips |
@@ -1792,15 +1717,15 @@ useSessionHydration() runs
 | `OriginPromptCard` | Inline prompt to set origin (shown in S2 when destination+dates set but no origin, 2+ specialists) |
 | `ItineraryProgressIndicator` | Progress indicator for multi-specialist auto-trigger itinerary generation |
 | `BookingDrawer` | Side sheet for tile browsing, triggered by FreeDayCard "Browse" or GhostSlot clicks. Supports `pinnedDayNumber` for per-day tile placement via fill-day API |
+| `TripSettingsSheet` | Relay sheet for destination/origin/dates/travelers/budget editors. Uses an unmount-safe delayed sheet open (`setTimeout` + `mountedRef`) to avoid opening a child sheet after parent unmount. |
 | `TripHealthBar` | Compact inventory bar showing tile counts (hotels, flights, activities) for General/Local Expert sections in `S2StrategyView` |
 | `useItineraryGeneration` | Hook extracted from `NomadicLanding` encapsulating the full expand-itinerary flow: `proceedWithItineraryGeneration` (NDJSON streaming), auto-trigger logic for multi-specialist trips (Path A), `handleExpandToItinerary` (validation-gated expand), and `handleSelectNights`. Before POSTing `/api/expand-itinerary`, it normalizes `trip_inputs`: empty activity categories are sent as `categories=[] + booking_types.activities='off'` so builder semantics match sheet intent. Returns `{proceedWithItineraryGeneration, handleExpandToItinerary, handleSelectNights, hasItineraryContent}`. |
-| `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. `planViewState` is backend-authoritative whenever present; when absent, frontend fallback only emits `S1_FRAMING` during active generation (otherwise `S0_BOOTSTRAP`). Pure computation — no side effects. |
+| `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. **Hard gate:** `planViewState` is forced to `S0_BOOTSTRAP` when `hasPlanPrerequisites` is false (destination + dates required). When prerequisites are met, backend `plan_view_state` is authoritative. `planTabEnabled` also requires `hasPlanPrerequisites`. Pure computation — no side effects. |
 | `useLandingEffects` | Hook extracted from `NomadicLanding` grouping side effects unrelated to itinerary generation: destination image fetching, `hasEverHadPlan` detection, topic tracking for mobile badges, specialist deep link handling. State is owned by the parent and passed in as params + setters. |
 | `specialist-colors.ts` | SSoT for specialist-to-color text class mappings (`SPECIALIST_TEXT_COLOR: Record<string, string>`). Used by `DragPreviewCard` and `ActivityMiniCard` for specialist label badges. Hue assignments match the DS constraint-priority palette. |
 | `useMapSync` | Zustand store (`frontend/hooks/useMapSync.ts`) for map↔timeline two-way sync. State: `visibleDayNumber` (set by TimelineThread scroll observer), `scrollTargetDayNumber` (set by InteractiveMap pin click), `highlightedCardId`. Actions: `setVisibleDayNumber()`, `requestScrollTo(dayNumber, itemId)`. Not persisted — resets on mount. |
 | `useUndoStack` | Hook (`frontend/hooks/useUndoStack.ts`) mounted in `ItineraryDndWrapper`. Returns `{ undoEntry, executeUndo }` and auto-expires `undoEntry` after 8s via `useEffect` + `setTimeout`. |
 | `showMutationToast` | Utility (`frontend/lib/showMutationToast.ts`) that shows a toast notification with an Undo CTA after drag/remove mutations. Calls `toast({ description: label, action: { label: 'Undo', onClick: documentStore.executeUndo } })`. |
-| `route-utils.ts` | Utility (`frontend/lib/route-utils.ts`) exporting `generateRouteGeoJson(dayCards, visibleDay)`. Returns a GeoJSON `FeatureCollection` with a `LineString` connecting the first-coordinate block of each day, capped at `visibleDay`. Returns null when `dayCards` is empty. |
 
 **Deleted Components (no longer in codebase):**
 - `ConflictResolutionBanner` -- conflict resolution now chat-driven via suggestion chips
@@ -1840,10 +1765,10 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 
 | Function | Purpose | Status |
 | --- | --- | --- |
-| `isBootstrap(state)` | Returns true when state is `P0_MINIMAL` (or any legacy S0/S1 alias via `normalizePlanViewState`). Returns true when state is null/undefined. | Active |
-| `isFraming(state)` | Returns true when state is exactly `S1_FRAMING`. | Active |
-| `isStrategyReady(state)` | Returns true when `normalizePlanViewState(state) === 'P1_ENRICHED'` AND state is not `S2_BLOCKED`. Used by `getNextAction()` and `shouldAutoTriggerItinerary()`. | Active |
-| `hasStrategy(state)` | Returns true when state normalizes to `P1_ENRICHED` or any `P3*` variant (strategy content exists). | Active |
+| `isBootstrap(state)` | Returns true when state is `S0_BOOTSTRAP`. Returns true when state is null/undefined. | Active |
+| `isFraming(state)` | Returns true only for legacy transient fallback states. | Active |
+| `isStrategyReady(state)` | Returns true when state is `S2_STRATEGY_READY` and state is not `S2_BLOCKED`. Used by `getNextAction()` and `shouldAutoTriggerItinerary()`. | Active |
+| `hasStrategy(state)` | Returns true when state is `S2_STRATEGY_READY` or any `S3*` variant (strategy content exists). | Active |
 | `isGenerating(generation)` | Checks if any generation is in progress (`generation?.active === true`) | Active |
 | `shouldAutoTriggerItinerary(state, topics, hasDates, generation, hasItinerary)` | Path A: auto-trigger for multi-specialist trips (2+ topics, S2, has dates, no existing itinerary) | Active |
 | `isMultiSpecialistTrip(executedTopics)` | Returns true when 2+ topics executed | Active |
@@ -1867,7 +1792,7 @@ export function getNextAction(
   _hasTripContext?: boolean // Deprecated - NextStepBar reads tripInputs from useDocumentStore
 ): 'expand_itinerary' | 'finalize_plan' | null {
   if (isGenerating(generation)) return null;
-  // isStrategyReady() normalizes S2_STRATEGY_READY and P1_ENRICHED aliases
+  // isStrategyReady() checks strategy-ready state for S2
   if (isStrategyReady(state)) return 'expand_itinerary';
   return null;
 }
@@ -1880,9 +1805,9 @@ export function getNextAction(
 1. **Right Panel Never Empty:** After first user message, always show *something* (hero, cards, or full plan).
 2. **No View Swapping:** Single renderer (`StrategyStageRenderer`) adapts via `computeDataDensity()`; don't mount/unmount entire view components.
 3. **No UI Chrome Removal:** Elements that appear during setup (status header, chip rows) must **transform through states**, not disappear. Layout shift breaks spatial memory. See `getChatStatusConfig` in `ChatPanel.tsx`.
-4. **Backend is SSoT:** `plan_view_state` from backend determines rendering mode. Frontend does not fabricate it except for the frontend-only state `S0_EMPTY` (reset intent). `S3_PARTIAL_CONFLICT` is emitted by the backend `/api/expand-itinerary` endpoint when the builder produces partial results. `S1_DESTINATION_SET` exists only in the frontend `VIEW_STATE_ORDER` for downgrade protection ordering.
+4. **Backend is SSoT:** `plan_view_state` from backend determines rendering mode. Frontend does not fabricate it except for `S0_EMPTY` (reset intent). `S3_PARTIAL_CONFLICT` is emitted by the backend `/api/expand-itinerary` endpoint when the builder produces partial results. `S1_DESTINATION_SET` exists only in the frontend `VIEW_STATE_ORDER` for downgrade protection ordering.
 5. **Coordinates Flow:** `[lng, lat]` format preserved from specialist → strategy_sections → DayBlock.
-6. **Plan Tab Unlock:** Mobile plan tab unlocks when `planTabEnabled = hasBranchesReady || !isBootstrap(planViewState)` (specialist content, tiles, or branches exist — no dates required). `isBootstrap()` normalizes P0_MINIMAL and all S0/S1 legacy aliases. Desktop `canViewPlan` in `useViewNavigation` gates on dates (`hasDates || isGenerating`) but is marked `@deprecated` and only used by legacy API. Strategy content alone DOES unlock the plan tab on mobile.
+6. **Plan Tab Unlock:** Plan tab unlocks when `planTabEnabled = hasPlanPrerequisites && (hasBranchesReady || !isBootstrap(planViewState))`. `hasPlanPrerequisites` requires both `hasDestination` AND `hasDateRange` (start_date + end_date). Strategy content alone does NOT unlock the plan tab -- dates are required. Desktop `canViewPlan` in `useViewNavigation` gates on dates (`hasDates || isGenerating`) but is marked `@deprecated` and only used by legacy API. Implementation: `useLandingDerived.ts`.
 7. **Specialist Display Labels:** All user-facing specialist names (toasts, badges, drag previews) use `getTopicLabel()` from `StrategyHeroUtils.tsx` — never raw `specialist_type`/`activity_type` strings (which are snake_case internal keys like `wildlife_safari`).
 
 ---
@@ -2070,7 +1995,7 @@ The standalone RefreshButton FAB has been removed. Regeneration is now handled b
 For multi-specialist trips (diving + hiking, skiing + hiking, etc.), the itinerary generation **auto-triggers** when dates are set. This removes the need for a manual FAB click.
 
 **Auto-Trigger Conditions:**
-1. `isStrategyReady(state)` returns true (normalizes to `P1_ENRICHED`, excludes `S2_BLOCKED`)
+1. `isStrategyReady(state)` returns true for `S2_STRATEGY_READY`, excludes `S2_BLOCKED`
 2. `executed_strategy_topics.length >= 2` (multi-specialist)
 3. `hasDates === true` (start + end date set)
 4. `!isGenerating` (not currently generating)
@@ -2086,8 +2011,8 @@ export function shouldAutoTriggerItinerary(
   generation?: GenerationState | null,
   hasItineraryContent?: boolean
 ): boolean {
-  // Must be in strategy-ready state (S2 / P1_ENRICHED)
-  if (!isStrategyReady(state)) return false;  // normalizes via P1_ENRICHED
+  // Must be in strategy-ready state
+  if (!isStrategyReady(state)) return false;
   if (isGenerating(generation)) return false;
   if (!hasDates) return false;
   if ((executedTopics?.length ?? 0) < 2) return false;
@@ -2129,7 +2054,7 @@ User: "Plan diving and hiking Bali March 1-5"
        ↓
 [Success] Timeline appears with constraint buffers
    OR
-[Conflict] Partial day_cards render at S3_PARTIAL_CONFLICT + resolution chips via SuggestionChipMiddleware
+[Conflict] Partial day_cards render at S3_PARTIAL_CONFLICT + resolution chips via chip_generator
 ```
 
 **UI Components:**
@@ -2142,7 +2067,7 @@ User: "Plan diving and hiking Bali March 1-5"
 2. **Inline Conflict Handling** (replaced former ConflictResolutionBanner)
    - Partial `day_cards` auto-render at `S3_PARTIAL_CONFLICT` showing what CAN fit
    - Blocking violations re-surface on next chat turn via `turn_meta.builder_result` metadata
-   - SuggestionChipMiddleware generates actionable resolution chips: "Extend to Mar 12", "Remove hiking"
+   - `chip_generator._generate_chips_from_state()` generates actionable resolution chips: "Extend to Mar 12", "Remove hiking"
    - **Unschedulable block styling:**
      - `opacity-60` with dashed amber border (`border-2 border-dashed border-amber-500/50`)
      - "Cannot schedule" warning badge with AlertTriangle icon
@@ -2462,7 +2387,7 @@ For `specialist_type === 'general'` (Trip Overview):
 | `feasibility_status` | string | Backend | `"feasible"`, `"caveat"`, or `"infeasible"` |
 | `feasibility_reason` | string | Backend | Explanation if not fully feasible |
 
-**One-Liner Auto-Generation (plan_graph.py):**
+**One-Liner Auto-Generation (`coordinator.py`):**
 When `one_liner` is missing, the backend generates a headline from the top constraint:
 
 ```python
@@ -2700,8 +2625,8 @@ The S3 Itinerary View (after plan finalization) transforms from raw data dumps i
 
 | Column | Width | Behavior |
 |--------|-------|----------|
-| Left | 50% | Timeline Thread (scrollable) |
-| Right | 50% | Interactive Map (sticky) |
+| Left | flex-1 (min 480px, max 800px) | Timeline Thread (scrollable) |
+| Right | flex-1 (min 350px) | Interactive Map (sticky, height: 100vh - header) |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -2731,7 +2656,7 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Element | Behavior |
 |---------|----------|
 | Default | Plan page scrolls vertically: strategy cards → tiles → timeline |
-| Map | Inline between tiles and timeline (300px height), scrolls with content. Only shown when `hasItineraryContent && fullModePOIs.length > 0` |
+| Map | Inline between tiles and timeline (300px height), scrolls with content. Only shown when `hasItineraryContent && (fullModePOIs.length > 0 || destinationCenter !== null)` |
 | Chat Input | `MobileChatInput` docked below swipe container (always visible) |
 | Navigation | Tab bar `[Chat] [Plan ●]` + horizontal swipe between pages |
 
@@ -2757,7 +2682,7 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Arrival/Departure | `LogisticsBlock` | Border-l-4, icon/time + resolved thumbnail (booked tile → tile map/preferred tiles → placeholder fallback) | Hard times (flights) |
 | Check-in/out | `LogisticsBlock` | Key icon, hotel name, inline constraints + resilient image fallback on load error | Accommodation logistics |
 | Safety Buffer | `SafetyBlock` | Red zone, "No Flights until". **Excludes** arrival/departure anchors (those are `LogisticsBlock`, not `SafetyBlock`) | Constraint visualization |
-| Activity | `ActivityMiniCard` | Thumbnail, category badge, duration, time of day, description, constraints, price badge (`block.booked_tile?.price_estimate`), book button, hold-to-delete. **Stage 17A:** Accepts `constraintDisplayModes?: Map<string, 'full' \| 'icon'>` — renders icon-only pill with Tooltip for repeated constraints. **Stage 17B:** Accepts `variant?: 'default' \| 'compact'` — compact renders a horizontal thumbnail+content row (~56px height) for single-activity days. | Rich activity display with metadata |
+| Activity | `ActivityMiniCard` | Thumbnail, category badge, duration, time of day, description, constraints, price badge (`block.booked_tile?.price_estimate`), book button, hold-to-delete. Accepts `constraintDisplayModes?: Map<string, 'full' \| 'icon'>` — renders icon-only pill with Tooltip for repeated constraints. Accepts `variant?: 'default' \| 'compact'` — compact renders a horizontal thumbnail+content row (~56px height) for single-activity days. | Rich activity display with metadata |
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
 | Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker. Buffer blocks (SafetyBlock) render above FreeDayCard when present. **Suppressed on arrival and departure days** (no activity placement on travel days) | Quick-fill with generated activities or browse |
 
@@ -3145,7 +3070,7 @@ The `BookingSection` component adapts rendering based on `mode` prop:
 | PLANNING | SuggestionCard | Hidden | Save, Change, Details |
 | BOOKING | TileCard | Visible | Book, Cart, Details |
 
-**Activity Tile Metadata Display:** `TileCard`, `MiniCard`, and `TileDetailsModal` render activity-specific metadata from `tile.meta` when `tile.type === 'activity'`: category badge (uppercase pill), duration hours (clock icon), time of day (sun/sunset/moon icon), and one-sentence description (from `meta.description`). The description field is generated by `experience_generator.py` and propagated via `meta.description`. `TileDetailsModal` additionally shows `skill_level` (if not beginner).
+**Activity Tile Metadata Display:** `TileCard`, `MiniCard`, and `TileDetailsModal` render activity-specific metadata from `tile.meta` when `tile.type === 'activity'`: category badge (uppercase pill), duration hours (clock icon), time of day (sun/sunset/moon icon), and one-sentence description (from `meta.description`). The description field is generated by `experience_generator.py` and propagated via `meta.description`.
 
 **Smart Tab Auto-Switch:** When new tiles arrive from a backend response, the active category tab automatically switches to the tab with the biggest growth (e.g., user says "yoga and nightlife" → Activities tab auto-selects). Respects manual selection: once a user clicks a tab, auto-switch is disabled for that session. First load always defaults to Stays. Implementation: `useEffect` comparing `prevCountsRef` with current tile counts per category.
 

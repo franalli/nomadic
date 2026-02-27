@@ -3,6 +3,7 @@ import re
 from datetime import date, datetime
 from typing import List, Optional
 
+from app.config import settings
 from app.schemas import Geo, Tile
 from app.services.unsplash import get_image_url_sync
 
@@ -118,8 +119,8 @@ class MockHotelProvider(Provider):
         if not budget_limit:
             parsed_budget = _parse_budget(ctx.budget)
             if parsed_budget:
-                # Allocate ~40% of total budget to hotels
-                budget_limit = parsed_budget * 0.4
+                # Allocate budget to hotels using the configured percentage.
+                budget_limit = parsed_budget * settings.budget_allocation_hotels
 
         # Extract hotel settings for filtering
         # Handle both dict and HotelSettings model
@@ -245,8 +246,8 @@ class MockFlightProvider(Provider):
         if not budget_limit:
             parsed_budget = _parse_budget(ctx.budget)
             if parsed_budget:
-                # Allocate ~30% of total budget to flights
-                budget_limit = parsed_budget * 0.3
+                # Allocate budget to flights using the configured percentage.
+                budget_limit = parsed_budget * settings.budget_allocation_flights
 
         # Extract flight settings for filtering
         # Handle both dict and FlightSettings model
@@ -615,8 +616,8 @@ class MockActivityProvider(Provider):
         if not budget_limit:
             parsed_budget = _parse_budget(ctx.budget)
             if parsed_budget:
-                # Allocate ~30% of total budget to activities
-                budget_limit = parsed_budget * 0.3
+                # Allocate budget to activities using the configured percentage.
+                budget_limit = parsed_budget * settings.budget_allocation_activities
 
         # Extract activity settings for filtering
         # Handle both dict and ActivitySettings model

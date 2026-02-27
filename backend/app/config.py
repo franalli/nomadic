@@ -37,7 +37,6 @@ class Settings(BaseSettings):
     # =============================================================================
     # Feature flags
     enable_graph_plan_route: bool = True  # Enable /v1/graph_plan route
-
     # Route configuration
     graph_plan_route_timeout_ms: int = 300000  # Overall route timeout in milliseconds (5 min)
 
@@ -196,11 +195,15 @@ class Settings(BaseSettings):
     # Trip Planning Configuration
     # =============================================================================
     default_trip_currency: str = "USD"  # Default currency for trip budgets
+    # Budget split controls used across allocator and builder filters
+    budget_allocation_flights: float = float(os.getenv("BUDGET_ALLOCATION_FLIGHTS", "0.30"))
+    budget_allocation_hotels: float = float(os.getenv("BUDGET_ALLOCATION_HOTELS", "0.40"))
+    budget_allocation_activities: float = float(os.getenv("BUDGET_ALLOCATION_ACTIVITIES", "0.30"))
     auto_correct_typo_threshold: int = 100  # Levenshtein distance for typo correction
     fuzzy_match_score_cutoff: int = 76  # rapidfuzz typo resolution threshold
     confidence_threshold_skip_router: float = 0.92  # Confidence to skip LLM router
     tier2_prefetch_wait_budget_ms: int = int(os.getenv("TIER2_PREFETCH_WAIT_BUDGET_MS", "350"))
-    tier2_generation_wait_budget_ms: int = int(os.getenv("TIER2_GENERATION_WAIT_BUDGET_MS", "4000"))
+    tier2_generation_wait_budget_ms: int = int(os.getenv("TIER2_GENERATION_WAIT_BUDGET_MS", "5500"))
 
     # =============================================================================
     # Security: Rate Limiting & Admin Access

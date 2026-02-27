@@ -125,6 +125,7 @@ export type ActivitySettings = {
   categories: string[]; // e.g., ['tours', 'experiences', 'outdoor']
   skill_level: string | null; // "beginner", "intermediate", "advanced"
   day_preferences?: Record<string, number>; // {"diving": 3, "hiking": 2}
+  activities_per_day?: number | null; // 1-3 from UI, null = auto
 };
 
 // Ground transport settings - which modes to include

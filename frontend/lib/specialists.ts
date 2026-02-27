@@ -98,12 +98,48 @@ const SPECIALIST_REGISTRY: Record<string, SpecialistConfig> = {
 /** All specialist IDs */
 export const SPECIALIST_IDS = Object.keys(SPECIALIST_REGISTRY);
 
-/** Color lookup with backward-compat aliases */
+/** Color lookup — Tier 1 specialists + Tier 2 activity categories.
+ *  Hex values match Tailwind -500 shades used in ActivityMiniCard borders. */
 const SPECIALIST_COLORS: Record<string, string> = {
   local_expert: '#6B7280',
   general: '#6B7280',
   ...Object.fromEntries(SPECIALIST_IDS.map((id) => [id, SPECIALIST_REGISTRY[id].color])),
   boating: SPECIALIST_REGISTRY.sailing.color,
+  // Tier 2 activity categories (mirrors ActivityMiniCard borderAccentClass)
+  cultural: '#F43F5E',    // rose-500
+  culture: '#F43F5E',
+  temples: '#F43F5E',
+  tours: '#3B82F6',       // blue-500
+  food: '#EF4444',        // red-500
+  nature: '#22C55E',      // green-500
+  spa: '#8B5CF6',         // violet-500
+  wellness: '#8B5CF6',
+  yoga: '#A855F7',        // purple-500
+  nightlife: '#D946EF',   // fuchsia-500
+  cooking: '#EC4899',     // pink-500
+  shopping: '#EC4899',
+  beach: '#10B981',       // emerald-500
+  adventure: '#F97316',   // orange-500
+  sightseeing: '#0EA5E9', // sky-500
+  photography: '#0EA5E9',
+  relaxation: '#EAB308',  // yellow-500
+  browse: '#F59E0B',      // amber-500
+  // LocalRecommendation.category values (backend: expert_constraints.py)
+  attraction: '#3B82F6',      // blue-500, matches tourist_attraction
+  dining: '#EF4444',          // red-500, matches restaurant/food
+  // Common map_type aliases
+  museum: '#F43F5E',
+  art_gallery: '#F43F5E',
+  historical_landmark: '#F43F5E',
+  cultural_landmark: '#F43F5E',
+  monument: '#F43F5E',
+  ruins: '#F43F5E',
+  tourist_attraction: '#3B82F6',
+  point_of_interest: '#3B82F6',
+  restaurant: '#EF4444',
+  cafe: '#EF4444',
+  bar: '#EF4444',
+  park: '#22C55E',
   default: '#71717A',
 };
 
@@ -118,7 +154,7 @@ export const SPECIALIST_DISPLAY_NAMES: Record<string, string> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getSpecialistColor(type?: string): string {
+export function getSpecialistColor(type?: string): string {
   return SPECIALIST_COLORS[type || ''] || SPECIALIST_COLORS.default;
 }
 

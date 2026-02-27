@@ -179,6 +179,10 @@ def merge_trip_inputs(
         "requires_assistance",
         "budget",
         "currency",
+        "date_flex",
+        "trip_duration",
+        "date_window_start",
+        "date_window_end",
         # Booking preferences (nested objects - replace entirely)
         "booking_types",
         "flight_settings",
@@ -231,9 +235,17 @@ def merge_trip_inputs(
             # Scalar fields: origin, start_date, end_date, adults, children,
             # requires_assistance, budget, multi_city_intent
             if is_explicit_null:
-                # User explicitly deleted this field
-                setattr(result, field, None)
-                _debug(f"Deleted '{field}' (explicit null)")
+                # User explicitly deleted this field.
+                # Non-nullable fields reset to schema defaults.
+                if field == "currency":
+                    result.currency = "USD"
+                    _debug("Reset 'currency' to default (explicit null)")
+                elif field == "date_flex":
+                    result.date_flex = False
+                    _debug("Reset 'date_flex' to default (explicit null)")
+                else:
+                    setattr(result, field, None)
+                    _debug(f"Deleted '{field}' (explicit null)")
             elif incoming_value is not None:
                 setattr(result, field, incoming_value)
                 _debug(f"Set '{field}' to '{incoming_value}'")
@@ -405,6 +417,7 @@ def apply_user_patch_sync(
     is updated to reflect the new values so UI displays updated destinations.
     """
     data = get_document_data(doc)
+    prev_destination = data.trip_inputs.destination
     prev_start_date = data.trip_inputs.start_date
     prev_end_date = data.trip_inputs.end_date
 
@@ -426,6 +439,7 @@ def apply_user_patch_sync(
     dates_changed = (
         prev_start_date != data.trip_inputs.start_date or prev_end_date != data.trip_inputs.end_date
     )
+    itinerary_context_changed = dates_changed or prev_destination != data.trip_inputs.destination
 
     # Merge branches
     data.branches = merge_branches(data.branches, patch.branches, patch.remove_branch_ids)
@@ -480,12 +494,16 @@ def apply_user_patch_sync(
             data.branches[primary_idx] = primary
 
     # Invariant: day_cards are derived from current dates; clear stale cards on date edits.
-    if dates_changed and data.day_cards:
+    if itinerary_context_changed and data.day_cards:
         _debug(
-            "apply_user_patch_sync: dates changed, clearing stale day_cards "
+            "apply_user_patch_sync: itinerary context changed, clearing stale day_cards "
             f"({len(data.day_cards)})"
         )
         data.day_cards = []
+
+    # Update preferences (heart-selected tiles) if provided
+    if patch.preferred_tile_ids is not None:
+        data.preferred_tile_ids = patch.preferred_tile_ids
 
     return save_document_data_sync(db, doc=doc, data=data, updated_by="user")
 
@@ -503,6 +521,7 @@ async def apply_user_patch(
     is updated to reflect the new values so UI displays updated destinations.
     """
     data = get_document_data(doc)
+    prev_destination = data.trip_inputs.destination
     prev_start_date = data.trip_inputs.start_date
     prev_end_date = data.trip_inputs.end_date
 
@@ -524,6 +543,7 @@ async def apply_user_patch(
     dates_changed = (
         prev_start_date != data.trip_inputs.start_date or prev_end_date != data.trip_inputs.end_date
     )
+    itinerary_context_changed = dates_changed or prev_destination != data.trip_inputs.destination
 
     # Merge branches
     data.branches = merge_branches(data.branches, patch.branches, patch.remove_branch_ids)
@@ -578,8 +598,11 @@ async def apply_user_patch(
             data.branches[primary_idx] = primary
 
     # Invariant: day_cards are derived from current dates; clear stale cards on date edits.
-    if dates_changed and data.day_cards:
-        _debug(f"apply_user_patch: dates changed, clearing stale day_cards ({len(data.day_cards)})")
+    if itinerary_context_changed and data.day_cards:
+        _debug(
+            "apply_user_patch: itinerary context changed, clearing stale day_cards "
+            f"({len(data.day_cards)})"
+        )
         data.day_cards = []
 
     # Update preferences (heart-selected tiles) if provided
@@ -595,8 +618,12 @@ async def apply_planner_update(
     doc: models.PlanDocument,
     trip_context_id: int,
     trip_inputs: Optional[DocumentTripInputs],
+    trip_inputs_explicit_nulls: Optional[set[str]] = None,
+    reset_trip_inputs: bool = False,
     branches: Optional[list[DocumentBranch]] = None,
+    replace_branches: bool = False,
     tiles: Optional[dict[str, TileSchema]] = None,
+    replace_tiles: bool = False,
     # ViewModel fields - persisted for session restoration
     plan_view_state: Optional[PlanViewState] = None,
     strategy_sections: Optional[list[StrategySection]] = None,
@@ -604,6 +631,8 @@ async def apply_planner_update(
     pending_strategy_topics: Optional[list[str]] = None,
     day_cards: Optional[list[DayCard]] = None,
     can_expand_to_itinerary: Optional[bool] = None,
+    constraints_validated: Optional[list[dict[str, Any]]] = None,
+    constraint_violations: Optional[list[dict[str, Any]]] = None,
     # NL-extracted settings that should bypass the user-owned field strip.
     # These are settings the user explicitly requested via chat (e.g. "5 star hotels").
     extracted_settings: Optional[dict[str, Any]] = None,
@@ -622,6 +651,7 @@ async def apply_planner_update(
     # categories set via PATCH would be clobbered by the stale base doc.
     await db.refresh(doc)
     data = get_document_data(doc)
+    prev_destination = data.trip_inputs.destination
     prev_start_date = data.trip_inputs.start_date
     prev_end_date = data.trip_inputs.end_date
 
@@ -631,39 +661,47 @@ async def apply_planner_update(
     if trip_inputs:
         _debug(f"apply_planner_update: Incoming trip_inputs = {trip_inputs.model_dump()}")
 
-    # User-owned settings fields — document is SSoT (set via PATCH from frontend
-    # sheets). Graph output carries Pydantic defaults for these fields (e.g.
-    # activity_settings=ActivitySettings(categories=[])) which must NOT overwrite
-    # the user's PATCH values. Strip them so merge_trip_inputs preserves doc values.
-    _USER_OWNED_SETTINGS = {
-        "activity_settings",
-        "hotel_settings",
-        "flight_settings",
-        "transport_settings",
-        "booking_types",
-    }
-    cleaned_inputs: dict | None = None
-    if trip_inputs:
-        cleaned_inputs = _trip_inputs_to_dict(trip_inputs)
-        for field in _USER_OWNED_SETTINGS:
-            # Preserve activity_settings when it carries non-empty categories
-            # (e.g. from NL extraction or prior-turn state). Other settings
-            # are always stripped — document (via db.refresh) is SSoT.
-            if field == "activity_settings":
-                val = cleaned_inputs.get(field)
-                if isinstance(val, dict) and val.get("categories"):
-                    continue  # Non-empty categories — keep
-            cleaned_inputs.pop(field, None)
+    if reset_trip_inputs:
+        if trip_inputs:
+            data.trip_inputs = DocumentTripInputs.model_validate(_trip_inputs_to_dict(trip_inputs))
+        else:
+            data.trip_inputs = DocumentTripInputs()
+    else:
+        # User-owned settings fields — document is SSoT (set via PATCH from frontend
+        # sheets). Graph output carries Pydantic defaults for these fields (e.g.
+        # activity_settings=ActivitySettings(categories=[])) which must NOT overwrite
+        # the user's PATCH values. Strip them so merge_trip_inputs preserves doc values.
+        _USER_OWNED_SETTINGS = {
+            "activity_settings",
+            "hotel_settings",
+            "flight_settings",
+            "transport_settings",
+            "booking_types",
+        }
+        cleaned_inputs: dict | None = None
+        if trip_inputs:
+            cleaned_inputs = _trip_inputs_to_dict(trip_inputs)
+            for field in _USER_OWNED_SETTINGS:
+                # Preserve activity_settings when it carries non-empty categories
+                # (e.g. from NL extraction or prior-turn state). Other settings
+                # are always stripped — document (via db.refresh) is SSoT.
+                if field == "activity_settings":
+                    val = cleaned_inputs.get(field)
+                    if isinstance(val, dict) and val.get("categories"):
+                        continue  # Non-empty categories — keep
+                cleaned_inputs.pop(field, None)
 
-    # Merge trip inputs - graph-owned fields only (user-owned stripped above)
-    data.trip_inputs = merge_trip_inputs(
-        data.trip_inputs,
-        cleaned_inputs,
-        replace_destinations=True,
-    )
+        # Merge trip inputs - graph-owned fields only (user-owned stripped above)
+        data.trip_inputs = merge_trip_inputs(
+            data.trip_inputs,
+            cleaned_inputs,
+            replace_destinations=True,
+            explicit_nulls=trip_inputs_explicit_nulls,
+        )
     dates_changed = (
         prev_start_date != data.trip_inputs.start_date or prev_end_date != data.trip_inputs.end_date
     )
+    itinerary_context_changed = dates_changed or prev_destination != data.trip_inputs.destination
 
     # Deep-merge NL-extracted settings into the document's user-owned fields.
     # Unlike Pydantic defaults (which are stripped), these are values the user
@@ -673,6 +711,18 @@ async def apply_planner_update(
             if data.trip_inputs.hotel_settings is None:
                 data.trip_inputs.hotel_settings = HotelSettings()
             data.trip_inputs.hotel_settings.min_stars = extracted_settings["hotel_min_stars"]
+        if extracted_settings.get("hotel_amenities") is not None:
+            if data.trip_inputs.hotel_settings is None:
+                data.trip_inputs.hotel_settings = HotelSettings()
+            data.trip_inputs.hotel_settings.amenities = extracted_settings["hotel_amenities"]
+        if extracted_settings.get("hotel_style"):
+            if data.trip_inputs.hotel_settings is None:
+                data.trip_inputs.hotel_settings = HotelSettings()
+            data.trip_inputs.hotel_settings.style = extracted_settings["hotel_style"]
+        if extracted_settings.get("hotel_location"):
+            if data.trip_inputs.hotel_settings is None:
+                data.trip_inputs.hotel_settings = HotelSettings()
+            data.trip_inputs.hotel_settings.location = extracted_settings["hotel_location"]
         if extracted_settings.get("flight_direct_only") is not None:
             if data.trip_inputs.flight_settings is None:
                 data.trip_inputs.flight_settings = FlightSettings()
@@ -687,7 +737,7 @@ async def apply_planner_update(
             data.trip_inputs.activity_settings.skill_level = extracted_settings[
                 "activity_skill_level"
             ]
-        if extracted_settings.get("flights_toggle"):
+        if extracted_settings.get("flights_toggle") is not None:
             if data.trip_inputs.booking_types is None:
                 data.trip_inputs.booking_types = BookingTypes()
             data.trip_inputs.booking_types.flights = extracted_settings["flights_toggle"]
@@ -698,7 +748,9 @@ async def apply_planner_update(
 
     # Merge branches (planner branches are added/updated) - only if provided
     if branches is not None:
-        data.branches = merge_branches(data.branches, branches)
+        data.branches = (
+            list(branches) if replace_branches else merge_branches(data.branches, branches)
+        )
     elif trip_inputs is not None and data.branches:
         # No new branches but trip_inputs changed - update the primary branch
         # to reflect the new values so UI displays updated destination/dates/etc
@@ -709,34 +761,26 @@ async def apply_planner_update(
             primary = data.branches[primary_idx]
             # Update branch parameters from trip_inputs
             # Always sync destination
-            primary.destination = trip_inputs.destination
-            if trip_inputs.origin is not None:
-                primary.origin = trip_inputs.origin
-            if trip_inputs.start_date is not None:
-                primary.start_date = trip_inputs.start_date
-            if trip_inputs.end_date is not None:
-                primary.end_date = trip_inputs.end_date
-            if trip_inputs.adults is not None:
-                primary.adults = trip_inputs.adults
-            if trip_inputs.children is not None:
-                primary.children = trip_inputs.children
-            if trip_inputs.requires_assistance is not None:
-                primary.requires_assistance = trip_inputs.requires_assistance
-            if trip_inputs.budget is not None:
-                primary.budget = trip_inputs.budget
-            if trip_inputs.currency is not None:
-                primary.currency = trip_inputs.currency
+            primary.destination = data.trip_inputs.destination
+            primary.origin = data.trip_inputs.origin
+            primary.start_date = data.trip_inputs.start_date
+            primary.end_date = data.trip_inputs.end_date
+            primary.adults = data.trip_inputs.adults
+            primary.children = data.trip_inputs.children
+            primary.requires_assistance = data.trip_inputs.requires_assistance
+            primary.budget = data.trip_inputs.budget
+            primary.currency = data.trip_inputs.currency
             data.branches[primary_idx] = primary
 
     # Merge tiles - only if provided
     if tiles is not None:
-        data.tiles = merge_tiles(data.tiles, tiles)
+        data.tiles = dict(tiles) if replace_tiles else merge_tiles(data.tiles, tiles)
 
     # If dates changed but planner did not provide rebuilt day_cards this turn,
     # drop stale itinerary cards to keep date/day-card state consistent.
-    if dates_changed and day_cards is None and data.day_cards:
+    if itinerary_context_changed and day_cards is None and data.day_cards:
         _debug(
-            "apply_planner_update: dates changed without new day_cards, "
+            "apply_planner_update: itinerary context changed without new day_cards, "
             f"clearing stale day_cards ({len(data.day_cards)})"
         )
         data.day_cards = []
@@ -754,6 +798,10 @@ async def apply_planner_update(
         data.day_cards = day_cards
     if can_expand_to_itinerary is not None:
         data.can_expand_to_itinerary = can_expand_to_itinerary
+    if constraints_validated is not None:
+        data.constraints_validated = constraints_validated
+    if constraint_violations is not None:
+        data.constraint_violations = constraint_violations
 
     return await save_document_data(db, doc=doc, data=data, updated_by="planner")
 
@@ -764,8 +812,12 @@ def apply_planner_update_sync(
     doc: models.PlanDocument,
     trip_context_id: int,
     trip_inputs: Optional[DocumentTripInputs],
+    trip_inputs_explicit_nulls: Optional[set[str]] = None,
+    reset_trip_inputs: bool = False,
     branches: Optional[list[DocumentBranch]] = None,
+    replace_branches: bool = False,
     tiles: Optional[dict[str, TileSchema]] = None,
+    replace_tiles: bool = False,
     # ViewModel fields - persisted for session restoration
     plan_view_state: Optional[PlanViewState] = None,
     strategy_sections: Optional[list[StrategySection]] = None,
@@ -773,6 +825,9 @@ def apply_planner_update_sync(
     pending_strategy_topics: Optional[list[str]] = None,
     day_cards: Optional[list[DayCard]] = None,
     can_expand_to_itinerary: Optional[bool] = None,
+    constraints_validated: Optional[list[dict[str, Any]]] = None,
+    constraint_violations: Optional[list[dict[str, Any]]] = None,
+    extracted_settings: Optional[dict[str, Any]] = None,
 ) -> models.PlanDocument:
     """Apply planner-generated branches, tiles, and viewModel state to the document (sync).
 
@@ -781,43 +836,89 @@ def apply_planner_update_sync(
     """
     db.refresh(doc)
     data = get_document_data(doc)
+    prev_destination = data.trip_inputs.destination
     prev_start_date = data.trip_inputs.start_date
     prev_end_date = data.trip_inputs.end_date
 
     # Update trip context
     data.trip_context_id = trip_context_id
 
-    # User-owned settings fields — document is SSoT (set via PATCH from frontend
-    # sheets). Strip them so merge_trip_inputs preserves doc values.
-    _USER_OWNED_SETTINGS = {
-        "activity_settings",
-        "hotel_settings",
-        "flight_settings",
-        "transport_settings",
-        "booking_types",
-    }
-    cleaned_inputs: dict | None = None
-    if trip_inputs:
-        cleaned_inputs = _trip_inputs_to_dict(trip_inputs)
-        for field in _USER_OWNED_SETTINGS:
-            # Preserve activity_settings when it carries non-empty categories
-            # (e.g. from NL extraction or prior-turn state). Other settings
-            # are always stripped — document (via db.refresh) is SSoT.
-            if field == "activity_settings":
-                val = cleaned_inputs.get(field)
-                if isinstance(val, dict) and val.get("categories"):
-                    continue  # Non-empty categories — keep
-            cleaned_inputs.pop(field, None)
+    if reset_trip_inputs:
+        if trip_inputs:
+            data.trip_inputs = DocumentTripInputs.model_validate(_trip_inputs_to_dict(trip_inputs))
+        else:
+            data.trip_inputs = DocumentTripInputs()
+    else:
+        # User-owned settings fields — document is SSoT (set via PATCH from frontend
+        # sheets). Strip them so merge_trip_inputs preserves doc values.
+        _USER_OWNED_SETTINGS = {
+            "activity_settings",
+            "hotel_settings",
+            "flight_settings",
+            "transport_settings",
+            "booking_types",
+        }
+        cleaned_inputs: dict | None = None
+        if trip_inputs:
+            cleaned_inputs = _trip_inputs_to_dict(trip_inputs)
+            for field in _USER_OWNED_SETTINGS:
+                # Preserve activity_settings when it carries non-empty categories
+                # (e.g. from NL extraction or prior-turn state). Other settings
+                # are always stripped — document (via db.refresh) is SSoT.
+                if field == "activity_settings":
+                    val = cleaned_inputs.get(field)
+                    if isinstance(val, dict) and val.get("categories"):
+                        continue  # Non-empty categories — keep
+                cleaned_inputs.pop(field, None)
 
-    # Merge trip inputs - graph-owned fields only (user-owned stripped above)
-    data.trip_inputs = merge_trip_inputs(
-        data.trip_inputs,
-        cleaned_inputs,
-        replace_destinations=True,
-    )
+        # Merge trip inputs - graph-owned fields only (user-owned stripped above)
+        data.trip_inputs = merge_trip_inputs(
+            data.trip_inputs,
+            cleaned_inputs,
+            replace_destinations=True,
+            explicit_nulls=trip_inputs_explicit_nulls,
+        )
     dates_changed = (
         prev_start_date != data.trip_inputs.start_date or prev_end_date != data.trip_inputs.end_date
     )
+    itinerary_context_changed = dates_changed or prev_destination != data.trip_inputs.destination
+
+    # Deep-merge NL-extracted settings into the document's user-owned fields.
+    if extracted_settings:
+        if extracted_settings.get("hotel_min_stars") is not None:
+            if data.trip_inputs.hotel_settings is None:
+                data.trip_inputs.hotel_settings = HotelSettings()
+            data.trip_inputs.hotel_settings.min_stars = extracted_settings["hotel_min_stars"]
+        if extracted_settings.get("hotel_amenities") is not None:
+            if data.trip_inputs.hotel_settings is None:
+                data.trip_inputs.hotel_settings = HotelSettings()
+            data.trip_inputs.hotel_settings.amenities = extracted_settings["hotel_amenities"]
+        if extracted_settings.get("hotel_style"):
+            if data.trip_inputs.hotel_settings is None:
+                data.trip_inputs.hotel_settings = HotelSettings()
+            data.trip_inputs.hotel_settings.style = extracted_settings["hotel_style"]
+        if extracted_settings.get("hotel_location"):
+            if data.trip_inputs.hotel_settings is None:
+                data.trip_inputs.hotel_settings = HotelSettings()
+            data.trip_inputs.hotel_settings.location = extracted_settings["hotel_location"]
+        if extracted_settings.get("flight_direct_only") is not None:
+            if data.trip_inputs.flight_settings is None:
+                data.trip_inputs.flight_settings = FlightSettings()
+            data.trip_inputs.flight_settings.direct_only = extracted_settings["flight_direct_only"]
+        if extracted_settings.get("flight_cabin_class"):
+            if data.trip_inputs.flight_settings is None:
+                data.trip_inputs.flight_settings = FlightSettings()
+            data.trip_inputs.flight_settings.cabin_class = extracted_settings["flight_cabin_class"]
+        if extracted_settings.get("activity_skill_level"):
+            if data.trip_inputs.activity_settings is None:
+                data.trip_inputs.activity_settings = ActivitySettings()
+            data.trip_inputs.activity_settings.skill_level = extracted_settings[
+                "activity_skill_level"
+            ]
+        if extracted_settings.get("flights_toggle") is not None:
+            if data.trip_inputs.booking_types is None:
+                data.trip_inputs.booking_types = BookingTypes()
+            data.trip_inputs.booking_types.flights = extracted_settings["flights_toggle"]
 
     # Title-case destination for consistent display
     if data.trip_inputs.destination:
@@ -825,7 +926,9 @@ def apply_planner_update_sync(
 
     # Merge branches (planner branches are added/updated) - only if provided
     if branches is not None:
-        data.branches = merge_branches(data.branches, branches)
+        data.branches = (
+            list(branches) if replace_branches else merge_branches(data.branches, branches)
+        )
     elif trip_inputs is not None and data.branches:
         # No new branches but trip_inputs changed - update the primary branch
         primary_idx = next(
@@ -833,34 +936,26 @@ def apply_planner_update_sync(
         )
         if primary_idx is not None:
             primary = data.branches[primary_idx]
-            primary.destination = trip_inputs.destination
-            if trip_inputs.origin is not None:
-                primary.origin = trip_inputs.origin
-            if trip_inputs.start_date is not None:
-                primary.start_date = trip_inputs.start_date
-            if trip_inputs.end_date is not None:
-                primary.end_date = trip_inputs.end_date
-            if trip_inputs.adults is not None:
-                primary.adults = trip_inputs.adults
-            if trip_inputs.children is not None:
-                primary.children = trip_inputs.children
-            if trip_inputs.requires_assistance is not None:
-                primary.requires_assistance = trip_inputs.requires_assistance
-            if trip_inputs.budget is not None:
-                primary.budget = trip_inputs.budget
-            if trip_inputs.currency is not None:
-                primary.currency = trip_inputs.currency
+            primary.destination = data.trip_inputs.destination
+            primary.origin = data.trip_inputs.origin
+            primary.start_date = data.trip_inputs.start_date
+            primary.end_date = data.trip_inputs.end_date
+            primary.adults = data.trip_inputs.adults
+            primary.children = data.trip_inputs.children
+            primary.requires_assistance = data.trip_inputs.requires_assistance
+            primary.budget = data.trip_inputs.budget
+            primary.currency = data.trip_inputs.currency
             data.branches[primary_idx] = primary
 
     # Merge tiles - only if provided
     if tiles is not None:
-        data.tiles = merge_tiles(data.tiles, tiles)
+        data.tiles = dict(tiles) if replace_tiles else merge_tiles(data.tiles, tiles)
 
     # If dates changed but planner did not provide rebuilt day_cards this turn,
     # drop stale itinerary cards to keep date/day-card state consistent.
-    if dates_changed and day_cards is None and data.day_cards:
+    if itinerary_context_changed and day_cards is None and data.day_cards:
         _debug(
-            "apply_planner_update_sync: dates changed without new day_cards, "
+            "apply_planner_update_sync: itinerary context changed without new day_cards, "
             f"clearing stale day_cards ({len(data.day_cards)})"
         )
         data.day_cards = []
@@ -878,6 +973,10 @@ def apply_planner_update_sync(
         data.day_cards = day_cards
     if can_expand_to_itinerary is not None:
         data.can_expand_to_itinerary = can_expand_to_itinerary
+    if constraints_validated is not None:
+        data.constraints_validated = constraints_validated
+    if constraint_violations is not None:
+        data.constraint_violations = constraint_violations
 
     return save_document_data_sync(db, doc=doc, data=data, updated_by="planner")
 

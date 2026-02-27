@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useShallow } from 'zustand/react/shallow';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 
 import { useToast } from '@/components/ui/toast';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
@@ -71,26 +71,27 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
 
   const effectiveTripInputs = useTripInputsWithFallback(tripInputs);
   const { toast } = useToast();
-  const {
-    storeTiles, storeDayCardsRaw, preferredTileIds, toggleTilePreference,
-    isRegenUpdating,
-  } = useDocumentStore(
-    useShallow((s) => ({
-      storeTiles: s.document?.tiles,
-      storeDayCardsRaw: s.document?.day_cards,
-      preferredTileIds: s.preferredTileIds,
-      toggleTilePreference: s.toggleTilePreference,
-      isRegenUpdating: s.isRegenerating,
-    }))
+  const storeTiles = useDocumentStore((s) => s.document?.tiles);
+  const storeDayCardsRaw = useDocumentStore((s) => s.document?.day_cards);
+  const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
+  const isRegenUpdating = useDocumentStore((s) => s.isRegenerating);
+  const preferredTileIds = useStoreWithEqualityFn(
+    useDocumentStore,
+    (s) => s.preferredTileIds,
+    (a, b) => a.size === b.size && [...a].every((id) => b.has(id))
   );
 
   const dayCardsFingerprint = useMemo(() => {
     const cards = storeDayCardsRaw;
     if (!cards || cards.length === 0) return null;
-    const blockIds = cards.flatMap((c) => c.blocks || [])
-      .filter((b) => b.coordinates?.lat != null && b.coordinates?.lng != null)
-      .map((b) => b.id).join(',');
-    return blockIds ? `${cards.length}:${blockIds}` : null;
+    const blockFingerprint = cards
+      .flatMap((card, cardIdx) => (card.blocks ?? []).map((block) => (
+        `${cardIdx}:${block.id ?? ''}:${block.summary ?? ''}:${block.period ?? ''}:` +
+        `${block.activity_type ?? ''}:${block.scheduled_time ?? ''}:` +
+        `${block.coordinates?.lat ?? ''}:${block.coordinates?.lng ?? ''}`
+      )))
+      .join('|');
+    return `${cards.length}:${blockFingerprint}`;
   }, [storeDayCardsRaw]);
   const effectiveTiles = storeTiles ?? tiles;
 
@@ -130,6 +131,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   }, [hasItineraryContent]);
   useEffect(() => {
     if (hasItineraryContent && !prevHasItineraryRef.current) {
+      prevHasItineraryRef.current = true;
       const timer = setTimeout(() => {
         timelineSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 100);
@@ -174,7 +176,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   const effectiveMode: ViewMode = explicitMode ?? activeMode;
 
   const displayLogic = useMemo(() => {
-    const hasDatesLocal = !!effectiveTripInputs?.start_date;
+    const hasDatesLocal = hasDates;
     const hasTilesLocal = effectiveTiles && Object.keys(effectiveTiles).length > 0;
     const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles);
     const isShowingMirrorLoader = generating && hasDatesLocal && !hasTilesLocal;
@@ -186,7 +188,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
       if (diffDays > 0) tripDuration = diffDays;
     }
     return { hasDates: hasDatesLocal, hasTiles: hasTilesLocal, density, isShowingMirrorLoader, tripDuration };
-  }, [state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs, generating]);
+  }, [state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs, generating, hasDates]);
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => setStableDensity(displayLogic.density));
@@ -209,8 +211,13 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
     if (!dayCardsFingerprint) return [];
     const destination = effectiveTripInputs?.destination ?? destinationTitle;
     return extractPOIsFromDayCards(effectiveDayCards, specialistData.fullModeSections, destination, dayCardsFingerprint);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dayCardsFingerprint, effectiveTripInputs?.destination, destinationTitle]);
+  }, [
+    dayCardsFingerprint,
+    effectiveTripInputs?.destination,
+    destinationTitle,
+    effectiveDayCards,
+    specialistData.fullModeSections,
+  ]);
 
   const bookingDrawer = useBookingDrawerState({
     generation, isCommitting, isExpandingItinerary, onSaveTile,

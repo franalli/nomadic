@@ -11,6 +11,7 @@ Map each changed file to its affected SSoT doc(s):
 | `backend/app/planner/state/graph_state.py`       | `docs/data-contracts.md` (core schema reference, enums, graph state shape)           |
 | `backend/app/planner/state/typed_meta.py`        | `docs/data-contracts.md` (state shape)                                               |
 | `backend/app/planner/services/*`                 | `docs/plan_graph_analysis.md` (itinerary builder phases, response envelope, caching) |
+| `backend/app/planner/schemas/*`                  | `docs/plan_graph_analysis.md` (coordinator protocol schemas and execution contracts)  |
 | `backend/app/plan_graph.py`                      | `docs/plan_graph_analysis.md` (graph definition, edge routing, node registration)    |
 | `backend/app/planner/cache_access.py`            | `docs/plan_graph_analysis.md` (planner cache handles, cache access patterns)         |
 | `backend/app/planner/hashing.py`                 | `docs/plan_graph_analysis.md` (cache key construction, hashing strategy)             |

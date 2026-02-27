@@ -1,11 +1,12 @@
 ---
 name: backend-specialist
 description: >
-  Delegate to this agent for ALL backend Python work: planner agent, tools, middleware,
+  Delegate to this agent for ALL backend Python work: planner coordinator, nodes,
   services, state layers, LLM factory, structured output, caching, config/settings.
-  Triggers on: itinerary builder, constraint guard, agent tools, middleware,
-  router extraction, specialist registry, state serialization,
-  agent_runner, FastAPI endpoints, tile service, caching, llm_factory,
+  Triggers on: itinerary builder, constraint guard, coordinator execution,
+  router extraction, specialist registry, state serialization, coordinator,
+  conversationalist, change classifier, specialist dispatch, trip brief,
+  FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
   patterns_registry, activity_browser, spend_guard, telemetry, or any file under backend/app/.
 tools: Read, Write, Edit, Bash, Glob, Grep
@@ -15,7 +16,7 @@ Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/pytest`
 
 # Nomadic Backend Specialist
 
-Backend engineer for a single-agent travel planning engine.
+Backend engineer for a coordinator-driven travel planning engine.
 Python 3.12 / FastAPI / SQLAlchemy / LangGraph / LangChain (OpenAI + Gemini).
 
 ## MANDATORY: Read Before Writing Code
@@ -24,13 +25,13 @@ ALWAYS read every file the plan touches and its direct imports before executing.
 
 Before ANY code change, read the relevant SSoT doc:
 
-- `docs/plan_graph_analysis.md` — Agent + tools architecture, middleware, caching, builder phases, constraint validation
+- `docs/plan_graph_analysis.md` — Coordinator architecture, caching, builder phases, constraint validation
 - `docs/data-contracts.md` — API routes, streaming protocols, core schemas, rate limiting, enums
 - `CLAUDE.md` — Current sprint, hard rules
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 
-- **Single agent architecture is law.** One `create_agent` planner with 6 tools (extract_trip_fields, get_specialist_advice, get_local_intel, search_tiles, validate_plan, build_itinerary) + 4 middleware. Never bypass the agent + tools pattern.
+- **Coordinator architecture is law.** `coordinator.execute_turn()` orchestrates classify/dispatch/logistics/builder/response; do not reintroduce direct `create_agent` runtime flow.
 - **TripPlan is the only state SSoT.** No parallel state objects.
 - **No hardcoded world data.** No locations, airports, IATA codes, coordinates, airlines, specialist-to-destination mappings.
 - **All LLM construction via `get_llm_by_model()`** from `llm_factory.py` with `settings.*_model`. No direct `ChatOpenAI()` or `ChatGoogleGenerativeAI()`.
@@ -40,30 +41,26 @@ Before ANY code change, read the relevant SSoT doc:
 
 ```
 backend/app/planner/
-  agent.py          → Agent factory (create_planner_agent)
-  agent_constants.py → AGENT_MAX_TOKENS, AGENT_TEMPERATURE
-  middleware.py      → ModelSelectionMiddleware, DynamicPromptMiddleware,
-                       TurnLifecycleMiddleware, SuggestionChipMiddleware
-  plan_graph.py      → Streaming core (run_turn_streaming), SSE event translation
-  tools/             → extract_trip_fields.py, get_specialist_advice.py,
-                       get_local_intel.py, search_tiles.py, validate_plan.py,
-                       build_itinerary.py, _parsing.py
+  coordinator.py     → Deterministic turn planner + step execution + envelope builder
+  conversationalist.py → Single-LLM response generator for coordinator path
+  chip_generator.py  → Suggestion chips for complete envelope
   nodes/             → constraint_guard.py, vertical_specialist.py, local_expert.py,
                        logistics_node.py, router_extraction.py,
                        specialist_schemas.py, input_gates.py, input_gate_config.py,
                        expert_constraints.py
   services/          → section_builder.py, state_serde.py,
                        itinerary_adapter.py, iata_resolver.py, admin_utils.py,
-                       feasibility_service.py, agent_runner.py
+                       feasibility_service.py
   state/             → graph_state.py, agent_state.py, typed_meta.py
-  prompts/           → planner.py (system prompt builder)
+  schemas/           → coordinator_schemas.py (ChangeType, ClassifierOutput, TripBrief,
+                       SpecialistPlan, ReplanRequest, ExecutionPlan)
   *.py               → specialist_registry.py, hashing.py,
                        llm_factory.py, patterns_registry.py, test_mode.py
 backend/app/
   main.py, schemas.py, config.py, db.py, db_models.py,
   debug_utils.py, graph_plan_utils.py, placeholders.py,
   lifespan.py, analytics_routes.py
-  data/              → demo_curation.py and curated backend datasets
+  data/              → demo_curation.py (curated hero-destination content)
   middleware/        → session middleware and request guards
   prompts/           → shared prompt templates (`synthesizer.txt`, `specialists/*.txt`)
   services/          → cache_core.py, specialist_cache.py, router_cache.py, tile_cache.py,
@@ -83,13 +80,13 @@ backend/app/
 
 - `frontend/` — anything
 - `specialist_registry.py` structure (add entries, don't restructure)
-- Agent + middleware architecture (create_planner_agent, middleware stack)
+- Coordinator step contracts in `coordinator.py` (`plan_turn`, `_execute_step`, `_build_envelope`)
 
 ## Halt Conditions — STOP and report, don't improvise
 
 - **Modifying an itinerary builder phase** → Read ALL phases first. They're coupled — phase order is load-bearing.
 - **Changing cache key format** → Will silently break L2 cache hits. Read cache_core.py + the specific cache file.
-- **Modifying agent middleware** → `ModelSelectionMiddleware` model upgrade logic is load-bearing. Read middleware.py before changing.
+- **Modifying coordinator step execution or parallel groups** → read `plan_turn()`, `_execute_parallel_group()`, and `_step_node_name()` before changing.
 - **Adding/changing constraint severity** → Budget/temporal/specialist/route checks interact. Read full constraint_guard.py.
 - **Editing specialist registry structure** → Derived constants auto-propagate. Only add entries, never restructure.
 - **Provider-specific LLM params** → Gemini uses `max_output_tokens` (not `max_tokens`), `thinking_budget`, `include_thoughts`. OpenAI uses `max_tokens`, `streaming`. Factory handles this — don't bypass it.
@@ -98,9 +95,9 @@ backend/app/
 
 ### ConstraintGuard
 
-Mostly deterministic. One LLM exception: `check_route_constraint()` calls `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL caching). Invoked via `validate_plan` tool. Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`.
+Mostly deterministic. One LLM exception: `check_route_constraint()` calls `validate_place_exists()` (via `app.validation.validate_input_async`, LLM-backed with TTL caching from `validation_cache.py`). Invoked via `validate_plan` tool. Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`.
 
-`DAY_PREFERENCE_EXCEEDS_CAPACITY` is now checked in two places: middleware merge pre-flight and `validate_plan`. If you update the capacity formula, update both paths together.
+`DAY_PREFERENCE_EXCEEDS_CAPACITY` now comes from `constraint_guard.py` capacity validation. If you update the capacity formula, keep guard checks and builder assumptions aligned.
 
 ### Specialist Registry
 

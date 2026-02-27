@@ -176,6 +176,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
   const lastMessageSentAtRef = useRef(0);
   const lastGenerateClickedAtRef = useRef(0);
   const abortStreamRef = useRef<(() => void) | null>(null);
+  const activeStreamRequestIdRef = useRef<string | null>(null);
   const autoExpandTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const focusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevSpecialistTypesRef = useRef<Set<string>>(new Set());
@@ -199,6 +200,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
   const sseRefs: ChatSseRefs = {
     abortStreamRef,
     isSendingRef,
+    activeStreamRequestIdRef,
     autoExpandTimeoutRef,
     prevSpecialistTypesRef,
     prevTileTypesRef,
@@ -229,6 +231,11 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       abortStreamRef.current();
       abortStreamRef.current = null;
     }
+    if (autoExpandTimeoutRef.current) {
+      clearTimeout(autoExpandTimeoutRef.current);
+      autoExpandTimeoutRef.current = null;
+    }
+    activeStreamRequestIdRef.current = null;
 
     // Mark message as interrupted with a user-friendly message
     if (streamingMessageId) {
@@ -244,9 +251,11 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     setNodeStatus(null);
     setHasReceivedFirstToken(false);
     setIsLoading(false);
+    setTriggerContext(null);
     isSendingRef.current = false;
     delayedLoader.reset();
-  }, [streamingMessageId, updateMessage, delayedLoader]);
+    actionLoader.reset();
+  }, [streamingMessageId, updateMessage, delayedLoader, actionLoader]);
 
   const sendMessageCore = useCallback(
     async (messageText: string, options?: { suggestionClicked?: string }) => {
@@ -339,6 +348,10 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
 
       // Reset Smart Loader for new message
       setActiveStatus(null);
+      if (autoExpandTimeoutRef.current) {
+        clearTimeout(autoExpandTimeoutRef.current);
+        autoExpandTimeoutRef.current = null;
+      }
 
       const nextTriggerContext: TriggerContext = {
         isGeneratePlanTrigger: isGenerateTrigger,
@@ -370,6 +383,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       setLastUserMessage(trimmed);
       setIsLoading(true);
       isSendingRef.current = true;
+      activeStreamRequestIdRef.current = requestId;
 
       const streamingMsgId = `a_stream_${Date.now()}`;
       if (!isSilentPlanGeneration) {
@@ -378,64 +392,95 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         setHasReceivedFirstToken(false);
       }
 
-      await useDocumentStore.getState().ensureSettingsFlushed({
-        requestId,
-        sendCycleId: requestId,
-      });
-
-      const currentTripInputs = useDocumentStore.getState().document?.trip_inputs;
-      const normalizedTripInputs = (() => {
-        if (!currentTripInputs) return currentTripInputs;
-        const categories = currentTripInputs.activity_settings?.categories ?? [];
-        if (categories.length > 0) return currentTripInputs;
-        return {
-          ...currentTripInputs,
-          activity_settings: {
-            ...(currentTripInputs.activity_settings ?? {}),
-            categories: [],
-            day_preferences: {},
-          },
-        };
-      })();
-
-      prevTripInputsRef.current = normalizedTripInputs ? {
-        start_date: normalizedTripInputs.start_date ?? null,
-        end_date: normalizedTripInputs.end_date ?? null,
-        adults: normalizedTripInputs.adults ?? null,
-        children: normalizedTripInputs.children ?? null,
-        budget: normalizedTripInputs.budget ?? null,
-        origin: normalizedTripInputs.origin ?? null,
-      } : null;
-
-      const body: Parameters<typeof streamGraphPlan>[0] = {
-        message: trimmed,
-        session_state: sessionState ?? undefined,
-        suggestion_clicked: options?.suggestionClicked,
-        trip_inputs: normalizedTripInputs ?? undefined,
-      };
-
-      if (isGenerateTrigger) {
-        debugLog('[ChatPanel] Sending GENERATE_PLAN_TRIGGER to API', {
-          destination: body.trip_inputs?.destination,
-          start_date: body.trip_inputs?.start_date,
-          end_date: body.trip_inputs?.end_date,
-          hasTripInputs: !!body.trip_inputs,
+      let streamStarted = false;
+      try {
+        await useDocumentStore.getState().ensureSettingsFlushed({
+          requestId,
+          sendCycleId: requestId,
         });
-      }
-      envelopeGenerationRef.current = nextEnvelopeBufferGeneration();
 
-      await executeStream({
-        body,
-        streamingMsgId,
-        isSilentPlanGeneration,
-        selectedBranchId,
-        envelopeGeneration: envelopeGenerationRef.current,
-        triggerContext: nextTriggerContext,
-        delayedLoader,
-        actionLoader,
-      });
+        if (activeStreamRequestIdRef.current !== requestId || !isSendingRef.current) {
+          debugLog('[ChatPanel] Skipping stream start - send was cancelled before stream init', {
+            request_id: requestId,
+          });
+          return;
+        }
+
+        const currentTripInputs = useDocumentStore.getState().document?.trip_inputs;
+        const normalizedTripInputs = (() => {
+          if (!currentTripInputs) return currentTripInputs;
+          const categories = currentTripInputs.activity_settings?.categories ?? [];
+          if (categories.length > 0) return currentTripInputs;
+          return {
+            ...currentTripInputs,
+            activity_settings: {
+              ...(currentTripInputs.activity_settings ?? {}),
+              categories: [],
+              day_preferences: {},
+            },
+          };
+        })();
+
+        prevTripInputsRef.current = normalizedTripInputs ? {
+          start_date: normalizedTripInputs.start_date ?? null,
+          end_date: normalizedTripInputs.end_date ?? null,
+          adults: normalizedTripInputs.adults ?? null,
+          children: normalizedTripInputs.children ?? null,
+          budget: normalizedTripInputs.budget ?? null,
+          origin: normalizedTripInputs.origin ?? null,
+        } : null;
+
+        const body: Parameters<typeof streamGraphPlan>[0] = {
+          message: trimmed,
+          session_state: sessionState ?? undefined,
+          suggestion_clicked: options?.suggestionClicked,
+          trip_inputs: normalizedTripInputs ?? undefined,
+        };
+
+        if (isGenerateTrigger) {
+          debugLog('[ChatPanel] Sending GENERATE_PLAN_TRIGGER to API', {
+            destination: body.trip_inputs?.destination,
+            start_date: body.trip_inputs?.start_date,
+            end_date: body.trip_inputs?.end_date,
+            hasTripInputs: !!body.trip_inputs,
+          });
+        }
+        envelopeGenerationRef.current = nextEnvelopeBufferGeneration();
+
+        streamStarted = true;
+        await executeStream({
+          body,
+          requestId,
+          streamingMsgId,
+          isSilentPlanGeneration,
+          selectedBranchId,
+          envelopeGeneration: envelopeGenerationRef.current,
+          triggerContext: nextTriggerContext,
+          delayedLoader,
+          actionLoader,
+        });
+      } catch (error) {
+        console.error('Failed to initialize chat stream:', error);
+        if (!isSilentPlanGeneration) {
+          updateMessage(streamingMsgId, {
+            content: 'Could not start this request. Please try again.',
+          });
+        } else {
+          toast('Could not start this request. Please try again.');
+        }
+      } finally {
+        if (!streamStarted || activeStreamRequestIdRef.current === requestId) {
+          activeStreamRequestIdRef.current = null;
+          setIsLoading(false);
+          setTriggerContext(null);
+          isSendingRef.current = false;
+          if (!streamStarted) {
+            setStreamingMessageId(null);
+          }
+        }
+      }
     },
-    [onGeneratePlanStart, selectedBranchId, sessionState, addMessage, delayedLoader, actionLoader, hasBranches, onUserMessageSubmit, toast, executeStream, setActiveStatus, setGenerateTriggered]
+    [onGeneratePlanStart, selectedBranchId, sessionState, addMessage, delayedLoader, actionLoader, hasBranches, onUserMessageSubmit, toast, executeStream, setActiveStatus, setGenerateTriggered, updateMessage]
   );
 
   const addAssistantMessage = useCallback((message: string) => {

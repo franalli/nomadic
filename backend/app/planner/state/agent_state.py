@@ -137,6 +137,9 @@ class NomadicAgentState(AgentState):
     # Active specialist constraints (no-fly buffer, altitude limits, ...)
     constraints: Annotated[list, _merge_constraints]
 
+    # Coordinator specialist plan outputs keyed by topic (e.g. "diving", "hiking")
+    specialist_plans: Annotated[dict, _merge_dicts]
+
     # Per-turn metadata -- reset at the start of each turn
     turn_meta: Annotated[dict, _merge_turn_meta]
 

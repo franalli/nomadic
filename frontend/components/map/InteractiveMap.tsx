@@ -406,7 +406,7 @@ export function InteractiveMap({
         zoom: defaultCenter.zoom,
       };
     }
-    return { lat: 25.2048, lng: 55.2708, zoom: 10 };
+    return { lat: 0, lng: 0, zoom: 2 };
   }, [defaultCenter.lat, defaultCenter.lng, defaultCenter.zoom]);
 
   const { normalizedItems, droppedCoordinateIds } = useMemo(() => {

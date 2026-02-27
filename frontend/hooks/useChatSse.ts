@@ -57,6 +57,7 @@ function getErrorMessage(error: Error): string {
 export interface ChatSseRefs {
   abortStreamRef: React.MutableRefObject<(() => void) | null>;
   isSendingRef: React.MutableRefObject<boolean>;
+  activeStreamRequestIdRef: React.MutableRefObject<string | null>;
   autoExpandTimeoutRef: React.MutableRefObject<NodeJS.Timeout | null>;
   prevSpecialistTypesRef: React.MutableRefObject<Set<string>>;
   prevTileTypesRef: React.MutableRefObject<Set<string>>;
@@ -107,6 +108,7 @@ export interface ChatSseCallbacks {
 
 export interface ExecuteStreamParams {
   body: Parameters<typeof streamGraphPlan>[0];
+  requestId: string;
   streamingMsgId: string;
   isSilentPlanGeneration: boolean;
   selectedBranchId: string | null;
@@ -124,6 +126,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
   const {
     abortStreamRef,
     isSendingRef,
+    activeStreamRequestIdRef,
     autoExpandTimeoutRef,
     prevSpecialistTypesRef,
     prevTileTypesRef,
@@ -163,6 +166,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
     (params: ExecuteStreamParams): Promise<void> => {
       const {
         body,
+        requestId,
         streamingMsgId,
         isSilentPlanGeneration,
         selectedBranchId,
@@ -173,13 +177,22 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
       } = params;
 
       return new Promise<void>((resolve) => {
+        const isStaleRequest = () => activeStreamRequestIdRef.current !== requestId;
+
         if (reconcileTimerRef.current) {
           clearTimeout(reconcileTimerRef.current);
           reconcileTimerRef.current = null;
         }
 
+        if (isStaleRequest()) {
+          debugLog('[SSE] Skipping stream setup for stale request');
+          resolve();
+          return;
+        }
+
         abortStreamRef.current = streamGraphPlan(body, {
           onToken: (token: string) => {
+            if (isStaleRequest()) return;
             setHasReceivedFirstToken(true);
             delayedLoader.onTangibleOutput();
             actionLoader.onTangibleOutput();
@@ -189,6 +202,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           },
 
           onNodeStatus: (status: SSENodeStatusEvent['data']) => {
+            if (isStaleRequest()) return;
             if (status.status === 'started') {
               const classification = classifyNodeAction(status.node, triggerContext ?? undefined);
 
@@ -232,6 +246,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           },
 
           onPartial: (data: SSEPartialEvent['data']) => {
+            if (isStaleRequest()) return;
             try {
               const store = useDocumentStore.getState();
               // Payload shape is validated on the complete event; partial is best-effort
@@ -250,6 +265,12 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           },
 
           onComplete: (response) => {
+            if (isStaleRequest()) {
+              debugLog('[SSE] Ignoring stale stream complete event');
+              resolve();
+              return;
+            }
+
             setStreamingMessageId(null);
             setNodeStatus(null);
             abortStreamRef.current = null;
@@ -445,6 +466,11 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
 
               if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
               autoExpandTimeoutRef.current = setTimeout(() => {
+                const activeRequestId = activeStreamRequestIdRef.current;
+                if (activeRequestId !== null && activeRequestId !== requestId) {
+                  debugLog(`[ChatPanel] ⏭️ ${expandReason} skipped - stale request`);
+                  return;
+                }
                 const latest = useDocumentStore.getState();
                 if (latest.expandInProgress) {
                   debugLog(`[ChatPanel] ⏭️ ${expandReason} skipped - expand already in progress`);
@@ -473,7 +499,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             // or the in-memory apply path threw. This prevents "manual refresh required".
             const responseHasStrategy = (doc.strategy_sections?.length ?? 0) > 0;
             const responseHasDayCards = (doc.day_cards?.length ?? 0) > 0;
-            const expectsDayCards = Boolean(doc.trip_inputs?.start_date && doc.trip_inputs?.end_date);
+            const expectsDayCards = Boolean(
+              (doc.trip_inputs?.start_date && doc.trip_inputs?.end_date) ||
+              (doc.trip_inputs?.date_flex === true && doc.trip_inputs?.trip_duration != null)
+            );
             const needsReconcile =
               !planResultApplied ||
               !responseHasStrategy ||
@@ -496,10 +525,17 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
 
             setIsLoading(false);
             isSendingRef.current = false;
+            activeStreamRequestIdRef.current = null;
             resolve();
           },
 
           onError: (error: Error) => {
+            if (isStaleRequest()) {
+              debugLog('[SSE] Ignoring stale stream error event');
+              resolve();
+              return;
+            }
+
             setStreamingMessageId(null);
             setNodeStatus(null);
             abortStreamRef.current = null;
@@ -517,10 +553,17 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               const errorMsgId = `a_err_${Date.now()}`;
               updateMessageId(streamingMsgId, errorMsgId);
               updateMessage(errorMsgId, { content: errorMessage });
+            } else {
+              useChatStore.getState().addMessage({
+                id: `a_err_${Date.now()}`,
+                role: 'assistant',
+                content: getErrorMessage(error),
+              });
             }
 
             setIsLoading(false);
             isSendingRef.current = false;
+            activeStreamRequestIdRef.current = null;
             resolve();
           },
         });
@@ -530,6 +573,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
     [
       abortStreamRef,
       isSendingRef,
+      activeStreamRequestIdRef,
       autoExpandTimeoutRef,
       prevSpecialistTypesRef,
       prevTileTypesRef,

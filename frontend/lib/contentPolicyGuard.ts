@@ -212,15 +212,6 @@ function enforceRightViewPolicy(
 
   // S3_ITINERARY_READY: Day cards allowed, but with constraints
   if (state === 'S3_ITINERARY_READY') {
-    // Day cards should exist but be constrained
-    if (viewModel.day_cards) {
-      for (const card of viewModel.day_cards) {
-        // Max 3 non-buffer blocks per day (buffer blocks are structural safety constraints)
-        const contentBlocks = card.blocks?.filter((b) => !b.is_buffer);
-        assertMaxLength(contentBlocks, 3, `blocks in Day ${card.day_number}`, state);
-      }
-    }
-
     // No booking-specific prices or CTAs in S3 itinerary
     // NOTE: "Reserve" removed - too generic, appears in legitimate tile descriptions
     // (e.g., "Reserve a table", "Reserve your spot"). Keep "Book now" for CTAs.

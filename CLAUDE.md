@@ -2,9 +2,10 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** backend planner intent/constraints/logistics + itinerary/experience services
-- **Secondary:** none
-- **Active work:** backend planner agent + tools architecture, frontend strategy/timeline/chat/layout rendering, and SSoT doc alignment in `docs/*`
+- **Focus:** UX polish, cost optimization, and shipping speed
+- **Secondary:** post-demo delivery hardening across frontend/backend planner interactions
+- **Active work:** UX and interaction polish, cost-aware recommendation optimizations, and SSoT doc alignment in `docs/*`
+- **Active files:** `backend/app/planner/*`, `backend/app/schemas.py`, `backend/app/config.py`, `backend/app/crud_document.py`, `frontend/components/*`, `frontend/lib/*`, `frontend/components/map/*`, `docs/*`, `.claude/agents/*`, `.codex/agents/*`, `CLAUDE.md`
 - **Known broken:** none explicitly tracked in current working diff
 - **DO NOT touch this sprint:** `llm_factory.py` provider/model-routing contract, API/schema compatibility surfaces
 
@@ -15,12 +16,12 @@
 1. DO NOT refactor files beyond the scope of the current task
 2. DO NOT add new dependencies without explicit approval
 3. DO NOT rename, move, or restructure existing files or functions
-4. DO NOT bypass the create_agent + tools architecture — all planner logic flows through agent tools and middleware, not standalone LangGraph nodes
+4. DO NOT bypass coordinator architecture — planner turns flow through `coordinator.execute_turn()` and StepType execution contracts
 5. DO NOT touch mobile-specific components unless explicitly asked
 6. DO NOT modify API contracts or shared schemas without explicit approval
 7. LIMIT changes to ≤8 files per task unless approved
 8. NEVER do broad directory scans or read node_modules — reference specific files
-9. DO NOT modify agent model selection (`ModelSelectionMiddleware` in `middleware.py`) without measuring quality impact
+9. DO NOT modify coordinator step mapping/status contract (`plan_turn`, `_step_node_name`, `_build_envelope`) without measuring UX impact
 10. ALL LLM construction via `get_llm_by_model()` from `llm_factory.py` — no direct `ChatOpenAI()` or `ChatGoogleGenerativeAI()` constructors in node/service code
 11. No hard-coded world data — never hard-code locations, airports, IATA codes, coordinates, airlines, or any potentially infinite dataset
 12. `TripPlan` is the sole SSoT for all trip state — no parallel state objects
@@ -93,33 +94,25 @@ These four docs override your assumptions. Read before generating code.
 
 0. **Keep it simple** — no over-engineering
 1. **TripPlan is SSoT** — single source of truth for all trip state
-2. **Data over Agents** — flights/hotels are data fetchers (search_tiles tool), not agents
-3. **Domain Experts ARE Agents** — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing/Climbing/Sailing/Wildlife Safari) use get_specialist_advice tool; Tier 2 (Cooking/Yoga/Nightlife/etc.) are lightweight tile filters
-4. **Single Agent Architecture** — one `create_agent` planner with 6 tools replaces the old 7-node DAG. The agent decides tool order dynamically.
-5. **Safe Routing** — LLM-based intent classification via `extract_trip_fields` tool and `settings.router_model`, no regex
-6. **Middleware over Nodes** — State mutation, model upgrades, prompt injection, and chip generation happen in `AgentMiddleware` hooks, not standalone nodes
-7. **One Voice** — The planner agent generates responses directly; no separate synthesizer
+2. **Data over Agents** — flights/hotels are data fetchers via coordinator tile search, not agent personas
+3. **Domain Experts remain modular** — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing/Climbing/Sailing/Wildlife Safari) run through specialist dispatch; Tier 2 (Cooking/Yoga/Nightlife/etc.) remain lightweight tile filters
+4. **Coordinator Architecture** — `coordinator.execute_turn()` classifies, plans deterministic steps, executes modules, and builds the envelope
+5. **Safe Routing** — LLM-based intent/change classification via `router_extraction.classify_change()` and `settings.router_model`, no regex
+6. **Deterministic state transitions** — step execution + `_build_envelope()` own state/view-state/ack updates
+7. **One Voice** — `conversationalist.py` streams the final assistant response
 8. **Centralized LLM Factory** — `get_llm_by_model()` handles provider detection (OpenAI/Gemini), model-specific params, structured output retry. Models configured via `settings.*_model` env vars.
 
-### Agent Tools (6)
+### Coordinator Steps
 
-| Tool | Wraps | Purpose |
+| StepType | Executes | Purpose |
 |------|-------|---------|
-| `extract_trip_fields` | `router_extraction.py` | Parse intent + trip fields from user message |
-| `get_local_intel` | `local_expert.py` | Trip Overview card + Phase B enrichment |
-| `get_specialist_advice` | `vertical_specialist.py` | Domain-specific strategy (diving, hiking, etc.) |
-| `search_tiles` | `logistics_node.py` | Flights, hotels, activities via TileService |
-| `validate_plan` | `constraint_guard.py` | Budget/temporal/safety constraint checks |
-| `build_itinerary` | `services/itinerary_builder.py` | Day-by-day schedule from tiles + constraints |
-
-### Middleware Stack (4)
-
-| Middleware | Hook | Purpose |
-|-----------|------|---------|
-| `ModelSelectionMiddleware` | `awrap_model_call` | Upgrades to planning model for complex turns |
-| `DynamicPromptMiddleware` | `awrap_model_call` | Injects live trip state into system prompt |
-| `TurnLifecycleMiddleware` | `abefore_agent`, `awrap_tool_call` | Resets turn meta, merges tool results into state |
-| `SuggestionChipMiddleware` | `aafter_model` | Template-based chip generation (no LLM) |
+| `CLASSIFY` | `router_extraction.classify_change()` | Intent + field extraction + change typing |
+| `DISPATCH_SPECIALISTS` | `vertical_specialist.dispatch_specialist_with_brief()` | Tier 1 specialist planning/replanning |
+| `LOCAL_INTEL` | `local_expert.py` helpers | Destination local-intelligence section |
+| `SEARCH_TILES` | `logistics_node.py` | Flights/hotels/activities refresh |
+| `BUILD_ITINERARY` | `services/itinerary_builder.py` | Day-by-day schedule from sections + tiles |
+| `GENERATE_RESPONSE` | `conversationalist.py` | Final streaming assistant response |
+| `SHORT_CIRCUIT` | coordinator helpers | Greeting/reset/question fast path |
 
 ### Stack
 
@@ -176,7 +169,7 @@ docker compose up db --build            # Docker DB
 
 ## Performance Notes
 
-Agent model selection in `ModelSelectionMiddleware` — upgrades from fast model to planning model for complex turns (first full plan, 3+ tool calls). Models configured via `settings.*_model` env vars. DO NOT modify selection logic without measuring quality impact. System prompt rebuilt from live state each turn via `DynamicPromptMiddleware`.
+Coordinator routing and response generation rely on `settings.*_model` env vars (`router_model`, `specialist_model`, `synthesizer_planning_model`, etc.) via `llm_factory.py`. Do not bypass `get_llm_by_model()` or alter coordinator step sequencing/status mapping without measuring quality and UX impact.
 
 ---
 

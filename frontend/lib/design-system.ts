@@ -181,7 +181,45 @@ export const DS = {
   },
 
   // ---------------------------------------------------------------------------
-  // 4. TYPOGRAPHY (The Schematic Look)
+  // 4. SEGMENTED CONTROLS (Shared border button groups)
+  // ---------------------------------------------------------------------------
+  segments: {
+    /**
+     * Shared control frame for radio/segmented controls.
+     */
+    container: `
+      inline-flex w-full rounded-lg border-2 border-zinc-200 overflow-hidden
+      dark:border-white/15
+    `,
+
+    /**
+     * Base segment shell.
+     */
+    segment: `
+      flex flex-col items-center py-3 text-sm transition-colors
+      flex-1 border-l border-zinc-200 dark:border-white/10 first:border-l-0
+    `,
+
+    /**
+     * Active segment token.
+     */
+    segmentActive: `
+      bg-emerald-500/15 text-emerald-400 font-semibold
+    `,
+
+    /**
+     * Inactive segment token.
+     */
+    segmentInactive: `
+      text-zinc-400 hover:bg-white/5
+      dark:hover:bg-white/10 dark:hover:text-white
+      hover:border-zinc-900 hover:text-zinc-900
+      dark:hover:border-white/40
+    `,
+  },
+
+  // ---------------------------------------------------------------------------
+  // 5. TYPOGRAPHY (The Schematic Look)
   // ---------------------------------------------------------------------------
   text: {
     /**

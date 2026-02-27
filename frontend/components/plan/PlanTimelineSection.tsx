@@ -11,6 +11,7 @@ import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 import { type ReactNode, useCallback } from 'react';
 
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { useToast } from '@/components/ui/toast';
 import { REVEAL_TIMING } from '@/lib/animation-config';
 import { debugLog } from '@/lib/debug';
@@ -107,20 +108,22 @@ export function PlanTimelineSection({
           <div className="relative">
             <LayoutGroup id="droppable-days">
               <ItineraryDndWrapper>
-                <TimelineThread
-                  dayCards={dayCards}
-                  variant={timelineVariant}
-                  useRichBlocks={true}
-                  disableFillDayActions={isStreaming}
-                  savedTileIds={savedTileIds}
-                  onOpenBookingDrawer={handleOpenBookingDrawer}
-                  onOpenStaysSettings={onOpenStaysSettings}
-                  onOpenFlightsSettings={onOpenFlightsSettings}
-                  onRemoveBlock={handleRemoveBlock}
-                  dayWrapper={wrapDay}
-                  freeDayDropSlot={renderFreeDayDropSlot}
-                  blockWrapper={wrapBlock}
-                />
+                <ErrorBoundary label="Timeline">
+                  <TimelineThread
+                    dayCards={dayCards}
+                    variant={timelineVariant}
+                    useRichBlocks={true}
+                    disableFillDayActions={isStreaming}
+                    savedTileIds={savedTileIds}
+                    onOpenBookingDrawer={handleOpenBookingDrawer}
+                    onOpenStaysSettings={onOpenStaysSettings}
+                    onOpenFlightsSettings={onOpenFlightsSettings}
+                    onRemoveBlock={handleRemoveBlock}
+                    dayWrapper={wrapDay}
+                    freeDayDropSlot={renderFreeDayDropSlot}
+                    blockWrapper={wrapBlock}
+                  />
+                </ErrorBoundary>
               </ItineraryDndWrapper>
             </LayoutGroup>
 
@@ -129,7 +132,11 @@ export function PlanTimelineSection({
               <div className="absolute inset-0 bg-white/60 dark:bg-black/50 z-10 flex items-center justify-center rounded-lg">
                 <div className="flex items-center gap-2 text-zinc-900 dark:text-white bg-white/90 dark:bg-zinc-900/80 border border-zinc-200 dark:border-white/10 px-4 py-2 rounded-full">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  <span className="text-sm">Updating with {preferenceCount} preferences...</span>
+                  <span className="text-sm">
+                    {preferenceCount > 0
+                      ? `Updating with ${preferenceCount} preferences...`
+                      : 'Rebuilding itinerary...'}
+                  </span>
                 </div>
               </div>
             )}

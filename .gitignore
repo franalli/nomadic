@@ -41,5 +41,8 @@ backend/test_plan_document_pytest.db*
 tmpclaude-*-cwd
 **/tmpclaude-*-cwd
 
+# Benchmarks
+.benchmarks/
+
 # Key files snapshot (auto-generated)
 docs/key_files/

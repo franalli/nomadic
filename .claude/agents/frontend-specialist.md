@@ -6,7 +6,9 @@ description: >
   Triggers on: UI components, DS tokens, plan rendering, chat panel, sheets/modals,
   pill chips, timeline blocks, tile cards, Framer Motion, Mapbox, mobile layout,
   ghost timeline, content policy guard, loader states, fill-day flow,
-  preference auto-regen, stream parser, browse activities, or any file under frontend/.
+  preference auto-regen, stream parser, browse activities, booking drawer,
+  undo stack, drag-and-drop, travel intelligence, consent/legal,
+  or any file under frontend/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -30,7 +32,7 @@ Before ANY code change, read the relevant SSoT doc:
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 
-- **Single agent architecture is law.** Backend emits `plan_view_state` — frontend reads it, never fabricates it (exception: `S1_DESTINATION_SET` is frontend-only).
+- **Coordinator architecture is law.** Backend emits `plan_view_state` from coordinator envelopes — frontend reads it, never fabricates it (exception: `S1_DESTINATION_SET` is frontend-only).
 - **TripPlan is the only state SSoT.** No parallel state objects on frontend.
 - **No hardcoded world data.** No location lists, city enums, airport codes, coordinate lookups.
 - **Single Renderer Pattern.** `StrategyStageRenderer` adapts to data density — never swap for separate view components.
@@ -88,6 +90,7 @@ frontend/
   hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
                      usePreferenceAutoRegen, useScrollCollapse, useSheetManager,
                      useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation,
+                     useActivityColorMap,
                      useChatEffects, useChatScrolling, useChatSend, useChatSse,
                      useMapSync, useUndoStack
   types/           → chat.ts, document.ts, generated.ts, hooks.ts, loader.ts,
@@ -95,12 +98,14 @@ frontend/
   lib/             → design-system.ts, api.ts, animation-config.ts, streamParser.ts,
                      tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
                      specialist-colors.ts, specialists.ts, utils.ts,
+                     activityHighlighter.ts,
                      contentPolicyGuard.ts, ghost-timeline-adapter.ts, fillDayGuards.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
-                     popular-places.ts, route-utils.ts, showMutationToast.ts,
-                     googlePlacesPhoto.ts, travelIntel.ts
+                     popular-places.ts, showMutationToast.ts,
+                     googlePlacesPhoto.ts, travelIntel.ts,
+                     use-sync-external-store-shim.js
   __tests__/       → Vitest tests
   public/          → Static assets (logos, marketing imagery)
   scripts/         → Frontend utility scripts (build/dev support)
@@ -118,7 +123,7 @@ frontend/
 - **Changing `documentStore` shape** → Read `data-contracts.md` Section 3 first. Store shape is a shared contract.
 - **Modifying streaming callbacks** → SSE (graph_plan) and NDJSON (expand-itinerary) have different protocols. Read both `streamParser.ts` and `api.ts`.
 - **Touching `plan_view_state` logic** → Backend is SSoT. Frontend reads, never fabricates (except `S1_DESTINATION_SET`).
-- **Editing timeline variant mapping** → S3_ITINERARY_READY→"real", S3_EDITING/S2→"draft", all others→"ghost". Read `planStateHelpers.ts`.
+- **Editing timeline variant mapping** → S3_ITINERARY_READY→"real", S3_EDITING/S2_STRATEGY_READY→"draft", all others→"ghost". Read `StrategyStageRenderer.tsx` (`computeTimelineVariant`).
 - **Modifying fill-day flow** → Requires `claimFillDay`/`releaseFillDay` mutex. Read `documentStore.ts` guards.
 - **Changing S3→S2 transitions** → Downgrade blocked when day_cards exist. This is intentional.
 - **Bypassing `contentPolicyGuard.ts`** → Content filtering is required, not optional.
@@ -132,12 +137,24 @@ import { DS } from "@/lib/design-system";
 DS.materials.glass;      // Cards, modals, panels
 DS.materials.surface;    // Inner sections, info boxes
 DS.materials.input;      // Text inputs, search
+DS.materials.inputLarge; // Budget "big number" style
 DS.actions.primary;      // Save, Confirm, Build
+DS.actions.primaryDisabled; // Disabled primary
 DS.actions.secondary;    // Cancel, Clear
+DS.actions.iconBtn;      // Close X, back arrows
+DS.actions.toggle;       // Radix toggle switch
+DS.actions.smallAction;  // Inside info boxes
 DS.pills.active;         // Selected pill
 DS.pills.inactive;       // Unselected pill
-DS.pills.shape;          // px-4 py-2 rounded-lg text-sm
-DS.text.h1 / .label / .body;
+DS.pills.shape;          // px-4 py-2 rounded-lg text-sm transition-all
+DS.pills.shapeFull;      // rounded-full variant
+DS.text.h1 / .label / .body / .muted / .accent;
+DS.stepper.button / .buttonDisabled / .value;
+DS.infoBox.container / .icon / .text;
+DS.glow.*;               // Raw CSS shadow strings (focusSm, md, dropText, dropCursor)
+DS.glowClass.*;          // Tailwind-ready shadow classes (focusXs..cursor, dropText, elevated)
+DS.textSize.*;           // Non-standard sizes (nano 9px, micro 10px, mini 11px, etc.)
+DS.brand.emerald;        // SVG stroke, map lines (#10b981)
 ```
 
 ### Critical Design Rules
@@ -176,7 +193,7 @@ After first user interaction, always show something: hero, cards, or full plan.
 
 ### Streaming
 
-- SSE (`/api/graph_plan/stream`): `onToken`, `onComplete`, `onError`, `onNodeStatus`
+- SSE (`/api/graph_plan/stream`): `onToken`, `onComplete`, `onError`, `onNodeStatus`, `onPartial`
 - NDJSON (`/api/expand-itinerary`): `progress` → `envelope` → `done`
 - Always add `X-CSRF-Token` header on unsafe methods
 - Retry: 3 max, exponential backoff 1s→10s + random jitter

@@ -12,6 +12,7 @@ Usage:
 import uuid
 from typing import Any, Dict, List, Optional
 
+from app.config import settings
 from app.data.demo_curation import DEMO_MANIFEST
 from app.placeholders import get_placeholder_image
 from app.schemas import Tile
@@ -25,7 +26,7 @@ from .provider_base import Provider
 
 
 def _within_budget(tile: Tile, hotel_limit: float, activity_limit: float) -> bool:
-    """Check if tile is within budget allocation (40% hotels, 30% activities)."""
+    """Check if tile is within budget allocation."""
     if tile.type == "hotel" and tile.price_estimate:
         return tile.price_estimate <= hotel_limit
     if tile.type == "activity" and tile.price_estimate:
@@ -124,10 +125,10 @@ class CuratedProvider(Provider):
         # Apply Filters from Trip Settings
         # =================================================================
 
-        # Budget filter (40% for hotels, 30% for activities)
+        # Budget filter from configured allocation percentages.
         if ctx.budget:
-            hotel_limit = ctx.budget * 0.4
-            activity_limit = ctx.budget * 0.3
+            hotel_limit = ctx.budget * settings.budget_allocation_hotels
+            activity_limit = ctx.budget * settings.budget_allocation_activities
             tiles = [t for t in tiles if _within_budget(t, hotel_limit, activity_limit)]
 
         # Skill level filter from activity_settings

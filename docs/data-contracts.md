@@ -34,7 +34,7 @@
 | POST   | `/api/document/apply-arrangement` | Validate + persist block moves with optimistic concurrency | `ArrangementApplyRequest{moves: BlockMove[], expected_version: int}` | `ArrangementResult{valid, violations, day_cards?, version?}` |
 | POST   | `/api/document/remove-block` | Remove a single block from the itinerary (pure Python, <10ms, no LLM) | `RemoveBlockRequest{block_id, day_number, expected_version}` | `RemoveBlockResponse{day_number, day_card, version, removed_block_id}` |
 | POST   | `/api/document/restore-snapshot` | Restore day_cards to a previous snapshot (undo stack; pure Python, <10ms, no LLM) | `RestoreSnapshotRequest{day_cards, expected_version}` | `RestoreSnapshotResponse{day_cards, version}` |
-| POST   | `/api/activities/browse`               | Browse Google Places activities for a free/buffer day | `BrowseActivitiesRequest{destination, day_number?, date?, hotel_location?, categories?}` | `{tiles: BrowseTile[], total: int}` |
+| POST   | `/api/activities/browse`               | Browse Google Places activities for a free/buffer day | `BrowseActivitiesRequest{destination, day_number?, date?, hotel_location?, categories?}` | `{tiles: BrowseTile[], total: int, source: "stashed"\|"places"}` |
 | POST   | `/api/document/insert-activity-block`  | Insert a browse tile as a block into a day (pure Python, no LLM) | `InsertActivityBlockRequest{day_number, tile, expected_version?}` | `InsertActivityBlockResponse{day_number, day_card, version, inserted_block_id}` |
 | GET    | `/api/specialist/{section_id}/enrichment` | Fetch Phase B enrichment status for a specialist section | -- | `SpecialistEnrichmentResponse{section_id, status: 'ready'\|'pending'\|'failed', data?, error_code?, retry_after_ms?}` |
 
@@ -71,9 +71,9 @@ Media type: `text/event-stream`. Events:
 | Event         | Data                                                                                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `token`       | `{type: "token", data: "..."}`                                                          | Streaming text chunk                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `node_status` | `{type: "node_status", data: {node, status: "started"\|"completed", label, icon_key, estimated_duration_ms}}` | Node/tool processing progress. Current backend payload contains only `node`, `status`, `label`, `icon_key`, `estimated_duration_ms`. In the agent architecture, `node` can be a tool name (`extract_trip_fields`, `get_specialist_advice`, `get_local_intel`, `search_tiles`, `validate_plan`, `build_itinerary`). |
+| `node_status` | `{type: "node_status", data: {node, status: "started"\|"completed", label, icon_key, estimated_duration_ms}}` | Coordinator step progress mapped to legacy node/tool names. Current payload contains only `node`, `status`, `label`, `icon_key`, `estimated_duration_ms`. Common values: `extract_trip_fields`, `get_specialist_advice`, `get_local_intel`, `search_tiles`, `build_itinerary`, `response`. |
 | `complete`    | `{type: "complete", data: {document, session_state, version, ...}}`                     | Full response envelope. `document` includes `itinerary_day_cards`, `suggested_responses`, `suggested_response_meta`, `suggestion_chips` (structured chips with action routing), `constraints_validated`, `constraint_violations`, `tiles_replaced`, and `ack_status`/`ack_updates`/`applied_updates`. When `day_cards` are present: `plan_view_state=S3_ITINERARY_READY` if conflict count is 0, `S3_EDITING` if conflicts exist, and `S3_PARTIAL_CONFLICT` on partial-failure path with returned day cards. When no concrete cards are produced: `S3_BLOCKED`. **`observability`** subfield currently emits `tokens`, `today_iso`, and `ready_to_generate_now`. Optional frontend fields such as `extraction_confidence`, `short_circuit_type`, `llm_calls_made`, `cache_hits`, and `confidence_routing` are reserved and not populated by backend today. |
-| `partial`     | `{type: "partial", data: {kind: "strategy_sections"\|"tiles"\|"trip_inputs", payload: unknown}}` | Progressive render before `complete`. In the agent architecture, emitted when tool results are available: `extract_trip_fields` -> `trip_inputs`; `get_specialist_advice`/`get_local_intel` -> `strategy_sections`; `search_tiles` -> `tiles` (ID-keyed tile map, matching `document.tiles`). Frontend merges via `store.mergeEnvelope(envelope, generation)` so stale events from prior send cycles are ignored. Errors must not crash stream -- wrapped defensively. `complete` event reconciles any differences. |
+| `partial`     | `{type: "partial", data: {kind: "strategy_sections"\|"tiles"\|"trip_inputs", payload: unknown}}` | Progressive render before `complete`. In the coordinator flow, emitted after classify/apply (`trip_inputs`), specialist/local-intel updates (`strategy_sections`), and tile refresh (`tiles`, ID-keyed map matching `document.tiles`). Frontend merges via `store.mergeEnvelope(envelope, generation)` so stale events from prior send cycles are ignored. Errors must not crash stream -- wrapped defensively. `complete` event reconciles any differences. |
 | `error`       | `{type: "error", message: "..."}`                                                       | Error details                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### NDJSON (`/api/expand-itinerary`)
@@ -150,15 +150,15 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `clear_l2_on_session_reset`      | false                | `CLEAR_L2_ON_RESET`            | Wipe L2 caches on session reset (dev only)                  |
 | `google_maps_api_key`            | --                   | `GOOGLE_MAPS_API_KEY`          | Google Places API key                                       |
 | `google_maps_api_secret`         | --                   | `GOOGLE_MAPS_API_SECRET`       | Google Places API secret                                    |
-| `router_model`                   | `gemini-2.5-flash`   | `ROUTER_MODEL`                 | LLM for extract_trip_fields tool + field extraction          |
+| `router_model`                   | `gemini-2.5-flash`   | `ROUTER_MODEL`                 | LLM for router extraction + coordinator `classify_change()` |
 | `extraction_model`               | `gemini-2.5-flash`   | `EXTRACTION_MODEL`             | LLM for router_extraction field extraction                  |
 | `local_expert_model`             | `gemini-2.5-flash`   | `LOCAL_EXPERT_MODEL`           | LLM for get_local_intel tool (prompt-based JSON, no function_calling)|
 | `local_expert_use_llm`           | true                 | `LOCAL_EXPERT_USE_LLM`         | Feature flag -- set false to disable LLM in LocalExpert     |
 | `specialist_model`               | `gpt-4o`             | `SPECIALIST_MODEL`             | LLM for get_specialist_advice tool domain reasoning (keep gpt-4o) |
 | `specialist_fallback_model`      | --                   | `SPECIALIST_FALLBACK_MODEL`    | Optional fallback model when specialist_model fails         |
-| `guard_model`                    | `gemini-2.5-flash`   | `GUARD_MODEL`                  | LLM for validate_plan tool place validation only            |
-| `synthesizer_planning_model`     | `gemini-2.5-flash`   | `SYNTHESIZER_PLANNING_MODEL`   | LLM for agent planning responses (upgraded via ModelSelectionMiddleware) |
-| `synthesizer_exploration_model`  | `gemini-2.5-flash`   | `SYNTHESIZER_EXPLORATION_MODEL`| LLM for agent exploration/specialist_update responses       |
+| `guard_model`                    | `gemini-2.5-flash`   | `GUARD_MODEL`                  | LLM for route/place validation fallback in constraint checks |
+| `synthesizer_planning_model`     | `gemini-2.5-flash`   | `SYNTHESIZER_PLANNING_MODEL`   | LLM for coordinator conversational response generation       |
+| `synthesizer_exploration_model`  | `gemini-2.5-flash`   | `SYNTHESIZER_EXPLORATION_MODEL`| LLM for exploration/specialist-update style responses       |
 | `experience_model`               | `gemini-2.5-flash`   | `EXPERIENCE_MODEL`             | LLM for Tier 2 activity tile generation (experience_generator)|
 | `iata_resolver_model`            | `gemini-2.5-flash`   | `IATA_RESOLVER_MODEL`          | LLM for airport IATA code resolution                        |
 | `use_google_places_provider`     | false                | `USE_GOOGLE_PLACES_PROVIDER`   | Feature flag: enable Google Places for hotels and activities |
@@ -184,6 +184,7 @@ NomadicAgentState (extends AgentState)
   |-- strategy_sections: list           (strategy-section cards from specialist advice)
   |-- day_cards: list                   (itinerary day cards from build_itinerary)
   |-- constraints: list                 (active specialist constraints)
+  |-- specialist_plans: dict            (coordinator specialist plan outputs keyed by topic, e.g. {"diving": {...}})
   |-- turn_meta: dict                   (per-turn metadata, reset each turn)
   '-- persistent_meta: dict             (cross-turn: plan_view_state, regen tier, ...)
 ```
@@ -202,7 +203,8 @@ PlanDocumentData
   |     |-- requires_assistance?, missing_fields[]
   |     |-- booking_types: BookingTypes (tri-state: off|suggested|on)
   |     |-- flight_settings, hotel_settings, transport_settings
-  |     |-- activity_settings: {categories[], skill_level?, day_preferences: {activity: count}}
+  |     |    hotel_settings includes: min_stars, amenities[], style?, location?
+  |     |-- activity_settings: {categories[], day_preferences: {activity: count}, activities_per_day? (1-5, null = auto)}
   |     '-- date_flex, trip_duration?, date_window_start/end?
   |
   |-- branches: DocumentBranch[]
@@ -281,7 +283,7 @@ PlanDocumentData
   |-- open_decisions[]
   |-- itinerary_overview, itinerary_assumptions
   |-- applied_updates[], undo_snapshot, update_provenance
-  |-- browseable_activities: Tile[] (Tier-1-suppressed Google Places tiles for Browse Activities sheet; stashed by logistics_node)
+  |-- browseable_activities: Dict[] (Tier-1-suppressed Google Places tile dicts for Browse Activities sheet; stashed by logistics_node)
   |-- ack_status, ack_updates[]  # AckStatus enum (see Section 4)
   |-- origin_just_set
   |-- tiles_replaced (bool: frontend should REPLACE tiles, not merge additively)
@@ -303,7 +305,7 @@ PlanDocumentData
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GraphPlanRequest`            | Plan generation: message, trip_inputs, session_state, document_id, ui_phase, expected_version, thread_id, reset, suggestion_clicked. Session state bootstrap/merge handled by shared `_prepare_graph_plan_session_state()` (used by `/graph_plan/stream`). User-owned settings (`activity_settings`, `hotel_settings`, `flight_settings`, `transport_settings`, `booking_types`) use deep merge via `_merge_user_owned_trip_settings()` to avoid clobbering omitted keys. |
 | `ExpandItineraryRequest`      | Stage 2->3: idempotency_key, strategy_sections, tiles, preferences, trip_inputs, force_full_rebuild, refresh_activity_categories?. **`refresh_activity_categories`:** When set, re-searches activity tiles for these categories before building (used by activity pill changes at S3 to swap stale tiles without an agent turn). **Tile source selection:** `force_full_rebuild=true` (auto-expand after chat) uses DB tiles (authoritative -- written by `apply_planner_update`); `force_full_rebuild=false` (preference regen / manual) uses frontend tiles (includes hearted tiles, filters); empty frontend tiles falls back to DB tiles. **Idempotency:** `idempotency_key` checked via `check_idempotency()` in `backend/app/request_dedup.py` (TTLCache, 30s TTL, 1000 max entries). |
-| `PlanDocumentPatch`           | CRDT update: version, branches?, tiles?, selections?, trip_inputs?, remove_branch_ids?, remove_tile_ids?, preferred_tile_ids? The nested `DocumentTripInputsPatch` (used for `trip_inputs?`) supports partial updates for all user-owned settings: `booking_types`, `flight_settings`, `hotel_settings`, `activity_settings`, `transport_settings`, `date_flex`, `trip_duration`, `date_window_start`, `date_window_end`. |
+| `PlanDocumentPatch`           | CRDT update: version, branches?, tiles?, selections?, trip_inputs?, remove_branch_ids?, remove_tile_ids?, preferred_tile_ids? The nested `DocumentTripInputsPatch` (used for `trip_inputs?`) supports partial updates for all user-owned settings: `booking_types`, `flight_settings`, `hotel_settings`, `activity_settings`, `transport_settings`, `date_flex`, `trip_duration`, `date_window_start`, `date_window_end`. Explicit `null` clears are supported; non-nullable fields reset to defaults (`currency -> "USD"`, `date_flex -> false`). |
 | `PlanDocumentResponse`        | Document fetch: version, updated_by, document, updated_at, changes_made: bool                                                                                                                                                                                                                                                                                                                                    |
 | `TileRefreshRequest/Response` | Refresh tiles for branch with new settings                                                                                                                                                                                                                                                                                                                                                                       |
 | `SuggestionChip`              | Structured chip: message, action_type (`send_message`\|`open_pill`\|`trigger_action`), action_target?, chip_type (`cta`\|`follow_up`\|`setting`), category, icon?                                                                                                                                                                                                                                                |
@@ -329,26 +331,16 @@ PlanDocumentData
 ### PlanViewState (density-driven rendering)
 
 ```
-Backend PlanViewState Literal (schemas.py) defines BOTH legacy S-prefixed states
-and new P-prefixed density states. Default is "P0_MINIMAL".
+Backend PlanViewState Literal (schemas.py) uses the legacy S-prefixed states as
+the backend payload contract.
 
-Legacy S-prefixed states (still emitted by itinerary/streaming endpoints):
-  S0_BOOTSTRAP -> S1_FRAMING -> S2_STRATEGY_READY -> S3_ITINERARY_READY
+Backend-emitted state graph:
+  S0_BOOTSTRAP -> S2_STRATEGY_READY -> S3_ITINERARY_READY
                                  |-- S2_BLOCKED        |-- S3_EDITING
                                                        |-- S3_PARTIAL_CONFLICT
                                                        '-- S3_BLOCKED
 
-New P-prefixed density states (defined in Literal, mapped as aliases):
-  P0_MINIMAL     (was S0_BOOTSTRAP / S1_FRAMING)
-  P1_ENRICHED    (was S2_STRATEGY_READY / S2_BLOCKED)
-  P2_LOGISTICS   (new: tiles fetched, suggestions available)
-  P3_FINALIZED   (was S3_ITINERARY_READY)
-  P3_EDITING     (was S3_EDITING)
-  P3_BLOCKED     (was S3_BLOCKED)
-
-Frontend-only states (not emitted by backend):
-  S0_EMPTY -- initial state before any interaction
-  S1_DESTINATION_SET -- destination chosen but no strategy yet
+P-prefixed alias states are not used for backend payload contract anymore.
 
 Hydration guards:
   Downgrade protection (setFromPlanResponse, mergeEnvelope): S3->S2 blocked when day_cards exist
@@ -471,7 +463,7 @@ Module-level `_userDirtySettings: Set<string>` (not Zustand state -- avoids re-r
 - **Mutation gate:** ChatPanel waits for `hasPendingMutations()` to clear (max 10s poll) before sending graph requests, preventing version conflicts from concurrent fill-day/drag-drop mutations
 - **Trip-input PATCH dedupe:** frontend filters unchanged `trip_inputs` fields before PATCH; backend enforces a matching no-op guard for pure `trip_inputs` writes
 - **Pre-graph settings flush dedupe:** `ensureSettingsFlushed()` computes a stable payload hash and skips duplicate flushes for the same send cycle (`sendCycleId`)
-- **Activity settings merge precedence:** `setFromPlanResponse` gives local sheet state priority for `activity_settings.categories`, `activity_settings.day_preferences`, and `booking_types.activities`, while backend response still drives other booking types (flights/hotels/transport)
+- **Activity settings merge precedence:** `setFromPlanResponse` gives local sheet state priority for `activity_settings.categories`, `activity_settings.day_preferences`, `activity_settings.activities_per_day`, and `booking_types.activities`, while backend response still drives other booking types (flights/hotels/transport)
 - **Activity defaults normalization:** all trip-input merge paths (`updateTripInputs`, `commitTripInputs`, `setFromPlanResponse`, `mergeEnvelope`) run `applyActivityCategoryDefaults()` to keep categories/booking-types/day-preferences consistent
 - **Fill-day real-block guard:** `TimelineThread` skips fill-day if the target day already has real activity blocks (race condition with graph SSE populating the day concurrently)
 - **Fill-day generation gate:** `TimelineThread`/`StrategyStageRenderer` block fill-day while stream/regeneration is active (`currentRunId`/generation flags), then surface a non-blocking wait message
@@ -499,7 +491,7 @@ Source: `frontend/lib/api.ts`
 | `validateArrangement()`      | POST `/api/document/validate-arrangement` | Check proposed block moves against constraints. Returns `{valid, violations[]}`. No LLM, target <50ms. |
 | `applyArrangement()`         | POST `/api/document/apply-arrangement` | Validate + persist block moves. Throws `'VERSION_CONFLICT'` on 409. On success, returns `{valid, violations, day_cards, version}` -- caller must `mergeEnvelope({day_cards})` and `setState({version})` separately. |
 | `removeBlock()`              | POST `/api/document/remove-block` | Remove a single block. Throws `'VERSION_CONFLICT'` on 409. Returns `{day_number, day_card, version, removed_block_id}`. |
-| `browseActivities()`           | POST `/api/activities/browse`   | Browse Google Places activities for a destination. Params: `{destination, dayNumber?, date?, hotelLocation?, categories?}`. Returns `{tiles: BrowseTile[], total: number}`. |
+| `browseActivities()`           | POST `/api/activities/browse`   | Browse Google Places activities for a destination. Params: `{destination, dayNumber?, date?, hotelLocation?, categories?}`. Returns `{tiles: BrowseTile[], total: number, source: "stashed"\|"places"}`. |
 | `getSpecialistEnrichment()`    | GET `/api/specialist/{sectionId}/enrichment` | Fetch Phase B enrichment status for a specialist section. Returns `{status: 'ready'\|'pending'\|'failed', section_id, data?, error_code?, retry_after_ms?}` or `null` (404). 202 -> `{status: 'pending'}`. |
 | `resetSession()`             | DELETE `/api/session`           | Clear session                                                                                                                                                                                                                 |
 | `fetchWithRetry()`           | (wraps apiFetch)                | Exponential backoff retry on transient errors                                                                                                                                                                                 |
@@ -508,7 +500,7 @@ Source: `frontend/lib/api.ts`
 | `isTransientStatus()`        | --                              | (module-private) Check if HTTP status is retryable (502, 503, 504). 429 excluded -- retrying amplifies rate limits.                                                                                                            |
 | `parseRetryAfter()`          | --                              | Parse `Retry-After` header from 429 response into numeric seconds (null if missing/unparseable)                                                                                                                               |
 
-**`BrowseTile` interface** (exported from `api.ts`): `{id, type, title, subtitle?, description?, image_url?, photo_name?, rating?, review_count?, location_label?, geo?: {lat, lng}, price_estimate?, source, provider, category, tags?, place_id?, maps_uri?}`
+**`BrowseTile` interface** (exported from `api.ts`): `{id, type, title, subtitle?, description?, image_url?, photo_name?, duration?, rating?, review_count?, location_label?, geo?: {lat, lng}, price_estimate?, source, provider, category, tags?, place_id?, maps_uri?}`
 
 ### Retry Logic
 

@@ -6,9 +6,14 @@ import React, { memo } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import type { ActivityColorEntry } from '@/hooks/useActivityColorMap';
+import { highlightActivityNames } from '@/lib/activityHighlighter';
 import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
+import { getSpecialistColorRgb } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
+import { useDocumentStore } from '@/state/documentStore';
 import type { ChatMessage } from '@/types/chat';
+import type { DayCard } from '@/types/plan-envelope';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -42,6 +47,32 @@ function isRetryableError(content: string): boolean {
   ];
   const lowerContent = content.toLowerCase();
   return retryablePatterns.some((pattern) => lowerContent.includes(pattern));
+}
+
+/** Extract plain text from React children (for fuzzy matching link text to block titles). */
+function extractTextContent(node: React.ReactNode): string {
+  if (typeof node === 'string') return node;
+  if (Array.isArray(node)) return node.map(extractTextContent).join('');
+  if (node && typeof node === 'object' && 'props' in node) {
+    const el = node as { props?: { children?: React.ReactNode } };
+    return extractTextContent(el.props?.children);
+  }
+  return '';
+}
+
+/** Find a block ID whose summary contains the entity name (case-insensitive substring). */
+function findBlockByEntityName(entityName: string, dayCards?: DayCard[]): string | undefined {
+  if (!dayCards || !entityName) return undefined;
+  const needle = entityName.toLowerCase();
+  for (const dc of dayCards) {
+    for (const block of dc.blocks ?? []) {
+      if (!block.id || !block.summary) continue;
+      if (block.summary.toLowerCase().includes(needle) || needle.includes(block.summary.toLowerCase())) {
+        return block.id;
+      }
+    }
+  }
+  return undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,6 +128,44 @@ const MARKDOWN_COMPONENTS = {
   ),
   // Links with proper styling - includes specialist deep link support
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+    // Handle actcolor: protocol (colored activity name mentions → scroll to card)
+    if (href?.startsWith('actcolor:')) {
+      const specialistType = href.replace('actcolor:', '');
+      const entityName = extractTextContent(children);
+      const dayCards = useDocumentStore.getState().document?.day_cards;
+      const matchingBlockId = findBlockByEntityName(entityName, dayCards);
+
+      if (!matchingBlockId) {
+        // No matching block — render as colored plain text, not clickable
+        return (
+          <span
+            className="activity-mention font-medium"
+            style={{ '--topic-color': getSpecialistColorRgb(specialistType) } as React.CSSProperties}
+          >
+            {children}
+          </span>
+        );
+      }
+
+      return (
+        <span
+          className="activity-mention font-medium cursor-pointer hover:underline"
+          style={{ '--topic-color': getSpecialistColorRgb(specialistType) } as React.CSSProperties}
+          data-specialist={specialistType}
+          onClick={() => {
+            const el = document.querySelector(`[data-block-id="${matchingBlockId}"]`);
+            if (!el) return;
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.remove('activity-scroll-highlight');
+            // Force reflow so re-adding the class restarts the animation
+            void (el as HTMLElement).offsetWidth;
+            el.classList.add('activity-scroll-highlight');
+          }}
+        >
+          {children}
+        </span>
+      );
+    }
     // Handle specialist: protocol links (deep links to specialist cards)
     if (href?.startsWith('specialist:')) {
       const specialistType = href.replace('specialist:', '');
@@ -117,16 +186,11 @@ const MARKDOWN_COMPONENTS = {
         </button>
       );
     }
-    // Regular external links
+    // Regular links — LLM may hallucinate URLs; render as emphasized plain text
     return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-emerald-600 dark:text-emerald-400 underline decoration-emerald-500/50 underline-offset-2 hover:decoration-emerald-500 transition-colors"
-      >
+      <span className="font-semibold text-zinc-900 dark:text-emerald-400">
         {children}
-      </a>
+      </span>
     );
   },
   // Blockquotes for emphasis or quotes
@@ -175,6 +239,8 @@ interface ChatMessageRendererProps {
   onRetry: (message: string) => void;
   /** Landing mode — center messages instead of left/right alignment */
   isLanding?: boolean;
+  /** Activity name -> specialist color map for highlighting */
+  colorMap: ActivityColorEntry[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -189,6 +255,7 @@ function ChatMessageRendererInner({
   lastUserMessage,
   onRetry,
   isLanding = false,
+  colorMap,
 }: ChatMessageRendererProps) {
   // Check if this is part of a split message (for styling and retry button logic)
   const isSplitMessage = m._isPartOfSplit;
@@ -255,7 +322,7 @@ function ChatMessageRendererInner({
             )}
           >
             <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-              {preprocessSpecialistLinks(m.content)}
+              {highlightActivityNames(preprocessSpecialistLinks(m.content), colorMap)}
             </Markdown>
             {/* Tier 11.12: Retry button for transient errors - only on last part of split messages */}
             {originalId.startsWith('a_err_') &&
@@ -298,7 +365,8 @@ function areChatMessagePropsEqual(
     prev.isLoading === next.isLoading &&
     prev.lastUserMessage === next.lastUserMessage &&
     prev.isLanding === next.isLanding &&
-    prev.index === next.index
+    prev.index === next.index &&
+    prev.colorMap === next.colorMap
   );
 }
 

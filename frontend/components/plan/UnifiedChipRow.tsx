@@ -588,58 +588,25 @@ function UnifiedChipRowInner({
     <div className="flex flex-col gap-2 w-full">
       {/* MOBILE ROW 1: TRIP PARAMS (Where & When) */}
       {/* DESKTOP ROW 1: All 5 core chips on one line (no-wrap, scrollable if needed) */}
-      <div className={cn(
-        'flex items-center gap-1.5',
-        isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
-        !isMobile && 'overflow-x-auto no-scrollbar flex-nowrap justify-center'
-      )}>
-        <CoreChip
-          icon={MapPin}
-          label="Destination"
-          value={destination}
-          onClick={destinationLocked ? undefined : onOpenDestination}
-          isMobile={isMobile}
-          disabled={isBookingMode}
-        />
-
-        <CoreChip
-          icon={Plane}
-          label="Origin"
-          value={origin}
-          onClick={onOpenOrigin}
-          isMobile={isMobile}
-          disabled={isBookingMode}
-        />
-
-        <CoreChip
-          icon={Calendar}
-          label="Dates"
-          value={dateRange}
-          onClick={onOpenDates}
-          isMobile={isMobile}
-          disabled={isBookingMode}
-        />
-
-        <CoreChip
-          icon={Users}
-          label="Travelers"
-          value={travelers}
-          onClick={onOpenTravelers}
-          isDefault={isTravelersDefault}
-          isMobile={isMobile}
-          disabled={isBookingMode}
-        />
-
-        <CoreChip
-          icon={DollarSign}
-          label="Budget"
-          value={budget}
-          onClick={onOpenBudget}
-          isOptional
-          isMobile={isMobile}
-          disabled={isBookingMode}
-        />
-      </div>
+      {isMobile ? (
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar -mx-4 px-4 py-1">
+          <CoreChip icon={MapPin} label="Destination" value={destination} onClick={destinationLocked ? undefined : onOpenDestination} isMobile disabled={isBookingMode} />
+          <CoreChip icon={Plane} label="Origin" value={origin} onClick={onOpenOrigin} isMobile disabled={isBookingMode} />
+          <CoreChip icon={Calendar} label="Dates" value={dateRange} onClick={onOpenDates} isMobile disabled={isBookingMode} />
+          <CoreChip icon={Users} label="Travelers" value={travelers} onClick={onOpenTravelers} isDefault={isTravelersDefault} isMobile disabled={isBookingMode} />
+          <CoreChip icon={DollarSign} label="Budget" value={budget} onClick={onOpenBudget} isOptional isMobile disabled={isBookingMode} />
+        </div>
+      ) : (
+        /* Desktop: single row, centered. Parent ChatMessageList uses overflow-x-clip + -mx-4 px-4
+           so the clip boundary is the full panel width — chips won't get cut. */
+        <div className="flex items-center gap-1.5 flex-nowrap justify-center">
+          <CoreChip icon={MapPin} label="Destination" value={destination} onClick={destinationLocked ? undefined : onOpenDestination} disabled={isBookingMode} />
+          <CoreChip icon={Plane} label="Origin" value={origin} onClick={onOpenOrigin} disabled={isBookingMode} />
+          <CoreChip icon={Calendar} label="Dates" value={dateRange} onClick={onOpenDates} disabled={isBookingMode} />
+          <CoreChip icon={Users} label="Travelers" value={travelers} onClick={onOpenTravelers} isDefault={isTravelersDefault} disabled={isBookingMode} />
+          <CoreChip icon={DollarSign} label="Budget" value={budget} onClick={onOpenBudget} isOptional disabled={isBookingMode} />
+        </div>
+      )}
 
       {/* MOBILE ROW 2: TRAVELERS (separate row on mobile only) */}
       {isMobile && (
@@ -670,7 +637,7 @@ function UnifiedChipRowInner({
       <div className={cn(
         'flex items-center gap-2',
         isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
-        !isMobile && 'flex-wrap justify-center'
+        !isMobile && 'flex-wrap justify-center py-0.5'
       )}>
         <ModuleChip
           icon={Plane}

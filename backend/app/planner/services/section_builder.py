@@ -161,3 +161,86 @@ def build_local_expert_section(
         # Comprehensive 12-category travel intelligence
         "travel_intelligence": travel_intelligence,
     }
+
+
+# ---------------------------------------------------------------------------
+# Fallback strategy-section builder (moved from tools/build_itinerary.py)
+# ---------------------------------------------------------------------------
+
+
+def _build_strategy_sections(
+    tiles_by_category: Dict[str, List[Dict[str, Any]]],
+    constraints: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build minimal strategy sections from tiles.
+
+    This is a simplified fallback for when real strategy sections aren't
+    available from the agent context (e.g., the architect node hasn't run
+    or the tool is invoked standalone). The full graph populates
+    strategy_sections via the architect node; this approximation groups
+    tiles by specialist type and attaches matching constraints so the
+    builder has enough structure to generate a day skeleton.
+
+    The ItineraryBuilder expects strategy_sections (output of the architect
+    node). When the tool is called outside the full graph, we synthesize
+    lightweight sections from the tile categories so the builder has
+    something to work with.
+    """
+    sections: List[Dict[str, Any]] = []
+
+    # Group activity tiles by specialist_type or category
+    activity_tiles = tiles_by_category.get("activities", [])
+    specialist_groups: Dict[str, List[Dict[str, Any]]] = {}
+    for tile in activity_tiles:
+        meta = tile.get("meta") or {}
+        specialist = meta.get("specialist_type") or meta.get("category") or "local_expert"
+        specialist_groups.setdefault(specialist, []).append(tile)
+
+    for specialist_type, tiles in specialist_groups.items():
+        content_added: List[Dict[str, Any]] = []
+        for tile in tiles:
+            content_added.append(
+                {
+                    "type": "activity",
+                    "title": tile.get("title", ""),
+                    "description": tile.get("subtitle", ""),
+                    "duration_hours": (tile.get("meta") or {}).get("duration_hours", 3.0),
+                    "tile_id": tile.get("id"),
+                }
+            )
+
+        # Attach constraints that match this specialist
+        section_constraints: List[Dict[str, Any]] = []
+        for c in constraints:
+            applies_to = c.get("applies_to_categories", [])
+            if not applies_to or specialist_type in applies_to:
+                section_constraints.append(
+                    {
+                        "constraint_id": c.get("constraint_id", ""),
+                        "type": c.get("type", ""),
+                        "rule": c.get("rule", ""),
+                        "severity": c.get("severity", "soft"),
+                        "reason": c.get("reason", ""),
+                    }
+                )
+
+        sections.append(
+            {
+                "specialist_type": specialist_type,
+                "content_added": content_added,
+                "constraints_applied": section_constraints,
+            }
+        )
+
+    # If no activity tiles, add a placeholder local_expert section
+    # so the builder still generates a day skeleton
+    if not sections:
+        sections.append(
+            {
+                "specialist_type": "local_expert",
+                "content_added": [],
+                "constraints_applied": [],
+            }
+        )
+
+    return sections

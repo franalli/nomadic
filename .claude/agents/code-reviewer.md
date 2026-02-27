@@ -16,12 +16,12 @@ Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/ruff`) 
 
 # Nomadic Code Reviewer
 
-Code reviewer for a single-agent travel planning engine with complex constraint logic.
+Code reviewer for a coordinator-driven travel planning engine with complex constraint logic.
 You review against the project's documented invariants. You NEVER modify files — only read and report.
 
 ## SSoT Documents (Read These for Every Review)
 
-- `docs/plan_graph_analysis.md` — Backend architecture, agent + tools, middleware, constraint validation, caching, builder phases
+- `docs/plan_graph_analysis.md` — Backend architecture, coordinator flow, constraint validation, caching, builder phases
 - `docs/design-system.md` — Frontend styling tokens, component mapping, restricted colors, interaction patterns
 - `docs/ux_unified_architecture.md` — View states, single renderer pattern, timeline variants, streaming protocols
 - `docs/data-contracts.md` — API routes, schemas, enums, streaming protocols, rate limiting
@@ -31,17 +31,18 @@ You review against the project's documented invariants. You NEVER modify files �
 
 ### 1. Architecture Invariants
 
-- [ ] **Single agent architecture preserved.** One `create_agent` planner with 6 tools + 4 middleware. No standalone LangGraph nodes for routing or synthesis.
+- [ ] **Coordinator architecture preserved.** `coordinator.execute_turn()` remains the orchestration path; no reintroduction of `create_agent` runtime flow.
 - [ ] **ItineraryBuilder remains a service**, not an agent tool with its own LLM calls.
 - [ ] **TripPlan is the only state SSoT.** No parallel state objects created.
-- [ ] **Middleware hooks are correct.** `ModelSelectionMiddleware` (`awrap_model_call`), `DynamicPromptMiddleware` (`awrap_model_call`), `TurnLifecycleMiddleware` (`abefore_agent`, `awrap_tool_call`), `SuggestionChipMiddleware` (`aafter_model`).
+- [ ] **Coordinator step planning is deterministic.** `plan_turn()` and `_execute_step()` map classifier output to the expected step sequence.
 - [ ] **ConstraintGuard is mostly deterministic.** One known LLM exception: `check_route_constraint()` → `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL). All other guard checks are pure Python.
 - [ ] **ItineraryBuilder has zero LLM calls.** Pure Python scheduling only.
-- [ ] **Model selection middleware unchanged.** `ModelSelectionMiddleware` upgrade logic not modified without measuring quality impact.
+- [ ] **Coordinator uses canonical modules and LLM factory.** No standalone graph nodes. `conversationalist.py` uses `get_llm_by_model()`.
 
 ### 2. LLM Factory Compliance
 
 - [ ] **All LLM construction via `get_llm_by_model()`** from `llm_factory.py`. No direct `ChatOpenAI()`, `ChatGoogleGenerativeAI()`, or raw SDK constructors in node/service code.
+- [ ] **Spend guard not bypassed.** `reserve_llm_spend_or_raise()` called via `get_llm_by_model()` — direct LLM constructors would skip budget enforcement.
 - [ ] **Model strings come from `settings.*_model`**, never hardcoded in node files.
 - [ ] **Structured output calls use `include_raw=True, method="function_calling"`** for cross-provider compatibility. Every call site guards `parsed is None` → `raise ValueError`. Retry is done inline with an explicit retry loop.
 - [ ] **Token usage via `extract_token_usage()`** from `llm_factory.py`. No direct `response_metadata["token_usage"]` or `usage_metadata` access in node/service code.
@@ -116,12 +117,12 @@ You review against the project's documented invariants. You NEVER modify files �
 - [ ] No files modified outside the stated task scope
 - [ ] No gratuitous refactors piggybacking on feature work
 - [ ] Parallel work zones respected (backend session not touching frontend, vice versa)
-- [ ] `schemas.py` and `specialist_schemas.py` changes coordinated if both sessions active
+- [ ] `schemas.py`, `specialist_schemas.py`, and `schemas/coordinator_schemas.py` changes coordinated if both sessions active
 
 ### 10. Caching Safety
 
 - [ ] L1 cache keys include all relevant dimensions (destination, dates/month, skill level, categories)
-- [ ] L2 cache writes use correct `cache_type` column value (specialist, experience, tiles)
+- [ ] L2 cache writes use correct `cache_type` column value (specialist, experience, experience_single, tiles)
 - [ ] Router cache: `router::v3::SHA256({normalized_text}:{today_date}:{context_fingerprint})[:32]` format preserved
 - [ ] Cache invalidation on constraint-relevant field changes
 

@@ -209,6 +209,7 @@ def _agent_state_defaults() -> Dict[str, Any]:
         "strategy_sections": [],
         "day_cards": [],
         "constraints": [],
+        "specialist_plans": {},
         "turn_meta": {},
         "persistent_meta": {},
     }
@@ -278,6 +279,7 @@ def serialize_agent_state(
         "strategy_sections",
         "day_cards",
         "constraints",
+        "specialist_plans",
         "persistent_meta",
     ):
         if key in state:

@@ -14,13 +14,19 @@ Flow: Router → Specialist → Architect
 The Specialist runs BEFORE the Architect calls tools.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
+import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from app.planner.schemas.coordinator_schemas import ReplanRequest, TripBrief
 
 from app.config import settings
 from app.placeholders import get_activity_image
@@ -278,6 +284,110 @@ async def generate_all_specialists_parallel(
     return output
 
 
+def _build_specialist_prompt(
+    topic: str,
+    destination: str,
+    trip_plan: Any,
+    skill_level: Optional[str] = None,
+    target_activities: Optional[int] = None,
+    scheduling_context: Optional[str] = None,
+) -> tuple[Optional[str], str]:
+    """Build the system + user prompts for a specialist LLM call.
+
+    Encapsulates prompt construction so that both the existing
+    ``generate_specialist_output_llm`` path and the new coordinator
+    ``dispatch_specialist_with_brief`` path share identical prompt logic.
+
+    Args:
+        topic: Specialist topic (e.g. "diving", "hiking").
+        destination: Trip destination.
+        trip_plan: Object with start_date, end_date, adults, children attrs.
+        skill_level: Optional user skill level string.
+        target_activities: User-requested activity count override.
+        scheduling_context: Optional coordinator-supplied context block.
+            When provided, appended verbatim to the user prompt so the
+            specialist is aware of cross-specialist scheduling constraints.
+
+    Returns:
+        Tuple of (system_prompt, user_prompt).  system_prompt is None when
+        no prompt template can be resolved for the topic.
+    """
+    # --- System prompt (from registry) ---
+    system_prompt = load_prompt(topic)
+    if not system_prompt:
+        system_prompt = load_prompt("generic_activity")
+    if not system_prompt:
+        return None, ""
+
+    # Inject user skill level
+    if skill_level:
+        system_prompt += (
+            f"\n\nUSER SKILL LEVEL: {skill_level}. "
+            "Generate activities appropriate for this level. "
+            "Do NOT suggest activities above this skill level."
+        )
+
+    # --- Trip duration ---
+    duration_days = 5  # Default
+    if trip_plan.start_date and trip_plan.end_date:
+        from datetime import datetime as _dt
+
+        try:
+            start = _dt.strptime(str(trip_plan.start_date), "%Y-%m-%d")
+            end = _dt.strptime(str(trip_plan.end_date), "%Y-%m-%d")
+            duration_days = (end - start).days + 1
+        except ValueError:
+            pass
+
+    # --- Activity count scaling ---
+    available_days = max(1, duration_days - 2)
+
+    if available_days <= 3:
+        min_acts, max_acts = 2, 3
+    elif available_days <= 8:
+        min_acts, max_acts = 3, min(available_days, 5)
+    else:
+        min_acts = min(available_days // 3, 5)
+        max_acts = min(available_days * 2 // 3, 7)
+
+    if target_activities is not None:
+        capped_target = min(target_activities, available_days)
+        min_acts = capped_target
+        max_acts = capped_target
+    else:
+        max_acts = min(max_acts, 3)
+        min_acts = min(min_acts, max_acts)
+
+    activity_count_instruction = (
+        f"- Generate exactly {min_acts} activities"
+        if min_acts == max_acts
+        else f"- Generate {min_acts}-{max_acts} activities to fill available days"
+    )
+
+    user_prompt = f"""Plan {topic} activities for {destination}.
+
+TRIP DETAILS:
+- Dates: {trip_plan.start_date} to {trip_plan.end_date} ({duration_days} days)
+- Travelers: {trip_plan.adults} adults, {trip_plan.children} children
+- Activity days available: {available_days} (excluding arrival/departure)
+
+REQUIREMENTS:
+- Use REAL sites/trails/runs - no made-up names
+{activity_count_instruction}
+- Include topic-specific fields (depth_meters for diving, elevation_meters for hiking, etc.)
+- Include cross-domain constraints explicitly (e.g., diving affects hiking)
+- Keep constraint reasons under 15 words
+- Maximum 5 constraints (safety-critical only)
+- For infeasible destinations (e.g., diving in landlocked areas), \
+set feasibility_status to "infeasible" with reason"""
+
+    # Append coordinator scheduling context if provided
+    if scheduling_context:
+        user_prompt += f"\n\n{scheduling_context}"
+
+    return system_prompt, user_prompt
+
+
 async def generate_specialist_output_llm(
     topic: str,
     destination: str,
@@ -285,6 +395,7 @@ async def generate_specialist_output_llm(
     db: Optional[Any] = None,  # AsyncSession for persistent caching
     skill_level: Optional[str] = None,  # User skill from activity_settings
     target_activities: Optional[int] = None,  # User's day_preference for this topic
+    scheduling_context: Optional[str] = None,  # Coordinator scheduling context
     skip_cache_lookup: bool = False,  # Skip pre-LLM cache read when caller already checked cache
 ) -> Optional[LLMSpecialistOutput]:
     """
@@ -309,7 +420,8 @@ async def generate_specialist_output_llm(
     # =========================================================================
     # CACHE CHECK: L1 (memory) → L2 (PostgreSQL)
     # =========================================================================
-    if db is not None and not skip_cache_lookup:
+    use_cache = bool(db is not None and not skip_cache_lookup and not scheduling_context)
+    if use_cache:
         try:
             from app.services.specialist_cache import get_cached_specialist_output
 
@@ -336,89 +448,40 @@ async def generate_specialist_output_llm(
         except Exception as e:
             _debug_log(f"[LLM_SPECIALIST] Cache lookup error: {e}")
 
-    system_prompt = load_prompt(topic)
-    if not system_prompt:
-        # Try generic activity prompt as fallback for Tier 2 categories
-        system_prompt = load_prompt("generic_activity")
-    if not system_prompt:
+    # Build prompts via shared helper (same logic, now reusable by
+    # dispatch_specialist_with_brief and the existing path).
+    system_prompt, user_prompt = _build_specialist_prompt(
+        topic=topic,
+        destination=destination,
+        trip_plan=trip_plan,
+        skill_level=skill_level,
+        target_activities=target_activities,
+        scheduling_context=scheduling_context,
+    )
+    if system_prompt is None:
         _debug_log(f"[LLM_SPECIALIST] No system prompt for topic '{topic}', using fallback")
         return None
 
-    # Inject user skill level so LLM generates appropriate activities
-    if skill_level:
-        system_prompt += (
-            f"\n\nUSER SKILL LEVEL: {skill_level}. "
-            "Generate activities appropriate for this level. "
-            "Do NOT suggest activities above this skill level."
-        )
-
-    # Calculate trip duration
-    duration_days = 5  # Default
-    if trip_plan.start_date and trip_plan.end_date:
-        from datetime import datetime
-
-        try:
-            start = datetime.strptime(str(trip_plan.start_date), "%Y-%m-%d")
-            end = datetime.strptime(str(trip_plan.end_date), "%Y-%m-%d")
-            duration_days = (end - start).days + 1
-        except ValueError:
-            pass
-
-    # Function calling uses _SPECIALIST_FLAT_SCHEMA (pre-flattened at module load,
-    # $defs inlined so Gemini's function calling API accepts the schema).
-
-    # Calculate available activity days (excluding arrival/departure/buffers)
-    available_days = max(1, duration_days - 2)
-
-    # Scale activity count to trip length
-    # Short trips (<=5 days): 2-3 activities
-    # Medium trips (6-10 days): 3-5 activities
-    # Long trips (11+ days): scale up to ~60% of available days, cap at 7
-    if available_days <= 3:
-        min_acts, max_acts = 2, 3
-    elif available_days <= 8:
-        min_acts, max_acts = 3, min(available_days, 5)
-    else:
-        min_acts = min(available_days // 3, 5)
-        max_acts = min(available_days * 2 // 3, 7)
-
-    # Override with user's day_preference if set (capped by physical available days)
+    # Log day_preference override (kept outside _build_specialist_prompt
+    # to avoid duplicating debug_log imports in the helper).
     if target_activities is not None:
+        duration_days = 5
+        if trip_plan.start_date and trip_plan.end_date:
+            from datetime import datetime
+
+            try:
+                s = datetime.strptime(str(trip_plan.start_date), "%Y-%m-%d")
+                e = datetime.strptime(str(trip_plan.end_date), "%Y-%m-%d")
+                duration_days = (e - s).days + 1
+            except ValueError:
+                pass
+        available_days = max(1, duration_days - 2)
         capped_target = min(target_activities, available_days)
-        min_acts = capped_target
-        max_acts = capped_target
         _debug_log(
-            f"[LLM_SPECIALIST] day_preference override: target={target_activities}, "
-            f"capped={capped_target}, available_days={available_days}"
+            f"[LLM_SPECIALIST] day_preference override: "
+            f"target={target_activities}, capped={capped_target}, "
+            f"available_days={available_days}"
         )
-    else:
-        # Default cap: no explicit preference → max 3 activities
-        # Prevents unbounded specialists from overstuffing the itinerary
-        max_acts = min(max_acts, 3)
-        min_acts = min(min_acts, max_acts)
-
-    activity_count_instruction = (
-        f"- Generate exactly {min_acts} activities"
-        if min_acts == max_acts
-        else f"- Generate {min_acts}-{max_acts} activities to fill available days"
-    )
-
-    user_prompt = f"""Plan {topic} activities for {destination}.
-
-TRIP DETAILS:
-- Dates: {trip_plan.start_date} to {trip_plan.end_date} ({duration_days} days)
-- Travelers: {trip_plan.adults} adults, {trip_plan.children} children
-- Activity days available: {available_days} (excluding arrival/departure)
-
-REQUIREMENTS:
-- Use REAL sites/trails/runs - no made-up names
-{activity_count_instruction}
-- Include topic-specific fields (depth_meters for diving, elevation_meters for hiking, etc.)
-- Include cross-domain constraints explicitly (e.g., diving affects hiking)
-- Keep constraint reasons under 15 words
-- Maximum 5 constraints (safety-critical only)
-- For infeasible destinations (e.g., diving in landlocked areas), \
-set feasibility_status to "infeasible" with reason"""
 
     llm_start = time.time()
     primary_model = settings.specialist_model
@@ -515,7 +578,7 @@ set feasibility_status to "infeasible" with reason"""
             # =================================================================
             # CACHE WRITE: Store successful LLM output to L1 + L2
             # =================================================================
-            if db is not None:
+            if use_cache:
                 try:
                     from app.services.specialist_cache import set_cached_specialist_output
 
@@ -557,6 +620,161 @@ set feasibility_status to "infeasible" with reason"""
             f"type={type(last_error).__name__} | msg={str(last_error)[:300]}"
         )
     return None
+
+
+# =============================================================================
+# Coordinator Bridge — TripBrief-based dispatch
+# =============================================================================
+
+
+def build_scheduling_context(brief: TripBrief) -> str:
+    """Build a scheduling-context block from a TripBrief.
+
+    The returned string is appended verbatim to the specialist user prompt
+    so the LLM is aware of cross-specialist scheduling constraints without
+    any changes to the specialist system prompt or LLM schema.
+
+    Args:
+        brief: TripBrief assembled by the coordinator.
+
+    Returns:
+        Multi-line string suitable for prompt injection.
+    """
+    lines: list[str] = ["SCHEDULING CONTEXT (from coordinator):"]
+    lines.append(f"- Trip duration: {brief.num_days} days ({brief.start_date} to {brief.end_date})")
+    if brief.reserved_days:
+        lines.append(f"- Days already reserved by other specialists: {brief.reserved_days}")
+    if brief.target_day_count is not None:
+        lines.append(f"- Target day count for your activities: {brief.target_day_count}")
+    if brief.other_specialist_zones:
+        lines.append(f"- Other specialist zones: {brief.other_specialist_zones}")
+    if brief.hotel_zone:
+        lines.append(f"- Hotel zone: {brief.hotel_zone}")
+
+    lines.append("")
+    lines.append("Plan your activities to FIT within the available days.")
+    if brief.hotel_zone:
+        lines.append("Prefer locations NEAR the hotel zone when possible.")
+    return "\n".join(lines)
+
+
+class _BriefAsTripPlan:
+    """Minimal adapter exposing TripBrief fields as trip_plan attributes.
+
+    ``generate_specialist_output_llm`` reads ``trip_plan.start_date``,
+    ``trip_plan.end_date``, ``trip_plan.adults``, and ``trip_plan.children``
+    via attribute access. This thin wrapper avoids importing the full
+    TripPlan model and keeps the bridge layer lightweight.
+    """
+
+    __slots__ = (
+        "start_date",
+        "end_date",
+        "adults",
+        "children",
+        "destination",
+    )
+
+    def __init__(self, brief: TripBrief) -> None:
+        self.start_date: str = brief.start_date
+        self.end_date: str = brief.end_date
+        self.adults: int = brief.adults
+        self.children: int = brief.children
+        self.destination: str = brief.destination
+
+
+async def dispatch_specialist_with_brief(
+    brief: TripBrief,
+    topic: str,
+    replan: Optional[ReplanRequest] = None,
+    db: Optional[Any] = None,
+) -> Optional[LLMSpecialistOutput]:
+    """Bridge between the coordinator's TripBrief and the existing
+    specialist LLM pipeline.
+
+    Converts TripBrief fields into the arguments expected by
+    ``generate_specialist_output_llm`` and optionally enriches the
+    prompt with cross-specialist scheduling context built from the
+    brief's reserved_days / other_specialist_zones / hotel_zone.
+
+    Args:
+        brief: Structured packet assembled by the coordinator.
+        topic: Specialist topic (e.g. "diving", "hiking").
+        replan: Optional ReplanRequest when iterating on an existing
+            plan. Currently used for logging; future phases will feed
+            the original plan into the prompt for delta-aware replanning.
+        db: Optional AsyncSession for persistent caching (passed through
+            to ``generate_specialist_output_llm`` unchanged).
+
+    Returns:
+        LLMSpecialistOutput or None on failure (same contract as
+        ``generate_specialist_output_llm``).
+    """
+    _logger = logging.getLogger(__name__)
+
+    # Build a trip-plan-like object from the brief
+    trip_plan_proxy = _BriefAsTripPlan(brief)
+
+    # Determine target_activities from brief
+    target_activities = brief.target_day_count
+
+    # Build scheduling context when the brief carries cross-specialist info.
+    # Phase 3B will thread this into the specialist prompt via a dedicated
+    # code path; for now we log it for observability.
+    has_cross_context = brief.reserved_days or brief.other_specialist_zones or brief.hotel_zone
+    scheduling_ctx: Optional[str] = None
+    if has_cross_context:
+        scheduling_ctx = build_scheduling_context(brief)
+        _logger.debug(
+            "[dispatch_specialist_with_brief] Scheduling context for %s:\n%s",
+            topic,
+            scheduling_ctx,
+        )
+
+    if replan is not None:
+        _logger.info(
+            "[dispatch_specialist_with_brief] Replanning %s — trigger: %s",
+            topic,
+            replan.change_trigger,
+        )
+        replan_context = (
+            "REPLAN CONTEXT:\n"
+            f"- Trigger: {replan.change_trigger}\n"
+            f"- Preserve where possible: {replan.preserve}\n"
+            "- Keep valid activities from original plan unless they conflict with new constraints."
+        )
+        scheduling_ctx = (
+            f"{scheduling_ctx}\n\n{replan_context}" if scheduling_ctx else replan_context
+        )
+
+    # Delegate to generate_specialist_output_llm which handles caching,
+    # retries, and padding.
+    #
+    # NOTE: scheduling_context is NOT part of the cache key (by design).
+    # The specialist cache is keyed on (topic, destination, dates,
+    # skill_level, day_pref). Scheduling context is ephemeral
+    # coordinator state that should not poison the cache.
+    result = await generate_specialist_output_llm(
+        topic=topic,
+        destination=brief.destination,
+        trip_plan=trip_plan_proxy,
+        db=db,
+        skill_level=brief.skill_level,
+        target_activities=target_activities,
+        scheduling_context=scheduling_ctx,
+    )
+
+    if result is not None:
+        _logger.info(
+            "[dispatch_specialist_with_brief] %s returned %d activities (status=%s)",
+            topic,
+            len(result.activities),
+            result.feasibility_status,
+        )
+    else:
+        _logger.warning("[dispatch_specialist_with_brief] %s returned None", topic)
+
+    return result
 
 
 def _get_minimal_safety_constraints(

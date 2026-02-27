@@ -62,14 +62,14 @@ function getChatStatusConfig(
   planState: string | undefined,
   isGenerating: boolean,
   destination: string | undefined,
-  dateRange: string | undefined,
+  hasDates: boolean,
 ): { text: string; label: string; indicator: 'blink' | 'spin' | 'pulse' | 'check' } {
   if (isFraming(planViewState) || isGenerating || planState === 'RESOLVING') {
     return { text: 'Building your trip...', label: 'Generating', indicator: 'spin' };
   }
   if (isBootstrap(planViewState)) {
     if (!destination) return { text: 'Where to next?', label: 'Awaiting Input', indicator: 'blink' };
-    if (!dateRange) return { text: 'When would you like to go?', label: 'Set Dates', indicator: 'blink' };
+    if (!hasDates) return { text: 'When would you like to go?', label: 'Set Dates', indicator: 'blink' };
     return { text: 'Ready to build your plan', label: 'Generating Plan', indicator: 'blink' };
   }
   if (planViewState && ITINERARY_STATES.has(planViewState)) {
@@ -349,44 +349,55 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       () => messages.filter((m) => m.id !== streamingMessageId),
       [messages, streamingMessageId],
     );
+    const visibleStable = useMemo(() => {
+      const visible: VisibleMessage[] = [];
 
-    const visibleStable = useMemo(
-      () =>
-        stableMessages
-          .filter((m) => {
-            if (m.role === 'system' || m.displayMode === 'ack_line') return false;
-            if (!m.content || m.content.trim().length === 0) return false;
-            if (isGenerating && m.id === 'm0') return false;
-            return true;
-          })
-          .map((m) => {
-            if (hasBranches && m.id === 'm0') {
-              return { ...m, content: 'Edit constraints.' };
-            }
-            return m;
-          })
-          .map((m) => ({
+      const splitMessageIfNeeded = (m: VisibleMessage): VisibleMessage[] => {
+        if (m.role !== 'assistant') return [m];
+        const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
+        if (paragraphs.length > 1) {
+          return paragraphs.map((paragraph, idx) => ({
             ...m,
-            content: sanitizeContent(m.content),
-          }))
-          .flatMap((m): VisibleMessage[] => {
-            if (m.role === 'assistant') {
-              const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
-              if (paragraphs.length > 1) {
-                return paragraphs.map((paragraph, idx) => ({
-                  ...m,
-                  id: `${m.id}_p${idx}`,
-                  content: paragraph.trim(),
-                  _isPartOfSplit: true,
-                  _isFirstPart: idx === 0,
-                  _isLastPart: idx === paragraphs.length - 1,
-                }));
-              }
-            }
-            return [m];
-          }),
-      [stableMessages, isGenerating, hasBranches],
-    );
+            id: `${m.id}_p${idx}`,
+            content: paragraph.trim(),
+            _isPartOfSplit: true,
+            _isFirstPart: idx === 0,
+            _isLastPart: idx === paragraphs.length - 1,
+          }));
+        }
+        const words = m.content.split(/\s+/).filter(Boolean).length;
+        const sentences = m.content.split(/(?<=[.!?])\s+(?=[A-Z])/).filter((s) => s.trim());
+        if (sentences.length >= 3 && words > 40) {
+          const parts = [sentences[0].trim(), sentences.slice(1).join(' ').trim()];
+          return parts.map((part, idx) => ({
+            ...m,
+            id: `${m.id}_p${idx}`,
+            content: part,
+            _isPartOfSplit: true,
+            _isFirstPart: idx === 0,
+            _isLastPart: idx === parts.length - 1,
+          }));
+        }
+        return [m];
+      };
+
+      for (const message of stableMessages) {
+        if (message.role === 'system' || message.displayMode === 'ack_line') continue;
+        if (!message.content || message.content.trim().length === 0) continue;
+        if (isGenerating && message.id === 'm0') continue;
+
+        const canonicalContent =
+          hasBranches && message.id === 'm0' ? 'Edit constraints.' : message.content;
+        const sanitized = sanitizeContent(canonicalContent);
+        if (!sanitized || sanitized.trim().length === 0) continue;
+
+        const normalized: VisibleMessage = { ...message, content: sanitized };
+        const split = splitMessageIfNeeded(normalized);
+        visible.push(...split);
+      }
+
+      return visible;
+    }, [stableMessages, isGenerating, hasBranches]);
 
     const streamingMessage = useMemo(
       () => messages.find((m) => m.id === streamingMessageId) ?? null,
@@ -414,14 +425,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       <div
         ref={panelRef}
         className={cn(
-          'text-zinc-900 dark:text-white flex min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-transparent p-4',
+          'text-foreground flex min-h-0 w-full flex-col gap-4 bg-transparent p-4 transition-[min-height,max-height] duration-300',
           panelHeightClass,
           !isDesktop && 'pb-1',
         )}
       >
         {/* ── DESKTOP: Hero status bar — shrink-0 header for non-bootstrap states ── */}
         {isDesktop && !isBootstrap(planViewState) && (() => {
-          const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, dateRange);
+          const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, hasDates);
           const showHero = !!(destinationImageUrl && hasDestination);
           return (
             <AnimatePresence mode="wait">
@@ -438,7 +449,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   'overflow-hidden',
                   showHero
                     ? 'h-[120px]'
-                    : 'h-14 border-b border-zinc-200/80 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md',
+                    : 'h-14 border-b border-border/80 bg-background/80 backdrop-blur-md',
                 )}
               >
                 {/* Hero image — only when destination image available */}
@@ -456,19 +467,19 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 {!showHero && (
                   <div className="absolute inset-0 z-10 flex items-center gap-2 px-4">
                     {status.indicator === 'spin' ? (
-                      <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />
+                      <Loader2 className="h-3 w-3 animate-spin text-primary" />
                     ) : status.indicator === 'check' ? null : (
                       <div className={cn(
-                        'w-2 h-2 rounded-full bg-emerald-500',
+                        'h-2 w-2 rounded-full bg-primary',
                         status.indicator === 'pulse' && 'animate-pulse',
                       )} />
                     )}
-                    <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                    <span className="text-sm font-semibold text-foreground">
                       {status.text}
                     </span>
                     <span className={cn(
-                      `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-500`,
-                      `dark:text-emerald-500 dark:${DS.glowClass.dropText}`,
+                      `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-muted-foreground`,
+                      DS.glowClass.dropText,
                     )}>
                       {status.label}
                     </span>
@@ -495,19 +506,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           planViewState={planViewState}
           isLanding={isDesktop && (isBootstrap(planViewState) || isFraming(planViewState))}
           scrollHeaderContent={isDesktop && isBootstrap(planViewState) && !isSetupHeaderCollapsed ? (() => {
-            const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, dateRange);
+            const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, hasDates);
             return (
               <>
                 {/* Hero banner — scrolls up as messages arrive */}
                 <div className="flex flex-col items-center justify-center text-center px-4 pb-4">
-                  <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                  <h1 className="text-2xl font-semibold tracking-tight text-foreground">
                     {status.text}
                   </h1>
                   <div className="mt-1.5 flex items-center gap-1.5">
-                    <span className={`font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-emerald-600 dark:text-emerald-500 dark:${DS.glowClass.dropText}`}>
+                    <span className={cn(
+                      `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-primary`,
+                      DS.glowClass.dropText,
+                    )}>
                       {status.label}
                     </span>
-                    <div className={`w-1 h-1.5 bg-emerald-600 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:${DS.glowClass.cursor}`} />
+                    <div className={cn(
+                      'h-1.5 w-1 animate-terminal-blink rounded-sm bg-primary',
+                      DS.glowClass.cursor,
+                    )} />
                   </div>
                 </div>
                 {/* Unified Chip Row — scrolls with hero */}
@@ -532,7 +549,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   destinationLocked={!!destination}
                 />
                 {/* Divider between setup controls and conversation */}
-                <div className="w-2/3 mx-auto border-t border-zinc-200/50 dark:border-white/10 mt-6 mb-4" />
+                <div className="mx-auto mb-4 mt-6 w-2/3 border-t border-border/50" />
               </>
             );
           })() : undefined}

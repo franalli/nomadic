@@ -1981,7 +1981,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ? graphSentCards
       : backendClearedCards
         ? []  // Backend explicitly cleared — force empty to trigger expand-itinerary
-        : (datesChanged ? [] : (currentDayCards ?? []));
+        : (currentDayCards ?? []);
     const suppressActivities = shouldSuppressActivitiesFromTripInputs(mergedTripInputs);
     const finalDayCards = suppressActivities
       ? (stripActivitiesFromDayCards(finalDayCardsRaw) ?? finalDayCardsRaw)
@@ -1989,10 +1989,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     if (hasGraphSentCards) {
       debugLog(`[documentStore.setFromPlanResponse] 📅 Day cards: FROM GRAPH (${graphSentCards.length} cards)`);
+      if (get().isRegenerating) {
+        set({ isRegenerating: false });
+      }
     } else if (backendClearedCards) {
       debugLog('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (backend staleness signal)');
-    } else if (datesChanged) {
-      debugLog('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (dates changed, no graph cards)');
+      if (get().isRegenerating) {
+        set({ isRegenerating: false });
+      }
     } else if (hasDayCards) {
       debugLog(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (no graph cards, keeping ${currentDayCards.length} existing)`);
     }
@@ -2297,13 +2301,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (envelope.day_cards !== undefined) {
       // If day_cards explicitly provided, use them
       dayCardsToMerge = envelope.day_cards;
+      if (envelope.day_cards.length > 0 && get().isRegenerating) {
+        set({ isRegenerating: false });
+      }
       debugLog(`[documentStore.mergeEnvelope] 📅 Day Cards: ${envelope.day_cards.length} cards provided`);
-    } else if (destinationChanged || datesChanged) {
-      // Destination/date changed: CLEAR day_cards
+    } else if (destinationChanged) {
+      // Destination changed: CLEAR day_cards (old destination cards are wrong)
       dayCardsToMerge = [];
-      debugLog(
-        `[documentStore.mergeEnvelope] 📅 Day Cards: CLEARED (${destinationChanged ? 'destination changed' : 'dates changed'})`
-      );
+      debugLog('[documentStore.mergeEnvelope] Day Cards: CLEARED (destination changed)');
+    } else if (datesChanged) {
+      // Date changed: PRESERVE stale cards to avoid flash, overlay handles UX
+      dayCardsToMerge = currentDayCards;
+      set({ isRegenerating: true });
+      debugLog('[documentStore.mergeEnvelope] Day Cards: PRESERVED (dates changed, awaiting rebuild)');
     } else if (hasDayCards) {
       // Preserve existing day_cards when itinerary exists
       dayCardsToMerge = currentDayCards;

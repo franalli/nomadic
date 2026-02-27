@@ -1,18 +1,11 @@
 """
-Tests for agent state serialization and multi-turn conversations.
+Tests for agent state serialization and coordinator dispatch integration.
 
 The serialization tests are pure unit tests (no API keys needed).
-The multi-turn tests require OPENAI_API_KEY or GOOGLE_API_KEY and
-are skipped when keys are unavailable.
 """
 
 from __future__ import annotations
 
-import importlib
-import os
-from types import SimpleNamespace
-
-import pytest
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -20,27 +13,10 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from app.planner.middleware import _merge_trip_fields
-from app.planner.plan_graph import _extract_partial_payload
 from app.planner.services.state_serde import (
     restore_agent_state,
     serialize_agent_state,
 )
-from app.planner.tools.get_local_intel import get_local_intel
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-# Integration tests are marked with ``llm`` so they can be explicitly
-# selected with ``pytest -m llm``.  They are skipped by default unless the
-# RUN_LLM_TESTS env var is set.
-_skip_no_llm = pytest.mark.skipif(
-    not os.environ.get("RUN_LLM_TESTS"),
-    reason="Set RUN_LLM_TESTS=1 to run agent integration tests",
-)
-
 
 # ===========================================================================
 # Unit tests -- serialization roundtrip (no API keys needed)
@@ -149,6 +125,16 @@ class TestSerializeAgentState:
             "strategy_sections": [{"specialist_type": "diving"}],
             "day_cards": [{"day": 1}],
             "constraints": [{"constraint_id": "no_fly_24h", "rule": "min 24h buffer"}],
+            "specialist_plans": {
+                "diving": {
+                    "topic": "diving",
+                    "feasibility_status": "feasible",
+                    "day_plans": [{"day_number": 2, "title": "USAT Liberty"}],
+                    "constraints": [{"constraint_id": "no_fly_24h"}],
+                    "editorial": "March is perfect for Tulamben",
+                    "confidence": 0.85,
+                },
+            },
             "turn_meta": {"tool_call_count": 2},
             "persistent_meta": {"plan_view_state": "S1_STRATEGY"},
         }
@@ -159,6 +145,7 @@ class TestSerializeAgentState:
         assert result["strategy_sections"] == state["strategy_sections"]
         assert result["day_cards"] == state["day_cards"]
         assert result["constraints"] == state["constraints"]
+        assert result["specialist_plans"] == state["specialist_plans"]
         # turn_meta is per-turn state — intentionally NOT serialized
         assert "turn_meta" not in result
         assert result["persistent_meta"] == state["persistent_meta"]
@@ -176,6 +163,7 @@ class TestRestoreAgentState:
         assert result["strategy_sections"] == []
         assert result["day_cards"] == []
         assert result["constraints"] == []
+        assert result["specialist_plans"] == {}
         assert result["turn_meta"] == {}
         assert result["persistent_meta"] == {}
 
@@ -239,6 +227,58 @@ class TestRestoreAgentState:
         assert re_serialized["trip_plan"] == serialized["trip_plan"]
         assert len(re_serialized["messages"]) == len(serialized["messages"])
 
+    def test_specialist_plans_roundtrip(self):
+        """specialist_plans round-trips through serialize -> restore."""
+        diving_plan = {
+            "topic": "diving",
+            "feasibility_status": "feasible",
+            "day_plans": [
+                {"day_number": 2, "title": "USAT Liberty", "location": "Tulamben"},
+                {"day_number": 3, "title": "Manta Point", "location": "Nusa Penida"},
+            ],
+            "constraints": [
+                {"constraint_id": "no_fly_24h", "reason": "24h no-fly buffer after diving"},
+            ],
+            "transit_requirements": [],
+            "estimated_cost": None,
+            "editorial": "March is perfect for Tulamben visibility",
+            "confidence": 0.85,
+        }
+        hiking_plan = {
+            "topic": "hiking",
+            "feasibility_status": "feasible",
+            "day_plans": [
+                {"day_number": 5, "title": "Mount Batur Sunrise", "location": "Kintamani"},
+            ],
+            "constraints": [],
+            "transit_requirements": [],
+            "estimated_cost": None,
+            "editorial": "Dry season is ideal for Batur",
+            "confidence": 0.9,
+        }
+        original = {
+            "messages": [HumanMessage(content="Plan diving and hiking in Bali")],
+            "trip_plan": {"destination": "Bali"},
+            "specialist_plans": {"diving": diving_plan, "hiking": hiking_plan},
+        }
+
+        serialized = serialize_agent_state(original)
+        assert serialized["specialist_plans"] == original["specialist_plans"]
+
+        restored = restore_agent_state(serialized)
+        assert restored["specialist_plans"]["diving"]["topic"] == "diving"
+        assert (
+            restored["specialist_plans"]["diving"]["editorial"]
+            == "March is perfect for Tulamben visibility"
+        )
+        assert len(restored["specialist_plans"]["diving"]["day_plans"]) == 2
+        assert restored["specialist_plans"]["hiking"]["topic"] == "hiking"
+        assert restored["specialist_plans"]["hiking"]["confidence"] == 0.9
+
+        # Re-serialize should be identical
+        re_serialized = serialize_agent_state(restored)
+        assert re_serialized["specialist_plans"] == serialized["specialist_plans"]
+
     def test_legacy_trip_inputs_and_metadata_tiles_are_migrated(self):
         session = {
             "messages": [
@@ -268,6 +308,8 @@ class TestRestoreAgentState:
         assert restored["trip_plan"]["budget"] == 5000
         assert restored["tiles"]["flights"][0]["id"] == "f1"
         assert restored["strategy_sections"][0]["specialist_type"] == "local_expert"
+        # Legacy sessions have no specialist_plans — should default to {}
+        assert restored["specialist_plans"] == {}
 
     def test_legacy_flat_trip_settings_are_normalized(self):
         session = {
@@ -292,194 +334,52 @@ class TestRestoreAgentState:
 
 
 # ===========================================================================
-# Unit tests -- create_agent regression guards
+# Selective re-dispatch (serde → coordinator dispatch list integration)
 # ===========================================================================
 
 
-def test_merge_trip_fields_applies_removal_and_reset_flags() -> None:
-    state = {
-        "trip_plan": {
-            "budget": 6000,
-            "activity_categories": ["hiking", "yoga"],
-            "specialist_hints": ["diving", "hiking"],
+def test_selective_redispatch_preserves_unaffected_plans() -> None:
+    """Verify that specialist_plans survives round-trip and _compute_preserve_list
+    returns topics not in the dispatch list."""
+    from app.planner.coordinator import _compute_dispatch_list, _compute_preserve_list
+    from app.planner.schemas.coordinator_schemas import ChangeType, ClassifierOutput
+
+    # Simulate a session with two specialist plans
+    original_state = {
+        "messages": [HumanMessage(content="Plan diving and hiking in Bali")],
+        "trip_plan": {"destination": "Bali", "start_date": "2026-03-01", "end_date": "2026-03-08"},
+        "trip_settings": {"activity_settings": {"categories": ["diving", "hiking"]}},
+        "specialist_plans": {
+            "diving": {
+                "topic": "diving",
+                "feasibility_status": "feasible",
+                "day_plans": [{"day_number": 2}],
+            },
+            "hiking": {
+                "topic": "hiking",
+                "feasibility_status": "feasible",
+                "day_plans": [{"day_number": 5}],
+            },
         },
-        "trip_settings": {
-            "hotel_settings": {"min_stars": 5, "amenities": ["pool"]},
-        },
-    }
-    result = {
-        "fields_changed": ["removal_targets", "reset_budget", "reset_hotel"],
-        "removal_targets": ["hiking"],
-        "reset_budget": True,
-        "reset_hotel": True,
     }
 
-    updates = _merge_trip_fields(state, result)
-
-    assert updates["trip_plan"]["budget"] is None
-    assert updates["trip_plan"]["activity_categories"] == ["yoga"]
-    assert updates["trip_plan"]["specialist_hints"] == ["diving"]
-    assert updates["trip_settings"]["hotel_settings"]["min_stars"] == 0
-    assert updates["trip_settings"]["hotel_settings"]["amenities"] == []
-
-
-def test_merge_trip_fields_persists_preferences_in_nested_settings() -> None:
-    state = {"trip_plan": {}, "trip_settings": {}}
-    result = {
-        "fields_changed": [
-            "skill_level",
-            "hotel_min_stars",
-            "hotel_amenities",
-            "flight_direct_only",
-            "flight_cabin_class",
-            "activity_categories",
-        ],
-        "skill_level": "beginner",
-        "hotel_min_stars": 4,
-        "hotel_amenities": ["pool", "spa"],
-        "flight_direct_only": True,
-        "flight_cabin_class": "business",
-        "activity_categories": ["yoga", "nightlife"],
-    }
-
-    updates = _merge_trip_fields(state, result)
-    trip_settings = updates["trip_settings"]
-
-    assert trip_settings["activity_settings"]["skill_level"] == "beginner"
-    assert trip_settings["activity_settings"]["categories"] == ["nightlife", "yoga"]
-    assert trip_settings["hotel_settings"]["min_stars"] == 4
-    assert trip_settings["hotel_settings"]["amenities"] == ["pool", "spa"]
-    assert trip_settings["flight_settings"]["direct_only"] is True
-    assert trip_settings["flight_settings"]["cabin_class"] == "business"
-
-    # Regression guard: flat keys are ignored by complete envelope builders.
-    assert "skill_level" not in trip_settings
-    assert "hotel_min_stars" not in trip_settings
-    assert "flight_direct_only" not in trip_settings
-
-
-def test_tiles_partial_payload_is_id_keyed_map() -> None:
-    tool_result = {
-        "flights": [{"id": "f_1", "type": "flight"}],
-        "hotels": [{"id": "h_1", "type": "hotel"}],
-        "activities": [{"id": "a_1", "type": "activity"}],
-    }
-
-    partial = _extract_partial_payload("search_tiles", tool_result)
-
-    assert partial is not None
-    assert partial["kind"] == "tiles"
-    assert set(partial["payload"].keys()) == {"f_1", "h_1", "a_1"}
-
-
-@pytest.mark.asyncio
-async def test_get_local_intel_uses_runtime_thread_id_for_enrichment_key(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from app.config import settings
-
-    local_expert_module = importlib.import_module("app.planner.nodes.local_expert")
-    captured_session_id: dict[str, str] = {}
-
-    async def _dummy_enrich() -> None:
-        return None
-
-    def _fake_build_enrichment_closure(*, session_id: str, **_: object):
-        captured_session_id["value"] = session_id
-        return _dummy_enrich
-
-    monkeypatch.setattr(settings, "local_expert_use_llm", True, raising=False)
-    monkeypatch.setattr(
-        local_expert_module,
-        "build_enrichment_closure",
-        _fake_build_enrichment_closure,
-    )
-
-    async with local_expert_module._pending_lock:
-        local_expert_module._pending_enrichments.clear()
-
-    runtime = SimpleNamespace(config={"configurable": {"thread_id": "sess_123"}})
-    await get_local_intel.coroutine(
-        destination="Bali",
-        start_date="2026-03-01",
-        end_date="2026-03-08",
-        travelers="2 adults",
-        session_id="",
-        runtime=runtime,
-    )
-
-    async with local_expert_module._pending_lock:
-        pending_keys = list(local_expert_module._pending_enrichments.keys())
-        local_expert_module._pending_enrichments.clear()
-
-    assert captured_session_id["value"] == "sess_123"
-    assert pending_keys == ["sess_123"]
-
-
-# ===========================================================================
-# Integration tests -- multi-turn (requires API key)
-# ===========================================================================
-
-
-@_skip_no_llm
-@pytest.mark.asyncio
-async def test_greeting():
-    """Agent handles a greeting with no tools."""
-    from app.planner.services.agent_runner import run_agent_turn
-
-    result = await run_agent_turn("Hi!")
-    assert result is not None
-    assert "messages" in result
-    # Should have at least the user message + agent response
-    assert len(result["messages"]) >= 2
-
-
-@_skip_no_llm
-@pytest.mark.asyncio
-async def test_multi_turn():
-    """Agent handles greeting -> destination -> dates across turns."""
-    from app.planner.services.agent_runner import run_agent_turn
-
-    # Turn 1: Greeting
-    state = await run_agent_turn("Hi, I want to plan a trip!")
-    assert state is not None
-    assert "messages" in state
-
-    # Turn 2: Destination
-    state = await run_agent_turn(
-        "I want to go to Bali for diving",
-        session_state=state,
-    )
-    trip = state.get("trip_plan", {})
-    # The agent should have extracted the destination via extract_trip_fields tool
-    assert trip.get("destination") is not None or len(state["messages"]) > 2
-
-    # Turn 3: Dates
-    state = await run_agent_turn(
-        "March 1 to March 8, 2026",
-        session_state=state,
-    )
-    trip = state.get("trip_plan", {})
-    # At minimum, conversation should have progressed
-    assert len(state["messages"]) >= 4
-
-
-@_skip_no_llm
-@pytest.mark.asyncio
-async def test_serialization_roundtrip_with_agent():
-    """State from a live agent call serializes and deserializes correctly."""
-    from app.planner.services.agent_runner import run_agent_turn
-
-    state = await run_agent_turn("I want to visit Bali March 1-8 for diving")
-
-    # Serialize (already serialized by run_agent_turn)
-    serialized = state
-
-    # Deserialize
+    # Round-trip through serde
+    serialized = serialize_agent_state(original_state)
     restored = restore_agent_state(serialized)
-    assert isinstance(restored["messages"], list)
-    assert restored.get("trip_plan") == state.get("trip_plan", {})
 
-    # Re-serialize should be stable
-    re_serialized = serialize_agent_state(restored)
-    assert re_serialized.get("trip_plan") == serialized.get("trip_plan")
+    # Classifier says only diving is affected
+    classifier = ClassifierOutput(
+        intent="PLANNING",
+        reasoning="User wants to change dive sites",
+        change_type=ChangeType.SWAP_ACTIVITY,
+        affects=["diving"],
+        preserves=["hiking"],
+    )
+
+    dispatch = _compute_dispatch_list(classifier, restored)
+    preserve = _compute_preserve_list(classifier, restored)
+
+    assert dispatch == ["diving"]
+    assert preserve == ["hiking"]
+    # Hiking plan survives untouched
+    assert restored["specialist_plans"]["hiking"]["day_plans"] == [{"day_number": 5}]

@@ -418,6 +418,8 @@ class HotelSettings(BaseModel):
 
     min_stars: int = Field(default=0, ge=0, le=5)  # 0 = no minimum
     amenities: List[str] = Field(default_factory=list)
+    style: Optional[str] = None
+    location: Optional[str] = None
 
 
 class ActivitySettings(BaseModel):
@@ -426,6 +428,12 @@ class ActivitySettings(BaseModel):
     categories: List[str] = Field(default_factory=list)  # empty = all categories
     skill_level: Optional[str] = None  # "beginner", "intermediate", "advanced"
     day_preferences: Dict[str, int] = Field(default_factory=dict)  # {"diving": 3, "hiking": 2}
+    activities_per_day: Optional[int] = Field(
+        None,
+        ge=1,
+        le=3,
+        description="AI generation target per free day. Does NOT cap manual user edits.",
+    )
 
 
 class TransportSettings(BaseModel):

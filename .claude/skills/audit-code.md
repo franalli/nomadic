@@ -815,6 +815,190 @@ Report:
 - `json.loads` without try/except → **High** (malformed JSON from LLM crashes node)
 - Missing retry/fallback on structured output failure → **Medium**
 
+### 1M: Google Places API Tier & Guard Compliance
+
+The project uses Google Places API (New) and **must stay on Pro tier** ($5/1k Text Search calls). Enterprise tier is triggered by requesting Enterprise-only fields in the `X-Goog-FieldMask` header ($32/1k). Additionally, every Places API call path must be protected by spend guards, circuit breakers, and error handling.
+
+#### 1M-1: Enterprise Field Leak (FieldMask Audit)
+
+Enterprise-only fields that bump Text Search from Pro ($5/1k) to Enterprise ($32/1k) include: `priceLevel`, `priceRange`, `rating`, `userRatingCount`, `reviews`, `currentOpeningHours`, `regularOpeningHours`, `websiteUri`, `nationalPhoneNumber`, `internationalPhoneNumber`, `currentSecondaryOpeningHours`, `regularSecondaryOpeningHours`, `allowsDogs`, `curbsidePickup`, `delivery`, `dineIn`, `goodForChildren`, `goodForGroups`, `goodForWatchingSports`, `liveMusic`, `menuForChildren`, `outdoorSeating`, `restroom`, `servesBeer`, `servesBreakfast`, `servesBrunch`, `servesCocktails`, `servesCoffee`, `servesDessert`, `servesDinner`, `servesLunch`, `servesVegetarianFood`, `servesWine`, `takeout`, `paymentOptions`, `parkingOptions`, `accessibilityOptions`, `generativeSummary`, `areaSummary`, `containingPlaces`, `addressDescriptor`, `evChargeOptions`, `fuelOptions`, `neighborhoodSummary`, `pureServiceAreaBusiness`.
+
+```bash
+# 1. Find ALL X-Goog-FieldMask definitions and string literals in the Places provider
+grep -n "X-Goog-FieldMask\|FieldMask\|FIELD_MASK\|_field_mask\|field_mask" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__
+
+# 2. Check for Enterprise-tier fields in ANY field mask string
+# These fields bump Text Search from Pro ($5/1k) to Enterprise ($32/1k):
+grep -rn "priceLevel\|priceRange\|userRatingCount\|\.reviews\|currentOpeningHours\|regularOpeningHours\|websiteUri\|nationalPhoneNumber\|internationalPhoneNumber\|currentSecondaryOpeningHours\|regularSecondaryOpeningHours" \
+  backend/app/tile_service/ --include="*.py" | grep -v __pycache__ | grep -v "# \|#.*Enterprise\|#.*stripped\|#.*Pro"
+
+# 3. Check for Enterprise boolean attribute fields (allowsDogs, dineIn, etc.)
+grep -rn "allowsDogs\|curbsidePickup\|delivery\b\|dineIn\|goodForChildren\|goodForGroups\|goodForWatchingSports\|liveMusic\|menuForChildren\|outdoorSeating\|restroom\|servesBeer\|servesBreakfast\|servesBrunch\|servesCocktails\|servesCoffee\|servesDessert\|servesDinner\|servesLunch\|servesVegetarianFood\|servesWine\|takeout\|paymentOptions\|parkingOptions\|accessibilityOptions\|generativeSummary\|areaSummary\|containingPlaces\|addressDescriptor" \
+  backend/app/tile_service/ --include="*.py" | grep -v __pycache__ | grep -v "# "
+
+# 4. Check for dynamic field mask construction that could accidentally include Enterprise fields
+# (e.g., building mask from a list that includes Enterprise fields, or user-controlled fields)
+grep -rn "field_mask.*+=\|field_mask.*join\|field_mask.*append\|field_mask.*format\|field_mask.*f\"" \
+  backend/app/tile_service/ --include="*.py" | grep -v __pycache__
+
+# 5. Cross-check: verify Pro-tier comments are accurate and adjacent to actual field masks
+# Read the full field mask definitions to manually inspect
+grep -n "FieldMask\|field_mask\|FIELD_MASK\|X-Goog-FieldMask" \
+  backend/app/tile_service/google_places_provider.py -A 15 | head -80
+
+# 6. Check if any OTHER file also makes Google Places API calls (bypassing the provider)
+grep -rn "places.googleapis.com\|maps.googleapis.com/maps/api/place" \
+  backend/app/ --include="*.py" | grep -v __pycache__ | grep -v google_places_provider
+```
+
+Report:
+
+- Enterprise-only field in any `X-Goog-FieldMask` string → **Critical** (6.4× cost increase: $5→$32 per 1k calls; a single field triggers Enterprise billing for the entire request)
+- Dynamic field mask construction that could include user-controlled or config-controlled fields without an allowlist → **High** (could accidentally add Enterprise fields via config change)
+- Enterprise field referenced in code (even in a comment-disabled line) without a `# Enterprise — DO NOT UNCOMMENT` guard → **Medium** (easy to accidentally re-enable)
+- Google Places API call outside `google_places_provider.py` → **Critical** (bypasses all tier/guard controls)
+- Pro-tier comment is inaccurate or missing next to a field mask definition → **Low** (documentation gap)
+
+#### 1M-2: Spend Guard Coverage on All Places Call Paths
+
+Every Google Places API call must be preceded by `reserve_places_spend_or_raise()` from `spend_guard.py`. If a call path bypasses the spend guard, it runs uncapped.
+
+```bash
+# 1. Catalog ALL functions that make HTTP requests to Google Places endpoints
+grep -rn "places.googleapis.com\|maps.googleapis.com" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__ | grep -v "# "
+
+# 2. Check that each call path invokes reserve_places_spend_or_raise BEFORE the HTTP call
+grep -n "reserve_places_spend_or_raise\|reserve.*places.*spend" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__
+
+# 3. Check if spend_guard_scope wraps the calling endpoints (session-level cap)
+grep -rn "spend_guard_scope" backend/app/main.py backend/app/streaming.py | grep -v "import\|def spend_guard"
+
+# 4. Check the geocoding path — does it also call reserve_places_spend_or_raise?
+# Geocoding ($5/1k) is a separate SKU but still a paid Google Maps call
+grep -n "geocode\|_geocode" backend/app/tile_service/google_places_provider.py | head -20
+# Cross-reference: is reserve_places_spend_or_raise called before geocoding requests?
+
+# 5. Check the photo proxy path — is it guarded?
+grep -n "proxy.*photo\|photo.*proxy\|places.googleapis.com.*media" backend/app/main.py | head -10
+# Photo requests are also billed — verify spend guard or rate limit coverage
+
+# 6. Check for any httpx/aiohttp calls to Google that bypass reserve_places_spend_or_raise
+grep -rn "httpx\.\|aiohttp\.\|requests\." backend/app/tile_service/ --include="*.py" | grep -v __pycache__ | grep -v "import\|# "
+```
+
+Report:
+
+- Places Text Search call without preceding `reserve_places_spend_or_raise()` → **Critical** (uncapped API spend)
+- Geocoding call without spend guard → **High** (lower cost per call but still paid; $5/1k Geocoding calls)
+- Photo proxy endpoint without spend guard or rate limit → **High** (photo requests are billed; attacker can scrape photos to drain budget)
+- New call path added to provider without spend guard integration → **Critical** (silent budget bypass)
+- `spend_guard_scope` not wrapping the endpoint that triggers Places calls → **High** (per-call reserve fires but session daily cap is not enforced)
+
+#### 1M-3: Circuit Breaker Coverage
+
+Every Google Places call path should be protected by the circuit breaker to prevent cascading failures and budget drain on API outages.
+
+```bash
+# 1. Catalog all circuit breaker path labels
+grep -n "_PLACES_PATH_LABELS\|PLACES_PATH_LABELS\|path_label\|circuit.*breaker\|_circuit" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__
+
+# 2. For each function that calls the Places API, verify it uses circuit_breaker_guard or equivalent
+grep -n "circuit_breaker\|_cb_guard\|_check_circuit\|_record_failure\|_record_success" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__
+
+# 3. Check that 429 (quota exhausted) triggers circuit open
+grep -n "429\|quota\|RESOURCE_EXHAUSTED\|rate.limit" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__
+
+# 4. Check circuit breaker configuration defaults
+grep -n "circuit_breaker" backend/app/config.py
+
+# 5. Check that circuit breaker can be disabled per-path or globally (and whether disable = unguarded)
+grep -n "circuit_breaker_enabled\|_CB_ENABLED\|cb_enabled" \
+  backend/app/tile_service/google_places_provider.py backend/app/config.py | grep -v __pycache__
+```
+
+Report:
+
+- Places API call function without circuit breaker guard → **Critical** (API outage or quota exhaustion causes cascading failures and continued spend on failing calls)
+- 429/quota response not triggering circuit open → **High** (keeps hammering exhausted quota, delays recovery)
+- Circuit breaker disabled by default (`enabled = False`) → **High** (no protection unless explicitly enabled)
+- Missing circuit breaker path label for a call path → **Medium** (call works but isn't tracked in telemetry or circuit state)
+- Circuit breaker open duration too short (< 10s) → **Medium** (reopens too quickly, doesn't give quota time to recover)
+
+#### 1M-4: Error Handling & Graceful Degradation
+
+All Places API calls must handle errors gracefully — never crash the request, never leak raw Google API errors to the client.
+
+```bash
+# 1. Check all try/except blocks around Places API calls
+grep -n "try:\|except\|raise\|HTTPError\|HTTPStatusError\|RequestError\|TimeoutException" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__ | head -40
+
+# 2. Check for bare except or overly broad exception handling
+grep -n "except Exception\|except:\s*$" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__
+
+# 3. Check that errors return empty results (graceful degradation) not exceptions
+grep -n "return \[\]\|return None\|return {}" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__ | head -20
+
+# 4. Check for timeout configuration on HTTP calls
+grep -n "timeout\|Timeout" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__
+
+# 5. Check for raw Google API error messages leaking to client responses
+grep -rn "detail=.*google\|detail=.*places\|detail=.*geocod" \
+  backend/app/main.py backend/app/tile_service/ --include="*.py" | grep -v __pycache__ | grep -v "# "
+
+# 6. Check photo proxy error handling (client-facing endpoint)
+grep -n "proxy.*photo\|def.*photo" backend/app/main.py -A 30 | head -40
+```
+
+Report:
+
+- Places API call without try/except → **Critical** (unhandled exception crashes the endpoint)
+- Missing timeout on HTTP request to Google → **Critical** (hangs indefinitely on unresponsive Google API, holds connection pool slot)
+- Raw Google API error message in HTTP response `detail` field → **High** (leaks internal API structure to client)
+- `except:` (bare) or `except Exception` without logging → **Medium** (silently swallows errors; should at least log)
+- Non-empty error response (returns partial/stale data on error instead of empty) → **Medium** (may confuse downstream logic)
+- Photo proxy returns 500 with raw error on Google API failure instead of placeholder/404 → **Medium**
+
+#### 1M-5: Telemetry & Observability
+
+Verify that all Places API call paths are instrumented for cost tracking and debugging.
+
+```bash
+# 1. Check telemetry recording function usage
+grep -n "record_google_places_usage\|_record_usage\|_telemetry" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__
+
+# 2. Check that every call path (browse, tier1_enrich, tier2_enrich, logistics, geocode) records usage
+grep -n "record_google_places_usage" \
+  backend/app/tile_service/google_places_provider.py | grep -v __pycache__
+# Count distinct path labels in record calls — should match _PLACES_PATH_LABELS count
+
+# 3. Check the admin stats endpoint includes Places usage
+grep -rn "google_places_usage\|places_stats\|places.*telemetry\|get_google_places_stats" \
+  backend/app/main.py | grep -v __pycache__
+
+# 4. Check for cost estimation accuracy — spend_guard estimated cost vs actual Google billing
+grep -n "spend_guard_places_estimated_call_usd\|estimated_call_usd\|0\.017\|places.*cost" \
+  backend/app/config.py backend/app/services/spend_guard.py | grep -v __pycache__
+```
+
+Report:
+
+- Places API call path without telemetry recording → **High** (invisible spend; can't debug cost spikes)
+- Missing path label in telemetry (call recorded but path is `None` or unknown) → **Medium** (can't attribute cost to feature)
+- Admin stats endpoint doesn't expose Places usage counters → **Medium** (no visibility without log parsing)
+- `spend_guard_places_estimated_call_usd` significantly under-estimates actual Google billing → **High** (caps trigger too late; e.g., estimate $0.005 but actual is $0.017 → 3.4× undershoot, session burns $6.80 before $2 cap triggers)
+- Skip: exact pricing validation (Google pricing can change; flag only order-of-magnitude mismatches)
+
 ---
 
 ## Phase 2: Frontend TypeScript/React
@@ -1925,6 +2109,11 @@ Produce the final report in this format:
 | Cache health — stats API      |       |          |       |
 | Resource lifecycle & leaks    |       |          |       |
 | LLM output validation         |       |          |       |
+| Google Places — Pro tier compliance |  |          |       |
+| Google Places — spend guard coverage | |          |       |
+| Google Places — circuit breaker |     |          |       |
+| Google Places — error handling |      |          |       |
+| Google Places — telemetry     |       |          |       |
 | LangGraph node count          |       |          |       |
 | Coordinate format violations  |       |          |       |
 | Hardcoded lists & world data  |       |          |       |

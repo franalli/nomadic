@@ -130,9 +130,32 @@ def _cached_tier2_tiles_for_categories(
     return tiles
 
 
-def _fallback_tier2_tiles(existing_tiles: list[dict], categories: set[str]) -> list[dict]:
+def _fallback_tier2_tiles(
+    existing_tiles: list[dict],
+    categories: set[str],
+    target_count: int = 0,
+) -> list[dict]:
     matching = [t for t in existing_tiles if _tile_matches_categories(t, categories)]
-    return matching or existing_tiles
+    # If we have enough category-matched tiles, return them
+    if matching and (target_count <= 0 or len(matching) >= target_count):
+        return matching
+
+    # Supplement with re-tagged tiles to reach target_count.
+    # These are "best available" tiles when Tier 2 generation timed out.
+    matched_ids = {id(t) for t in matching}
+    retagged = list(matching)  # start with what matched
+    for t in existing_tiles:
+        if id(t) in matched_ids:
+            continue
+        t_copy = {**t}  # shallow copy — don't mutate cached tiles
+        meta = {**(t_copy.get("meta") or {})}
+        meta["source_categories"] = sorted(categories)
+        meta["fallback_retagged"] = True  # audit trail
+        t_copy["meta"] = meta
+        retagged.append(t_copy)
+        if target_count > 0 and len(retagged) >= target_count:
+            break
+    return retagged
 
 
 async def _resolve_tier2_experience_tiles(
@@ -176,7 +199,12 @@ async def _resolve_tier2_experience_tiles(
             experience_tiles = prefetched
 
     if experience_tiles is None:
-        wait_budget_ms = max(0, settings.tier2_generation_wait_budget_ms)
+        base_budget_ms = max(0, settings.tier2_generation_wait_budget_ms)
+        # Scale budget with category count — multi-category requests need more time
+        category_scale = max(1, min(len(categories), 4))  # clamp 1..4
+        # Scale budget with tile count — n8 needs more time than n4
+        tile_scale = max(1.0, tiles_per_category / 4)  # n4 is baseline
+        wait_budget_ms = int(base_budget_ms * tile_scale) + (category_scale - 1) * 1500
         wait_budget_seconds = wait_budget_ms / 1000.0
         try:
             if wait_budget_seconds > 0:
@@ -207,7 +235,8 @@ async def _resolve_tier2_experience_tiles(
         except asyncio.TimeoutError:
             source = "fallback_timeout"
             reason = "timeout"
-            experience_tiles = _fallback_tier2_tiles(fallback_tiles, categories)
+            target = tiles_per_category * len(categories)
+            experience_tiles = _fallback_tier2_tiles(fallback_tiles, categories, target)
             _debug_log(
                 "[VERIFY][TIER2] generation_timeout "
                 f"key={generation_key} budget_ms={wait_budget_ms}"
@@ -231,7 +260,8 @@ async def _resolve_tier2_experience_tiles(
         except Exception as e:
             source = "fallback_timeout"
             reason = f"error:{type(e).__name__}"
-            experience_tiles = _fallback_tier2_tiles(fallback_tiles, categories)
+            target = tiles_per_category * len(categories)
+            experience_tiles = _fallback_tier2_tiles(fallback_tiles, categories, target)
             _debug_log(
                 f"[VERIFY][TIER2] generation_error key={generation_key} err={type(e).__name__}"
             )
@@ -840,6 +870,7 @@ async def _fetch_activities(
     max_results: int = 5,
     dest_lat: float | None = None,
     dest_lng: float | None = None,
+    activity_categories: list[str] | None = None,
 ):
     """
     Fetch activity tiles with L1+L2 caching.
@@ -852,8 +883,19 @@ async def _fetch_activities(
         # =====================================================================
         # ACTIVITIES CACHE CHECK
         # =====================================================================
+        # Build variant from active categories for cache key differentiation
+        cat_variant = (
+            "|".join(sorted(c.lower() for c in activity_categories)) if activity_categories else ""
+        )
+
         cached_activities = await get_cached_tiles(
-            db, provider, "activity", plan.destination, start_date, end_date
+            db,
+            provider,
+            "activity",
+            plan.destination,
+            start_date,
+            end_date,
+            variant=cat_variant,
         )
 
         if cached_activities:
@@ -911,7 +953,14 @@ async def _fetch_activities(
 
             if activity_dicts:
                 await set_cached_tiles(
-                    db, provider, "activity", plan.destination, start_date, end_date, activity_dicts
+                    db,
+                    provider,
+                    "activity",
+                    plan.destination,
+                    start_date,
+                    end_date,
+                    activity_dicts,
+                    variant=cat_variant,
                 )
 
     return activity_dicts
@@ -953,6 +1002,11 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     activity_settings = _settings.activity_settings.model_dump()
     flight_settings = _settings.flight_settings.model_dump()
     activities_requested = _settings.booking_types.activities != "off"
+    activity_categories = (
+        list(_settings.activity_settings.categories)
+        if _settings.activity_settings.categories
+        else []
+    )
 
     # Determine provider and cache key parameters
     dest_key = plan.destination.lower().strip() if plan.destination else ""
@@ -1026,6 +1080,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 max_results=activity_max_results,
                 dest_lat=dest_lat,
                 dest_lng=dest_lng,
+                activity_categories=activity_categories,
             ),
         )
     else:
@@ -1567,7 +1622,14 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     free_days = max(0, trip_days - specialist_days - 2)
     # Specialist days can hold ~1 co-scheduled experience tile each
     total_placeable = free_days + specialist_days
-    base = max(2, total_placeable // len(tier2_cats))
+    # Scale by user's per-day density preference (default 1)
+    target_apd = (
+        state.metadata.get("trip_settings", {})
+        .get("activity_settings", {})
+        .get("activities_per_day", 1)
+        or 1
+    )
+    base = max(2, (total_placeable * target_apd) // len(tier2_cats))
 
     if specialist_days > 0:
         cap = 4
@@ -1579,12 +1641,15 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
         else:
             cap = 4
 
+    # Raise cap proportionally for higher density targets
+    if target_apd > 1:
+        cap = min(cap * target_apd, 20)
     tiles_per_cat = min(base, cap)
     log(
         "LOGISTICS",
         f"Tile scaling: trip={trip_days}d, specialist={specialist_days}d, "
         f"free={free_days}d, placeable={total_placeable}d, "
-        f"cats={len(tier2_cats)}, tiles/cat={tiles_per_cat}",
+        f"cats={len(tier2_cats)}, tiles/cat={tiles_per_cat}, apd={target_apd}",
     )
     return tiles_per_cat
 

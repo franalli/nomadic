@@ -15,13 +15,13 @@ import logging
 import re
 from calendar import monthrange
 from datetime import datetime, timedelta
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.planner.llm_factory import get_llm_by_model
+from app.planner.llm_factory import get_llm_by_model, resolve_schema_refs
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
@@ -30,6 +30,12 @@ from app.planner.specialist_registry import (
 )
 from app.planner.state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
+
+if TYPE_CHECKING:
+    from app.planner.schemas.coordinator_schemas import (
+        ChangeClassification,
+        ClassifierOutput,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +107,15 @@ class RouterOutput(BaseModel):
         description=(
             "JSON string of day counts per activity when user explicitly states numbers. "
             'E.g., "3 days diving" -> \'{"diving": 3}\'. null if not specified.'
+        ),
+    )
+
+    # Activities per day (density preference)
+    activities_per_day: Optional[int] = Field(
+        None,
+        description=(
+            "Target activities per day if user specifies density. "
+            "E.g., '2 activities a day' -> 2. Only set when explicitly stated."
         ),
     )
 
@@ -427,6 +442,16 @@ If the user specifies day counts for activities, return a JSON STRING (not objec
 - "mostly diving with a bit of hiking" → null (no explicit counts)
 - "a week of surfing" → '{{"surfing": 7}}'
 Only populate when user explicitly states numbers. null otherwise.
+
+## Task 5b: Activities Per Day (Density Preference)
+
+If the user specifies how many activities they want per day, return the number:
+- "2 activities per day" -> 2
+- "pack the days with stuff" -> null (no explicit count)
+- "keep it to one thing a day" -> 1
+- "I want 3 things to do each day" -> 3
+
+Only populate when user explicitly states a number. null otherwise.
 
 ## Task 6: Modification Detection
 
@@ -901,6 +926,379 @@ async def _classify_and_extract_with_llm(
     # All retries exhausted — raise, let caller handle
     logger.error("[ROUTER] ALL extraction attempts failed — raising to caller")
     raise last_exc  # type: ignore[misc]
+
+
+# =============================================================================
+# Lightweight Change Type Classification (small schema for Gemini)
+# =============================================================================
+
+_CHANGE_TYPE_PROMPT = """You are a change classifier for a travel planning system.
+
+## Current Trip State
+{trip_state_json}
+
+## Extracted Fields From This Message
+{extracted_fields_json}
+
+## Existing Specialist Plans
+{existing_specialists_json}
+
+## Task
+Classify how the user message changes the existing trip plan.
+
+### intent (MUST be one of):
+- "GREETING" — social/greeting input
+- "RESET" — user wants to start over
+- "QUESTION" — user is asking a question, not changing the plan
+- "PLANNING" — user is building or modifying the plan
+
+### change_type (MUST be one of):
+- "initial_plan" — first planning message, no existing plan
+- "day_count" — changed day counts for an activity ("3 dive days not 4")
+- "spatial" — changed spatial arrangement ("move hiking near dives")
+- "swap_activity" — replace one activity with another
+- "add_activity" — add a new activity to existing plan
+- "remove_activity" — remove an activity from the plan
+- "date_change" — dates changed
+- "destination_change" — destination changed (invalidates ALL specialists)
+- "preference" — general preference ("more relaxed pace")
+- "logistics" — logistics preference ("direct flights only")
+- "settings" — hotel/flight settings ("5-star hotels")
+- "question" — asking a question (not changing plan)
+- "greeting" — social greeting
+- "reset" — explicit reset
+
+### affects / preserves / informs:
+- **affects**: Specialist domains that need re-dispatch (lowercase canonical names)
+- **preserves**: Domains whose cached results stay valid
+- **informs**: Domains that should know about the change but don't re-run
+
+Rules:
+- GREETING → change_type="greeting", empty affects/preserves/informs
+- RESET → change_type="reset", empty affects/preserves/informs
+- QUESTION → change_type="question", empty affects/preserves/informs
+- No existing plan → change_type="initial_plan"
+- destination_change → affects=ALL existing specialists
+- day_count/swap/add/remove/spatial → affects=only relevant specialists
+
+## User Message
+"{user_message}"
+
+Respond with valid JSON matching the schema exactly."""
+
+
+async def _classify_change_type(
+    user_message: str,
+    router_output: "RouterOutput",
+    trip_state_summary: Dict[str, Any],
+    *,
+    model: Optional[str] = None,
+) -> "ChangeClassification":
+    """Lightweight change classification using a small 6-field schema.
+
+    This schema is small enough for Gemini function calling (~6 fields, 1 enum)
+    whereas the full ClassifierOutput (~40 fields, 14-value enum) triggers
+    Gemini's "too much branching" rejection.
+
+    Args:
+        user_message: Raw user input text.
+        router_output: Already-extracted RouterOutput from step 1.
+        trip_state_summary: Compact trip state from build_trip_state_summary().
+        model: Optional model override.
+
+    Returns:
+        ChangeClassification with intent, change_type, affects, preserves, informs.
+    """
+    from app.planner.llm_factory import extract_token_usage
+    from app.planner.schemas.coordinator_schemas import ChangeClassification
+
+    resolved_model = model or settings.router_model
+
+    # Build compact extracted fields summary for the prompt
+    extracted_fields = {
+        k: v
+        for k, v in {
+            "destination": router_output.destination,
+            "origin": router_output.origin,
+            "start_date": router_output.start_date,
+            "end_date": router_output.end_date,
+            "duration_days": router_output.duration_days,
+            "budget": router_output.budget,
+            "specialist_hints": router_output.specialist_hints,
+            "activity_categories": router_output.activity_categories,
+            "removal_targets": router_output.removal_targets,
+            "intent": router_output.intent,
+            "planning_ready": router_output.planning_ready,
+            "skill_level": router_output.skill_level,
+            "activity_day_preferences": router_output.activity_day_preferences,
+        }.items()
+        if v is not None and v != [] and v != ""
+    }
+
+    existing_specialists = sorted(
+        str(k).lower() for k in (trip_state_summary.get("specialist_plans", {}) or {}).keys() if k
+    )
+
+    trip_state_json = json.dumps(trip_state_summary, indent=2) if trip_state_summary else "{}"
+
+    prompt = _CHANGE_TYPE_PROMPT.format(
+        trip_state_json=trip_state_json,
+        extracted_fields_json=json.dumps(extracted_fields, indent=2),
+        existing_specialists_json=json.dumps(existing_specialists),
+        user_message=user_message,
+    )
+
+    llm = get_llm_by_model(resolved_model, temperature=0, max_tokens=400)
+
+    # ChangeClassification is 6 fields — well within Gemini's limits
+    classifier_schema = resolve_schema_refs(ChangeClassification.model_json_schema())
+    structured_llm = llm.with_structured_output(
+        dict(classifier_schema),
+        include_raw=True,
+        method="function_calling",
+    )
+
+    result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
+
+    parsed_payload = result["parsed"] if isinstance(result, dict) else result
+    if parsed_payload is None:
+        raise ValueError("Structured output returned None for _classify_change_type")
+
+    if isinstance(parsed_payload, ChangeClassification):
+        parsed_dict = parsed_payload.model_dump()
+    elif isinstance(parsed_payload, dict):
+        parsed_dict = parsed_payload
+    elif hasattr(parsed_payload, "model_dump"):
+        parsed_dict = parsed_payload.model_dump()
+    else:
+        raise ValueError(
+            f"Unexpected payload type for _classify_change_type: {type(parsed_payload).__name__}"
+        )
+
+    raw = result.get("raw") if isinstance(result, dict) else None
+    token_usage = extract_token_usage(raw, model=resolved_model)
+
+    parsed = ChangeClassification.model_validate(parsed_dict)
+
+    logger.info(
+        "[CLASSIFIER] change_type=%s affects=%s preserves=%s informs=%s (tokens=%s)",
+        parsed.change_type,
+        parsed.affects,
+        parsed.preserves,
+        parsed.informs,
+        token_usage,
+    )
+
+    return parsed
+
+
+def _heuristic_change_classification(
+    router_output: "RouterOutput",
+    trip_state_summary: Dict[str, Any],
+) -> "ChangeClassification":
+    """Heuristic fallback: derive change classification from RouterOutput fields.
+
+    Called when the lightweight LLM classification also fails (double safety net).
+    This is the same logic that was previously inline in classify_change()'s
+    fallback path, extracted into a reusable helper.
+    """
+    from app.planner.schemas.coordinator_schemas import (
+        ChangeClassification,
+        ChangeType,
+    )
+
+    summary = trip_state_summary or {}
+    existing_topics = {
+        str(k).lower() for k in (summary.get("specialist_plans", {}) or {}).keys() if k
+    }
+
+    intent = router_output.intent  # RouterOutput has 3 intents: GREETING/RESET/PLANNING
+    # Promote to QUESTION if RouterOutput says PLANNING but no plan fields extracted
+    has_plan_fields = bool(
+        router_output.destination
+        or router_output.start_date
+        or router_output.end_date
+        or router_output.specialist_hints
+        or router_output.activity_categories
+        or router_output.planning_ready
+        or router_output.budget
+    )
+    if intent == "PLANNING" and not has_plan_fields and router_output.question_type:
+        intent = "QUESTION"
+
+    affects = sorted(
+        {
+            t.lower()
+            for t in router_output.specialist_hints
+            if isinstance(t, str) and t.lower() in TIER1_SPECIALIST_NAMES
+        }
+    )
+    preserves = sorted([t for t in existing_topics if t not in set(affects)])
+
+    fields_changed: List[str] = []
+    for field in (
+        "destination",
+        "origin",
+        "start_date",
+        "end_date",
+        "budget",
+        "adults",
+        "children",
+    ):
+        if getattr(router_output, field, None) is not None:
+            fields_changed.append(field)
+    if router_output.activity_categories:
+        fields_changed.append("activity_categories")
+
+    has_existing_plan = bool(existing_topics or summary.get("has_itinerary"))
+
+    if intent == "GREETING":
+        change_type = ChangeType.GREETING
+    elif intent == "RESET":
+        change_type = ChangeType.RESET
+    elif intent == "QUESTION":
+        change_type = ChangeType.QUESTION
+    elif (
+        router_output.destination
+        and summary.get("destination")
+        and str(router_output.destination).strip().lower()
+        != str(summary.get("destination")).strip().lower()
+    ):
+        change_type = ChangeType.DESTINATION_CHANGE
+    elif router_output.start_date or router_output.end_date:
+        change_type = ChangeType.DATE_CHANGE if has_existing_plan else ChangeType.INITIAL_PLAN
+    elif router_output.activity_categories or affects:
+        change_type = ChangeType.ADD_ACTIVITY if has_existing_plan else ChangeType.INITIAL_PLAN
+    else:
+        change_type = ChangeType.INITIAL_PLAN if not has_existing_plan else ChangeType.PREFERENCE
+
+    return ChangeClassification(
+        intent=intent,  # type: ignore[arg-type]  # str reassigned from Literal; runtime values always valid
+        change_type=change_type,
+        fields_changed=fields_changed,
+        affects=affects,
+        preserves=preserves,
+        informs=[],
+    )
+
+
+async def classify_change(
+    user_message: str,
+    trip_state_summary: Dict[str, Any],
+    *,
+    model: Optional[str] = None,
+) -> "ClassifierOutput":
+    """Classify user intent AND analyze what changed relative to current trip state.
+
+    Two-step approach that works with Gemini:
+      1. Proven ``_classify_and_extract_with_llm()`` → RouterOutput (~27 fields)
+      2. Lightweight ``_classify_change_type()``       → ChangeClassification (6 fields)
+      3. Merge both into ``ClassifierOutput``
+
+    The full ClassifierOutput (~40 fields, 14-value enum) triggers Gemini's
+    ``400 INVALID_ARGUMENT: too much branching`` rejection on every call.
+    Splitting into two small schemas avoids this entirely while producing
+    the same (richer) output.
+
+    Args:
+        user_message: Raw user input text.
+        trip_state_summary: Compact trip state dict from ``build_trip_state_summary()``.
+        model: Optional model override (defaults to ``settings.router_model``).
+
+    Returns:
+        ClassifierOutput with both extraction fields and change classification.
+
+    Raises:
+        ValueError: If both router extraction and heuristic fallback fail.
+    """
+    from app.planner.schemas.coordinator_schemas import ClassifierOutput
+
+    # =========================================================================
+    # Step 1: Proven router extraction (RouterOutput, ~27 fields — works with Gemini)
+    # =========================================================================
+    summary = trip_state_summary or {}
+    dates = summary.get("dates", {}) if isinstance(summary.get("dates"), dict) else {}
+    from app.planner.state.graph_state import TripPlan
+
+    fallback_state = GraphState(
+        trip_plan=TripPlan(
+            destination=summary.get("destination"),
+            origin=summary.get("origin"),
+            start_date=dates.get("start"),
+            end_date=dates.get("end"),
+            adults=summary.get("adults", 1) or 1,
+            children=summary.get("children", 0) or 0,
+            budget=summary.get("budget"),
+        )
+    )
+
+    router_output, _ = await _classify_and_extract_with_llm(user_message, fallback_state)
+    # _classify_and_extract_with_llm already validates/normalizes internally (line 871)
+
+    # =========================================================================
+    # Step 2: Lightweight change classification (6 fields — works with Gemini)
+    # =========================================================================
+    try:
+        change_cls = await _classify_change_type(
+            user_message,
+            router_output,
+            summary,
+            model=model,
+        )
+        logger.info(
+            "[CLASSIFIER] LLM change classification succeeded: "
+            "intent=%s change_type=%s affects=%s preserves=%s",
+            change_cls.intent,
+            change_cls.change_type,
+            change_cls.affects,
+            change_cls.preserves,
+        )
+    except Exception as e:
+        logger.warning(
+            "[CLASSIFIER] Lightweight change classification failed (%s), using heuristic fallback",
+            str(e),
+        )
+        change_cls = _heuristic_change_classification(router_output, summary)
+        logger.info(
+            "[CLASSIFIER] Heuristic fallback: intent=%s change_type=%s affects=%s preserves=%s",
+            change_cls.intent,
+            change_cls.change_type,
+            change_cls.affects,
+            change_cls.preserves,
+        )
+
+    # =========================================================================
+    # Step 3: Merge RouterOutput + ChangeClassification → ClassifierOutput
+    # =========================================================================
+    merged = router_output.model_dump()
+    merged.update(
+        {
+            "intent": change_cls.intent,
+            "change_type": change_cls.change_type,
+            "fields_changed": change_cls.fields_changed,
+            "affects": change_cls.affects,
+            "preserves": change_cls.preserves,
+            "informs": change_cls.informs,
+        }
+    )
+    result = ClassifierOutput.model_validate(merged)
+
+    logger.info(
+        "[CLASSIFIER] change_type=%s fields_changed=%s affects=%s preserves=%s",
+        result.change_type,
+        result.fields_changed,
+        result.affects,
+        result.preserves,
+    )
+    logger.debug(
+        "[CLASSIFIER] intent=%s dest=%s dates=%s->%s",
+        result.intent,
+        result.destination,
+        result.start_date,
+        result.end_date,
+    )
+
+    return result
 
 
 # =============================================================================

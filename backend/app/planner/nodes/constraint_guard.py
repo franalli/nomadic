@@ -14,6 +14,7 @@ Key Principle: "The math must work."
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.config import settings
 from app.planner.specialist_registry import canonicalize_rule, get_nofly_buffer_hours
 from app.planner.specialist_registry import get as get_config
 from app.planner.state import (
@@ -112,9 +113,9 @@ class GuardViolation:
 
 # Default budget allocation percentages
 BUDGET_ALLOCATIONS = {
-    "flights": 0.30,  # 30% for flights
-    "hotels": 0.40,  # 40% for hotels
-    "activities": 0.30,  # 30% for activities
+    "flights": settings.budget_allocation_flights,  # 30% default for flights
+    "hotels": settings.budget_allocation_hotels,  # 40% default for hotels
+    "activities": settings.budget_allocation_activities,  # 30% default for activities
 }
 
 

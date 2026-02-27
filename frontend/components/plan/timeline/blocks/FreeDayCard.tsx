@@ -10,7 +10,7 @@
  * @see docs/ux_unified_architecture.md Section 10.C
  */
 
-import { BookOpen, PauseCircle, ShieldAlert, Sparkles, Zap } from 'lucide-react';
+import { BookOpen, PauseCircle, Search, ShieldAlert, Sparkles, Zap } from 'lucide-react';
 import React, { useState } from 'react';
 
 import { DS } from '@/lib/design-system';
@@ -150,7 +150,7 @@ export function FreeDayCard({
           )}
         >
           <span className="relative inline-block">
-            <span className="relative z-10">Browse more activities</span>
+            <span className="relative z-10 inline-flex items-center gap-1.5"><Search className="h-3.5 w-3.5" />Browse more activities</span>
             {!isDisabled && (
               <span
                 aria-hidden="true"

@@ -9,6 +9,7 @@
  */
 
 import { isBootstrap } from '@/components/plan/planStateHelpers';
+import { useActivityColorMap } from '@/hooks/useActivityColorMap';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { PlanViewState } from '@/types/plan-envelope';
@@ -49,12 +50,14 @@ export function ChatMessageList({
   isLanding = false,
   scrollHeaderContent,
 }: ChatMessageListProps) {
+  const colorMap = useActivityColorMap();
+
   return (
     <div
       ref={scrollContainerRef}
       className={cn(
         'min-h-0 flex-1 overflow-y-auto text-sm no-scrollbar relative z-10 no-overflow-anchor',
-        isLanding ? 'pt-[18vh]' : 'pt-2',
+        isLanding ? 'pt-[18vh] overflow-x-clip -mx-4 px-4' : 'pt-2',
         !isDesktop && 'flex flex-col',
       )}
       role="log"
@@ -100,6 +103,7 @@ export function ChatMessageList({
                 lastUserMessage={lastUserMessage}
                 onRetry={onRetry}
                 isLanding={isLanding}
+                colorMap={colorMap}
               />
             ))}
             {/* Invisible sentinel for smooth scroll-to-bottom */}

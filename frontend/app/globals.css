@@ -755,6 +755,16 @@ input[type="number"]::-webkit-outer-spin-button {
   color: rgb(var(--topic-color));
 }
 
+/* Activity mention in chat -- colored text with subtle hover feedback */
+.activity-mention {
+  color: rgb(var(--topic-color));
+  border-radius: 2px;
+  transition: background-color 150ms ease;
+}
+.activity-mention:hover {
+  background-color: rgb(var(--topic-color) / 0.12);
+}
+
 /* Reduced color mode for 3+ agents - remove header tint */
 [data-reduced-color="true"] .topic-header-tint {
   background: transparent;
@@ -1102,6 +1112,31 @@ input[type="number"]::-webkit-outer-spin-button {
   .specialist-highlight {
     animation: none !important;
     box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.5);
+  }
+}
+
+/* ===== Activity Scroll Highlight ===== */
+/* Brief glow when chat link scrolls to an activity card */
+.activity-scroll-highlight {
+  animation: activity-scroll-pulse 1.5s ease-out forwards;
+}
+
+@keyframes activity-scroll-pulse {
+  0% {
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.6);
+  }
+  40% {
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.25);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-scroll-highlight {
+    animation: none !important;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.5);
   }
 }
 

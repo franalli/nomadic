@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 
+from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,14 @@ from app.planner.state.graph_state import GraphState
 from app.services.cache_core import MemoryCache, l2_upsert
 
 logger = logging.getLogger(__name__)
+
+
+class IataResponse(BaseModel):
+    """LLM response for IATA code resolution."""
+
+    origin: str = Field(default="", description="IATA code for origin city")
+    destination: str = Field(default="", description="IATA code for destination city")
+
 
 L1_TTL_SECONDS = 24 * 60 * 60  # 24h
 L1_MAX_SIZE = 512
@@ -197,21 +205,23 @@ async def resolve_iata_codes(origin: str, destination: str, state: GraphState) -
 
     try:
         llm = get_llm_by_model(settings.iata_resolver_model, temperature=0, max_tokens=50)
-        prompt = (
-            f"Return ONLY a JSON object with IATA airport codes.\n"
-            f"Use the primary international airport for each city.\n"
-            f"Cities: {', '.join(needs)}\n"
-            f'Example: {{"origin": "SFO", "destination": "DPS"}}'
+
+        structured_llm = llm.with_structured_output(
+            IataResponse, include_raw=True, method="function_calling"
         )
-        result = await llm.ainvoke([{"role": "user", "content": prompt}])
-        raw = result.content.strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        if not raw:
-            logger.warning("[IATA] Empty LLM response")
+
+        prompt = (
+            f"Return IATA airport codes for these cities. "
+            f"Use the primary international airport for each city.\n"
+            f"Cities: {', '.join(needs)}"
+        )
+        result = await structured_llm.ainvoke([{"role": "user", "content": prompt}])
+        parsed = result["parsed"]
+        if parsed is None:
+            logger.warning("[IATA] Structured output returned None")
             return origin_code, dest_code
 
-        codes = json.loads(raw)
+        codes = parsed.model_dump()
 
         if origin and not origin_code:
             extracted_origin = _extract_code(codes, "origin")

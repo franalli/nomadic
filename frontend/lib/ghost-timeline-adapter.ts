@@ -81,6 +81,63 @@ function _normalizeMapCoordinates(
   return { lat, lng };
 }
 
+/**
+ * Haversine distance in km between two {lat, lng} points.
+ * Used as a proximity guard against LLM-hallucinated coordinates.
+ */
+function _haversineKm(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const R = 6371; // Earth radius in km
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const sinLat = Math.sin(dLat / 2);
+  const sinLng = Math.sin(dLng / 2);
+  const h =
+    sinLat * sinLat +
+    Math.cos((a.lat * Math.PI) / 180) *
+      Math.cos((b.lat * Math.PI) / 180) *
+      sinLng * sinLng;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** Max distance (km) a POI can be from destination centroid before being filtered. */
+const _MAX_POI_DISTANCE_KM = 200;
+
+/**
+ * Filter out POIs whose coordinates are likely LLM-hallucinated.
+ * Computes median-based centroid of all POIs, then drops any > 200km.
+ * Median is robust to majority-hallucination (mean would shift toward bad data).
+ * Only applies when there are >= 3 POIs (need a meaningful cluster).
+ */
+function _filterProximityOutliers(pois: MapPOI[]): MapPOI[] {
+  if (pois.length < 3) return pois;
+
+  const lats = pois.map((p) => p.coordinates.lat).sort((a, b) => a - b);
+  const lngs = pois.map((p) => p.coordinates.lng).sort((a, b) => a - b);
+  const mid = Math.floor(lats.length / 2);
+  const medianLat = lats.length % 2 ? lats[mid] : (lats[mid - 1] + lats[mid]) / 2;
+  const medianLng = lngs.length % 2 ? lngs[mid] : (lngs[mid - 1] + lngs[mid]) / 2;
+  const centroid = { lat: medianLat, lng: medianLng };
+
+  const filtered = pois.filter((poi) => {
+    const dist = _haversineKm(poi.coordinates, centroid);
+    if (dist > _MAX_POI_DISTANCE_KM) {
+      debugLog('[POI_PROXIMITY] Filtered outlier', {
+        title: poi.title,
+        coords: poi.coordinates,
+        distKm: Math.round(dist),
+        centroid,
+      });
+      return false;
+    }
+    return true;
+  });
+
+  return filtered;
+}
+
 function _toNormalizedKey(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
@@ -452,7 +509,7 @@ export function extractPOIsFromSections(
     });
   });
 
-  return pois;
+  return _filterProximityOutliers(pois);
 }
 
 /**
@@ -552,9 +609,19 @@ export function extractPOIsFromDayCards(
     return fallback;
   }
 
-  _poiMemoCache.set(fingerprint, pois);
+  const filtered = _filterProximityOutliers(pois);
+
+  // If proximity filter removed all POIs, fall back to strategy sections
+  if (filtered.length === 0 && strategySections) {
+    const fallback = extractPOIsFromSections(strategySections, destination);
+    _poiMemoCache.set(fingerprint, fallback);
+    _trimPoiMemoCache();
+    return fallback;
+  }
+
+  _poiMemoCache.set(fingerprint, filtered);
   _trimPoiMemoCache();
-  return pois;
+  return filtered;
 }
 
 /**
