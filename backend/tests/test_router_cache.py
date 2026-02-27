@@ -205,7 +205,7 @@ class TestL1MemoryCache:
         assert result["destination"] == "Bali"
 
         stats = get_cache_stats()
-        assert stats["hits"] >= 1
+        assert stats["l1_hits"] >= 1
 
     def test_context_dependent_query_not_cached(self):
         """CRITICAL: Context-dependent queries must NOT be cached."""
@@ -227,18 +227,18 @@ class TestL1MemoryCache:
         assert result is None
 
         stats = get_cache_stats()
-        assert stats["misses"] >= 1
+        assert stats["l1_misses"] >= 1
 
     def test_stats_tracking(self):
         """Test that stats are properly tracked."""
         stats_before = get_cache_stats()
-        initial_misses = stats_before["misses"]
+        initial_misses = stats_before["l1_misses"]
 
         # Trigger a miss
         get_cached_extraction("test query miss", "2025-02-01")
 
         stats_after = get_cache_stats()
-        assert stats_after["misses"] == initial_misses + 1
+        assert stats_after["l1_misses"] == initial_misses + 1
 
     def test_clear_returns_count(self):
         """Test that clear returns the count of cleared entries."""

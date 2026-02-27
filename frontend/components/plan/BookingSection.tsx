@@ -24,7 +24,7 @@
  */
 
 
-import { Lock, Package } from 'lucide-react';
+import { Package } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 
 import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
@@ -35,7 +35,6 @@ interface TileFilters {
   freeCancel: boolean;
   maxPrice: number | null;
 }
-import { DS } from '@/lib/design-system';
 import { getActiveSpecialists } from '@/lib/specialist-utils';
 import { activityMatchesSpecialist as registryMatch } from '@/lib/specialists';
 import { getTotalTileCount, isBookableActivityTile, normalizeTileType, selectTilesByType } from '@/lib/tileSelectors';
@@ -46,9 +45,8 @@ import type { PartnerPrice,Tile  } from '@/types/tile';
 
 import { CategorySection } from './booking/CategorySection';
 import { CheckoutSidebar } from './booking/CheckoutSidebar';
-import { AlternativesModal } from './modals/AlternativesModal';
+import { BookingPlanningView } from './BookingPlanningView';
 import { isGenerating } from './planStateHelpers';
-import { SuggestionCard } from './tiles/SuggestionCard';
 
 /** Check if an activity tile matches active specialist types (with experience pass-through) */
 function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boolean {
@@ -149,7 +147,6 @@ export function BookingSection({
   const [internalExpanded] = useState(!hasItinerary);
   const isExpanded = controlledExpanded ?? internalExpanded;
   const [selectedTile, setSelectedTile] = useState<Tile | null>(null);
-  const [alternativesTile, setAlternativesTile] = useState<Tile | null>(null);
   const [filters] = useState<TileFilters>({
     sort: 'recommended',
     freeCancel: false,
@@ -270,11 +267,7 @@ export function BookingSection({
   //   return tile?.currency === 'EUR' ? '€' : tile?.currency === 'GBP' ? '£' : '$';
   // }, [tileArray]);
 
-  // Handlers for MiniCard actions
-  const handleDetailsClick = useCallback((tile: Tile) => {
-    setSelectedTile(tile);
-  }, []);
-
+  // Handlers for booking mode (tile details + checkout)
   const handleSaveClick = useCallback(
     (tile: Tile) => {
       onSaveTile?.(tile);
@@ -285,33 +278,6 @@ export function BookingSection({
   const handleCloseModal = useCallback(() => {
     setSelectedTile(null);
   }, []);
-
-  // Handler for viewing alternatives
-  const handleViewAlternatives = useCallback((tile: Tile) => {
-    if (onViewAlternatives) {
-      onViewAlternatives(tile);
-    } else {
-      // Use internal alternatives modal
-      setAlternativesTile(tile);
-    }
-  }, [onViewAlternatives]);
-
-  const handleCloseAlternatives = useCallback(() => {
-    setAlternativesTile(null);
-  }, []);
-
-  const handleSelectAlternative = useCallback((tile: Tile) => {
-    onSaveTile?.(tile);
-    setAlternativesTile(null);
-  }, [onSaveTile]);
-
-  // Get alternatives for a tile (same category, excluding current)
-  const getAlternatives = useCallback((tile: Tile): Tile[] => {
-    return tileArray.filter(t =>
-      t.id !== tile.id &&
-      t.type === tile.type
-    );
-  }, [tileArray]);
 
   // Handler for tile click in CategorySection
   const handleTileClick = useCallback((tile: Tile) => {
@@ -354,148 +320,21 @@ export function BookingSection({
   // Mode is the SSoT for UI variant, not state. See docs/ux_unified_architecture.md
   if (effectiveMode === 'planning' && totalTiles > 0) {
     return (
-      <ModalErrorBoundary>
-        <div id="booking-section">
-          <div className="px-6 pt-0 pb-1">
-            {savedTileIds.size > 0 && (
-              <span className={cn('mt-2 inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 font-medium text-primary', DS.textSize.micro)}>
-                {savedTileIds.size} in trip
-              </span>
-            )}
-            {/* Section-level lock message - only show if dates are NOT set */}
-            {/* @see docs/ux_unified_architecture.md Section XII - Tiles-first logic */}
-            {!hasDates && (
-              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Lock className="h-3 w-3" />
-                <span>
-                  Booking links unlock after you{' '}
-                  {onOpenSheet ? (
-                    <button
-                      type="button"
-                      onClick={() => onOpenSheet('dates')}
-                      className="text-primary underline underline-offset-2 hover:text-primary/80"
-                    >
-                      set trip dates
-                    </button>
-                  ) : (
-                    'set trip dates'
-                  )}{' '}
-                  and create your itinerary.
-                </span>
-              </p>
-            )}
-          </div>
-
-          {/* Stays tiles */}
-          {isExpanded && (
-            <div className="px-6 pb-4 space-y-4">
-              {stayTiles.length > 0 ? (
-                <>
-                  {filteredStayTiles.slice(0, 6).map((tile) => (
-                    <SuggestionCard
-                      key={tile.id}
-                      tile={tile}
-                      reasoning={tile.meta?.reasoning as string | undefined}
-                      isSaved={savedTileIds.has(tile.id)}
-                      onSave={handleSaveClick}
-                      onViewAlternatives={() => handleViewAlternatives(tile)}
-                      onDetailsClick={handleDetailsClick}
-                      onOpenStaysSettings={onOpenStaysSettings}
-                      variant="compact"
-                    />
-                  ))}
-                  {filteredStayTiles.length > 6 && (
-                    <p className="pt-2 text-xs text-muted-foreground">
-                      +{filteredStayTiles.length - 6} more stays available
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p className="py-2 text-xs text-muted-foreground">No stays found yet.</p>
-              )}
-            </div>
-          )}
-
-          {/* Flights tiles */}
-          {flightsExpanded && (
-            <div className="px-6 pb-4 space-y-4">
-              {flightTiles.length > 0 ? (
-                <>
-                  {filteredFlightTiles.slice(0, 6).map((tile) => (
-                    <SuggestionCard
-                      key={tile.id}
-                      tile={tile}
-                      reasoning={tile.meta?.reasoning as string | undefined}
-                      isSaved={savedTileIds.has(tile.id)}
-                      onSave={handleSaveClick}
-                      onViewAlternatives={() => handleViewAlternatives(tile)}
-                      onDetailsClick={handleDetailsClick}
-                      variant="compact"
-                    />
-                  ))}
-                  {filteredFlightTiles.length > 6 && (
-                    <p className="pt-2 text-xs text-muted-foreground">
-                      +{filteredFlightTiles.length - 6} more flights available
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p className="py-2 text-xs text-muted-foreground">No flights found yet.</p>
-              )}
-            </div>
-          )}
-
-          {/* Activities tiles */}
-          {isExpanded && (
-            <div className="px-6 pb-4 space-y-4">
-              {filteredActivityTiles.length > 0 ? (
-                <>
-                  {filteredActivityTiles.slice(0, 6).map((tile) => (
-                    <SuggestionCard
-                      key={tile.id}
-                      tile={tile}
-                      reasoning={tile.meta?.reasoning as string | undefined}
-                      isSaved={savedTileIds.has(tile.id)}
-                      onSave={handleSaveClick}
-                      onViewAlternatives={() => handleViewAlternatives(tile)}
-                      onDetailsClick={handleDetailsClick}
-                      variant="compact"
-                    />
-                  ))}
-                  {filteredActivityTiles.length > 6 && (
-                    <p className="pt-2 text-xs text-muted-foreground">
-                      +{filteredActivityTiles.length - 6} more activities available
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p className="py-2 text-xs text-muted-foreground">No activities found yet.</p>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Details modal */}
-        <TileDetailsModal
-          tile={selectedTile}
-          isOpen={selectedTile !== null}
-          isSaved={selectedTile ? savedTileIds.has(selectedTile.id) : false}
-          onClose={handleCloseModal}
-          onSaveClick={handleSaveClick}
-        />
-
-        {/* Alternatives modal (PLANNING mode) */}
-        {effectiveMode === 'planning' && (
-          <AlternativesModal
-            open={alternativesTile !== null}
-            onOpenChange={(open) => !open && handleCloseAlternatives()}
-            currentTile={alternativesTile}
-            alternatives={alternativesTile ? getAlternatives(alternativesTile) : []}
-            category={alternativesTile?.type === 'hotel' ? 'Hotel' : alternativesTile?.type === 'flight' ? 'Flight' : 'Activity'}
-            onSelect={handleSelectAlternative}
-          />
-        )}
-      </ModalErrorBoundary>
+      <BookingPlanningView
+        filteredStayTiles={filteredStayTiles}
+        filteredFlightTiles={filteredFlightTiles}
+        filteredActivityTiles={filteredActivityTiles}
+        tileArray={tileArray}
+        savedTileIds={savedTileIds}
+        isExpanded={isExpanded}
+        flightsExpanded={flightsExpanded}
+        hasDates={hasDates}
+        effectiveMode={effectiveMode}
+        onSaveTile={onSaveTile}
+        onOpenSheet={onOpenSheet}
+        onViewAlternatives={onViewAlternatives}
+        onOpenStaysSettings={onOpenStaysSettings}
+      />
     );
   }
 

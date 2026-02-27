@@ -9,6 +9,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# GIL-protected: dict operations are atomic on CPython.
+# Safe for concurrent access from asyncio event loop.
 _background_tasks: set[asyncio.Task] = set()
 
 

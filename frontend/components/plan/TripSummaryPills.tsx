@@ -14,6 +14,7 @@
 import { Activity, Calendar, DollarSign, MapPin, Plane, Users } from 'lucide-react';
 
 import { CoreChip } from '@/components/plan/CoreChip';
+import { canonicalCategoryKey, TIER1_CONSTRAINT_HINTS,toCategoryKey } from '@/lib/categoryNormalization';
 import {
   formatBudgetForPills,
   formatDateRangeForPills,
@@ -39,79 +40,6 @@ const NON_ACTIVITY_TYPES = new Set([
   'arrival', 'departure', 'check-in', 'check-out', 'check_in', 'check_out',
   'free_day', 'rest_day', 'buffer', 'decompression_buffer',
 ]);
-
-const CATEGORY_ALIAS: Record<string, string> = {
-  culture: 'cultural',
-  tours: 'tours',
-  attraction: 'tours',
-  tourist_attraction: 'tours',
-  point_of_interest: 'tours',
-  travel_agency: 'tours',
-  cultural_attraction: 'cultural',
-  museum: 'cultural',
-  art_gallery: 'cultural',
-  historical_landmark: 'cultural',
-  cultural_landmark: 'cultural',
-  monument: 'cultural',
-  plaza: 'cultural',
-  ruins: 'cultural',
-  fountain: 'cultural',
-  hindu_temple: 'temples',
-  temple: 'temples',
-  church: 'cultural',
-  place_of_worship: 'cultural',
-  synagogue: 'cultural',
-  mosque: 'cultural',
-  restaurant: 'food',
-  cafe: 'food',
-  bar: 'food',
-  bakery: 'food',
-  meal_takeaway: 'food',
-  meal_delivery: 'food',
-  park: 'nature',
-  natural_feature: 'nature',
-  national_park: 'nature',
-  campground: 'nature',
-  zoo: 'nature',
-  botanical_garden: 'nature',
-  shopping_mall: 'shopping',
-  market: 'shopping',
-  store: 'shopping',
-  clothing_store: 'shopping',
-  department_store: 'shopping',
-  beauty_salon: 'spa',
-  gym: 'spa',
-};
-
-const TIER1_CONSTRAINT_HINTS: Record<string, RegExp[]> = {
-  diving: [/\bdiv(e|ing|er|es)\b/i, /\bscuba\b/i, /\bno[- ]fly\b/i, /\bdecompression\b/i],
-  hiking: [/\bhik(e|ing)\b/i, /\btrek\b/i, /\btrail\b/i],
-  skiing: [/\bski(ing)?\b/i, /\bsnowboard(ing)?\b/i, /\baltitude\b/i],
-  cycling: [/\bcycl(e|ing)\b/i, /\bbik(e|ing)\b/i],
-  surfing: [/\bsurf(ing)?\b/i, /\bwave\b/i],
-  sailing: [/\bsail(ing)?\b/i, /\byacht(ing)?\b/i, /\bmarine\b/i],
-};
-
-function toCategoryKey(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  return normalized || null;
-}
-
-function canonicalCategoryKey(value: unknown): string | null {
-  const key = toCategoryKey(value);
-  if (!key) return null;
-  const mapped = CATEGORY_ALIAS[key] ?? key;
-  if (/(culture|cultural|heritage)/.test(key)) return 'cultural';
-  if (/(museum|landmark|historic|monument|plaza|fountain)/.test(key)) return 'cultural';
-  if (/(temple|church|worship|mosque|synagogue)/.test(key)) return 'temples';
-  if (/(restaurant|cafe|bar|bakery|food|meal)/.test(key)) return 'food';
-  if (/(park|garden|nature|zoo|camp)/.test(key)) return 'nature';
-  if (/(shop|store|market|mall)/.test(key)) return 'shopping';
-  if (/(spa|wellness|gym|beauty)/.test(key)) return 'spa';
-  if (/(tour|point_of_interest|visitor|travel_agency)/.test(key)) return 'tours';
-  return mapped;
-}
 
 function resolveBlockCategory(block: DayBlock): string | null {
   if (block.is_buffer) return null;

@@ -5,7 +5,7 @@
 - **Focus:** UX polish, cost optimization, and shipping speed
 - **Secondary:** post-demo delivery hardening across frontend/backend planner interactions
 - **Active work:** UX and interaction polish, cost-aware recommendation optimizations, and SSoT doc alignment in `docs/*`
-- **Active files:** `backend/app/planner/*`, `backend/app/schemas.py`, `backend/app/config.py`, `backend/app/crud_document.py`, `frontend/components/*`, `frontend/lib/*`, `frontend/components/map/*`, `docs/*`, `.claude/agents/*`, `.codex/agents/*`, `CLAUDE.md`
+- **Active files:** `backend/app/*`, `backend/tests/*`, `frontend/components/*`, `frontend/hooks/*`, `frontend/lib/*`, `docs/*`, `.claude/agents/*`, `.claude/commands/*`, `.codex/agents/*`, `.codex/skills/*`, `CLAUDE.md`
 - **Known broken:** none explicitly tracked in current working diff
 - **DO NOT touch this sprint:** `llm_factory.py` provider/model-routing contract, API/schema compatibility surfaces
 

@@ -318,6 +318,12 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   const isFlightsRefreshingRef = useRef(false);
 
   /**
+   * Timer for post-reset scroll/focus.
+   * Cleared on unmount to prevent state updates after unmount.
+   */
+  const scrollFocusTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  /**
    * Monotonic sequence used to discard stale settings refresh responses.
    */
   const refreshSeqRef = useRef(0);
@@ -437,7 +443,8 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     resetChat();
 
     // Step 4: Scroll to chat panel and focus input
-    setTimeout(() => {
+    if (scrollFocusTimerRef.current) clearTimeout(scrollFocusTimerRef.current);
+    scrollFocusTimerRef.current = setTimeout(() => {
       if (chatPanelContainerRef.current) {
         chatPanelContainerRef.current.scrollIntoView({
           behavior: 'smooth',
@@ -632,13 +639,16 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   );
 
   /**
-   * Cleanup generating timer on unmount.
+   * Cleanup generating timer and scroll/focus timer on unmount.
    * Prevents delayed state updates after unmount.
    */
   useEffect(() => {
     return () => {
       if (generatingTimerRef.current) {
         clearTimeout(generatingTimerRef.current);
+      }
+      if (scrollFocusTimerRef.current) {
+        clearTimeout(scrollFocusTimerRef.current);
       }
     };
   }, []);

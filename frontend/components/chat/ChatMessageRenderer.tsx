@@ -6,8 +6,6 @@ import React, { memo } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import type { ActivityColorEntry } from '@/hooks/useActivityColorMap';
-import { highlightActivityNames } from '@/lib/activityHighlighter';
 import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
 import { getSpecialistColorRgb } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
@@ -239,8 +237,6 @@ interface ChatMessageRendererProps {
   onRetry: (message: string) => void;
   /** Landing mode — center messages instead of left/right alignment */
   isLanding?: boolean;
-  /** Activity name -> specialist color map for highlighting */
-  colorMap: ActivityColorEntry[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -255,7 +251,6 @@ function ChatMessageRendererInner({
   lastUserMessage,
   onRetry,
   isLanding = false,
-  colorMap,
 }: ChatMessageRendererProps) {
   // Check if this is part of a split message (for styling and retry button logic)
   const isSplitMessage = m._isPartOfSplit;
@@ -322,7 +317,7 @@ function ChatMessageRendererInner({
             )}
           >
             <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-              {highlightActivityNames(preprocessSpecialistLinks(m.content), colorMap)}
+              {preprocessSpecialistLinks(m.content)}
             </Markdown>
             {/* Tier 11.12: Retry button for transient errors - only on last part of split messages */}
             {originalId.startsWith('a_err_') &&
@@ -365,8 +360,7 @@ function areChatMessagePropsEqual(
     prev.isLoading === next.isLoading &&
     prev.lastUserMessage === next.lastUserMessage &&
     prev.isLanding === next.isLanding &&
-    prev.index === next.index &&
-    prev.colorMap === next.colorMap
+    prev.index === next.index
   );
 }
 

@@ -77,7 +77,6 @@ def _activity_logistics_hash(state: GraphState) -> str:
             "adults": tp.adults,
             "children": tp.children,
             "activity_skill_level": trip_settings.activity_settings.skill_level,
-            "activity_categories": sorted(trip_settings.activity_settings.categories),
         }
     )
 
@@ -206,6 +205,21 @@ async def _resolve_tier2_experience_tiles(
         tile_scale = max(1.0, tiles_per_category / 4)  # n4 is baseline
         wait_budget_ms = int(base_budget_ms * tile_scale) + (category_scale - 1) * 1500
         wait_budget_seconds = wait_budget_ms / 1000.0
+
+        async def _background_prewarm() -> None:
+            try:
+                await generate_fn(
+                    destination=destination,
+                    categories=list(categories),
+                    month=month,
+                    budget=budget,
+                    tier1_specialists=tier1_specialists,
+                    tiles_per_category=tiles_per_category,
+                    state=None,
+                )
+            except Exception:
+                pass
+
         try:
             if wait_budget_seconds > 0:
                 experience_tiles = await asyncio.wait_for(
@@ -241,21 +255,6 @@ async def _resolve_tier2_experience_tiles(
                 "[VERIFY][TIER2] generation_timeout "
                 f"key={generation_key} budget_ms={wait_budget_ms}"
             )
-
-            async def _background_prewarm() -> None:
-                try:
-                    await generate_fn(
-                        destination=destination,
-                        categories=list(categories),
-                        month=month,
-                        budget=budget,
-                        tier1_specialists=tier1_specialists,
-                        tiles_per_category=tiles_per_category,
-                        state=None,
-                    )
-                except Exception:
-                    pass
-
             create_task_fn(_background_prewarm())
         except Exception as e:
             source = "fallback_timeout"
@@ -265,21 +264,6 @@ async def _resolve_tier2_experience_tiles(
             _debug_log(
                 f"[VERIFY][TIER2] generation_error key={generation_key} err={type(e).__name__}"
             )
-
-            async def _background_prewarm() -> None:
-                try:
-                    await generate_fn(
-                        destination=destination,
-                        categories=list(categories),
-                        month=month,
-                        budget=budget,
-                        tier1_specialists=tier1_specialists,
-                        tiles_per_category=tiles_per_category,
-                        state=None,
-                    )
-                except Exception:
-                    pass
-
             create_task_fn(_background_prewarm())
 
     elapsed_ms = int((time.monotonic() - started_at) * 1000)
@@ -883,10 +867,9 @@ async def _fetch_activities(
         # =====================================================================
         # ACTIVITIES CACHE CHECK
         # =====================================================================
-        # Build variant from active categories for cache key differentiation
-        cat_variant = (
-            "|".join(sorted(c.lower() for c in activity_categories)) if activity_categories else ""
-        )
+        # Category-agnostic cache: one API call per destination per date range.
+        # Categories are applied downstream by experience_generator / specialist dispatch.
+        cat_variant = ""
 
         cached_activities = await get_cached_tiles(
             db,
@@ -911,7 +894,15 @@ async def _fetch_activities(
         else:
             _debug_log(f"[TILE_CACHE] Activities MISS - fetching from {provider}")
 
-            # Build search context — scale activity count by trip length
+            # Build search context — scale activity count by trip length.
+            # Strip categories from activity_settings so the Google Places query
+            # is generic ("tourist attractions and activities in {dest}"), matching
+            # the category-agnostic cache key above.
+            _act_settings_for_search = (
+                {k: v for k, v in (activity_settings or {}).items() if k != "categories"}
+                if activity_settings
+                else None
+            )
             ctx = SearchContext(
                 destination=plan.destination,
                 origin=plan.origin,
@@ -925,7 +916,7 @@ async def _fetch_activities(
                 origin_iata=plan.origin_iata or None,
                 destination_iata=plan.destination_iata or None,
                 hotel_settings=hotel_settings or None,
-                activity_settings=activity_settings or None,
+                activity_settings=_act_settings_for_search,
                 flight_settings=flight_settings or None,
                 destination_lat=dest_lat,
                 destination_lng=dest_lng,

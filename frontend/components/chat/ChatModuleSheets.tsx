@@ -14,7 +14,6 @@ import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
 import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
 import { triggerRegeneration } from '@/hooks/usePreferenceAutoRegen';
-import { debugLog } from '@/lib/debug';
 import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
 import type {
@@ -82,7 +81,7 @@ export function ChatModuleSheets({
   onUpdateBookingTypes,
   onUpdateFlightSettings,
   onUpdateHotelSettings,
-  onUpdateActivitySettings,
+  onUpdateActivitySettings: _onUpdateActivitySettings,
   onOpenSheet,
   sendMessageCore,
   toast,
@@ -96,7 +95,6 @@ export function ChatModuleSheets({
   const [activityUserSaved, setActivityUserSaved] = useState(false);
   const sheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const patchDocument = useDocumentStore((s) => s.patchDocument);
-  const updateTripInputs = useDocumentStore((s) => s.updateTripInputs);
   const commitTripInputs = useDocumentStore((s) => s.commitTripInputs);
 
   useEffect(() => {
@@ -234,11 +232,10 @@ export function ChatModuleSheets({
               }
             : undefined;
 
-          onUpdateActivitySettings?.(settings);
-          if (nextBookingTypes) {
-            updateTripInputs({ booking_types: nextBookingTypes });
-          }
-
+          // Single atomic commit — commitTripInputs handles both the
+          // optimistic local store update and the backend PATCH in one call.
+          // Do NOT call onUpdateActivitySettings or updateTripInputs separately;
+          // those would trigger redundant local writes and a debounced PATCH.
           await commitTripInputs({
             activity_settings: {
               ...settings,
@@ -249,24 +246,6 @@ export function ChatModuleSheets({
           });
 
           toast('Activity preferences saved');
-          // === FULL DIAGNOSTIC — REMOVE AFTER FIX ===
-          const _diagDoc = useDocumentStore.getState().document;
-          const _diagPVS = _diagDoc?.plan_view_state;
-          const _diagTiles = _diagDoc?.tiles ? Object.keys(_diagDoc.tiles) : [];
-          const _diagActivityTiles = _diagTiles.filter(k => k.includes('activity'));
-          const _diagDayCards = _diagDoc?.day_cards?.length ?? 0;
-          debugLog(
-            '[DIAG:ACTIVITY_SAVE]',
-            `plan_view_state: ${_diagPVS}`,
-            `isS3: ${['S3_ITINERARY_READY', 'S3_EDITING'].includes(_diagPVS ?? '')}`,
-            `isS2: ${_diagPVS === 'S2_STRATEGY_READY'}`,
-            `saved_categories: ${JSON.stringify(settings.categories)}`,
-            `tiles_total: ${_diagTiles.length}`,
-            `activity_tiles: ${_diagActivityTiles.length} ${JSON.stringify(_diagActivityTiles)}`,
-            `day_cards: ${_diagDayCards}`,
-            `will_trigger_path: ${['S3_ITINERARY_READY', 'S3_EDITING'].includes(_diagPVS ?? '') ? 'triggerRegeneration' : _diagPVS === 'S2_STRATEGY_READY' ? 'GENERATE_PLAN_NOW' : 'NONE'}`,
-          );
-          // === END DIAGNOSTIC ===
           // Read CURRENT planViewState from store (prop may be stale after PATCH)
           const currentPVS = useDocumentStore.getState().document?.plan_view_state;
           const isS3Activities = ['S3_ITINERARY_READY', 'S3_EDITING'].includes(currentPVS ?? '');

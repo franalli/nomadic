@@ -180,6 +180,55 @@ def resolve_schema_refs(schema: dict) -> dict:
     return resolved
 
 
+# Keys accepted by Gemini's function-calling schema format.
+# Sourced from langchain_google_genai._function_utils._ALLOWED_SCHEMA_FIELDS_SET.
+_GEMINI_ALLOWED_SCHEMA_KEYS = frozenset(
+    {
+        "type",
+        "type_",
+        "description",
+        "enum",
+        "format",
+        "items",
+        "properties",
+        "required",
+        "nullable",
+        "anyOf",
+        "default",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minItems",
+        "maxItems",
+        "title",
+    }
+)
+
+
+def strip_unsupported_schema_keys(node: object) -> object:
+    """Recursively strip JSON Schema keys unsupported by Gemini function calling.
+
+    Gemini's schema format accepts a strict subset of JSON Schema. Keys like
+    ``additionalProperties`` and ``parameters`` cause SDK warnings and are
+    silently dropped. Strip them proactively so structured output doesn't rely
+    on Gemini's lenient parsing.
+
+    Safe to compose with ``resolve_schema_refs()``:
+        ``strip_unsupported_schema_keys(resolve_schema_refs(schema))``
+    """
+    if isinstance(node, dict):
+        return {
+            k: strip_unsupported_schema_keys(v)
+            for k, v in node.items()
+            if k in _GEMINI_ALLOWED_SCHEMA_KEYS
+        }
+    if isinstance(node, list):
+        return [strip_unsupported_schema_keys(item) for item in node]
+    return node
+
+
 def extract_json_content(response: object) -> str:
     """
     Extract JSON string from a LangChain AIMessage response.

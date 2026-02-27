@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.planner.hashing import make_cache_key
+from app.planner.llm_factory import resolve_schema_refs, strip_unsupported_schema_keys
 from app.planner.specialist_registry import get as get_specialist_config
 from app.services.cache_core import MemoryCache
 
@@ -22,6 +23,12 @@ class FeasibilityCheck(BaseModel):
 
     possible: bool
     reason: str
+
+
+# Pre-resolved flat schema for Gemini-compatible structured output.
+_FEASIBILITY_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
+    resolve_schema_refs(FeasibilityCheck.model_json_schema())
+)
 
 
 async def _check_feasibility_llm(topic: str, destination: str) -> FeasibilityCheck:
@@ -43,7 +50,7 @@ async def _check_feasibility_llm(topic: str, destination: str) -> FeasibilityChe
         )
 
         structured_llm = llm.with_structured_output(
-            FeasibilityCheck, include_raw=True, method="function_calling"
+            dict(_FEASIBILITY_FLAT_SCHEMA), include_raw=True, method="function_calling"
         )
 
         prompt = f"""Is {topic} activity possible in {destination}?
@@ -57,9 +64,18 @@ Rules:
 Be strict. Landlocked cities cannot have diving. Alpine towns without coast cannot have diving."""
 
         result = await structured_llm.ainvoke(prompt)
-        parsed = result["parsed"]
-        if parsed is None:
-            raise ValueError(f"Structured output returned None for {topic} in {destination}")
+        if isinstance(result, dict) and "parsed" in result:
+            parsed = result["parsed"]
+            if parsed is None:
+                raise ValueError(f"Structured output returned None for {topic} in {destination}")
+        elif hasattr(result, "model_fields"):
+            parsed = result
+        else:
+            raise ValueError(f"Unexpected structured output type: {type(result).__name__}")
+
+        # Rehydrate dict → Pydantic (Gemini returns dict when using dict schema)
+        if isinstance(parsed, dict):
+            parsed = FeasibilityCheck.model_validate(parsed)
 
         _debug_log(
             f"[FEASIBILITY_LLM] {topic} in {destination}: "
@@ -78,6 +94,17 @@ _feasibility_cache: MemoryCache = MemoryCache(maxsize=256, ttl=86400)
 _feasibility_inflight: dict[str, asyncio.Future] = {}
 
 
+def cancel_feasibility_inflight() -> int:
+    """Cancel all inflight feasibility futures. Returns count cancelled."""
+    count = 0
+    for _key, fut in list(_feasibility_inflight.items()):
+        if not fut.done():
+            fut.cancel()
+            count += 1
+    _feasibility_inflight.clear()
+    return count
+
+
 async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
     """
     Cached LLM feasibility check with singleflight deduplication.
@@ -93,6 +120,13 @@ async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
 
     if cache_key in _feasibility_inflight:
         return await _feasibility_inflight[cache_key]
+
+    # Skip dedup under pressure to avoid unbounded memory growth
+    if len(_feasibility_inflight) > 200:
+        result = await _check_feasibility_llm(topic, destination)
+        pair = (result.possible, result.reason)
+        _feasibility_cache.set(cache_key, pair)
+        return pair
 
     # No await between here and registering the future — asyncio's cooperative
     # scheduling makes this check-and-set atomic. If you add an await here,

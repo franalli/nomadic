@@ -64,25 +64,37 @@ export async function getSignedGooglePlacesPhotoProxyUrl(
   if (inflight) return inflight;
 
   const pending = (async () => {
-    const params = new URLSearchParams({
-      name: normalized,
-      max_width: String(width),
-      max_height: String(height),
-      ttl_seconds: '300',
-    });
-    const res = await apiFetch(`/api/media/google-places-photo-url?${params.toString()}`, {
-      cache: 'no-store',
-    });
-    if (!res.ok) return undefined;
+    const fetchSignedUrl = async (): Promise<{ url?: string; status: number }> => {
+      const params = new URLSearchParams({
+        name: normalized,
+        max_width: String(width),
+        max_height: String(height),
+        ttl_seconds: '300',
+      });
+      const res = await apiFetch(`/api/media/google-places-photo-url?${params.toString()}`, {
+        cache: 'no-store',
+      });
+      if (!res.ok) return { status: res.status };
 
-    const payload = await res.json() as SignedGooglePlacesPhotoResponse;
-    const rawUrl = typeof payload.url === 'string' ? payload.url.trim() : '';
-    if (!rawUrl) return undefined;
-    const resolvedUrl = rawUrl.startsWith('http')
-      ? rawUrl
-      : `${API_BASE}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`;
-    signedPhotoUrlCache.set(cacheKey, resolvedUrl);
-    return resolvedUrl;
+      const payload = await res.json() as SignedGooglePlacesPhotoResponse;
+      const rawUrl = typeof payload.url === 'string' ? payload.url.trim() : '';
+      if (!rawUrl) return { status: res.status };
+      const resolved = rawUrl.startsWith('http')
+        ? rawUrl
+        : `${API_BASE}${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`;
+      return { url: resolved, status: res.status };
+    };
+
+    let result = await fetchSignedUrl();
+
+    // Retry once on 401 — auth/CSRF token may have expired on the signing endpoint
+    if (result.status === 401) {
+      result = await fetchSignedUrl();
+    }
+
+    if (!result.url) return undefined;
+    signedPhotoUrlCache.set(cacheKey, result.url);
+    return result.url;
   })()
     .catch(() => undefined)
     .finally(() => {

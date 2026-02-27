@@ -106,18 +106,25 @@ export function useChatEffects(params: UseChatEffectsParams): void {
 
   // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
   useEffect(() => {
+    let scrollTimer: ReturnType<typeof setTimeout> | undefined;
     if (!prevIsLoadingRef.current && isLoading) {
       // Scroll to bottom when loading STARTS so Logic Terminal is visible
       scrollToBottom(true);
     } else if (prevIsLoadingRef.current && !isLoading) {
-      // Reset and force scroll to bottom when response finishes
+      // Reset and force scroll to bottom when response finishes.
+      // Fire twice: immediately for content already rendered, and after
+      // a short delay to catch any post-render layout shifts.
       scrollToBottom(true);
       scrollPanelIntoView();
+      scrollTimer = setTimeout(() => scrollToBottom(true), 150);
       requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
     }
     prevIsLoadingRef.current = isLoading;
+    return () => {
+      if (scrollTimer) clearTimeout(scrollTimer);
+    };
   }, [isLoading, scrollToBottom, scrollPanelIntoView, inputRef]);
 
   // Cleanup timeouts on unmount

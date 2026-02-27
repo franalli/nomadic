@@ -34,7 +34,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.planner.hashing import make_cache_key
-from app.planner.llm_factory import get_llm_by_model
+from app.planner.llm_factory import (
+    get_llm_by_model,
+    resolve_schema_refs,
+    strip_unsupported_schema_keys,
+)
 from app.services.cache_core import MemoryCache, l2_upsert
 from app.services.task_tracker import track as _track_task
 
@@ -262,6 +266,12 @@ class ExperienceOutput(BaseModel):
     """Structured output from experience generation LLM call."""
 
     activities: list[ExperienceTile] = Field(description="List of generated experience activities")
+
+
+# Pre-resolved flat schema for Gemini-compatible structured output.
+_EXPERIENCE_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
+    resolve_schema_refs(ExperienceOutput.model_json_schema())
+)
 
 
 # =============================================================================
@@ -502,19 +512,27 @@ async def generate_single_category(
 
         llm = get_llm_by_model(settings.experience_model, temperature=0.3, max_tokens=max_tokens)
         structured_llm = llm.with_structured_output(
-            ExperienceOutput, include_raw=True, method="function_calling"
+            dict(_EXPERIENCE_FLAT_SCHEMA), include_raw=True, method="function_calling"
         )
 
         user_prompt = _build_user_prompt(
             destination, [category], month, budget, tier1_specialists, tiles_per_category
         )
 
-        result = await structured_llm.ainvoke(
-            [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=user_prompt),
-            ]
-        )
+        for _attempt in range(2):
+            try:
+                result = await structured_llm.ainvoke(
+                    [
+                        SystemMessage(content=SYSTEM_PROMPT),
+                        HumanMessage(content=user_prompt),
+                    ]
+                )
+                break
+            except Exception:
+                if _attempt == 0:
+                    await asyncio.sleep(1)
+                    continue
+                raise
 
         if isinstance(result, dict) and "parsed" in result:
             parsed: ExperienceOutput = result["parsed"]
@@ -530,6 +548,11 @@ async def generate_single_category(
         from app.planner.llm_factory import extract_token_usage
 
         token_usage = extract_token_usage(raw, model=settings.experience_model)
+
+        # Rehydrate dict → Pydantic when structured output returns a dict (Gemini path)
+        if isinstance(parsed, dict):
+            parsed = ExperienceOutput.model_validate(parsed)
+
         duration_ms = int((time.time() - start_t) * 1000)
         logger.info(
             f"[EXPERIENCE] Generated {len(parsed.activities)} tiles in {duration_ms}ms"
@@ -798,29 +821,84 @@ async def _generate_experiences_impl(
 
         logger.info("[EXPERIENCE] L2 cache MISS")
 
-        # Check for incremental generation opportunity (state metadata)
+        # ── Per-category cache recovery ──────────────────────────────────
+        # Composite key missed, but individual categories may be cached from
+        # prior single-category or smaller-composite calls. Reuse them to
+        # avoid full regeneration when user adds a new category.
+        cached_tiles_by_cat: dict[str, list[dict]] = {}
+        for i, cat in enumerate(categories):
+            single_key = _single_category_cache_key(destination, cat, month, tiles_per_category)
+            per_cat_cached = _mem.get(single_key)
+            if per_cat_cached is not None:
+                try:
+                    tile_dicts = _cached_single_category_to_tiles(
+                        per_cat_cached,
+                        destination,
+                        base_index=i * tiles_per_category,
+                    )
+                    cached_tiles_by_cat[cat] = tile_dicts
+                except (ValidationError, TypeError, ValueError):
+                    pass  # stale payload — regenerate
+
+        # Also try L2 for categories not found in L1
+        cats_missing_l1 = [c for c in categories if c not in cached_tiles_by_cat]
+        if cats_missing_l1:
+            try:
+                async with async_session_factory() as db:
+                    for cat in cats_missing_l1:
+                        cat_idx = categories.index(cat)
+                        single_key = _single_category_cache_key(
+                            destination, cat, month, tiles_per_category
+                        )
+                        l2_single = await _get_cached(
+                            db, single_key, cache_type="experience_single"
+                        )
+                        if l2_single is not None:
+                            try:
+                                tile_dicts = _cached_single_category_to_tiles(
+                                    l2_single,
+                                    destination,
+                                    base_index=cat_idx * tiles_per_category,
+                                )
+                                cached_tiles_by_cat[cat] = tile_dicts
+                            except (ValidationError, TypeError, ValueError):
+                                pass
+            except Exception as e:
+                logger.warning(f"[EXPERIENCE] Per-category L2 recovery failed: {e}")
+
+        if cached_tiles_by_cat:
+            logger.info(
+                f"[EXPERIENCE] Per-category cache recovery: "
+                f"{len(cached_tiles_by_cat)}/{len(categories)} categories from cache"
+            )
+
+        # ── Incremental generation (state metadata + per-category cache) ──
         new_cats = list(categories)  # Default: generate all categories
-        existing_tiles_by_cat = {}
+        existing_tiles_by_cat: dict[str, list[dict]] = {**cached_tiles_by_cat}
 
         if state is not None and hasattr(state, "metadata"):
             previously_generated = state.metadata.get("generated_tier2_categories", {})
-            existing_tiles_by_cat = previously_generated.get(destination, {})
+            state_tiles = previously_generated.get(destination, {})
+            # Merge state tiles (lower priority than cache)
+            for cat, tiles in state_tiles.items():
+                if cat not in existing_tiles_by_cat:
+                    existing_tiles_by_cat[cat] = tiles
 
-            # Diff to find NEW categories
-            new_cats = [cat for cat in categories if cat not in existing_tiles_by_cat]
+        # Diff to find NEW categories (not in any cache)
+        new_cats = [cat for cat in categories if cat not in existing_tiles_by_cat]
 
-            if new_cats != list(categories):
-                logger.info(
-                    f"[EXPERIENCE] Incremental generation: {len(new_cats)} new categories "
-                    f"(already have {len(categories) - len(new_cats)})"
-                )
+        if new_cats != list(categories) and existing_tiles_by_cat:
+            logger.info(
+                f"[EXPERIENCE] Incremental generation: {len(new_cats)} new categories "
+                f"(already have {len(categories) - len(new_cats)})"
+            )
 
-        # If all categories exist in state metadata, merge and return
+        # If all categories exist in cache/state, merge and return
         if not new_cats and existing_tiles_by_cat:
             all_tiles = []
             for cat in categories:
                 all_tiles.extend(existing_tiles_by_cat.get(cat, []))
-            logger.info(f"[EXPERIENCE] All categories cached in state: {len(all_tiles)} tiles")
+            logger.info(f"[EXPERIENCE] All categories cached: {len(all_tiles)} tiles")
             # Cache composite result
             _mem.set(cache_key, all_tiles)
             _set_tier2_generation_source(state, "cache")
@@ -846,7 +924,7 @@ async def _generate_experiences_impl(
                     settings.experience_model, temperature=0.3, max_tokens=max_tokens
                 )
                 structured_llm = llm.with_structured_output(
-                    ExperienceOutput, include_raw=True, method="function_calling"
+                    dict(_EXPERIENCE_FLAT_SCHEMA), include_raw=True, method="function_calling"
                 )
 
                 user_prompt = _build_user_prompt(
@@ -870,6 +948,10 @@ async def _generate_experiences_impl(
                     raw = None
                 else:
                     raise ValueError(f"Unexpected structured output type: {type(result).__name__}")
+
+                # Rehydrate dict → Pydantic when structured output returns a dict (Gemini path)
+                if isinstance(parsed, dict):
+                    parsed = ExperienceOutput.model_validate(parsed)
 
                 from app.planner.llm_factory import extract_token_usage
 
@@ -941,7 +1023,7 @@ async def _generate_experiences_impl(
         task = asyncio.create_task(_background_prefetch())
         _track_task(task)
 
-        # Update state metadata with new tiles by category
+        # Update state metadata with new + recovered tiles by category
         if state is not None and hasattr(state, "metadata"):
             if "generated_tier2_categories" not in state.metadata:
                 state.metadata["generated_tier2_categories"] = {}
@@ -949,6 +1031,11 @@ async def _generate_experiences_impl(
                 state.metadata["generated_tier2_categories"][destination] = {}
 
             dest_tiles = state.metadata["generated_tier2_categories"][destination]
+
+            # Persist per-category cache recoveries so subsequent turns see them
+            for cat, tiles in existing_tiles_by_cat.items():
+                if cat not in dest_tiles and tiles:
+                    dest_tiles[cat] = tiles
 
             # Track new tiles by category
             for cat in new_cats:

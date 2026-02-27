@@ -25,6 +25,7 @@ from sqlalchemy import select, update
 
 from app.config import settings
 from app.planner.hashing import make_cache_key
+from app.planner.llm_factory import resolve_schema_refs, strip_unsupported_schema_keys
 from app.services.cache_core import MemoryCache, l2_upsert
 from app.services.specialist_cache import _month_from_date
 
@@ -56,6 +57,26 @@ _browse_cache = MemoryCache(maxsize=L1_MAX_SIZE, ttl=L1_TTL_SECONDS)
 _browse_inflight_lock = asyncio.Lock()
 _browse_inflight_tasks: dict[str, asyncio.Task[list[dict[str, Any]]]] = {}
 
+
+async def cancel_browse_inflight() -> int:
+    """Cancel all inflight browse tasks. Returns count cancelled."""
+    async with _browse_inflight_lock:
+        count = 0
+        for _key, task in list(_browse_inflight_tasks.items()):
+            if not task.done():
+                task.cancel()
+                count += 1
+        _browse_inflight_tasks.clear()
+    return count
+
+
+def clear_browse_cache() -> int:
+    """Clear browse L1 cache. Returns count cleared."""
+    count = _browse_cache.clear()
+    logger.info(f"[BROWSE_CACHE] Cleared ({count} entries)")
+    return count
+
+
 _PRICE_BAND_TO_LEVEL: Dict[str, int] = {
     "Free": 0,
     "$": 1,
@@ -74,6 +95,11 @@ class _BrowseEstimateItem(BaseModel):
 class _BrowseEstimateBatch(BaseModel):
     items: List[_BrowseEstimateItem] = Field(default_factory=list)
 
+
+# Pre-resolved flat schema for Gemini-compatible structured output.
+_BROWSE_ESTIMATE_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
+    resolve_schema_refs(_BrowseEstimateBatch.model_json_schema())
+)
 
 # _month_from_date imported from app.services.specialist_cache
 
@@ -199,7 +225,7 @@ async def _enrich_tiles_with_llm(
 
         llm = get_llm_by_model(settings.router_model, temperature=0, max_tokens=900)
         structured_llm = llm.with_structured_output(
-            _BrowseEstimateBatch,
+            dict(_BROWSE_ESTIMATE_FLAT_SCHEMA),
             include_raw=True,
             method="function_calling",
         )
@@ -235,10 +261,9 @@ async def _enrich_tiles_with_llm(
                     parsed = result.get("parsed")
                     if parsed is None:
                         raise ValueError("Structured output returned parsed=None")
-                    if not isinstance(parsed, _BrowseEstimateBatch):
-                        raise ValueError(
-                            f"Unexpected structured output type: {type(parsed).__name__}"
-                        )
+                    # Rehydrate dict → Pydantic (Gemini returns dict when using dict schema)
+                    if isinstance(parsed, dict):
+                        parsed = _BrowseEstimateBatch.model_validate(parsed)
                     estimates = parsed.items
                 elif isinstance(result, _BrowseEstimateBatch):
                     estimates = result.items

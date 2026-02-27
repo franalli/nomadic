@@ -74,6 +74,11 @@ export function useChatScrolling({
     // Don't auto-scroll if user has scrolled up, unless forced
     if (!force && isUserScrolledUpRef.current) return;
 
+    // Reset scroll-up tracking on force so subsequent soft scrolls also work
+    if (force) {
+      isUserScrolledUpRef.current = false;
+    }
+
     const container = scrollContainerRef.current;
     if (!container) return;
 

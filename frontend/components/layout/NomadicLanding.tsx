@@ -11,20 +11,14 @@ import { MobileChatInput } from '@/components/chat/MobileChatInput';
 import { TripStatusBar } from '@/components/chat/TripStatusBar';
 import { FloatingBuildButton } from '@/components/layout/FloatingBuildButton';
 import {
-  type PlanResultPayload,
   useBranchManager,
 } from '@/components/layout/hooks/useBranchManager';
 import { useItineraryGeneration } from '@/components/layout/hooks/useItineraryGeneration';
 import { useLandingDerived } from '@/components/layout/hooks/useLandingDerived';
 import { useLandingEffects } from '@/components/layout/hooks/useLandingEffects';
+import { useLandingHandlers } from '@/components/layout/hooks/useLandingHandlers';
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
-import {
-  type ChangeReceiptData,
-  detectChangedFieldNames,
-  detectTopicsFromMessage,
-  RESET_BUTTON_COOLDOWN_MS,
-} from '@/components/layout/LandingHelpers';
 import { LandingSheets } from '@/components/layout/LandingSheets';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
@@ -36,15 +30,11 @@ import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { startPreferenceAutoRegen } from '@/hooks/usePreferenceAutoRegen';
 import { useSheetManager } from '@/hooks/useSheetManager';
 import { useViewNavigationLight } from '@/hooks/useViewNavigation';
-import { debugLog } from '@/lib/debug';
 import { DS } from '@/lib/design-system';
 import { cn, formatDateForDisplay } from '@/lib/utils';
-import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import { useMobileNavStore } from '@/state/mobileNavStore';
-import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
-import type { Tile } from '@/types/tile';
 
 export function NomadicLanding() {
   // ─── Viewport & mobile nav ───────────────────────────────────────────────
@@ -85,38 +75,35 @@ export function NomadicLanding() {
     }))
   );
 
-  // Plan rendering fields (split from trip-input slice to reduce shallow-compare churn)
-  const {
-    docPlanState,
-    docDestinationCard,
-    docPlanViewState,
-    docStrategySections,
-    docTiles,
-    docExecutedTopics,
-    docPendingTopics,
-    docDayCards,
-    docGeneration,
-    docOpenDecisions,
-    docItineraryOverview,
-    docItineraryAssumptions,
-    docNeedsRefresh,
-    docCanExpand,
-  } = useDocumentStore(
+  // Layout state — rarely changes
+  const { docPlanViewState, docPlanState, docDestinationCard } = useDocumentStore(
     useShallow((s) => ({
+      docPlanViewState: s.document?.plan_view_state,
       docPlanState: s.document?.plan_state,
       docDestinationCard: s.document?.destination_card,
-      docPlanViewState: s.document?.plan_view_state,
+    }))
+  );
+
+  // Content state — changes on plan updates
+  const { docStrategySections, docTiles, docDayCards, docExecutedTopics, docPendingTopics } = useDocumentStore(
+    useShallow((s) => ({
       docStrategySections: s.document?.strategy_sections,
       docTiles: s.document?.tiles,
+      docDayCards: s.document?.day_cards,
       docExecutedTopics: s.document?.executed_strategy_topics,
       docPendingTopics: s.document?.pending_strategy_topics,
-      docDayCards: s.document?.day_cards,
+    }))
+  );
+
+  // Status state — changes frequently
+  const { docGeneration, docNeedsRefresh, docCanExpand, docOpenDecisions, docItineraryOverview, docItineraryAssumptions } = useDocumentStore(
+    useShallow((s) => ({
       docGeneration: s.generation,
+      docNeedsRefresh: s.document?.needs_refresh,
+      docCanExpand: s.document?.can_expand_to_itinerary,
       docOpenDecisions: s.document?.open_decisions,
       docItineraryOverview: s.document?.itinerary_overview,
       docItineraryAssumptions: s.document?.itinerary_assumptions,
-      docNeedsRefresh: s.document?.needs_refresh,
-      docCanExpand: s.document?.can_expand_to_itinerary,
     }))
   );
 
@@ -140,13 +127,7 @@ export function NomadicLanding() {
 
   // ─── Local state ─────────────────────────────────────────────────────────
 
-  const receiptDataRef = useRef<ChangeReceiptData | null>(null);
-  const previousTripInputsRef = useRef<DocumentTripInputs | null>(null);
   const [userRequestedGeneration, setUserRequestedGeneration] = useState(false);
-  const [isFinalizing, setIsFinalizing] = useState(false);
-  const [gearActivitiesSheetOpen, setGearActivitiesSheetOpen] = useState(false);
-  const [gearStaysSheetOpen, setGearStaysSheetOpen] = useState(false);
-  const [gearFlightsSheetOpen, setGearFlightsSheetOpen] = useState(false);
 
   // State managed by effects but owned here (avoids circular deps with derived)
   const [hasEverHadPlan, setHasEverHadPlan] = useState(false);
@@ -167,9 +148,6 @@ export function NomadicLanding() {
   const [uiGeneration, setUiGeneration] = useState<GenerationState | null>(null);
   const [chatKey, setChatKey] = useState(0);
   const chatPanelContainerRef = useRef<HTMLDivElement | null>(null);
-  const [isResettingSession, setIsResettingSession] = useState(false);
-  const resetInFlightRef = useRef(false);
-  const resetCooldownUntilRef = useRef(0);
 
   // Local booking settings
   const {
@@ -318,127 +296,52 @@ export function NomadicLanding() {
     tripInputsStartDate: tripInputs.start_date,
   });
 
-  // ─── Event handlers ──────────────────────────────────────────────────────
+  // ─── Event handlers (extracted to useLandingHandlers) ────────────────────
 
-  const handleStartNewSession = useCallback(async () => {
-    const now = Date.now();
-    if (resetInFlightRef.current || now < resetCooldownUntilRef.current) return;
-    resetInFlightRef.current = true;
-    setIsResettingSession(true);
-    debugLog('[handleStartNewSession] Reset triggered');
-    try {
-      if (finalizeTimerRef.current) {
-        clearTimeout(finalizeTimerRef.current);
-        finalizeTimerRef.current = null;
-      }
-      storeReset();
-      useChatStore.getState().resetChat();
-      setUiGeneration(null);
-      receiptDataRef.current = null;
-      previousTripInputsRef.current = null;
-      setHasEverHadPlan(false);
-      setUserRequestedGeneration(false);
-      setLocalPendingTopics([]);
-      setDestinationImageUrl(null);
-      setIsFinalizing(false);
-      setGearActivitiesSheetOpen(false);
-      setGearStaysSheetOpen(false);
-      setGearFlightsSheetOpen(false);
-      closeSheet();
-      if (!isDesktop) mobileNavReset();
-      await branchManagerStartNewSession();
-      debugLog('[handleStartNewSession] Reset complete');
-    } catch (error) {
-      console.error('[handleStartNewSession] Reset failed:', error);
-    } finally {
-      resetInFlightRef.current = false;
-      resetCooldownUntilRef.current = Date.now() + RESET_BUTTON_COOLDOWN_MS;
-      setIsResettingSession(false);
-    }
-  }, [branchManagerStartNewSession, closeSheet, finalizeTimerRef, storeReset, isDesktop, mobileNavReset]);
-
-  const handleSaveTilePreference = useCallback(
-    (tile: Tile) => { toggleTilePreference(tile.id); },
-    [toggleTilePreference]
-  );
-  const handleOpenGearActivities = useCallback(() => setGearActivitiesSheetOpen(true), []);
-  const handleOpenGearStays = useCallback(() => setGearStaysSheetOpen(true), []);
-  const handleOpenGearFlights = useCallback(() => setGearFlightsSheetOpen(true), []);
-
-  const handleGeneratePlanStartWithSnapshot = useCallback(() => {
-    previousTripInputsRef.current = storeTripInputs ? { ...storeTripInputs } : null;
-    setUserRequestedGeneration(true);
-    handleGeneratePlanStart();
-    navigateTo('plan');
-    if (!isDesktop) mobileNavigateToPlan();
-  }, [storeTripInputs, handleGeneratePlanStart, navigateTo, isDesktop, mobileNavigateToPlan]);
-
-  const handlePlanResultWithReceipt = useCallback(
-    (result: PlanResultPayload) => {
-      handlePlanResult(result);
-      const newInputs = result.response?.document?.trip_inputs ?? null;
-      const changedFields = detectChangedFieldNames(previousTripInputsRef.current, newInputs);
-      if (changedFields.length > 0) {
-        receiptDataRef.current = {
-          type: changedFields.length === 1 ? 'partial' : 'updated',
-          fields: changedFields,
-          canUndo: true,
-        };
-      }
-    },
-    [handlePlanResult]
-  );
-
-  const handleUserMessageSubmit = useCallback(
-    (message: string) => {
-      if (!hasEverHadPlan) return;
-      const detectedTopics = detectTopicsFromMessage(message);
-      const existingTopics = new Set(
-        useDocumentStore.getState().document?.executed_strategy_topics ?? []
-      );
-      const newTopics = detectedTopics.filter((t) => !existingTopics.has(t));
-      if (newTopics.length > 0) {
-        setLocalPendingTopics((prev) =>
-          Array.from(new Map([...prev, ...newTopics].map((t) => [t, true])).keys())
-        );
-      }
-    },
-    [hasEverHadPlan]
-  );
-
-  const handleBuildPlan = useCallback(() => {
-    chatPanelRef.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
-  }, []);
-
-  const handleFinalizePlan = useCallback(() => {
-    if (finalizeTimerRef.current) {
-      clearTimeout(finalizeTimerRef.current);
-      finalizeTimerRef.current = null;
-    }
-    setIsFinalizing(true);
-    finalizeTimerRef.current = setTimeout(() => {
-      finalizeTimerRef.current = null;
-      finalizePlan();
-      navigateTo('book');
-      setIsFinalizing(false);
-    }, 1500);
-  }, [finalizePlan, navigateTo, finalizeTimerRef]);
-
-  const handleMobileSend = useCallback((message: string) => {
-    if (!chatPanelRef.current?.sendMessage) {
-      debugLog('[MobileChatInput] ChatPanel ref not ready');
-      return;
-    }
-    chatPanelRef.current.sendMessage(message);
-  }, []);
-
-  const handleMobileStopStreaming = useCallback(() => {
-    chatPanelRef.current?.stopStreaming?.();
-  }, []);
-
-  const handleSendMessage = useCallback((msg: string) => {
-    chatPanelRef.current?.sendMessage?.(msg);
-  }, []);
+  const {
+    handleStartNewSession,
+    handleSaveTilePreference,
+    handleOpenGearActivities,
+    handleOpenGearStays,
+    handleOpenGearFlights,
+    handleGeneratePlanStartWithSnapshot,
+    handlePlanResultWithReceipt,
+    handleUserMessageSubmit,
+    handleBuildPlan,
+    handleFinalizePlan,
+    handleMobileSend,
+    handleMobileStopStreaming,
+    handleSendMessage,
+    isResettingSession,
+    isFinalizing,
+    gearActivitiesSheetOpen,
+    gearStaysSheetOpen,
+    gearFlightsSheetOpen,
+    setGearActivitiesSheetOpen,
+    setGearStaysSheetOpen,
+    setGearFlightsSheetOpen,
+  } = useLandingHandlers({
+    storeReset,
+    toggleTilePreference,
+    storeTripInputs,
+    closeSheet,
+    mobileNavReset,
+    mobileNavigateToPlan,
+    navigateTo,
+    finalizePlan,
+    branchManagerStartNewSession,
+    handlePlanResult,
+    handleGeneratePlanStart,
+    hasEverHadPlan,
+    setHasEverHadPlan,
+    setLocalPendingTopics,
+    setDestinationImageUrl,
+    finalizeTimerRef,
+    chatPanelRef,
+    setUiGeneration,
+    setUserRequestedGeneration,
+    setChatKey,
+  });
 
   // ─── JSX ─────────────────────────────────────────────────────────────────
 

@@ -49,11 +49,15 @@ frontend/
                      TripStatusBar, MobileChatInput,
                      ChatInputBar, ChatInputHandler, ChatMessageList,
                      ChatMessageRenderer, ChatModuleSheets,
+                     ChatStatusHeader,
                      ChatSuggestionBar, ChatSuggestionChips,
                      suggestion-actions.ts
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
                      PlanHeader, NextStepBar, planStateHelpers,
                      CoreChip, UnifiedChipRow, TripHealthBar, TripSummaryPills,
+                     BookingPlanningView, ChipGroup, ChipScrollContainer,
+                     FullDensityTimeline, TimelineBlockList,
+                     TimelineDayCard, useTimelineBufferLogic,
                      ItineraryProgressIndicator, OriginPromptCard,
                      DestinationIntelCard, DestinationMapPlaceholder,
                      PlanDensityViews, PlanFullDensityView, PlanTimelineSection,
@@ -64,7 +68,7 @@ frontend/
                      S2AgentCard, S2AgentCardExpanded, S2LocalIntelSection,
                      S2StrategyStack, S2TopicConfig,
                      StrategyHeroAccordion, StrategyHeroCompactSheet, StrategyHeroHeroSheet,
-                     StrategyHeroTISectionsA, StrategyHeroTISectionsB,
+                     StrategyHeroContent, StrategyHeroTISectionsA, StrategyHeroTISectionsB,
                      StrategyHeroTravelIntelligence, StrategyHeroUtils
       sheets/      → BaseSheet, DestinationSheet, OriginSheet, DatesSheet,
                      TravelersSheet, BudgetSheet, FlightsSheet, StaysSheet,
@@ -72,17 +76,20 @@ frontend/
       timeline/    → InlineDatePrompt, TimelineSkeleton,
                      DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot,
                      ItineraryDndWrapper, RichBlockRenderer, useTimelineFillDay
-        blocks/    → ActivityMiniCard, LogisticsBlock, SafetyBlock, GhostSlot,
+        blocks/    → ActivityMiniCard, ActivityCardActions, ActivityCardMeta,
+                     ActivityCardPhoto, LogisticsBlock, SafetyBlock, GhostSlot,
                      FreeDayCard, HoldToDeleteButton, PreferenceAttributionBadge, types.ts
-      tiles/       → SuggestionCard
+      tiles/       → SuggestionCard, SuggestionCardContent
     tiles/         → TileCard, MiniCard, TileDetailsModal, TaxesFeesTooltip
+                     MiniCardContent, TileCardContent, TileDetailsInfo
     ui/            → Shared UI primitives
     layout/        → SplitLayoutView, NomadicLanding, LandingHelpers, LandingSheets,
                      FloatingBuildButton, MobileSwipeLayout, MobileModeHeader,
                      hooks/ (useSessionHydration, useBranchManager, useBranchState,
                              useItineraryGeneration, useLandingDerived, useLandingEffects,
-                             useTileSelection, useTripInputsEditor, useLocalBookingSettings)
-    map/           → InteractiveMap, MapErrorBoundary, MapboxErrorSuppressor,
+                             useLandingHandlers, useTileSelection, useTripInputsEditor,
+                             useLocalBookingSettings)
+    map/           → InteractiveMap, MapMarkerItem, MapErrorBoundary, MapboxErrorSuppressor,
                      mapbox-error-handler.ts
     nomadic/       → consent-manager, legal-page (legal/consent UI)
     providers/     → Providers (context wrappers) via `components/providers/Providers.tsx`
@@ -103,7 +110,7 @@ frontend/
                      date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
-                     popular-places.ts, showMutationToast.ts,
+                     categoryNormalization.ts, popular-places.ts, showMutationToast.ts,
                      googlePlacesPhoto.ts, travelIntel.ts,
                      use-sync-external-store-shim.js
   __tests__/       → Vitest tests

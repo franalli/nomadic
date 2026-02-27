@@ -40,69 +40,72 @@ const TRIP_ALERT_TYPES = new Set([
   'legal',
 ]);
 
+// TODO: replace with country_code from destination_card when available
+// This hardcoded map violates CLAUDE.md rule #11 (no hard-coded world data).
+// Once backend DestinationCard includes country_code, use countryCodeToFlag() instead.
 const DESTINATION_FLAG_MAP: Record<string, string> = {
-  italy: '🇮🇹',
-  rome: '🇮🇹',
-  milan: '🇮🇹',
-  venice: '🇮🇹',
-  france: '🇫🇷',
-  paris: '🇫🇷',
-  spain: '🇪🇸',
-  madrid: '🇪🇸',
-  barcelona: '🇪🇸',
-  portugal: '🇵🇹',
-  lisbon: '🇵🇹',
-  greece: '🇬🇷',
-  athens: '🇬🇷',
-  turkey: '🇹🇷',
-  istanbul: '🇹🇷',
-  japan: '🇯🇵',
-  tokyo: '🇯🇵',
-  kyoto: '🇯🇵',
-  thailand: '🇹🇭',
-  bangkok: '🇹🇭',
-  phuket: '🇹🇭',
-  indonesia: '🇮🇩',
-  bali: '🇮🇩',
-  singapore: '🇸🇬',
-  vietnam: '🇻🇳',
-  hanoi: '🇻🇳',
-  saigon: '🇻🇳',
-  australia: '🇦🇺',
-  sydney: '🇦🇺',
-  melbourne: '🇦🇺',
-  uk: '🇬🇧',
-  'united kingdom': '🇬🇧',
-  london: '🇬🇧',
-  ireland: '🇮🇪',
-  dublin: '🇮🇪',
-  germany: '🇩🇪',
-  berlin: '🇩🇪',
-  munich: '🇩🇪',
-  netherlands: '🇳🇱',
-  amsterdam: '🇳🇱',
-  switzerland: '🇨🇭',
-  zurich: '🇨🇭',
-  austria: '🇦🇹',
-  vienna: '🇦🇹',
-  usa: '🇺🇸',
-  us: '🇺🇸',
-  'united states': '🇺🇸',
-  canada: '🇨🇦',
-  mexico: '🇲🇽',
-  brazil: '🇧🇷',
-  argentina: '🇦🇷',
-  peru: '🇵🇪',
-  colombia: '🇨🇴',
-  morocco: '🇲🇦',
-  egypt: '🇪🇬',
-  uae: '🇦🇪',
-  dubai: '🇦🇪',
-  india: '🇮🇳',
-  delhi: '🇮🇳',
-  mumbai: '🇮🇳',
-  south_korea: '🇰🇷',
-  seoul: '🇰🇷',
+  italy: '\u{1F1EE}\u{1F1F9}',
+  rome: '\u{1F1EE}\u{1F1F9}',
+  milan: '\u{1F1EE}\u{1F1F9}',
+  venice: '\u{1F1EE}\u{1F1F9}',
+  france: '\u{1F1EB}\u{1F1F7}',
+  paris: '\u{1F1EB}\u{1F1F7}',
+  spain: '\u{1F1EA}\u{1F1F8}',
+  madrid: '\u{1F1EA}\u{1F1F8}',
+  barcelona: '\u{1F1EA}\u{1F1F8}',
+  portugal: '\u{1F1F5}\u{1F1F9}',
+  lisbon: '\u{1F1F5}\u{1F1F9}',
+  greece: '\u{1F1EC}\u{1F1F7}',
+  athens: '\u{1F1EC}\u{1F1F7}',
+  turkey: '\u{1F1F9}\u{1F1F7}',
+  istanbul: '\u{1F1F9}\u{1F1F7}',
+  japan: '\u{1F1EF}\u{1F1F5}',
+  tokyo: '\u{1F1EF}\u{1F1F5}',
+  kyoto: '\u{1F1EF}\u{1F1F5}',
+  thailand: '\u{1F1F9}\u{1F1ED}',
+  bangkok: '\u{1F1F9}\u{1F1ED}',
+  phuket: '\u{1F1F9}\u{1F1ED}',
+  indonesia: '\u{1F1EE}\u{1F1E9}',
+  bali: '\u{1F1EE}\u{1F1E9}',
+  singapore: '\u{1F1F8}\u{1F1EC}',
+  vietnam: '\u{1F1FB}\u{1F1F3}',
+  hanoi: '\u{1F1FB}\u{1F1F3}',
+  saigon: '\u{1F1FB}\u{1F1F3}',
+  australia: '\u{1F1E6}\u{1F1FA}',
+  sydney: '\u{1F1E6}\u{1F1FA}',
+  melbourne: '\u{1F1E6}\u{1F1FA}',
+  uk: '\u{1F1EC}\u{1F1E7}',
+  'united kingdom': '\u{1F1EC}\u{1F1E7}',
+  london: '\u{1F1EC}\u{1F1E7}',
+  ireland: '\u{1F1EE}\u{1F1EA}',
+  dublin: '\u{1F1EE}\u{1F1EA}',
+  germany: '\u{1F1E9}\u{1F1EA}',
+  berlin: '\u{1F1E9}\u{1F1EA}',
+  munich: '\u{1F1E9}\u{1F1EA}',
+  netherlands: '\u{1F1F3}\u{1F1F1}',
+  amsterdam: '\u{1F1F3}\u{1F1F1}',
+  switzerland: '\u{1F1E8}\u{1F1ED}',
+  zurich: '\u{1F1E8}\u{1F1ED}',
+  austria: '\u{1F1E6}\u{1F1F9}',
+  vienna: '\u{1F1E6}\u{1F1F9}',
+  usa: '\u{1F1FA}\u{1F1F8}',
+  us: '\u{1F1FA}\u{1F1F8}',
+  'united states': '\u{1F1FA}\u{1F1F8}',
+  canada: '\u{1F1E8}\u{1F1E6}',
+  mexico: '\u{1F1F2}\u{1F1FD}',
+  brazil: '\u{1F1E7}\u{1F1F7}',
+  argentina: '\u{1F1E6}\u{1F1F7}',
+  peru: '\u{1F1F5}\u{1F1EA}',
+  colombia: '\u{1F1E8}\u{1F1F4}',
+  morocco: '\u{1F1F2}\u{1F1E6}',
+  egypt: '\u{1F1EA}\u{1F1EC}',
+  uae: '\u{1F1E6}\u{1F1EA}',
+  dubai: '\u{1F1E6}\u{1F1EA}',
+  india: '\u{1F1EE}\u{1F1F3}',
+  delhi: '\u{1F1EE}\u{1F1F3}',
+  mumbai: '\u{1F1EE}\u{1F1F3}',
+  south_korea: '\u{1F1F0}\u{1F1F7}',
+  seoul: '\u{1F1F0}\u{1F1F7}',
 };
 
 const INTEL_CATEGORIES: Array<Pick<IntelCategory, 'key' | 'label' | 'shortLabel' | 'icon'>> = [
@@ -447,8 +450,34 @@ export function buildDestinationIntel(
   return { categories: visibleCategories, tipCount, summaryLabels };
 }
 
-export function destinationFlag(destination: string | null | undefined): string {
-  if (!destination) return '🌍';
+/**
+ * Convert an ISO 3166-1 alpha-2 country code to its flag emoji.
+ * Each letter is offset into the Regional Indicator Symbol range (U+1F1E6..U+1F1FF).
+ *
+ * Ready for use once backend DestinationCard includes `country_code`.
+ */
+export function countryCodeToFlag(cc: string): string {
+  const upper = cc.toUpperCase();
+  if (upper.length !== 2) return '\u{1F30D}';
+  return String.fromCodePoint(
+    ...[...upper].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)
+  );
+}
+
+/**
+ * Resolve a flag emoji for a destination.
+ *
+ * Accepts an optional ISO country code (preferred path once backend provides it).
+ * Falls back to the legacy DESTINATION_FLAG_MAP lookup by city/country name.
+ */
+export function destinationFlag(
+  destination: string | null | undefined,
+  countryCode?: string | null,
+): string {
+  // Preferred: use country_code when available
+  if (countryCode) return countryCodeToFlag(countryCode);
+
+  if (!destination) return '\u{1F30D}';
 
   const raw = destination.toLowerCase().trim();
   const commaParts = raw.split(',');
@@ -464,5 +493,5 @@ export function destinationFlag(destination: string | null | undefined): string 
     if (DESTINATION_FLAG_MAP[key]) return DESTINATION_FLAG_MAP[key];
   }
 
-  return '🌍';
+  return '\u{1F30D}';
 }

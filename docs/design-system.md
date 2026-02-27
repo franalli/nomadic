@@ -2596,6 +2596,14 @@ Updates to Section 6 — new components discovered in audit:
 | `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
 | `InlineDatePrompt` | `plan/timeline/InlineDatePrompt.tsx` | `DS.actions.primary` | Inline CTA to set dates within timeline |
 | `DestinationIntelCard` | `plan/DestinationIntelCard.tsx` | `DS` tokens | Collapsible destination overview card built from strategy sections |
+| `ChatStatusHeader` | `chat/ChatStatusHeader.tsx` | `DS.textSize.*`, `DS.actions.primary` | Desktop status chip rendered above chat with transition-safe chrome |
+| `TileDetailsInfo` | `tiles/TileDetailsInfo.tsx` | `DS.textSize.mini` | Metadata strip (distance/ratings/metadata) used by tile cards |
+| `SuggestionCardContent` | `plan/tiles/SuggestionCardContent.tsx` | `DS.textSize.*` | Shared content block for suggestion rendering |
+| `MiniCardContent` | `tiles/MiniCardContent.tsx` | `DS.textSize.*`, `DS.text.accent` | Shared compact tile body renderer |
+| `TileCardContent` | `tiles/TileCardContent.tsx` | `DS.textSize.*`, `DS.actions.smallAction` | Shared booking/tile body renderer |
+| `ActivityCardMeta` | `plan/timeline/blocks/ActivityCardMeta.tsx` | `DS.textSize.micro`, `DS.text.muted` | Activity metadata badges and metadata row formatting |
+| `ActivityCardActions` | `plan/timeline/blocks/ActivityCardActions.tsx` | `DS.actions.primary`, `DS.text.label` | Action row for activity detail/visit links |
+| `ActivityCardPhoto` | `plan/timeline/blocks/ActivityCardPhoto.tsx` | `DS.glowClass.dropText` | Thumbnail section for `ActivityMiniCard` |
 
 ---
 

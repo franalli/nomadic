@@ -11,7 +11,7 @@ nomadic/
 │   │   ├── backend-specialist.md
 │   │   ├── code-reviewer.md
 │   │   └── frontend-specialist.md
-│   ├── skills/                 # Codex skill command mappings
+│   ├── commands/               # Claude command frontends
 │   │   ├── audit-code.md
 │   │   ├── clear-cache.md
 │   │   ├── clear-sprint.md
@@ -44,8 +44,7 @@ nomadic/
 ├── scripts/                    # Root-level utility scripts
 │   ├── cleanup-claude-history.ps1  # Windows history cleanup
 │   ├── cleanup-claude-history.sh   # Unix history cleanup
-│   ├── copy-key-files.sh           # Copy key backend files to docs/
-│   └── count_prompt_tokens.py      # Token counting utility
+│   └── copy-key-files.sh           # Copy key backend files to docs/
 ├── .claudeignore               # Claude Code ignore patterns
 ├── .gitignore                  # Git ignore patterns
 ├── .pre-commit-config.yaml     # Pre-commit hooks
@@ -53,7 +52,6 @@ nomadic/
 ├── AGENTS.md                   # Local Codex agent/skill trigger instructions
 ├── CLAUDE.md                   # AI assistant instructions
 ├── docker-compose.yml          # Docker configuration
-├── prompt_token_counts.json    # Prompt/token analysis output
 ├── README.md                   # Project readme
 └── render.yaml                 # Render deployment config
 ```
@@ -182,7 +180,6 @@ backend/
 │   │
 │   └── tools/                  # LangGraph tools
 │       ├── __init__.py
-│       ├── circuit_breaker.py  # Circuit breaker + rate limiter for external APIs
 │       ├── constraint_engine.py # Constraint processing
 │       └── tile_service.py     # Tile service tool
 │
@@ -218,9 +215,13 @@ backend/
 │   ├── test_activity_browser.py          # Browse activities backend contract tests
 │   ├── test_activity_image_placeholder_mapping.py  # Activity image placeholder mapping tests
 │   ├── test_agent_multiturn.py           # Agent multi-turn conversation tests
+│   ├── test_chip_generator.py            # Chip output and deterministic variant generation tests
 │   ├── test_conflict_resolution.py       # Conflict resolution & constraint alias tests
+│   ├── test_coordinator.py              # Coordinator turn flow + step execution tests
 │   ├── test_cross_domain_constraints.py  # Cross-domain constraint tests
+│   ├── test_expert_constraints.py        # Expert-constraint schema/model alignment
 │   ├── test_demo_dataset.py              # Demo data tests
+│   ├── test_patterns_registry.py         # Specialist pattern registry tests
 │   ├── test_endpoint_contract.py         # Endpoint response contract tests
 │   ├── test_experience_generator.py      # Experience generator tests
 │   ├── test_fill_day_coordinates.py      # Fill-day coordinate + constraint mapping tests
@@ -324,6 +325,7 @@ frontend/
 │   │   ├── ChatMessageRenderer.tsx  # Individual message rendering (extracted from ChatPanel)
 │   │   ├── ChatModuleSheets.tsx      # Module sheets (flights/stays/activities) extracted from ChatPanel
 │   │   ├── ChatPanel.tsx
+│   │   ├── ChatStatusHeader.tsx        # Desktop status hero/mini bar above chat
 │   │   ├── ChatSkeleton.tsx
 │   │   ├── ChatSuggestionBar.tsx     # Thin wrapper around ChatSuggestionChips for ChatPanel integration
 │   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
@@ -346,6 +348,7 @@ frontend/
 │   │       ├── useItineraryGeneration.ts  # Itinerary generation orchestration (extracted from NomadicLanding)
 │   │       ├── useLandingDerived.ts       # Derived state computations for NomadicLanding (extracted)
 │   │       ├── useLandingEffects.ts       # Side effects for NomadicLanding (extracted)
+│   │       ├── useLandingHandlers.ts
 │   │       ├── useLocalBookingSettings.ts
 │   │       ├── useSessionHydration.ts
 │   │       ├── useTileSelection.ts
@@ -353,6 +356,7 @@ frontend/
 │   │
 │   ├── map/                    # Map components
 │   │   ├── InteractiveMap.tsx
+│   │   ├── MapMarkerItem.tsx
 │   │   ├── MapboxErrorSuppressor.tsx
 │   │   ├── MapErrorBoundary.tsx
 │   │   └── mapbox-error-handler.ts   # Global Mapbox error suppression (shared patterns)
@@ -362,11 +366,15 @@ frontend/
 │   │   └── legal-page.tsx
 │   │
 │   ├── plan/                   # Plan view components
+│   │   ├── BookingPlanningView.tsx           # Booking controls rendered in full-density planning context
 │   │   ├── BookingSection.tsx
 │   │   ├── BrowseActivitiesSheet.tsx  # Bottom sheet for browsing categorized activity tiles (Tier 1 free days)
+│   │   ├── ChipGroup.tsx
+│   │   ├── ChipScrollContainer.tsx        # Shared horizontal chip wrapper (carousel-safe)
 │   │   ├── CoreChip.tsx
 │   │   ├── DestinationIntelCard.tsx   # Destination intelligence card
 │   │   ├── DestinationMapPlaceholder.tsx
+│   │   ├── FullDensityTimeline.tsx       # Activity timeline container used by full-density view
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── NextStepBar.tsx
 │   │   ├── OriginPromptCard.tsx
@@ -376,12 +384,15 @@ frontend/
 │   │   ├── PlanTimelineSection.tsx         # Timeline section with DnD wiring for full-density view
 │   │   ├── planStateHelpers.ts
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
+│   │   ├── TimelineBlockList.tsx
+│   │   ├── TimelineDayCard.tsx
 │   │   ├── TimelineThread.tsx
 │   │   ├── TripHealthBar.tsx
 │   │   ├── TripSummaryPills.tsx
 │   │   ├── UnifiedChipRow.tsx
 │   │   ├── useBookingDrawerState.ts        # Booking drawer open/close + fill-day API hook
 │   │   ├── useStrategyStageOrchestration.ts # Heavy computation/state/effects for StrategyStageRenderer
+│   │   ├── useTimelineBufferLogic.ts       # Buffer/day-card classification helper for timeline states
 │   │   │
 │   │   ├── booking/
 │   │   │   ├── BookingDrawer.tsx
@@ -393,6 +404,7 @@ frontend/
 │   │   │
 │   │   ├── sheets/             # Bottom sheets
 │   │   │   ├── ActivitiesSheet.tsx
+│   │   │   ├── ActivitiesSheetContent.tsx      # Activity sheet form/section rendering
 │   │   │   ├── BaseSheet.tsx
 │   │   │   ├── BudgetSheet.tsx
 │   │   │   ├── DatesSheet.tsx
@@ -412,6 +424,7 @@ frontend/
 │   │   │   ├── S2StrategyView.tsx
 │   │   │   ├── S2TopicConfig.tsx         # Topic configuration panel for S2 specialists
 │   │   │   ├── StrategyHero.tsx
+│   │   │   ├── StrategyHeroContent.tsx
 │   │   │   ├── StrategyHeroAccordion.tsx        # Accordion expansion for StrategyHero sections
 │   │   │   ├── StrategyHeroCompactSheet.tsx     # Compact sheet variant for StrategyHero
 │   │   │   ├── StrategyHeroHeroSheet.tsx        # Hero sheet variant for StrategyHero
@@ -421,7 +434,11 @@ frontend/
 │   │   │   └── StrategyHeroUtils.tsx            # Shared utilities for StrategyHero components
 │   │   │
 │   │   ├── tiles/
-│   │   │   └── SuggestionCard.tsx
+│   │   │   ├── SuggestionCard.tsx
+│   │   │   ├── SuggestionCardContent.tsx
+│   │   │   ├── MiniCardContent.tsx
+│   │   │   ├── TileCardContent.tsx
+│   │   │   └── TileDetailsInfo.tsx
 │   │   │
 │   │   └── timeline/
 │   │       ├── DragPreviewCard.tsx     # Ghost card shown in DragOverlay during block drag
@@ -435,6 +452,9 @@ frontend/
 │   │       ├── useTimelineFillDay.ts   # Fill-day state + handler hook (extracted from TimelineThread)
 │   │       └── blocks/
 │   │           ├── ActivityMiniCard.tsx
+│   │           ├── ActivityCardActions.tsx
+│   │           ├── ActivityCardMeta.tsx
+│   │           ├── ActivityCardPhoto.tsx
 │   │           ├── FreeDayCard.tsx
 │   │           ├── GhostSlot.tsx
 │   │           ├── HoldToDeleteButton.tsx          # Press-and-hold circular progress delete button
@@ -448,8 +468,11 @@ frontend/
 │   │
 │   ├── tiles/                  # Tile display components
 │   │   ├── MiniCard.tsx
+│   │   ├── MiniCardContent.tsx
 │   │   ├── TaxesFeesTooltip.tsx
 │   │   ├── TileCard.tsx
+│   │   ├── TileCardContent.tsx
+│   │   ├── TileDetailsInfo.tsx
 │   │   └── TileDetailsModal.tsx
 │   │
 │   └── ui/                     # Base UI components
@@ -499,6 +522,7 @@ frontend/
 │   ├── format-utils.ts         # Formatting utilities
 │   ├── ghost-timeline-adapter.ts  # Ghost timeline + MapPOI extraction (MapPOI.dayNumber added Stage 19)
 │   ├── googlePlacesPhoto.ts    # Google Places photo URL helpers
+│   ├── categoryNormalization.ts  # Category canonicalization and chip filtering helpers
 │   ├── showMutationToast.ts    # Toast helper with Undo CTA for drag/remove mutations
 │   ├── loaderConfig.ts         # Loader configuration
 │   ├── loaderCopyConfig.ts     # Loader copy text

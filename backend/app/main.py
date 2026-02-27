@@ -765,8 +765,17 @@ async def security_headers(request: Request, call_next):
 async def limit_body_size(request: Request, call_next):
     """Reject payloads exceeding MAX_BODY_BYTES before Pydantic parses them."""
     cl = request.headers.get("content-length")
-    if cl and int(cl) > MAX_BODY_BYTES:
-        return JSONResponse(status_code=413, content={"detail": "Payload too large"})
+    if cl:
+        try:
+            cl_int = int(cl)
+        except (ValueError, TypeError):
+            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+        if cl_int > MAX_BODY_BYTES:
+            return JSONResponse(status_code=413, content={"detail": "Payload too large"})
+    if not cl and request.method in {"POST", "PUT", "PATCH"}:
+        body = await request.body()
+        if len(body) > MAX_BODY_BYTES:
+            return JSONResponse(status_code=413, content={"detail": "Payload too large"})
     return await call_next(request)
 
 
@@ -842,6 +851,25 @@ async def proxy_google_places_photo(
     if not sig or not secrets.compare_digest(sig, expected_sig):
         raise HTTPException(status_code=403, detail="Invalid signed photo URL")
 
+    # ETag based on photo resource name — enables conditional requests (304 Not Modified)
+    etag = f'"{hashlib.md5(photo_name.encode()).hexdigest()}"'
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match and etag in [t.strip() for t in if_none_match.split(",")]:
+        return Response(
+            status_code=304,
+            headers={"ETag": etag, "Cache-Control": "private, max-age=604800"},
+        )
+
+    from app.tile_service.google_places_provider import (
+        _is_places_circuit_open,
+        _record_places_circuit_failure,
+        _record_places_circuit_success,
+        record_google_places_usage,
+    )
+
+    if _is_places_circuit_open("photo_proxy"):
+        return JSONResponse(status_code=503, content={"detail": "Service temporarily unavailable"})
+
     try:
         with spend_guard_scope(session_id):
             reserve_places_spend_or_raise(source="google_places_photo:proxy")
@@ -857,17 +885,26 @@ async def proxy_google_places_photo(
         "key": settings.google_maps_api_key,
     }
 
+    record_google_places_usage("photo_proxy", "request")
+
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             upstream = await client.get(upstream_url, params=params, headers={"Accept": "image/*"})
     except httpx.HTTPError as exc:
+        record_google_places_usage("photo_proxy", "error", reason="httpx_error")
+        _record_places_circuit_failure("photo_proxy")
         raise HTTPException(status_code=502, detail="Google Places photo fetch failed") from exc
 
     if upstream.status_code == 404:
+        record_google_places_usage("photo_proxy", "error", reason="not_found")
         raise HTTPException(status_code=404, detail="Google Places photo not found")
     if upstream.status_code == 429:
+        record_google_places_usage("photo_proxy", "error", reason="rate_limited")
+        _record_places_circuit_failure("photo_proxy", status_code=429)
         raise HTTPException(status_code=429, detail="Google Places photo rate-limited")
     if upstream.status_code >= 400:
+        record_google_places_usage("photo_proxy", "error", reason=f"http_{upstream.status_code}")
+        _record_places_circuit_failure("photo_proxy", status_code=upstream.status_code)
         raise HTTPException(status_code=502, detail="Google Places photo upstream error")
 
     content_type = (upstream.headers.get("content-type") or "").split(";")[0].strip().lower()
@@ -876,7 +913,13 @@ async def proxy_google_places_photo(
             status_code=502, detail="Google Places photo returned non-image payload"
         )
 
-    headers = {"Cache-Control": "private, max-age=300"}
+    _record_places_circuit_success("photo_proxy")
+    record_google_places_usage("photo_proxy", "success")
+
+    headers = {
+        "Cache-Control": "private, max-age=604800",  # 7 days — photo resource names are stable
+        "ETag": etag,
+    }
     content_length = upstream.headers.get("content-length")
     if content_length:
         headers["Content-Length"] = content_length

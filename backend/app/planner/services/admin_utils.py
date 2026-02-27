@@ -104,7 +104,7 @@ async def clear_all_checkpoints() -> None:
 
 
 async def clear_response_caches() -> int:
-    """Clear L1 in-memory caches (experience, specialist, tile, feasibility).
+    """Clear L1 in-memory caches (experience, specialist, tile, feasibility, router, browse, enrichment, IATA).
 
     L2 (PostgreSQL) is only cleared when settings.clear_l2_on_session_reset is True
     (set CLEAR_L2_ON_RESET=true in .env for local dev). In production this flag is
@@ -120,6 +120,16 @@ async def clear_response_caches() -> int:
     total += clear_specialist_cache()
     total += clear_tile_cache()
     total += _feasibility_cache.clear()
+
+    from app.planner.services.iata_resolver import clear_iata_cache
+    from app.services.activity_browser import clear_browse_cache
+    from app.services.router_cache import clear_cache as clear_router_cache
+    from app.tile_service.google_places_provider import _enrich_mem
+
+    total += clear_router_cache()
+    total += clear_browse_cache()
+    total += _enrich_mem.clear()
+    total += clear_iata_cache()
 
     # L2: only when explicitly enabled at runtime.
     truthy = {"1", "true", "yes", "on"}

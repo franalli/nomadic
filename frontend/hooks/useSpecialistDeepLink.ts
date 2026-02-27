@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import type { SpecialistType } from '@/lib/specialistLinkParser';
@@ -32,6 +32,16 @@ const HIGHLIGHT_DURATION_MS = 2000;
  */
 export function useSpecialistDeepLink() {
   const isDesktop = useIsDesktop();
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    };
+  }, []);
 
   const navigateToSpecialist = useCallback(
     (specialistType: SpecialistType) => {
@@ -40,8 +50,12 @@ export function useSpecialistDeepLink() {
         useMobileNavStore.getState().navigateToPlan();
       }
 
+      // Clear any pending timeouts from previous navigation
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+
       // Wait for tab transition animation, then scroll
-      setTimeout(() => {
+      scrollTimeoutRef.current = setTimeout(() => {
         // Find the specialist card by data-topic attribute
         // AgentCards have data-topic="diving", data-topic="hiking", etc.
         const card = document.querySelector(`[data-topic="${specialistType}"]`);
@@ -54,7 +68,7 @@ export function useSpecialistDeepLink() {
           card.classList.add('specialist-highlight');
 
           // Remove highlight after animation completes
-          setTimeout(() => {
+          highlightTimeoutRef.current = setTimeout(() => {
             card.classList.remove('specialist-highlight');
           }, HIGHLIGHT_DURATION_MS);
         } else {

@@ -29,7 +29,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.config import settings
-from app.planner.hashing import stable_hash
+from app.planner.hashing import stable_hash, stable_hash_short
+from app.planner.nodes.router_extraction import _clamp_date_str
 from app.planner.schemas.coordinator_schemas import (
     ChangeType,
     ClassifierOutput,
@@ -864,21 +865,6 @@ def _compute_num_days(start_date: str, end_date: str) -> int:
         return 5
 
 
-def _clamp_date_str(date_str: str) -> Optional[str]:
-    """Clamp invalid day-of-month to month maximum (YYYY-MM-DD only)."""
-    import re
-    from calendar import monthrange
-
-    match = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", date_str)
-    if not match:
-        return None
-    year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
-    if month < 1 or month > 12:
-        return None
-    max_day = monthrange(year, month)[1]
-    return f"{year:04d}-{month:02d}-{min(day, max_day):02d}"
-
-
 def _extract_plan_zone(plan_dict: Dict[str, Any]) -> Optional[str]:
     """Extract primary zone from a specialist plan dict."""
     day_plans = plan_dict.get("day_plans", [])
@@ -1532,6 +1518,205 @@ def _plan_to_strategy_section(
     )
 
 
+def _specialist_content_to_tiles(
+    topic: str,
+    section: Dict[str, Any],
+    destination: str,
+) -> List[Dict[str, Any]]:
+    """Convert specialist content_added items into tile dicts.
+
+    Produces tiles matching the experience_generator._experience_to_tile_dict()
+    shape so the existing Phase 2.5 + Phase 5 enrichment/placement pipelines
+    work without changes.
+
+    Tile IDs are deterministic (survive replans) using stable_hash_short.
+    """
+    content_added = section.get("content_added", [])
+    if not content_added:
+        return []
+
+    dest_slug = destination.lower().strip().replace(" ", "_").replace(",", "")
+    tiles: List[Dict[str, Any]] = []
+
+    for item in content_added:
+        if item.get("is_buffer"):
+            continue
+
+        title = item.get("title", "")
+        if not title:
+            continue
+
+        hash_key = f"{dest_slug}:{topic}:{title}"
+        tile_id = f"spec_{dest_slug}_{topic}_{stable_hash_short(hash_key)}"
+
+        coords = item.get("coordinates")  # [lng, lat] or None
+        geo: Dict[str, Any] = {}
+        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+            geo = {"lng": coords[0], "lat": coords[1]}
+
+        tiles.append(
+            {
+                "id": tile_id,
+                "type": "activity",
+                "partner": "vertical_specialist",
+                "partner_product_id": tile_id,
+                "title": title,
+                "subtitle": f"{topic.capitalize()} activity",
+                "image_url": item.get("image_url"),
+                "price_estimate": None,
+                "price_level": None,
+                "currency": "USD",
+                "price_basis": "per_person",
+                "is_estimate_only": True,
+                "deeplink_url": "",
+                "rating": None,
+                "location_label": destination,
+                "tags": ["activity", topic, "specialist"],
+                "availability_status": "available",
+                "meta": {
+                    "specialist_type": topic,
+                    "category": topic,
+                    "duration_hours": item.get("duration_hours", 3.0),
+                    "description": item.get("description", ""),
+                    "preferred_day": item.get("day"),
+                    "intensity": item.get("intensity"),
+                },
+                "geo": geo,
+                "source": "live",
+                "source_agent": "vertical_specialist",
+            }
+        )
+
+    return tiles
+
+
+def _inject_specialist_tiles_into_state(state: Dict[str, Any]) -> None:
+    """Inject specialist content_added items as real tiles into state.
+
+    Called at the top of _build_itinerary() after DISPATCH_SPECIALISTS +
+    SEARCH_TILES have both completed. Writes tile_id back to each content_added
+    item so Phase 2 reads it during ActivityBlock construction.
+    """
+    strategy_sections = state.get("strategy_sections", [])
+    destination = state.get("trip_plan", {}).get("destination", "")
+    if not destination:
+        return
+
+    tiles = state.get("tiles", {})
+    activity_tiles = tiles.get("activities", [])
+    if not isinstance(activity_tiles, list):
+        activity_tiles = []
+
+    existing_ids = {t.get("id") for t in activity_tiles if isinstance(t, dict) and t.get("id")}
+    new_spec_ids: set[str] = set()
+    new_tiles: List[Dict[str, Any]] = []
+
+    for section in strategy_sections:
+        topic = _norm_topic(section.get("specialist_type", ""))
+        if not topic or topic in ("general", "local_expert"):
+            continue
+        if section.get("feasibility_status") == "infeasible":
+            continue
+
+        spec_tiles = _specialist_content_to_tiles(topic, section, destination)
+
+        # Write tile_id back onto content_added items for Phase 2 ActivityBlock
+        content_added = section.get("content_added", [])
+        tile_by_title: Dict[str, str] = {}
+        for t in spec_tiles:
+            key = (t.get("title") or "").strip().lower()
+            if key:
+                tile_by_title[key] = t["id"]
+
+        for item in content_added:
+            if item.get("is_buffer"):
+                continue
+            key = (item.get("title") or "").strip().lower()
+            tid = tile_by_title.get(key)
+            if tid:
+                item["tile_id"] = tid
+
+        for t in spec_tiles:
+            new_spec_ids.add(t["id"])
+            if t["id"] not in existing_ids:
+                new_tiles.append(t)
+
+    # Remove stale specialist tiles from previous runs
+    activity_tiles = [
+        t
+        for t in activity_tiles
+        if not isinstance(t, dict)
+        or t.get("source_agent") != "vertical_specialist"
+        or t.get("id") in new_spec_ids
+    ]
+
+    activity_tiles.extend(new_tiles)
+    tiles["activities"] = activity_tiles
+    state["tiles"] = tiles
+
+    if new_tiles:
+        logger.info(
+            "[coordinator] Injected %d specialist tiles (%d total specialist)",
+            len(new_tiles),
+            len(new_spec_ids),
+        )
+
+
+async def _enrich_specialist_tiles(state: Dict[str, Any]) -> None:
+    """Enrich specialist tiles with Google Places data (photos, ratings, coordinates).
+
+    Gated by settings.use_google_places_provider. Graceful degradation: tiles
+    work with LLM coordinates if enrichment fails.
+    """
+    if not settings.use_google_places_provider:
+        return
+
+    tiles = state.get("tiles", {})
+    activity_tiles = tiles.get("activities", [])
+    if not isinstance(activity_tiles, list):
+        return
+
+    specialist_tiles = [
+        t
+        for t in activity_tiles
+        if isinstance(t, dict) and t.get("source_agent") == "vertical_specialist"
+    ]
+    if not specialist_tiles:
+        return
+
+    destination = state.get("trip_plan", {}).get("destination", "")
+    if not destination:
+        return
+
+    try:
+        from app.tile_service.google_places_provider import enrich_activities_with_places
+
+        enriched = await enrich_activities_with_places(
+            specialist_tiles, destination, path_label="specialist_enrich"
+        )
+
+        # Replace specialist tiles in the activity list with enriched versions
+        enriched_by_id = {t.get("id"): t for t in enriched if isinstance(t, dict)}
+        for i, t in enumerate(activity_tiles):
+            if isinstance(t, dict) and t.get("id") in enriched_by_id:
+                enriched_tile = enriched_by_id[t["id"]]
+                # Sync geo from verified Google Places coordinates so Phase 2.5
+                # (which reads geo, not coordinates) gets the best data.
+                coords = enriched_tile.get("coordinates")
+                if isinstance(coords, list) and len(coords) == 2:
+                    enriched_tile["geo"] = {"lng": coords[0], "lat": coords[1]}
+                activity_tiles[i] = enriched_tile
+
+        tiles["activities"] = activity_tiles
+        state["tiles"] = tiles
+        logger.info(
+            "[coordinator] Enriched %d specialist tiles via Google Places",
+            len(enriched),
+        )
+    except Exception as exc:
+        logger.warning("[coordinator] Specialist tile enrichment failed (graceful): %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Tile search (Phase 2: minimal bridge)
 # ---------------------------------------------------------------------------
@@ -1789,6 +1974,10 @@ async def _build_itinerary(
 
     if not start_date or not end_date or not destination:
         return None
+
+    # Inject specialist content_added items as real tiles
+    _inject_specialist_tiles_into_state(state)
+    await _enrich_specialist_tiles(state)
 
     tiles: Dict[str, Any] = state.get("tiles", {})
     strategy_sections = state.get("strategy_sections", [])

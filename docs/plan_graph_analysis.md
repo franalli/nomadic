@@ -184,10 +184,14 @@ These modules survived the architecture migration. They are no longer standalone
 LLM-based intent classification + field extraction. Single LLM call produces `RouterOutput` schema.
 
 **Key functions:**
-- `_classify_and_extract_with_llm()` -- Legacy extraction helper used by fallback path in `classify_change()`
-- `classify_change()` -- Coordinator-aware change classifier. Single LLM call produces `ClassifierOutput` with intent, change_type, affects/preserves/informs lists. Lives alongside `_classify_and_extract_with_llm` for the feature-flag bridge period.
+- `_sanitize_user_message()` -- Escapes prompt-template metacharacters before interpolation.
+- `_classify_and_extract_with_llm()` -- Unified extraction call that returns `RouterOutput` and performs cache lookup/write.
+- `_classify_change_type()` -- Lightweight second-pass classifier that derives `change_type`, `affects`, `preserves`, and `informs`.
+- `classify_change()` -- Coordinator-aware classifier with two-pass flow:
+  1. `RouterOutput` from `_classify_and_extract_with_llm()`
+  2. `ChangeClassification` from `_classify_change_type()` (retries once on transient failure)
+  3. Merge into `ClassifierOutput`.
 - `_validate_extraction()` -- Post-extraction validation
-- `_populate_trip_plan_from_router_output()` -- Applies extracted fields to TripPlan
 
 **RouterOutput Schema:**
 
@@ -381,7 +385,14 @@ if total_activity_days > max_capacity:
 
 **Phase 2.5: Enrich Activities from Tiles**
 
-Cross-references specialist `content_added` activities with `search_tiles` results to inherit Google Places data (rating, coordinates, photo, price, deeplink). Matching strategy: normalized title exact match. Also stores `_matched_tile` on enriched activities so Phase 5 block construction can set `booked_tile` for frontend photo resolution.
+Specialist `content_added` is first converted to synthetic activity tiles (`source_agent='vertical_specialist'`) in
+`coordinator._inject_specialist_tiles_into_state()`. These tiles are enriched with Google Places data (`enrich_activities_with_places`)
+before builder placement. Builder enrichment follows this order:
+1. direct `tile_id` match between `ActivityOutput.tile_id` and coordinator-generated specialist tiles
+2. normalized-title fallback against all activity tiles.
+
+The matched tile object is stored on each enriched activity (`activity._matched_tile`) and drives `booked_tile` assignment in
+`ItineraryBuilder._assign_booked_tiles_for_frontend()`, which powers richer photos/metadata in frontend cards.
 
 **Key Insight:** The no-fly buffer only restricts DIVING placement, not total capacity. Day 7 of an 8-day trip can have hiking activities even though diving is blocked (24h before flight). The buffer doesn't reduce total trip capacity -- it restricts which activities can go where.
 
@@ -438,8 +449,11 @@ In Phase 5.6:
 
 - **Pass 1 (free-day fill):** each free day accepts up to `target_per_day` experience tiles
   where `target_per_day` is `_activities_per_day`, subject to hour and category caps.
+- Specialist-origin tiles (`source_agent='vertical_specialist'`) are excluded from experience placement.
 - **Pass 2 (co-schedule):** remaining experience tiles are placed on specialist days using the
   same capacity + time-slot scoring pass.
+- `_day_remaining_capacity()` enforces both time-hour and block capacity, and clamps placements
+  to `_activities_per_day` as a hard per-day ceiling after prior allocations.
 
 **Phase 5.25: Preferred Activity Placement (Two-Pass)**
 
@@ -589,7 +603,7 @@ Pydantic structured output is used for LLM calls that need **guaranteed schema e
 
 | Tool / Module | Uses Structured Output? | LLM Used? | Schema(s) | Purpose |
 | --- | --- | --- | --- | --- |
-| **_classify_change** (via `router_extraction.py`) | Yes | `settings.router_model` (via `llm_factory`) | `RouterOutput` + `ClassifierOutput` | Intent + field extraction + change classification |
+| **_classify_change** (via `router_extraction.py`) | Yes | `settings.router_model` (via `llm_factory`) | `RouterOutput`, `ChangeClassification`, `ClassifierOutput` | Two-pass intent/extraction + lightweight change classification |
 | **dispatch_specialists** (via `coordinator.py` + `vertical_specialist.py`) | Yes (function_calling, flattened schema) | `settings.specialist_model` (via `llm_factory`) | `LLMSpecialistOutput` via `_SPECIALIST_FLAT_SCHEMA` | Specialist planning with fallback |
 | **local_intel** (via `local_expert.py`) | Yes (prompt-based) | `settings.local_expert_model` (via `llm_factory`) | `LocalExpertOutput` | Prompt-based JSON; no function_calling |
 | **search_tiles** (via `logistics_node.py`) | No | N/A | N/A | API/provider calls only (Curated, Google Places, Mock) |
@@ -883,6 +897,12 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 
 **Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'experience_single'`, `'tiles'`). Browse and Places enrichment L2 entries use `cache_type='tiles'`.
 
+**Experience cache recovery (incremental regen):** `experience_generator.py` now supports category-by-category reuse to avoid recomputing unchanged Tier 2 categories:
+
+- On composite cache miss it probes `experience_single` entries first from L1 (`_mem`) and then L2.
+- Cached per-category tiles are merged with state metadata before generation; only newly introduced categories are regenerated.
+- Regenerated tiles are merged back into state metadata (`generated_tier2_categories`) and written back to the relevant caches, so subsequent turns reuse them.
+
 ### Cache Invalidation Triggers
 
 | Trigger                  | Caches Invalidated               |
@@ -963,6 +983,10 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 L1-only cache for NL extraction results. Only caches self-contained queries to prevent cross-conversation pollution.
 
 **Service:** `backend/app/services/router_cache.py`
+
+Key format: `router::v3::{sha256({normalized_text}:{today_date}:{context_fingerprint})[:32]}`.
+Stats keys are exposed as `l1_hits`, `l1_misses`, and `skipped_context_dependent` (context-dependent inputs are explicitly skipped).
+`make_cache_key()` now serializes `None` inputs as `__NONE__` to avoid accidental key collisions.
 
 **CRITICAL: Context-Dependency Detection** -- Queries that reference conversation context are NOT cached:
 

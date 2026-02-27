@@ -835,7 +835,8 @@ class TestDayRemainingCapacity:
         assert blocks == 0
 
     def test_specialist_day_remaining(self, builder: ItineraryBuilder):
-        """Day with 4h specialist has 7h remaining, 2 block slots."""
+        """Day with 4h specialist has 7h remaining, 2 block slots (apd=3)."""
+        builder._activities_per_day = 3
         day = DayCardOutput(
             day_number=2,
             label="Diving Day",
@@ -853,8 +854,29 @@ class TestDayRemainingCapacity:
         assert hours == 7.0
         assert blocks == 2
 
+    def test_apd_cap_enforced(self, builder: ItineraryBuilder):
+        """activities_per_day=1 caps remaining blocks to 0 when 1 activity placed."""
+        builder._activities_per_day = 1
+        day = DayCardOutput(
+            day_number=2,
+            label="Diving Day",
+            blocks=[
+                DayBlockOutput(
+                    period="morning",
+                    activity_type="usat_liberty_wreck",
+                    summary="USAT Liberty Wreck",
+                    specialist_type="diving",
+                    duration="4h",
+                )
+            ],
+        )
+        hours, blocks = builder._day_remaining_capacity(day)
+        assert hours == 7.0
+        assert blocks == 0  # APD cap prevents more activities
+
     def test_free_day_full_capacity(self, builder: ItineraryBuilder):
-        """Free day placeholder doesn't consume capacity."""
+        """Free day placeholder doesn't consume capacity (apd=3 matches MAX_BLOCKS)."""
+        builder._activities_per_day = 3
         day = DayCardOutput(
             day_number=3,
             label="Free Day",
@@ -892,7 +914,8 @@ class TestDayRemainingCapacity:
         assert blocks == 0
 
     def test_buffer_blocks_dont_consume(self, builder: ItineraryBuilder):
-        """Buffer blocks (no-fly) don't consume capacity."""
+        """Buffer blocks (no-fly) don't consume activity hours but count as block slots."""
+        builder._activities_per_day = 3
         day = DayCardOutput(
             day_number=4,
             label="Buffer Day",
@@ -915,9 +938,9 @@ class TestDayRemainingCapacity:
         )
         hours, blocks = builder._day_remaining_capacity(day)
         # Only the dive counts: 11 - 4 = 7h; buffer counts as a block slot
-        # (matches frontend content policy guard)
+        # (matches frontend content policy guard); APD allows 2 more (3 - 1 dive)
         assert hours == 7.0
-        assert blocks == 1
+        assert blocks == 1  # min(MAX_BLOCKS - 2, apd_remaining=2) = 1
 
 
 # =============================================================================
@@ -1023,6 +1046,7 @@ class TestPhase56CoScheduling:
 
     def test_coschedule_no_free_days(self, builder: ItineraryBuilder):
         """With 0 free days and experience tiles, tiles are co-scheduled on specialist days."""
+        builder._activities_per_day = 2  # allow co-scheduling alongside specialist activity
         days = [
             DayCardOutput(
                 day_number=1,
@@ -1076,6 +1100,7 @@ class TestPhase56CoScheduling:
 
     def test_mixed_free_and_specialist(self, builder: ItineraryBuilder):
         """Free days filled first, overflow co-scheduled on specialist days."""
+        builder._activities_per_day = 2  # allow co-scheduling alongside specialist activity
         days = [
             DayCardOutput(
                 day_number=1,
@@ -1217,6 +1242,7 @@ class TestPhase56CoScheduling:
 
     def test_complementarity_scoring(self, builder: ItineraryBuilder):
         """Evening tile prefers morning-specialist day over afternoon-specialist day."""
+        builder._activities_per_day = 2  # allow co-scheduling alongside specialist activity
         days = [
             DayCardOutput(
                 day_number=1,
@@ -1272,6 +1298,7 @@ class TestPhase525CoScheduling:
 
     def test_preferred_coschedule_no_free_days(self, builder: ItineraryBuilder):
         """Hearted activity is co-scheduled when no free days exist."""
+        builder._activities_per_day = 2  # allow co-scheduling alongside specialist activity
         days = [
             DayCardOutput(
                 day_number=1,
@@ -1719,3 +1746,178 @@ class TestCrossDomainOrdering:
             kw in summary_lower
             for kw in ("buffer", "24h", "no-fly", "no fly", "decompression", "safety", "altitude")
         ), f"Buffer summary should reference its safety purpose, got: '{buf.summary}'"
+
+
+# =============================================================================
+# Test: Phase 2.5 ID-based tile matching for specialist tiles
+# =============================================================================
+
+
+class TestPhase25IdBasedMatching:
+    """Test that Phase 2.5 uses tile_id for direct matching before title fallback."""
+
+    def test_id_match_sets_matched_tile(self, builder: ItineraryBuilder):
+        """Activity with tile_id gets _matched_tile set via ID lookup.
+
+        Field-by-field enrichment is skipped for pre-linked specialist tiles
+        (tile_id already matches), but _matched_tile is always set for Phase 5.
+        """
+        sections = [
+            {
+                "specialist_type": "diving",
+                "content_added": [
+                    {
+                        "title": "Manta Point",
+                        "description": "Manta ray dive",
+                        "duration_hours": 3.0,
+                        "tile_id": "spec_bali_diving_abc123",
+                    }
+                ],
+                "constraints_applied": [],
+            }
+        ]
+        tiles = {
+            "spec_bali_diving_abc123": {
+                "id": "spec_bali_diving_abc123",
+                "type": "activity",
+                "title": "Manta Point",
+                "source_agent": "vertical_specialist",
+                "rating": 4.8,
+                "image_url": "https://example.com/manta.jpg",
+                "meta": {"place_id": "gp_123"},
+                "geo": {"lng": 115.5, "lat": -8.7},
+            },
+        }
+        activities, _ = builder._extract_specialist_content(sections)
+        enriched = builder._enrich_activities_from_tiles(activities, tiles)
+
+        activity = enriched["diving"][0]
+        assert activity.tile_id == "spec_bali_diving_abc123"
+        assert hasattr(activity, "_matched_tile")
+        assert activity._matched_tile["id"] == "spec_bali_diving_abc123"
+        # Field-by-field copy is skipped (tile came from same content_added)
+        assert activity.rating is None
+
+    def test_id_match_takes_priority_over_title(self, builder: ItineraryBuilder):
+        """When tile_id is present, _matched_tile uses the ID-matched tile, not title."""
+        sections = [
+            {
+                "specialist_type": "diving",
+                "content_added": [
+                    {
+                        "title": "Reef Dive",
+                        "description": "Coral reef dive",
+                        "duration_hours": 2.5,
+                        "tile_id": "spec_bali_diving_correct",
+                    }
+                ],
+                "constraints_applied": [],
+            }
+        ]
+        # Two tiles: one with matching ID, one with matching title but different ID
+        tiles = {
+            "spec_bali_diving_correct": {
+                "id": "spec_bali_diving_correct",
+                "type": "activity",
+                "title": "Reef Dive (Enriched)",
+                "source_agent": "vertical_specialist",
+                "rating": 4.9,
+                "meta": {},
+                "geo": {},
+            },
+            "exp_bali_diving_0": {
+                "id": "exp_bali_diving_0",
+                "type": "activity",
+                "title": "Reef Dive",
+                "source_agent": "experience_generator",
+                "rating": 3.5,
+                "meta": {},
+                "geo": {},
+            },
+        }
+        activities, _ = builder._extract_specialist_content(sections)
+        enriched = builder._enrich_activities_from_tiles(activities, tiles)
+
+        activity = enriched["diving"][0]
+        # _matched_tile should be the ID-matched tile, not the title-matched one
+        assert activity._matched_tile["id"] == "spec_bali_diving_correct"
+        assert activity._matched_tile["rating"] == 4.9
+
+    def test_title_fallback_still_works(self, builder: ItineraryBuilder):
+        """Activities without tile_id still match by title."""
+        sections = [
+            {
+                "specialist_type": "diving",
+                "content_added": [
+                    {
+                        "title": "Coral Garden",
+                        "description": "Shallow dive",
+                        "duration_hours": 2.0,
+                    }
+                ],
+                "constraints_applied": [],
+            }
+        ]
+        tiles = {
+            "exp_bali_diving_0": {
+                "id": "exp_bali_diving_0",
+                "type": "activity",
+                "title": "Coral Garden",
+                "source_agent": "experience_generator",
+                "rating": 4.2,
+                "meta": {},
+                "geo": {},
+            },
+        }
+        activities, _ = builder._extract_specialist_content(sections)
+        enriched = builder._enrich_activities_from_tiles(activities, tiles)
+
+        activity = enriched["diving"][0]
+        assert activity.rating == 4.2
+        assert activity.tile_id == "exp_bali_diving_0"
+
+
+class TestPhase56SpecialistExclusion:
+    """Test that Phase 5.6 logistics backfill excludes specialist tiles."""
+
+    def test_specialist_tiles_excluded_from_logistics_backfill(self, builder: ItineraryBuilder):
+        """Specialist tiles should not be picked up by the logistics backfill path."""
+        inp = ItineraryBuilderInput(
+            start_date="2024-03-15",
+            end_date="2024-03-20",
+            strategy_sections=[
+                {
+                    "specialist_type": "diving",
+                    "content_added": [
+                        {
+                            "title": "Manta Point",
+                            "duration_hours": 3.0,
+                            "tile_id": "spec_bali_diving_abc",
+                        },
+                    ],
+                    "constraints_applied": [],
+                }
+            ],
+            tiles={
+                "spec_bali_diving_abc": {
+                    "id": "spec_bali_diving_abc",
+                    "type": "activity",
+                    "title": "Manta Point",
+                    "source_agent": "vertical_specialist",
+                    "meta": {"specialist_type": "diving"},
+                },
+            },
+            destination="Bali",
+        )
+        result = builder.build(inp)
+        assert result.success
+
+        # Count how many times Manta Point appears across all days
+        manta_count = 0
+        for card in result.day_cards:
+            for block in card.blocks:
+                if "Manta Point" in (block.summary or ""):
+                    manta_count += 1
+
+        # Manta Point placed by Phase 5 (specialist path), not duplicated by 5.6
+        assert manta_count <= 1, f"Manta Point placed {manta_count} times (expected <= 1)"

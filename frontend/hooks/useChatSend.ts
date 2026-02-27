@@ -271,6 +271,18 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         return;
       }
 
+      // Abort any previous in-flight stream before starting a new one.
+      // Prevents ghost duplicate requests from consuming LLM tokens.
+      if (abortStreamRef.current) {
+        abortStreamRef.current();
+        abortStreamRef.current = null;
+        // Clean up orphaned partial assistant message from the aborted stream
+        if (streamingMessageId) {
+          filterMessages((m) => m.id !== streamingMessageId);
+          setStreamingMessageId(null);
+        }
+      }
+
       // MUTATION GATE: Wait for in-flight mutations (fill-day, drag-drop) to settle.
       if (useDocumentStore.getState().hasPendingMutations()) {
         await new Promise<void>((resolve) => {

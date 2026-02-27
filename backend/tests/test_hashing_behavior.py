@@ -118,8 +118,8 @@ class TestCanonicalizeDestinations:
 
 
 class TestMakeCacheKey:
-    def test_none_part_becomes_empty(self):
-        assert make_cache_key(None) == ""
+    def test_none_part_becomes_sentinel(self):
+        assert make_cache_key(None) == "__NONE__"
 
     def test_string_passthrough(self):
         assert make_cache_key("router") == "router"
@@ -146,11 +146,11 @@ class TestMakeCacheKey:
         assert result == "router::v6::london|paris"
 
     def test_all_none_parts(self):
-        assert make_cache_key(None, None) == "::"
+        assert make_cache_key(None, None) == "__NONE__::__NONE__"
 
     def test_mixed_types(self):
         result = make_cache_key("prefix", 5, None, ["Tokyo"])
-        assert result == "prefix::5::::tokyo"
+        assert result == "prefix::5::__NONE__::tokyo"
 
 
 # ---------------------------------------------------------------------------

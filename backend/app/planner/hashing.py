@@ -112,7 +112,7 @@ def make_cache_key(*parts: Any) -> str:
     key_parts = []
     for part in parts:
         if part is None:
-            key_parts.append("")
+            key_parts.append("__NONE__")
         elif isinstance(part, str):
             key_parts.append(part)
         elif isinstance(part, (list, tuple)):
@@ -136,13 +136,3 @@ def field_hash(value: str) -> str:
     to detect which trip fields changed between requests.
     """
     return hashlib.sha256((value or "").encode()).hexdigest()[:12]
-
-
-# Mapping for ban enforcement
-BANNED_PATTERNS = [
-    r"(?<![_a-zA-Z])hash\(",  # hash( not preceded by identifier char
-]
-
-REPLACEMENT_SUGGESTIONS = {
-    "hash(": "Use stable_hash(), stable_hash_int(), or stable_hash_index() instead",
-}

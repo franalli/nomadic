@@ -220,6 +220,7 @@ export type PlanViewState =
   | 'P3_EDITING'       // User editing itinerary assumptions/constraints
   | 'P3_BLOCKED'       // Itinerary requested but blocked (missing locks)
   // Legacy aliases (for migration - will be removed)
+  // Intentional: FE-only sentinel — not present in backend PlanEnvelope schema
   | 'S0_EMPTY'         // FE-only reset sentinel, never emitted by backend -> P0_MINIMAL
   | 'S0_BOOTSTRAP'     // -> P0_MINIMAL
   | 'S1_FRAMING'       // -> P0_MINIMAL (merged)

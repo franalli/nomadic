@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 _session_id_ctx: ContextVar[str | None] = ContextVar("spend_guard_session_id", default=None)
 
+# NOTE: In-memory spend tracking is correct for single-worker deployment.
+# For multi-worker, migrate to Redis or shared state.
+# TODO: Before scaling to multi-instance, replace module-level dicts with
+# Redis counters (INCRBY + daily-key TTL) so budget isolation survives restarts
+# and is shared across workers.
 _spend_lock = Lock()
 _spend_day_key = datetime.now(UTC).date().isoformat()
 _session_spend_usd: dict[str, float] = {}
@@ -104,6 +109,9 @@ def _reserve_or_raise(
     sid = session_id if session_id is not None else _session_id_ctx.get()
     # No request/session context means there's no stable principal to budget against.
     if not sid:
+        logger.warning(
+            "spend_guard bypassed: no session_id (source=%s, est=$%.4f)", source, estimated_usd
+        )
         return
 
     session_cap = max(0.0, float(settings.spend_guard_session_daily_cap_usd))

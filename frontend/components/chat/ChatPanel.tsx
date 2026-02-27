@@ -3,8 +3,6 @@
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 // frontend/components/ChatPanel.tsx
 
-import { AnimatePresence, motion } from 'framer-motion';
-import { Loader2 } from 'lucide-react';
 import {
   forwardRef,
   useImperativeHandle,
@@ -13,7 +11,7 @@ import {
   useState,
 } from 'react';
 
-import { isBootstrap, isFraming, ITINERARY_STATES } from '@/components/plan/planStateHelpers';
+import { isBootstrap, isFraming } from '@/components/plan/planStateHelpers';
 import { UnifiedChipRow } from '@/components/plan/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
 import { useChatEffects } from '@/hooks/useChatEffects';
@@ -41,6 +39,7 @@ import { ChatInputHandler } from './ChatInputHandler';
 import { ChatMessageList } from './ChatMessageList';
 import { type VisibleMessage } from './ChatMessageRenderer';
 import { ChatModuleSheets } from './ChatModuleSheets';
+import { ChatStatusHeader,getChatStatusConfig } from './ChatStatusHeader';
 import { ChatSuggestionBar } from './ChatSuggestionBar';
 import { type ActiveStatus, SmartLoader } from './SmartLoader';
 
@@ -54,38 +53,8 @@ const sanitizeContent = (content: string): string => {
     .trim();
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Chat Status Config - maps plan phase to persistent status bar content
-// ─────────────────────────────────────────────────────────────────────────────
-function getChatStatusConfig(
-  planViewState: PlanViewState | undefined,
-  planState: string | undefined,
-  isGenerating: boolean,
-  destination: string | undefined,
-  hasDates: boolean,
-): { text: string; label: string; indicator: 'blink' | 'spin' | 'pulse' | 'check' } {
-  if (isFraming(planViewState) || isGenerating || planState === 'RESOLVING') {
-    return { text: 'Building your trip...', label: 'Generating', indicator: 'spin' };
-  }
-  if (isBootstrap(planViewState)) {
-    if (!destination) return { text: 'Where to next?', label: 'Awaiting Input', indicator: 'blink' };
-    if (!hasDates) return { text: 'When would you like to go?', label: 'Set Dates', indicator: 'blink' };
-    return { text: 'Ready to build your plan', label: 'Generating Plan', indicator: 'blink' };
-  }
-  if (planViewState && ITINERARY_STATES.has(planViewState)) {
-    return { text: 'Itinerary complete', label: 'Ready', indicator: 'check' };
-  }
-  return { text: 'Your trip is taking shape', label: 'Refine Plan', indicator: 'pulse' };
-}
-
 // Stable empty array to avoid new [] identity on every render when not streaming
 const EMPTY_VISIBLE_MESSAGES: VisibleMessage[] = [];
-
-// Hoisted Framer Motion animation objects to avoid new object identity on every render
-const FADE_INITIAL = { opacity: 0 } as const;
-const FADE_ANIMATE = { opacity: 1 } as const;
-const FADE_EXIT = { opacity: 0 } as const;
-const FADE_TRANSITION = { duration: 0.3, ease: [0.4, 0, 0.2, 1] } as const;
 
 const MESSAGE_BURST_COOLDOWN_MS = 1000;
 const GENERATE_BURST_COOLDOWN_MS = 3000;
@@ -431,64 +400,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         )}
       >
         {/* ── DESKTOP: Hero status bar — shrink-0 header for non-bootstrap states ── */}
-        {isDesktop && !isBootstrap(planViewState) && (() => {
-          const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, hasDates);
-          const showHero = !!(destinationImageUrl && hasDestination);
-          return (
-            <AnimatePresence mode="wait">
-              <motion.div
-                key="status-bar"
-                initial={FADE_INITIAL}
-                animate={FADE_ANIMATE}
-                exit={FADE_EXIT}
-                transition={FADE_TRANSITION}
-                className={cn(
-                  'relative z-40 shrink-0',
-                  '-mx-4 -mt-4 mb-2',
-                  'w-[calc(100%+2rem)]',
-                  'overflow-hidden',
-                  showHero
-                    ? 'h-[120px]'
-                    : 'h-14 border-b border-border/80 bg-background/80 backdrop-blur-md',
-                )}
-              >
-                {/* Hero image — only when destination image available */}
-                {showHero && (
-                  <img
-                    src={destinationImageUrl!}
-                    alt={destination}
-                    className="absolute inset-0 h-full w-full object-cover brightness-90 saturate-[1.1]"
-                  />
-                )}
-                {/* Scrim: bottom half fades hard to panel background, top stays clear */}
-                {showHero && (
-                  <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
-                )}
-                {!showHero && (
-                  <div className="absolute inset-0 z-10 flex items-center gap-2 px-4">
-                    {status.indicator === 'spin' ? (
-                      <Loader2 className="h-3 w-3 animate-spin text-primary" />
-                    ) : status.indicator === 'check' ? null : (
-                      <div className={cn(
-                        'h-2 w-2 rounded-full bg-primary',
-                        status.indicator === 'pulse' && 'animate-pulse',
-                      )} />
-                    )}
-                    <span className="text-sm font-semibold text-foreground">
-                      {status.text}
-                    </span>
-                    <span className={cn(
-                      `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-muted-foreground`,
-                      DS.glowClass.dropText,
-                    )}>
-                      {status.label}
-                    </span>
-                  </div>
-                )}
-              </motion.div>
-            </AnimatePresence>
-          );
-        })()}
+        {isDesktop && (
+          <ChatStatusHeader
+            planViewState={planViewState}
+            planState={planState}
+            isGenerating={isGenerating ?? false}
+            destination={destination}
+            hasDates={hasDates}
+            hasDestination={hasDestination}
+            destinationImageUrl={destinationImageUrl}
+          />
+        )}
 
         {/* ── Scrollable message list ── */}
         {/* Bootstrap hero + chips are passed as scrollHeaderContent so they scroll with messages */}

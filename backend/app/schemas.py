@@ -196,7 +196,8 @@ class ExpandItineraryRequest(BaseModel):
     """Request to expand strategy into full itinerary (Stage 2 -> Stage 3)."""
 
     idempotency_key: str = Field(
-        description="Client-generated UUID to prevent duplicate generation"
+        max_length=200,
+        description="Client-generated UUID to prevent duplicate generation",
     )
     # Optional document context - if provided, used to restore session state
     trip_inputs: Optional[Dict[str, Any]] = Field(
@@ -277,6 +278,14 @@ class GraphPlanRequest(BaseModel):
     message: str = Field(max_length=2000)
     trip_inputs: dict = Field(default_factory=dict)
     session_state: dict | None = None
+
+    @field_validator("trip_inputs")
+    @classmethod
+    def _cap_trip_inputs_keys(cls, v: dict) -> dict:
+        if len(v) > 100:
+            raise ValueError("trip_inputs dict exceeds 100 keys")
+        return v
+
     document_id: str | None = Field(
         default=None,
         max_length=200,
@@ -972,6 +981,13 @@ class InsertActivityBlockRequest(BaseModel):
     tile: Dict[str, Any]  # BrowseTile dict from the frontend
     expected_version: Optional[int] = None  # Deprecated — no longer enforced
 
+    @field_validator("tile")
+    @classmethod
+    def _cap_tile_keys(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if len(v) > 50:
+            raise ValueError("tile dict exceeds 50 keys")
+        return v
+
 
 class InsertActivityBlockResponse(BaseModel):
     """Response from insert-activity-block."""
@@ -985,7 +1001,7 @@ class InsertActivityBlockResponse(BaseModel):
 class RestoreSnapshotRequest(BaseModel):
     """Restore day_cards to a previous snapshot (undo stack)."""
 
-    day_cards: List[Dict[str, Any]]
+    day_cards: List[Dict[str, Any]] = Field(max_length=60)
     expected_version: int  # optimistic concurrency
 
 

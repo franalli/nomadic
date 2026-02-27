@@ -112,6 +112,8 @@ export function BrowseActivitiesSheet({
       }
       if (Object.keys(next).length === 0) return;
       setSignedImageByTileId((prev) => ({ ...prev, ...next }));
+    }).catch((err) => {
+      if (!cancelled) console.error('[BrowseActivitiesSheet] photo signing failed:', err);
     });
 
     return () => {

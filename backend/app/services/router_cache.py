@@ -48,7 +48,7 @@ L1_MAX_SIZE = 500
 _mem = MemoryCache(
     maxsize=L1_MAX_SIZE,
     ttl=L1_TTL_SECONDS,
-    stat_keys=["hits", "misses", "skipped_context_dependent"],
+    stat_keys=["l1_hits", "l1_misses", "skipped_context_dependent"],
 )
 
 
@@ -162,12 +162,12 @@ def get_cached_extraction(
     cached = _mem.get(key)
 
     if cached is not None:
-        _mem.increment_stat("hits")
+        _mem.increment_stat("l1_hits")
         dest = cached.get("destination", "?")
         logger.info(f"[ROUTER_CACHE] ✅ HIT: '{user_text[:40]}' → dest={dest}")
         return cached
 
-    _mem.increment_stat("misses")
+    _mem.increment_stat("l1_misses")
     logger.info(f"[ROUTER_CACHE] ❌ MISS: '{user_text[:40]}'")
     return None
 

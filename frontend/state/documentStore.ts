@@ -67,6 +67,7 @@ const DEFAULT_HOTEL_SETTINGS: HotelSettings = {
 const DEFAULT_ACTIVITY_SETTINGS: ActivitySettings = {
   categories: [],
   skill_level: null,
+  activities_per_day: 1,
 };
 
 const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
@@ -1956,16 +1957,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // === FULL DIAGNOSTIC — LAYER 12: TILE DELTA ===
-    const _prevActivityTiles = Object.entries(currentDoc?.tiles ?? {})
-      .filter(([, t]) => (t as Record<string, unknown>)?.type === 'activity')
-      .map(([id, t]) => `${id}:${((t as Record<string, unknown>)?.title as string)?.slice(0, 25)}`);
-    const _newActivityTiles = Object.entries(mergedTiles ?? {})
-      .filter(([, t]) => (t as Record<string, unknown>)?.type === 'activity')
-      .map(([id, t]) => `${id}:${((t as Record<string, unknown>)?.title as string)?.slice(0, 25)}`);
+    const _prevTiles = Object.entries(currentDoc?.tiles ?? {})
+      .map(([id, t]) => {
+        const tile = t as Record<string, unknown>;
+        return `${(tile?.type as string)?.[0] ?? '?'}:${id.slice(0, 20)}:${((tile?.title as string) ?? (tile?.name as string) ?? '').slice(0, 20)}`;
+      });
+    const _newTiles = Object.entries(mergedTiles ?? {})
+      .map(([id, t]) => {
+        const tile = t as Record<string, unknown>;
+        return `${(tile?.type as string)?.[0] ?? '?'}:${id.slice(0, 20)}:${((tile?.title as string) ?? (tile?.name as string) ?? '').slice(0, 20)}`;
+      });
     debugLog('[DIAG:TILE_DELTA]',
-      `before: ${JSON.stringify(_prevActivityTiles)}`,
-      `after: ${JSON.stringify(_newActivityTiles)}`,
-      `changed: ${JSON.stringify(_prevActivityTiles) !== JSON.stringify(_newActivityTiles)}`,
+      `before(${_prevTiles.length}): ${JSON.stringify(_prevTiles)}`,
+      `after(${_newTiles.length}): ${JSON.stringify(_newTiles)}`,
+      `changed: ${JSON.stringify(_prevTiles) !== JSON.stringify(_newTiles)}`,
     );
     // === END DIAGNOSTIC ===
 
@@ -2027,14 +2032,32 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         responseSections.map(s => [s.specialist_type, s])
       );
 
-      // Start with response sections, preserving content_added from current where missing
+      // Start with response sections, preserving content_added and enrichment state from current where stale
       const merged = responseSections.map(respSection => {
         const existing = currentByType.get(respSection.specialist_type);
+        if (!existing) return respSection;
+
+        let section = respSection;
+
         // If response lacks content_added but we have it cached, preserve it
-        if (existing?.content_added && !respSection.content_added) {
-          return { ...respSection, content_added: existing.content_added };
+        if (existing.content_added && !section.content_added) {
+          section = { ...section, content_added: existing.content_added };
         }
-        return respSection;
+
+        // Defensive merge: never regress local_expert_enrichment from "ready" to "pending".
+        // The coordinator reads state at turn start (before enrichment completes) and emits
+        // a stale snapshot. The polling endpoint already set "ready" locally — preserve it.
+        const existingEnrichState = existing.local_expert_enrichment?.state;
+        const incomingEnrichState = section.local_expert_enrichment?.state;
+        if (existingEnrichState === 'ready' && incomingEnrichState === 'pending') {
+          section = {
+            ...section,
+            local_expert_enrichment: existing.local_expert_enrichment,
+            travel_intelligence: existing.travel_intelligence ?? section.travel_intelligence,
+          };
+        }
+
+        return section;
       });
 
       // Add current sections that aren't in the response (preserve existing specialists)

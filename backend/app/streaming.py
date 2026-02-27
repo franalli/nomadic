@@ -1499,7 +1499,8 @@ async def generate_ndjson(
                     )
                     from app.tile_service.service import search_tiles as tile_search
 
-                    tile_result = await asyncio.to_thread(tile_search, tile_req)
+                    with spend_guard_scope(session_id):
+                        tile_result = await asyncio.to_thread(tile_search, tile_req)
 
                     # Replace activity tiles, keep hotels + flights
                     new_activity_tiles = {

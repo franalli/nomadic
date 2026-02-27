@@ -12,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import _get_async_session_factory
 from app.planner.hashing import make_cache_key
-from app.planner.llm_factory import get_llm_by_model
+from app.planner.llm_factory import (
+    get_llm_by_model,
+    resolve_schema_refs,
+    strip_unsupported_schema_keys,
+)
 from app.planner.state.graph_state import GraphState
 from app.services.cache_core import MemoryCache, l2_upsert
 
@@ -25,6 +29,11 @@ class IataResponse(BaseModel):
     origin: str = Field(default="", description="IATA code for origin city")
     destination: str = Field(default="", description="IATA code for destination city")
 
+
+# Pre-resolved flat schema for Gemini-compatible structured output.
+_IATA_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
+    resolve_schema_refs(IataResponse.model_json_schema())
+)
 
 L1_TTL_SECONDS = 24 * 60 * 60  # 24h
 L1_MAX_SIZE = 512
@@ -207,7 +216,7 @@ async def resolve_iata_codes(origin: str, destination: str, state: GraphState) -
         llm = get_llm_by_model(settings.iata_resolver_model, temperature=0, max_tokens=50)
 
         structured_llm = llm.with_structured_output(
-            IataResponse, include_raw=True, method="function_calling"
+            dict(_IATA_FLAT_SCHEMA), include_raw=True, method="function_calling"
         )
 
         prompt = (
@@ -216,12 +225,18 @@ async def resolve_iata_codes(origin: str, destination: str, state: GraphState) -
             f"Cities: {', '.join(needs)}"
         )
         result = await structured_llm.ainvoke([{"role": "user", "content": prompt}])
-        parsed = result["parsed"]
-        if parsed is None:
-            logger.warning("[IATA] Structured output returned None")
+        if isinstance(result, dict) and "parsed" in result:
+            parsed = result["parsed"]
+            if parsed is None:
+                logger.warning("[IATA] Structured output returned None")
+                return origin_code, dest_code
+        elif hasattr(result, "model_fields"):
+            parsed = result
+        else:
+            logger.warning(f"[IATA] Unexpected structured output type: {type(result).__name__}")
             return origin_code, dest_code
 
-        codes = parsed.model_dump()
+        codes = parsed if isinstance(parsed, dict) else parsed.model_dump()
 
         if origin and not origin_code:
             extracted_origin = _extract_code(codes, "origin")

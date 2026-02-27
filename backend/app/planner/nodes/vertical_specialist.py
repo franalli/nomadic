@@ -30,7 +30,12 @@ if TYPE_CHECKING:
 
 from app.config import settings
 from app.placeholders import get_activity_image
-from app.planner.llm_factory import extract_token_usage, get_llm_by_model, resolve_schema_refs
+from app.planner.llm_factory import (
+    extract_token_usage,
+    get_llm_by_model,
+    resolve_schema_refs,
+    strip_unsupported_schema_keys,
+)
 from app.planner.services.feasibility_service import (
     check_feasibility,
 )
@@ -102,8 +107,11 @@ class LLMSpecialistOutput(BaseModel):
     constraints: List[LLMConstraint] = []
 
 
-# Cache flat schema at module load — $defs inlined so Gemini function calling accepts it
-_SPECIALIST_FLAT_SCHEMA: dict = resolve_schema_refs(LLMSpecialistOutput.model_json_schema())
+# Cache flat schema at module load — $defs inlined, unsupported keys stripped
+# so Gemini function calling accepts it without warnings.
+_SPECIALIST_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
+    resolve_schema_refs(LLMSpecialistOutput.model_json_schema())
+)
 
 
 def _record_specialist_latency_metric(

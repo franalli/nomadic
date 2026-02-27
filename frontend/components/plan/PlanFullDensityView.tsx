@@ -1,7 +1,6 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Building2, ChevronDown, Compass, Lightbulb, Plane } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -14,15 +13,12 @@ import type { MapPOI } from '@/lib/ghost-timeline-adapter';
 import { calculateMapCenter, extractPOIsFromSections } from '@/lib/ghost-timeline-adapter';
 import { buildDestinationIntel } from '@/lib/travelIntel';
 import { cn } from '@/lib/utils';
-import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { DestinationCard, PlanViewModel, PlanViewState, StrategySection } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
-import { BookingSection } from './BookingSection';
-import { OriginPromptCard } from './OriginPromptCard';
+import { FullDensityTimeline } from './FullDensityTimeline';
 import type { GenerationState } from './planStateHelpers';
-import { PlanTimelineSection } from './PlanTimelineSection';
 import { type TimelineVariant } from './TimelineThread';
 
 const DESKTOP_MAP_CONTENT_STYLE = { minWidth: 480, maxWidth: 800 } as const;
@@ -140,7 +136,6 @@ export function PlanFullDensityView({
   const onToggleStays = useCallback(() => setStaysExpanded((v) => !v), []);
   const onToggleFlights = useCallback(() => setFlightsExpanded((v) => !v), []);
 
-  const [intelExpanded, setIntelExpanded] = useState(false);
   const intelDestinationKey = normalizeDestinationKey(effectiveFullDest);
   const localExpertSection = useMemo(
     () => strategySections.find((s) => s.specialist_type === 'local_expert'),
@@ -151,6 +146,10 @@ export function PlanFullDensityView({
   const localExpertSectionEnrichment = localExpertEnrichmentState(localExpertSection);
   const localExpertReady = localExpertSectionEnrichment === 'ready';
   const localExpertSectionRef = useRef<StrategySection | null>(null);
+  // Track streaming state in a ref so the enrichment polling loop can
+  // bail out when a new graph request starts (props are stale in closures).
+  const isStreamingRef = useRef(isStreaming);
+  useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
   const [enrichedLocalExpertSection, setEnrichedLocalExpertSection] = useState<StrategySection | null>(null);
   const effectiveStrategySections = useMemo(() => {
     if (!localExpertSectionId || !enrichedLocalExpertSection) {
@@ -175,8 +174,6 @@ export function PlanFullDensityView({
   const travelAdviceLabel = isTravelIntelPending
     ? 'Travel Advice'
     : `Travel Advice (${travelIntelSectionCount})`;
-  const showRowTwoChips = hasDestinationIntel || (hasItineraryContent && (flightCount > 0 || stayCount > 0));
-
   useEffect(() => {
     setEnrichedLocalExpertSection(null);
   }, [intelDestinationKey, localExpertSectionId]);
@@ -219,7 +216,15 @@ export function PlanFullDensityView({
       let pendingAttempts = 0;
       let transientErrors = 0;
 
+      // Initial delay: Phase B LLM enrichment takes 10-20s, skip wasted early polls
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      if (cancelled) return;
+
       while (!cancelled) {
+        // Abandon polling when a new graph request starts — fresh
+        // enrichment data will arrive with the new response.
+        if (isStreamingRef.current) return;
+
         let result: Awaited<ReturnType<typeof getSpecialistEnrichment>> = null;
         try {
           result = await getSpecialistEnrichment(localExpertSectionId);
@@ -230,7 +235,7 @@ export function PlanFullDensityView({
           await new Promise((resolve) => setTimeout(resolve, 2000));
           continue;
         }
-        if (cancelled) return;
+        if (cancelled || isStreamingRef.current) return;
         transientErrors = 0;
         if (!result) return;
 
@@ -290,12 +295,6 @@ export function PlanFullDensityView({
     localExpertReady,
     localExpertSectionId,
   ]);
-
-  const subduedTogglePillClass = cn(
-    'inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-sm whitespace-nowrap transition-colors',
-    'border-zinc-300 dark:border-white/15 bg-zinc-100 dark:bg-white/[0.06]',
-    'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/10',
-  );
 
   // Measure the spacer height so the map top-aligns with Day 1.
   //
@@ -357,158 +356,43 @@ export function PlanFullDensityView({
           className={cn('flex flex-col min-w-0', showDesktopMap ? 'flex-1' : 'w-full')}
           style={showDesktopMap ? DESKTOP_MAP_CONTENT_STYLE : undefined}
         >
-        {state === 'S2_STRATEGY_READY' &&
-          effectiveTripInputs?.destination && effectiveTripInputs?.start_date &&
-          effectiveTripInputs?.end_date && !effectiveTripInputs?.origin &&
-          (viewModel.executed_strategy_topics?.length ?? 0) >= 2 && (
-            <div className="px-4 mb-4">
-              <OriginPromptCard
-                onSetOrigin={(origin) => { useDocumentStore.getState().commitTripInputs({ origin }); }}
-              />
-            </div>
-          )}
-
-        {/* Row 2 chips — Flights/Stays + destination intel */}
-        {showRowTwoChips && (
-          <div className="px-4 pb-2 pt-1">
-            <div className="flex items-center gap-2">
-              {flightCount > 0 && (
-                <button
-                  type="button"
-                  onClick={onToggleFlights}
-                  className={subduedTogglePillClass}
-                >
-                  <Plane className="w-3 h-3 shrink-0" />
-                  Flights ({flightCount})
-                  <ChevronDown className={cn('w-3 h-3 transition-transform', flightsExpanded && 'rotate-180')} />
-                </button>
-              )}
-              {stayCount > 0 && (
-                <button
-                  type="button"
-                  onClick={onToggleStays}
-                  className={subduedTogglePillClass}
-                >
-                  <Building2 className="w-3 h-3 shrink-0" />
-                  Stays ({stayCount})
-                  <ChevronDown className={cn('w-3 h-3 transition-transform', staysExpanded && 'rotate-180')} />
-                </button>
-              )}
-              {hasDestinationIntel && (
-                <button
-                  id="destination-intel-trigger"
-                  type="button"
-                  aria-expanded={intelExpanded}
-                  aria-controls="destination-intel-panel"
-                  aria-busy={isAnyRegenerating || isTravelIntelPending ? true : undefined}
-                  onClick={() => setIntelExpanded(v => !v)}
-                  className={cn(
-                    subduedTogglePillClass,
-                    'max-w-[360px] justify-between',
-                    isAnyRegenerating && 'opacity-70'
-                  )}
-                >
-                  <span className="flex items-center gap-1.5 min-w-0">
-                    <Lightbulb className="w-3 h-3 shrink-0" />
-                    <span className="truncate">{travelAdviceLabel}</span>
-                  </span>
-                  <span className="flex items-center gap-1 shrink-0">
-                    {isTravelIntelPending && (
-                      <Compass
-                        className="w-3 h-3 compass-spin text-emerald-500"
-                        aria-label="Travel advice is loading"
-                      />
-                    )}
-                    <ChevronDown className={cn('w-3 h-3 transition-transform', intelExpanded && 'rotate-180')} />
-                  </span>
-                </button>
-              )}
-            </div>
-
-            {hasDestinationIntel && intelExpanded && (
-              <div
-                id="destination-intel-panel"
-                aria-labelledby="destination-intel-trigger"
-                className="mt-2 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900/40"
-              >
-                <div className="max-h-[280px] space-y-3 overflow-y-auto px-3 py-3">
-                  {intelCategories.map((category) => (
-                    <div key={category.key} className="space-y-1">
-                      <p className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                        <span>{category.icon}</span>
-                        <span>{category.label}</span>
-                      </p>
-                      <ul className="list-disc list-outside marker:text-emerald-400 space-y-1 pl-10">
-                        {category.items.map((item) => (
-                          <li
-                            key={`${category.key}-${item}`}
-                            className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400"
-                          >
-                            {item}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {hasDestinationIntel && isAnyRegenerating && (
-              <div className="mt-2 flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-zinc-900/60 px-3 py-2">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-                <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                  {isRegenUpdating ? 'Updating itinerary...' : 'Updating plan...'}
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        <AnimatePresence>
-          {effectiveTiles && Object.keys(effectiveTiles).length > 0 && (
-            <motion.section
-              key="tiles-section" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              transition={{ duration: REVEAL_TIMING.TILES_FADE / 1000 }}
-              id="tiles-section"
-              className={cn('mt-1', isExpandingItinerary && 'opacity-60 pointer-events-none')}
-            >
-              <BookingSection
-                state={state} tiles={effectiveTiles} generation={generation}
-                hasStrategyContent={hasSectionData} savedTileIds={savedTileIds}
-                onSaveTile={handleSaveTile} hasDates={!!effectiveTripInputs?.start_date}
-                mode={effectiveMode as 'planning' | 'booking'}
-                strategySections={effectiveStrategySections}
-                onOpenStaysSettings={onOpenStaysSettings}
-                isExpanded={staysExpanded}
-                onToggleExpanded={onToggleStays}
-                flightsExpanded={flightsExpanded}
-                onToggleFlights={onToggleFlights}
-              />
-            </motion.section>
-          )}
-        </AnimatePresence>
-
-        {!isDesktop && hasItineraryContent && (fullModePOIs.length > 0 || destinationCenter !== null) && (
-          <section className="mt-4 px-4">
-            <div className="h-[300px] overflow-hidden rounded-xl border border-zinc-200/50 dark:border-white/10">
-              <MapErrorBoundary className="h-full w-full">
-                <InteractiveMap items={fullModeMapItems} activeItemId={null}
-                  defaultCenter={mapCenter} className="h-full w-full"
-                  interactive={false} showAttribution={false} />
-              </MapErrorBoundary>
-            </div>
-          </section>
-        )}
-
-        <PlanTimelineSection
-          dayCards={viewModel.day_cards ?? []} timelineVariant={timelineVariant}
-          isStreaming={isStreaming} isRegenUpdating={isRegenUpdating}
-          isExpandingItinerary={isExpandingItinerary} hasItineraryContent={hasItineraryContent}
-          preferenceCount={preferenceCount} savedTileIds={savedTileIds}
+        <FullDensityTimeline
+          state={state}
+          viewModel={viewModel}
+          effectiveStrategySections={effectiveStrategySections}
+          effectiveTiles={effectiveTiles}
+          effectiveTripInputs={effectiveTripInputs}
+          generation={generation}
+          savedTileIds={savedTileIds}
+          hasSectionData={hasSectionData}
+          hasItineraryContent={hasItineraryContent}
+          isExpandingItinerary={isExpandingItinerary}
+          isStreaming={isStreaming}
+          isAnyRegenerating={isAnyRegenerating}
+          isRegenUpdating={isRegenUpdating}
+          isDesktop={isDesktop}
+          preferenceCount={preferenceCount}
+          effectiveMode={effectiveMode}
+          timelineVariant={timelineVariant}
           timelineSectionRef={timelineSectionRef}
+          handleSaveTile={handleSaveTile}
           handleOpenBookingDrawer={handleOpenBookingDrawer}
-          onOpenStaysSettings={onOpenStaysSettings} onOpenFlightsSettings={onOpenFlightsSettings}
+          onOpenStaysSettings={onOpenStaysSettings}
+          onOpenFlightsSettings={onOpenFlightsSettings}
+          fullModeMapItems={fullModeMapItems}
+          mapCenter={mapCenter}
+          hasDestinationCenter={destinationCenter !== null}
+          fullModePOIs={fullModePOIs}
+          stayCount={stayCount}
+          flightCount={flightCount}
+          staysExpanded={staysExpanded}
+          flightsExpanded={flightsExpanded}
+          onToggleStays={onToggleStays}
+          onToggleFlights={onToggleFlights}
+          intelCategories={intelCategories}
+          hasDestinationIntel={hasDestinationIntel}
+          isTravelIntelPending={isTravelIntelPending}
+          travelAdviceLabel={travelAdviceLabel}
         />
         </div>
 

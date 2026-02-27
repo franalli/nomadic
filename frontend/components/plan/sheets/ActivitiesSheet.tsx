@@ -9,21 +9,19 @@
  */
 
 
-import { Ticket } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
-import { Stepper } from '@/components/ui/stepper';
-import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/toast';
+import { canonicalCategoryKey, TIER1_CONSTRAINT_HINTS, toCategoryKey } from '@/lib/categoryNormalization';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { ActivitySettings } from '@/types/document';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
+import { ActivitiesSheetContent, ALL_CATEGORIES } from './ActivitiesSheetContent';
 import { BaseSheet } from './BaseSheet';
-import { GatingBlocker } from './GatingBlocker';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -47,109 +45,10 @@ interface ActivitiesSheetProps {
   onOpenDestination?: () => void;
 }
 
-// Activity categories — flat list, no visual distinction between tiers.
-// Tier 1 (specialist) vs Tier 2 (experience) is a backend implementation detail.
-const ALL_CATEGORIES = [
-  { value: 'diving', label: 'Diving', icon: '🤿' },
-  { value: 'hiking', label: 'Hiking', icon: '🥾' },
-  { value: 'skiing', label: 'Skiing', icon: '⛷️' },
-  { value: 'cycling', label: 'Cycling', icon: '🚴' },
-  { value: 'sailing', label: 'Sailing', icon: '⛵' },
-  { value: 'surfing', label: 'Surfing', icon: '🏄' },
-  { value: 'cooking', label: 'Cooking', icon: '🍳' },
-  { value: 'yoga', label: 'Yoga', icon: '🧘' },
-  { value: 'cultural', label: 'Cultural', icon: '🏛️' },
-  { value: 'tours', label: 'Tours', icon: '🎟️' },
-  { value: 'temples', label: 'Temples', icon: '⛩️' },
-  { value: 'nightlife', label: 'Nightlife', icon: '🎉' },
-  { value: 'beach', label: 'Beach', icon: '🏖️' },
-  { value: 'shopping', label: 'Shopping', icon: '🛍️' },
-  { value: 'photography', label: 'Photography', icon: '📸' },
-];
-
-const PACE_OPTIONS = [
-  { value: 1, label: 'Relaxed' },
-  { value: 2, label: 'Moderate' },
-  { value: 3, label: 'Packed' },
-] as const;
-
 const NON_ACTIVITY_TYPES = new Set([
   'arrival', 'departure', 'check-in', 'check-out', 'check_in', 'check_out',
   'free_day', 'rest_day', 'buffer', 'decompression_buffer',
 ]);
-
-const CATEGORY_ALIAS: Record<string, string> = {
-  culture: 'cultural',
-  tours: 'tours',
-  attraction: 'tours',
-  tourist_attraction: 'tours',
-  point_of_interest: 'tours',
-  travel_agency: 'tours',
-  cultural_attraction: 'cultural',
-  museum: 'cultural',
-  art_gallery: 'cultural',
-  historical_landmark: 'cultural',
-  cultural_landmark: 'cultural',
-  monument: 'cultural',
-  plaza: 'cultural',
-  ruins: 'cultural',
-  fountain: 'cultural',
-  hindu_temple: 'temples',
-  temple: 'temples',
-  church: 'cultural',
-  place_of_worship: 'cultural',
-  synagogue: 'cultural',
-  mosque: 'cultural',
-  restaurant: 'food',
-  cafe: 'food',
-  bar: 'food',
-  bakery: 'food',
-  meal_takeaway: 'food',
-  meal_delivery: 'food',
-  park: 'nature',
-  natural_feature: 'nature',
-  national_park: 'nature',
-  campground: 'nature',
-  zoo: 'nature',
-  botanical_garden: 'nature',
-  shopping_mall: 'shopping',
-  market: 'shopping',
-  store: 'shopping',
-  clothing_store: 'shopping',
-  department_store: 'shopping',
-  beauty_salon: 'spa',
-  gym: 'spa',
-};
-
-const TIER1_CONSTRAINT_HINTS: Record<string, RegExp[]> = {
-  diving: [/\bdiv(e|ing|er|es)\b/i, /\bscuba\b/i, /\bno[- ]fly\b/i, /\bdecompression\b/i],
-  hiking: [/\bhik(e|ing)\b/i, /\btrek\b/i, /\btrail\b/i],
-  skiing: [/\bski(ing)?\b/i, /\bsnowboard(ing)?\b/i, /\baltitude\b/i],
-  cycling: [/\bcycl(e|ing)\b/i, /\bbik(e|ing)\b/i],
-  surfing: [/\bsurf(ing)?\b/i, /\bwave\b/i],
-  sailing: [/\bsail(ing)?\b/i, /\byacht(ing)?\b/i, /\bmarine\b/i],
-};
-
-function toCategoryKey(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  return normalized || null;
-}
-
-function canonicalCategoryKey(value: unknown): string | null {
-  const key = toCategoryKey(value);
-  if (!key) return null;
-  const mapped = CATEGORY_ALIAS[key] ?? key;
-  if (/(culture|cultural|heritage)/.test(key)) return 'cultural';
-  if (/(museum|landmark|historic|monument|plaza|fountain)/.test(key)) return 'cultural';
-  if (/(temple|church|worship|mosque|synagogue)/.test(key)) return 'temples';
-  if (/(restaurant|cafe|bar|bakery|food|meal)/.test(key)) return 'food';
-  if (/(park|garden|nature|zoo|camp)/.test(key)) return 'nature';
-  if (/(shop|store|market|mall)/.test(key)) return 'shopping';
-  if (/(spa|wellness|gym|beauty)/.test(key)) return 'spa';
-  if (/(tour|point_of_interest|visitor|travel_agency)/.test(key)) return 'tours';
-  return mapped;
-}
 
 function resolveBlockCategory(block: DayBlock): string | null {
   if (block.is_buffer) return null;
@@ -321,8 +220,12 @@ function ActivitiesSheetInner({
     effectiveInitialDayPreferences
   );
   const [localPace, setLocalPace] = useState<number | null>(
-    settings.activities_per_day ?? null
+    settings.activities_per_day ?? 1
   );
+  // Track which categories had their day-preference stepper manually adjusted.
+  // Only these entries are sent in day_preferences on save — inferred defaults
+  // and seed values (toggleCategory seeds with 1) are display-only.
+  const [userAdjustedCategories, setUserAdjustedCategories] = useState<Set<string>>(new Set());
   const wasOpenRef = useRef(false);
 
   // Check if prerequisites met
@@ -334,7 +237,8 @@ function ActivitiesSheetInner({
       setLocalEnabled(enabled);
       setLocalCategories(effectiveInitialCategories);
       setLocalDayPreferences(effectiveInitialDayPreferences);
-      setLocalPace(settings.activities_per_day ?? null);
+      setLocalPace(settings.activities_per_day ?? 1);
+      setUserAdjustedCategories(new Set());
     }
     wasOpenRef.current = open;
   }, [open, enabled, effectiveInitialCategories, effectiveInitialDayPreferences, settings.activities_per_day]);
@@ -354,12 +258,14 @@ function ActivitiesSheetInner({
 
   // Handle save preferences
   const handleSave = useCallback(() => {
-    // Strip day_preferences keys for categories that were removed.
-    // Without this, removing "hiking" leaves day_preferences:{hiking:4} in the payload,
-    // which the backend sees as a request to schedule hiking days.
+    // Only send day_preferences for categories the user explicitly adjusted via stepper.
+    // Inferred defaults and seed values (from toggleCategory) are display-only.
+    // Also strip keys for categories that were removed.
     const activeCategorySet = new Set(localCategories);
     const cleanedDayPreferences = Object.fromEntries(
-      Object.entries(localDayPreferences).filter(([cat]) => activeCategorySet.has(cat))
+      Object.entries(localDayPreferences).filter(
+        ([cat]) => activeCategorySet.has(cat) && userAdjustedCategories.has(cat)
+      )
     );
     onSaveSettings({
       categories: localCategories,
@@ -369,7 +275,7 @@ function ActivitiesSheetInner({
     });
     toast('Activity preferences saved');
     onOpenChange(false);
-  }, [localCategories, localDayPreferences, localPace, onSaveSettings, toast, onOpenChange]);
+  }, [localCategories, localDayPreferences, localPace, userAdjustedCategories, onSaveSettings, toast, onOpenChange]);
 
   // Toggle category — when adding, seed day_preferences with a default of 1
   const toggleCategory = useCallback((category: string) => {
@@ -387,6 +293,10 @@ function ActivitiesSheetInner({
 
   // Handle day preference changes
   const handleDayPreferenceChange = useCallback((category: string, days: number) => {
+    setUserAdjustedCategories(prev => {
+      if (prev.has(category)) return prev;
+      return new Set([...prev, category]);
+    });
     setLocalDayPreferences(prev => {
       if (days === 0) {
         const rest = { ...prev };
@@ -432,138 +342,20 @@ function ActivitiesSheetInner({
         </div>
       }
     >
-      <div className="space-y-6">
-        {/* Gating blocker */}
-        <GatingBlocker
-          featureLabel="activities"
-          gates={[
-            { label: 'Destination', met: hasDestination, onOpen: onOpenDestination },
-          ]}
-          onClose={() => onOpenChange(false)}
-        />
-
-        {/* Include toggle */}
-        <div className="flex items-center justify-between py-3 border-b border-zinc-200 dark:border-white/10">
-          <div className="flex items-center gap-2">
-            <Ticket className="h-5 w-5 text-zinc-900 dark:text-white" />
-            <span className="text-sm font-medium text-zinc-900 dark:text-white">
-              Include activities
-            </span>
-          </div>
-          <Switch
-            checked={localEnabled}
-            onCheckedChange={handleToggle}
-            disabled={!prerequisitesMet && !localEnabled}
-          />
-        </div>
-
-        {/* Preferences (disabled when toggle off) */}
-        <div
-          className={cn(
-            'space-y-6 transition-opacity',
-            !localEnabled && 'opacity-50 pointer-events-none'
-          )}
-        >
-          {/* Pace — activities per day (generation target) */}
-          <div>
-            <h3 className={cn(DS.text.label, 'mb-3')}>Pace</h3>
-            <div className="grid grid-cols-3 rounded-xl border border-zinc-200 dark:border-white/10 overflow-hidden">
-              {PACE_OPTIONS.map((option) => {
-                const isSelected = localPace === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setLocalPace(isSelected ? null : option.value)}
-                    className={cn(
-                      'flex flex-col items-center py-3 text-sm transition-colors',
-                      'border-l border-zinc-200 dark:border-white/10 first:border-l-0',
-                      isSelected
-                        ? 'bg-emerald-500/15 text-emerald-400 font-semibold'
-                        : 'text-zinc-400 hover:bg-white/5'
-                    )}
-                  >
-                    <span>{option.label}</span>
-                    <span className="text-xs opacity-60">{option.value}/day</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Activity Categories — single flat grid */}
-          <div>
-            <div className="grid grid-cols-2 gap-2">
-              {ALL_CATEGORIES.map((option) => {
-                const isSelected = localCategories.includes(option.value);
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => toggleCategory(option.value)}
-                    className={cn(
-                      'flex items-center gap-2 px-3 py-3 rounded-lg text-sm font-medium',
-                      'transition-all duration-150 text-left',
-                      isSelected
-                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
-                      : cn(
-                          'bg-white border-2 border-zinc-200 text-zinc-600',
-                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
-                        )
-                    )}
-                  >
-                    <span>{option.icon}</span>
-                    <span>{option.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-            {localCategories.length === 0 && (
-              <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2">
-                No categories selected = mixed recommendations
-              </p>
-            )}
-          </div>
-
-          {/* Day preferences — only when categories selected */}
-          {localCategories.length > 0 && (
-            <div>
-              <h3 className={cn(DS.text.label, 'mb-3')}>
-                Days per activity
-              </h3>
-              <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2">
-                Leave at 0 for no preference
-              </p>
-              <div className="space-y-1">
-                {localCategories.map((catValue) => {
-                  const catDef = ALL_CATEGORIES.find(c => c.value === catValue);
-                  return (
-                    <div key={catValue} className="flex items-center justify-between py-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">{catDef?.icon || '🏷️'}</span>
-                        <span className="text-sm font-medium text-zinc-900 dark:text-white">
-                          {catDef?.label || catValue}
-                        </span>
-                      </div>
-                      <Stepper
-                        value={localDayPreferences[catValue] || 0}
-                        min={0}
-                        max={7}
-                        size="sm"
-                        onChange={(val) => handleDayPreferenceChange(catValue, val)}
-                        label={`${catDef?.label || catValue} days`}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-        </div>
-      </div>
+      <ActivitiesSheetContent
+        localEnabled={localEnabled}
+        localCategories={localCategories}
+        localDayPreferences={localDayPreferences}
+        localPace={localPace}
+        prerequisitesMet={prerequisitesMet}
+        hasDestination={hasDestination}
+        onToggle={handleToggle}
+        onSetLocalPace={setLocalPace}
+        onToggleCategory={toggleCategory}
+        onDayPreferenceChange={handleDayPreferenceChange}
+        onOpenDestination={onOpenDestination}
+        onOpenChange={onOpenChange}
+      />
     </BaseSheet>
   );
 }

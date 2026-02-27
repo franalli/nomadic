@@ -493,7 +493,9 @@ class ItineraryBuilder:
         self._warnings: List[str] = []
         self._nofly_buffer_days: int = 0
         self._day_preferences = input_data.activity_day_preferences or {}
-        self._activities_per_day: int = max(1, min(input_data.activities_per_day or 1, 5))
+        self._activities_per_day: int = max(
+            1, min(input_data.activities_per_day or MAX_BLOCKS_PER_DAY, 5)
+        )
         # Active categories for Phase 5.25 preferred-tile category filter.
         # None means "no filter" (user didn't specify categories).
         # set() means "user explicitly cleared all categories — skip all".
@@ -855,6 +857,10 @@ class ItineraryBuilder:
         if not activity_tiles:
             return activities_by_specialist
 
+        # ID-based lookup (Priority 1: direct match for specialist tiles)
+        tile_by_id: Dict[str, Dict[str, Any]] = {t["id"]: t for t in activity_tiles if t.get("id")}
+
+        # Title-based lookup (Priority 2: fallback for experience tiles)
         tile_by_title: Dict[str, Dict[str, Any]] = {}
         for tile in activity_tiles:
             key = _normalize_title_key(tile.get("title"))
@@ -864,9 +870,24 @@ class ItineraryBuilder:
         enriched_count = 0
         for _specialist, activities in activities_by_specialist.items():
             for activity in activities:
-                key = _normalize_title_key(activity.title)
-                tile = tile_by_title.get(key)
+                tile = None
+                # Priority 1: direct ID match (specialist tiles with tile_id)
+                if activity.tile_id:
+                    tile = tile_by_id.get(activity.tile_id)
+                # Priority 2: title-based match
                 if tile is None:
+                    key = _normalize_title_key(activity.title)
+                    tile = tile_by_title.get(key)
+                if tile is None:
+                    continue
+
+                # Store matched tile for Phase 5 booked_tile assignment
+                activity._matched_tile = tile  # type: ignore[attr-defined]
+
+                # Skip field-by-field enrichment if already linked (specialist tiles
+                # are created from the same content_added — copying is a no-op).
+                if activity.tile_id and activity.tile_id == tile.get("id"):
+                    enriched_count += 1
                     continue
 
                 meta = tile.get("meta") or {}
@@ -903,8 +924,6 @@ class ItineraryBuilder:
                 if activity.tile_id is None:
                     activity.tile_id = tile.get("id")
 
-                # Store matched tile for Phase 5 booked_tile assignment
-                activity._matched_tile = tile  # type: ignore[attr-defined]
                 enriched_count += 1
 
         if enriched_count > 0:
@@ -2167,6 +2186,7 @@ class ItineraryBuilder:
 
         activity_hours = 0.0
         total_blocks = 0
+        activity_count = 0
         for b in day.blocks:
             if b.activity_type == "free_day":
                 continue
@@ -2175,11 +2195,16 @@ class ItineraryBuilder:
             total_blocks += 1
             if not b.is_buffer:
                 activity_hours += _parse_duration_hours(b.duration, 3.0)
+                activity_count += 1
 
-        return (
-            max(0.0, DAY_CAPACITY_HOURS - activity_hours),
-            max(0, MAX_BLOCKS_PER_DAY - total_blocks),
-        )
+        remaining_hours = max(0.0, DAY_CAPACITY_HOURS - activity_hours)
+        remaining_blocks = max(0, MAX_BLOCKS_PER_DAY - total_blocks)
+
+        # Enforce activities_per_day as a hard ceiling across all placement phases
+        apd_remaining = max(0, self._activities_per_day - activity_count)
+        remaining_blocks = min(remaining_blocks, apd_remaining)
+
+        return (remaining_hours, remaining_blocks)
 
     def _time_slot_score(self, day: DayCardOutput, tile_time_of_day: str) -> float:
         """
@@ -2315,6 +2340,7 @@ class ItineraryBuilder:
                 for _, t in tiles.items()
                 if isinstance(t, dict)
                 and t.get("type") == "activity"
+                and t.get("source_agent") != "vertical_specialist"
                 and t.get("id") not in preferred_ids
             ]
 
@@ -2779,6 +2805,10 @@ class ItineraryBuilder:
             if title_key and title_key in scheduled_title_keys:
                 return False
             if day_idx not in day_slots or len(day_slots[day_idx]) >= MAX_SLOTS_PER_DAY:
+                return False
+            # Enforce activities_per_day cap (matches _day_remaining_capacity)
+            _, rem_blocks = self._day_remaining_capacity(days[day_idx])
+            if rem_blocks < 1:
                 return False
             day = days[day_idx]
             period = next((p for p in PERIODS if p not in day_slots[day_idx]), None)

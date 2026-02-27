@@ -21,7 +21,11 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.planner.llm_factory import get_llm_by_model
+from app.planner.llm_factory import (
+    get_llm_by_model,
+    resolve_schema_refs,
+    strip_unsupported_schema_keys,
+)
 from app.validation_cache import (
     _build_prompt,
     _check_rate_limit,
@@ -42,6 +46,12 @@ class ValidationResponse(BaseModel):
     v: list[str] = Field(default_factory=list, description="Corrected place name(s)")
     ok: bool = Field(description="Whether the input is a valid location")
     r: Optional[str] = Field(default=None, description="Reason if invalid")
+
+
+# Pre-resolved flat schema for Gemini-compatible structured output.
+_VALIDATION_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
+    resolve_schema_refs(ValidationResponse.model_json_schema())
+)
 
 
 def _get_model_name() -> str:
@@ -140,7 +150,7 @@ async def _call_llm_validation_async(
                 max_tokens=settings.validation_max_tokens,
             )
             structured_llm = llm.with_structured_output(
-                ValidationResponse, include_raw=True, method="function_calling"
+                dict(_VALIDATION_FLAT_SCHEMA), include_raw=True, method="function_calling"
             )
             result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
             if isinstance(result, dict) and "parsed" in result:
@@ -151,6 +161,9 @@ async def _call_llm_validation_async(
                 parsed = result
             else:
                 raise ValueError(f"Unexpected structured output type: {type(result).__name__}")
+            # Rehydrate dict → Pydantic if needed, then dump to dict for cache
+            if isinstance(parsed, dict):
+                parsed = ValidationResponse.model_validate(parsed)
             return parsed.model_dump()
 
         except Exception as exc:

@@ -92,15 +92,20 @@ function TripSettingsSheetInner({
   const { destination, origin, start_date, end_date, adults, children, budget, currency } = tripInputs;
 
   const mountedRef = useRef(true);
+  const openFieldTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      if (openFieldTimerRef.current) clearTimeout(openFieldTimerRef.current);
+    };
   }, []);
 
   const openField = useCallback(
     (sheet: SheetType) => {
       onOpenChange(false); // Close this sheet first
       // Small delay to let close animation finish before opening next
-      setTimeout(() => { if (mountedRef.current) onOpenSheet(sheet); }, 200);
+      if (openFieldTimerRef.current) clearTimeout(openFieldTimerRef.current);
+      openFieldTimerRef.current = setTimeout(() => { if (mountedRef.current) onOpenSheet(sheet); }, 200);
     },
     [onOpenChange, onOpenSheet]
   );

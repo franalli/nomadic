@@ -9,27 +9,30 @@ Handles:
 - State population from extraction results
 """
 
+import asyncio
 import hashlib
 import json
 import logging
 import re
 from calendar import monthrange
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.planner.llm_factory import get_llm_by_model, resolve_schema_refs
+from app.planner.llm_factory import (
+    get_llm_by_model,
+    resolve_schema_refs,
+    strip_unsupported_schema_keys,
+)
 from app.planner.specialist_registry import (
     ALL_SPECIALIST_KEYWORDS,
     TIER1_SPECIALIST_NAMES,
-    TIER2_CATEGORY_ALIASES,
     TIER2_COMMON_HINTS,
 )
 from app.planner.state import GraphState
-from app.planner.state.typed_meta import get_trip_settings
 
 if TYPE_CHECKING:
     from app.planner.schemas.coordinator_schemas import (
@@ -55,6 +58,16 @@ def _build_specialist_keyword_prompt() -> str:
 
 
 _SPECIALIST_KEYWORD_PROMPT = _build_specialist_keyword_prompt()
+
+
+def _sanitize_user_message(text: str) -> str:
+    """Escape prompt template metacharacters in user input.
+
+    Prevents user-supplied text from being interpreted as format-string
+    variables (``{}``) or fenced code blocks (triple backticks) when
+    interpolated into LLM prompt templates.
+    """
+    return text.replace("{", "{{").replace("}", "}}").replace("```", "` ` `")
 
 
 # =============================================================================
@@ -282,10 +295,20 @@ class RouterOutput(BaseModel):
     )
 
 
+# Pre-resolved flat schemas for Gemini-compatible structured output.
+# Passing dicts (not classes) avoids LangChain's OpenAI function-calling
+# wrapper which adds a top-level "parameters" key Gemini doesn't support.
+_ROUTER_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
+    resolve_schema_refs(RouterOutput.model_json_schema())
+)
+
+
 # =============================================================================
 # Prompts
 # =============================================================================
 
+# DEPRECATED: Unused — classification is handled by _classify_and_extract_with_llm().
+# Retained as reference only. Do NOT call .format() on this without _sanitize_user_message().
 CLASSIFICATION_PROMPT = (
     """You are an intent classifier for a travel planning assistant.
 
@@ -523,15 +546,6 @@ Respond with valid JSON. Only include fields that are explicitly mentioned."""
 # =============================================================================
 # LLM Factories
 # =============================================================================
-
-
-def _get_router_llm():
-    """Get the fast LLM for intent classification."""
-    return get_llm_by_model(
-        settings.router_model,
-        temperature=0,  # Deterministic classification
-        max_tokens=150,  # Classification is short
-    )
 
 
 def _get_router_extraction_llm():
@@ -860,15 +874,16 @@ async def _classify_and_extract_with_llm(
         try:
             llm = _get_router_extraction_llm()
 
-            # Use structured output for reliable JSON parsing
+            # Use pre-resolved flat schema (dict, not class) to avoid
+            # LangChain wrapping it with a "parameters" key Gemini rejects.
             structured_llm = llm.with_structured_output(
-                RouterOutput, include_raw=True, method="function_calling"
+                dict(_ROUTER_FLAT_SCHEMA), include_raw=True, method="function_calling"
             )
 
             # Format prompt with current date context
             current_year = today.year
             prompt = ROUTER_EXTRACTION_PROMPT.format(
-                user_message=user_text,
+                user_message=_sanitize_user_message(user_text),
                 today_date=today_date,
                 current_year=current_year,
                 current_trip_context=current_trip_context,
@@ -889,7 +904,7 @@ async def _classify_and_extract_with_llm(
             # VALIDATE & NORMALIZE EXTRACTED FIELDS
             # Ensures consistent cache keys (e.g., "Bali, Indonesia" → "Bali")
             # =================================================================
-            parsed_dict = parsed.model_dump()
+            parsed_dict = parsed if isinstance(parsed, dict) else parsed.model_dump()
             validated_dict = _validate_extraction(parsed_dict, today_date)
             parsed = RouterOutput.model_validate(validated_dict)
 
@@ -1045,20 +1060,30 @@ async def _classify_change_type(
         trip_state_json=trip_state_json,
         extracted_fields_json=json.dumps(extracted_fields, indent=2),
         existing_specialists_json=json.dumps(existing_specialists),
-        user_message=user_message,
+        user_message=_sanitize_user_message(user_message),
     )
 
     llm = get_llm_by_model(resolved_model, temperature=0, max_tokens=400)
 
     # ChangeClassification is 6 fields — well within Gemini's limits
-    classifier_schema = resolve_schema_refs(ChangeClassification.model_json_schema())
+    classifier_schema = strip_unsupported_schema_keys(
+        resolve_schema_refs(ChangeClassification.model_json_schema())
+    )
     structured_llm = llm.with_structured_output(
         dict(classifier_schema),
         include_raw=True,
         method="function_calling",
     )
 
-    result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
+    for _attempt in range(2):
+        try:
+            result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
+            break
+        except Exception:
+            if _attempt == 0:
+                await asyncio.sleep(1)
+                continue
+            raise
 
     parsed_payload = result["parsed"] if isinstance(result, dict) else result
     if parsed_payload is None:
@@ -1324,183 +1349,3 @@ def _clamp_date_str(date_str: str) -> str | None:
     clamped = f"{year:04d}-{month:02d}-{clamped_day:02d}"
     logger.info(f"Clamped date {date_str} -> {clamped} (month has {max_day} days)")
     return clamped
-
-
-def _populate_trip_plan_from_router_output(
-    state: "GraphState",
-    router_output: RouterOutput,
-    fallback_destination: Optional[str],
-    user_text: str = "",
-    category_baseline: Optional[set[str]] = None,
-    category_merge_mode: str = "add",
-    allow_category_updates: bool = True,
-) -> None:
-    """
-    Populate state.trip_plan fields from RouterOutput extraction.
-
-    This is the key fix for the date extraction bug - we populate the state
-    IMMEDIATELY after extraction, before any checks for missing dates.
-
-    Args:
-        state: GraphState to update
-        router_output: Extracted fields from LLM
-        fallback_destination: Destination from context extraction (used if LLM didn't extract one)
-    """
-    # Set destination (prefer extracted, fallback to context)
-    if router_output.destination:
-        state.trip_plan.destination = router_output.destination
-    elif fallback_destination and not state.trip_plan.destination:
-        state.trip_plan.destination = fallback_destination
-
-    # Multi-destination: stash deferred destinations on trip_plan for DestinationGate
-    if router_output.multi_destination_detected:
-        state.trip_plan._multi_dest_from_llm = True
-        # Parse deferred destinations from original user text
-        raw = user_text
-        deferred = []
-        dest_lower = (router_output.destination or "").lower()
-        for sep in [" and ", " then ", ", "]:
-            # Don't split if separator is part of the destination itself
-            # (handles "Trinidad and Tobago" erroneously flagged as multi-dest)
-            if sep.lower() in dest_lower:
-                continue
-            if sep in raw.lower():
-                parts = re.split(re.escape(sep), raw, flags=re.IGNORECASE)
-                if len(parts) > 1:
-                    deferred = [p.strip() for p in parts[1:] if p.strip()]
-                    break
-        state.trip_plan._deferred_destinations = deferred
-    else:
-        state.trip_plan._multi_dest_from_llm = False
-        state.trip_plan._deferred_destinations = []
-
-    # Set dates - TripPlan expects strings in YYYY-MM-DD format
-    if router_output.start_date:
-        clamped = _clamp_date_str(router_output.start_date)
-        if clamped:
-            state.trip_plan.start_date = clamped
-        else:
-            logger.warning(f"Invalid start_date format: {router_output.start_date}")
-
-    if router_output.end_date:
-        clamped = _clamp_date_str(router_output.end_date)
-        if clamped:
-            state.trip_plan.end_date = clamped
-        else:
-            logger.warning(f"Invalid end_date format: {router_output.end_date}")
-
-    # Calculate duration if we have both dates but no explicit duration
-    if state.trip_plan.start_date and state.trip_plan.end_date and not router_output.duration_days:
-        try:
-            start = datetime.strptime(state.trip_plan.start_date, "%Y-%m-%d")
-            end = datetime.strptime(state.trip_plan.end_date, "%Y-%m-%d")
-            state.trip_plan.duration_days = (end - start).days + 1  # Inclusive
-        except ValueError:
-            pass  # Skip duration calculation if dates are invalid
-
-    # INVERSE: Calculate end_date if we have start_date + duration but no end_date
-    # Handles cases like "a week in March" where LLM extracts start + duration
-    # FIX: Use accumulated start_date from previous turns, not just this-turn's extraction
-    # This allows "make it 4 days" to work when start_date was set in a prior message
-    start_date_to_use = router_output.start_date or state.trip_plan.start_date
-    if start_date_to_use and router_output.duration_days and not router_output.end_date:
-        try:
-            start = datetime.strptime(start_date_to_use, "%Y-%m-%d")
-            end = start + timedelta(days=router_output.duration_days - 1)  # Inclusive
-            state.trip_plan.end_date = end.strftime("%Y-%m-%d")
-            state.trip_plan.duration_days = router_output.duration_days
-            logger.debug(f"Calculated end_date from duration: {state.trip_plan.end_date}")
-        except ValueError:
-            pass  # Skip if date format is invalid
-
-    # Set other extracted fields if present
-    if router_output.origin:
-        state.trip_plan.origin = router_output.origin
-
-    if router_output.origin_iata:
-        state.trip_plan.origin_iata = router_output.origin_iata
-    if router_output.destination_iata:
-        state.trip_plan.destination_iata = router_output.destination_iata
-
-    if router_output.adults is not None:
-        state.trip_plan.adults = router_output.adults
-
-    if router_output.children is not None:
-        state.trip_plan.children = router_output.children
-
-    if router_output.budget is not None:
-        state.trip_plan.budget = router_output.budget
-
-    # Persist activity categories to activity_settings (Tier 2 pipeline activation)
-    if allow_category_updates and (
-        router_output.activity_categories or router_output.specialist_hints
-    ):
-        # Tier 1 validated by registry; Tier 2 is open-ended — accept any reasonable string.
-        # Apply alias normalization (e.g. "culture" → "cultural") so LLM drift
-        # doesn't create duplicate categories.
-        validated = [
-            TIER2_CATEGORY_ALIASES.get(
-                c.lower().strip().replace("_", " "),
-                c.lower().strip().replace("_", " "),
-            )
-            for c in router_output.activity_categories
-            if c.strip() and len(c.strip()) <= 40
-        ]
-        trip_inputs = state.metadata.get("trip_inputs", {})
-        activity_settings = trip_inputs.get("activity_settings", {})
-        existing = set(activity_settings.get("categories", []))
-        baseline = set(category_baseline) if category_baseline is not None else existing
-        # Also include Tier 1 specialists as categories (gated by registry)
-        from_specialists = {
-            s.lower() for s in router_output.specialist_hints if s.lower() in TIER1_SPECIALIST_NAMES
-        }
-        extracted = set(validated) | from_specialists
-        if extracted:
-            if category_merge_mode == "replace":
-                merged = sorted(extracted)
-            else:
-                merged = sorted(baseline | extracted)
-            activity_settings["categories"] = merged
-            trip_inputs["activity_settings"] = activity_settings
-            state.metadata["trip_inputs"] = trip_inputs
-            state.metadata.pop("trip_settings", None)  # Clear so fallback reads trip_inputs
-            state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
-            logger.debug(
-                "[VERIFY][CATEGORY_MERGE] applied mode=%s baseline=%s extracted=%s merged=%s",
-                category_merge_mode,
-                sorted(baseline),
-                sorted(extracted),
-                merged,
-            )
-            logger.info(
-                "[ROUTER] Categories: %s (merge_mode=%s, baseline=%s, extracted=%s)",
-                merged,
-                category_merge_mode,
-                sorted(baseline),
-                sorted(extracted),
-            )
-
-    # Persist activity day preferences (count-based, parsed from JSON string)
-    day_prefs = _parse_day_preferences(router_output.activity_day_preferences, user_text)
-    if day_prefs:
-        # Scope to categories mentioned this turn — prevents LLM hallucinating
-        # day counts for categories the user didn't reference (e.g., surfing: 3
-        # when user only said "add 2 days nightlife").
-        mentioned = set(router_output.activity_categories) | set(router_output.specialist_hints)
-        if mentioned:
-            day_prefs = {k: v for k, v in day_prefs.items() if k in mentioned}
-        trip_inputs = state.metadata.get("trip_inputs", {})
-        activity_settings = trip_inputs.get("activity_settings", {})
-        existing_prefs = activity_settings.get("day_preferences", {})
-        merged_prefs = {**existing_prefs, **day_prefs}
-        activity_settings["day_preferences"] = merged_prefs
-        trip_inputs["activity_settings"] = activity_settings
-        state.metadata["trip_inputs"] = trip_inputs
-        state.metadata.pop("trip_settings", None)
-        state.metadata["trip_settings"] = get_trip_settings(state).model_dump()
-        logger.info(f"[ROUTER] Day preferences: {merged_prefs}")
-
-    logger.debug(
-        f"Populated trip_plan: dest={state.trip_plan.destination}, "
-        f"dates={state.trip_plan.start_date} → {state.trip_plan.end_date}"
-    )

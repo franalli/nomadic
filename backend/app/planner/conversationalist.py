@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _RESPONSE_TEMPERATURE: float = 0.6
-_RESPONSE_MAX_TOKENS: int = 250
+_RESPONSE_MAX_TOKENS: int = 400
 
 
 # ---------------------------------------------------------------------------
@@ -721,7 +721,7 @@ async def generate_response_streaming(
     """Stream the assistant response token by token.
 
     Uses ``settings.synthesizer_planning_model`` via ``get_llm_by_model()``
-    with temperature 0.6 and max 250 tokens.  Enforces a hard sentence
+    with temperature 0.6 and max 400 tokens.  Enforces a hard sentence
     limit derived from the active voice block so the response never
     exceeds the declared maximum even if the LLM overshoots.
     """

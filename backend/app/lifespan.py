@@ -153,11 +153,31 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     await close_unsplash_http_client()
     logger.info("[Shutdown] Closed Unsplash HTTP client")
 
+    # 1c. Cancel inflight feasibility checks
+    from app.planner.services.feasibility_service import cancel_feasibility_inflight
+
+    cancelled_feasibility = cancel_feasibility_inflight()
+    if cancelled_feasibility:
+        logger.info("[Shutdown] Cancelled %d inflight feasibility checks", cancelled_feasibility)
+
+    # 1d. Cancel inflight browse tasks
+    from app.services.activity_browser import cancel_browse_inflight
+
+    cancelled_browse = await cancel_browse_inflight()
+    if cancelled_browse:
+        logger.info("[Shutdown] Cancelled %d inflight browse tasks", cancelled_browse)
+
     # 5b. Close Google Places HTTP client
     from app.tile_service.google_places_provider import close_places_http_client
 
     await close_places_http_client()
     logger.info("[Shutdown] Closed Google Places HTTP client")
+
+    # 5c. Close Google Places sync HTTP client
+    from app.tile_service.google_places_provider import close_sync_client
+
+    close_sync_client()
+    logger.info("[Shutdown] Closed Google Places sync HTTP client")
 
     # 6. Clear pending enrichments dict
     from app.planner.nodes.local_expert import _pending_enrichments, _pending_lock

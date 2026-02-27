@@ -18,7 +18,6 @@ Architecture — Tier 1 Decouple (skeleton-first):
 import asyncio
 import json
 import logging
-import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -58,11 +57,6 @@ _ENRICHMENT_TTL_SECONDS = 120  # 2 minutes
 _pending_enrichments: dict[str, tuple[object, float]] = {}  # (factory, monotonic_ts)
 _pending_lock = asyncio.Lock()  # Protects _pending_enrichments against coroutine interleaving
 
-# Threading lock for synchronous access to _pending_enrichments (e.g. from
-# _build_complete_envelope in plan_graph.py which runs in a sync context
-# inside an async generator).  The asyncio lock above only protects async
-# callers; this lock protects the sync code path from concurrent thread access.
-_pending_enrichments_thread_lock = threading.Lock()
 _active_destination_enrichments: set[str] = set()
 _active_enrichment_lock = asyncio.Lock()
 
@@ -702,15 +696,24 @@ Output as JSON with "constraints" and "recommendations" arrays."""
             )
             logger.debug("LOCAL_EXPERT Phase B: calling LLM (%s)...", settings.local_expert_model)
 
-            raw = await asyncio.wait_for(
-                llm.ainvoke(
-                    [
-                        SystemMessage(content=_system_prompt),
-                        HumanMessage(content=_user_context),
-                    ]
-                ),
-                timeout=60,
-            )
+            for _attempt in range(2):
+                try:
+                    raw = await asyncio.wait_for(
+                        llm.ainvoke(
+                            [
+                                SystemMessage(content=_system_prompt),
+                                HumanMessage(content=_user_context),
+                            ]
+                        ),
+                        timeout=60,
+                    )
+                    break
+                except Exception:
+                    if _attempt == 0:
+                        logger.debug("LOCAL_EXPERT Phase B: LLM call failed, retrying after 2s...")
+                        await asyncio.sleep(2)
+                        continue
+                    raise
             logger.debug("LOCAL_EXPERT Phase B: LLM call completed")
 
             content = extract_json_content(raw)

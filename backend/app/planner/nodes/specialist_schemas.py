@@ -1,3 +1,5 @@
+# DEPRECATED: This module is retained for backward compatibility.
+# New code should use schemas from graph_state.py or schemas.py directly.
 """
 Specialist Schemas
 
