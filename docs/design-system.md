@@ -249,8 +249,7 @@ Hearts indicate user preference for AI weighting, not cart additions.
 
 Map panels use sticky positioning during timeline scroll (P3+ only).
 
-Two map panel configurations exist, rendered from `PlanFullDensityView` and `PlanDensityViews`:
-- **Bridge mode map** (`PlanBridgeDensityView`, S2, destination set): `w-[350px]`, `sticky top-4`, `h-[400px]`
+Map panel configuration is now owned by `PlanFullDensityView`; `PlanDensityViews` now only renders the loading shell.
 - **Full mode map** (`PlanFullDensityView`, S3, itinerary content): `flex-1 min-w-[350px] self-stretch`, sticky viewport map with dynamic `top`/height offsets
 
 | Property | Bridge Mode (S2) | Full Mode (S3) | Mobile |
@@ -689,7 +688,7 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | Calendar | `ui/calendar.tsx` | Custom (see Calendar section) |
 | StrategyHero | `plan/stages/StrategyHero.tsx` | `DS.textSize.nano`, `DS.textSize.micro` directly; child sheets (`StrategyHeroCompactSheet`, `StrategyHeroHeroSheet`, `StrategyHeroAccordion`) use `DS.text.label`, `DS.text.body`, `DS.infoBox.container`. 3 variants: `hero`, `compact`, `accordion` |
 | Stepper (shared) | `ui/stepper.tsx` | Raw DS.stepper pattern (sm/default size variants) |
-| TileCard | `tiles/TileCard.tsx` | Raw glass card pattern, rating stars use neutral zinc scale |
+| TileCard | `tiles/TileCard.tsx` | Raw glass card pattern, rating stars use neutral zinc scale; signed Google Places photo URLs (`googlePlacesPhoto`) take precedence when present |
 | MiniCard | `tiles/MiniCard.tsx` | Compact glass card pattern, rating stars use neutral zinc scale |
 | SuggestionCard | `plan/tiles/SuggestionCard.tsx` | Suggested card variant, neutral zinc rating treatment, emerald save state |
 | GatingBlocker | `plan/sheets/GatingBlocker.tsx` | Shared prerequisite-gating notice for module sheets (Flights/Stays/Activities). Raw infoBox pattern (`bg-zinc-50 dark:bg-white/[0.02]`), raw smallAction pattern buttons |
@@ -2590,7 +2589,7 @@ Updates to Section 6 — new components discovered in audit:
 | `FreeDayCard` | `plan/timeline/blocks/FreeDayCard.tsx` | `DS.actions.primary` | Dashed-border empty day; specialist chip picker; see Section 31.8 |
 | `StrategyHeroAccordion` | `plan/stages/StrategyHeroAccordion.tsx` | `DS.textSize.*` | Collapsible accordion variant of StrategyHero; specialist colors via `SPECIALIST_STYLE_CLASSES` (in `StrategyHeroUtils.tsx`) |
 | `S2AgentCard` | `plan/stages/S2AgentCard.tsx` | `DS.textSize.*` | Legacy specialist card with topic CSS vars; `shadow-card` on card, `hover:shadow-soft` on hover |
-| `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Density switcher; `bg-emerald-500 rounded-full animate-pulse` for live indicator dot |
+| `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Loading shell only (`PlanMirrorLoader`); keeps live indicator dot. |
 | `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (raw pattern) | Full-density itinerary layout; subdued toggle pills for Flights/Stays/Travel Intel and sticky desktop map column |
 | `TimelineThread` | `plan/TimelineThread.tsx` | `DS.textSize.*` | Day-thread renderer; constraint/status chips with light/dark contrast pairs and unschedulable overlays |
 | `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |

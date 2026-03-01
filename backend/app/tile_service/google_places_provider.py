@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import logging
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from threading import Lock
@@ -354,6 +356,63 @@ def _get_photo_url(photo_name: str) -> Optional[str]:
     return None
 
 
+_PHOTO_NAME_RE = re.compile(r"^places/[A-Za-z0-9_-]+/photos/[A-Za-z0-9_-]+$")
+_PHOTO_SIGNED_TTL_MAX = 30 * 60
+
+
+def _media_signing_secret() -> str:
+    """Return server-side secret for signing media proxy URLs.
+
+    Mirrors the fallback chain in main.py to avoid circular imports.
+    """
+    secret = (
+        settings.media_proxy_signing_key
+        or settings.admin_api_key
+        or settings.google_maps_api_secret
+        or settings.google_maps_api_key
+        or ""
+    ).strip()
+    return secret
+
+
+def build_signed_photo_url(
+    session_id: str,
+    photo_name: str,
+    *,
+    max_width: int = 256,
+    max_height: int = 256,
+    ttl_seconds: int = 300,
+) -> Optional[str]:
+    """Construct a signed proxy URL for a Google Places photo.
+
+    Mirrors the signing logic from main._build_signed_google_places_photo_url
+    to avoid circular imports. The proxy endpoint at
+    /api/media/google-places-photo validates these signatures.
+    """
+    if not isinstance(photo_name, str) or not _PHOTO_NAME_RE.fullmatch(photo_name.strip()):
+        return None
+    secret = _media_signing_secret()
+    if not secret:
+        return None
+    photo_name = photo_name.strip()
+    ttl = max(60, min(ttl_seconds, _PHOTO_SIGNED_TTL_MAX))
+    exp = int(time.time()) + ttl
+    payload = f"{session_id}\n{photo_name}\n{max_width}\n{max_height}\n{exp}".encode("utf-8")
+    sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    from urllib.parse import urlencode
+
+    query = urlencode(
+        {
+            "name": photo_name,
+            "max_width": max_width,
+            "max_height": max_height,
+            "exp": exp,
+            "sig": sig,
+        }
+    )
+    return f"/api/media/google-places-photo?{query}"
+
+
 _GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 # In-memory geocode cache to avoid repeat API calls for the same destination.
@@ -547,6 +606,8 @@ def _build_places_request(
             "places.location,"
             "places.editorialSummary,"
             "places.primaryType,"
+            "places.rating,"
+            "places.userRatingCount,"
             "places.googleMapsUri"
         ),
     }
@@ -1121,12 +1182,15 @@ class GooglePlacesActivityProvider(Provider):
 # Activity Enrichment — ground LLM-generated activities with Google Places
 # =============================================================================
 
-# Lightweight field mask for enrichment (coordinates, photos, rating, price).
+# Lightweight field mask for enrichment (id, name, coordinates, photos, deeplink, address, rating).
+# rating + userRatingCount are Basic tier (free) — safe to include.
 _ENRICH_FIELD_MASK = (
     "places.id,"
     "places.displayName,"
     "places.location,"
     "places.photos,"
+    "places.rating,"
+    "places.userRatingCount,"
     "places.googleMapsUri,"
     "places.shortFormattedAddress"
 )
@@ -1296,8 +1360,15 @@ def _apply_place_to_activity(activity: dict, place: dict, title: str) -> dict:
         place.get("googleMapsUri") or f"https://www.google.com/maps/place/?q=place_id:{place_id}"
     )
 
-    # Enterprise fields (rating, priceLevel) stripped from enrichment FieldMask
-    # to stay on Pro tier. Provide heuristic price for tiles without LLM price.
+    # Extract rating + review count (Basic tier, free).
+    gp_rating = place.get("rating")
+    if gp_rating is not None:
+        enriched["rating"] = gp_rating
+    gp_review_count = place.get("userRatingCount")
+    if gp_review_count is not None:
+        enriched["user_ratings_count"] = gp_review_count
+
+    # Provide heuristic price for tiles without LLM price.
     if enriched.get("price_estimate") is None:
         enriched["price_estimate"] = _estimate_activity_price(None, travelers=2)
         enriched["price_basis"] = "per_person"
@@ -1484,6 +1555,14 @@ async def _enrich_single_activity(
     if not places:
         record_google_places_usage(path, "empty", mode="enrichment")
         await _set_cached_enrichment(cache_key, {"matched": False})
+        # Fallback deeplink for un-enriched tiles so they never have empty deeplinks
+        if not activity.get("deeplink") and not activity.get("deeplink_url"):
+            from urllib.parse import quote
+
+            tile_name = activity.get("title", "")
+            activity["deeplink"] = (
+                f"https://www.google.com/maps/search/{quote(f'{tile_name} {destination}')}"
+            )
         return activity
 
     try:
@@ -1524,7 +1603,7 @@ async def enrich_activities_with_places(
     semaphore = asyncio.Semaphore(_enrich_max_parallel())
 
     # Enrich all provided activities; concurrency is controlled by semaphore.
-    max_enrich = len(activities)
+    max_enrich = min(len(activities), settings.google_places_enrichment_cap)
     to_enrich = activities[:max_enrich]
     passthrough = activities[max_enrich:]
 
@@ -1532,7 +1611,7 @@ async def enrich_activities_with_places(
         async with semaphore:
             return await _enrich_single_activity(client, activity, destination, api_key, path)
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    async with httpx.AsyncClient(timeout=8.0) as client:
         coros = [_enrich_with_limit(activity) for activity in to_enrich]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
 

@@ -53,6 +53,8 @@ export interface UseLandingEffectsParams {
   setHasEverHadPlan: (v: boolean) => void;
   setLocalPendingTopics: React.Dispatch<React.SetStateAction<string[]>>;
   setDestinationImageUrl: (url: string | null) => void;
+  /** When true, session is still being restored — skip side-effects that may be wasted */
+  isHydrating?: boolean;
 }
 
 export interface UseLandingEffectsResult {
@@ -87,6 +89,7 @@ export function useLandingEffects({
   setHasEverHadPlan,
   setLocalPendingTopics,
   setDestinationImageUrl,
+  isHydrating,
 }: UseLandingEffectsParams): UseLandingEffectsResult {
   // ─── Destination image fetch ────────────────────────────────────────────
 
@@ -95,6 +98,7 @@ export function useLandingEffects({
   useEffect(() => {
     const destination = tripInputs.destination;
     if (!destination || destination === lastFetchedDestination.current) return;
+    if (isHydrating) return;
 
     lastFetchedDestination.current = destination;
     setDestinationImageUrl(null);
@@ -117,7 +121,7 @@ export function useLandingEffects({
       });
 
     return () => controller.abort();
-  }, [tripInputs.destination, setDestinationImageUrl]);
+  }, [tripInputs.destination, setDestinationImageUrl, isHydrating]);
 
   // ─── hasEverHadPlan detection ───────────────────────────────────────────
 

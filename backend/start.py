@@ -12,6 +12,7 @@ Usage:
     python start.py --prod   # Production mode (no reload)
 """
 
+import logging
 import os
 import sys
 
@@ -40,6 +41,17 @@ def main():
 
     is_prod = "--prod" in sys.argv
     log_level = get_log_level()
+
+    # Configure root logger so application loggers (app.*) output INFO/DEBUG
+    # to stderr. Without this, uvicorn only adds handlers for its own loggers
+    # and Python's lastResort handler only captures WARNING+, so all
+    # logger.info() / logger.debug() calls from app.* are silently dropped.
+    if log_level == "debug":
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(levelname)s:%(name)s:%(message)s",
+            stream=sys.stderr,
+        )
 
     print(f"Starting Nomadic Backend (DEBUG={os.getenv('DEBUG', 'off')}, log_level={log_level})")
 

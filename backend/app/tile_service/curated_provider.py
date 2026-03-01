@@ -11,6 +11,7 @@ Usage:
 
 import uuid
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from app.config import settings
 from app.data.demo_curation import DEMO_MANIFEST
@@ -19,6 +20,14 @@ from app.schemas import Tile
 
 from .models import SearchContext
 from .provider_base import Provider
+
+
+def _search_deeplink(name: str, destination: str, tile_type: str = "activity") -> str:
+    """Generate a Google Maps/Flights search URL as fallback deeplink."""
+    if tile_type == "flight":
+        return f"https://www.google.com/travel/flights?q={quote(destination)}"
+    return f"https://www.google.com/maps/search/{quote(f'{name} {destination}')}"
+
 
 # =============================================================================
 # Filtering Helpers
@@ -173,8 +182,9 @@ class CuratedProvider(Provider):
             currency=hotel.get("currency", ctx.currency or "USD"),
             price_basis="per_night",
             is_estimate_only=True,
-            deeplink_url=hotel.get("booking_url", "#"),
-            rating=float(hotel.get("rating", 0)),
+            deeplink_url=hotel.get("booking_url")
+            or _search_deeplink(hotel.get("name", "Hotel"), self.destination_key, "hotel"),
+            rating=float(hotel["rating"]) if hotel.get("rating") else None,
             location_label=hotel.get("location"),
             tags=hotel.get("amenities", []),
             availability_status="available",
@@ -184,6 +194,7 @@ class CuratedProvider(Provider):
                 "distance_to_dive_sites": hotel.get("distance_to_dive_sites"),
                 "curated": True,
                 "description": hotel.get("description"),
+                "stars": int(float(hotel["rating"])) if hotel.get("rating") else None,
             },
             source="curated",
             source_agent="curated_provider",
@@ -225,7 +236,10 @@ class CuratedProvider(Provider):
             currency=activity.get("currency", ctx.currency or "USD"),
             price_basis="per_person",
             is_estimate_only=True,
-            deeplink_url=activity.get("booking_url", "#"),
+            deeplink_url=activity.get("booking_url")
+            or _search_deeplink(
+                activity.get("title", "Activity"), self.destination_key, "activity"
+            ),
             location_label=activity.get("location"),
             tags=tags,
             availability_status="available",

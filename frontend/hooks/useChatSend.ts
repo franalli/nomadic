@@ -79,6 +79,7 @@ interface UseChatSendParams {
 
   // Scroll helpers (from useChatScrolling)
   scrollPanelIntoView: () => void;
+  scrollToBottom: (force?: boolean) => void;
 
   // Input ref for focus management
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -146,6 +147,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     setGenerateTriggered,
     setActiveStatus,
     scrollPanelIntoView,
+    scrollToBottom,
     inputRef,
     toast,
   } = params;
@@ -223,6 +225,8 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     filterMessages,
     onPlanResult,
     onAutoExpandItinerary,
+    scrollToBottom,
+    scrollPanelIntoView,
   });
 
   // Stop streaming when user clicks the stop button
@@ -458,6 +462,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
           });
         }
         envelopeGenerationRef.current = nextEnvelopeBufferGeneration();
+        useDocumentStore.getState().bumpMessageSendNonce();
 
         streamStarted = true;
         await executeStream({
@@ -492,7 +497,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         }
       }
     },
-    [onGeneratePlanStart, selectedBranchId, sessionState, addMessage, delayedLoader, actionLoader, hasBranches, onUserMessageSubmit, toast, executeStream, setActiveStatus, setGenerateTriggered, updateMessage]
+    [onGeneratePlanStart, selectedBranchId, sessionState, addMessage, delayedLoader, actionLoader, hasBranches, onUserMessageSubmit, toast, executeStream, setActiveStatus, setGenerateTriggered, scrollToBottom, updateMessage]
   );
 
   const addAssistantMessage = useCallback((message: string) => {

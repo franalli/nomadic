@@ -10,12 +10,18 @@ All imports are lazy so unused providers add zero startup cost.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Mapping
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.services.spend_guard import reserve_llm_spend_or_raise
+
+# Suppress known-benign Gemini schema warnings from LangChain's internal
+# schema reprocessing. Our gemini_safe_schema() pipeline already strips
+# unsupported keys, but LangChain re-derives them internally.
+logging.getLogger("langchain_google_genai._function_utils").setLevel(logging.ERROR)
 
 
 def get_llm_by_model(
@@ -215,17 +221,66 @@ def strip_unsupported_schema_keys(node: object) -> object:
     silently dropped. Strip them proactively so structured output doesn't rely
     on Gemini's lenient parsing.
 
+    The ``properties`` key is special: its children are field-name → schema
+    mappings. Field names must be preserved (not filtered against the allowlist);
+    only the schema *within* each field is recursively stripped.
+
     Safe to compose with ``resolve_schema_refs()``:
         ``strip_unsupported_schema_keys(resolve_schema_refs(schema))``
     """
     if isinstance(node, dict):
-        return {
-            k: strip_unsupported_schema_keys(v)
-            for k, v in node.items()
-            if k in _GEMINI_ALLOWED_SCHEMA_KEYS
-        }
+        result = {}
+        for k, v in node.items():
+            if k not in _GEMINI_ALLOWED_SCHEMA_KEYS:
+                continue
+            if k == "properties" and isinstance(v, dict):
+                # properties is a map of field_name → schema_object.
+                # Preserve field names; only strip within each field's schema.
+                result[k] = {
+                    field_name: strip_unsupported_schema_keys(field_schema)
+                    for field_name, field_schema in v.items()
+                }
+            else:
+                result[k] = strip_unsupported_schema_keys(v)
+        return result
     if isinstance(node, list):
         return [strip_unsupported_schema_keys(item) for item in node]
+    return node
+
+
+def gemini_safe_schema(node: object) -> object:
+    """Convert Pydantic anyOf-nullable patterns to Gemini-native nullable format.
+
+    Pydantic v2 renders ``Optional[T]`` as ``{"anyOf": [{"type": T}, {"type": "null"}]}``.
+    Gemini silently drops ``anyOf``, erasing all type info for those fields.
+    This converts them to ``{"type": T, "nullable": true}`` which Gemini enforces.
+
+    Safe for OpenAI too — ``nullable`` is valid in non-strict function-calling schemas.
+
+    Compose after ``strip_unsupported_schema_keys``:
+        ``gemini_safe_schema(strip_unsupported_schema_keys(resolve_schema_refs(schema)))``
+    """
+    if isinstance(node, dict):
+        if "anyOf" in node:
+            any_of = node["anyOf"]
+            if isinstance(any_of, list) and len(any_of) == 2:
+                non_null = [
+                    b for b in any_of if not (isinstance(b, dict) and b.get("type") == "null")
+                ]
+                null_branch = [b for b in any_of if isinstance(b, dict) and b.get("type") == "null"]
+                if len(non_null) == 1 and len(null_branch) == 1:
+                    # Optional[T] pattern — merge non-null branch + nullable
+                    merged = dict(gemini_safe_schema(non_null[0]))
+                    merged["nullable"] = True
+                    # Preserve sibling keys (description, default, etc.)
+                    for k, v in node.items():
+                        if k != "anyOf" and k not in merged:
+                            merged[k] = gemini_safe_schema(v)
+                    return merged
+        # Regular dict — recurse into values
+        return {k: gemini_safe_schema(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [gemini_safe_schema(item) for item in node]
     return node
 
 

@@ -13,6 +13,7 @@ from app.config import settings
 from app.db import _get_async_session_factory
 from app.planner.hashing import make_cache_key
 from app.planner.llm_factory import (
+    gemini_safe_schema,
     get_llm_by_model,
     resolve_schema_refs,
     strip_unsupported_schema_keys,
@@ -31,8 +32,8 @@ class IataResponse(BaseModel):
 
 
 # Pre-resolved flat schema for Gemini-compatible structured output.
-_IATA_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
-    resolve_schema_refs(IataResponse.model_json_schema())
+_IATA_FLAT_SCHEMA: dict = gemini_safe_schema(
+    strip_unsupported_schema_keys(resolve_schema_refs(IataResponse.model_json_schema()))
 )
 
 L1_TTL_SECONDS = 24 * 60 * 60  # 24h

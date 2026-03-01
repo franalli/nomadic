@@ -806,6 +806,10 @@ type DocumentState = {
   // Fill-day: surgical single day card replacement + atomic tile merge
   replaceDayCard: (dayNumber: number, newCard: DayCard, newVersion?: number, newTiles?: Record<string, Tile>) => void;
 
+  // Enrichment poller cancellation — incremented on each message send
+  messageSendNonce: number;
+  bumpMessageSendNonce: () => void;
+
   // Reset
   reset: () => void;
 };
@@ -855,6 +859,8 @@ const initialState = {
   generation: null as GenerationState | null,
   // Stashed activity tiles (Tier 1 suppressed — available for Browse Activities sheet)
   browseableActivities: [] as Array<Record<string, unknown>>,
+  // Enrichment poller cancellation — incremented on each message send
+  messageSendNonce: 0,
 };
 
 /**
@@ -1450,6 +1456,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Prevents overwriting backend-derived values (e.g., specialist-extracted
     // categories like ["diving", "hiking"]) with empty frontend defaults.
     const dirty = new Set(_userDirtySettings);
+    const ti = doc.trip_inputs;
+
+    // Auto-flush default activities_per_day when the document has null/undefined.
+    // The Pace pill shows "Relaxed 1/day" by default but is never marked dirty
+    // unless the user explicitly changes it — so the backend never receives it.
+    if (
+      !dirty.has('activity_settings') &&
+      ti.activity_settings?.activities_per_day == null
+    ) {
+      const patched = {
+        ...(ti.activity_settings ?? DEFAULT_ACTIVITY_SETTINGS),
+        activities_per_day: DEFAULT_ACTIVITY_SETTINGS.activities_per_day,
+      };
+      get().updateTripInputs({ activity_settings: patched });
+      dirty.add('activity_settings');
+    }
 
     if (dirty.size === 0) {
       debugLog('[ensureSettingsFlushed] SKIP — no dirty settings', {
@@ -1458,10 +1480,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       });
       return;
     }
-
-    const ti = doc.trip_inputs;
+    // Re-read trip_inputs in case updateTripInputs patched activity_settings above
+    const freshTi = get().document?.trip_inputs ?? ti;
     const payload: Partial<DocumentTripInputsPatch> = {};
-    if (dirty.has('activity_settings')) payload.activity_settings = ti.activity_settings;
+    if (dirty.has('activity_settings')) payload.activity_settings = freshTi.activity_settings;
     if (dirty.has('hotel_settings')) payload.hotel_settings = ti.hotel_settings;
     if (dirty.has('flight_settings')) payload.flight_settings = ti.flight_settings;
     if (dirty.has('transport_settings')) payload.transport_settings = ti.transport_settings;
@@ -1948,9 +1970,26 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Merge tiles only for same destination (additive like flights)
     // Full replace on destination change, date change, or backend tiles_replaced flag
     const tilesReplaced = response.document.tiles_replaced === true;
-    const mergedTiles = (destinationChanged || datesChanged || tilesReplaced)
-      ? response.document.tiles
-      : { ...currentDoc?.tiles, ...response.document.tiles };
+    let mergedTiles: Record<string, any>;
+    if (destinationChanged || datesChanged) {
+      mergedTiles = response.document.tiles;
+    } else if (tilesReplaced) {
+      const incomingHasHotels = Object.values(response.document.tiles ?? {}).some(
+        (t: any) => t.type === 'hotel' || t.type === 'accommodation'
+      );
+      if (!incomingHasHotels && currentDoc?.tiles) {
+        const currentHotels = Object.fromEntries(
+          Object.entries(currentDoc.tiles).filter(
+            ([, t]: [string, any]) => t.type === 'hotel' || t.type === 'accommodation'
+          )
+        );
+        mergedTiles = { ...currentHotels, ...response.document.tiles };
+      } else {
+        mergedTiles = response.document.tiles;
+      }
+    } else {
+      mergedTiles = { ...currentDoc?.tiles, ...response.document.tiles };
+    }
 
     if (tilesReplaced) {
       debugLog('[documentStore.setFromPlanResponse] 🔄 Tiles: REPLACED (tiles_replaced flag)');
@@ -1972,6 +2011,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       `after(${_newTiles.length}): ${JSON.stringify(_newTiles)}`,
       `changed: ${JSON.stringify(_prevTiles) !== JSON.stringify(_newTiles)}`,
     );
+    // Skip tile state write when tiles_replaced flag is set but content is identical.
+    // Use full key set + JSON value comparison (not the truncated diagnostic strings).
+    const _tileKeysChanged = (() => {
+      if (!currentDoc?.tiles || !tilesReplaced) return true;
+      const prevKeys = Object.keys(currentDoc.tiles).sort();
+      const newKeys = Object.keys(mergedTiles).sort();
+      if (prevKeys.length !== newKeys.length) return true;
+      if (prevKeys.some((k, i) => k !== newKeys[i])) return true;
+      // Keys match — compare values by serializing each tile
+      return prevKeys.some(k => JSON.stringify(currentDoc.tiles[k]) !== JSON.stringify(mergedTiles[k]));
+    })();
+    if (tilesReplaced && !_tileKeysChanged && currentDoc?.tiles) {
+      debugLog('[DIAG:TILE_DELTA] No-op tile replace detected — preserving referential identity');
+      mergedTiles = currentDoc.tiles;
+    }
     // === END DIAGNOSTIC ===
 
     // ============================================================
@@ -2152,6 +2206,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     const { document: currentDoc } = get();
     if (!currentDoc) return;
+
+    // Skip no-op envelopes — partials without meaningful data don't need a state write
+    const hasPayload =
+      (envelope.tiles !== undefined && Object.keys(envelope.tiles).length > 0) ||
+      envelope.day_cards !== undefined ||
+      envelope.strategy_sections !== undefined ||
+      envelope.plan_view_state !== undefined ||
+      envelope.constraint_violations !== undefined ||
+      envelope.constraints_validated !== undefined ||
+      envelope.browseable_activities !== undefined;
+    if (!hasPayload && !envelope.trip_inputs) {
+      debugLog('[documentStore.mergeEnvelope] ⏭️ SKIPPED (empty envelope)');
+      return;
+    }
 
     envelope = sanitizeEnvelopeImages(envelope);
 
@@ -2857,6 +2925,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ...(newVersion !== undefined && { version: newVersion }),
     });
   },
+
+  messageSendNonce: 0,
+  bumpMessageSendNonce: () => set((s) => ({ messageSendNonce: s.messageSendNonce + 1 })),
 
   reset: () => {
     // Abort any in-flight generation on reset

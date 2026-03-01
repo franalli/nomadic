@@ -100,7 +100,7 @@ export function PlanFullDensityView({
   // Hotels always come from Google Places so they reliably have lat/lng.
   const destinationCenter = useMemo(() => {
     const hotelTile = Object.values(effectiveTiles).find(
-      (t) => (t.type === 'hotel' || t.type === 'accommodation') && t.geo?.lat && t.geo?.lng,
+      (t) => (t.type === 'hotel' || t.type === 'accommodation') && t.geo?.lat != null && t.geo?.lng != null,
     );
     if (hotelTile?.geo) return { lat: hotelTile.geo.lat, lng: hotelTile.geo.lng, zoom: 13 };
     return null;
@@ -149,7 +149,14 @@ export function PlanFullDensityView({
   // Track streaming state in a ref so the enrichment polling loop can
   // bail out when a new graph request starts (props are stale in closures).
   const isStreamingRef = useRef(isStreaming);
-  useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
+  // Monotonic turn counter — increments each time streaming starts.
+  // Polling loops capture the value at start and bail if it changes,
+  // closing the 0-500ms race window between "user sends" and "first SSE event".
+  const turnCounterRef = useRef(0);
+  useEffect(() => {
+    isStreamingRef.current = isStreaming;
+    if (isStreaming) turnCounterRef.current += 1;
+  }, [isStreaming]);
   const [enrichedLocalExpertSection, setEnrichedLocalExpertSection] = useState<StrategySection | null>(null);
   const effectiveStrategySections = useMemo(() => {
     if (!localExpertSectionId || !enrichedLocalExpertSection) {
@@ -215,6 +222,7 @@ export function PlanFullDensityView({
       const startedAt = Date.now();
       let pendingAttempts = 0;
       let transientErrors = 0;
+      const startTurn = turnCounterRef.current;
 
       // Initial delay: Phase B LLM enrichment takes 10-20s, skip wasted early polls
       await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -223,7 +231,7 @@ export function PlanFullDensityView({
       while (!cancelled) {
         // Abandon polling when a new graph request starts — fresh
         // enrichment data will arrive with the new response.
-        if (isStreamingRef.current) return;
+        if (isStreamingRef.current || turnCounterRef.current !== startTurn) return;
 
         let result: Awaited<ReturnType<typeof getSpecialistEnrichment>> = null;
         try {
@@ -235,7 +243,7 @@ export function PlanFullDensityView({
           await new Promise((resolve) => setTimeout(resolve, 2000));
           continue;
         }
-        if (cancelled || isStreamingRef.current) return;
+        if (cancelled || isStreamingRef.current || turnCounterRef.current !== startTurn) return;
         transientErrors = 0;
         if (!result) return;
 

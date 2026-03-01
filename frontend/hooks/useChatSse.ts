@@ -104,6 +104,8 @@ export interface ChatSseCallbacks {
     response?: GraphPlanResponse;
   }) => void;
   onAutoExpandItinerary?: (options?: { forceFullRebuild?: boolean }) => void;
+  scrollToBottom: (force?: boolean) => void;
+  scrollPanelIntoView: () => void;
 }
 
 export interface ExecuteStreamParams {
@@ -149,9 +151,25 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
     filterMessages,
     onPlanResult,
     onAutoExpandItinerary,
+    scrollToBottom,
+    scrollPanelIntoView,
   } = callbacks;
 
   const reconcileTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const queueCompletionScroll = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollPanelIntoView();
+      scrollToBottom(true);
+      requestAnimationFrame(() => {
+        scrollPanelIntoView();
+        scrollToBottom(true);
+      });
+      setTimeout(() => {
+        scrollPanelIntoView();
+        scrollToBottom(true);
+      }, 150);
+    });
+  }, [scrollToBottom, scrollPanelIntoView]);
 
   useEffect(() => {
     return () => {
@@ -526,6 +544,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             setIsLoading(false);
             isSendingRef.current = false;
             activeStreamRequestIdRef.current = null;
+            queueCompletionScroll();
             resolve();
           },
 
@@ -564,6 +583,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             setIsLoading(false);
             isSendingRef.current = false;
             activeStreamRequestIdRef.current = null;
+            queueCompletionScroll();
             resolve();
           },
         });
@@ -593,6 +613,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
       filterMessages,
       onPlanResult,
       onAutoExpandItinerary,
+      queueCompletionScroll,
     ]
   );
 

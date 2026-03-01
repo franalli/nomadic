@@ -32,6 +32,7 @@ from app.config import settings
 from app.placeholders import get_activity_image
 from app.planner.llm_factory import (
     extract_token_usage,
+    gemini_safe_schema,
     get_llm_by_model,
     resolve_schema_refs,
     strip_unsupported_schema_keys,
@@ -109,9 +110,11 @@ class LLMSpecialistOutput(BaseModel):
 
 # Cache flat schema at module load — $defs inlined, unsupported keys stripped
 # so Gemini function calling accepts it without warnings.
-_SPECIALIST_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
-    resolve_schema_refs(LLMSpecialistOutput.model_json_schema())
+_SPECIALIST_FLAT_SCHEMA: dict = gemini_safe_schema(
+    strip_unsupported_schema_keys(resolve_schema_refs(LLMSpecialistOutput.model_json_schema()))
 )
+
+_CACHE_DAY_PREF_UNSET = object()  # Sentinel: cache_day_pref not provided
 
 
 def _record_specialist_latency_metric(
@@ -299,7 +302,8 @@ def _build_specialist_prompt(
     skill_level: Optional[str] = None,
     target_activities: Optional[int] = None,
     scheduling_context: Optional[str] = None,
-) -> tuple[Optional[str], str]:
+    activities_per_day: int = 2,
+) -> tuple[Optional[str], str, int]:
     """Build the system + user prompts for a specialist LLM call.
 
     Encapsulates prompt construction so that both the existing
@@ -317,15 +321,15 @@ def _build_specialist_prompt(
             specialist is aware of cross-specialist scheduling constraints.
 
     Returns:
-        Tuple of (system_prompt, user_prompt).  system_prompt is None when
-        no prompt template can be resolved for the topic.
+        Tuple of (system_prompt, user_prompt, max_acts).  system_prompt is
+        None when no prompt template can be resolved for the topic.
     """
     # --- System prompt (from registry) ---
     system_prompt = load_prompt(topic)
     if not system_prompt:
         system_prompt = load_prompt("generic_activity")
     if not system_prompt:
-        return None, ""
+        return None, "", 0
 
     # Inject user skill level
     if skill_level:
@@ -348,7 +352,10 @@ def _build_specialist_prompt(
             pass
 
     # --- Activity count scaling ---
-    available_days = max(1, duration_days - 2)
+    # Account for safety buffers (e.g., diving 24h no-fly buffer)
+    _spec_config = get_specialist_config(topic)
+    _buffer_days = 1 if (_spec_config and _spec_config.has_nofly_buffer) else 0
+    available_days = max(1, duration_days - 2 - _buffer_days)
 
     if available_days <= 3:
         min_acts, max_acts = 2, 3
@@ -359,11 +366,19 @@ def _build_specialist_prompt(
         max_acts = min(available_days * 2 // 3, 7)
 
     if target_activities is not None:
-        capped_target = min(target_activities, available_days)
+        # Allow multi-activity days (apd > 1): cap at available_days × 5, not available_days
+        max_total = available_days * 5
+        capped_target = min(target_activities, max_total)
         min_acts = capped_target
         max_acts = capped_target
     else:
-        max_acts = min(max_acts, 3)
+        apd = activities_per_day or getattr(trip_plan, "activities_per_day", 2) or 2
+        # Category-aware: specialist gets fair share of available days
+        all_categories = getattr(trip_plan, "categories", None) or []
+        num_categories = max(1, len(all_categories))
+        specialist_share = max(1, available_days // num_categories)
+        desired = min(specialist_share * apd + 1, available_days, 10)
+        max_acts = min(max_acts, desired)
         min_acts = min(min_acts, max_acts)
 
     activity_count_instruction = (
@@ -393,7 +408,7 @@ set feasibility_status to "infeasible" with reason"""
     if scheduling_context:
         user_prompt += f"\n\n{scheduling_context}"
 
-    return system_prompt, user_prompt
+    return system_prompt, user_prompt, max_acts
 
 
 async def generate_specialist_output_llm(
@@ -405,6 +420,7 @@ async def generate_specialist_output_llm(
     target_activities: Optional[int] = None,  # User's day_preference for this topic
     scheduling_context: Optional[str] = None,  # Coordinator scheduling context
     skip_cache_lookup: bool = False,  # Skip pre-LLM cache read when caller already checked cache
+    cache_day_pref: object = _CACHE_DAY_PREF_UNSET,  # Raw user day pref for cache key alignment
 ) -> Optional[LLMSpecialistOutput]:
     """
     Single LLM call generates feasibility + activities + constraints.
@@ -422,8 +438,18 @@ async def generate_specialist_output_llm(
         skip_cache_lookup: If True, bypasses the cache read in this function.
             Useful when caller already performed cache lookup and wants to avoid
             duplicate L1/L2 reads on single-specialist miss path.
+        cache_day_pref: Raw user day preference for cache key alignment.
+            When set to _CACHE_DAY_PREF_UNSET, defaults to target_activities.
+            Needed because the parallel path caches with the raw user pref (may be
+            None) while the single dispatch path has a computed target_activities.
     """
     from app.debug_utils import _debug_log
+
+    # Resolve cache_day_pref: use raw user preference when provided for cache
+    # key alignment with the parallel dispatch path; fall back to target_activities.
+    _effective_cache_day_pref = (
+        target_activities if cache_day_pref is _CACHE_DAY_PREF_UNSET else cache_day_pref
+    )
 
     # =========================================================================
     # CACHE CHECK: L1 (memory) → L2 (PostgreSQL)
@@ -440,10 +466,16 @@ async def generate_specialist_output_llm(
                 start_date=trip_plan.start_date,
                 end_date=trip_plan.end_date,
                 skill_level=skill_level,
-                day_pref=target_activities,
+                day_pref=_effective_cache_day_pref,
             )
 
             if cached is not None:
+                # Check for negative cache sentinel
+                from app.services.specialist_cache import is_negative_cache
+
+                if is_negative_cache(cached):
+                    _debug_log(f"[LLM_SPECIALIST] NEGATIVE CACHE HIT: {topic} — skipping LLM")
+                    return None
                 try:
                     output = LLMSpecialistOutput.model_validate(cached)
                     _debug_log(
@@ -458,13 +490,14 @@ async def generate_specialist_output_llm(
 
     # Build prompts via shared helper (same logic, now reusable by
     # dispatch_specialist_with_brief and the existing path).
-    system_prompt, user_prompt = _build_specialist_prompt(
+    system_prompt, user_prompt, max_acts = _build_specialist_prompt(
         topic=topic,
         destination=destination,
         trip_plan=trip_plan,
         skill_level=skill_level,
         target_activities=target_activities,
         scheduling_context=scheduling_context,
+        activities_per_day=getattr(trip_plan, "activities_per_day", 2) or 2,
     )
     if system_prompt is None:
         _debug_log(f"[LLM_SPECIALIST] No system prompt for topic '{topic}', using fallback")
@@ -483,8 +516,11 @@ async def generate_specialist_output_llm(
                 duration_days = (e - s).days + 1
             except ValueError:
                 pass
-        available_days = max(1, duration_days - 2)
-        capped_target = min(target_activities, available_days)
+        _pad_config = get_specialist_config(topic)
+        _pad_buffer = 1 if (_pad_config and _pad_config.has_nofly_buffer) else 0
+        available_days = max(1, duration_days - 2 - _pad_buffer)
+        max_total = available_days * 5
+        capped_target = min(target_activities, max_total)
         _debug_log(
             f"[LLM_SPECIALIST] day_preference override: "
             f"target={target_activities}, capped={capped_target}, "
@@ -537,8 +573,31 @@ async def generate_specialist_output_llm(
 
             parsed_dict = raw_result.get("parsed") if isinstance(raw_result, dict) else None
             if parsed_dict is None:
-                raise ValueError("Structured output returned parsed=None")
+                # Attempt raw text extraction before failing (Gemini sometimes
+                # returns content in raw message instead of parsed dict).
+                raw_msg = raw_result.get("raw") if isinstance(raw_result, dict) else None
+                if raw_msg and hasattr(raw_msg, "content"):
+                    import json as _json
+
+                    try:
+                        parsed_dict = _json.loads(raw_msg.content)
+                    except (ValueError, TypeError):
+                        pass
+                if parsed_dict is None:
+                    raise ValueError("Structured output returned parsed=None")
             output = LLMSpecialistOutput.model_validate(parsed_dict)
+
+            # Post-LLM truncation: cap activities at prompt-requested max
+            if (
+                output.feasibility_status == "feasible"
+                and max_acts > 0
+                and len(output.activities) > max_acts
+            ):
+                _debug_log(
+                    f"[LLM_SPECIALIST] Truncating {topic}: "
+                    f"{len(output.activities)} → {max_acts} activities"
+                )
+                output.activities = output.activities[:max_acts]
 
             # Guard against LLM returning an all-defaults empty dict (feasible + zero activities).
             # model_validate({}) would succeed silently and poison the 7-day L2 cache.
@@ -563,9 +622,9 @@ async def generate_specialist_output_llm(
             if (
                 target_activities is not None
                 and output.feasibility_status == "feasible"
-                and len(output.activities) < min(target_activities, available_days)
+                and len(output.activities) < min(target_activities, available_days * 5)
             ):
-                deficit = min(target_activities, available_days) - len(output.activities)
+                deficit = min(target_activities, available_days * 5) - len(output.activities)
                 original_count = len(output.activities)
                 if output.activities:
                     for i in range(deficit):
@@ -598,7 +657,7 @@ async def generate_specialist_output_llm(
                         end_date=trip_plan.end_date,
                         output=output.model_dump(),
                         skill_level=skill_level,
-                        day_pref=target_activities,
+                        day_pref=_effective_cache_day_pref,
                     )
                 except Exception as cache_err:
                     _debug_log(f"[LLM_SPECIALIST] Cache write failed (non-fatal): {cache_err}")
@@ -627,6 +686,22 @@ async def generate_specialist_output_llm(
             f"[LLM_SPECIALIST] ❌ FAILED for {topic} after {elapsed:.1f}s | "
             f"type={type(last_error).__name__} | msg={str(last_error)[:300]}"
         )
+        # Write negative cache sentinel to prevent retry storms
+        if use_cache:
+            try:
+                from app.services.specialist_cache import set_negative_cache
+
+                await set_negative_cache(
+                    topic=topic,
+                    destination=destination,
+                    start_date=trip_plan.start_date,
+                    end_date=trip_plan.end_date,
+                    skill_level=skill_level,
+                    day_pref=target_activities,
+                    error=str(last_error)[:200],
+                )
+            except Exception:
+                pass
     return None
 
 
@@ -681,6 +756,8 @@ class _BriefAsTripPlan:
         "adults",
         "children",
         "destination",
+        "activities_per_day",
+        "categories",
     )
 
     def __init__(self, brief: TripBrief) -> None:
@@ -689,6 +766,8 @@ class _BriefAsTripPlan:
         self.adults: int = brief.adults
         self.children: int = brief.children
         self.destination: str = brief.destination
+        self.activities_per_day: int = brief.activities_per_day
+        self.categories: list = getattr(brief, "categories", [])
 
 
 async def dispatch_specialist_with_brief(
@@ -696,6 +775,7 @@ async def dispatch_specialist_with_brief(
     topic: str,
     replan: Optional[ReplanRequest] = None,
     db: Optional[Any] = None,
+    raw_day_pref: Optional[int] = _CACHE_DAY_PREF_UNSET,
 ) -> Optional[LLMSpecialistOutput]:
     """Bridge between the coordinator's TripBrief and the existing
     specialist LLM pipeline.
@@ -726,6 +806,11 @@ async def dispatch_specialist_with_brief(
     # Determine target_activities from brief
     target_activities = brief.target_day_count
 
+    # Resolve raw_day_pref for cache key alignment with parallel dispatch path.
+    # The parallel path caches with day_preferences.get(topic) (raw user pref),
+    # while target_activities may be a computed value from _scaled_target.
+    _cache_pref = raw_day_pref
+
     # Build scheduling context when the brief carries cross-specialist info.
     # Phase 3B will thread this into the specialist prompt via a dedicated
     # code path; for now we log it for observability.
@@ -755,8 +840,51 @@ async def dispatch_specialist_with_brief(
             f"{scheduling_ctx}\n\n{replan_context}" if scheduling_ctx else replan_context
         )
 
-    # Delegate to generate_specialist_output_llm which handles caching,
-    # retries, and padding.
+    # Check cache — handle both negative sentinels and positive hits to avoid
+    # a duplicate L1/L2 lookup inside generate_specialist_output_llm.
+    skip_cache = False
+    if db is not None:
+        try:
+            from app.services.specialist_cache import (
+                get_cached_specialist_output,
+                is_negative_cache,
+            )
+
+            _read_day_pref = (
+                target_activities if _cache_pref is _CACHE_DAY_PREF_UNSET else _cache_pref
+            )
+            cached = await get_cached_specialist_output(
+                db=db,
+                topic=topic,
+                destination=brief.destination,
+                start_date=brief.start_date,
+                end_date=brief.end_date,
+                skill_level=brief.skill_level,
+                day_pref=_read_day_pref,
+            )
+            if cached is not None:
+                if is_negative_cache(cached):
+                    _logger.info(
+                        "[dispatch_specialist_with_brief] %s negative cache hit — skipping LLM",
+                        topic,
+                    )
+                    return None
+                # Positive cache hit — return directly, skip second lookup
+                try:
+                    output = LLMSpecialistOutput.model_validate(cached)
+                    _logger.info(
+                        "[dispatch_specialist_with_brief] %s cache hit (%d activities)",
+                        topic,
+                        len(output.activities),
+                    )
+                    return output
+                except (ValueError, TypeError):
+                    pass  # Corrupt entry — fall through to LLM
+            skip_cache = True  # Already checked — tell downstream to skip
+        except Exception:
+            pass
+
+    # Delegate to generate_specialist_output_llm which handles retries and padding.
     #
     # NOTE: scheduling_context is NOT part of the cache key (by design).
     # The specialist cache is keyed on (topic, destination, dates,
@@ -770,6 +898,8 @@ async def dispatch_specialist_with_brief(
         skill_level=brief.skill_level,
         target_activities=target_activities,
         scheduling_context=scheduling_ctx,
+        skip_cache_lookup=skip_cache,
+        cache_day_pref=_cache_pref,
     )
 
     if result is not None:
@@ -1862,6 +1992,8 @@ async def _merge_specialist_into_state(
         image_url = block.image_url or _get_curated_image(
             topic, state.trip_plan.destination, block.title
         )
+        if not image_url:
+            image_url = get_activity_image(topic, state.trip_plan.destination or "", block.title)
         skill_key = block.skill_level.lower() if block.skill_level else None
         intensity = (
             skill_to_intensity.get(skill_key)
@@ -2020,39 +2152,18 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     clog = CompactLogger("specialist", metrics=metrics)
 
     # =========================================================================
-    # FIRST THING: Invalidate stale cache if destination OR month changed
+    # FIRST THING: Invalidate stale cache if destination OR dates changed
     # Must happen before ANY other logic for multi-specialist loops
     # =========================================================================
     cached_key = state.metadata.get("_last_specialist_key", "")
     current_dest = (state.trip_plan.destination or "").lower().strip()
-    # Use month + duration bucket instead of exact dates — date extensions within
-    # the same bucket don't change specialist LLM output (activity recommendations
-    # depend on destination/month/duration-class, not exact start/end dates).
-    # Matches the persistent specialist_cache strategy.
+    # Use exact dates — date-anchored safety constraints (e.g., diving no-fly
+    # buffer "by March 20th") become stale when dates shift even within the
+    # same month. Matches the persistent specialist_cache v3 strategy.
     start_date = state.trip_plan.start_date or ""
     end_date = state.trip_plan.end_date or ""
-    _month = start_date[:7] if len(start_date) >= 7 else "no-month"
-    try:
-        from datetime import datetime as _dt
-
-        _s = _dt.strptime(start_date[:10], "%Y-%m-%d")
-        _e = _dt.strptime(end_date[:10], "%Y-%m-%d")
-        _days = (_e - _s).days + 1
-        _bucket = (
-            "weekend"
-            if _days <= 3
-            else "short"
-            if _days <= 5
-            else "week"
-            if _days <= 8
-            else "extended"
-            if _days <= 11
-            else "twoweek"
-            if _days <= 15
-            else "long"
-        )
-    except (ValueError, TypeError):
-        _bucket = "unknown"
+    _start = start_date[:10] if len(start_date) >= 10 else "no-start"
+    _end = end_date[:10] if len(end_date) >= 10 else "no-end"
     # Include skill_level and day_preferences so preference changes bust
     # the parallel_llm_results cache.
     _activity_settings = state.metadata.get("trip_inputs", {}).get("activity_settings", {}) or {}
@@ -2072,7 +2183,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         else {}
     )
     _dp_suffix = json.dumps(_tier1_prefs, sort_keys=True) if _tier1_prefs else ""
-    current_key = f"{current_dest}:{_month}:{_bucket}:{_skill_level}:{_dp_suffix}"
+    current_key = f"{current_dest}:{_start}:{_end}:{_skill_level}:{_dp_suffix}"
 
     if cached_key and cached_key != current_key:
         _debug_log(

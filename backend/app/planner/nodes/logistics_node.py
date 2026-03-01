@@ -77,6 +77,8 @@ def _activity_logistics_hash(state: GraphState) -> str:
             "adults": tp.adults,
             "children": tp.children,
             "activity_skill_level": trip_settings.activity_settings.skill_level,
+            "activities_per_day": trip_settings.activity_settings.activities_per_day,
+            "categories": sorted(trip_settings.activity_settings.categories or []),
         }
     )
 
@@ -280,6 +282,65 @@ async def _resolve_tier2_experience_tiles(
     return experience_tiles or []
 
 
+def _backfill_experience_tiles_from_gp(
+    experience_tiles: list[dict],
+    gp_activity_dicts: list[dict],
+) -> None:
+    """Backfill experience tiles with GP data (photo, geo, image) by title match.
+
+    Mutates experience_tiles in place. Best-effort — unmatched tiles keep
+    their Unsplash image_url.
+    """
+    if not gp_activity_dicts:
+        return
+
+    gp_by_title: dict[str, dict] = {}
+    for gp_tile in gp_activity_dicts:
+        title = (gp_tile.get("title") or "").strip().lower()
+        if title and title not in gp_by_title:
+            gp_by_title[title] = gp_tile
+
+    matched = 0
+    for exp_tile in experience_tiles:
+        title = (exp_tile.get("title") or "").strip().lower()
+        gp_match = gp_by_title.get(title)
+        if not gp_match:
+            continue
+
+        gp_geo = gp_match.get("geo")
+        if (
+            isinstance(gp_geo, dict)
+            and gp_geo.get("lat") is not None
+            and gp_geo.get("lng") is not None
+        ):
+            exp_tile["geo"] = gp_geo
+            exp_tile.setdefault("meta", {})["geo"] = gp_geo
+
+        gp_photo = (gp_match.get("meta") or {}).get("photo_name") or gp_match.get("photo_name")
+        if gp_photo:
+            exp_tile.setdefault("meta", {})["photo_name"] = gp_photo
+
+        gp_image = gp_match.get("image_url")
+        if gp_image:
+            exp_tile["image_url"] = gp_image
+
+        gp_place_id = (
+            gp_match.get("google_place_id")
+            or gp_match.get("place_id")
+            or (gp_match.get("meta") or {}).get("place_id")
+        )
+        if gp_place_id:
+            exp_tile["google_place_id"] = gp_place_id
+
+        matched += 1
+
+    if matched:
+        log(
+            "LOGISTICS",
+            f"Backfilled {matched}/{len(experience_tiles)} experience tiles with GP data",
+        )
+
+
 # =============================================================================
 # Main Node
 # =============================================================================
@@ -400,8 +461,15 @@ async def logistics_node(state: GraphState) -> GraphState:
     if not flights_requested and plan.origin:
         _debug_log("[LOGISTICS] ✈️ Auto-upgrading flights: off → suggested (origin present)")
         flights_requested = True
-        # Persist so frontend stays in sync on next document fetch
-        trip_inputs_bt = state.metadata.get("trip_inputs", {}).get("booking_types", {})
+        _logistics_settings.booking_types.flights = "suggested"
+        # Persist to trip_settings so downstream consumers see the upgrade
+        ts = state.metadata.get("trip_settings") or {}
+        bt = ts.setdefault("booking_types", {})
+        bt["flights"] = "suggested"
+        state.metadata["trip_settings"] = ts
+        # Keep legacy trip_inputs path for backward compat
+        trip_inputs = state.metadata.setdefault("trip_inputs", {})
+        trip_inputs_bt = trip_inputs.setdefault("booking_types", {})
         trip_inputs_bt["flights"] = "suggested"
 
     direct_only_requested = bool(_logistics_settings.flight_settings.direct_only)
@@ -427,15 +495,18 @@ async def logistics_node(state: GraphState) -> GraphState:
         clog.node_end("LOGISTICS", duration_ms, status="skipped", reason="missing_fields")
         return state
 
-    # Resolve airport codes only when flight search is actually possible.
-    # Avoids unnecessary LLM latency when flights are disabled or origin is missing.
+    # Resolve airport codes. Destination IATA is always useful (frontend map centering).
+    # Origin IATA only needed when flight search is possible.
     origin_code = ""
     dest_code = ""
     if flights_requested and plan.origin:
-        # Reads state first (populated by router), falls back to LLM only if missing.
+        # Full resolve: both origin + destination for flight search.
         origin_code, dest_code = await resolve_iata_codes(
             plan.origin or "", plan.destination, state
         )
+    elif plan.destination and not (state.trip_plan.destination_iata or "").strip():
+        # Destination-only resolve: populate IATA for map centering even without flights.
+        _, dest_code = await resolve_iata_codes("", plan.destination, state)
 
     # Can only search flights if: flights enabled + origin provided + codes resolved
     can_search_flights = flights_requested and bool(plan.origin) and bool(origin_code and dest_code)
@@ -751,14 +822,17 @@ async def _fetch_hotels(
     _min_stars = (
         int(hotel_settings.get("min_stars") or 0) if isinstance(hotel_settings, dict) else 0
     )
-    hotel_cache_variant = f"stars{_min_stars}" if _min_stars > 0 else ""
+    _dest_norm = (plan.destination or "").lower().strip()
+    hotel_cache_variant = f"{_dest_norm}::stars{_min_stars}" if _min_stars > 0 else _dest_norm
 
     async with async_session_factory() as db:
         # =====================================================================
         # HOTELS CACHE CHECK
+        # Hotels are location-based lookups; dates excluded from cache key
+        # because pricing comes from deep-link at booking time, not search.
         # =====================================================================
         cached_hotels = await get_cached_tiles(
-            db, provider, "hotel", plan.destination, start_date, end_date, hotel_cache_variant
+            db, provider, "hotel", plan.destination, "", "", hotel_cache_variant
         )
 
         if cached_hotels:
@@ -832,8 +906,8 @@ async def _fetch_hotels(
                     provider,
                     "hotel",
                     plan.destination,
-                    start_date,
-                    end_date,
+                    "",
+                    "",
                     hotel_dicts,
                     hotel_cache_variant,
                 )
@@ -871,13 +945,14 @@ async def _fetch_activities(
         # Categories are applied downstream by experience_generator / specialist dispatch.
         cat_variant = ""
 
+        start_month = start_date[:7] if start_date else ""
         cached_activities = await get_cached_tiles(
             db,
             provider,
             "activity",
             plan.destination,
-            start_date,
-            end_date,
+            start_month,
+            "",
             variant=cat_variant,
         )
 
@@ -948,8 +1023,8 @@ async def _fetch_activities(
                     provider,
                     "activity",
                     plan.destination,
-                    start_date,
-                    end_date,
+                    start_month,
+                    "",
                     activity_dicts,
                     variant=cat_variant,
                 )
@@ -1102,6 +1177,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
         min_stars = hotel_settings.get("min_stars", 0) or 0
     if min_stars > 0:
         before = len(hotel_dicts)
+        pre_filter = list(hotel_dicts)
         hotel_dicts = [
             h
             for h in hotel_dicts
@@ -1112,6 +1188,18 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 "LOGISTICS",
                 f"Hotel star filter: {before} → {len(hotel_dicts)} ({min_stars}+ stars)",
             )
+        if not hotel_dicts and before > 0:
+            logger.warning(
+                "[logistics_node] Hotel star filter (%d+ stars) eliminated all %d hotels — keeping originals",
+                min_stars,
+                before,
+            )
+            hotel_dicts = pre_filter
+            state.metadata["hotel_filter_empty"] = True
+            state.metadata["hotel_filter_min_stars"] = min_stars
+        elif hotel_dicts:
+            state.metadata.pop("hotel_filter_empty", None)
+            state.metadata.pop("hotel_filter_min_stars", None)
 
     # Store in state
     state.tiles["hotels"] = hotel_dicts
@@ -1399,6 +1487,25 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
             state.tiles["activities"] = []
             activity_dicts = []
+
+            # Backfill: keep top generic tiles for free-day padding
+            # So itinerary builder has activities for non-specialist days
+            free_day_backfill = state.metadata.get("browseable_activities", [])
+            if free_day_backfill:
+                # Cap to ~4 free days × 2 apd = 8 tiles max
+                backfill_tiles = []
+                for t in free_day_backfill[:8]:
+                    bt = dict(t)
+                    bt["meta"] = {**(bt.get("meta") or {}), "is_backfill": True}
+                    backfill_tiles.append(bt)
+                state.tiles["activities"] = backfill_tiles
+                activity_dicts = backfill_tiles
+                log(
+                    "LOGISTICS",
+                    f"[BACKFILL] Kept {len(backfill_tiles)} generic tiles for free-day padding",
+                    data=f"specialists={active_niche}",
+                )
+
             log(
                 "LOGISTICS",
                 f"Suppressing {len(existing_list)} logistics activities — pure Tier 1",
@@ -1448,6 +1555,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     data=f"specialists={active_niche}, tier2={tier2_cats}, source={source}",
                 )
                 state.tiles["activities"] = experience_tiles
+                _backfill_experience_tiles_from_gp(experience_tiles, activity_dicts)
                 activity_dicts = experience_tiles
                 used_tier2_categories = set(tier2_cats)
                 # Mark that Tier 2 tiles were generated (for synthesizer gate)
@@ -1518,6 +1626,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     data=f"categories={tier2_only}, source={source}",
                 )
                 state.tiles["activities"] = experience_tiles
+                _backfill_experience_tiles_from_gp(experience_tiles, activity_dicts)
                 activity_dicts = experience_tiles
                 used_tier2_categories = set(tier2_only)
                 # Mark that Tier 2 tiles were generated (for synthesizer gate)
@@ -1589,7 +1698,7 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     Cap strategy:
     - Mixed Tier1+Tier2 (specialist_days > 0): cap at 4.
     - Pure Tier2 with strategy context and long free-day horizon (>7 days):
-      expand cap up to 8 to avoid under-filling long trips.
+      expand cap up to 12 to avoid under-filling long trips.
     - Otherwise: cap at 4.
     """
     plan = state.trip_plan
@@ -1609,16 +1718,21 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
         if section.get("specialist_type", "") in ("local_expert", "general"):
             continue
         specialist_days += len(section.get("content_added", []))
+    # If specialists are planned but sections not yet written (parallel execution),
+    # use planned count as estimate (~2 activities per specialist)
+    planned = state.metadata.get("planned_specialist_count", 0)
+    if specialist_days == 0 and planned > 0:
+        specialist_days = planned * 2
 
-    free_days = max(0, trip_days - specialist_days - 2)
+    free_days = max(0, trip_days - specialist_days - min(2, trip_days - 1))
     # Specialist days can hold ~1 co-scheduled experience tile each
     total_placeable = free_days + specialist_days
     # Scale by user's per-day density preference (default 1)
     target_apd = (
         state.metadata.get("trip_settings", {})
         .get("activity_settings", {})
-        .get("activities_per_day", 1)
-        or 1
+        .get("activities_per_day", 2)
+        or 2
     )
     base = max(2, (total_placeable * target_apd) // len(tier2_cats))
 
@@ -1628,14 +1742,26 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
         strategy_sections = state.metadata.get("strategy_sections", [])
         has_strategy_context = isinstance(strategy_sections, list) and len(strategy_sections) > 0
         if has_strategy_context and free_days > 7:
-            cap = min(8, max(4, math.ceil(free_days / len(tier2_cats))))
+            cap = min(12, max(4, math.ceil(free_days / len(tier2_cats))))
         else:
             cap = 4
 
-    # Raise cap proportionally for higher density targets
+    # For APD>1, ensure cap covers the user's explicit density request.
+    # Original caps (4 for mixed, 4-12 for pure Tier2) remain unchanged for APD=1.
     if target_apd > 1:
-        cap = min(cap * target_apd, 20)
+        needed_per_cat = math.ceil(free_days * target_apd / len(tier2_cats))
+        cap = min(max(cap, needed_per_cat), 12)
     tiles_per_cat = min(base, cap)
+
+    # Coverage floor: when specialists consume days, the cap of 4 can
+    # under-provision Tier 2 tiles for the remaining free days.
+    # Lift tiles_per_cat to fill free days, capped at 12.
+    total_tiles_planned = tiles_per_cat * max(len(tier2_cats), 1)
+    total_tiles_needed = free_days * target_apd
+    if total_tiles_planned < total_tiles_needed:
+        min_needed = math.ceil(total_tiles_needed / max(len(tier2_cats), 1))
+        tiles_per_cat = max(tiles_per_cat, min(min_needed, 12))
+
     log(
         "LOGISTICS",
         f"Tile scaling: trip={trip_days}d, specialist={specialist_days}d, "

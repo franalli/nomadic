@@ -456,7 +456,7 @@ class ItineraryBuilder:
         self._warnings: List[str] = []
         self._nofly_buffer_days: int = 0
         self._day_preferences: Dict[str, int] = {}
-        self._activities_per_day: int = 1
+        self._activities_per_day: int = 2
         # None = no category filter, set() = user explicitly cleared categories.
         self._active_categories: Optional[set[str]] = None
 
@@ -493,9 +493,7 @@ class ItineraryBuilder:
         self._warnings: List[str] = []
         self._nofly_buffer_days: int = 0
         self._day_preferences = input_data.activity_day_preferences or {}
-        self._activities_per_day: int = max(
-            1, min(input_data.activities_per_day or MAX_BLOCKS_PER_DAY, 5)
-        )
+        self._activities_per_day: int = max(1, min(input_data.activities_per_day or 2, 5))
         # Active categories for Phase 5.25 preferred-tile category filter.
         # None means "no filter" (user didn't specify categories).
         # set() means "user explicitly cleared all categories — skip all".
@@ -887,6 +885,8 @@ class ItineraryBuilder:
                 # Skip field-by-field enrichment if already linked (specialist tiles
                 # are created from the same content_added — copying is a no-op).
                 if activity.tile_id and activity.tile_id == tile.get("id"):
+                    if activity.image_url is None and tile.get("image_url"):
+                        activity.image_url = tile["image_url"]
                     enriched_count += 1
                     continue
 
@@ -909,7 +909,11 @@ class ItineraryBuilder:
                         activity.price_level = _price_estimate_to_level(tile["price_estimate"])
 
                 if activity.coordinates is None:
-                    if isinstance(geo, dict) and geo.get("lat") and geo.get("lng"):
+                    if (
+                        isinstance(geo, dict)
+                        and geo.get("lat") is not None
+                        and geo.get("lng") is not None
+                    ):
                         activity.coordinates = [geo["lng"], geo["lat"]]
 
                 if activity.google_place_id is None:
@@ -1614,9 +1618,9 @@ class ItineraryBuilder:
                     preference_status = "user_preferred" if is_user_preferred else None
                     matched_tile = getattr(activity, "_matched_tile", None)
                     block = DayBlockOutput(
-                        id=f"act_{spec}_{day_idx}_{len(day.blocks)}",
+                        id=activity.tile_id or f"act_{spec}_{day_idx}_{len(day.blocks)}",
                         period=periods[period_ptr % len(periods)],
-                        activity_type=activity.title.lower().replace(" ", "_"),
+                        activity_type=spec,
                         intensity=activity.intensity,
                         summary=activity.title,
                         specialist_type=spec,
@@ -1688,9 +1692,9 @@ class ItineraryBuilder:
                     preference_status = "user_preferred" if is_user_preferred else None
                     matched_tile = getattr(activity, "_matched_tile", None)
                     block = DayBlockOutput(
-                        id=f"act_{spec}_{day_idx}_{len(day.blocks)}",
+                        id=activity.tile_id or f"act_{spec}_{day_idx}_{len(day.blocks)}",
                         period=periods[period_ptr % len(periods)],
-                        activity_type=activity.title.lower().replace(" ", "_"),
+                        activity_type=spec,
                         intensity=activity.intensity,
                         summary=activity.title,
                         specialist_type=spec,
@@ -1792,9 +1796,9 @@ class ItineraryBuilder:
                         is_user_preferred = getattr(activity, "is_user_preferred", False)
                         matched_tile = getattr(activity, "_matched_tile", None)
                         block = DayBlockOutput(
-                            id=f"act_{spec}_{best_day_idx}_{len(day.blocks)}",
+                            id=activity.tile_id or f"act_{spec}_{best_day_idx}_{len(day.blocks)}",
                             period=periods[period_ptr % len(periods)],
-                            activity_type=activity.title.lower().replace(" ", "_"),
+                            activity_type=spec,
                             intensity=activity.intensity,
                             summary=activity.title,
                             specialist_type=spec,
@@ -1911,9 +1915,10 @@ class ItineraryBuilder:
 
                 # Create block with preference attribution
                 block = DayBlockOutput(
-                    id=f"act_{current_specialist}_{day_idx}_{len(current_day.blocks)}",
+                    id=activity.tile_id
+                    or f"act_{current_specialist}_{day_idx}_{len(current_day.blocks)}",
                     period=periods[period_ptr % len(periods)],
-                    activity_type=activity.title.lower().replace(" ", "_"),
+                    activity_type=current_specialist,
                     intensity=activity.intensity,
                     summary=activity.title,
                     specialist_type=current_specialist,
@@ -2107,6 +2112,7 @@ class ItineraryBuilder:
                     or tile.get("browse_category")
                     or ""
                 ).lower()
+                tile_cat = POI_TYPE_ALIASES.get(tile_cat, tile_cat)
                 tile_tags = {t.lower() for t in tile.get("tags") or []}
                 category_match = (
                     not tile_cat
@@ -2166,7 +2172,7 @@ class ItineraryBuilder:
         Returns (0, 0) for arrival/departure anchor days.
         """
         if not day.blocks:
-            return (DAY_CAPACITY_HOURS, MAX_BLOCKS_PER_DAY)
+            return (DAY_CAPACITY_HOURS, min(MAX_BLOCKS_PER_DAY, self._activities_per_day))
 
         # Skip logistics anchor days
         anchor_types = (
@@ -2237,7 +2243,7 @@ class ItineraryBuilder:
         period_map = {"morning": "morning", "afternoon": "afternoon", "evening": "evening"}
         geo = tile.get("geo") or {}
         coords = None
-        if isinstance(geo, dict) and geo.get("lat") and geo.get("lng"):
+        if isinstance(geo, dict) and geo.get("lat") is not None and geo.get("lng") is not None:
             coords = {"lat": geo["lat"], "lng": geo["lng"]}
         elif tile.get("coordinates"):
             c = tile["coordinates"]
@@ -2245,6 +2251,14 @@ class ItineraryBuilder:
                 coords = c
             elif isinstance(c, list) and len(c) == 2:
                 coords = {"lat": c[1], "lng": c[0]}  # [lng, lat] → {lat, lng}
+        if coords is None:
+            meta_geo = meta.get("geo")
+            if (
+                isinstance(meta_geo, dict)
+                and meta_geo.get("lat") is not None
+                and meta_geo.get("lng") is not None
+            ):
+                coords = {"lat": meta_geo["lat"], "lng": meta_geo["lng"]}
         source_agent = (tile.get("source_agent") or "").strip().lower()
         explicit_price_level = tile.get("price_level")
         if isinstance(explicit_price_level, int) and 0 <= explicit_price_level <= 4:
@@ -2258,7 +2272,7 @@ class ItineraryBuilder:
         return DayBlockOutput(
             id=tile.get("id", f"exp_block_{day_number}_{count}"),
             period=period_map.get(time_of_day, "afternoon"),
-            activity_type=tile.get("title", "Experience Activity"),
+            activity_type=category if category else "experience",
             summary=tile.get("title", "Experience Activity"),
             # Only tag Tier 1 specialist activities (diving, hiking, etc.).
             # Tier 2 / generic experience tiles don't get a specialist badge.
@@ -2273,7 +2287,7 @@ class ItineraryBuilder:
             review_count=tile.get("user_ratings_count") or tile.get("review_count"),
             price_level=block_price_level,
             google_place_id=tile.get("google_place_id") or tile.get("place_id"),
-            deeplink=tile.get("deeplink") or tile.get("maps_uri"),
+            deeplink=tile.get("deeplink") or tile.get("deeplink_url") or tile.get("maps_uri"),
             coordinates=coords,
         )
 
@@ -2368,6 +2382,7 @@ class ItineraryBuilder:
                     or t.get("specialist_type")
                     or ""
                 ).lower()
+                tile_cat = POI_TYPE_ALIASES.get(tile_cat, tile_cat)
                 tile_tags = {tag.lower() for tag in t.get("tags") or []}
                 tile_source_cats = {
                     c.lower() for c in (t.get("meta") or {}).get("source_categories", [])
@@ -2683,6 +2698,7 @@ class ItineraryBuilder:
                         or tile.get("specialist_type")
                         or ""
                     ).lower()
+                    tile_cat = POI_TYPE_ALIASES.get(tile_cat, tile_cat)
                     # Match against tags too if no explicit category field
                     tile_tags = {t.lower() for t in tile.get("tags") or []}
                     # Empty tile_cat = unidentifiable source (e.g. browse/Places tile) →
@@ -2830,7 +2846,12 @@ class ItineraryBuilder:
             activity_block = DayBlockOutput(
                 id=f"pref_{tile['id']}_{day_idx}_{period}",
                 period=period,
-                activity_type=tile.get("title", "Activity").lower().replace(" ", "_"),
+                activity_type=(
+                    tile.get("specialist_type")
+                    or tile.get("category")
+                    or (tile.get("meta") or {}).get("category")
+                    or "activity"
+                ),
                 intensity=tile.get("intensity"),
                 summary=tile.get("title", "Activity"),
                 image_url=tile.get("image_url"),
@@ -2970,7 +2991,12 @@ class ItineraryBuilder:
                     activity_block = DayBlockOutput(
                         id=f"pref_{tile['id']}_{best_idx}_{period}",
                         period=period,
-                        activity_type=tile.get("title", "Activity").lower().replace(" ", "_"),
+                        activity_type=(
+                            tile.get("specialist_type")
+                            or tile.get("category")
+                            or (tile.get("meta") or {}).get("category")
+                            or "activity"
+                        ),
                         intensity=tile.get("intensity"),
                         summary=tile.get("title", "Activity"),
                         image_url=tile.get("image_url"),
@@ -2978,7 +3004,16 @@ class ItineraryBuilder:
                         rating=tile.get("rating"),
                         review_count=tile.get("review_count"),
                         price_level=tile.get("price_level"),
-                        coordinates=tile.get("coordinates"),
+                        coordinates=(
+                            tile.get("coordinates")
+                            or (
+                                {"lat": tile["geo"]["lat"], "lng": tile["geo"]["lng"]}
+                                if isinstance(tile.get("geo"), dict)
+                                and "lat" in tile.get("geo", {})
+                                and "lng" in tile.get("geo", {})
+                                else None
+                            )
+                        ),
                         specialist_type=tile.get("specialist_type") or tile.get("category") or None,
                         preference_status="user_preferred",
                         booking_category="activity",

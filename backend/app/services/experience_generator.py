@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.planner.hashing import make_cache_key
 from app.planner.llm_factory import (
+    gemini_safe_schema,
     get_llm_by_model,
     resolve_schema_refs,
     strip_unsupported_schema_keys,
@@ -269,8 +270,8 @@ class ExperienceOutput(BaseModel):
 
 
 # Pre-resolved flat schema for Gemini-compatible structured output.
-_EXPERIENCE_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
-    resolve_schema_refs(ExperienceOutput.model_json_schema())
+_EXPERIENCE_FLAT_SCHEMA: dict = gemini_safe_schema(
+    strip_unsupported_schema_keys(resolve_schema_refs(ExperienceOutput.model_json_schema()))
 )
 
 
@@ -508,7 +509,7 @@ async def generate_single_category(
     start_t = time.time()
     try:
         extra_tiles = max(0, tiles_per_category - 2)
-        max_tokens = min(600 + extra_tiles * 100, 1200)
+        max_tokens = min(600 + extra_tiles * 100, 2400)
 
         llm = get_llm_by_model(settings.experience_model, temperature=0.3, max_tokens=max_tokens)
         structured_llm = llm.with_structured_output(
@@ -561,6 +562,26 @@ async def generate_single_category(
 
     except Exception as e:
         logger.warning(f"[EXPERIENCE] Single category {category} failed: {e}")
+        # Graceful degradation: try progressively smaller cached batches
+        for fallback_n in (12, 10, 8, 6, 4, 2):
+            if fallback_n >= tiles_per_category:
+                continue
+            fallback_key = _single_category_cache_key(destination, category, month, fallback_n)
+            fallback_cached = _mem.get(fallback_key)
+            if fallback_cached is not None:
+                try:
+                    tile_dicts = _cached_single_category_to_tiles(
+                        fallback_cached, destination, base_index
+                    )
+                    logger.info(
+                        "[EXPERIENCE] Degraded to cached n=%d: %d tiles for %s",
+                        fallback_n,
+                        len(tile_dicts),
+                        category,
+                    )
+                    return tile_dicts
+                except (ValidationError, TypeError, ValueError):
+                    continue
         return []
 
     # Clamp durations

@@ -24,11 +24,7 @@ import { BookingDrawer } from './booking/BookingDrawer';
 import { BookingSection } from './BookingSection';
 import { ItineraryProgressIndicator } from './ItineraryProgressIndicator';
 import { NextStepBar } from './NextStepBar';
-import {
-  PlanBridgeDensityView,
-  PlanGhostDensityView,
-  PlanMirrorLoader,
-} from './PlanDensityViews';
+import { PlanMirrorLoader } from './PlanDensityViews';
 import { PlanFullDensityView } from './PlanFullDensityView';
 import { PlanHeader } from './PlanHeader';
 import { type GenerationState } from './planStateHelpers';
@@ -86,7 +82,7 @@ export function StrategyStageRenderer({
   onFinalizePlan: _onFinalize, isFinalizing: _isFinalizing = false, onRefineAssumptions,
   savedTileIds = EMPTY_SAVED_TILE_IDS, onSaveTile, tripInputs, onOpenSheet,
   isCommitting = false, hasEverHadPlan: _hasEverHadPlan = false,
-  isRegenerating = false, onSelectNights, mode: explicitMode,
+  isRegenerating = false, onSelectNights: _onSelectNights, mode: explicitMode,
   onOpenActivitySettings: _onOpenActivitySettings, onOpenStaysSettings, onOpenFlightsSettings,
 }: StrategyStageRendererProps) {
   const o = useStrategyStageOrchestration({
@@ -97,29 +93,9 @@ export function StrategyStageRenderer({
 
   const planContent = useMemo(() => {
     const { isShowingMirrorLoader, tripDuration } = o.displayLogic;
-    const { fullModeSections, filteredViewModel, totalConstraints, ghostDayCards, ghostHasDuration } = o.specialistData;
+    const { fullModeSections } = o.specialistData;
     if (isShowingMirrorLoader) return <PlanMirrorLoader tripDuration={tripDuration} />;
-    if (o.stableDensity === 'empty') return null;
-    if (o.stableDensity === 'ghost') {
-      return (
-        <PlanGhostDensityView
-          filteredViewModel={filteredViewModel}
-          totalConstraints={totalConstraints} ghostDayCards={ghostDayCards}
-          ghostHasDuration={ghostHasDuration} effectiveTripInputs={o.effectiveTripInputs}
-          onSelectNights={onSelectNights} onOpenSheet={onOpenSheet}
-          onOpenStaysSettings={onOpenStaysSettings} onOpenFlightsSettings={onOpenFlightsSettings}
-        />
-      );
-    }
-    if (o.stableDensity === 'bridge') {
-      return (
-        <PlanBridgeDensityView
-          filteredViewModel={filteredViewModel}
-          totalConstraints={totalConstraints} hasDates={o.displayLogic.hasDates}
-          destinationCard={destinationCard} effectiveTripInputs={o.effectiveTripInputs}
-        />
-      );
-    }
+    if (o.stableDensity === 'empty' || o.stableDensity === 'ghost' || o.stableDensity === 'bridge') return null;
     return (
       <PlanFullDensityView
         state={state} viewModel={viewModel}
@@ -145,7 +121,7 @@ export function StrategyStageRenderer({
     o.isRegenUpdating, o.isDesktop, o.preferenceCount,
     o.effectiveMode, o.timelineSectionRef, o.scrollContainerRef, o.handleSaveTile, o.handleOpenBookingDrawer,
     state, viewModel, destinationCard, generation, savedTileIds, isExpandingItinerary,
-    onRefineAssumptions, onSelectNights, onOpenSheet,
+    onRefineAssumptions,
   ]);
 
   const bookContent = useMemo(() => (

@@ -59,6 +59,10 @@ import {
 import { apiFetch } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { placeholderImageForTile } from '@/lib/placeholders';
+import {
+  getSignedGooglePlacesPhotoProxyUrl,
+  normalizeGooglePlacesPhotoName,
+} from '@/lib/googlePlacesPhoto';
 import { cn, isFlightType } from '@/lib/utils';
 import { usePreferenceActions, useTilePreference } from '@/state/documentStore';
 import type { Tile } from '@/types/tile';
@@ -182,6 +186,30 @@ export const TileCard = memo(function TileCard({
   // Tier 11.7: Track image loading state for skeleton feedback
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
+  // GP photo signing — reuse ActivityCardPhoto pattern
+  const photoName = useMemo(() => {
+    const meta = tile.meta as Record<string, unknown> | undefined;
+    return normalizeGooglePlacesPhotoName(meta?.photo_name);
+  }, [tile]);
+  const [signedPhotoUrl, setSignedPhotoUrl] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    let isMounted = true;
+    setSignedPhotoUrl(undefined);
+    if (!photoName) return () => { isMounted = false; };
+
+    getSignedGooglePlacesPhotoProxyUrl(photoName, { maxWidth: 320, maxHeight: 240 })
+      .then((url) => {
+        if (!isMounted) return;
+        setSignedPhotoUrl(url);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setSignedPhotoUrl(undefined);
+      });
+
+    return () => { isMounted = false; };
+  }, [photoName]);
   // AbortController ref for fire-and-forget click tracking
   const trackAbortRef = useRef<AbortController | null>(null);
 
@@ -324,7 +352,7 @@ export const TileCard = memo(function TileCard({
         {isFlight ? (
           <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center shadow-sm">
             <img
-              src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}
+              src={imageError ? placeholderImageForTile(tile) : (signedPhotoUrl || tile.image_url || placeholderImageForTile(tile))}
               alt={tile.title}
               loading="lazy"
               onLoad={() => setImageLoaded(true)}
@@ -337,7 +365,7 @@ export const TileCard = memo(function TileCard({
           </div>
         ) : (
           <img
-            src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}
+            src={imageError ? placeholderImageForTile(tile) : (signedPhotoUrl || tile.image_url || placeholderImageForTile(tile))}
             alt={tile.title}
             loading="lazy"
             onLoad={() => setImageLoaded(true)}

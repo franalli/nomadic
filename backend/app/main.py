@@ -326,8 +326,9 @@ def _sanitize_trip_inputs_for_category_merge(
         return incoming
 
     text = (message or "").strip()
-    is_generate_turn = text.upper() == "GENERATE_PLAN_NOW"
-    if not (is_generate_turn or _is_question_like_message(text)):
+    if text.upper() == "GENERATE_PLAN_NOW":
+        return incoming  # Generate carries committed settings — never strip
+    if not _is_question_like_message(text):
         return incoming
     if has_explicit_category_intent(text):
         return incoming
@@ -1742,6 +1743,11 @@ async def reset_session(
     # Clear LangGraph checkpoint for this session (even if session not in DB)
     if session_id:
         await clear_session_checkpoint(session_id)
+
+        # Cancel any pending local_expert enrichment for this session
+        from app.planner.nodes.local_expert import cancel_pending_enrichment
+
+        await cancel_pending_enrichment(session_id)
 
     # Clear response caches (or all caches in dev mode)
     if settings.aggressive_cache_clear:

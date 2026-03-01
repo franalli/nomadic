@@ -17,7 +17,6 @@ import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import {
   extractPOIsFromDayCards,
-  generateGhostDayCards,
   hasSpecialistContent,
 } from '@/lib/ghost-timeline-adapter';
 import { useDocumentStore } from '@/state/documentStore';
@@ -35,12 +34,14 @@ export type DataDensity = 'empty' | 'ghost' | 'bridge' | 'full';
 export function computeDataDensity(
   state: PlanViewState,
   strategySections: PlanViewModel['strategy_sections'],
-  tiles: Record<string, Tile> | undefined
+  tiles: Record<string, Tile> | undefined,
+  hasDates: boolean = false,
 ): DataDensity {
   const hasSpecialist = hasSpecialistContent(strategySections);
   const hasTiles = tiles && Object.keys(tiles).length > 0;
   const normalizedState = normalizePlanViewState(state);
-  if (normalizedState === 'P0_MINIMAL' && hasSpecialist) return 'ghost';
+  if (normalizedState === 'P0_MINIMAL' && hasSpecialist && hasDates) return 'ghost';
+  if (normalizedState === 'P0_MINIMAL' && hasSpecialist) return 'bridge';
   if (normalizedState === 'P0_MINIMAL') return 'empty';
   if (normalizedState === 'P1_ENRICHED' && hasSpecialist && !hasTiles) return 'bridge';
   return 'full';
@@ -178,7 +179,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   const displayLogic = useMemo(() => {
     const hasDatesLocal = hasDates;
     const hasTilesLocal = effectiveTiles && Object.keys(effectiveTiles).length > 0;
-    const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles);
+    const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles, hasDates);
     const isShowingMirrorLoader = generating && hasDatesLocal && !hasTilesLocal;
     let tripDuration = effectiveTripInputs?.trip_duration ?? 3;
     if (effectiveTripInputs?.start_date && effectiveTripInputs?.end_date) {
@@ -200,23 +201,29 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
       s => s.feasibility_status !== 'infeasible' && s.feasibility_status !== 'caveat'
     );
     const totalConstraints = fullModeSections.reduce((acc, s) => acc + (s.constraints_applied?.length ?? 0), 0);
-    const ghostDuration = effectiveTripInputs?.trip_duration ?? 5;
-    const ghostDayCards = generateGhostDayCards(fullModeSections, ghostDuration);
-    const ghostHasDuration = !!effectiveTripInputs?.end_date || effectiveTripInputs?.trip_duration != null;
-    return { fullModeSections, totalConstraints, ghostDayCards, ghostHasDuration,
+    return { fullModeSections, totalConstraints,
       filteredViewModel: { ...viewModel, strategy_sections: fullModeSections } as PlanViewModel };
-  }, [viewModel, effectiveTripInputs?.trip_duration, effectiveTripInputs?.end_date]);
+  }, [viewModel]);
+
+  const destinationCoords = useMemo(() => {
+    const hotelTile = Object.values(effectiveTiles).find(
+      (t) => (t.type === 'hotel' || t.type === 'accommodation') && t.geo?.lat != null && t.geo?.lng != null,
+    );
+    if (hotelTile?.geo) return { lat: hotelTile.geo.lat, lng: hotelTile.geo.lng };
+    return null;
+  }, [effectiveTiles]);
 
   const fullModePOIs = useMemo(() => {
     if (!dayCardsFingerprint) return [];
     const destination = effectiveTripInputs?.destination ?? destinationTitle;
-    return extractPOIsFromDayCards(effectiveDayCards, specialistData.fullModeSections, destination, dayCardsFingerprint);
+    return extractPOIsFromDayCards(effectiveDayCards, specialistData.fullModeSections, destination, dayCardsFingerprint, destinationCoords);
   }, [
     dayCardsFingerprint,
     effectiveTripInputs?.destination,
     destinationTitle,
     effectiveDayCards,
-    specialistData.fullModeSections,
+    specialistData,
+    destinationCoords,
   ]);
 
   const bookingDrawer = useBookingDrawerState({

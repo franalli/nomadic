@@ -344,6 +344,10 @@ class TripBrief(BaseModel):
         None,
         description="User-requested number of days for this activity.",
     )
+    activities_per_day: int = Field(
+        default=2,
+        description="Global pace setting: activities per day (1=relaxed, 2=moderate, 3=packed).",
+    )
 
     # Cross-specialist spatial context
     hotel_zone: Optional[str] = None
@@ -354,6 +358,12 @@ class TripBrief(BaseModel):
 
     # Trip intent
     trip_vibe: Optional[str] = None  # "adventure", "relaxation", etc.
+
+    # All active categories for fair-share allocation across specialists
+    categories: List[str] = Field(
+        default_factory=list,
+        description="All active trip categories for fair-share allocation.",
+    )
 
 
 # =============================================================================

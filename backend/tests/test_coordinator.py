@@ -510,10 +510,10 @@ class TestTileRefreshTypes:
         result = _tile_refresh_types(classifier)
         assert result == ["flights"]
 
-    def test_date_change_refreshes_flights_hotels(self) -> None:
+    def test_date_change_refreshes_flights_hotels_activities(self) -> None:
         classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
         result = _tile_refresh_types(classifier)
-        assert set(result) == {"flights", "hotels"}
+        assert set(result) == {"flights", "hotels", "activities"}
 
     def test_add_activity_refreshes_activities(self) -> None:
         classifier = _make_classifier(change_type=ChangeType.ADD_ACTIVITY)

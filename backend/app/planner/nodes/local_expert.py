@@ -28,7 +28,7 @@ from pydantic import ValidationError
 from app.config import settings
 from app.data.demo_curation import DEMO_MANIFEST
 from app.placeholders import get_destination_gallery
-from app.planner.llm_factory import extract_json_content, extract_token_usage, get_llm_by_model
+from app.planner.llm_factory import extract_token_usage, get_llm_by_model
 from app.planner.nodes.expert_constraints import (
     LocalConstraint,
     LocalExpertOutput,
@@ -59,6 +59,19 @@ _pending_lock = asyncio.Lock()  # Protects _pending_enrichments against coroutin
 
 _active_destination_enrichments: set[str] = set()
 _active_enrichment_lock = asyncio.Lock()
+
+
+async def cancel_pending_enrichment(session_id: str) -> bool:
+    """Cancel a pending Phase B enrichment for a session being deleted.
+
+    Returns True if an enrichment was actually cancelled.
+    """
+    async with _pending_lock:
+        entry = _pending_enrichments.pop(session_id, None)
+    if entry is not None:
+        logger.info("[LOCAL_EXPERT] Cancelled pending enrichment for session %s", session_id)
+        return True
+    return False
 
 
 def _utc_now_iso() -> str:
@@ -694,12 +707,15 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                 max_retries=0,
                 max_tokens=5000,
             )
+            structured_llm = llm.with_structured_output(
+                LocalExpertOutput, include_raw=True, method="function_calling"
+            )
             logger.debug("LOCAL_EXPERT Phase B: calling LLM (%s)...", settings.local_expert_model)
 
             for _attempt in range(2):
                 try:
-                    raw = await asyncio.wait_for(
-                        llm.ainvoke(
+                    raw_result = await asyncio.wait_for(
+                        structured_llm.ainvoke(
                             [
                                 SystemMessage(content=_system_prompt),
                                 HumanMessage(content=_user_context),
@@ -716,8 +732,8 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                     raise
             logger.debug("LOCAL_EXPERT Phase B: LLM call completed")
 
-            content = extract_json_content(raw)
-            if not content:
+            parsed = raw_result.get("parsed") if isinstance(raw_result, dict) else None
+            if parsed is None:
                 if _session_id:
                     await _persist_travel_intelligence(
                         _session_id,
@@ -725,10 +741,16 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                         enrichment_state="failed",
                         error_code="parse_error",
                     )
-                logger.debug("LOCAL_EXPERT Phase B: LLM returned empty content — marked failed")
+                logger.debug(
+                    "LOCAL_EXPERT Phase B: structured output returned None — marked failed"
+                )
                 return
 
-            response = LocalExpertOutput.model_validate_json(content)
+            # Gemini returns dict when using class schema; rehydrate to Pydantic
+            if isinstance(parsed, dict):
+                response = LocalExpertOutput.model_validate(parsed)
+            else:
+                response = parsed
             response = _enrich_legacy_lists(response)
 
             # Best-effort cache write for future destination-scoped reuse.
@@ -750,7 +772,7 @@ Output as JSON with "constraints" and "recommendations" arrays."""
             except Exception as cache_err:
                 logger.debug("LOCAL_EXPERT Phase B cache write failed (non-fatal): %s", cache_err)
 
-            token_usage = extract_token_usage(raw, model=settings.local_expert_model)
+            token_usage = extract_token_usage(raw_result, model=settings.local_expert_model)
             if token_usage:
                 from app.debug_utils import calculate_llm_cost
 

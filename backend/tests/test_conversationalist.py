@@ -97,11 +97,20 @@ class TestEnforceSentenceLimit:
         assert _enforce_sentence_limit(text, 1) == "The U.S. has options."
 
     def test_abbreviation_dr(self):
-        """'Dr.' followed by uppercase is a known false positive — acceptable."""
+        """'Dr.' is a known abbreviation — should NOT trigger a sentence boundary."""
         text = "Dr. Smith arrived. He left."
-        # "Dr." -> followed by " Smith" (uppercase) -> counts as boundary (1)
-        # This IS a false positive, but acceptable for travel chat
-        assert _enforce_sentence_limit(text, 1) == "Dr."
+        # "Dr." is in _ABBREVIATIONS → skip, "arrived." → boundary (1)
+        assert _enforce_sentence_limit(text, 1) == "Dr. Smith arrived."
+
+    def test_abbreviation_st(self):
+        """'St.' before a proper noun must not split the sentence."""
+        text = "Visit St. Peter's Basilica. It is stunning."
+        assert _enforce_sentence_limit(text, 1) == "Visit St. Peter's Basilica."
+
+    def test_abbreviation_mt(self):
+        """'Mt.' before a proper noun must not split the sentence."""
+        text = "Climb Mt. Fuji in summer. The views are incredible."
+        assert _enforce_sentence_limit(text, 1) == "Climb Mt. Fuji in summer."
 
     def test_decimal_number(self):
         """Decimal numbers like '14.5' should not trigger a sentence boundary."""
@@ -132,6 +141,28 @@ class TestEnforceSentenceLimit:
         text = "Hey! Where are we headed?"
         # "Hey!" -> followed by " Where" (uppercase) -> boundary (1)
         assert _enforce_sentence_limit(text, 1) == "Hey!"
+
+    def test_abbreviation_no(self):
+        """'No.' before a number/name must not split the sentence."""
+        text = "See item No. Five in the list. It is great."
+        assert _enforce_sentence_limit(text, 1) == "See item No. Five in the list."
+
+    def test_abbreviation_rd(self):
+        """'Rd.' (road abbreviation) must not split the sentence."""
+        text = "Turn onto Hampton Rd. North of the park. Then stop."
+        assert _enforce_sentence_limit(text, 1) == "Turn onto Hampton Rd. North of the park."
+
+    def test_abbreviation_at_end_of_text(self):
+        """Abbreviation at end-of-text should still count as a sentence boundary."""
+        text = "Visit St."
+        # Even though "St" is an abbreviation, at EOT there's no continuation,
+        # so it IS a sentence boundary (count=1).
+        assert _enforce_sentence_limit(text, 1) == "Visit St."
+
+    def test_abbreviation_only_sentence_at_eot(self):
+        """Single sentence ending with an abbreviation at EOT, limit=2."""
+        text = "Ask Dr."
+        assert _enforce_sentence_limit(text, 2) == "Ask Dr."
 
     def test_trailing_whitespace_stripped(self):
         text = "First sentence.  Second sentence."

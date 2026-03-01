@@ -55,8 +55,8 @@ class TestTilesPerCategory:
         result = _compute_tiles_per_category(state, {"yoga"})
         # With a niche specialist, cap is 4
         assert result >= 2, f"Expected >= 2 tiles for 13-day trip with free days, got {result}"
-        # And not inflated beyond cap
-        assert result <= 8, f"Expected <= 8 tiles (capped), got {result}"
+        # And not inflated beyond hard cap (12)
+        assert result <= 12, f"Expected <= 12 tiles (hard cap), got {result}"
 
     def test_all_specialist_days_no_free(self):
         """7-day trip fully covered by specialist content → minimal tiles needed.
@@ -106,7 +106,7 @@ class TestTilesPerCategory:
         result = _compute_tiles_per_category(state, {"yoga"})
         # Pure Tier 2: tiles should scale to free days, capped at 8
         assert result >= 4, f"Expected >= 4 tiles for 10-day yoga-only trip, got {result}"
-        assert result <= 8, f"Expected <= 8 tiles (cap), got {result}"
+        assert result <= 12, f"Expected <= 12 tiles (hard cap), got {result}"
 
     def test_multi_category_distribution(self):
         """3 Tier 2 categories on a 9-day trip → tile count per category scales proportionally.

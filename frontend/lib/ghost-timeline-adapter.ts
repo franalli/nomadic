@@ -258,16 +258,18 @@ function _resolvePoiType(block: DayBlock): string {
 function _buildPoiFingerprint(
   dayCards: import('@/types/plan-envelope').DayCard[] | undefined,
   destination: string | undefined,
-  hint: string | null | undefined
+  hint: string | null | undefined,
+  destinationCoords?: { lat: number; lng: number } | null,
 ): string {
   const destinationKey = (destination ?? '').trim().toLowerCase();
+  const coordsKey = destinationCoords ? `${destinationCoords.lat.toFixed(4)},${destinationCoords.lng.toFixed(4)}` : '';
   if (hint) {
-    return _hashFingerprint(`hint:${hint}|dest:${destinationKey}`);
+    return _hashFingerprint(`hint:${hint}|dest:${destinationKey}|coords:${coordsKey}`);
   }
   if (!dayCards || dayCards.length === 0) {
-    return _hashFingerprint(`empty|dest:${destinationKey}`);
+    return _hashFingerprint(`empty|dest:${destinationKey}|coords:${coordsKey}`);
   }
-  const tokens: string[] = [`dest:${destinationKey}`, `days:${dayCards.length}`];
+  const tokens: string[] = [`dest:${destinationKey}`, `coords:${coordsKey}`, `days:${dayCards.length}`];
   for (const dayCard of dayCards) {
     tokens.push(`d:${dayCard.day_number}|b:${dayCard.blocks?.length ?? 0}`);
     dayCard.blocks?.forEach((block, idx) => {
@@ -340,7 +342,7 @@ export function generateGhostDayCards(
         const block: DayBlock = {
           id: `ghost-${section.specialist_type}-${content.title}`,
           period: 'morning', // Default to morning for specialist activities
-          activity_type: content.type || section.specialist_type || 'activity',
+          activity_type: section.specialist_type || content.type || 'activity',
           summary: content.title,
           // Pass through coordinates from specialist content for map integration
           // Backend sends [lng, lat] format, convert to { lat, lng } for Mapbox
@@ -417,14 +419,22 @@ export function hasSpecialistContent(
 ): boolean {
   if (!strategySections) return false;
 
-  return strategySections.some(
-    (section) =>
+  return strategySections.some((section) => {
+    if (section.specialist_type === 'local_expert') {
+      return !!(
+        section.destination_gallery?.length ||
+        section.constraints_applied?.length ||
+        section.principles?.length
+      );
+    }
+    return (
       section.specialist_type &&
       section.specialist_type !== 'general' &&
       section.feasibility_status !== 'infeasible' &&
       section.content_added &&
       section.content_added.length > 0
-  );
+    );
+  });
 }
 
 /**
@@ -521,9 +531,10 @@ export function extractPOIsFromDayCards(
   dayCards: import('@/types/plan-envelope').DayCard[] | undefined,
   strategySections?: import('@/types/plan-envelope').StrategySection[],
   destination?: string,
-  fingerprintHint?: string | null
+  fingerprintHint?: string | null,
+  destinationCoords?: { lat: number; lng: number } | null,
 ): MapPOI[] {
-  const fingerprint = _buildPoiFingerprint(dayCards, destination, fingerprintHint);
+  const fingerprint = _buildPoiFingerprint(dayCards, destination, fingerprintHint, destinationCoords);
   const cached = _poiMemoCache.get(fingerprint);
   if (cached) {
     debugLog(`[VERIFY][POI_MEMO] fingerprint=${fingerprint} cache_hit=true`);
@@ -599,6 +610,18 @@ export function extractPOIsFromDayCards(
   // If itinerary exists but no coordinates, fall back to strategy sections
   if (pois.length === 0 && strategySections) {
     const fallback = extractPOIsFromSections(strategySections, destination);
+    if (fallback.length === 0 && destinationCoords) {
+      const centerPoi: MapPOI = {
+        id: `dest-center-${destination ?? 'unknown'}`,
+        title: destination || 'Destination',
+        type: 'destination-center',
+        coordinates: destinationCoords,
+      };
+      const destFallback = [centerPoi];
+      _poiMemoCache.set(fingerprint, destFallback);
+      _trimPoiMemoCache();
+      return destFallback;
+    }
     _poiMemoCache.set(fingerprint, fallback);
     _trimPoiMemoCache();
     debugLog('[extractPOIsFromDayCards] fallback summary', {
@@ -614,6 +637,18 @@ export function extractPOIsFromDayCards(
   // If proximity filter removed all POIs, fall back to strategy sections
   if (filtered.length === 0 && strategySections) {
     const fallback = extractPOIsFromSections(strategySections, destination);
+    if (fallback.length === 0 && destinationCoords) {
+      const centerPoi: MapPOI = {
+        id: `dest-center-${destination ?? 'unknown'}`,
+        title: destination || 'Destination',
+        type: 'destination-center',
+        coordinates: destinationCoords,
+      };
+      const destFallback = [centerPoi];
+      _poiMemoCache.set(fingerprint, destFallback);
+      _trimPoiMemoCache();
+      return destFallback;
+    }
     _poiMemoCache.set(fingerprint, fallback);
     _trimPoiMemoCache();
     return fallback;

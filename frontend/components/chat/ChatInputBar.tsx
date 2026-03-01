@@ -70,12 +70,12 @@ export function ChatInputBar({
       >
         {/* Input Field - takes remaining space */}
         {/* Note: Status text removed - Logic Terminal in chat list is the single source of truth (DS Section 19.C) */}
-        <form onSubmit={onSubmit} className="flex-1 h-full">
+        <form onSubmit={onSubmit} className="flex-1 h-full flex items-center">
           <textarea
             ref={inputRef}
             disabled={isInputDisabledByPlanState}
             aria-label="Chat message"
-            className="w-full bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-4 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+            className="w-full h-11 min-h-11 bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-2.5 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
             placeholder={
               isInputDisabledByPlanState
                 ? 'Updating...'

@@ -5,7 +5,7 @@ L1: In-memory TTLCache with RLock (1h TTL, 128 entries) - hot path
 L2: PostgreSQL response_cache (7d TTL) - warm persistence across restarts
 
 Cache key format:
-specialist::v2::{topic}::{dest}::{month}::{bucket}::{skill}::{dpref}::{phash}
+specialist::v4::{topic}::{dest}::{iso_month}::m::{skill}::{dpref}::{phash}
 
 Usage:
     from app.services.specialist_cache import (
@@ -57,42 +57,6 @@ _cache_get = _mem.get
 _cache_set = _mem.set
 
 
-def _month_from_date(date_str: Optional[str]) -> str:
-    """Extract YYYY-MM from a date string for seasonal cache bucketing."""
-    if not date_str or len(date_str) < 7:
-        return "unknown"
-    return date_str[:7]  # "2026-03-15" -> "2026-03"
-
-
-def _duration_bucket(start_date: Optional[str], end_date: Optional[str]) -> str:
-    """
-    Bucket trip duration for cache key (max 3-day spread per bucket).
-
-    Specialist recommendations vary by trip length (more spots for longer trips)
-    but not by exact day count. Narrow buckets prevent activity count regression
-    where a cached 9-day result underserves a 14-day trip.
-    """
-    if not start_date or not end_date:
-        return "unknown"
-    try:
-        start = datetime.strptime(start_date[:10], "%Y-%m-%d")
-        end = datetime.strptime(end_date[:10], "%Y-%m-%d")
-        days = (end - start).days + 1  # Inclusive
-        if days <= 3:
-            return "weekend"  # 1-3d
-        if days <= 5:
-            return "short"  # 4-5d
-        if days <= 8:
-            return "week"  # 6-8d
-        if days <= 11:
-            return "extended"  # 9-11d
-        if days <= 15:
-            return "twoweek"  # 12-15d
-        return "long"  # 16d+
-    except (ValueError, TypeError):
-        return "unknown"
-
-
 def _specialist_cache_key(
     topic: str,
     destination: str,
@@ -102,32 +66,42 @@ def _specialist_cache_key(
     day_pref: Optional[int] = None,
 ) -> str:
     """
-    Generate stable cache key with month + duration bucket (not exact dates).
+    Generate stable cache key with ISO-month bucketing.
 
     Format:
-    specialist::v2::{topic}::{dest}::{month}::{bucket}::{skill}::{dpref}::{phash}
+    specialist::v4::{topic}::{dest}::{iso_month}::m::{skill}::{dpref}::{phash}
 
-    Month granularity: diving in Bali in March = same recommendations regardless
-    of exact start day. Duration bucket: 5-day vs 11-day trip gets different
-    density of recommendations. day_pref: user's requested activity count for
-    this topic (from day_preferences stepper).
+    Dates are coarsened to ISO month — specialist content is conceptually
+    date-independent. Duration is dropped because d6 vs d7 produces
+    unnecessary misses, and specialist plans don't vary by trip length.
+    Date-anchored constraints (e.g., diving no-fly buffer) are re-anchored
+    by the itinerary builder at schedule time.
     """
+    from datetime import date as date_type
+
     from app.planner.specialist_registry import prompt_hash
 
     dest_normalized = destination.lower().strip() if destination else "unknown"
-    month = _month_from_date(start_date)
-    bucket = _duration_bucket(start_date, end_date)
+    # Coarsen dates to ISO month — a diving plan for Bali is the same whether
+    # dates are Mar 15-21 or Mar 22-28. Adjacent-week misses are eliminated.
+    try:
+        s = date_type.fromisoformat(start_date[:10])
+        start = f"{s.year}-{s.month:02d}"
+        end = "m"  # Duration dropped — specialist content is duration-agnostic
+    except (ValueError, TypeError, AttributeError):
+        start = start_date[:7] if start_date else "unknown"
+        end = "unknown"
     skill = skill_level or "any"
     dpref = f"dp{day_pref}" if day_pref is not None else "dpany"
     phash = prompt_hash(topic)
 
     key = make_cache_key(
         "specialist",
-        "v2",
+        "v4",
         topic,
         dest_normalized,
-        month,
-        bucket,
+        start,
+        end,
         skill,
         dpref,
         phash,
@@ -273,6 +247,40 @@ async def set_cached_specialist_output(
     except Exception as e:
         logger.warning(f"[SPECIALIST_CACHE] L2 write failed: {e}")
         await db.rollback()
+
+
+# =============================================================================
+# Negative caching — short-TTL sentinel for failed LLM calls
+# =============================================================================
+
+_NEGATIVE_SENTINEL_KEY = "_negative_cache"
+
+
+async def set_negative_cache(
+    topic: str,
+    destination: str,
+    start_date: Optional[str],
+    end_date: Optional[str],
+    skill_level: Optional[str] = None,
+    day_pref: Optional[int] = None,
+    error: str = "",
+) -> None:
+    """Write a negative sentinel to L1 only (no DB write).
+
+    Uses the L1 global TTL (1h). The sentinel prevents retrying an identical
+    failing specialist call within the same server lifetime.
+    """
+    cache_key = _specialist_cache_key(
+        topic, destination, start_date, end_date, skill_level, day_pref=day_pref
+    )
+    sentinel = {_NEGATIVE_SENTINEL_KEY: True, "_error": error[:200]}
+    _mem.set(cache_key, sentinel)
+    logger.info("[SPECIALIST_CACHE] Negative cache set: %s (error=%s)", cache_key, error[:80])
+
+
+def is_negative_cache(value: Optional[dict]) -> bool:
+    """Return True if *value* is a negative-cache sentinel."""
+    return isinstance(value, dict) and value.get(_NEGATIVE_SENTINEL_KEY) is True
 
 
 # =============================================================================

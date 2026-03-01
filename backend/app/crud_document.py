@@ -688,7 +688,13 @@ async def apply_planner_update(
                 if field == "activity_settings":
                     val = cleaned_inputs.get(field)
                     if isinstance(val, dict) and val.get("categories"):
-                        continue  # Non-empty categories — keep
+                        doc_cats = set(
+                            getattr(data.trip_inputs.activity_settings, "categories", None) or []
+                        )
+                        graph_cats = set(val.get("categories", []))
+                        if graph_cats <= doc_cats:
+                            cleaned_inputs.pop(field, None)  # Graph subset — preserve doc
+                        continue
                 cleaned_inputs.pop(field, None)
 
         # Merge trip inputs - graph-owned fields only (user-owned stripped above)
@@ -856,7 +862,6 @@ def apply_planner_update_sync(
             "hotel_settings",
             "flight_settings",
             "transport_settings",
-            "booking_types",
         }
         cleaned_inputs: dict | None = None
         if trip_inputs:
@@ -868,7 +873,13 @@ def apply_planner_update_sync(
                 if field == "activity_settings":
                     val = cleaned_inputs.get(field)
                     if isinstance(val, dict) and val.get("categories"):
-                        continue  # Non-empty categories — keep
+                        doc_cats = set(
+                            getattr(data.trip_inputs.activity_settings, "categories", None) or []
+                        )
+                        graph_cats = set(val.get("categories", []))
+                        if graph_cats <= doc_cats:
+                            cleaned_inputs.pop(field, None)  # Graph subset — preserve doc
+                        continue
                 cleaned_inputs.pop(field, None)
 
         # Merge trip inputs - graph-owned fields only (user-owned stripped above)

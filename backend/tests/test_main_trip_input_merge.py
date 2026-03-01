@@ -8,7 +8,9 @@ from app.main import (
 from app.schemas import GraphPlanRequest
 
 
-def test_generate_turn_preserves_document_categories_by_dropping_request_snapshot():
+def test_generate_turn_preserves_committed_categories():
+    """GENERATE_PLAN_NOW carries freshly-committed settings from PATCH —
+    categories are authoritative and must NOT be stripped."""
     incoming = {
         "activity_settings": {
             "categories": ["diving", "nightlife"],
@@ -19,7 +21,7 @@ def test_generate_turn_preserves_document_categories_by_dropping_request_snapsho
 
     sanitized = _sanitize_trip_inputs_for_category_merge(incoming, "GENERATE_PLAN_NOW")
 
-    assert "categories" not in sanitized["activity_settings"]
+    assert sanitized["activity_settings"]["categories"] == ["diving", "nightlife"]
     assert sanitized["activity_settings"]["day_preferences"] == {"diving": 3}
     assert sanitized["hotel_settings"]["min_stars"] == 5
 

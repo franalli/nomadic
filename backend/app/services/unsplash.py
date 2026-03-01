@@ -344,6 +344,36 @@ async def _fetch_variants_from_unsplash_once(
                 results = data.get("results", [])
                 logger.info(f"[UNSPLASH-API] Got {len(results)} results for {destination}")
 
+                # Broader-query retry: if the initial (possibly specific) query
+                # returned nothing, try once more with a simple destination query.
+                if not results:
+                    broader = f"{destination} travel landmark"
+                    logger.info(
+                        "[UNSPLASH-API] 0 results for '%s', retrying broader query: '%s'",
+                        query,
+                        broader,
+                    )
+                    resp2 = await client.get(
+                        "https://api.unsplash.com/search/photos",
+                        params={
+                            "query": broader,
+                            "per_page": NUM_VARIANTS,
+                            "orientation": "landscape",
+                            "order_by": "relevant",
+                            "content_filter": "high",
+                        },
+                        headers={
+                            "Authorization": f"Client-ID {api_key}",
+                        },
+                    )
+                    if resp2.status_code == 200:
+                        results = resp2.json().get("results", [])
+                        logger.info(
+                            "[UNSPLASH-API] Broader retry got %d results for %s",
+                            len(results),
+                            destination,
+                        )
+
                 if not results:
                     logger.info(f"No Unsplash results for query: {query}")
                     return []
@@ -880,7 +910,7 @@ async def get_image_for_destination(
                 logger.warning(f"[UNSPLASH] DB cache save failed: {e}")
 
         # Return requested variant (or fallback to variant 0 if not enough results)
-        actual_variant = min(variant, len(images) - 1)
+        actual_variant = variant % len(images)
         image = images[actual_variant]
         url = build_image_url(image.image_id, width, height)
         logger.info(

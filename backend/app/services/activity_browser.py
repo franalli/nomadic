@@ -25,9 +25,20 @@ from sqlalchemy import select, update
 
 from app.config import settings
 from app.planner.hashing import make_cache_key
-from app.planner.llm_factory import resolve_schema_refs, strip_unsupported_schema_keys
+from app.planner.llm_factory import (
+    gemini_safe_schema,
+    resolve_schema_refs,
+    strip_unsupported_schema_keys,
+)
 from app.services.cache_core import MemoryCache, l2_upsert
-from app.services.specialist_cache import _month_from_date
+
+
+def _month_from_date(date_str: str | None) -> str:
+    """Extract YYYY-MM from date string for cache keying."""
+    if date_str and len(date_str) >= 7:
+        return date_str[:7]
+    return "unknown"
+
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +48,7 @@ CATEGORY_TO_PLACES_TYPES: Dict[str, List[str]] = {
     "spa": ["spa", "beauty_salon"],
     "cultural": ["museum", "art_gallery", "hindu_temple", "church", "mosque"],
     "food": ["restaurant", "cafe", "bakery"],
-    "nature": ["park", "natural_feature", "campground"],
+    "nature": ["park", "campground", "national_park"],
     "shopping": ["shopping_mall", "market", "clothing_store"],
     "nightlife": ["night_club", "bar"],
     "tours": ["tourist_attraction"],
@@ -97,11 +108,9 @@ class _BrowseEstimateBatch(BaseModel):
 
 
 # Pre-resolved flat schema for Gemini-compatible structured output.
-_BROWSE_ESTIMATE_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
-    resolve_schema_refs(_BrowseEstimateBatch.model_json_schema())
+_BROWSE_ESTIMATE_FLAT_SCHEMA: dict = gemini_safe_schema(
+    strip_unsupported_schema_keys(resolve_schema_refs(_BrowseEstimateBatch.model_json_schema()))
 )
-
-# _month_from_date imported from app.services.specialist_cache
 
 
 def _cache_key(
@@ -295,9 +304,7 @@ async def _enrich_tiles_with_llm(
             if est is None:
                 continue
 
-            if not tile.get("price_estimate"):
-                tile["price_estimate"] = est.price_band
-                enriched_count += 1
+            # price_estimate is Optional[float] — price band string goes to meta only
             if tile.get("price_level") is None:
                 tile["price_level"] = _PRICE_BAND_TO_LEVEL.get(est.price_band)
             if not tile.get("duration"):
@@ -419,6 +426,11 @@ def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
     }
     price_level = price_level_map.get(price_level_raw) if isinstance(price_level_raw, str) else None
 
+    # Map GP price_level (0-4) to rough per-person estimate
+    price_estimate = None
+    if price_level is not None:
+        price_estimate = {0: 0, 1: 15, 2: 35, 3: 65, 4: 120}.get(price_level)
+
     photos = place.get("photos", [])
     image_url = None
     photo_name = None
@@ -447,7 +459,7 @@ def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
         "deeplink": maps_uri,
         "location_label": address,
         "geo": {"lat": lat, "lng": lng} if lat and lng else None,
-        "price_estimate": _price_level_to_range(price_level),
+        "price_estimate": price_estimate,
         "price_level": price_level,
         "source": "google_places",
         "provider": "google_places",

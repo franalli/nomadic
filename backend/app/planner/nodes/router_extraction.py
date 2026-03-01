@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.planner.llm_factory import (
+    gemini_safe_schema,
     get_llm_by_model,
     resolve_schema_refs,
     strip_unsupported_schema_keys,
@@ -298,8 +299,8 @@ class RouterOutput(BaseModel):
 # Pre-resolved flat schemas for Gemini-compatible structured output.
 # Passing dicts (not classes) avoids LangChain's OpenAI function-calling
 # wrapper which adds a top-level "parameters" key Gemini doesn't support.
-_ROUTER_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
-    resolve_schema_refs(RouterOutput.model_json_schema())
+_ROUTER_FLAT_SCHEMA: dict = gemini_safe_schema(
+    strip_unsupported_schema_keys(resolve_schema_refs(RouterOutput.model_json_schema()))
 )
 
 
@@ -1066,8 +1067,8 @@ async def _classify_change_type(
     llm = get_llm_by_model(resolved_model, temperature=0, max_tokens=400)
 
     # ChangeClassification is 6 fields — well within Gemini's limits
-    classifier_schema = strip_unsupported_schema_keys(
-        resolve_schema_refs(ChangeClassification.model_json_schema())
+    classifier_schema = gemini_safe_schema(
+        strip_unsupported_schema_keys(resolve_schema_refs(ChangeClassification.model_json_schema()))
     )
     structured_llm = llm.with_structured_output(
         dict(classifier_schema),
@@ -1236,7 +1237,20 @@ async def classify_change(
     Raises:
         ValueError: If both router extraction and heuristic fallback fail.
     """
-    from app.planner.schemas.coordinator_schemas import ClassifierOutput
+    from app.planner.schemas.coordinator_schemas import ChangeType, ClassifierOutput
+
+    # =========================================================================
+    # Short-circuit: GENERATE_PLAN_NOW / GENERATE_PLAN_TRIGGER
+    # Saves one LLM call and ensures consistent full-rebuild behavior.
+    # =========================================================================
+    if user_message.strip().upper() in ("GENERATE_PLAN_NOW", "GENERATE_PLAN_TRIGGER"):
+        return ClassifierOutput(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            reasoning="GENERATE_PLAN_NOW trigger — full rebuild",
+            fields_changed=[],
+            affects=[],
+        )
 
     # =========================================================================
     # Step 1: Proven router extraction (RouterOutput, ~27 fields — works with Gemini)

@@ -337,6 +337,11 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
 
         // If no tiles, fetch them from the API
         if (!hasTilesForBranch && fallbackBranchId) {
+          // Guard: skip if a previous fetch is still in-flight (e.g. effect re-entrant before cleanup)
+          if (tilesFetchControllerRef.current) {
+            debugLog('[useSessionHydration] ⏭️ Tile fetch already in-flight, skipping duplicate');
+            return;
+          }
           const controller = new AbortController();
           tilesFetchControllerRef.current = controller;
 

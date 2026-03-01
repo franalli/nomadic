@@ -691,18 +691,44 @@ def _debug_error(message: str, **kwargs: Any) -> None:
 
 def configure_logging():
     """
-    Configure logging for non-full modes.
+    Configure logging levels based on DEBUG mode.
 
-    Suppresses noisy loggers when not in full mode.
+    - full: adds root handler so app.* logger.info/debug calls output to stderr
+    - compact/off: suppresses noisy loggers
     Call this at app startup.
     """
     import logging
+    import sys
     import warnings
 
     mode = get_debug_mode()
 
-    # Full mode shows everything
     if mode == "full":
+        # Add a root handler so app.* loggers output INFO+ to stderr.
+        # Without this, only WARNING+ appears (via Python's lastResort handler)
+        # because uvicorn only adds handlers for its own loggers.
+        if not logging.root.handlers:
+            logging.basicConfig(
+                level=logging.INFO,
+                format="%(levelname)s:%(name)s:%(message)s",
+                stream=sys.stderr,
+            )
+        # Suppress noisy third-party loggers even in full mode
+        for noisy in (
+            "httpx",
+            "httpcore",
+            "openai",
+            "langchain",
+            "langchain_core",
+            "langchain_openai",
+            "pydantic",
+            "watchfiles",
+            "watchfiles.main",
+            "google",
+            "google.auth",
+            "google.api_core",
+        ):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
         return
 
     # =========================================================================

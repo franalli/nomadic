@@ -181,6 +181,8 @@ class Settings(BaseSettings):
     experience_cache_ttl_hours: int = 72
     # Google Places enrichment of LLM-generated activities (Tier1/Tier2)
     google_places_enrichment_cache_ttl_hours: int = 168
+    # Max activities to enrich per call (caps Google Places API spend)
+    google_places_enrichment_cap: int = int(os.getenv("GOOGLE_PLACES_ENRICHMENT_CAP", "3"))
     # Wipe L2 (PostgreSQL) on session reset — for local dev/testing only
     # Set CLEAR_L2_ON_RESET=true in .env; leave unset in production
     clear_l2_on_session_reset: bool = os.getenv("CLEAR_L2_ON_RESET", "false").lower() == "true"
@@ -208,7 +210,7 @@ class Settings(BaseSettings):
     # =============================================================================
     # Security: Rate Limiting & Admin Access
     # =============================================================================
-    rate_limit_enabled: bool = True
+    rate_limit_enabled: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
     admin_api_key: str = os.getenv("ADMIN_API_KEY", "")
     media_proxy_signing_key: str = os.getenv("MEDIA_PROXY_SIGNING_KEY", "")
     max_sessions_per_ip_hour: int = int(

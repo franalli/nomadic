@@ -22,7 +22,7 @@ import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { getSpecialistEnrichment } from '@/lib/api';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
-import { useChatStore } from '@/state/chatStore';
+import { useDocumentStore } from '@/state/documentStore';
 import type { StrategySection } from '@/types/plan-envelope';
 
 import { StrategyHeroAccordion } from './StrategyHeroAccordion';
@@ -93,10 +93,9 @@ export function StrategyHero({
   const [enrichmentUiState, setEnrichmentUiState] = useState<EnrichmentUiState>('idle');
   const [enrichmentErrorCode, setEnrichmentErrorCode] = useState<string | null>(null);
   const [enrichmentRetryNonce, setEnrichmentRetryNonce] = useState(0);
-  // Track chat message count to abort enrichment polling when a new turn starts.
-  // messages.length changes only on addMessage (turn boundary), NOT on token append,
-  // so it won't cause spurious effect re-runs during streaming.
-  const messageCount = useChatStore((s) => s.messages.length);
+  // Track document existence — becomes false on session reset, cancelling the poller
+  const documentExists = useDocumentStore((s) => s.document !== null);
+  const messageSendNonce = useDocumentStore((s) => s.messageSendNonce);
 
   const displaySection = enrichedSection ?? section;
   const hasTravelIntelligence = Boolean(
@@ -130,6 +129,10 @@ export function StrategyHero({
       setEnrichmentErrorCode(null);
       let transientErrors = 0;
       let pendingAttempts = 0;
+
+      // Initial delay — give the backend time to start enrichment before first poll
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      if (cancelled) return;
 
       while (!cancelled) {
         let result: Awaited<ReturnType<typeof getSpecialistEnrichment>> = null;
@@ -190,7 +193,8 @@ export function StrategyHero({
     return () => {
       cancelled = true;
     };
-  }, [hasTravelIntelligence, isSheetOpen, section.id, section.specialist_type, enrichmentRetryNonce, messageCount]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- polling lifecycle controlled by isSheetOpen + section.id; not restarted on every render
+  }, [hasTravelIntelligence, isSheetOpen, section.id, section.specialist_type, enrichmentRetryNonce, documentExists, messageSendNonce]);
 
   const handleRetryEnrichment = () => {
     setEnrichmentUiState('idle');

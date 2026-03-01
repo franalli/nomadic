@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.planner.llm_factory import (
+    gemini_safe_schema,
     get_llm_by_model,
     resolve_schema_refs,
     strip_unsupported_schema_keys,
@@ -49,8 +50,8 @@ class ValidationResponse(BaseModel):
 
 
 # Pre-resolved flat schema for Gemini-compatible structured output.
-_VALIDATION_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
-    resolve_schema_refs(ValidationResponse.model_json_schema())
+_VALIDATION_FLAT_SCHEMA: dict = gemini_safe_schema(
+    strip_unsupported_schema_keys(resolve_schema_refs(ValidationResponse.model_json_schema()))
 )
 
 

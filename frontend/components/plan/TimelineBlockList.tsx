@@ -426,6 +426,24 @@ export function TimelineBlockList({
           );
         })
       )}
+      {/* Add activity button — rich activity days only (not free/arrival/departure/skeleton) */}
+      {useRichBlocks && !isFreeDay && !isArrival && !isDeparture
+        && !blocksToRender.every(b => b.is_skeleton) && (
+        <button
+          type="button"
+          onClick={() => onBrowse(card.day_number, card.date ?? null)}
+          className={cn(
+            'w-full py-2 rounded-lg text-sm font-medium transition-colors',
+            'border-2 border-dashed',
+            'border-zinc-200 dark:border-white/10',
+            'text-zinc-400 dark:text-zinc-500',
+            'hover:border-zinc-900 hover:text-zinc-600',
+            'dark:hover:border-white/25 dark:hover:text-zinc-300',
+          )}
+        >
+          + Add activity
+        </button>
+      )}
     </div>
   );
 

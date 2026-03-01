@@ -86,6 +86,26 @@ class Tile(BaseModel):
     image_url: Optional[str] = None
 
     price_estimate: Optional[float] = None
+
+    @field_validator("price_estimate", mode="before")
+    @classmethod
+    def _coerce_price_estimate(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            import re
+
+            cleaned = re.sub(r"[^\d.\-]", "", v)
+            if not cleaned:
+                return None
+            try:
+                return float(cleaned)
+            except (ValueError, TypeError):
+                return None
+        return None
+
     live_price: Optional[float] = None
     currency: str = "USD"
     price_basis: str = "per_trip"
@@ -457,7 +477,9 @@ class DocumentTripInputs(BaseModel):
     """Trip parameters extracted/inferred from conversation."""
 
     destination: Optional[str] = None
+    destination_iata: Optional[str] = None
     origin: Optional[str] = None
+    origin_iata: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     adults: Optional[int] = None

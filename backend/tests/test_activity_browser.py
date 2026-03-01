@@ -253,8 +253,8 @@ class TestBrowseActivitiesHappyPath:
         assert isinstance(results, list)
 
     @pytest.mark.asyncio
-    async def test_price_level_mapped_to_symbol(self):
-        """PRICE_LEVEL_MODERATE maps to '$$' in the returned tile."""
+    async def test_price_level_mapped_correctly(self):
+        """PRICE_LEVEL_MODERATE maps to price_level=2 and price_estimate=35."""
         with (
             patch(_PLACES_API, new_callable=AsyncMock) as mock_places,
             patch(_GEOCODE_API, new_callable=AsyncMock) as mock_geocode,
@@ -273,7 +273,7 @@ class TestBrowseActivitiesHappyPath:
             )
 
         assert len(results) >= 1
-        assert results[0]["price_estimate"] == "$$"
+        assert results[0]["price_estimate"] == 35
         assert results[0]["price_level"] == 2
 
     @pytest.mark.asyncio

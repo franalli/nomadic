@@ -68,6 +68,7 @@ Map each changed file to its affected SSoT doc(s):
 | `frontend/app/layout.tsx`                        | `docs/ux_unified_architecture.md` (root layout, providers, global structure)         |
 | `frontend/app/page.tsx`                          | `docs/ux_unified_architecture.md` (landing page, entry point)                        |
 | `.claude/commands/*`                             | `docs/repo_structure.md` (Claude Code slash commands)                                |
+| `.claude/plans/*`                                | `docs/repo_structure.md` (Persisted Claude planning artifacts)                         |
 | `.claude/agents/*`                               | `docs/repo_structure.md` (Claude Code agent specs)                                   |
 | `.codex/commands/*`                              | `docs/repo_structure.md` (Codex command specs)                                       |
 | `.codex/agents/*`                                | `docs/repo_structure.md` (Codex agent specs)                                         |

@@ -103,6 +103,9 @@ def _canonicalize_applied_updates(fields_changed: List[str]) -> List[str]:
         "children": "travelers",
         "budget": "budget",
         "currency": "budget",
+        "activities_per_day": "preferences",
+        "activity_categories": "preferences",
+        "skill_level": "preferences",
     }
     canonical: List[str] = []
     for field in fields_changed:
@@ -329,6 +332,7 @@ _TILE_REFRESH_CHANGES: frozenset[ChangeType] = frozenset(
         ChangeType.DATE_CHANGE,
         ChangeType.LOGISTICS,
         ChangeType.SETTINGS,
+        ChangeType.PREFERENCE,
         ChangeType.ADD_ACTIVITY,
         ChangeType.REMOVE_ACTIVITY,
         ChangeType.SWAP_ACTIVITY,
@@ -397,6 +401,23 @@ def _trip_inputs_partial_payload(state: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+def _normalize_tile_fields(tile: Dict[str, Any]) -> Dict[str, Any]:
+    """Add canonical Tile schema fields from provider-specific variants.
+
+    Additive — originals preserved for backward compatibility.
+    """
+    if not tile.get("geo"):
+        coords = tile.get("coordinates")
+        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+            try:
+                tile["geo"] = {"lat": float(coords[1]), "lng": float(coords[0])}
+            except (TypeError, ValueError):
+                pass
+    if not tile.get("deeplink_url") and tile.get("deeplink"):
+        tile["deeplink_url"] = tile["deeplink"]
+    return tile
+
+
 def _flatten_tiles_payload(tiles: Dict[str, Any]) -> Dict[str, Any]:
     """Flatten category-keyed tiles into ID-keyed map for partial SSE updates."""
     flattened: Dict[str, Any] = {}
@@ -410,7 +431,7 @@ def _flatten_tiles_payload(tiles: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(tile, dict):
                 tile_id = tile.get("id")
                 if tile_id:
-                    flattened[str(tile_id)] = tile
+                    flattened[str(tile_id)] = _normalize_tile_fields(tile)
     return flattened
 
 
@@ -699,19 +720,45 @@ def _tile_refresh_types(classifier: ClassifierOutput) -> List[str]:
             types.append("flights")
         return types or ["flights", "hotels"]
     if ct == ChangeType.DATE_CHANGE:
-        return ["flights", "hotels"]
+        return ["flights", "hotels", "activities"]
     if ct in (
         ChangeType.ADD_ACTIVITY,
         ChangeType.REMOVE_ACTIVITY,
         ChangeType.SWAP_ACTIVITY,
     ):
         return ["activities"]
+    if ct == ChangeType.PREFERENCE:
+        # APD change → regenerate activity tiles with new density
+        if classifier.activities_per_day is not None:
+            return ["activities"]
+        return []
     return []
 
 
 # ---------------------------------------------------------------------------
 # Brief builders
 # ---------------------------------------------------------------------------
+
+
+def _scaled_target(
+    topic_pref: Optional[int],
+    apd: int,
+    num_days: Optional[int],
+) -> Optional[int]:
+    """Compute effective target activity count for a specialist.
+
+    Explicit per-topic day_preference wins outright.  Otherwise, scale
+    available activity days by activities_per_day so the specialist
+    generates enough content for the builder to fill each day slot.
+    """
+    if topic_pref is not None:
+        return topic_pref
+    if apd is not None and apd > 1:
+        available = max(1, (num_days or 7) - 2)
+        return min(
+            available * apd, 10
+        )  # Cap at 10 — structured output reliability drops beyond this
+    return None
 
 
 def build_brief(
@@ -729,6 +776,7 @@ def build_brief(
     trip_settings: Dict[str, Any] = state.get("trip_settings", {})
     activity_settings = trip_settings.get("activity_settings", {})
     day_preferences: Dict[str, int] = activity_settings.get("day_preferences", {})
+    apd: int = activity_settings.get("activities_per_day") or 2
 
     # Use classifier destination if trip_plan doesn't have one yet
     destination = trip_plan.get("destination") or classifier.destination or ""
@@ -778,10 +826,12 @@ def build_brief(
         budget_total=budget_total,
         budget_allocation_pct=round(budget_pct, 2),
         reserved_days=sorted(reserved_days),
-        target_day_count=day_preferences.get(topic),
+        target_day_count=_scaled_target(day_preferences.get(topic), apd, num_days),
+        activities_per_day=apd,
         hotel_zone=trip_settings.get("hotel_settings", {}).get("location"),
         other_specialist_zones=other_zones,
         trip_vibe=trip_plan.get("vibe"),
+        categories=list(activity_settings.get("categories", [])),
     )
 
 
@@ -1145,7 +1195,7 @@ def _apply_classifier_to_state(
 
     # Activities per day (density preference)
     if classifier.activities_per_day is not None:
-        clamped = max(1, min(classifier.activities_per_day, 5))
+        clamped = max(1, min(classifier.activities_per_day, 3))
         old_apd = activity_settings.get("activities_per_day")
         if old_apd != clamped:
             activity_settings["activities_per_day"] = clamped
@@ -1156,6 +1206,13 @@ def _apply_classifier_to_state(
                     "summary": f"activities_per_day set to {clamped}",
                 }
             )
+            # Invalidate stale tiles and day_cards so tile scaling
+            # re-runs with the updated density preference.
+            tiles = state.get("tiles", {})
+            if isinstance(tiles, dict) and tiles.get("activities"):
+                tiles["activities"] = []
+                state["tiles"] = tiles
+            state["day_cards"] = []
 
     # Skill level
     if classifier.skill_level:
@@ -1254,9 +1311,11 @@ def _apply_classifier_to_state(
     trip_settings["flight_settings"] = flight_settings
 
     # Auto-enable flight search when origin is newly captured.
+    origin_just_set = False
     booking_types = dict(trip_settings.get("booking_types", {}))
     has_origin_now = bool(trip_plan.get("origin"))
     if has_origin_now and not old_origin:
+        origin_just_set = True
         current_flights_mode = booking_types.get("flights")
         if current_flights_mode in (None, "off", ""):
             booking_types["flights"] = "suggested"
@@ -1281,6 +1340,8 @@ def _apply_classifier_to_state(
     existing_turn_steps = list(turn_meta.get("turn_steps", []))
     turn_meta["fields_changed"] = merged_fields
     turn_meta["turn_steps"] = existing_turn_steps + turn_steps
+    if origin_just_set:
+        turn_meta["origin_just_set"] = True
     state["turn_meta"] = turn_meta
 
 
@@ -1354,12 +1415,19 @@ async def _dispatch_specialists_parallel(
                 pre_change_state=pre_change_state if isinstance(pre_change_state, dict) else None,
             )
 
+        # Extract raw user day preference for cache key alignment with
+        # the parallel dispatch path (which caches with day_prefs.get(topic)).
+        _trip_settings = state.get("trip_settings", {})
+        _act_settings = _trip_settings.get("activity_settings", {})
+        _raw_day_pref = _act_settings.get("day_preferences", {}).get(topic)
+
         async with async_session_factory() as db:
             result = await dispatch_specialist_with_brief(
                 brief=brief,
                 topic=topic,
                 replan=replan_request,
                 db=db,
+                raw_day_pref=_raw_day_pref,
             )
 
         return topic, result.model_dump() if result is not None else None
@@ -1662,8 +1730,11 @@ def _inject_specialist_tiles_into_state(state: Dict[str, Any]) -> None:
         )
 
 
-async def _enrich_specialist_tiles(state: Dict[str, Any]) -> None:
-    """Enrich specialist tiles with Google Places data (photos, ratings, coordinates).
+_ENRICHABLE_SOURCES = {"vertical_specialist", "experience_generator"}
+
+
+async def _enrich_activity_tiles(state: Dict[str, Any]) -> None:
+    """Enrich specialist + experience tiles with Google Places data.
 
     Gated by settings.use_google_places_provider. Graceful degradation: tiles
     work with LLM coordinates if enrichment fails.
@@ -1676,12 +1747,12 @@ async def _enrich_specialist_tiles(state: Dict[str, Any]) -> None:
     if not isinstance(activity_tiles, list):
         return
 
-    specialist_tiles = [
+    tiles_to_enrich = [
         t
         for t in activity_tiles
-        if isinstance(t, dict) and t.get("source_agent") == "vertical_specialist"
+        if isinstance(t, dict) and t.get("source_agent") in _ENRICHABLE_SOURCES
     ]
-    if not specialist_tiles:
+    if not tiles_to_enrich:
         return
 
     destination = state.get("trip_plan", {}).get("destination", "")
@@ -1689,13 +1760,16 @@ async def _enrich_specialist_tiles(state: Dict[str, Any]) -> None:
         return
 
     try:
-        from app.tile_service.google_places_provider import enrich_activities_with_places
-
-        enriched = await enrich_activities_with_places(
-            specialist_tiles, destination, path_label="specialist_enrich"
+        from app.tile_service.google_places_provider import (
+            _geocode_destination_async,
+            enrich_activities_with_places,
         )
 
-        # Replace specialist tiles in the activity list with enriched versions
+        enriched = await enrich_activities_with_places(
+            tiles_to_enrich, destination, path_label="activity_enrich"
+        )
+
+        # Replace enriched tiles in the activity list
         enriched_by_id = {t.get("id"): t for t in enriched if isinstance(t, dict)}
         for i, t in enumerate(activity_tiles):
             if isinstance(t, dict) and t.get("id") in enriched_by_id:
@@ -1707,14 +1781,62 @@ async def _enrich_specialist_tiles(state: Dict[str, Any]) -> None:
                     enriched_tile["geo"] = {"lng": coords[0], "lat": coords[1]}
                 activity_tiles[i] = enriched_tile
 
+        # Geocode fallback for tiles still missing geo after enrichment
+        for i, t in enumerate(activity_tiles):
+            if (
+                isinstance(t, dict)
+                and t.get("source_agent") in _ENRICHABLE_SOURCES
+                and not t.get("geo")
+            ):
+                query = f"{t.get('title', '')}, {destination}"
+                coords = await _geocode_destination_async(query)
+                if coords:
+                    t["geo"] = {"lng": coords[1], "lat": coords[0]}
+                    activity_tiles[i] = t
+
+        # Resolve photo_name → signed proxy URL for enriched tiles.
+        # GP photos are of the actual place and should override Unsplash placeholders.
+        session_id = state.get("session_id", "")
+        if session_id:
+            from app.tile_service.google_places_provider import build_signed_photo_url
+
+            for tile in activity_tiles:
+                if not isinstance(tile, dict):
+                    continue
+                photo_name = (
+                    (tile.get("meta") or {}).get("photo_name") or tile.get("photo_name") or ""
+                )
+                if photo_name:
+                    signed_url = build_signed_photo_url(session_id, photo_name)
+                    if signed_url:
+                        tile["image_url"] = signed_url
+
+        # Unsplash fallback for specialist tiles that failed GP enrichment
+        from app.placeholders import get_placeholder_image
+
+        for idx, tile in enumerate(activity_tiles):
+            if not isinstance(tile, dict):
+                continue
+            if tile.get("source_agent") not in _ENRICHABLE_SOURCES:
+                continue
+            if tile.get("image_url"):
+                continue
+            topic = (tile.get("meta") or {}).get("specialist_type", "activity")
+            tile["image_url"] = get_placeholder_image(
+                category=topic,
+                seed=f"{destination}-{topic}-{idx}",
+                width=800,
+                height=600,
+            )
+
         tiles["activities"] = activity_tiles
         state["tiles"] = tiles
         logger.info(
-            "[coordinator] Enriched %d specialist tiles via Google Places",
+            "[coordinator] Enriched %d activity tiles via Google Places",
             len(enriched),
         )
     except Exception as exc:
-        logger.warning("[coordinator] Specialist tile enrichment failed (graceful): %s", exc)
+        logger.warning("[coordinator] Activity tile enrichment failed (graceful): %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -1808,6 +1930,8 @@ async def _search_tiles(
                 "date_window_end": trip_plan.get("date_window_end"),
             },
             "executed_strategy_topics": executed_topics,
+            "strategy_sections": strategy_sections,
+            "planned_specialist_count": len(executed_topics),
         },
     )
 
@@ -1832,9 +1956,17 @@ async def _search_tiles(
 
     turn_meta = dict(state.get("turn_meta", {}))
     turn_meta["tiles_replaced"] = True
+    # Merge resolved IATA codes back from GraphState
+    if graph_state.trip_plan.origin_iata and not trip_plan.get("origin_iata"):
+        state["trip_plan"]["origin_iata"] = graph_state.trip_plan.origin_iata
+    if graph_state.trip_plan.destination_iata and not trip_plan.get("destination_iata"):
+        state["trip_plan"]["destination_iata"] = graph_state.trip_plan.destination_iata
     flight_status = graph_state.metadata.get("flight_search_status")
     if isinstance(flight_status, str) and flight_status:
         turn_meta["flight_search_status"] = flight_status
+    if graph_state.metadata.get("hotel_filter_empty"):
+        turn_meta["hotel_filter_empty"] = True
+        turn_meta["hotel_filter_min_stars"] = graph_state.metadata.get("hotel_filter_min_stars")
     if "activities" in requested_types:
         browseable = graph_state.metadata.get("browseable_activities")
         turn_meta["browseable_activities"] = browseable if isinstance(browseable, list) else []
@@ -1954,6 +2086,72 @@ async def _run_local_intel(
         return None
 
 
+async def _refresh_enrichment_states(state: Dict[str, Any], session_id: str) -> None:
+    """Refresh stale 'pending' enrichment states from the DB.
+
+    Phase B runs as a background task after the SSE complete event. On the next
+    turn, in-memory strategy_sections may still show 'pending' even though
+    Phase B has written 'ready'/'failed' to the document. This function reads
+    the latest enrichment state from the DB and patches in-memory sections.
+    """
+    sections = state.get("strategy_sections", [])
+    if not isinstance(sections, list):
+        return
+
+    has_pending = any(
+        isinstance(s, dict)
+        and isinstance(s.get("local_expert_enrichment"), dict)
+        and s["local_expert_enrichment"].get("state") == "pending"
+        for s in sections
+    )
+    if not has_pending:
+        return
+
+    try:
+        from app.crud_document import get_document, get_document_data
+        from app.crud_trip import get_session_by_token
+        from app.db import _get_async_session_factory
+
+        async_session_factory = _get_async_session_factory()
+        async with async_session_factory() as db:
+            db_session = await get_session_by_token(db, session_id)
+            if not db_session:
+                return
+            doc = await get_document(db, session=db_session)
+            if not doc:
+                return
+            data = get_document_data(doc)
+            db_sections = data.strategy_sections or []
+
+            # Build lookup of enrichment states from DB
+            db_enrichment_by_type: Dict[str, dict] = {}
+            for db_sec in db_sections:
+                st = getattr(db_sec, "specialist_type", None)
+                enr = getattr(db_sec, "local_expert_enrichment", None)
+                if st and enr:
+                    enr_dict = enr if isinstance(enr, dict) else enr.model_dump()
+                    if enr_dict.get("state") in ("ready", "failed"):
+                        db_enrichment_by_type[st] = enr_dict
+
+            # Patch in-memory sections
+            for section in sections:
+                if not isinstance(section, dict):
+                    continue
+                enr = section.get("local_expert_enrichment", {})
+                if not isinstance(enr, dict) or enr.get("state") != "pending":
+                    continue
+                st = section.get("specialist_type", "")
+                if st in db_enrichment_by_type:
+                    section["local_expert_enrichment"] = db_enrichment_by_type[st]
+                    logger.debug(
+                        "[coordinator] Refreshed enrichment state for %s: %s",
+                        st,
+                        db_enrichment_by_type[st].get("state"),
+                    )
+    except Exception as exc:
+        logger.debug("[coordinator] Enrichment state refresh failed (non-fatal): %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Itinerary building (Phase 2: bridge to ItineraryBuilder)
 # ---------------------------------------------------------------------------
@@ -1973,17 +2171,27 @@ async def _build_itinerary(
     destination = trip_plan.get("destination")
 
     if not start_date or not end_date or not destination:
+        logger.info(
+            "[coordinator] _build_itinerary: skipped (missing: start=%s end=%s dest=%s)",
+            bool(start_date),
+            bool(end_date),
+            bool(destination),
+        )
         return None
 
     # Inject specialist content_added items as real tiles
     _inject_specialist_tiles_into_state(state)
-    await _enrich_specialist_tiles(state)
+    await _enrich_activity_tiles(state)
 
     tiles: Dict[str, Any] = state.get("tiles", {})
     strategy_sections = state.get("strategy_sections", [])
 
     # Need either hotels or activities to build
     if not tiles.get("hotels") and not tiles.get("activities"):
+        logger.info(
+            "[coordinator] _build_itinerary: skipped (no tiles: %s)",
+            {k: len(v) for k, v in tiles.items() if isinstance(v, list)},
+        )
         return None
 
     try:
@@ -2035,15 +2243,18 @@ async def _build_itinerary(
             ),
             "conflicts": [c.model_dump() for c in result.conflicts],
             "warnings": result.warnings,
+            "overview": result.overview.model_dump() if result.overview else None,
         }
         state["turn_meta"] = turn_meta
 
         if result.day_cards:
             day_cards = [card.model_dump() for card in result.day_cards]
             state["day_cards"] = day_cards
+            logger.info("[coordinator] _build_itinerary: produced %d day_cards", len(day_cards))
             return day_cards
 
         # Explicitly clear stale itinerary when builder returns no cards.
+        logger.info("[coordinator] _build_itinerary: builder returned no day_cards")
         state["day_cards"] = []
         return []
 
@@ -2184,6 +2395,16 @@ def _build_envelope(
         val = trip_settings.get(settings_field)
         if val is not None:
             trip_inputs[settings_field] = val
+
+    # Reconcile booking_types with actual tile presence — scoped search
+    # overrides (flights="off" when not in this refresh) must not leak
+    # into the envelope when tiles actually exist.
+    bt = dict(trip_inputs.get("booking_types", {}))
+    if tiles.get("flights") and bt.get("flights") in ("off", None):
+        bt["flights"] = "suggested"
+    if tiles.get("hotels") and bt.get("hotels") in ("off", None):
+        bt["hotels"] = "suggested"
+    trip_inputs["booking_types"] = bt
 
     is_flex_dates = bool(trip_plan.get("date_flex"))
 
@@ -2326,7 +2547,7 @@ def _build_envelope(
             if isinstance(tile, dict):
                 tile_id = tile.get("id")
                 if tile_id:
-                    flattened_tiles[tile_id] = tile
+                    flattened_tiles[str(tile_id)] = _normalize_tile_fields(tile)
 
     origin_just_set = bool(turn_meta.get("origin_just_set", False))
     tiles_replaced = bool(turn_meta.get("tiles_replaced", False))
@@ -2352,7 +2573,10 @@ def _build_envelope(
         "constraint_violations": constraint_violations,
         "browseable_activities": browseable_activities,
         "can_expand_to_itinerary": bool(strategy_sections) and ready_to_generate,
-        "itinerary_day_cards": [] if coordinator_reset else (day_cards if day_cards else None),
+        "itinerary_day_cards": (
+            [] if coordinator_reset else day_cards if day_cards else ([] if builder_ran else None)
+        ),
+        "itinerary_overview": builder_result.get("overview") if builder_ran else None,
         "ack_status": ack_status,
         "ack_updates": ack_updates,
         "applied_updates": _canonicalize_applied_updates(fields_changed),
@@ -2365,6 +2589,7 @@ def _build_envelope(
         "suggestion_chips": suggestion_chips,
         "suggested_responses": suggested_replies,
         "trip_inputs": trip_inputs,
+        "trip_settings": trip_settings,
         "branches": [],
         "ready_to_generate": ready_to_generate,
         "changes_made": changes_made,
@@ -2510,7 +2735,30 @@ async def _execute_step(
         }
 
     if step_type == StepType.BUILD_ITINERARY:
+        # Snapshot tile IDs before build to detect new specialist-injected tiles
+        pre_ids = {
+            t.get("id")
+            for cat in (state.get("tiles", {}) or {}).values()
+            if isinstance(cat, list)
+            for t in cat
+            if isinstance(t, dict)
+        }
         await _build_itinerary(state)
+        # Only emit tile partial if new tiles were injected (avoids duplicate
+        # re-render — SEARCH_TILES already emitted the initial set)
+        post_ids = {
+            t.get("id")
+            for cat in (state.get("tiles", {}) or {}).values()
+            if isinstance(cat, list)
+            for t in cat
+            if isinstance(t, dict)
+        }
+        if post_ids - pre_ids:
+            tiles = state.get("tiles", {})
+            return {
+                "type": "partial",
+                "data": {"kind": "tiles", "payload": _flatten_tiles_payload(tiles)},
+            }
         return None
 
     if step_type == StepType.GENERATE_RESPONSE:
@@ -2616,6 +2864,7 @@ async def execute_turn(
         SSE event dicts: node_status, partial, token, complete, error.
     """
     wall_start = time.monotonic()
+    _unsplash_task = None
 
     try:
         # Step 0: Reset turn_meta for this turn
@@ -2626,11 +2875,20 @@ async def execute_turn(
         _merge_doc_settings(state, doc_settings)
 
         # Step 2: Classify
-        summary = build_trip_state_summary(state)
+        # Pre-flight: empty/whitespace messages skip the LLM entirely
+        if not user_message or not user_message.strip():
+            classifier = ClassifierOutput(
+                intent="GREETING",
+                change_type=ChangeType.GREETING,
+                reasoning="Empty message — treated as greeting",
+                confidence=1.0,
+            )
+        else:
+            summary = build_trip_state_summary(state)
 
-        from app.planner.nodes.router_extraction import classify_change
+            from app.planner.nodes.router_extraction import classify_change
 
-        classifier = await classify_change(user_message, summary)
+            classifier = await classify_change(user_message, summary)
 
         logger.info(
             "[coordinator] Classified: intent=%s change_type=%s affects=%s",
@@ -2638,6 +2896,15 @@ async def execute_turn(
             classifier.change_type.value,
             classifier.affects,
         )
+
+        # Fire Unsplash prefetch as early as possible so cache is warm by tile
+        # construction time (~2-5s head start vs. prefetching in _search_tiles).
+        _prefetch_dest = classifier.destination or state.get("trip_plan", {}).get("destination")
+        if _prefetch_dest and classifier.intent == "PLANNING":
+            from app.services.unsplash import prefetch_destination_images
+
+            _unsplash_task = asyncio.create_task(prefetch_destination_images(_prefetch_dest))
+            _unsplash_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
         # Backward-compatible node_status naming for extraction tool.
         if classifier.intent == "PLANNING":
@@ -2802,7 +3069,13 @@ async def execute_turn(
         state.setdefault("messages", []).append(HumanMessage(content=user_message))
         state["messages"].append(AIMessage(content=assistant_message))
 
-        # Step 7: Build and yield complete envelope
+        # Step 7: Await unsplash prefetch (if running), refresh enrichment, build envelope
+        if _unsplash_task and not _unsplash_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(_unsplash_task), timeout=2.0)
+            except (asyncio.TimeoutError, Exception):
+                pass  # Fall back to placeholder gracefully
+        await _refresh_enrichment_states(state, session_id)
         envelope = _build_envelope(state, user_message, session_id, assistant_message)
 
         wall_ms = int((time.monotonic() - wall_start) * 1000)

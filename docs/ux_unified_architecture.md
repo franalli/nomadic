@@ -942,15 +942,13 @@ function StrategyStageRenderer({ state, viewModel, ... }) {
 
   // planContent is a useMemo switching on o.stableDensity:
   if (o.displayLogic.isShowingMirrorLoader) return <PlanMirrorLoader />;
-  if (o.stableDensity === 'empty')  return null;
-  if (o.stableDensity === 'ghost')  return <PlanGhostDensityView ... />;
-  if (o.stableDensity === 'bridge') return <PlanBridgeDensityView ... />;
+if (o.stableDensity === 'empty' || o.stableDensity === 'ghost' || o.stableDensity === 'bridge') return null;
   // default: full density
   return <PlanFullDensityView ... />;
 }
 ```
 
-> **Note:** The component file is `StrategyStageRenderer.tsx`, not `UnifiedStageRenderer`. There is no `UnifiedStageRenderer` component in the codebase. The actual rendering is dispatched through four density-specific views (`PlanMirrorLoader`, `PlanGhostDensityView`, `PlanBridgeDensityView`, `PlanFullDensityView`), not by directly composing `S2StrategyView`, `BookingSection`, and `TimelineThread` inline. Those subcomponents are used internally by the density views (primarily `PlanFullDensityView`).
+> **Note:** The component file is `StrategyStageRenderer.tsx`, not `UnifiedStageRenderer`. There is no `UnifiedStageRenderer` component in the codebase. Rendering is now a two-branch flow: loading states use `PlanMirrorLoader`, while non-loading states go into `PlanFullDensityView`. The dedicated density components `PlanGhostDensityView` and `PlanBridgeDensityView` are no longer in use.
 
 ---
 
@@ -1688,7 +1686,7 @@ useSessionHydration() runs
 | `StrategyStageRenderer` | Data density computation, conditional rendering, single renderer for all modes. Heavy computation and effects are delegated to `useStrategyStageOrchestration`. |
 | `useStrategyStageOrchestration` | Hook centralising all heavy computation, state, and effects for `StrategyStageRenderer` (keeps renderer under ~300 lines). Owns `DataDensity` computation, ghost timeline generation, map POI extraction, constraint validation sets, and fill-day guard refs. |
 | `PlanFullDensityView` | Full-density view (map + timeline + booking/intel controls). Receives all props from `StrategyStageRenderer`, renders the flex desktop map layout (content: flex-1 min 480px max 800px; map: flex-1 min 350px), owns the row-two toggle chips (Flights, Stays, Destination Travel Intel), and fetches/polls Local Expert enrichment for the destination intel panel. |
-| `PlanDensityViews` | Ghost, bridge, and mirror-loader density views (`PlanGhostDensityView`, `PlanBridgeDensityView`, `PlanMirrorLoader`). |
+| `PlanDensityViews` | Density loading view (`PlanMirrorLoader`) only. |
 | `PlanTimelineSection` | Timeline section for full-density view — handles DnD wrapping (`ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`), skeleton loading, regeneration overlay, and wraps `TimelineThread` in `ErrorBoundary` for crash isolation. |
 | `TimelineBlockList` | Renders one day’s timeline blocks, splitting compact vs full variants and injecting optional DnD/slot render-props for drag/drop and free-day actions. |
 | `TimelineDayCard` | Composes a day header, day-level constraints, and block list for one day in both compact and full timeline modes. |

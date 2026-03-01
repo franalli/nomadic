@@ -245,6 +245,7 @@ async def test_enrich_activities_respects_concurrency_limit():
         patch(_ENRICH_SINGLE, new=AsyncMock(side_effect=_slow_enrich)) as mock_single,
         patch(_ENRICH_MAX_PARALLEL, return_value=2),
         patch.object(provider.settings, "google_maps_api_key", "fake-key"),
+        patch.object(provider.settings, "google_places_enrichment_cap", len(activities)),
     ):
         enriched = await provider.enrich_activities_with_places(
             activities=activities,
@@ -303,6 +304,7 @@ async def test_enrich_activities_http_retry_and_semaphore_integration():
         patch(_RETRY_ATTEMPTS, return_value=2),
         patch(_BACKOFF_SECONDS, return_value=0.0),
         patch.object(provider.settings, "google_maps_api_key", "fake-key"),
+        patch.object(provider.settings, "google_places_enrichment_cap", len(activities)),
     ):
         mock_get_cache.return_value = None
         mock_http_client.side_effect = lambda *args, **kwargs: _FakeAsyncHttpClient(

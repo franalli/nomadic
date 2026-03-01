@@ -262,6 +262,11 @@ Domain specialist with LLM-first architecture. 8 specialists (diving, hiking, sk
 - `dispatch_specialist_with_brief()` -- Coordinator bridge: converts `TripBrief` into `generate_specialist_output_llm()` arguments via `_BriefAsTripPlan` adapter. Supports `ReplanRequest` for selective re-dispatch.
 - `build_scheduling_context()` -- Builds a scheduling-context block from a `TripBrief` (reserved days, target day count, hotel zone) appended to the specialist user prompt.
 
+Recent behavior:
+- `_build_specialist_prompt()` now returns `(system, user, max_acts)` and applies category-aware, density-aware capping.
+- `TripBrief` now flows into `_BriefAsTripPlan` with `activities_per_day` and active `categories` to bias distribution across specialists.
+- Specialist outputs are additionally capped after parsing so `max_acts` is never exceeded in cacheable payloads.
+
 **LLM-first architecture:** Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
 
 Uses `_SPECIALIST_FLAT_SCHEMA` (inlined `$defs` via `resolve_schema_refs()`) for Gemini function calling compatibility.
@@ -605,7 +610,7 @@ Pydantic structured output is used for LLM calls that need **guaranteed schema e
 | --- | --- | --- | --- | --- |
 | **_classify_change** (via `router_extraction.py`) | Yes | `settings.router_model` (via `llm_factory`) | `RouterOutput`, `ChangeClassification`, `ClassifierOutput` | Two-pass intent/extraction + lightweight change classification |
 | **dispatch_specialists** (via `coordinator.py` + `vertical_specialist.py`) | Yes (function_calling, flattened schema) | `settings.specialist_model` (via `llm_factory`) | `LLMSpecialistOutput` via `_SPECIALIST_FLAT_SCHEMA` | Specialist planning with fallback |
-| **local_intel** (via `local_expert.py`) | Yes (prompt-based) | `settings.local_expert_model` (via `llm_factory`) | `LocalExpertOutput` | Prompt-based JSON; no function_calling |
+| **local_intel** (via `local_expert.py`) | Yes | `settings.local_expert_model` (via `llm_factory`) | `LocalExpertOutput` | Structured output with `method="function_calling"`, guarded parsing + LLM token accounting |
 | **search_tiles** (via `logistics_node.py`) | No | N/A | N/A | API/provider calls only (Curated, Google Places, Mock) |
 | **validate_plan** (via `constraint_guard.py`) | No | `settings.guard_model` (place validation only) | N/A | Mostly deterministic |
 | **build_itinerary** (via `itinerary_builder.py`) | No | N/A | N/A | Pure Python scheduling |
@@ -888,7 +893,7 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 
 | Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
 |-------|-------------|---------|--------|--------|------------|---------|
-| Specialist | `specialist_cache.py` | 128 | 1h | 168h (env: SPECIALIST_CACHE_TTL_HOURS) | `specialist::v2::{topic}::{dest}::{month}::{bucket}::{skill}::{dpref}::{phash}` | LLM outputs |
+| Specialist | `specialist_cache.py` | 128 | 1h | 168h (env: SPECIALIST_CACHE_TTL_HOURS) | `specialist::v3::{topic}::{dest}::{start}::{end}::{skill}::{dpref}::{phash}` | LLM outputs. Cache invalidation now includes exact start/end dates for date-shift-sensitive constraints. |
 | Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month}::n{tiles_per_category}` | Tier 2 tiles |
 | Tile | `tile_cache.py` | 256 | 24h | 72h (env: TILE_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
 | Browse | `activity_browser.py` | 256 | 6h | 72h (env: TILE_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
@@ -1039,7 +1044,7 @@ User-configurable settings (`activity_settings`, `hotel_settings`, `flight_setti
 | Layer          | File                                                 | What it does                                                                                                                                                                                 |
 | -------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Emission       | `state_serde.py` `trip_plan_to_trip_inputs()`        | Settings fields **omitted** from TripPlan conversion                                                                                                                                         |
-| Restoration    | `state_serde.py` + `streaming.py` complete envelope assembly | Reads typed `TripSettings` via `get_trip_settings(state)` and serializes sub-models into output `trip_inputs`                                                                                |
+| Restoration    | `state_serde.py` + `streaming.py` complete envelope assembly | Reads typed `TripSettings` via `get_trip_settings(state)` and serializes sub-models into output `trip_inputs` and `trip_settings`                                                                                 |
 | Input merge    | `streaming.py` (SSE endpoint)                        | `_USER_OWNED_SETTINGS` guard -- document baseline wins for settings fields                                                                                                                   |
 | Output persist | `crud_document.py` `apply_planner_update()`          | Strips settings from graph output before `merge_trip_inputs()`                                                                                                                               |
 
@@ -1127,6 +1132,8 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 ### Complete Envelope (`_build_envelope()`)
 
 Coordinator complete payload includes `plan_view_state`, `tiles`, `strategy_sections`, `itinerary_day_cards`, `constraints_validated`, `constraint_violations`, `ack_status`, `ack_updates`, and `applied_updates`. `ack_status` now supports `partial` when only partial-failure updates were generated.
+
+`coordinator._build_envelope()` also emits envelope-level `trip_settings` (fresh booking/hotel/activity settings) and now serializes `itinerary_day_cards=[]` when builder runs but returns no cards.
 
 ### DB Session Ownership
 

@@ -399,7 +399,6 @@ async def generate_sse(
                             "hotel_settings",
                             "flight_settings",
                             "transport_settings",
-                            "booking_types",
                         }
                         # Document as baseline, session overrides for graph-owned fields only
                         merged = {**doc_inputs}
@@ -622,6 +621,29 @@ async def generate_sse(
                 trip_inputs = trip_inputs.model_dump()
             if not isinstance(trip_inputs, dict):
                 trip_inputs = {}
+            # Merge authoritative trip_settings from graph result (contains
+            # booking_types upgrades, min_stars changes, etc.).
+            # Only merge when the graph explicitly emits trip_settings to avoid
+            # sourcing stale values from session state.
+            graph_trip_settings = final_result.get("trip_settings")
+            if isinstance(graph_trip_settings, dict) and isinstance(trip_inputs, dict):
+                for settings_key in (
+                    "booking_types",
+                    "flight_settings",
+                    "hotel_settings",
+                    "activity_settings",
+                    "transport_settings",
+                ):
+                    if settings_key in graph_trip_settings:
+                        graph_val = graph_trip_settings[settings_key]
+                        existing_val = trip_inputs.get(settings_key)
+                        if isinstance(graph_val, dict) and isinstance(existing_val, dict):
+                            for k, v in graph_val.items():
+                                if v is not None:
+                                    existing_val[k] = v
+                        elif graph_val is not None:
+                            trip_inputs[settings_key] = graph_val
+
             ready_to_generate_now = final_result.get("ready_to_generate", False)
             coordinator_reset = bool(final_result.get("coordinator_reset", False))
             changes_made = bool(
@@ -1008,11 +1030,15 @@ async def generate_sse(
                     async with _pe_lock:
                         _pe_cleanup.pop(session_id, None)
 
-                    error_payload = json.dumps(
-                        {"type": "error", "message": "Failed to persist planning update."}
+                    # Reset version to pre-persist value so frontend doesn't
+                    # hold an uncommitted version number on its next request.
+                    new_document_version = document_version
+                    logger.warning(
+                        "[%s] Persistence failed — continuing to emit complete event "
+                        "with in-memory data (version reset to %s)",
+                        request_id,
+                        document_version,
                     )
-                    yield f"event: error\ndata: {error_payload}\n\n"
-                    return
 
             # Build response document
             response_document = document_data if document_data else PlanDocumentData()
@@ -1317,6 +1343,31 @@ async def generate_sse(
             )
             yield f"event: error\ndata: {error_payload}\n\n"
         finally:
+            # Clean up any pending Phase B enrichment that was never fired
+            # (e.g., SSE generator exited early due to client disconnect/timeout).
+            try:
+                from app.planner.nodes.local_expert import (
+                    _pending_enrichments as _pe_finally,
+                )
+                from app.planner.nodes.local_expert import (
+                    _pending_lock as _pl_finally,
+                )
+                from app.planner.nodes.local_expert import (
+                    _persist_travel_intelligence,
+                )
+
+                async with _pl_finally:
+                    _stale_entry = _pe_finally.pop(session_id, None)
+                if _stale_entry is not None:
+                    logger.warning("[SSE] Cleaned up unfired enrichment for %s", session_id)
+                    try:
+                        await _persist_travel_intelligence(
+                            session_id, None, enrichment_state="failed", error_code="sse_exit"
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             await release_sse_slot(session_key, ip_key)
 
 
@@ -1706,6 +1757,7 @@ async def generate_ndjson(
             else:
                 activity_categories = None
             day_preferences = trip_inputs_data.get("activity_settings", {}).get("day_preferences")
+            apd = trip_inputs_data.get("activity_settings", {}).get("activities_per_day")
             builder_input = ItineraryBuilderInput(
                 start_date=start_date,
                 end_date=end_date,
@@ -1716,6 +1768,7 @@ async def generate_ndjson(
                 preferences=preferences_input,
                 activity_categories=activity_categories,
                 activity_day_preferences=day_preferences,
+                activities_per_day=apd,
                 user_pinned_tiles=doc_data.user_pinned_tiles if doc_data else None,
             )
 

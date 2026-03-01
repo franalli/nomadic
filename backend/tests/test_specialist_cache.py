@@ -13,15 +13,14 @@ class TestCacheKeyGeneration:
     """Test cache key generation logic."""
 
     def test_basic_key(self):
-        """Test cache key format with month + duration bucket + day_pref.
+        """Test cache key format with ISO-month bucketing.
 
-        Format: specialist::v2::{topic}::{dest}::{month}::{bucket}::{skill}::{dpref}::{phash}.
+        Format: specialist::v4::{topic}::{dest}::{iso_month}::m::{skill}::{dpref}::{phash}.
         """
         from app.services.specialist_cache import _specialist_cache_key
 
         key = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-20")
-        # 6 days = "week" bucket
-        assert key.startswith("specialist::v2::diving::bali::2025-03::week::any::dpany::")
+        assert key.startswith("specialist::v4::diving::bali::2025-03::m::any::dpany::")
         assert len(key.split("::")) == 9  # 9 segments
 
     def test_normalized_destination(self):
@@ -32,59 +31,39 @@ class TestCacheKeyGeneration:
         key2 = _specialist_cache_key("diving", "bali", "2025-03-15", "2025-03-20")
         assert key1 == key2
 
-    def test_month_extraction(self):
-        """Test month is extracted from start_date."""
+    def test_iso_month_in_key(self):
+        """Test ISO month bucketing in cache key (duration dropped)."""
         from app.services.specialist_cache import _specialist_cache_key
 
         key = _specialist_cache_key("hiking", "Alps", "2025-07-01", "2025-07-10")
+        # Should use ISO month format, duration dropped
         assert "2025-07" in key
+        assert "::m::" in key
 
-    def test_same_bucket_shares_cache(self):
-        """Dates within same month and duration bucket share cache key."""
+    def test_same_month_share_cache(self):
+        """Trips within the same month share cache (duration-agnostic)."""
         from app.services.specialist_cache import _specialist_cache_key
 
-        key1 = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-17")
-        key2 = _specialist_cache_key("diving", "Bali", "2025-03-18", "2025-03-20")
-        # Both are weekend (3 days), same month -> same key
+        # Mar 15-20 and Mar 16-28 are both in 2025-03 — same cache key
+        key1 = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-20")
+        key2 = _specialist_cache_key("diving", "Bali", "2025-03-16", "2025-03-28")
         assert key1 == key2
 
-    def test_different_buckets_produce_different_keys(self):
-        """Different duration buckets produce different cache keys."""
+    def test_different_months_produce_different_keys(self):
+        """Different ISO months produce different cache keys."""
         from app.services.specialist_cache import _specialist_cache_key
 
-        short_key = _specialist_cache_key(
-            "diving",
-            "Bali",
-            "2025-03-15",
-            "2025-03-17",
-        )  # 3d weekend
-        long_key = _specialist_cache_key(
-            "diving",
-            "Bali",
-            "2025-03-15",
-            "2025-03-25",
-        )  # 11d extended
-        assert short_key != long_key
-        assert "weekend" in short_key
-        assert "extended" in long_key
+        key1 = _specialist_cache_key("diving", "Bali", "2025-03-10", "2025-03-15")
+        key2 = _specialist_cache_key("diving", "Bali", "2025-04-24", "2025-04-29")
+        assert key1 != key2
 
-    def test_duration_buckets(self):
-        """Test duration bucket boundaries."""
-        from app.services.specialist_cache import _duration_bucket
+    def test_same_dates_share_cache(self):
+        """Identical dates produce the same cache key."""
+        from app.services.specialist_cache import _specialist_cache_key
 
-        assert _duration_bucket("2025-03-01", "2025-03-01") == "weekend"  # 1 day
-        assert _duration_bucket("2025-03-01", "2025-03-03") == "weekend"  # 3 days
-        assert _duration_bucket("2025-03-01", "2025-03-04") == "short"  # 4 days
-        assert _duration_bucket("2025-03-01", "2025-03-05") == "short"  # 5 days
-        assert _duration_bucket("2025-03-01", "2025-03-06") == "week"  # 6 days
-        assert _duration_bucket("2025-03-01", "2025-03-08") == "week"  # 8 days
-        assert _duration_bucket("2025-03-01", "2025-03-09") == "extended"  # 9 days
-        assert _duration_bucket("2025-03-01", "2025-03-11") == "extended"  # 11 days
-        assert _duration_bucket("2025-03-01", "2025-03-12") == "twoweek"  # 12 days
-        assert _duration_bucket("2025-03-01", "2025-03-15") == "twoweek"  # 15 days
-        assert _duration_bucket("2025-03-01", "2025-03-16") == "long"  # 16 days
-        assert _duration_bucket(None, None) == "unknown"
-        assert _duration_bucket("2025-03-01", None) == "unknown"
+        key1 = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-20")
+        key2 = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-20")
+        assert key1 == key2
 
     def test_missing_dates(self):
         """Test graceful handling of missing dates."""

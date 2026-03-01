@@ -152,7 +152,7 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `google_maps_api_secret`         | --                   | `GOOGLE_MAPS_API_SECRET`       | Google Places API secret                                    |
 | `router_model`                   | `gemini-2.5-flash`   | `ROUTER_MODEL`                 | LLM for router extraction + coordinator `classify_change()` |
 | `extraction_model`               | `gemini-2.5-flash`   | `EXTRACTION_MODEL`             | LLM for router_extraction field extraction                  |
-| `local_expert_model`             | `gemini-2.5-flash`   | `LOCAL_EXPERT_MODEL`           | LLM for get_local_intel tool (prompt-based JSON, no function_calling)|
+| `local_expert_model`             | `gemini-2.5-flash`   | `LOCAL_EXPERT_MODEL`           | LLM for get_local_expert tool (function calling, phased response parsing and enrichment cleanup hooks) |
 | `local_expert_use_llm`           | true                 | `LOCAL_EXPERT_USE_LLM`         | Feature flag -- set false to disable LLM in LocalExpert     |
 | `specialist_model`               | `gpt-4o`             | `SPECIALIST_MODEL`             | LLM for get_specialist_advice tool domain reasoning (keep gpt-4o) |
 | `specialist_fallback_model`      | --                   | `SPECIALIST_FALLBACK_MODEL`    | Optional fallback model when specialist_model fails         |
@@ -468,6 +468,7 @@ Module-level `_userDirtySettings: Set<string>` (not Zustand state -- avoids re-r
 - **Fill-day real-block guard:** `TimelineThread` skips fill-day if the target day already has real activity blocks (race condition with graph SSE populating the day concurrently)
 - **Fill-day generation gate:** `TimelineThread`/`StrategyStageRenderer` block fill-day while stream/regeneration is active (`currentRunId`/generation flags), then surface a non-blocking wait message
 - **Fill-day burst guard:** `TimelineThread` and `StrategyStageRenderer` enforce a 1.5s local cooldown between fill-day requests
+- **Send-cycle guard:** `messageSendNonce` increments on each user send to gate stale completion/scroll side-effects from overlapping Graph streams
 - **RAF merge guard:** `mergeEnvelope()` disables RAF buffering when `requestAnimationFrame` is unavailable or test env flags are set; merges run inline for deterministic tests
 - **Image URL hygiene:** document/envelope merge paths sanitize Picsum hosts (`picsum.photos`, `fastly.picsum.photos`) out of destination cards, tiles, day blocks, and strategy assets; required gallery/vibe images fall back to a deterministic Unsplash URL
 - **Bookable activity filter:** `isBookableActivityTile()` in `tileSelectors.ts` filters fill-day generated tiles (`source_agent` in `experience_generator` or `vertical_specialist`) from the booking surface (`BookingSection`). Non-activity tiles always pass through.
@@ -501,6 +502,8 @@ Source: `frontend/lib/api.ts`
 | `parseRetryAfter()`          | --                              | Parse `Retry-After` header from 429 response into numeric seconds (null if missing/unparseable)                                                                                                                               |
 
 **`BrowseTile` interface** (exported from `api.ts`): `{id, type, title, subtitle?, description?, image_url?, photo_name?, duration?, rating?, review_count?, location_label?, geo?: {lat, lng}, price_estimate?, source, provider, category, tags?, place_id?, maps_uri?}`
+
+- `price_estimate` and `live_price` are accepted as numeric strings in some upstream providers; frontend schema validation normalizes these to numbers in `documentStore` before rendering tile totals.
 
 ### Retry Logic
 

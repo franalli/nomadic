@@ -20,6 +20,8 @@ nomadic/
 │   │   ├── run-curl.md
 │   │   ├── update-docs.md
 │   │   └── verify-build.md
+│   ├── plans/                  # Persisted planning artifacts and run notes
+│   │   ├── parsed-discovering-liskov.md
 │   ├── settings.json           # Claude Code settings
 │   └── settings.local.json     # Local Claude Code settings
 ├── .codex/                     # Codex wrappers + skills
@@ -212,6 +214,7 @@ backend/
 │   ├── conftest.py                       # Pytest fixtures
 │   ├── llm_stub.py                       # LLM mock for testing
 │   ├── run_curl_flows.sh                 # End-to-end curl flow tests
+│   ├── analyze_flow_logs.py               # Flow log analysis and regression checks
 │   ├── test_activity_browser.py          # Browse activities backend contract tests
 │   ├── test_activity_image_placeholder_mapping.py  # Activity image placeholder mapping tests
 │   ├── test_agent_multiturn.py           # Agent multi-turn conversation tests

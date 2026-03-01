@@ -109,7 +109,10 @@ export function useChatEffects(params: UseChatEffectsParams): void {
     let scrollTimer: ReturnType<typeof setTimeout> | undefined;
     if (!prevIsLoadingRef.current && isLoading) {
       // Scroll to bottom when loading STARTS so Logic Terminal is visible
-      scrollToBottom(true);
+      requestAnimationFrame(() => {
+        scrollToBottom(true);
+        scrollPanelIntoView();
+      });
     } else if (prevIsLoadingRef.current && !isLoading) {
       // Reset and force scroll to bottom when response finishes.
       // Fire twice: immediately for content already rendered, and after

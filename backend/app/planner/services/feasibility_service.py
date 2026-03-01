@@ -13,7 +13,11 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.planner.hashing import make_cache_key
-from app.planner.llm_factory import resolve_schema_refs, strip_unsupported_schema_keys
+from app.planner.llm_factory import (
+    gemini_safe_schema,
+    resolve_schema_refs,
+    strip_unsupported_schema_keys,
+)
 from app.planner.specialist_registry import get as get_specialist_config
 from app.services.cache_core import MemoryCache
 
@@ -26,8 +30,8 @@ class FeasibilityCheck(BaseModel):
 
 
 # Pre-resolved flat schema for Gemini-compatible structured output.
-_FEASIBILITY_FLAT_SCHEMA: dict = strip_unsupported_schema_keys(
-    resolve_schema_refs(FeasibilityCheck.model_json_schema())
+_FEASIBILITY_FLAT_SCHEMA: dict = gemini_safe_schema(
+    strip_unsupported_schema_keys(resolve_schema_refs(FeasibilityCheck.model_json_schema()))
 )
 
 

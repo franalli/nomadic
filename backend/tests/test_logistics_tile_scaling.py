@@ -15,6 +15,8 @@ def _make_state(
     start_date: str,
     end_date: str,
     strategy_sections: list[dict] | None = None,
+    activities_per_day: int | None = None,
+    categories: list[str] | None = None,
 ) -> GraphState:
     """Build a minimal GraphState for tile scaling tests."""
     state = GraphState(
@@ -22,6 +24,13 @@ def _make_state(
     )
     if strategy_sections is not None:
         state.metadata["strategy_sections"] = strategy_sections
+    activity_settings: dict = {}
+    if activities_per_day is not None:
+        activity_settings["activities_per_day"] = activities_per_day
+    if categories is not None:
+        activity_settings["categories"] = categories
+    if activity_settings:
+        state.metadata.setdefault("trip_settings", {})["activity_settings"] = activity_settings
     return state
 
 
@@ -81,7 +90,7 @@ class TestComputeTilesPerCategory:
         assert result == 2
 
     def test_mixed_tier1_tier2(self):
-        """Mixed diving + yoga: niche specialist caps tile count to 4."""
+        """Mixed diving + yoga: coverage floor lifts count to fill free days."""
         state = _make_state(
             start_date="2026-03-01",
             end_date="2026-03-10",
@@ -93,14 +102,9 @@ class TestComputeTilesPerCategory:
             ],
         )
 
-        # trip_days = 10, specialist_days = 2 (from diving section)
-        # free_days = max(0, 10 - 2 - 2) = 6
-        # total_placeable = 6 + 2 = 8
-        # base = max(2, 8 // 1) = 8 (1 tier2 cat: yoga)
-        # has_niche = True (specialist_days > 0), cap = 4
-        # result = min(8, 4) = 4
+        # apd=2 (default): base=max(2,(8*2)//1)=16, cap=4→lifted to 12, tiles=12
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 4
+        assert result == 12
 
     def test_single_category_short_trip_minimum_2(self):
         """4-day yoga trip, no specialist sections: result clamped to minimum 2."""
@@ -110,11 +114,113 @@ class TestComputeTilesPerCategory:
             strategy_sections=[],
         )
 
-        # trip_days = 4, specialist_days = 0
-        # free_days = max(0, 4 - 0 - 2) = 2
-        # total_placeable = 2 + 0 = 2
-        # base = max(2, 2 // 1) = 2
-        # has_niche = False, cap = min(8, max(4, ceil(2/1))) = min(8, 4) = 4
-        # result = min(2, 4) = 2
+        # apd=2 (default): base=max(2,(2*2)//1)=4, cap=4, tiles=4
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 2
+        assert result == 4
+
+    # -----------------------------------------------------------------
+    # APD > 1: Tile scaling must honour activities_per_day
+    # -----------------------------------------------------------------
+
+    def test_apd2_7day_pure_tier2_generates_enough_tiles(self):
+        """7-day trip, APD=2, 1 category: need 10 tiles (5 free × 2)."""
+        state = _make_state(
+            start_date="2026-03-01",
+            end_date="2026-03-07",
+            strategy_sections=[],
+            activities_per_day=2,
+        )
+
+        # trip_days = 7, specialist_days = 0
+        # free_days = 7 - 0 - 2 = 5
+        # total_placeable = 5
+        # target_apd = 2
+        # base = max(2, (5 * 2) // 1) = 10
+        # cap = 4 (no strategy context, free_days <= 7)
+        # APD>1: needed_per_cat = ceil(5 * 2 / 1) = 10 → cap = min(max(4, 10), 12) = 10
+        # result = min(10, 10) = 10
+        result = _compute_tiles_per_category(state, {"yoga"})
+        assert result == 10, f"Expected 10 tiles for 7-day APD=2 trip, got {result}"
+
+    def test_apd2_mixed_tier1_tier2_scales_cap(self):
+        """10-day mixed trip, APD=2: cap must scale beyond base 4."""
+        state = _make_state(
+            start_date="2026-03-01",
+            end_date="2026-03-10",
+            strategy_sections=[
+                {
+                    "specialist_type": "diving",
+                    "content_added": [{"title": "Reef Dive"}, {"title": "Wreck Dive"}],
+                },
+            ],
+            activities_per_day=2,
+        )
+
+        # trip_days = 10, specialist_days = 2
+        # free_days = max(0, 10 - 2 - 2) = 6
+        # total_placeable = 6 + 2 = 8
+        # target_apd = 2
+        # base = max(2, (8 * 2) // 1) = 16
+        # cap = 4 (specialist_days > 0)
+        # APD>1: needed_per_cat = ceil(6 * 2 / 1) = 12 → cap = min(max(4, 12), 12) = 12
+        # result = min(16, 12) = 12
+        result = _compute_tiles_per_category(state, {"yoga"})
+        assert result == 12, f"Expected 12 tiles for mixed APD=2 trip, got {result}"
+
+    def test_apd1_mixed_coverage_floor_fills_free_days(self):
+        """APD=1 mixed trip: coverage floor lifts count to fill free days."""
+        state = _make_state(
+            start_date="2026-03-01",
+            end_date="2026-03-10",
+            strategy_sections=[
+                {
+                    "specialist_type": "diving",
+                    "content_added": [{"title": "Reef Dive"}, {"title": "Wreck Dive"}],
+                },
+            ],
+            activities_per_day=1,
+        )
+
+        # cap = 4 (specialist_days > 0), tiles_per_cat = min(8, 4) = 4
+        # Coverage floor: min_needed = ceil(6 * 1 / 1) = 6
+        # tiles_per_cat = max(4, min(6, 12)) = 6
+        result = _compute_tiles_per_category(state, {"yoga"})
+        assert result == 6, f"APD=1 mixed trip with coverage floor should be 6, got {result}"
+
+    def test_apd2_multiple_tier2_categories(self):
+        """APD=2, 3 Tier2 categories: cap must scale per-category for density."""
+        state = _make_state(
+            start_date="2026-03-01",
+            end_date="2026-03-10",
+            strategy_sections=[],
+            activities_per_day=2,
+            categories=["yoga", "cooking", "nightlife"],
+        )
+
+        # trip_days = 10, specialist_days = 0
+        # free_days = max(0, 10 - 0 - 2) = 8
+        # total_placeable = 8
+        # target_apd = 2
+        # base = max(2, (8 * 2) // 3) = max(2, 5) = 5
+        # cap = min(8, max(4, ceil(8/3))) = min(8, 4) = 4
+        # APD>1: needed_per_cat = ceil(8 * 2 / 3) = 6 → cap = min(max(4, 6), 12) = 6
+        # result = min(5, 6) = 5
+        result = _compute_tiles_per_category(state, {"yoga", "cooking", "nightlife"})
+        assert result >= 5, f"Expected >= 5 tiles per cat for 3-cat APD=2 trip, got {result}"
+
+    def test_apd3_short_trip_capped_at_12(self):
+        """APD=3 on a 14-day trip: hard-capped at 12 tiles per category."""
+        state = _make_state(
+            start_date="2026-03-01",
+            end_date="2026-03-14",
+            strategy_sections=[],
+            activities_per_day=3,
+        )
+
+        # trip_days = 14, free_days = 12, total_placeable = 12
+        # base = max(2, (12 * 3) // 1) = 36
+        # needed_per_cat = ceil(12 * 3 / 1) = 36
+        # cap = min(max(cap, 36), 12) = 12
+        # result = min(36, 12) = 12
+        result = _compute_tiles_per_category(state, {"yoga"})
+        assert result == 12, f"Should hard-cap at 12, got {result}"

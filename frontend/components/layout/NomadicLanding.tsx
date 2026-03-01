@@ -234,7 +234,8 @@ export function NomadicLanding() {
     ? computeDataDensity(
         planViewState ?? 'S0_BOOTSTRAP',
         planViewModel.strategy_sections,
-        tiles
+        tiles,
+        hasDates
       )
     : 'empty';
 
@@ -270,6 +271,7 @@ export function NomadicLanding() {
     setHasEverHadPlan,
     setLocalPendingTopics,
     setDestinationImageUrl,
+    isHydrating: branchManager.isHydratingSnapshot,
   });
 
   // Sync refs for branchManager resetDraft callback

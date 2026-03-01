@@ -318,10 +318,12 @@ async def test_pure_tier1_multi_specialist_suppresses_activities(
     await _search_hotels_and_activities(state, state.trip_plan)
 
     activities = state.tiles.get("activities", [])
-    assert len(activities) == 0, (
-        "Pure Tier 1 (diving+surfing) should suppress all generic activities, "
-        f"got {len(activities)}"
-    )
+    # Pure Tier 1 suppresses fetched activities but may backfill from browseable
+    # for free-day padding.  Backfill tiles are tagged with is_backfill=True.
+    for tile in activities:
+        assert (tile.get("meta") or {}).get("is_backfill") is True, (
+            f"Non-backfill activity tile survived pure Tier 1 (diving+surfing) suppression: {tile}"
+        )
 
 
 @pytest.mark.asyncio
@@ -508,9 +510,12 @@ async def test_pure_tier1_suppresses_all_activity_tiles(
     await _search_hotels_and_activities(state, state.trip_plan)
 
     activities = state.tiles.get("activities", [])
-    assert len(activities) == 0, (
-        f"Pure Tier 1 should suppress all generic activities, got {len(activities)}"
-    )
+    # Pure Tier 1 suppresses fetched activities but may backfill from browseable
+    # for free-day padding.  Backfill tiles are tagged with is_backfill=True.
+    for tile in activities:
+        assert (tile.get("meta") or {}).get("is_backfill") is True, (
+            f"Non-backfill activity tile survived pure Tier 1 suppression: {tile}"
+        )
 
 
 def test_mock_backfill_prefers_water_theme():

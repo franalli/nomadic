@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _RESPONSE_TEMPERATURE: float = 0.6
-_RESPONSE_MAX_TOKENS: int = 400
+_RESPONSE_MAX_TOKENS: int = 600
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +55,13 @@ def _build_trip_context_block(state: Dict[str, Any]) -> str:
     end = trip_plan.get("end_date")
     if start and end:
         parts.append(f"Dates: {start} to {end}")
+        try:
+            s = datetime.strptime(start, "%Y-%m-%d").date()
+            e = datetime.strptime(end, "%Y-%m-%d").date()
+            duration = (e - s).days + 1
+            parts.append(f"Trip duration: {duration} days (ends {e.strftime('%B %d')})")
+        except ValueError:
+            pass
     elif start:
         parts.append(f"Start date: {start}")
 
@@ -361,6 +368,16 @@ def _build_outcome_block(state: Dict[str, Any]) -> str:
                     parts.append(f"Hotel: {name}{star_str}")
                     break
 
+    # Hotel filter fallback — warn the LLM so it can inform the user
+    turn_meta: Dict[str, Any] = state.get("turn_meta", {})
+    if turn_meta.get("hotel_filter_empty"):
+        min_stars = turn_meta.get("hotel_filter_min_stars", "?")
+        parts.append(
+            f"REQUIRED: Tell the user their {min_stars}-star hotel filter "
+            "matched no results, so you're showing all available hotels. "
+            "Suggest they try a lower star rating."
+        )
+
     return "## Outcome (what the system just did)\n" + "\n".join(f"- {p}" for p in parts)
 
 
@@ -461,23 +478,21 @@ Tone: efficient expert confirming and adding value.\
 
 _VOICE_PLAN_GENERATED: str = """\
 ## Voice: Plan Generated / Rebuilt
-Sentence count: 3-4 MAX.
-Structure:
-  1. Lead with the single boldest highlight (the thing they'll remember).
-  2. Surface one tension, tradeoff, or practical constraint.
-  3. End with one concrete thing they could tweak or explore.
-Never enumerate all days. Never say "I've built" or "I've put together".
-The plan is already visible — your job is editorial color, not description.
-Tone: opinionated travel editor reviewing the draft.\
+Sentence count: 2 MAX. Target 30 words total.
+1. Lead with the single boldest highlight or editorial opinion.
+2. One actionable nudge — what to tweak, explore, or watch out for.
+CRITICAL: Constraints, gear warnings, weather alerts, and booking reminders
+are ALREADY displayed as tags on each day card. Do NOT repeat them.
+Never list days. Never describe the plan. It's visible in the panel.
+Tone: opinionated travel editor. Terse.\
 """
 
 _VOICE_ACTIVITY_CHANGE: str = """\
 ## Voice: Activity Added/Removed/Swapped
-Sentence count: 2-3 MAX.
-Name what's new, then surface one implication or connection.
-Never restate what was removed — the user knows.
-If a specialist found feasibility issues, lead with that.
-Tone: collaborator adjusting the plan together.\
+Sentence count: 2 MAX. Target 25 words total.
+Name what changed, then one implication or connection.
+Constraints are shown as tags on day cards — do NOT repeat them.
+Tone: collaborator adjusting together.\
 """
 
 _VOICE_PREFERENCE_CHANGE: str = """\
@@ -492,7 +507,7 @@ _VOICE_QUESTION: str = """\
 Answer the question directly and specifically using specialist data.
 Then give one actionable follow-up or recommendation.
 Never deflect with "it depends" without a concrete suggestion.
-Sentence count: 2-4 depending on complexity.
+Sentence count: 2-3 depending on complexity.
 Tone: knowledgeable friend who's been there.\
 """
 
@@ -505,7 +520,7 @@ Example: "Hey! Where are we headed?"\
 
 _VOICE_FALLBACK: str = """\
 ## Voice: General
-Sentence count: 2-3.
+Sentence count: 2 MAX.
 Be specific. Reference actual plan content. Have a point of view.
 Never be generic. If you don't have specialist data, be brief and honest.\
 """
@@ -517,12 +532,12 @@ Never be generic. If you don't have specialist data, be brief and honest.\
 _SENTENCE_LIMIT: Dict[str, int] = {
     _VOICE_DESTINATION_SET: 2,
     _VOICE_DATES_SET: 2,
-    _VOICE_PLAN_GENERATED: 4,
-    _VOICE_ACTIVITY_CHANGE: 3,
+    _VOICE_PLAN_GENERATED: 2,
+    _VOICE_ACTIVITY_CHANGE: 2,
     _VOICE_PREFERENCE_CHANGE: 2,
-    _VOICE_QUESTION: 4,
+    _VOICE_QUESTION: 3,
     _VOICE_GREETING: 1,
-    _VOICE_FALLBACK: 3,
+    _VOICE_FALLBACK: 2,
 }
 _DEFAULT_SENTENCE_LIMIT: int = 3
 
@@ -572,6 +587,41 @@ def _resolve_voice_block(
     return voice_block
 
 
+_ABBREVIATIONS = frozenset(
+    {
+        "st",
+        "mt",
+        "ft",
+        "dr",
+        "mr",
+        "mrs",
+        "ms",
+        "sr",
+        "jr",
+        "pt",
+        "no",
+        "rd",
+        "ave",
+        "blvd",
+        "sq",
+        "dept",
+        "govt",
+        "approx",
+        "est",
+        "vol",
+        "gen",
+        "col",
+        "lt",
+        "sgt",
+        "cpl",
+        "pvt",
+        "prof",
+        "rev",
+        "fr",
+    }
+)
+
+
 def _enforce_sentence_limit(text: str, limit: int) -> str:
     """Return *text* trimmed to at most *limit* sentences.
 
@@ -580,7 +630,8 @@ def _enforce_sentence_limit(text: str, limit: int) -> str:
     either **end-of-text** or **whitespace + an uppercase letter**.
 
     This avoids false positives on abbreviations (``U.S.``, ``Dr.``),
-    decimal numbers (``14.5``), and mid-sentence ellipsis (``Wait... really?``).
+    decimal numbers (``14.5``), mid-sentence ellipsis (``Wait... really?``),
+    and known abbreviations that precede proper nouns (``St. Peter's``).
     """
     count = 0
     i = 0
@@ -594,6 +645,14 @@ def _enforce_sentence_limit(text: str, limit: int) -> str:
             rest = text[i + 1 :]
             stripped = rest.lstrip()
             if not stripped or (rest and rest[0].isspace() and stripped and stripped[0].isupper()):
+                # Skip known abbreviations (St. Peter's, Mt. Fuji, Dr. Smith)
+                word_start = i
+                while word_start > 0 and text[word_start - 1].isalpha():
+                    word_start -= 1
+                preceding_word = text[word_start:i].lower()
+                if preceding_word in _ABBREVIATIONS:
+                    i += 1
+                    continue
                 count += 1
                 if count >= limit:
                     return text[: i + 1].rstrip()
@@ -721,7 +780,7 @@ async def generate_response_streaming(
     """Stream the assistant response token by token.
 
     Uses ``settings.synthesizer_planning_model`` via ``get_llm_by_model()``
-    with temperature 0.6 and max 400 tokens.  Enforces a hard sentence
+    with temperature 0.6 and max 600 tokens.  Enforces a hard sentence
     limit derived from the active voice block so the response never
     exceeds the declared maximum even if the LLM overshoots.
     """

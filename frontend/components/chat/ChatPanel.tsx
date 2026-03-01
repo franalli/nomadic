@@ -251,6 +251,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setGenerateTriggered,
       setActiveStatus,
       scrollPanelIntoView,
+      scrollToBottom,
       inputRef,
       toast,
     });

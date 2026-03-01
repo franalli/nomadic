@@ -91,6 +91,7 @@ def build_itinerary_from_state(state: GraphState) -> Optional[ItineraryResult]:
         preferences=preferences,
         activity_categories=activity_categories,
         activity_day_preferences=settings.activity_settings.day_preferences or None,
+        activities_per_day=settings.activity_settings.activities_per_day,
         user_pinned_tiles=pinned_tiles or None,
     )
     builder = ItineraryBuilder()

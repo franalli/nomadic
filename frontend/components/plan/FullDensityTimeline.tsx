@@ -222,11 +222,11 @@ export function FullDensityTimeline({
             </div>
           )}
 
-          {hasDestinationIntel && isAnyRegenerating && (
+          {hasDestinationIntel && isAnyRegenerating && !isRegenUpdating && (
             <div className="mt-2 flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-zinc-900/60 px-3 py-2">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
               <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                {isRegenUpdating ? 'Updating itinerary...' : 'Updating plan...'}
+                Updating plan...
               </p>
             </div>
           )}
