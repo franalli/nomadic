@@ -2070,11 +2070,15 @@ async def _merge_specialist_into_state(
         try:
             from app.tile_service.google_places_provider import enrich_activities_with_places
 
-            content_added = await enrich_activities_with_places(
-                content_added,
+            _cap = settings.google_places_enrichment_cap
+            to_enrich = content_added[:_cap]
+            keep_as_is = content_added[_cap:]
+            enriched = await enrich_activities_with_places(
+                to_enrich,
                 destination=state.trip_plan.destination or "",
                 path_label="tier1_enrich",
             )
+            content_added = enriched + keep_as_is
         except Exception as e:
             _debug_log(f"[SPECIALIST] Places enrichment failed, using LLM data: {e}")
 

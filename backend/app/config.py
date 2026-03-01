@@ -234,9 +234,9 @@ class Settings(BaseSettings):
     spend_guard_llm_unknown_model_estimated_call_usd: float = float(
         os.getenv("SPEND_GUARD_LLM_UNKNOWN_MODEL_ESTIMATED_CALL_USD", "0.02")
     )
-    # Google Places Text Search billable-call estimate (USD).
+    # Google Places Text Search billable-call estimate (USD) — Pro tier ($32/1000).
     spend_guard_places_estimated_call_usd: float = float(
-        os.getenv("SPEND_GUARD_PLACES_ESTIMATED_CALL_USD", "0.017")
+        os.getenv("SPEND_GUARD_PLACES_ESTIMATED_CALL_USD", "0.032")
     )
 
     # Validation cache settings
@@ -401,6 +401,8 @@ class Settings(BaseSettings):
     google_places_circuit_breaker_open_seconds: int = int(
         os.getenv("GOOGLE_PLACES_CIRCUIT_BREAKER_OPEN_SECONDS", "30")
     )
+    # Max activities to enrich with Google Places per call (cap API cost)
+    google_places_enrichment_cap: int = int(os.getenv("GOOGLE_PLACES_ENRICHMENT_CAP", "3"))
 
 
 settings = Settings()
