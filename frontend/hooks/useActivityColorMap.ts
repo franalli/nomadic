@@ -1,3 +1,5 @@
+'use client';
+
 import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 

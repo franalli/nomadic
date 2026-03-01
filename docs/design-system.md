@@ -59,10 +59,10 @@ import { DS } from '@/lib/design-system';
 
 | Token | Light Mode | Dark Mode | Use For |
 |-------|------------|-----------|---------|
-| `DS.segments.container` | 2px black border, zinc-100 border separators | white/15 border with soft glow | Shared-border segmented groups |
-| `DS.segments.segment` | White bg, dark text, `rounded-md` as needed | White/5 bg, glass dark text | Individual segment button shell |
-| `DS.segments.segmentActive` | Emerald-500/15 bg, emerald text, `font-semibold` | White bg, black text, `font-semibold` | Active segment |
-| `DS.segments.segmentInactive` | Light border-2, hover-to-dark text/edge | Glass fill + white hover edge | Inactive segment |
+| `DS.segments.container` | 2px zinc-200 border, `rounded-lg overflow-hidden` | white/15 border | Shared-border segmented groups |
+| `DS.segments.segment` | Flex column, zinc-200 left-border separators, `text-sm` | white/10 left-border separators | Individual segment button shell |
+| `DS.segments.segmentActive` | Emerald-500/15 bg, emerald-400 text, `font-semibold` | Same (no dark override) | Active segment |
+| `DS.segments.segmentInactive` | Zinc-400 text, hover → zinc-900 text/border | hover → white/10 bg, white text | Inactive segment |
 
 > **Note:** `rounded-lg` is overridden in `tailwind.config.mts` from the Tailwind default of `0.5rem` (8px) to `0.75rem` (12px). All `rounded-lg` usage in this system resolves to 12px.
 
@@ -195,9 +195,9 @@ Info boxes should feel like a **recessed technical panel**, not a warning sign.
 
 | Token | Light Mode | Dark Mode | Description |
 |-------|------------|-----------|-------------|
-| `DS.infoBox.container` | `bg-zinc-50 border border-zinc-100 p-4` | `bg-white/[0.02] border border-white/5` | Clean, cool surface |
-| `DS.infoBox.icon` | `text-zinc-500` | `text-zinc-400` | Subtle icon, not alarming |
-| `DS.infoBox.text` | `text-zinc-600` | `text-zinc-400` | Body text |
+| `DS.infoBox.container` | `bg-zinc-50 border border-zinc-100 p-4 rounded-xl flex gap-4 items-start` | `bg-white/[0.02] border border-white/5` | Clean, cool surface |
+| `DS.infoBox.icon` | `w-5 h-5 text-zinc-500 shrink-0` | `text-zinc-400` | Subtle icon, not alarming |
+| `DS.infoBox.text` | `text-sm text-zinc-600` | `text-zinc-400` | Body text |
 
 **Code Example:**
 
@@ -238,8 +238,9 @@ Hearts indicate user preference for AI weighting, not cart additions.
 
 | State | Visual | Tailwind Classes |
 |-------|--------|------------------|
-| Unpressed | Outline heart, zinc-400 | `stroke-zinc-400 fill-transparent` |
-| Pressed | Filled heart, emerald-500, scale | `fill-emerald-500 stroke-emerald-500 scale-110` |
+| Unpressed | Outline heart, zinc-400 | `stroke-zinc-400 fill-transparent hover:stroke-zinc-300` |
+| Pressed | Filled heart, emerald-500 | `fill-emerald-500 stroke-emerald-500` |
+| Animating | Button scale-up (transient) | `scale-110` on button wrapper during toggle |
 | Button BG | Semi-transparent dark | `bg-black/40 backdrop-blur-sm` |
 | Focus | White ring | `focus-visible:ring-2 focus-visible:ring-white/50` |
 
@@ -541,7 +542,7 @@ const borderAccentClass: Record<string, string> = {
 - `border-l-4` colored left-border on each ActivityMiniCard (Tailwind classes, not inline styles)
 - Icon color matches specialist via static class maps
 - Card background: neutral white/zinc
-- Unschedulable activities: `bg-amber-50/50 dark:bg-amber-900/10 border-amber-200` with `border-l-amber-500`
+- Unschedulable activities: `bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/40` with `border-l-amber-500`
 
 #### Implementation Reference
 
@@ -556,7 +557,7 @@ getSpecialistConfig('boating')   // returns sailing config (backward compat)
 SPECIALIST_IDS                   // ['diving', 'hiking', 'skiing', 'cycling', 'surfing', 'climbing', 'sailing', 'wildlife_safari']
 ```
 
-> **Note:** `getSpecialistColor` is not exported. Access the color via `getSpecialistConfig(type).color`.
+> **Note:** `getSpecialistColor(type)` is exported and returns the hex color for any specialist or Tier 2 category (falls back to `#71717A`). `getSpecialistConfig(type)` returns the full config object for Tier 1 specialists only.
 
 **Text Color Classes:** `frontend/lib/specialist-colors.ts` exports `SPECIALIST_TEXT_COLOR` — a `Record<string, string>` of Tailwind text color classes for specialist label badges (e.g., `text-cyan-600 dark:text-cyan-400` for diving). Used by `DragPreviewCard` and `ActivityMiniCard` for specialist name coloring.
 
@@ -566,7 +567,7 @@ SPECIALIST_IDS                   // ['diving', 'hiking', 'skiing', 'cycling', 's
 
 #### Trip DNA Bar
 
-The Trip DNA bar shows engine constraints from niche specialists (all entries in `SPECIALIST_IDS`). It appears BELOW the specialist accordion cards and ABOVE the itinerary. Filtering uses `NICHE_SPECIALIST_IDS` from `lib/specialists.ts`.
+The Trip DNA bar shows engine constraints from niche specialists (all entries in `SPECIALIST_IDS`). It appears BELOW the specialist accordion cards and ABOVE the itinerary. Filtering uses `SPECIALIST_IDS` from `lib/specialists.ts`.
 
 **Layout Order (StrategyStageRenderer):**
 1. Specialist Analysis (collapsed accordion cards, hidden in S3 by default)
@@ -676,7 +677,7 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | StaysSheet | `plan/sheets/StaysSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, same patterns as Flights |
 | ActivitiesSheet | `plan/sheets/ActivitiesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, same as Flights, `Stepper` from `ui/stepper.tsx` (day preference steppers) |
 | TripSettingsSheet | `plan/sheets/TripSettingsSheet.tsx` | BaseSheet, field rows for mobile settings relay |
-| DatesSheet | `plan/sheets/DatesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, raw glass pattern, raw Tactile pills |
+| DatesSheet | `plan/sheets/DatesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, `DS.textSize.micro`, raw glass pattern, raw Tactile pills |
 | ChatPanel | `chat/ChatPanel.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (S0 hero terminal text) |
 | ChatMessageList | `chat/ChatMessageList.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (terminal status text) |
 | ChatInputBar | `chat/ChatInputBar.tsx` | `DS.glowClass.sm`, `DS.glowClass.md`, Living Void pattern (emerald glow + pulse), Stop button (monochrome square) |
@@ -1769,7 +1770,7 @@ This creates a direct visual link: "What I typed → is being processed."
     isLoading && nodeStatus?.node
       ? [
           'border border-emerald-500/50 dark:border-emerald-500/40',
-          'shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)] dark:shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]',
+          `${DS.glowClass.sm} dark:${DS.glowClass.md}`,
           'animate-pulse',
         ]
       // Default state
@@ -1805,34 +1806,35 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
 
 **Problem:** Using the same color in both modes creates visual inconsistency. Grey text (`text-zinc-400`) in Light Mode looks weak; emerald on white looks cheap.
 
-**Solution:**
-- **Light Mode:** "Typewriter Ink" — Jet Black (`text-zinc-950`), solid and permanent like an architectural label.
-- **Dark Mode:** "System Pulse" — Emerald (`text-emerald-500`) with a glow, like a retro terminal or flight computer.
+**Solution:** Emerald-themed terminal text in both modes, with glow emphasis in dark mode.
 
 ### Visual Specifications
 
-| Element | Light Mode ("Typewriter Ink") | Dark Mode ("System Pulse") |
-|---------|-------------------------------|----------------------------|
-| **Text Color** | `text-zinc-950` | `text-emerald-500` |
-| **Glow** | None | `drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]` |
+Two implementations exist:
+
+**S0 Hero (ChatPanel):** Uses CSS variable `text-primary` / `bg-primary` for theme-aware emerald, plus `DS.glowClass.dropText` and `DS.glowClass.cursor` glow in both modes.
+
+**Chat Status (ChatMessageList):** Uses explicit emerald classes with dark-only glow.
+
+| Element | Light Mode | Dark Mode |
+|---------|------------|-----------|
+| **Text Color** | `text-emerald-600` | `text-emerald-500` |
+| **Glow** | None (chat) / `DS.glowClass.dropText` (S0 hero) | `DS.glowClass.dropText` |
 | **Font** | `font-mono text-[9px] uppercase tracking-[0.12em] font-bold` | Same |
-| **Cursor Color** | `bg-zinc-950` | `bg-emerald-500` |
-| **Cursor Glow** | None | `shadow-[0_0_6px_rgba(16,185,129,0.6)]` |
+| **Cursor Color** | `bg-emerald-600` | `bg-emerald-500` |
+| **Cursor Glow** | None (chat) / `DS.glowClass.cursor` (S0 hero) | `DS.glowClass.cursor` |
 | **Cursor Animation** | `animate-terminal-blink` (defined in `globals.css`) | Same |
 
-### Code Example
+### Code Example (ChatMessageList)
 
 ```tsx
-// System Status Text (Awaiting Input, Parameters Updated, etc.)
+// System Status Text (Awaiting Input)
 <div className="flex items-center gap-1.5">
   {/* The Text */}
   <span className={cn(
-    // Base Typography: Technical Monospace
     "font-mono text-[9px] uppercase tracking-[0.12em] font-bold",
-    // Light Mode: "Typewriter Ink" (Solid, Dark, Permanent)
-    "text-zinc-950",
-    // Dark Mode: "System Pulse" (Glowing, Emerald, Digital)
-    "dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+    "text-emerald-600 dark:text-emerald-500",
+    `dark:${DS.glowClass.dropText}`
   )}>
     Awaiting Input
   </span>
@@ -1840,23 +1842,38 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
   {/* The Blinking Cursor */}
   <div className={cn(
     "w-1 h-1.5 animate-terminal-blink rounded-sm",
-    // Light: Solid black ink
-    "bg-zinc-950",
-    // Dark: Emerald with glow
-    "dark:bg-emerald-500 dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]"
+    "bg-emerald-600 dark:bg-emerald-500",
+    `dark:${DS.glowClass.cursor}`
   )} />
 </div>
 ```
 
+### Code Example (S0 Hero — ChatPanel)
+
+```tsx
+// Uses CSS variable tokens for theme-aware emerald + glow in both modes
+<span className={cn(
+  `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-primary`,
+  DS.glowClass.dropText,
+)}>
+  {status.label}
+</span>
+<div className={cn(
+  'h-1.5 w-1 animate-terminal-blink rounded-sm bg-primary',
+  DS.glowClass.cursor,
+)} />
+```
+
 ### Why This Works
 
-1. **Light Mode:** The jet black text looks like a typewriter label or architectural blueprint annotation—professional and permanent.
-2. **Dark Mode:** The emerald glow creates a "heartbeat" effect, reinforcing the AI/system persona. It matches the bioluminescent design language.
+1. **Emerald in both modes** creates a consistent "system heartbeat" identity for the AI persona.
+2. **Dark Mode glow** reinforces the bioluminescent design language.
 3. **Consistency:** The cursor shares the same color as the text, creating a unified visual element.
 
 ### Implementation Reference
 
 - `frontend/components/chat/ChatPanel.tsx` (S0 hero banner)
+- `frontend/components/chat/ChatMessageList.tsx` (chat empty state)
 
 ---
 
@@ -2595,7 +2612,7 @@ Updates to Section 6 — new components discovered in audit:
 | `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
 | `InlineDatePrompt` | `plan/timeline/InlineDatePrompt.tsx` | `DS.actions.primary` | Inline CTA to set dates within timeline |
 | `DestinationIntelCard` | `plan/DestinationIntelCard.tsx` | `DS` tokens | Collapsible destination overview card built from strategy sections |
-| `ChatStatusHeader` | `chat/ChatStatusHeader.tsx` | `DS.textSize.*`, `DS.actions.primary` | Desktop status chip rendered above chat with transition-safe chrome |
+| `ChatStatusHeader` | `chat/ChatStatusHeader.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText` | Desktop status chip rendered above chat with transition-safe chrome |
 | `TileDetailsInfo` | `tiles/TileDetailsInfo.tsx` | `DS.textSize.mini` | Metadata strip (distance/ratings/metadata) used by tile cards |
 | `SuggestionCardContent` | `plan/tiles/SuggestionCardContent.tsx` | `DS.textSize.*` | Shared content block for suggestion rendering |
 | `MiniCardContent` | `tiles/MiniCardContent.tsx` | `DS.textSize.*`, `DS.text.accent` | Shared compact tile body renderer |
@@ -2862,5 +2879,95 @@ When a sheet section is inactive (e.g., flight/stay preferences when toggle is o
 **Rule:** Use `opacity-50 pointer-events-none` together (never one without the other). Do NOT add `disabled` to individual child elements inside the overlay — this pattern is the section-level disabled state.
 
 **Implementation:** `FlightsSheet.tsx`, `StaysSheet.tsx`, `ActivitiesSheet.tsx`
+
+---
+
+## 33. Provisional Component Mapping Backlog (Un-audited Components)
+
+These entries were discovered via full component scan and are now documented so every surface has an explicit
+style contract before full audit. These rows are provisional and should be promoted into Section 6/30 after
+component-by-component verification.
+
+Status key:
+- `Provisional`: mapped expectations defined, full audit pending
+- `Non-Visual`: orchestration/container component with no direct UI surface
+- `Out-of-Scope`: intentionally exempt (documented exception)
+
+### 33.1 Animations, Chat, Layout, Map, Infrastructure
+
+| Component | File | Expected DS Tokens / Patterns | Status |
+|-----------|------|-------------------------------|--------|
+| `StartupSequence` | `animations/StartupSequence.tsx` | `DS.textSize.micro`, `DS.glowClass.dropText`, terminal-style status text and motion timings from Section 25 | Provisional |
+| `Typewriter` | `animations/Typewriter.tsx` | Cursor glow via `DS.glowClass.cursor`, text contrast per Section 17.7 | Provisional |
+| `ChatInputHandler` | `chat/ChatInputHandler.tsx` | No style surface; behavior-only wrapper | Non-Visual |
+| `ChatMessageRenderer` | `chat/ChatMessageRenderer.tsx` | Section 9 + 22 message bubble patterns; preserve documented white-glow exception in dark mode | Provisional |
+| `ChatModuleSheets` | `chat/ChatModuleSheets.tsx` | Sheet orchestration; visual tokens inherited from mapped sheet components | Non-Visual |
+| `ChatSkeleton` | `chat/ChatSkeleton.tsx` | Section 26 skeleton pattern (`bg-zinc-200/50`, `dark:bg-zinc-700/50`, `animate-pulse`) | Provisional |
+| `ChatSuggestionBar` | `chat/ChatSuggestionBar.tsx` | Suggestion chip rail follows Pill Reel rule (`flex-nowrap overflow-x-auto no-scrollbar -mx-4 px-4`) | Provisional |
+| `FloatingBuildButton` | `layout/FloatingBuildButton.tsx` | `DS.glowClass.elevated/elevatedHover`; z-index follows Section 28 (`z-[900]`) | Provisional |
+| `LandingSheets` | `layout/LandingSheets.tsx` | Sheet router only; styling delegated to mapped sheet components | Non-Visual |
+| `InteractiveMap` | `map/InteractiveMap.tsx` | Base layer at map tier (`z-0`); map overlays/controls follow Section 28 exceptions | Provisional |
+| `MapMarkerItem` | `map/MapMarkerItem.tsx` | `DS.textSize.mapMarkerLabel`, `DS.textSize.mini`; marker tooltip allowed `z-[9999]` exception | Provisional |
+| `MapboxErrorSuppressor` | `map/MapboxErrorSuppressor.tsx` | Error suppression utility; no direct style surface | Non-Visual |
+| `legal-page` | `nomadic/legal-page.tsx` | Legal prose component remains on shadcn/prose tokens (Section 6 out-of-scope note) | Out-of-Scope |
+| `Providers` | `providers/Providers.tsx` | Context provider wrapper; no visual surface | Non-Visual |
+
+### 33.2 Plan Core, Booking, and Sheet Surface Extensions
+
+| Component | File | Expected DS Tokens / Patterns | Status |
+|-----------|------|-------------------------------|--------|
+| `BookingPlanningView` | `plan/BookingPlanningView.tsx` | Planning-mode surfaces should use zinc/emerald pairs and DS micro typography (`DS.textSize.*`) | Provisional |
+| `ChipGroup` | `plan/ChipGroup.tsx` | Chip text uses `DS.textSize.micro`; selected/inactive chips follow DS tactile pill rules | Provisional |
+| `ChipScrollContainer` | `plan/ChipScrollContainer.tsx` | Horizontal chip rail rule from Section 11/12 (`no vertical wrap`, edge bleed) | Provisional |
+| `DestinationMapPlaceholder` | `plan/DestinationMapPlaceholder.tsx` | Map fallback should match Section 31.4 zinc fallback palette | Provisional |
+| `FullDensityTimeline` | `plan/FullDensityTimeline.tsx` | Subdued toggle pills must follow Section 32.1 visual contract | Provisional |
+| `ItineraryProgressIndicator` | `plan/ItineraryProgressIndicator.tsx` | State/severity colors align with Section 24 and Section 4 restricted color usage | Provisional |
+| `OriginPromptCard` | `plan/OriginPromptCard.tsx` | CTA hierarchy should use `DS.actions.primary` and DS text label/body patterns | Provisional |
+| `PlanTimelineSection` | `plan/PlanTimelineSection.tsx` | Timeline loading states follow Section 26 skeleton standards and spacing tiers | Provisional |
+| `TimelineBlockList` | `plan/TimelineBlockList.tsx` | Constraint badges follow Section 4 inline severity palette; free-day rendering aligns with Section 31.8 | Provisional |
+| `TimelineDayCard` | `plan/TimelineDayCard.tsx` | Day intensity badges must keep contrast-safe pill classes and icon sizing tiers (Section 29) | Provisional |
+| `BookingDrawer` | `plan/booking/BookingDrawer.tsx` | Drawer layer uses Section 28 sheet z-tier; elevated surfaces use `shadow-soft`/`shadow-card` | Provisional |
+| `ActivitiesSheetContent` | `plan/sheets/ActivitiesSheetContent.tsx` | `DS.text.label`; tactile segmented/chip styling; disabled overlay pattern from Section 32.5 | Provisional |
+
+### 33.3 Strategy Stage and Timeline Detail Components
+
+| Component | File | Expected DS Tokens / Patterns | Status |
+|-----------|------|-------------------------------|--------|
+| `S2AgentCardExpanded` | `plan/stages/S2AgentCardExpanded.tsx` | Card elevations use `shadow-card` with approved dark exceptions; DS text sizing for metadata | Provisional |
+| `S2LocalIntelSection` | `plan/stages/S2LocalIntelSection.tsx` | Constraint/status badges use DS micro labels and Section 4 severity colors | Provisional |
+| `S2StrategyStack` | `plan/stages/S2StrategyStack.tsx` | DS micro labels and spacing-tier compliance for stacked cards | Provisional |
+| `S2StrategyView` | `plan/stages/S2StrategyView.tsx` | Uses DS text-size and chip patterns; follows single-renderer invariants | Provisional |
+| `S2TopicConfig` | `plan/stages/S2TopicConfig.tsx` | Topic config helper; no direct styling contract | Non-Visual |
+| `StrategyHeroCompactSheet` | `plan/stages/StrategyHeroCompactSheet.tsx` | DS text label/body/micro tokens and info-box conventions | Provisional |
+| `StrategyHeroContent` | `plan/stages/StrategyHeroContent.tsx` | Card elevation and hover states use Section 27 shadow tiers | Provisional |
+| `StrategyHeroHeroSheet` | `plan/stages/StrategyHeroHeroSheet.tsx` | DS label/body/text-size hierarchy and contrast-safe image overlays | Provisional |
+| `StrategyHeroTISectionsA` | `plan/stages/StrategyHeroTISectionsA.tsx` | DS micro typography and zinc contrast pairings from Section 17.7 | Provisional |
+| `StrategyHeroTISectionsB` | `plan/stages/StrategyHeroTISectionsB.tsx` | DS micro typography and severity-color consistency | Provisional |
+| `StrategyHeroTravelIntelligence` | `plan/stages/StrategyHeroTravelIntelligence.tsx` | Section headers use `DS.text.label`; body text uses DS zinc scales | Provisional |
+| `FreeDayDropSlot` | `plan/timeline/FreeDayDropSlot.tsx` | Drop-zone visuals align with Section 31.7 droppable day zone | Provisional |
+| `ItineraryDndWrapper` | `plan/timeline/ItineraryDndWrapper.tsx` | DnD orchestration container; no direct style surface | Non-Visual |
+| `RichBlockRenderer` | `plan/timeline/RichBlockRenderer.tsx` | Rendering dispatcher; visual styling delegated to mapped block components | Non-Visual |
+| `TimelineSkeleton` | `plan/timeline/TimelineSkeleton.tsx` | Skeleton colors/animation follow Section 26 | Provisional |
+| `HoldToDeleteButton` | `plan/timeline/blocks/HoldToDeleteButton.tsx` | Destructive hold interaction must use semantic warning/error color rules only | Provisional |
+| `SafetyBlock` | `plan/timeline/blocks/SafetyBlock.tsx` | Safety/warning states follow Section 4 inline constraint severity styles | Provisional |
+| `TaxesFeesTooltip` | `tiles/TaxesFeesTooltip.tsx` | Tooltip text sizing (`DS.textSize.mini`/`micro`) and zinc contrast pairings | Provisional |
+
+### 33.4 UI Primitive Coverage (Shadcn Exception Paths)
+
+These components remain in the Section 20 exception set. They may use shadcn token systems, but must not
+introduce conflicting visual language when consumed by app components.
+
+| Component | File | Expected DS Tokens / Patterns | Status |
+|-----------|------|-------------------------------|--------|
+| `ErrorBoundary` | `ui/ErrorBoundary.tsx` | Neutral zinc fallback styling; avoid semantic token drift in consumer surfaces | Provisional |
+| `ModalErrorBoundary` | `ui/ModalErrorBoundary.tsx` | Error fallback style should align with modal/surface contrast rules | Provisional |
+| `bottom-sheet` | `ui/bottom-sheet.tsx` | Must respect Section 28 sheet z-tier and Section 27 elevation expectations | Provisional |
+| `button` | `ui/button.tsx` | Primary/secondary button variants should mirror `DS.actions.*` contracts | Provisional |
+| `card` | `ui/card.tsx` | shadcn primitive (Section 20 exception); consumer cards should prefer DS surface patterns | Out-of-Scope |
+| `popover` | `ui/popover.tsx` | shadcn primitive (Section 20 exception); verify layering against Section 28 when used | Out-of-Scope |
+| `sheet` | `ui/sheet.tsx` | shadcn primitive with custom tiered z-index (`z-[1200]/z-[1201]`) | Provisional |
+| `skeleton` | `ui/skeleton.tsx` | Primitive should honor Section 26 skeleton color/animation baseline | Provisional |
+| `switch` | `ui/switch.tsx` | Switch states should align to `DS.actions.toggle` checked/unchecked palette | Provisional |
+| `tooltip` | `ui/tooltip.tsx` | shadcn primitive (Section 20 exception); keep tooltip layer in approved top-tier range | Out-of-Scope |
 
 ---

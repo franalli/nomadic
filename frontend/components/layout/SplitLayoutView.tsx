@@ -69,7 +69,7 @@ export function SplitLayoutView({
 }: SplitLayoutViewProps) {
   const isDesktop = useIsDesktop();
 
-  const isLanding = dataDensity === 'empty' || dataDensity === 'bridge' || dataDensity === 'ghost';
+  const isLanding = dataDensity === 'empty' || dataDensity === 'bridge';
 
   return (
     <div className="flex flex-col h-[100dvh] lg:h-screen overflow-hidden">

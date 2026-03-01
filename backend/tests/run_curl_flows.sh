@@ -21,6 +21,10 @@
 #   15  Deeplink URL format validation — hotel/activity deeplinks are real URLs
 #   16  Travelers + budget extraction — "2 adults and 1 child, $3000 budget"
 #   17  Suggested response round-trip — chip bar text sent as user message
+#   18  Price + star rating — day card blocks carry price_level + hotel price
+#   19  Extend trip — extend dates preserves existing day card structure
+#   20  Add Tier 1 activity — hiking after initial cultural plan
+#   21  Long trip tile density — extend by 10 days, ≥60% fill rate
 #
 # Architecture contract (from plan_graph_analysis.md + data-contracts.md):
 #   - SSE event types: token, node_status, partial, complete, error
@@ -639,6 +643,29 @@ CHIP_META=$(extract_doc "suggested_response_meta")
 CHIP_META_CT=$(jlen "$CHIP_META")
 check_gte "suggested_response_meta ≥ 1" "$CHIP_META_CT" 1 || F=false
 
+# ── Specialist tile verification ──
+TILES=$(extract_doc "tiles")
+TILE_CT=$(jlen "$TILES")
+check_gte "tiles ≥ 3" "$TILE_CT" 3 || F=false
+
+# Diving tiles should exist (from specialist OR GP browse with diving tag)
+HAS_DIVING_TILES=$(echo "$TILES" | python3 -c "
+import sys,json
+try:
+    t=json.load(sys.stdin)
+    vals=t.values() if isinstance(t,dict) else t
+    found=0
+    for v in vals:
+        if not isinstance(v,dict): continue
+        tags=v.get('tags',[])
+        title=(v.get('title','')+'').lower()
+        if 'diving' in tags or 'dive' in title or 'snorkel' in title:
+            found+=1
+    print('true' if found>=1 else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Diving tiles present (specialist or tagged)" "$HAS_DIVING_TILES" "true" || F=false
+
 else F=false; fi; else F=false; fi
 $F && _flow pass 3 || _flow fail 3
 _flow_end 3
@@ -926,6 +953,18 @@ try:
 except: print('clean')
 " 2>/dev/null || echo "clean")
 check "Bali tiles cleared" "$HAS_BALI_TILES" "clean" || F=false
+
+# Categories should NOT contain 'diving' after switching to Lisbon
+CATS_RAW=$(extract_top "session_state.trip_settings.activity_settings.categories")
+HAS_STALE_CAT=$(echo "$CATS_RAW" | python3 -c "
+import sys,json
+try:
+    cats=json.load(sys.stdin)
+    stale=[c for c in cats if c.lower() in ('diving','surfing','skiing')]
+    print('stale:'+','.join(stale) if stale else 'clean')
+except: print('clean')
+" 2>/dev/null || echo "clean")
+check "Stale categories cleared" "$HAS_STALE_CAT" "clean" || F=false
 
 else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 10 || _flow fail 10
@@ -1467,6 +1506,495 @@ fi
 else F=false; fi; else F=false; fi
 $F && _flow pass 17 || _flow fail 17
 _flow_end 17
+echo ""
+fi
+
+
+# =============================================================================
+#  FLOW 18: Price + Star Rating in Day Cards
+# =============================================================================
+# After building an itinerary, activity blocks should carry price_level and
+# hotel blocks should have booked_tile with price_estimate. Rating comes from
+# LLM specialist output (not Google Places, which is Pro-tier only).
+if should_run 18; then
+_flow_begin 18
+echo ""
+echo "═══ Flow 18: Price + Star Rating in Day Cards ═══"
+F=true
+
+if fresh_session; then
+
+echo "  → Turn 1: Diving in Bali, March 15-22, from New York"
+if send_message "Diving in Bali, March 15-22, 2 adults from New York"; then
+
+echo "  → Turn 2: GENERATE_PLAN_NOW"
+if send_message "GENERATE_PLAN_NOW"; then
+
+DAY_CARDS=$(extract_doc "day_cards")
+DC_CT=$(jlen "$DAY_CARDS")
+check_gte "day_cards present" "$DC_CT" 1 || F=false
+
+# Count activity blocks with price_level set (non-null)
+PRICED_ACTS=$(echo "$DAY_CARDS" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    total=0; priced=0
+    for card in cards:
+        for b in card.get('blocks',[]):
+            if b.get('booking_category')=='activity':
+                total+=1
+                if b.get('price_level') is not None:
+                    priced+=1
+    print(f'{priced}/{total}')
+except: print('0/0')
+" 2>/dev/null || echo "0/0")
+echo "  ℹ  Activity blocks with price_level: $PRICED_ACTS"
+
+# At least 50% of activity blocks should have price_level
+PRICE_OK=$(echo "$DAY_CARDS" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    total=0; priced=0
+    for card in cards:
+        for b in card.get('blocks',[]):
+            if b.get('booking_category')=='activity':
+                total+=1
+                if b.get('price_level') is not None:
+                    priced+=1
+    print('true' if total>0 and priced>=total*0.5 else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "≥50% activity blocks have price_level" "$PRICE_OK" "true" || F=false
+
+# Count activity blocks with rating set (from LLM specialist output)
+RATED_ACTS=$(echo "$DAY_CARDS" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    total=0; rated=0
+    for card in cards:
+        for b in card.get('blocks',[]):
+            if b.get('booking_category')=='activity':
+                total+=1
+                if b.get('rating') is not None:
+                    rated+=1
+    print(f'{rated}/{total}')
+except: print('0/0')
+" 2>/dev/null || echo "0/0")
+echo "  ℹ  Activity blocks with rating: $RATED_ACTS"
+
+# Hotel price in tiles dict (hotels are browse-only without explicit user preference)
+TILES=$(extract_doc "tiles")
+HOTEL_PRICE=$(echo "$TILES" | python3 -c "
+import sys,json
+try:
+    tiles=json.load(sys.stdin)
+    vals=tiles.values() if isinstance(tiles,dict) else tiles
+    for t in vals:
+        if not isinstance(t,dict): continue
+        if t.get('type')=='hotel':
+            pe=t.get('price_estimate') or t.get('total_inclusive')
+            if pe is not None and float(pe)>0:
+                print('true'); sys.exit()
+    print('false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Hotel tile has price in tiles dict" "$HOTEL_PRICE" "true" || F=false
+
+# Hotel tile should have rating (from tile data)
+HOTEL_RATING=$(echo "$DAY_CARDS" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    for card in cards:
+        for b in card.get('blocks',[]):
+            if b.get('booking_category')=='hotel' and b.get('booked_tile'):
+                tile=b['booked_tile']
+                r=tile.get('rating')
+                if r is not None and float(r)>0:
+                    print('true'); sys.exit()
+    print('false')
+except: print('false')
+" 2>/dev/null || echo "false")
+if [ "$HOTEL_RATING" = "true" ]; then
+  echo "  ✓ Hotel booked_tile has rating"; PASS=$((PASS+1))
+else
+  echo "  ⚠  Hotel booked_tile missing rating (non-critical — heuristic sources vary)"
+fi
+
+# Tiles should have price_estimate set
+TILES=$(extract_doc "tiles")
+TILES_PRICED=$(echo "$TILES" | python3 -c "
+import sys,json
+try:
+    tiles=json.load(sys.stdin)
+    vals=tiles.values() if isinstance(tiles,dict) else tiles
+    total=0; priced=0
+    for t in vals:
+        if isinstance(t,dict):
+            total+=1
+            pe=t.get('price_estimate') or t.get('total_inclusive')
+            if pe is not None and float(pe)>0:
+                priced+=1
+    print(f'{priced}/{total}')
+except: print('0/0')
+" 2>/dev/null || echo "0/0")
+echo "  ℹ  Tiles with price: $TILES_PRICED"
+TILE_PRICE_OK=$(echo "$TILES" | python3 -c "
+import sys,json
+try:
+    tiles=json.load(sys.stdin)
+    vals=tiles.values() if isinstance(tiles,dict) else tiles
+    total=0; priced=0
+    for t in vals:
+        if isinstance(t,dict):
+            total+=1
+            pe=t.get('price_estimate') or t.get('total_inclusive')
+            if pe is not None and float(pe)>0:
+                priced+=1
+    print('true' if total>0 and priced>=total*0.5 else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "≥50% tiles have price_estimate" "$TILE_PRICE_OK" "true" || F=false
+
+else F=false; fi; else F=false; fi; else F=false; fi
+$F && _flow pass 18 || _flow fail 18
+_flow_end 18
+echo ""
+fi
+
+
+# =============================================================================
+#  FLOW 19: Extend Trip — Preserves Existing Day Cards
+# =============================================================================
+# Turn 1: 5-day trip. Turn 2: GENERATE_PLAN_NOW. Turn 3: Extend by 3 days.
+# Turn 4: GENERATE_PLAN_NOW again.
+# Validates that the new itinerary has more days and the original Arrival/Departure
+# structure is preserved (Arrival on Day 1, Departure on last day).
+if should_run 19; then
+_flow_begin 19
+echo ""
+echo "═══ Flow 19: Extend Trip — Preserves Existing Day Cards ═══"
+F=true
+
+if fresh_session; then
+
+echo "  → Turn 1: Rome, March 1-5"
+if send_message "I want to visit Rome from March 1 to March 5"; then
+
+DEST=$(extract_top "session_state.trip_plan.destination")
+check_not_empty "Turn 1: destination extracted" "$DEST" || F=false
+
+echo "  → Turn 2: GENERATE_PLAN_NOW"
+if send_message "GENERATE_PLAN_NOW"; then
+
+DAY_CARDS_T2=$(extract_doc "day_cards")
+DC_CT_T2=$(jlen "$DAY_CARDS_T2")
+echo "  ℹ  Turn 2: $DC_CT_T2 day cards (5-day trip)"
+check_gte "Turn 2: day_cards ≥ 4" "$DC_CT_T2" 4 || F=false
+
+# Capture Arrival label
+DAY1_LABEL_T2=$(echo "$DAY_CARDS_T2" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    print(cards[0].get('label','').lower() if cards else '')
+except: print('')
+" 2>/dev/null || echo "")
+check_contains "Turn 2: Day 1=Arrival" "$DAY1_LABEL_T2" "arrival" || F=false
+
+# Capture activity count from original itinerary
+ORIG_ACT_CT=$(echo "$DAY_CARDS_T2" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    total=0
+    for card in cards:
+        for b in card.get('blocks',[]):
+            if b.get('booking_category')=='activity':
+                total+=1
+    print(total)
+except: print(0)
+" 2>/dev/null || echo "0")
+echo "  ℹ  Turn 2: $ORIG_ACT_CT activity blocks in original itinerary"
+
+echo "  → Turn 3: Extend trip by 3 more days"
+if send_message "extend the trip by 3 more days"; then
+
+# Router should update end_date
+END_DATE=$(extract_top "session_state.trip_plan.end_date")
+check_not_empty "Turn 3: end_date updated" "$END_DATE" || F=false
+# End date should now be March 8 (original Mar 5 + 3 days)
+if echo "$END_DATE" | grep -qE "03-0[7-9]|03-1[0-9]"; then
+  echo "  ✓ End date extended past March 5 (=$END_DATE)"; PASS=$((PASS+1))
+else
+  echo "  ⚠  End date may not be extended (=$END_DATE) — checking day count instead"
+fi
+
+echo "  → Turn 4: GENERATE_PLAN_NOW"
+if send_message "GENERATE_PLAN_NOW"; then
+
+DAY_CARDS_T4=$(extract_doc "day_cards")
+DC_CT_T4=$(jlen "$DAY_CARDS_T4")
+echo "  ℹ  Turn 4: $DC_CT_T4 day cards (extended trip)"
+
+# Extended trip should have MORE day cards than original
+check_gt "Turn 4: more day_cards than Turn 2 ($DC_CT_T4 > $DC_CT_T2)" "$DC_CT_T4" "$DC_CT_T2" || F=false
+
+# Should have at least 7 day cards (5 original + 3 extended)
+check_gte "Turn 4: day_cards ≥ 7 (extended)" "$DC_CT_T4" 7 || F=false
+
+# Arrival still on Day 1
+DAY1_LABEL_T4=$(echo "$DAY_CARDS_T4" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    print(cards[0].get('label','').lower() if cards else '')
+except: print('')
+" 2>/dev/null || echo "")
+check_contains "Turn 4: Day 1=Arrival (preserved)" "$DAY1_LABEL_T4" "arrival" || F=false
+
+# Departure on last day
+LAST_LABEL_T4=$(echo "$DAY_CARDS_T4" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    print(cards[-1].get('label','').lower() if cards else '')
+except: print('')
+" 2>/dev/null || echo "")
+check_contains "Turn 4: Last day=Departure" "$LAST_LABEL_T4" "departure" || F=false
+
+# Activity count should be >= original (more days = more activities)
+EXTEND_ACT_CT=$(echo "$DAY_CARDS_T4" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    total=0
+    for card in cards:
+        for b in card.get('blocks',[]):
+            if b.get('booking_category')=='activity':
+                total+=1
+    print(total)
+except: print(0)
+" 2>/dev/null || echo "0")
+echo "  ℹ  Turn 4: $EXTEND_ACT_CT activity blocks in extended itinerary"
+check_gte "Turn 4: activity blocks ≥ original ($EXTEND_ACT_CT ≥ $ORIG_ACT_CT)" "$EXTEND_ACT_CT" "$ORIG_ACT_CT" || F=false
+
+# Day utilization: ≥50% of interior days should have real activity blocks
+FILL_RATE=$(echo "$DAY_CARDS_T4" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    interior=[c for c in cards[1:-1]]  # skip arrival/departure
+    with_acts=0
+    for c in interior:
+        acts=[b for b in c.get('blocks',[]) if b.get('booking_category')=='activity']
+        if acts: with_acts+=1
+    total=max(1,len(interior))
+    print('true' if with_acts/total >= 0.5 else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Turn 4: ≥50% interior days have activities" "$FILL_RATE" "true" || F=false
+
+# Destination preserved through all turns
+DEST_T4=$(extract_top "session_state.trip_plan.destination")
+check_not_empty "Turn 4: destination preserved" "$DEST_T4" || F=false
+
+else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi
+$F && _flow pass 19 || _flow fail 19
+_flow_end 19
+echo ""
+fi
+
+
+# =============================================================================
+#  FLOW 20: Add Tier 1 Activity — Hiking After Initial Plan
+# =============================================================================
+# Turn 1: Cultural trip to Rome. Turn 2: GENERATE_PLAN_NOW.
+# Turn 3: "add hiking". Turn 4: GENERATE_PLAN_NOW.
+# Validates: specialist dispatched successfully, hiking tiles in tile dict,
+# hiking activity blocks in day_cards, categories include hiking.
+if should_run 20; then
+_flow_begin 20
+echo ""
+echo "═══ Flow 20: Add Tier 1 Activity — Hiking ═══"
+F=true
+
+if fresh_session; then
+
+echo "  → Turn 1: Cultural trip to Rome, March 1-7"
+if send_message "I want a cultural trip to Rome from March 1 to March 7"; then
+
+DEST=$(extract_top "session_state.trip_plan.destination")
+check_not_empty "Turn 1: destination" "$DEST" || F=false
+
+echo "  → Turn 2: GENERATE_PLAN_NOW"
+if send_message "GENERATE_PLAN_NOW"; then
+
+DC_T2=$(extract_doc "day_cards")
+DC_CT_T2=$(jlen "$DC_T2")
+check_gte "Turn 2: day_cards ≥ 5" "$DC_CT_T2" 5 || F=false
+
+# Count cultural activity blocks before hiking
+CULTURAL_ACT_CT=$(echo "$DC_T2" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    total=sum(1 for c in cards for b in c.get('blocks',[]) if b.get('booking_category')=='activity')
+    print(total)
+except: print(0)
+" 2>/dev/null || echo "0")
+echo "  ℹ  Turn 2: $CULTURAL_ACT_CT activity blocks (cultural only)"
+
+echo "  → Turn 3: add hiking"
+if send_message "add hiking to the trip"; then
+
+# Categories should now include hiking
+CATS=$(extract_top "session_state.trip_settings.activity_settings.categories")
+check_contains "Turn 3: categories include hiking" "$CATS" "hiking" || F=false
+
+# Specialist dispatch should have been attempted
+TOOLS=$(extract_tools)
+echo "  ℹ  Turn 3 tools: $TOOLS"
+check_contains "Turn 3: get_specialist_advice called" "$TOOLS" "get_specialist_advice" || F=false
+
+echo "  → Turn 4: GENERATE_PLAN_NOW"
+if send_message "GENERATE_PLAN_NOW"; then
+
+DC_T4=$(extract_doc "day_cards")
+DC_CT_T4=$(jlen "$DC_T4")
+check_gte "Turn 4: day_cards ≥ 5" "$DC_CT_T4" 5 || F=false
+
+# Hiking tiles should exist in tiles dict
+TILES=$(extract_doc "tiles")
+HAS_HIKING=$(echo "$TILES" | python3 -c "
+import sys,json
+try:
+    t=json.load(sys.stdin)
+    vals=t.values() if isinstance(t,dict) else t
+    found=0
+    for v in vals:
+        if not isinstance(v,dict): continue
+        tags=[x.lower() for x in v.get('tags',[])]
+        title=(v.get('title','')).lower()
+        if 'hiking' in tags or 'hike' in title or 'trail' in title or 'trek' in title:
+            found+=1
+    print(found)
+except: print(0)
+" 2>/dev/null || echo "0")
+echo "  ℹ  Turn 4: $HAS_HIKING hiking tiles in tile dict"
+check_gte "Turn 4: hiking tiles ≥ 1" "$HAS_HIKING" 1 || F=false
+
+# Activity blocks should increase (hiking adds to cultural)
+TOTAL_ACT_CT=$(echo "$DC_T4" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    total=sum(1 for c in cards for b in c.get('blocks',[]) if b.get('booking_category')=='activity')
+    print(total)
+except: print(0)
+" 2>/dev/null || echo "0")
+echo "  ℹ  Turn 4: $TOTAL_ACT_CT total activity blocks (cultural+hiking)"
+check_gte "Turn 4: activity blocks ≥ cultural baseline ($TOTAL_ACT_CT ≥ $CULTURAL_ACT_CT)" "$TOTAL_ACT_CT" "$CULTURAL_ACT_CT" || F=false
+
+else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi
+$F && _flow pass 20 || _flow fail 20
+_flow_end 20
+echo ""
+fi
+
+
+# =============================================================================
+#  FLOW 21: Long Trip Tile Density — Extend by 10 Days
+# =============================================================================
+# Turn 1: Short trip. Turn 2: GENERATE_PLAN_NOW.
+# Turn 3: Extend by 10 days. Turn 4: GENERATE_PLAN_NOW.
+# Validates: day_cards cover extended range, ≥60% interior days have
+# real activity blocks (not filler), tile count scales with duration.
+if should_run 21; then
+_flow_begin 21
+echo ""
+echo "═══ Flow 21: Long Trip Tile Density ═══"
+F=true
+
+if fresh_session; then
+
+echo "  → Turn 1: Rome, March 1-7"
+if send_message "I want to visit Rome from March 1 to March 7"; then
+
+check_not_empty "Turn 1: destination" "$(extract_top 'session_state.trip_plan.destination')" || F=false
+
+echo "  → Turn 2: GENERATE_PLAN_NOW"
+if send_message "GENERATE_PLAN_NOW"; then
+
+DC_T2=$(extract_doc "day_cards")
+DC_CT_T2=$(jlen "$DC_T2")
+check_gte "Turn 2: day_cards ≥ 5" "$DC_CT_T2" 5 || F=false
+
+echo "  → Turn 3: extend by 10 days"
+if send_message "extend the trip by 10 more days"; then
+
+END_DATE=$(extract_top "session_state.trip_plan.end_date")
+check_not_empty "Turn 3: end_date updated" "$END_DATE" || F=false
+
+echo "  → Turn 4: GENERATE_PLAN_NOW"
+if send_message "GENERATE_PLAN_NOW"; then
+
+DC_T4=$(extract_doc "day_cards")
+DC_CT_T4=$(jlen "$DC_T4")
+echo "  ℹ  Turn 4: $DC_CT_T4 day cards (extended ~17-day trip)"
+check_gte "Turn 4: day_cards ≥ 14 (17-day extended)" "$DC_CT_T4" 14 || F=false
+
+# Tile count should scale — need more tiles for longer trip
+TILES=$(extract_doc "tiles")
+TILE_CT=$(jlen "$TILES")
+echo "  ℹ  Turn 4: $TILE_CT tiles"
+check_gte "Turn 4: tiles ≥ 10 (17-day needs density)" "$TILE_CT" 10 || F=false
+
+# Key assertion: day utilization — ≥60% interior days have real activities
+FILL_DATA=$(echo "$DC_T4" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    interior=[c for c in cards[1:-1]]
+    with_acts=0; filler=0
+    for c in interior:
+        acts=[b for b in c.get('blocks',[]) if b.get('booking_category')=='activity']
+        if acts:
+            with_acts+=1
+        else:
+            filler+=1
+    total=max(1,len(interior))
+    rate=with_acts/total
+    print(json.dumps({'with_acts':with_acts,'filler':filler,'total':total,'rate':round(rate,2)}))
+except: print(json.dumps({'with_acts':0,'filler':0,'total':0,'rate':0}))
+" 2>/dev/null || echo '{}')
+echo "  ℹ  Turn 4: fill data: $FILL_DATA"
+
+FILL_OK=$(echo "$FILL_DATA" | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    print('true' if d.get('rate',0) >= 0.6 else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Turn 4: ≥60% interior days have activities" "$FILL_OK" "true" || F=false
+
+# Filler block count should be minority
+FILLER_OK=$(echo "$FILL_DATA" | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    print('true' if d.get('filler',999) <= d.get('total',0)*0.5 else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Turn 4: filler days ≤ 50% of interior" "$FILLER_OK" "true" || F=false
+
+else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi
+$F && _flow pass 21 || _flow fail 21
+_flow_end 21
 echo ""
 fi
 

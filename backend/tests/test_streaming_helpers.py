@@ -8,6 +8,7 @@ from app.streaming import (
     _flatten_request_preferences,
     _get_trip_input_display_value,
     _normalized_preference_ids,
+    _seed_trip_plan_from_inputs,
     compute_trip_readiness,
 )
 
@@ -336,3 +337,86 @@ def test_conflicts_to_violations_enum_severity() -> None:
 
 def test_conflicts_to_violations_empty_list() -> None:
     assert _conflicts_to_constraint_violations([]) == []
+
+
+# ---------------------------------------------------------------------------
+# _seed_trip_plan_from_inputs
+# ---------------------------------------------------------------------------
+
+
+def test_seed_trip_plan_copies_present_fields() -> None:
+    """Core fields in trip_inputs should be copied to trip_plan."""
+    state: dict = {
+        "trip_inputs": {
+            "destination": "Bali",
+            "origin": "London",
+            "start_date": "2026-06-01",
+            "end_date": "2026-06-07",
+        },
+        "trip_plan": {"destination": "Old Place"},
+    }
+    _seed_trip_plan_from_inputs(state)
+    assert state["trip_plan"]["destination"] == "Bali"
+    assert state["trip_plan"]["origin"] == "London"
+    assert state["trip_plan"]["start_date"] == "2026-06-01"
+    assert state["trip_plan"]["end_date"] == "2026-06-07"
+
+
+def test_seed_trip_plan_propagates_none_for_cleared_fields() -> None:
+    """Explicitly cleared fields (None) must propagate to trip_plan."""
+    state: dict = {
+        "trip_inputs": {"origin": None},
+        "trip_plan": {"origin": "London", "destination": "Bali"},
+    }
+    _seed_trip_plan_from_inputs(state)
+    assert state["trip_plan"]["origin"] is None
+    # Unmentioned fields are untouched
+    assert state["trip_plan"]["destination"] == "Bali"
+
+
+def test_seed_trip_plan_preserves_stale_when_key_absent() -> None:
+    """When trip_inputs lacks a key entirely, trip_plan retains its value."""
+    state: dict = {
+        "trip_inputs": {"destination": "Tokyo"},
+        "trip_plan": {"destination": "Old", "origin": "London"},
+    }
+    _seed_trip_plan_from_inputs(state)
+    assert state["trip_plan"]["destination"] == "Tokyo"
+    # origin not in trip_inputs → trip_plan keeps its value
+    assert state["trip_plan"]["origin"] == "London"
+
+
+def test_seed_trip_plan_ignores_settings_fields() -> None:
+    """Settings fields should NOT be seeded (they flow via _doc_settings)."""
+    state: dict = {
+        "trip_inputs": {
+            "destination": "Bali",
+            "booking_types": {"flights": "on"},
+            "flight_settings": {"direct_only": True},
+        },
+        "trip_plan": {},
+    }
+    _seed_trip_plan_from_inputs(state)
+    assert state["trip_plan"]["destination"] == "Bali"
+    assert "booking_types" not in state["trip_plan"]
+    assert "flight_settings" not in state["trip_plan"]
+
+
+def test_seed_trip_plan_creates_trip_plan_if_missing() -> None:
+    """When trip_plan is absent from session_state, it should be created."""
+    state: dict = {
+        "trip_inputs": {"destination": "Rome", "adults": 2},
+    }
+    _seed_trip_plan_from_inputs(state)
+    assert state["trip_plan"]["destination"] == "Rome"
+    assert state["trip_plan"]["adults"] == 2
+
+
+def test_seed_trip_plan_empty_inputs() -> None:
+    """Empty trip_inputs should leave trip_plan unchanged."""
+    state: dict = {
+        "trip_inputs": {},
+        "trip_plan": {"destination": "Bali"},
+    }
+    _seed_trip_plan_from_inputs(state)
+    assert state["trip_plan"]["destination"] == "Bali"

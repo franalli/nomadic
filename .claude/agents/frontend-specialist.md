@@ -72,7 +72,7 @@ frontend/
                      StrategyHeroTravelIntelligence, StrategyHeroUtils
       sheets/      → BaseSheet, DestinationSheet, OriginSheet, DatesSheet,
                      TravelersSheet, BudgetSheet, FlightsSheet, StaysSheet,
-                     ActivitiesSheet, TripSettingsSheet, GatingBlocker
+                     ActivitiesSheet, ActivitiesSheetContent, TripSettingsSheet, GatingBlocker
       timeline/    → InlineDatePrompt, TimelineSkeleton,
                      DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot,
                      ItineraryDndWrapper, RichBlockRenderer, useTimelineFillDay
@@ -105,7 +105,6 @@ frontend/
   lib/             → design-system.ts, api.ts, animation-config.ts, streamParser.ts,
                      tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
                      specialist-colors.ts, specialists.ts, utils.ts,
-                     activityHighlighter.ts,
                      contentPolicyGuard.ts, ghost-timeline-adapter.ts, fillDayGuards.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,

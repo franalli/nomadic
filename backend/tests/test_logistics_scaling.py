@@ -104,9 +104,9 @@ class TestTilesPerCategory:
         )
 
         result = _compute_tiles_per_category(state, {"yoga"})
-        # Pure Tier 2: tiles should scale to free days, capped at 8
+        # Pure Tier 2: tiles should scale to free days, ceiling=20 for >7 free days
         assert result >= 4, f"Expected >= 4 tiles for 10-day yoga-only trip, got {result}"
-        assert result <= 12, f"Expected <= 12 tiles (hard cap), got {result}"
+        assert result <= 20, f"Expected <= 20 tiles (hard cap for >7 free days), got {result}"
 
     def test_multi_category_distribution(self):
         """3 Tier 2 categories on a 9-day trip → tile count per category scales proportionally.

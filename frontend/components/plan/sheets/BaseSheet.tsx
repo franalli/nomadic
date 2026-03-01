@@ -299,7 +299,7 @@ function MobileSheet({
               'bg-white/95 dark:bg-zinc-950/95',
               'backdrop-blur-xl',
               'border-t border-zinc-200 dark:border-white/10',
-              'shadow-[0_-8px_32px_rgba(0,0,0,0.12)] dark:shadow-[0_-8px_32px_rgba(0,0,0,0.5)]'
+              'shadow-soft'
             )}
           >
             {/* Drag Handle - larger for better touch affordance */}

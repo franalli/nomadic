@@ -24,7 +24,7 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 const variantClasses: Record<ButtonVariant, string> = {
   // DS.actions.primary: Black light / Emerald dark with glow
   primary: cn(
-    'bg-zinc-900 text-white border border-zinc-900 shadow-lg shadow-zinc-900/10',
+    'bg-zinc-900 text-white border border-zinc-900',
     'hover:bg-zinc-800 hover:border-zinc-800',
     'dark:bg-emerald-600 dark:border-emerald-600 dark:text-white',
     `dark:${DS.glowClass.lg}`,
@@ -38,7 +38,7 @@ const variantClasses: Record<ButtonVariant, string> = {
   ),
   // Outline: Border-defined with glass fill in dark (DS pills.inactive pattern)
   outline: cn(
-    'bg-white text-zinc-700 border border-zinc-200 shadow-sm',
+    'bg-white text-zinc-700 border border-zinc-200',
     'hover:bg-zinc-50 hover:border-zinc-900 hover:text-zinc-900',
     'dark:bg-white/5 dark:text-zinc-400 dark:border-white/15',
     'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white'
@@ -66,7 +66,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       'transition-all duration-200 active:scale-[0.98]',
       'focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20',
       'dark:focus-visible:ring-emerald-500/20',
-      'disabled:opacity-60 disabled:cursor-not-allowed'
+      'disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none'
     );
 
     return (

@@ -1,6 +1,6 @@
 'use client';
 
-import { Ticket } from 'lucide-react';
+import { Leaf, Sun, Ticket, Zap } from 'lucide-react';
 
 import { Stepper } from '@/components/ui/stepper';
 import { Switch } from '@/components/ui/switch';
@@ -30,9 +30,9 @@ export const ALL_CATEGORIES = [
 ];
 
 export const PACE_OPTIONS = [
-  { value: 1, label: 'Relaxed' },
-  { value: 2, label: 'Moderate' },
-  { value: 3, label: 'Packed' },
+  { value: 1, label: 'Relaxed', icon: Leaf },
+  { value: 2, label: 'Moderate', icon: Sun },
+  { value: 3, label: 'Packed', icon: Zap },
 ] as const;
 
 export interface ActivitiesSheetContentProps {
@@ -103,21 +103,31 @@ export function ActivitiesSheetContent({
           <div className="grid grid-cols-3 rounded-xl border border-zinc-200 dark:border-white/10 overflow-hidden">
             {PACE_OPTIONS.map((option) => {
               const isSelected = localPace === option.value;
+              const Icon = option.icon;
               return (
                 <button
                   key={option.value}
                   type="button"
                   onClick={() => onSetLocalPace(isSelected ? null : option.value)}
                   className={cn(
-                    'flex flex-col items-center py-3 text-sm transition-colors',
+                    'group flex flex-col items-center py-3 text-sm transition-colors',
                     'border-l border-zinc-200 dark:border-white/10 first:border-l-0',
                     isSelected
-                      ? 'bg-emerald-500/15 text-emerald-400 font-semibold'
-                      : 'text-zinc-400 hover:bg-white/5'
+                      ? 'bg-emerald-50 text-emerald-700 font-semibold dark:bg-emerald-500/15 dark:text-emerald-400'
+                      : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-white'
                   )}
                 >
+                  <Icon
+                    className={cn(
+                      'mb-0.5 h-4 w-4 shrink-0 transition-colors',
+                      isSelected
+                        ? 'text-emerald-700 dark:text-emerald-400'
+                        : 'text-zinc-600 group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-white'
+                    )}
+                    strokeWidth={2.25}
+                  />
                   <span>{option.label}</span>
-                  <span className="text-xs opacity-60">{option.value}/day</span>
+                  <span className="text-xs opacity-70">{option.value}/day</span>
                 </button>
               );
             })}

@@ -419,7 +419,8 @@ async def test_search_hotels_activities_skips_activity_fetch_when_activities_off
     assert calls["activities"] == 0
     assert state.tiles.get("hotels") == [{"id": "hotel_1"}]
     assert state.tiles.get("activities") == []
-    assert "browseable_activities" not in state.metadata
+    # browseable_activities is preserved across non-activity turns (for Browse sheet)
+    assert state.metadata.get("browseable_activities") == [{"id": "stale"}]
     assert "active_plan_categories" not in state.metadata
     assert "tier2_generation_key" not in state.metadata
     assert state.metadata.get("booking_summary", {}).get("activities_found") == 0

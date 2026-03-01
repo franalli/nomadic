@@ -43,6 +43,7 @@ export function computeDataDensity(
   if (normalizedState === 'P0_MINIMAL' && hasSpecialist && hasDates) return 'ghost';
   if (normalizedState === 'P0_MINIMAL' && hasSpecialist) return 'bridge';
   if (normalizedState === 'P0_MINIMAL') return 'empty';
+  if (normalizedState === 'P1_ENRICHED' && hasSpecialist && !hasTiles && hasDates) return 'ghost';
   if (normalizedState === 'P1_ENRICHED' && hasSpecialist && !hasTiles) return 'bridge';
   return 'full';
 }

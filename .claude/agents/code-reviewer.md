@@ -71,8 +71,8 @@ You review against the project's documented invariants. You NEVER modify files â
 - [ ] No-fly buffer: only restricts DIVING placement, not total trip capacity
 - [ ] Cross-domain: `ALTITUDE_AFTER_DIVE` blocks hiking/skiing/climbing within 24h of diving
 - [ ] Fill-day adjacent-day checks only treat `specialist_type='diving'` as authoritative when block content/constraints indicate real diving context
-- [ ] `validate_plan` tool returns violations to agent; agent decides response strategy
-- [ ] No auto-fix loop â€” agent handles constraint violations in its response
+- [ ] Constraint guard violations returned to caller (coordinator or endpoint); no agent loop
+- [ ] `validate_block_arrangement` called directly by `main.py` endpoints for DnD validation
 - [ ] Severity hierarchy: blocking > warning > info
 - [ ] `GuardViolation` carries: code, message, severity, category, suggested_action, conflicting_specialists, suggested_specialist
 - [ ] Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`

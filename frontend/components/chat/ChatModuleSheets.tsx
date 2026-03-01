@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { PLAN_ACTIVE_STATES } from '@/components/plan/planStateHelpers';
 import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
 import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
@@ -117,7 +118,15 @@ export function ChatModuleSheets({
           if (onUpdateBookingTypes) {
             onUpdateBookingTypes({ flights: enabled ? 'on' : 'off' });
           }
-          toast(enabled ? 'Flights included' : 'Flights removed');
+          // No toast here — FlightsSheet.handleToggle and handleUpdateBookingTypes
+          // already provide toggle feedback.
+          // Trigger rebuild to fetch/remove flight tiles
+          if (enabled) {
+            const currentPVS = useDocumentStore.getState().document?.plan_view_state;
+            if (PLAN_ACTIVE_STATES.has(currentPVS ?? '')) {
+              void sendMessageCore(GENERATE_PLAN_TRIGGER);
+            }
+          }
         }}
         onSaveSettings={(settings) => {
           if (onUpdateFlightSettings) {

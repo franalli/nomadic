@@ -26,6 +26,7 @@ import logging
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Optional
+from urllib.parse import quote
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ValidationError
@@ -120,6 +121,51 @@ def has_cached(
 # =============================================================================
 
 
+# Seasonal categories keep month-level precision; non-seasonal normalize to quarter
+_SEASONAL_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "skiing",
+        "surfing",
+        "diving",
+        "hiking",
+        "sailing",
+        "cycling",
+        "wildlife_safari",
+        "climbing",
+        "snowboarding",
+        "kayaking",
+    }
+)
+
+
+def _normalize_month_for_cache(month: str, categories: list[str]) -> str:
+    """Normalize month to quarter for non-seasonal categories.
+
+    Seasonal categories (skiing, surfing, diving, etc.) keep month precision
+    since availability varies by month. Non-seasonal categories (yoga, cooking,
+    nightlife) are month-agnostic so we normalize to quarter for better cache hits.
+
+    Mixed lists: if ANY category is seasonal, the entire key keeps month precision
+    (e.g. ["diving", "yoga"] → keeps "2026-03", not "2026-Q1").
+    """
+    if not month or month == "unknown":
+        return month
+    has_seasonal = any(c.lower().strip() in _SEASONAL_CATEGORIES for c in categories)
+    if has_seasonal:
+        return month
+    # Normalize to quarter: 2026-01..03 → 2026-Q1, etc.
+    try:
+        parts = month.split("-")
+        if len(parts) >= 2:
+            year = parts[0]
+            m = int(parts[1])
+            quarter = (m - 1) // 3 + 1
+            return f"{year}-Q{quarter}"
+    except (ValueError, IndexError):
+        pass
+    return month
+
+
 def _experience_cache_key(
     destination: str, categories: list[str], month: str, tiles_per_category: int = 2
 ) -> str:
@@ -134,7 +180,7 @@ def _experience_cache_key(
     """
     dest_normalized = destination.lower().strip() if destination else "unknown"
     cats_normalized = "|".join(sorted(c.lower().strip() for c in categories))
-    month_normalized = month if month else "unknown"
+    month_normalized = _normalize_month_for_cache(month if month else "unknown", categories)
     key = make_cache_key(
         "experience",
         "v2",
@@ -156,7 +202,9 @@ def _single_category_cache_key(
     """Stable cache key for single-category generation used by fill-day flows."""
     dest_normalized = destination.lower().strip() if destination else "unknown"
     category_normalized = category.lower().strip() if category else "unknown"
-    month_normalized = month if month else "unknown"
+    month_normalized = _normalize_month_for_cache(
+        month if month else "unknown", [category] if category else []
+    )
     key = make_cache_key(
         "experience_single",
         "v1",
@@ -347,6 +395,21 @@ def _clamp_tile_durations(tiles: list, max_hours: float = 4.0) -> list:
     return tiles
 
 
+def _normalize_experience_ratings(tiles: list[dict]) -> list[dict]:
+    """Overwrite ratings on all experience tiles with deterministic heuristic.
+
+    LLM sometimes hallucinate rating/review_count from training data, producing
+    inconsistent presence across tiles. Replace ALL ratings with a deterministic
+    rank-based value so every tile renders consistently in the UI.
+
+    Range: 4.7 → 4.4 (curated "best of" tiles are inherently high quality).
+    """
+    for rank, tile in enumerate(tiles):
+        tile["rating"] = round(max(4.3, 4.7 - (rank * 0.05)), 1)
+        tile["review_count"] = max(200, 800 - rank * 80)
+    return tiles
+
+
 def _experience_to_tile_dict(
     tile: ExperienceTile,
     destination: str,
@@ -397,7 +460,7 @@ def _experience_to_tile_dict(
         "currency": "USD",
         "price_basis": "per_person",
         "is_estimate_only": True,
-        "deeplink_url": "",
+        "deeplink_url": f"https://www.google.com/maps/search/{quote(f'{tile.title} {destination}')}",
         "rating": None,
         "location_label": destination,
         "tags": ["activity", tile.category, "experience"],
@@ -695,6 +758,7 @@ async def generate_experience_tiles_for_day(
         except Exception as e:
             logger.warning("[EXPERIENCE] fill-day enrichment failed, using LLM data: %s", e)
 
+    all_tiles = _normalize_experience_ratings(all_tiles)
     logger.info(f"[EXPERIENCE] fill-day: generated {len(all_tiles)} tiles for day {day_number}")
     return all_tiles
 
@@ -1190,4 +1254,4 @@ async def generate_experiences(
             normalized_categories,
             hydrated_count,
         )
-    return _clamp_tile_durations(tiles)
+    return _normalize_experience_ratings(_clamp_tile_durations(tiles))

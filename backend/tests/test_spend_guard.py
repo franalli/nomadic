@@ -116,9 +116,12 @@ def test_llm_spend_guard_is_noop_without_session_context(
 ) -> None:
     monkeypatch.setattr(settings, "spend_guard_enabled", True)
     monkeypatch.setattr(settings, "spend_guard_session_daily_cap_usd", 0.000001)
-    monkeypatch.setattr(settings, "spend_guard_global_daily_cap_usd", 0.000001)
+    # Global cap=0 disables global enforcement — test verifies session-level is
+    # a no-op without a session, not that global cap blocks.
+    monkeypatch.setattr(settings, "spend_guard_global_daily_cap_usd", 0)
     monkeypatch.setattr(settings, "spend_guard_llm_prompt_tokens_estimate", 500)
     monkeypatch.setattr(settings, "spend_guard_llm_completion_tokens_estimate", 500)
+    clear_spend_guard_counters()
 
     with patch(_OPENAI_TARGET) as mock_cls:
         mock_cls.return_value = MagicMock()

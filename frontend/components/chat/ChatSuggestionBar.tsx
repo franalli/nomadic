@@ -28,6 +28,7 @@ interface ChatSuggestionBarProps {
   onUpdateFlightSettings?: (settings: Partial<FlightSettings>) => void;
   onUpdateBookingTypes?: (settings: Partial<BookingTypes>) => void;
   onOpenSheet?: (sheet: SheetType) => void;
+  onConfirmReset?: () => void;
   onSendMessage: (message: string, options?: { suggestionClicked?: string }) => void;
   onOpenFlights: () => void;
   onOpenStays: () => void;

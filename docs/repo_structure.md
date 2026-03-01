@@ -44,7 +44,6 @@ nomadic/
 ├── docs/                       # Architecture documentation
 ├── frontend/                   # Next.js frontend
 ├── scripts/                    # Root-level utility scripts
-│   ├── cleanup-claude-history.ps1  # Windows history cleanup
 │   ├── cleanup-claude-history.sh   # Unix history cleanup
 │   └── copy-key-files.sh           # Copy key backend files to docs/
 ├── .claudeignore               # Claude Code ignore patterns
@@ -220,6 +219,7 @@ backend/
 │   ├── test_agent_multiturn.py           # Agent multi-turn conversation tests
 │   ├── test_chip_generator.py            # Chip output and deterministic variant generation tests
 │   ├── test_conflict_resolution.py       # Conflict resolution & constraint alias tests
+│   ├── test_conversationalist.py         # Conversationalist streaming + response tests
 │   ├── test_coordinator.py              # Coordinator turn flow + step execution tests
 │   ├── test_cross_domain_constraints.py  # Cross-domain constraint tests
 │   ├── test_expert_constraints.py        # Expert-constraint schema/model alignment
@@ -438,10 +438,7 @@ frontend/
 │   │   │
 │   │   ├── tiles/
 │   │   │   ├── SuggestionCard.tsx
-│   │   │   ├── SuggestionCardContent.tsx
-│   │   │   ├── MiniCardContent.tsx
-│   │   │   ├── TileCardContent.tsx
-│   │   │   └── TileDetailsInfo.tsx
+│   │   │   └── SuggestionCardContent.tsx
 │   │   │
 │   │   └── timeline/
 │   │       ├── DragPreviewCard.tsx     # Ghost card shown in DragOverlay during block drag
@@ -514,7 +511,6 @@ frontend/
 ├── lib/                        # Utility functions
 │   ├── animation-config.ts     # Progressive disclosure timing constants
 │   ├── api.ts                  # API client
-│   ├── activityHighlighter.ts  # Chat activity-name highlighter (markdown protocol + longest-match)
 │   ├── contentPolicyGuard.ts   # Content policy validation
 │   ├── date-utils.ts           # Date formatting/parsing utilities
 │   ├── dayIntensity.ts         # Day intensity scoring (relaxed/balanced/packed) from DayBlock hours
@@ -566,6 +562,9 @@ frontend/
 │   ├── sheets.ts
 │   ├── summary.ts
 │   └── tile.ts
+│
+├── e2e/                       # End-to-end Playwright tests
+│   └── rome-golden-path.spec.ts  # Golden-path E2E test for Rome trip flow
 │
 ├── __tests__/                  # Frontend tests
 │   ├── anti-fragmentation.test.tsx

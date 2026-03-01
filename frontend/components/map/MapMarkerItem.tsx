@@ -58,54 +58,107 @@ interface PinConfig {
 }
 
 /**
- * Pin icon + color per activity/specialist type.
- * Keys match backend `specialist_type` and `activity_type` values exactly.
- * Tier 1 = specialist types (specialist_registry.py)
- * Tier 2 = general activity categories (experience_generator)
+ * Hex color per activity/specialist type for map marker pins.
  *
  * DS exception: Mapbox GL markers require inline hex color values for
  * dynamic backgroundColor styling — Tailwind JIT purges unknown classes.
+ * Amber/orange on climbing/wildlife_safari/adventure falls under the DS
+ * "specialist highlight" allowance (design-system.md §Color).
+ *
+ * Tier 1 = specialist types (specialist_registry.py)
+ * Tier 2 = general activity categories (experience_generator)
+ * Logistics = flight/hotel/accommodation markers
  */
-const PIN_CONFIG: Record<string, PinConfig> = {
+const SPECIALIST_MARKER_COLORS: Record<string, string> = {
   // ── Tier 1: Specialist types ──
-  diving:          { icon: Waves,       color: '#06b6d4' }, // cyan-500
-  hiking:          { icon: Mountain,    color: '#10b981' }, // emerald-500
-  skiing:          { icon: Snowflake,   color: '#3b82f6' }, // blue-500
-  cycling:         { icon: Bike,        color: '#84cc16' }, // lime-500
-  surfing:         { icon: Wind,        color: '#6366f1' }, // indigo-500
-  sailing:         { icon: Anchor,      color: '#06b6d4' }, // cyan-500
-  climbing:        { icon: Compass,     color: '#f97316' }, // orange-500
-  wildlife_safari: { icon: Binoculars,  color: '#f59e0b' }, // amber-500
+  diving:          '#06b6d4', // cyan-500
+  hiking:          '#10b981', // emerald-500
+  skiing:          '#3b82f6', // blue-500
+  cycling:         '#84cc16', // lime-500
+  surfing:         '#6366f1', // indigo-500
+  sailing:         '#06b6d4', // cyan-500
+  climbing:        '#f97316', // orange-500
+  wildlife_safari: '#f59e0b', // amber-500
   // ── Tier 2: General activity categories ──
-  yoga:            { icon: Flower2,     color: '#a855f7' }, // purple-500
-  wellness:        { icon: Dumbbell,    color: '#8b5cf6' }, // violet-500
-  spa:             { icon: Flower2,     color: '#8b5cf6' }, // violet-500
-  nightlife:       { icon: Music,       color: '#d946ef' }, // fuchsia-500
-  cooking:         { icon: Utensils,    color: '#ec4899' }, // pink-500
-  culture:         { icon: Church,      color: '#f43f5e' }, // rose-500
-  cultural:        { icon: Church,      color: '#f43f5e' }, // rose-500
-  temples:         { icon: Landmark,    color: '#f43f5e' }, // rose-500
-  food:            { icon: Utensils,    color: '#ef4444' }, // red-500
-  beach:           { icon: Palmtree,    color: '#10b981' }, // emerald-500
-  shopping:        { icon: ShoppingBag, color: '#ec4899' }, // pink-500
-  sightseeing:     { icon: Camera,      color: '#0ea5e9' }, // sky-500
-  photography:     { icon: Camera,      color: '#0ea5e9' }, // sky-500
-  relaxation:      { icon: Sunset,      color: '#eab308' }, // yellow-500
-  nature:          { icon: Palmtree,    color: '#22c55e' }, // green-500
-  tours:           { icon: Camera,      color: '#3b82f6' }, // blue-500
-  adventure:       { icon: Compass,     color: '#f97316' }, // orange-500
-  family:          { icon: Landmark,    color: '#f59e0b' }, // amber-500
-  activity:        { icon: Flower2,     color: '#a855f7' }, // purple-500
+  yoga:            '#a855f7', // purple-500
+  wellness:        '#8b5cf6', // violet-500
+  spa:             '#8b5cf6', // violet-500
+  nightlife:       '#d946ef', // fuchsia-500
+  cooking:         '#ec4899', // pink-500
+  culture:         '#f43f5e', // rose-500
+  cultural:        '#f43f5e', // rose-500
+  temples:         '#f43f5e', // rose-500
+  food:            '#ef4444', // red-500
+  beach:           '#10b981', // emerald-500
+  shopping:        '#ec4899', // pink-500
+  sightseeing:     '#0ea5e9', // sky-500
+  photography:     '#0ea5e9', // sky-500
+  relaxation:      '#eab308', // yellow-500
+  nature:          '#22c55e', // green-500
+  tours:           '#3b82f6', // blue-500
+  adventure:       '#f97316', // orange-500
+  family:          '#f59e0b', // amber-500
+  activity:        '#a855f7', // purple-500
   // ── Logistics ──
-  flight:          { icon: Plane,       color: '#60a5fa' }, // blue-400
-  arrival:         { icon: Plane,       color: '#60a5fa' }, // blue-400
-  departure:       { icon: Plane,       color: '#60a5fa' }, // blue-400
-  hotel:           { icon: Bed,         color: '#71717a' }, // zinc-500
-  accommodation:   { icon: Bed,         color: '#71717a' }, // zinc-500
-  stay:            { icon: Bed,         color: '#71717a' }, // zinc-500
-  'check-in':      { icon: Bed,         color: '#71717a' }, // zinc-500
-  'check-out':     { icon: Bed,         color: '#71717a' }, // zinc-500
+  flight:          '#60a5fa', // blue-400
+  arrival:         '#60a5fa', // blue-400
+  departure:       '#60a5fa', // blue-400
+  hotel:           '#71717a', // zinc-500
+  accommodation:   '#71717a', // zinc-500
+  stay:            '#71717a', // zinc-500
+  'check-in':      '#71717a', // zinc-500
+  'check-out':     '#71717a', // zinc-500
 };
+
+/** Pin icon per activity/specialist type for map markers. */
+const PIN_ICON: Record<string, LucideIcon> = {
+  // ── Tier 1: Specialist types ──
+  diving:          Waves,
+  hiking:          Mountain,
+  skiing:          Snowflake,
+  cycling:         Bike,
+  surfing:         Wind,
+  sailing:         Anchor,
+  climbing:        Compass,
+  wildlife_safari: Binoculars,
+  // ── Tier 2: General activity categories ──
+  yoga:            Flower2,
+  wellness:        Dumbbell,
+  spa:             Flower2,
+  nightlife:       Music,
+  cooking:         Utensils,
+  culture:         Church,
+  cultural:        Church,
+  temples:         Landmark,
+  food:            Utensils,
+  beach:           Palmtree,
+  shopping:        ShoppingBag,
+  sightseeing:     Camera,
+  photography:     Camera,
+  relaxation:      Sunset,
+  nature:          Palmtree,
+  tours:           Camera,
+  adventure:       Compass,
+  family:          Landmark,
+  activity:        Flower2,
+  // ── Logistics ──
+  flight:          Plane,
+  arrival:         Plane,
+  departure:       Plane,
+  hotel:           Bed,
+  accommodation:   Bed,
+  stay:            Bed,
+  'check-in':      Bed,
+  'check-out':     Bed,
+};
+
+/** Combined pin config derived from color + icon maps. */
+const PIN_CONFIG: Record<string, PinConfig> = Object.fromEntries(
+  Object.keys(SPECIALIST_MARKER_COLORS).map((key) => [
+    key,
+    { icon: PIN_ICON[key] ?? MapPin, color: SPECIALIST_MARKER_COLORS[key] },
+  ])
+);
 
 // DS exception: Mapbox GL requires hex color values for marker pins
 const DEFAULT_PIN: PinConfig = { icon: MapPin, color: '#a1a1aa' }; // zinc-400

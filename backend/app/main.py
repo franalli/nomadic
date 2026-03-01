@@ -11,7 +11,7 @@ import time
 import warnings
 from datetime import datetime
 from typing import Any, Dict, List
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -2710,7 +2710,8 @@ async def fill_day_endpoint(
                             "type": "activity",
                             "partner": "specialist",
                             "partner_product_id": f"specialist_{s_type}_{body.day_number}",
-                            "deeplink_url": "",
+                            "deeplink_url": item.get("deeplink")
+                            or f"https://www.google.com/maps/search/{quote(f'{title} {destination}')}",
                             "title": title,
                             "subtitle": item.get("subtitle", ""),
                             "image_url": item.get("image_url", ""),

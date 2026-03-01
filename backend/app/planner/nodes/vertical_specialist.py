@@ -356,6 +356,8 @@ def _build_specialist_prompt(
     _spec_config = get_specialist_config(topic)
     _buffer_days = 1 if (_spec_config and _spec_config.has_nofly_buffer) else 0
     available_days = max(1, duration_days - 2 - _buffer_days)
+    # Cap at 60% of total days to leave room for mixed activities (yoga, etc.)
+    available_days = min(available_days, max(1, int(duration_days * 0.6)))
 
     if available_days <= 3:
         min_acts, max_acts = 2, 3
@@ -401,6 +403,9 @@ REQUIREMENTS:
 - Include cross-domain constraints explicitly (e.g., diving affects hiking)
 - Keep constraint reasons under 15 words
 - Maximum 5 constraints (safety-critical only)
+- NEVER embed absolute dates in constraints — use relative references \
+("last full day", "day before departure", "first morning") so constraints \
+remain valid if trip dates change
 - For infeasible destinations (e.g., diving in landlocked areas), \
 set feasibility_status to "infeasible" with reason"""
 
@@ -454,7 +459,8 @@ async def generate_specialist_output_llm(
     # =========================================================================
     # CACHE CHECK: L1 (memory) → L2 (PostgreSQL)
     # =========================================================================
-    use_cache = bool(db is not None and not skip_cache_lookup and not scheduling_context)
+    can_cache_write = db is not None
+    use_cache = bool(can_cache_write and not skip_cache_lookup and not scheduling_context)
     if use_cache:
         try:
             from app.services.specialist_cache import get_cached_specialist_output
@@ -478,6 +484,7 @@ async def generate_specialist_output_llm(
                     return None
                 try:
                     output = LLMSpecialistOutput.model_validate(cached)
+                    output = _reanchor_constraint_dates(output)
                     _debug_log(
                         f"[LLM_SPECIALIST] CACHE HIT: {topic} in {destination} "
                         f"(status={output.feasibility_status})"
@@ -599,10 +606,20 @@ async def generate_specialist_output_llm(
                 )
                 output.activities = output.activities[:max_acts]
 
-            # Guard against LLM returning an all-defaults empty dict (feasible + zero activities).
-            # model_validate({}) would succeed silently and poison the 7-day L2 cache.
+            # Guard against LLM returning feasible + zero activities.
+            # Convert to caveat so the user sees feedback instead of silence,
+            # and skip the L2 cache write so the next request retries the LLM.
             if output.feasibility_status == "feasible" and not output.activities:
-                raise ValueError("LLM returned feasible status with zero activities")
+                _debug_log(
+                    f"[LLM_SPECIALIST] ⚠️ {topic}: feasible with zero activities "
+                    f"— converting to caveat (not cached)"
+                )
+                output.feasibility_status = "caveat"
+                output.feasibility_reason = (
+                    f"No specific {topic} activities found for this destination. "
+                    "Try adjusting your preferences or destination."
+                )
+                return output
 
             token_usage = extract_token_usage(raw_result, model=model_name)
             if token_usage:
@@ -645,7 +662,7 @@ async def generate_specialist_output_llm(
             # =================================================================
             # CACHE WRITE: Store successful LLM output to L1 + L2
             # =================================================================
-            if use_cache:
+            if can_cache_write:
                 try:
                     from app.services.specialist_cache import set_cached_specialist_output
 
@@ -687,7 +704,7 @@ async def generate_specialist_output_llm(
             f"type={type(last_error).__name__} | msg={str(last_error)[:300]}"
         )
         # Write negative cache sentinel to prevent retry storms
-        if use_cache:
+        if can_cache_write:
             try:
                 from app.services.specialist_cache import set_negative_cache
 
@@ -872,6 +889,7 @@ async def dispatch_specialist_with_brief(
                 # Positive cache hit — return directly, skip second lookup
                 try:
                     output = LLMSpecialistOutput.model_validate(cached)
+                    output = _reanchor_constraint_dates(output)
                     _logger.info(
                         "[dispatch_specialist_with_brief] %s cache hit (%d activities)",
                         topic,
@@ -1025,6 +1043,29 @@ def convert_llm_output_to_specialist_output(
         constraints=constraints,
         content_blocks=content_blocks,
     )
+
+
+def _reanchor_constraint_dates(output: "LLMSpecialistOutput") -> "LLMSpecialistOutput":
+    """Replace absolute dates in cached constraint rules/reasons with relative references.
+
+    Cached specialist output may contain hard-coded dates (e.g. "March 20th")
+    that become stale when replayed for different trip dates.
+    """
+    import re as _re
+
+    _date_pattern = _re.compile(
+        r"\b(?:January|February|March|April|May|June|July|August|"
+        r"September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?\b",
+        _re.IGNORECASE,
+    )
+    for c in output.constraints:
+        if _date_pattern.search(c.constraint_id):
+            c.constraint_id = _date_pattern.sub("the day before departure", c.constraint_id)
+        if _date_pattern.search(c.reason):
+            c.reason = _date_pattern.sub("the day before departure", c.reason)
+        if c.label and _date_pattern.search(c.label):
+            c.label = _date_pattern.sub("the day before departure", c.label)
+    return output
 
 
 # =============================================================================
@@ -1979,11 +2020,14 @@ async def _merge_specialist_into_state(
     # Default price estimates per specialist type — overridden by Places enrichment when available.
     # These are rough per-person baselines used only when Google Places returns no priceLevel.
     _default_price_estimate: dict[str, float] = {
-        "diving": 70.0,
-        "hiking": 25.0,
+        "diving": 85.0,
+        "hiking": 45.0,
         "skiing": 120.0,
-        "cycling": 50.0,
-        "surfing": 60.0,
+        "cycling": 55.0,
+        "surfing": 65.0,
+        "climbing": 75.0,
+        "sailing": 95.0,
+        "wildlife_safari": 110.0,
     }
     content_added = []
     for block in output.content_blocks:
@@ -2010,7 +2054,7 @@ async def _merge_specialist_into_state(
             "coordinates": block.coordinates,
             "intensity": intensity,
             "duration_hours": block.duration_hours,
-            "price_estimate": _default_price_estimate.get(topic),
+            "price_estimate": _default_price_estimate.get(topic, 50.0),
         }
         content_added.append(content_item)
 

@@ -33,6 +33,12 @@ _session_spend_usd: dict[str, float] = {}
 _global_spend_usd = 0.0
 _provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0}
 
+if not settings.spend_guard_enabled:
+    logger.critical(
+        "SPEND GUARD DISABLED — all LLM and Places API calls are uncapped. "
+        "Set SPEND_GUARD_ENABLED=true in production."
+    )
+
 
 class SpendLimitExceeded(RuntimeError):
     """Raised when a pre-call spend reservation exceeds configured limits."""
@@ -107,11 +113,26 @@ def _reserve_or_raise(
         return
 
     sid = session_id if session_id is not None else _session_id_ctx.get()
-    # No request/session context means there's no stable principal to budget against.
     if not sid:
         logger.warning(
-            "spend_guard bypassed: no session_id (source=%s, est=$%.4f)", source, estimated_usd
+            "spend_guard: no session_id (source=%s), enforcing global cap only",
+            source,
         )
+        # Skip session cap, still enforce global daily cap
+        global_cap = max(0.0, float(settings.spend_guard_global_daily_cap_usd))
+        with _spend_lock:
+            _rollover_if_needed()
+            if global_cap > 0 and (_global_spend_usd + estimated_usd) > global_cap:
+                raise SpendLimitExceeded(
+                    provider=provider,
+                    scope="global",
+                    limit_usd=global_cap,
+                    current_usd=_global_spend_usd,
+                    requested_usd=estimated_usd,
+                    source=source,
+                )
+            _global_spend_usd += estimated_usd
+            _provider_spend_usd[provider] = _provider_spend_usd.get(provider, 0.0) + estimated_usd
         return
 
     session_cap = max(0.0, float(settings.spend_guard_session_daily_cap_usd))

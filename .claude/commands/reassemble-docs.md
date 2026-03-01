@@ -25,26 +25,26 @@ files and corrects any drift between docs and code. Run this weekly or after maj
 
 **Sources of truth:** The backend planner code.
 
-### 2A: Node Architecture (read each node file, verify doc matches)
+### 2A: Coordinator + Module Architecture (read each source file, verify doc matches)
 
-For each node, read the ACTUAL source and verify the doc:
+For each module, read the ACTUAL source and verify the doc:
 
 | Doc Section           | Read These Files                                                                               | Verify                                                                                                                          |
 | --------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Architecture Overview | `backend/app/plan_graph.py`                                                                    | Node count, node names in `create_optimized_graph()`, edge definitions                                                          |
-| IntentRouter          | `backend/app/planner/nodes/intent_router.py`, `backend/app/planner/nodes/router_extraction.py` | Classification flow, `RouterOutput` fields, static responses, specialist detection                                              |
-| TripArchitect         | `backend/app/planner/nodes/trip_architect.py`                                                  | Settings extraction, field handling, mode determination                                                                         |
+| Architecture Overview | `backend/app/planner/coordinator.py`                                                           | StepType enum, `plan_turn()` logic, `_execute_step()` dispatch, `_build_envelope()` output                                     |
+| RouterExtraction      | `backend/app/planner/nodes/router_extraction.py`                                               | Classification flow, `RouterOutput`/`ClassifierOutput` fields, static responses, specialist detection                           |
 | VerticalSpecialist    | `backend/app/planner/nodes/vertical_specialist.py`                                             | Execution flow, parallel batching, `SpecialistOutput` fields                                                                    |
 | LocalExpert           | `backend/app/planner/nodes/local_expert.py`                                                    | LLM gating, fallback behavior                                                                                                   |
 | LogisticsNode         | `backend/app/planner/nodes/logistics_node.py`                                                  | Tile fetching, provider routing, experience generation trigger                                                                  |
-| ConstraintGuard       | `backend/app/planner/nodes/constraint_guard.py`                                                | Validation functions, violation types, auto-fix loop, `route_after_guard()` logic                                               |
-| Synthesizer           | `backend/app/planner/nodes/synthesizer.py`                                                     | Model routing (`_MODEL_BY_COMPLEXITY` or equivalent), response types, `generate_suggestions()` priority cascade, prompt caching |
+| ConstraintGuard       | `backend/app/planner/nodes/constraint_guard.py`                                                | Validation functions, violation types, `validate_block_arrangement()`, builder-aware suppression                                 |
+| Conversationalist     | `backend/app/planner/conversationalist.py`                                                     | Response generation, context assembly, prompt caching                                                                           |
+| ChipGenerator         | `backend/app/planner/chip_generator.py`                                                        | Suggestion chip generation, priority cascade                                                                                    |
 
 For each: if the doc describes behavior that doesn't match the code, FIX THE DOC.
 
-### 2B: Routing Logic
+### 2B: Coordinator Step Planning
 
-Read `plan_graph.py` functions: `route_after_router()`, `route_after_specialist()`, `route_after_guard()`, `route_after_architect()`, `route_after_logistics()`. Verify the routing diagram and conditional edge descriptions match.
+Read `coordinator.py` functions: `plan_turn()`, `_execute_step()`, `_execute_parallel_group()`, `_build_envelope()`, `_step_node_name()`. Verify the step execution flow and parallel group descriptions match.
 
 ### 2C: Specialist Domain Knowledge
 
@@ -66,7 +66,7 @@ Read `backend/app/services/itinerary_builder.py` — focus on the `build()` meth
 
 ### 2E: Caching Architecture
 
-Read: `specialist_cache.py`, `router_cache.py`, `tile_cache.py`, `experience_generator.py` (cache sections), `base_cache.py`, `cache_access.py`.
+Read: `specialist_cache.py`, `router_cache.py`, `tile_cache.py`, `experience_generator.py` (cache sections), `cache_core.py`.
 
 - Verify cache table: class, max size, TTL, key format, purpose
 - Verify L1/L2 architecture description
@@ -80,21 +80,21 @@ Read `backend/app/services/regen_strategy.py`.
 
 ### 2G: Services
 
-Read `response_envelope.py`, `section_builder.py`, `state_serde.py`, `itinerary_adapter.py`.
+Read `section_builder.py`, `state_serde.py`, `itinerary_adapter.py`. Also read `coordinator.py` `_build_envelope()` for plan_view_state computation.
 
 - Verify described public APIs match actual function signatures
-- Verify `_compute_plan_view_state()` logic matches doc
+- Verify `_compute_coordinator_s3_state()` logic matches doc
 
 ### 2H: Streaming
 
-Read `plan_graph.py` streaming functions (`run_turn_streaming` or equivalent).
+Read `backend/app/streaming.py` and streaming sections of `backend/app/main.py` and `coordinator.py` `execute_turn()`.
 
 - Verify SSE event types and data shapes
 - Verify NDJSON event types for expand-itinerary
 
 ### 2I: LLM Factory & Structured Output
 
-Read `backend/app/planner/llm_factory.py` and `backend/app/planner/llm_structured.py`.
+Read `backend/app/planner/llm_factory.py`.
 
 - Verify supported providers (model prefix detection logic)
 - Verify provider-specific param handling (Gemini: `max_output_tokens`, `thinking_budget`; OpenAI: `max_tokens`, `streaming`)
@@ -129,7 +129,7 @@ Read `backend/app/schemas.py` and `backend/app/planner/state/graph_state.py`.
 
 ### 3C: Streaming Protocols
 
-Read the streaming handler in `main.py` and `plan_graph.py`.
+Read the streaming handler in `main.py`, `streaming.py`, and `coordinator.py`.
 
 - Verify SSE event table (type, data shape, purpose)
 - Verify NDJSON event table
@@ -216,7 +216,7 @@ Write all corrections to `docs/design-system.md`.
 
 ### 5A: Planning Phases & View States
 
-Read `frontend/lib/planStateHelpers.ts` and `backend/app/planner/services/response_envelope.py` (`_compute_plan_view_state`).
+Read `frontend/components/plan/planStateHelpers.ts` and `backend/app/planner/coordinator.py` (`_build_envelope`, `_compute_coordinator_s3_state`).
 
 - Verify Planning Phase Progression table
 - Verify Legacy Mapping table (S* → P* states)
@@ -248,7 +248,7 @@ Read `frontend/hooks/useSessionHydration.ts` (or equivalent) and `frontend/state
 
 ### 5E: Suggestion Chips
 
-Read `backend/app/planner/nodes/synthesizer.py` (`generate_suggestions`) and the chip rendering component.
+Read `backend/app/planner/chip_generator.py` and the chip rendering component.
 
 - Verify chip state table (what chips show in what state)
 - Verify priority cascade description
@@ -305,7 +305,7 @@ For each factual claim in the agent spec (function names, phase lists, constant 
 
 Key areas to verify per agent:
 
-**backend-specialist**: Node names + count in `create_optimized_graph()`, routing function signatures, halt condition file references, constraint guard validation function names, cache class names, derived constants from specialist registry, state serialization function signatures, LLM factory provider detection logic, structured output retry pattern
+**backend-specialist**: StepType enum values in `coordinator_schemas.py`, coordinator function signatures (`plan_turn`, `_execute_step`, `_build_envelope`), halt condition file references, constraint guard validation function names, cache class names, derived constants from specialist registry, state serialization function signatures, LLM factory provider detection logic, structured output retry pattern
 
 **frontend-specialist**: DS token categories + names in the `DS` object, Tailwind config overrides, store action names + guard logic, streaming protocol details in api.ts, renderer component name + conditional logic, component file names in ownership list, halt condition file references
 
@@ -351,7 +351,7 @@ Audit `CLAUDE.md` against the live codebase. CLAUDE.md drifts just like other do
 
 Read each hard rule. For each:
 
-- Verify the invariant is still enforced in code (e.g., rule about node count: count nodes in `create_optimized_graph()`)
+- Verify the invariant is still enforced in code (e.g., rule about coordinator: verify `plan_turn()` and `execute_turn()` in `coordinator.py`)
 - Verify referenced function/file names still exist
 - Verify no rules reference specific model names or versions (should reference `settings.*_model`)
 - Flag rules that may be obsolete with `<!-- REVIEW: is this rule still needed? -->`
@@ -369,7 +369,7 @@ Read each hard rule. For each:
 
 ### 7E: Performance Notes
 
-- Verify model routing description matches `_MODEL_BY_COMPLEXITY` in synthesizer.py
+- Verify model routing description references `settings.*_model` env vars via `llm_factory.py`
 - Verify description does NOT contain hardcoded model names — should reference `settings.*_model` env vars
 
 ### 7F: Sprint Section

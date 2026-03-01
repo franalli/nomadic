@@ -10,6 +10,7 @@ type SuggestionTriggerActionParams = {
   bookingTypes?: BookingTypes;
   onUpdateFlightSettings?: (settings: Partial<FlightSettings>) => void;
   onUpdateBookingTypes?: (settings: Partial<BookingTypes>) => void;
+  onConfirmReset?: () => void;
   ensureSettingsFlushed?: (options?: { requestId?: string; sendCycleId?: string }) => Promise<void>;
   toast?: (message: string) => void;
 };
@@ -23,6 +24,11 @@ export function handleSuggestionTriggerAction(params: SuggestionTriggerActionPar
     ensureSettingsFlushed,
     toast,
   } = params;
+
+  if (actionTarget === 'confirm_reset') {
+    params.onConfirmReset?.();
+    return true;
+  }
 
   if (actionTarget !== 'set_direct_flights_only') {
     return false;

@@ -374,10 +374,11 @@ class TestComputeTilesPerCategory:
         result = _compute_tiles_per_category(state, {"yoga"})
         assert result == 10
 
-    def test_long_trip_capped_at_12(self):
+    def test_long_trip_capped_at_20(self):
         # 21-day trip, no specialists, 1 category
         # tiles_per_cat = min(max(2,19),4) = 4
-        # Coverage floor: 4*1=4 < 19*1=19, lifts to min(19,12)=12
+        # free_days > 7 -> tile_cap_ceiling = 20
+        # Coverage floor: 4*1=4 < 19*2=38, lifts to min(38,20)=20
         tp = TripPlan(
             destination="Bali",
             start_date="2026-03-01",
@@ -385,7 +386,7 @@ class TestComputeTilesPerCategory:
         )
         state = _make_state(trip_plan=tp)
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 12
+        assert result == 20
 
     def test_very_short_trip_minimum_2(self):
         # 2-day trip, 0 specialist

@@ -1,12 +1,12 @@
 ---
 name: backend-specialist
 description: >
-  Delegate to this agent for ALL backend Python work: planner agent, tools, middleware,
+  Delegate to this agent for ALL backend Python work: planner coordinator, nodes,
   services, state layers, LLM factory, structured output, caching, config/settings.
-  Triggers on: itinerary builder, constraint guard, agent tools, middleware,
+  Triggers on: itinerary builder, constraint guard, coordinator execution,
   router extraction, specialist registry, state serialization, coordinator,
   conversationalist, change classifier, specialist dispatch, trip brief,
-  agent_runner, FastAPI endpoints, tile service, caching, llm_factory,
+  FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
   patterns_registry, activity_browser, spend_guard, telemetry, or any file under backend/app/.
 tools: Read, Write, Edit, Bash, Glob, Grep

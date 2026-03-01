@@ -25,6 +25,7 @@ import logging
 import time
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
+from urllib.parse import quote
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -438,7 +439,9 @@ def _flatten_tiles_payload(tiles: Dict[str, Any]) -> Dict[str, Any]:
 def _short_circuit_message(intent: str) -> str:
     """Deterministic, no-LLM response for greeting/reset short-circuits."""
     if intent == "RESET":
-        return "Reset complete. Tell me your destination and dates to start a new trip."
+        return (
+            "Are you sure you want to reset? This will clear your entire trip plan and start fresh."
+        )
     if intent == "GREETING":
         return "Hi! Share your destination and dates and I can start planning."
     return ""
@@ -451,6 +454,11 @@ def _clear_planning_artifacts(state: Dict[str, Any]) -> None:
     state["day_cards"] = []
     state["constraints"] = []
     state["specialist_plans"] = {}
+    # Clear stale overview/browseable so they don't leak from old destination
+    persistent_meta = state.get("persistent_meta", {})
+    if isinstance(persistent_meta, dict):
+        persistent_meta.pop("itinerary_overview", None)
+        persistent_meta.pop("browseable_activities", None)
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +506,20 @@ def plan_turn(
                 ExecutionStep(step_type=StepType.GENERATE_RESPONSE),
             ],
             reason="Question — answer without plan changes",
+            estimated_llm_calls=1,
+            estimated_wall_ms=800,
+        )
+
+    # Short-circuit GENERATE_PLAN_NOW when itinerary is already built
+    if (
+        change_type == ChangeType.INITIAL_PLAN
+        and classifier.reasoning
+        and "GENERATE_PLAN_NOW" in classifier.reasoning
+        and state.get("day_cards")
+    ):
+        return ExecutionPlan(
+            steps=[ExecutionStep(step_type=StepType.GENERATE_RESPONSE)],
+            reason="GENERATE_PLAN_NOW — itinerary exists, response only",
             estimated_llm_calls=1,
             estimated_wall_ms=800,
         )
@@ -636,6 +658,18 @@ def _compute_dispatch_list(
     tier1_active = sorted({c for c in all_categories if c in TIER1_SPECIALIST_NAMES})
 
     if classifier.change_type in _FULL_INVALIDATION_CHANGES:
+        if classifier.change_type == ChangeType.DESTINATION_CHANGE:
+            # Only dispatch specialists explicitly mentioned in the new message.
+            # Check affects, specialist_hints, AND activity_categories.
+            mentioned = (
+                {_norm_topic(t) for t in classifier.affects}
+                | {_norm_topic(h) for h in classifier.specialist_hints}
+                | {_norm_topic(c) for c in classifier.activity_categories}
+            )
+            new_specialists = [c for c in tier1_active if c in mentioned]
+            if not new_specialists and not mentioned & TIER1_SPECIALIST_NAMES:
+                return []  # Don't carry forward from old destination
+            return new_specialists if new_specialists else tier1_active
         # Fresh start — dispatch all active Tier 1 specialists
         return tier1_active
 
@@ -820,8 +854,8 @@ def build_brief(
         start_date=start_date,
         end_date=end_date,
         num_days=num_days,
-        adults=trip_plan.get("adults", 1),
-        children=trip_plan.get("children", 0),
+        adults=trip_plan.get("adults") or 1,
+        children=trip_plan.get("children") or 0,
         skill_level=classifier.skill_level or activity_settings.get("skill_level"),
         budget_total=budget_total,
         budget_allocation_pct=round(budget_pct, 2),
@@ -1097,6 +1131,14 @@ def _apply_classifier_to_state(
     existing_cats: List[str] = list(activity_settings.get("categories", []))
     new_cats = list(existing_cats)
 
+    # On destination change, clear stale categories — e.g. "diving" is irrelevant
+    # after switching from Bali to Lisbon.  Specialist hints from the NEW message
+    # will be re-added below.
+    if classifier.change_type == ChangeType.DESTINATION_CHANGE:
+        new_cats = []
+        if activity_settings.get("day_preferences"):
+            activity_settings["day_preferences"] = {}
+
     # Add specialist hints as categories
     for hint in classifier.specialist_hints:
         if hint and hint.lower() not in [c.lower() for c in new_cats]:
@@ -1213,6 +1255,10 @@ def _apply_classifier_to_state(
                 tiles["activities"] = []
                 state["tiles"] = tiles
             state["day_cards"] = []
+
+    # Default activities_per_day to 2 if not explicitly set by user
+    if not activity_settings.get("activities_per_day"):
+        activity_settings["activities_per_day"] = 2
 
     # Skill level
     if classifier.skill_level:
@@ -1636,7 +1682,7 @@ def _specialist_content_to_tiles(
                 "currency": "USD",
                 "price_basis": "per_person",
                 "is_estimate_only": True,
-                "deeplink_url": "",
+                "deeplink_url": f"https://www.google.com/maps/search/{quote(f'{title} {destination}')}",
                 "rating": None,
                 "location_label": destination,
                 "tags": ["activity", topic, "specialist"],
@@ -1970,6 +2016,11 @@ async def _search_tiles(
     if "activities" in requested_types:
         browseable = graph_state.metadata.get("browseable_activities")
         turn_meta["browseable_activities"] = browseable if isinstance(browseable, list) else []
+    else:
+        # Preserve existing browseable from persistent_meta (survives turn_meta reset)
+        existing_browseable = state.get("persistent_meta", {}).get("browseable_activities", [])
+        if existing_browseable:
+            turn_meta["browseable_activities"] = existing_browseable
     turn_meta["tile_search_summary"] = (
         f"Found {len(merged_tiles.get('flights', []))} flights, "
         f"{len(merged_tiles.get('hotels', []))} hotels, "
@@ -2058,8 +2109,8 @@ async def _run_local_intel(
                 destination=destination,
                 start_date=trip_plan.get("start_date"),
                 end_date=trip_plan.get("end_date"),
-                adults=trip_plan.get("adults", 1),
-                children=trip_plan.get("children", 0),
+                adults=trip_plan.get("adults", 1) or 1,
+                children=trip_plan.get("children", 0) or 0,
                 session_id=session_id,
             )
             async with _pending_lock:
@@ -2354,6 +2405,35 @@ def _build_envelope(
         ]
         state["persistent_meta"] = persistent_meta
 
+    # ── Reset confirmation override ──────────────────────────────────
+    if state.get("_reset_pending"):
+        suggestion_chips = [
+            {
+                "message": "Yes, reset my trip",
+                "action_type": "trigger_action",
+                "action_target": "confirm_reset",
+                "chip_type": "cta",
+                "category": "action",
+            },
+            {
+                "message": "No, keep planning",
+                "action_type": "send_message",
+                "chip_type": "follow_up",
+                "category": "follow_up",
+            },
+        ]
+        persistent_meta = (
+            dict(persistent_meta) if not isinstance(persistent_meta, dict) else {**persistent_meta}
+        )
+        persistent_meta["suggestion_chips"] = suggestion_chips
+        persistent_meta["suggestion_chip_texts"] = [c["message"] for c in suggestion_chips]
+        persistent_meta["suggestion_chip_meta"] = [
+            {"chip_type": c["chip_type"], "category": c["category"], "icon": None}
+            for c in suggestion_chips
+        ]
+        state["persistent_meta"] = persistent_meta
+        state.pop("_reset_pending", None)
+
     if not isinstance(suggestion_chips, list):
         suggestion_chips = []
 
@@ -2433,7 +2513,15 @@ def _build_envelope(
     builder_ran = isinstance(builder_result, dict) and builder_result.get("success") is not None
 
     if not has_core:
-        plan_view_state = "S0_BOOTSTRAP"
+        # Check if we have destination but just missing dates
+        has_destination_only = bool(
+            trip_plan.get("destination")
+            and (not trip_plan.get("start_date") or not trip_plan.get("end_date"))
+        )
+        if has_destination_only and strategy_sections:
+            plan_view_state = "S2_STRATEGY_READY"
+        else:
+            plan_view_state = "S0_BOOTSTRAP"
     elif builder_ran:
         plan_view_state = _compute_coordinator_s3_state(turn_meta, day_cards or [])
     elif day_cards:
@@ -2448,6 +2536,13 @@ def _build_envelope(
     # Write to persistent_meta
     persistent_meta = dict(state.get("persistent_meta", {}))
     persistent_meta["plan_view_state"] = plan_view_state
+    # Persist itinerary_overview so it survives across turns where builder doesn't re-run
+    if builder_ran and builder_result.get("overview"):
+        persistent_meta["itinerary_overview"] = builder_result["overview"]
+    # Persist browseable_activities so they survive turn_meta reset between turns
+    browseable_from_turn = turn_meta.get("browseable_activities")
+    if isinstance(browseable_from_turn, list) and browseable_from_turn:
+        persistent_meta["browseable_activities"] = browseable_from_turn
     state["persistent_meta"] = persistent_meta
 
     # Compute whether state changed this turn via hash comparison.
@@ -2552,6 +2647,10 @@ def _build_envelope(
     origin_just_set = bool(turn_meta.get("origin_just_set", False))
     tiles_replaced = bool(turn_meta.get("tiles_replaced", False))
     browseable_activities = turn_meta.get("browseable_activities", [])
+    # Normalize deeplink → deeplink_url for browseable activities
+    for ba in browseable_activities:
+        if not ba.get("deeplink_url") and ba.get("deeplink"):
+            ba["deeplink_url"] = ba["deeplink"]
 
     document: Dict[str, Any] = {
         "trip_context_id": None,
@@ -2576,7 +2675,11 @@ def _build_envelope(
         "itinerary_day_cards": (
             [] if coordinator_reset else day_cards if day_cards else ([] if builder_ran else None)
         ),
-        "itinerary_overview": builder_result.get("overview") if builder_ran else None,
+        "itinerary_overview": (
+            builder_result.get("overview")
+            if builder_ran
+            else persistent_meta.get("itinerary_overview")
+        ),
         "ack_status": ack_status,
         "ack_updates": ack_updates,
         "applied_updates": _canonicalize_applied_updates(fields_changed),
@@ -2638,12 +2741,7 @@ async def _execute_step(
     if step_type == StepType.SHORT_CIRCUIT:
         reason = step.params.get("reason", "")
         if reason == "reset":
-            # Clear state
-            state["trip_plan"] = {}
-            state["trip_settings"] = {}
-            _clear_planning_artifacts(state)
-            state["persistent_meta"] = {}
-            state["_coordinator_reset"] = True
+            state["_reset_pending"] = True
         return None
 
     if step_type == StepType.DISPATCH_SPECIALISTS:
@@ -2942,13 +3040,7 @@ async def execute_turn(
                 },
             }
         elif classifier.intent == "RESET":
-            yield {
-                "type": "partial",
-                "data": {
-                    "kind": "trip_inputs",
-                    "payload": {},
-                },
-            }
+            pass
 
         # Step 4: Plan the turn
         plan = plan_turn(classifier, state)

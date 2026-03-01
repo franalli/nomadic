@@ -251,7 +251,9 @@ export function ActivityCardMeta({
   const priceLevelLabel = resolvePriceLevelLabel(block);
   const resolvedPriceEstimate = resolvePriceEstimate(block);
   const resolvedDuration = resolveDurationLabel(block);
-  const showEstimatedPrice = !priceLevelLabel && resolvedPriceEstimate != null;
+  // Prefer numeric estimate (~$45) over price level ($$) when both exist
+  const showEstimatedPrice = resolvedPriceEstimate != null;
+  const showPriceLevel = priceLevelLabel && !showEstimatedPrice;
   const badgeBg = BADGE_BG_CLASS[categoryKey] || 'bg-zinc-100 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-400';
 
   const showIntensityBadge = block.intensity && !block.is_buffer && block.specialist_type !== 'local_expert' && (() => {
@@ -274,11 +276,11 @@ export function ActivityCardMeta({
         {resolvedTitle}
       </h4>
 
-      {(block.rating != null || priceLevelLabel || showEstimatedPrice || resolvedDuration) && (
+      {(block.rating != null || showPriceLevel || showEstimatedPrice || resolvedDuration) && (
         <div className="mt-1 flex items-center gap-2 flex-wrap">
           {block.rating != null && (
             <span className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-0.5">
-              <Star className="w-3 h-3 fill-current text-amber-400" />
+              <Star className="w-3 h-3 fill-current text-amber-400 dark:text-amber-300" />
               {block.rating.toFixed(1)}
               {block.review_count != null && (
                 <span className="ml-0.5">
@@ -290,7 +292,7 @@ export function ActivityCardMeta({
             </span>
           )}
 
-          {priceLevelLabel && (
+          {showPriceLevel && (
             <span className="text-xs text-zinc-500 dark:text-zinc-400">
               {priceLevelLabel}
             </span>

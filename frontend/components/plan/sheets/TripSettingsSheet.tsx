@@ -62,18 +62,18 @@ function FieldRow({ icon: Icon, label, value, onClick }: FieldRowProps) {
     >
       <Icon className={cn(
         'w-5 h-5 shrink-0',
-        value ? 'text-zinc-900 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-500'
+        value ? 'text-zinc-900 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400'
       )} />
       <div className="flex-1 min-w-0 text-left">
         <span className={cn(
           'text-sm font-medium',
-          value ? 'text-zinc-900 dark:text-white' : 'text-zinc-400 dark:text-zinc-500'
+          value ? 'text-zinc-900 dark:text-white' : 'text-zinc-500 dark:text-zinc-400'
         )}>
           {value || label}
         </span>
       </div>
       {!value && (
-        <span className="text-xs text-zinc-400 dark:text-zinc-600">Tap to set</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">Tap to set</span>
       )}
     </button>
   );
@@ -130,7 +130,7 @@ function TripSettingsSheetInner({
       title="Trip Settings"
       hint="Tap a field to edit"
     >
-      <div className="flex flex-col gap-2.5">
+      <div className="flex flex-col gap-2">
         <FieldRow
           icon={MapPin}
           label="Destination"

@@ -81,7 +81,7 @@ These four docs override your assumptions. Read before generating code.
 
 | SSoT Doc                           | Governs                                | Rule                                                                  |
 | ---------------------------------- | -------------------------------------- | --------------------------------------------------------------------- |
-| `@docs/plan_graph_analysis.md`     | Backend architecture, agent + tools    | MUST verify plan against spec before writing planner code             |
+| `@docs/plan_graph_analysis.md`     | Backend architecture, coordinator + nodes/services | MUST verify plan against spec before writing planner code             |
 | `@docs/design-system.md`           | UI styling, tokens, component patterns | ALL React components use these tokens — no invented Tailwind values   |
 | `@docs/ux_unified_architecture.md` | View states, rendering logic, UX flow  | Never swap renderers — `StrategyStageRenderer` adapts by data density |
 | `@docs/data-contracts.md`          | API routes, schemas, state store       | Check before modifying API endpoints, schemas, or state shape         |
@@ -186,7 +186,7 @@ Coordinator routing and response generation rely on `settings.*_model` env vars 
 
 - `/compact` after completing major features or switching focus areas
 - `/clear` when switching between frontend and backend work
-- Reference specific files (`@backend/app/planner/agent.py`), not directories
+- Reference specific files (`@backend/app/planner/coordinator.py`), not directories
 - Avoid reading entire directories, node_modules, or loading all spec docs at once
 
 ---

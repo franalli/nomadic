@@ -69,8 +69,7 @@ backend/app/
                        spend_guard.py
   tile_service/      → curated_provider.py, mock_provider.py,
                        google_places_provider.py, provider_base.py, service.py, models.py
-  tools/             → constraint_engine.py, tile_service.py,
-                       circuit_breaker.py
+  tools/             → constraint_engine.py, tile_service.py
   utils/             → tile_utils.py (tile-flattening utilities)
   crud_document.py, crud_trip.py, validation.py, validation_cache.py,
   rate_limit.py, request_dedup.py, streaming.py, sse_state.py
@@ -95,7 +94,7 @@ backend/app/
 
 ### ConstraintGuard
 
-Mostly deterministic. One LLM exception: `check_route_constraint()` calls `validate_place_exists()` (via `app.validation.validate_input_async`, LLM-backed with TTL caching from `validation_cache.py`). Invoked via `validate_plan` tool. Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`.
+Mostly deterministic. One LLM exception: `check_route_constraint()` calls `validate_place_exists()` (via `app.validation.validate_input_async`, LLM-backed with TTL caching from `validation_cache.py`). Invoked directly by `main.py` endpoints for block arrangement validation (`validate_block_arrangement`). Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`.
 
 `DAY_PREFERENCE_EXCEEDS_CAPACITY` now comes from `constraint_guard.py` capacity validation. If you update the capacity formula, keep guard checks and builder assumptions aligned.
 

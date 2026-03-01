@@ -343,7 +343,7 @@ export function BookingSection({
     const message = totalTiles > 0 ? 'Refreshing deals…' : 'Searching deals…';
     return (
       <div id="booking-section" className="px-4 py-2 space-y-4 animate-in fade-in duration-500">
-        <p className="text-xs text-muted-foreground">{message}</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">{message}</p>
         <MiniCardSkeleton />
         <MiniCardSkeleton />
         <MiniCardSkeleton />
@@ -355,7 +355,7 @@ export function BookingSection({
   if (state.startsWith('S2_')) {
     return (
       <div id="booking-section" className="px-4 py-2">
-        <p className="text-xs text-muted-foreground/80">
+        <p className="text-xs text-zinc-500/80 dark:text-zinc-400/80">
           Booking options appear after itinerary.
         </p>
       </div>
@@ -369,9 +369,9 @@ export function BookingSection({
       return (
         <div id="booking-section" className="flex items-center justify-center h-64">
           <div className="text-center">
-            <Package className="mx-auto mb-3 h-12 w-12 text-muted-foreground/60" />
-            <p className="text-muted-foreground">No booking options available yet.</p>
-            <p className="mt-1 text-sm text-muted-foreground/80">
+            <Package className="mx-auto mb-3 h-12 w-12 text-zinc-400 dark:text-zinc-500" />
+            <p className="text-zinc-500 dark:text-zinc-400">No booking options available yet.</p>
+            <p className="mt-1 text-sm text-zinc-500/80 dark:text-zinc-400/80">
               Generate an itinerary to see bookable options.
             </p>
           </div>
@@ -389,13 +389,13 @@ export function BookingSection({
               {/* Header */}
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-xl font-semibold text-foreground">Your Trip Options</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Your Trip Options</h2>
+                  <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                     {totalTiles} options found • Add items to your trip
                   </p>
                 </div>
                 {savedTileIds.size > 0 && (
-                  <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                  <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
                     {savedTileIds.size} in trip
                   </span>
                 )}
@@ -442,9 +442,9 @@ export function BookingSection({
           </div>
 
           {/* Mobile: Fixed Checkout Footer */}
-          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 flex items-center justify-between border-t border-border bg-background/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm">
+          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-20 flex items-center justify-between border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-zinc-950/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm">
             <div className="flex flex-col">
-              <span className="text-xs text-muted-foreground">Est. Total</span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">Est. Total</span>
               <span className="font-bold text-lg">
                 {hasMixedCheckoutCurrencies ? (
                   'Multiple currencies'
@@ -462,10 +462,10 @@ export function BookingSection({
               onClick={onCheckout}
               disabled={savedTiles.length === 0 || hasCheckoutCurrencyIssue || !onCheckout}
               className={cn(
-                'px-6 py-3 rounded-lg font-semibold text-sm transition-colors',
+                'px-6 py-3 rounded-lg font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none',
                 savedTiles.length > 0 && !hasCheckoutCurrencyIssue && onCheckout
-                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-soft'
-                  : 'bg-muted text-muted-foreground cursor-not-allowed'
+                  ? 'bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:hover:bg-emerald-500 shadow-sm'
+                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-400'
               )}
             >
               Checkout

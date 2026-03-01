@@ -37,7 +37,7 @@ interface DatesSheetProps {
 // Quick presets
 const DATE_PRESETS = [
   { label: 'This Weekend', getDates: () => getThisWeekend() },
-  { label: 'Next Week', getDates: () => getNextWeekend() },
+  { label: 'Next Weekend', getDates: () => getNextWeekend() },
   { label: '1 Week', getDates: () => getWeekFromNow(1) },
   { label: '2 Weeks', getDates: () => getWeekFromNow(2) },
 ];
@@ -196,7 +196,7 @@ function DatesSheetInner({
                 'bg-white/95 dark:bg-zinc-950/95',
                 'backdrop-blur-xl',
                 'border border-zinc-200 dark:border-white/10',
-                'shadow-[0_20px_50px_rgba(0,0,0,0.1)] dark:shadow-2xl dark:shadow-black/80',
+                'shadow-soft',
                 // Mobile
                 !isDesktop && 'max-w-[95vw]'
               )}
@@ -215,7 +215,7 @@ function DatesSheetInner({
                   'transition-all'
                 )}
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
 
               {/* ═══════════════════════════════════════════════════════════════ */}

@@ -1970,19 +1970,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Merge tiles only for same destination (additive like flights)
     // Full replace on destination change, date change, or backend tiles_replaced flag
     const tilesReplaced = response.document.tiles_replaced === true;
-    let mergedTiles: Record<string, Record<string, unknown>>;
+    let mergedTiles: Record<string, Tile>;
     if (destinationChanged || datesChanged) {
       mergedTiles = response.document.tiles;
     } else if (tilesReplaced) {
       const incomingHasHotels = Object.values(response.document.tiles ?? {}).some(
-        (t: Record<string, unknown>) =>
-          t.type === 'hotel' || t.type === 'accommodation'
+        (t) => t.type === 'hotel' || t.type === 'accommodation'
       );
       if (!incomingHasHotels && currentDoc?.tiles) {
         const currentHotels = Object.fromEntries(
           Object.entries(currentDoc.tiles).filter(
-            ([, t]: [string, Record<string, unknown>]) =>
-              t.type === 'hotel' || t.type === 'accommodation'
+            ([, t]) => t.type === 'hotel' || t.type === 'accommodation'
           )
         );
         mergedTiles = { ...currentHotels, ...response.document.tiles };

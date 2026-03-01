@@ -602,6 +602,7 @@ class ItineraryBuilder:
                     conflicts=early_conflicts,
                     resolutions=resolutions,
                     day_cards=partial_days,  # Return partial schedule
+                    overview=self._compute_overview(partial_days),
                     error="CONSTRAINT_CONFLICT",
                 )
 
@@ -618,7 +619,9 @@ class ItineraryBuilder:
             tier2_cats = [
                 c
                 for c in (input_data.activity_categories or [])
-                if c not in scheduled_types and c not in ("general", "local_expert")
+                if c not in scheduled_types
+                and c not in _TIER1_SPECIALIST_NAMES
+                and c not in ("general", "local_expert")
             ]
             has_tier2 = bool(tier2_cats)
             days = self._distribute_activities(

@@ -92,10 +92,10 @@ export function StrategyStageRenderer({
   });
 
   const planContent = useMemo(() => {
-    const { isShowingMirrorLoader, tripDuration } = o.displayLogic;
+    const { isShowingMirrorLoader, tripDuration, density: immediateDensity } = o.displayLogic;
     const { fullModeSections } = o.specialistData;
-    if (isShowingMirrorLoader) return <PlanMirrorLoader tripDuration={tripDuration} />;
-    if (o.stableDensity === 'empty' || o.stableDensity === 'ghost' || o.stableDensity === 'bridge') return null;
+    if (isShowingMirrorLoader || immediateDensity === 'ghost') return <PlanMirrorLoader tripDuration={tripDuration} />;
+    if (immediateDensity === 'empty' || immediateDensity === 'bridge') return null;
     return (
       <PlanFullDensityView
         state={state} viewModel={viewModel}
@@ -116,7 +116,7 @@ export function StrategyStageRenderer({
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps -- onOpenActivitySettings etc intentionally excluded
   }, [
-    o.displayLogic, o.specialistData, o.stableDensity, o.effectiveTripInputs, o.fullModePOIs,
+    o.displayLogic, o.specialistData, o.effectiveTripInputs, o.fullModePOIs,
     o.effectiveTiles, o.hasSectionData, o.hasItineraryContent, o.isStreaming, o.isAnyRegenerating,
     o.isRegenUpdating, o.isDesktop, o.preferenceCount,
     o.effectiveMode, o.timelineSectionRef, o.scrollContainerRef, o.handleSaveTile, o.handleOpenBookingDrawer,

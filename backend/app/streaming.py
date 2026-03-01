@@ -285,6 +285,43 @@ def _normalize_constraints_validated(value: Any) -> List[Dict[str, Any]]:
     return normalized
 
 
+# Core identity fields seeded from trip_inputs → trip_plan.
+# Settings fields (booking_types, flight_settings, etc.) are NOT included —
+# they flow through _doc_settings → restore_agent_state → trip_settings.
+_CORE_TRIP_FIELDS = (
+    "destination",
+    "origin",
+    "start_date",
+    "end_date",
+    "destination_iata",
+    "origin_iata",
+    "adults",
+    "children",
+    "budget",
+    "currency",
+)
+
+
+def _seed_trip_plan_from_inputs(session_state: Dict[str, Any]) -> None:
+    """Seed trip_plan with document's core fields from trip_inputs.
+
+    restore_agent_state reads session_state["trip_plan"] which carries stale
+    values from the prior graph run. The document merge writes fresh PATCH
+    values (origin, dates) into trip_inputs. This copies them so the
+    coordinator sees fields set via PATCH that the classifier won't
+    re-extract from chat text (e.g. GENERATE_PLAN_NOW).
+
+    Uses key-presence (``_f in src``) rather than truthiness so that
+    explicitly cleared fields (e.g. origin=None) propagate correctly.
+    """
+    src = session_state.get("trip_inputs", {})
+    dst = session_state.get("trip_plan", {})
+    for field in _CORE_TRIP_FIELDS:
+        if field in src:
+            dst[field] = src[field]
+    session_state["trip_plan"] = dst
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SSE Generator
 # ─────────────────────────────────────────────────────────────────────────────
@@ -522,6 +559,9 @@ async def generate_sse(
             session_state["metadata"]["session_id"] = session_id
             if document_version is not None:
                 session_state["metadata"]["document_version"] = int(document_version)
+
+            # ── Seed trip_plan with document's core fields ──
+            _seed_trip_plan_from_inputs(session_state)
 
             # Stream tokens from run_turn_streaming with per-event timeout
             # Use route timeout for total stream duration protection

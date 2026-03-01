@@ -163,6 +163,8 @@ interface ChatPanelProps {
    * Used for optimistic UI - detect topics and show placeholder AgentCards.
    */
   onUserMessageSubmit?: (message: string) => void;
+  /** Callback to confirm and execute a session reset (e.g. from suggestion chip) */
+  onConfirmReset?: () => void;
 }
 
 export interface ChatPanelHandle {
@@ -202,6 +204,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onOpenSheet,
       onUserMessageSubmit,
       destinationImageUrl,
+      onConfirmReset,
     } = props;
 
     const isInputDisabledByPlanState = planState === 'RESOLVING';
@@ -494,6 +497,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             onUpdateBookingTypes={onUpdateBookingTypes}
             onOpenSheet={onOpenSheet}
             onSendMessage={chatSend.sendMessageCore}
+            onConfirmReset={onConfirmReset}
             onOpenFlights={() => setFlightsSheetOpen(true)}
             onOpenStays={() => setStaysSheetOpen(true)}
             onOpenActivities={() => setActivitiesSheetOpen(true)}

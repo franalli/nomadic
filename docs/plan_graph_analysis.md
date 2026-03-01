@@ -58,17 +58,6 @@ Coordinator-driven trip planning system with deterministic step planning in Pyth
 7. **Deterministic envelope** -- `_build_envelope()` computes view state, ack status, and document payload.
 8. **Pure-Python itinerary synthesis** -- builder remains non-LLM.
 
-### Deleted Components (replaced by coordinator flow)
-
-| Deleted Module | Replacement |
-| --- | --- |
-| `planner/agent.py`, `planner/agent_constants.py` | Coordinator entrypoint: `planner/coordinator.py::execute_turn()` |
-| `planner/middleware.py` | Deterministic merge + envelope logic in coordinator + `crud_document.py` |
-| `planner/plan_graph.py` | `streaming.py` now invokes coordinator directly |
-| `planner/prompts/planner.py` | Prompt construction moved to `conversationalist.py` and classifier/specialist prompts |
-| `planner/tools/*` | Direct coordinator calls into router/specialist/logistics/local-intel/builder modules |
-| `planner/services/agent_runner.py` | No cached `create_agent` runtime; turn execution is coordinator-driven |
-
 ---
 
 ## Package Structure
@@ -232,6 +221,7 @@ class RouterOutput(BaseModel):
 
     # Settings extraction
     activities_per_day: Optional[int] = None
+    skill_level: Optional[str] = None  # "beginner", "intermediate", "advanced"
 
     hotel_min_stars: Optional[int] = None
     hotel_style: Optional[str] = None
@@ -264,8 +254,11 @@ Domain specialist with LLM-first architecture. 8 specialists (diving, hiking, sk
 
 Recent behavior:
 - `_build_specialist_prompt()` now returns `(system, user, max_acts)` and applies category-aware, density-aware capping.
+- `_build_specialist_prompt()` caps specialist `available_days` at 60% of trip duration to preserve room for mixed non-specialist activities.
 - `TripBrief` now flows into `_BriefAsTripPlan` with `activities_per_day` and active `categories` to bias distribution across specialists.
 - Specialist outputs are additionally capped after parsing so `max_acts` is never exceeded in cacheable payloads.
+- Constraint text is anchored to relative wording (for example, "day before departure"), and cached outputs are re-anchored by `_reanchor_constraint_dates()` before merge.
+- "feasible + zero activities" outputs are converted to `caveat` responses and skipped for L2 cache write, preventing stale empty specialist cache entries.
 
 **LLM-first architecture:** Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
 
@@ -290,6 +283,9 @@ Flight/hotel/activity fetching with safety logic.
 - Two-tier activity system (Tier 1 specialist + Tier 2 experience)
 - No-fly safety logic (registry-driven via `_NOFLY_CATEGORIES`)
 - Hotels and activities fetched in parallel via `asyncio.gather()`
+- Hotel-star filtering now cascades down (`min_stars-1 ... 1`) before fallback-to-originals, with applied threshold tracked in `state.metadata`.
+- General-only trips (no specialist/categories) call `browse_activities()` across default categories to seed larger activity pools for long itineraries.
+- Experience tiles are stashed into `metadata["browseable_activities"]`, and Google Places backfill now propagates rating/review_count/deeplink when available.
 
 ### ConstraintGuard (`constraint_guard.py`)
 
@@ -448,7 +444,7 @@ When `activity_day_preferences` are set (e.g., `{"diving": 3, "hiking": 2}`), th
 **Phase 5.6: Experience Tile Placement and `activities_per_day` scaling**
 
 `ItineraryBuilder` normalizes `activities_per_day` to `_activities_per_day` in `__init__`
-(`max(1, min(input_data.activities_per_day or 1, 5))`).
+(`max(1, min(input_data.activities_per_day or 2, 5))`).
 
 In Phase 5.6:
 
@@ -689,8 +685,9 @@ class GraphState(BaseModel):
 ```python
 class ActivitySettings(BaseModel):
     categories: List[str] = []
+    skill_level: Optional[str] = None
     day_preferences: Dict[str, int] = {}  # {"diving": 3, "hiking": 2}
-    activities_per_day: Optional[int] = None  # 1-5, None = auto target
+    activities_per_day: int = 2  # 1-3; None coerces to 2 for legacy payloads
 ```
 
 ### TripPlan (SSoT)
@@ -893,8 +890,8 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 
 | Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
 |-------|-------------|---------|--------|--------|------------|---------|
-| Specialist | `specialist_cache.py` | 128 | 1h | 168h (env: SPECIALIST_CACHE_TTL_HOURS) | `specialist::v3::{topic}::{dest}::{start}::{end}::{skill}::{dpref}::{phash}` | LLM outputs. Cache invalidation now includes exact start/end dates for date-shift-sensitive constraints. |
-| Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month}::n{tiles_per_category}` | Tier 2 tiles |
+| Specialist | `specialist_cache.py` | 128 | 1h | 168h (env: SPECIALIST_CACHE_TTL_HOURS) | `specialist::v4::{topic}::{dest}::{iso_month}::m::{skill}::{dpref}::{phash}` | LLM outputs. Dates coarsened to ISO month (YYYY-MM); duration dropped (specialist content is duration-agnostic). |
+| Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month_or_quarter}::n{tiles_per_category}` | Tier 2 tiles. Seasonal categories keep `YYYY-MM`; non-seasonal categories normalize to `YYYY-QN` for higher cache reuse. |
 | Tile | `tile_cache.py` | 256 | 24h | 72h (env: TILE_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
 | Browse | `activity_browser.py` | 256 | 6h | 72h (env: TILE_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
 | Places Enrichment | `google_places_provider.py` | 2048 | 24h | 168h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v2::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups |
@@ -907,6 +904,7 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 - On composite cache miss it probes `experience_single` entries first from L1 (`_mem`) and then L2.
 - Cached per-category tiles are merged with state metadata before generation; only newly introduced categories are regenerated.
 - Regenerated tiles are merged back into state metadata (`generated_tier2_categories`) and written back to the relevant caches, so subsequent turns reuse them.
+- Month normalization is category-aware: any seasonal category in the request keeps month precision; fully non-seasonal sets collapse to quarter buckets.
 
 ### Cache Invalidation Triggers
 
@@ -971,8 +969,7 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 |-----------|---------|---------|
 | topic | `diving` | Specialist type |
 | destination | `bali` | Normalized lowercase |
-| month | `2025-02` | YYYY-MM from start_date (seasonal bucketing) |
-| bucket | `week` | Duration bucket: weekend(1-3d), short(4-5d), week(6-8d), extended(9-11d), twoweek(12-15d), long(16d+) |
+| iso_month | `2025-02` | YYYY-MM from trip midpoint date (for cross-month spans, e.g. Mar 31-Apr 7 -> `2025-04`); duration dropped (specialist content is duration-agnostic) |
 | skill | `advanced` / `any` | User skill level |
 | dpref | `dp5` / `dpany` | Day preference count for this topic |
 | phash | `9c22ff5f` | 8-char blake2s hash of prompt file (auto-invalidates on edit) |
@@ -1012,7 +1009,7 @@ Selective regeneration minimizes LLM calls when trip inputs change by computing 
 | Strategy        | Trigger Fields                                                                              | Execution Path                    | Est. Time | LLM Calls             |
 | --------------- | ------------------------------------------------------------------------------------------- | --------------------------------- | --------- | --------------------- |
 | **BUILDER**     | `preferred_tile_ids` / `preferences`, `origin`                                              | ItineraryBuilder only             | ~100ms    | None                  |
-| **LOGISTICS**   | `adults`, `children`, `budget`, `flight_settings`, `hotel_settings`                         | Tile fetching + Builder           | ~500ms    | None (API calls only) |
+| **LOGISTICS**   | `adults`, `children`, `budget`, `flight_settings`, `hotel_settings`, `activity_skill_level` | Tile fetching + Builder           | ~500ms    | None (API calls only) |
 | **SPECIALISTS** | `start_date`, `end_date`, `activity_categories`                                             | Specialists + Tiles + Builder     | ~3-8s     | Yes                   |
 | **FULL**        | `destination`                                                                               | Full re-execution                 | ~10-15s   | Yes                   |
 
@@ -1028,6 +1025,7 @@ FIELD_IMPACT: Dict[str, RegenStrategy] = {
     "budget": RegenStrategy.LOGISTICS,
     "flight_settings": RegenStrategy.LOGISTICS,
     "hotel_settings": RegenStrategy.LOGISTICS,
+    "activity_skill_level": RegenStrategy.LOGISTICS,
     "origin": RegenStrategy.BUILDER,
     "preferences": RegenStrategy.BUILDER,
 }
@@ -1083,12 +1081,15 @@ backend/app/prompts/
 
 `build_response_context()` currently assembles the LLM context in this order:
 
-1. Trip context block (`_build_trip_context_block`)
-2. Specialist findings (`_build_specialist_findings_block`)
-3. Itinerary status (`_build_itinerary_status_block`)
-4. Outcome (`_build_outcome_block`) for mutation turns (add/remove/settings/date/spatial preference/logistics changes)
-5. Turn context (`_build_turn_context_block`)
-6. **Already-Said dedup block** with recent assistant replies (max 3), to prevent repetitive responses
+1. **Persona** -- destination-aware (with local culture/style hints) or generic persona block
+2. Trip context block (`_build_trip_context_block`)
+3. **"What the User Sees Right Now"** -- rendered when `day_cards` or `strategy_sections` exist in state, giving the LLM awareness of the current UI surface
+4. Specialist findings (`_build_specialist_findings_block`)
+5. Itinerary status (`_build_itinerary_status_block`)
+6. Outcome (`_build_outcome_block`) for mutation turns (add/remove/settings/date/spatial preference/logistics changes)
+7. Turn context (`_build_turn_context_block`)
+8. **Already-Said dedup block** with recent assistant replies (max 3), to prevent repetitive responses
+9. **Hard rules** (`_VOICE_BASE`) + intent-specific voice block with per-intent sentence limits (enforced by `_enforce_sentence_limit()`)
 
 This keeps the final assistant turn aligned with what the backend just applied, and prevents it from repeating already delivered content.
 
@@ -1175,6 +1176,8 @@ The `search_tiles` tool (via logistics_node) and `tile_service/service.py` both 
 | 2        | `USE_GOOGLE_PLACES_PROVIDER=true`    | GooglePlacesHotelProvider | GooglePlacesActivityProvider  |
 | 3        | Fallback (offline/dev)               | MockHotelProvider         | MockActivityProvider          |
 
+`google_places_provider.py` runs on a Pro-tier field mask (Enterprise fields like rating/userRatingCount/editorialSummary are excluded). Activity/hotel tile ratings and review counts are normalized deterministically by rank for UI consistency. Hotel price estimates are derived from baseline nightly rate plus preference multipliers (`min_stars`, `style`) when raw provider price/rating fields are unavailable.
+
 ### Settings-Aware Tile Filtering
 
 | Setting Type                    | Filter Applied                                      | Budget Allocation |
@@ -1182,7 +1185,7 @@ The `search_tiles` tool (via logistics_node) and `tile_service/service.py` both 
 | `budget` (hotels)               | `tile.price_estimate <= budget * settings.budget_allocation_hotels`              | Configured ratio |
 | `budget` (activities)           | `tile.price_estimate <= budget * settings.budget_allocation_activities`              | Configured ratio |
 | `budget` (flights)              | `tile.price_estimate <= budget * settings.budget_allocation_flights`              | Configured ratio |
-| `hotel_settings.min_stars`      | `tile.rating >= min_stars`                          | -                 |
+| `hotel_settings.min_stars`      | `tile.rating >= min_stars` (rating may be deterministic provider heuristic on Pro-tier paths) | -                 |
 | `flight_settings.direct_only`   | `tile.meta.stops == 0`                              | -                 |
 
 Current tile filtering is budget/transport/hotel driven only; no user-profile gating is applied in filtering.

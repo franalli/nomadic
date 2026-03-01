@@ -306,6 +306,13 @@ class GraphPlanRequest(BaseModel):
             raise ValueError("trip_inputs dict exceeds 100 keys")
         return v
 
+    @field_validator("session_state")
+    @classmethod
+    def _cap_session_state_keys(cls, v: dict | None) -> dict | None:
+        if v and len(v) > 200:
+            raise ValueError("session_state dict exceeds 200 keys")
+        return v
+
     document_id: str | None = Field(
         default=None,
         max_length=200,
@@ -457,12 +464,18 @@ class ActivitySettings(BaseModel):
     categories: List[str] = Field(default_factory=list)  # empty = all categories
     skill_level: Optional[str] = None  # "beginner", "intermediate", "advanced"
     day_preferences: Dict[str, int] = Field(default_factory=dict)  # {"diving": 3, "hiking": 2}
-    activities_per_day: Optional[int] = Field(
-        None,
+    activities_per_day: int = Field(
+        2,
         ge=1,
         le=3,
         description="AI generation target per free day. Does NOT cap manual user edits.",
     )
+
+    @field_validator("activities_per_day", mode="before")
+    @classmethod
+    def _coerce_apd_none(cls, v: Any) -> int:
+        """Coerce None/null to default 2 for backwards compat with legacy state."""
+        return v if v is not None else 2
 
 
 class TransportSettings(BaseModel):

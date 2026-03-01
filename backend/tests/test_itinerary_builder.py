@@ -1642,6 +1642,26 @@ class TestHandleEmptyDays:
         free_block = day2.blocks[0]
         assert free_block.summary.startswith("Yoga")
 
+    def test_tier1_category_not_used_for_free_day_tier2_label(self, builder: ItineraryBuilder):
+        """Tier1 categories (e.g., hiking) should not label free-day placeholders."""
+        input_data = ItineraryBuilderInput(
+            start_date="2024-03-15",
+            end_date="2024-03-17",
+            strategy_sections=[],
+            tiles={},
+            destination="Bali",
+            activity_categories=["hiking"],
+        )
+
+        result = builder.build(input_data)
+        assert result.success is True
+
+        day2 = result.day_cards[1]
+        free_blocks = [b for b in day2.blocks if b.activity_type == "free_day"]
+        assert len(free_blocks) == 1
+        assert free_blocks[0].summary.startswith("Free Day")
+        assert "Hiking" not in free_blocks[0].summary
+
 
 # =============================================================================
 # Test: Cross-Domain Dive → Buffer → Altitude Ordering

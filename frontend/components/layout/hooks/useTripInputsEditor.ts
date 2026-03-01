@@ -302,7 +302,13 @@ export function useTripInputsEditor(
         // Auto-apply correction if provided
         const correctedValue = result.corrected_values[0];
         const valueToCommit = correctedValue || trimmedOrigin;
-        const success = await commitTripInputs({ origin: valueToCommit });
+        // Bundle booking_types upgrade so flights turn on atomically with origin
+        const currentBT = useDocumentStore.getState().document?.trip_inputs?.booking_types;
+        const originUpdates: Partial<DocumentTripInputs> = { origin: valueToCommit };
+        if (currentBT && currentBT.flights === 'off') {
+          originUpdates.booking_types = { ...currentBT, flights: 'suggested' };
+        }
+        const success = await commitTripInputs(originUpdates);
 
         if (!success) {
           setPendingOrigin(null);

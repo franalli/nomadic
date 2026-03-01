@@ -386,6 +386,7 @@ export function NomadicLanding() {
         planViewState={planViewState}
         onOpenSheet={openSheet}
         destinationImageUrl={destinationCard?.image_url ?? destinationImageUrl}
+        onConfirmReset={handleStartNewSession}
       />
     </ErrorBoundary>
   );

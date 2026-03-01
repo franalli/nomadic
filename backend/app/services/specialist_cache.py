@@ -86,7 +86,10 @@ def _specialist_cache_key(
     # dates are Mar 15-21 or Mar 22-28. Adjacent-week misses are eliminated.
     try:
         s = date_type.fromisoformat(start_date[:10])
-        start = f"{s.year}-{s.month:02d}"
+        e = date_type.fromisoformat(end_date[:10]) if end_date else s
+        # Use midpoint date's month for cross-month trips (e.g. Mar 31-Apr 7 → April)
+        midpoint = s + (e - s) / 2
+        start = f"{midpoint.year}-{midpoint.month:02d}"
         end = "m"  # Duration dropped — specialist content is duration-agnostic
     except (ValueError, TypeError, AttributeError):
         start = start_date[:7] if start_date else "unknown"

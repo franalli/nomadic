@@ -284,11 +284,16 @@ export function useLocalBookingSettings(
 
   // Origin-aware flights: Auto-suggest flights when origin is set
   // Tri-state invariant: Only upgrade 'off' -> 'suggested', never touch 'on' or existing 'suggested'
+  // Guard: Also check store's booking_types — the atomic PATCH in LandingSheets/
+  // useTripInputsEditor may have already upgraded flights to 'suggested' in the
+  // same commit as origin. Without this check, bookingTypesRef (synced next render)
+  // still reads 'off' and fires a harmless but wasteful duplicate commit.
   useEffect(() => {
     const hasOrigin = !!storeTripInputs?.origin;
     const currentFlightsState = bookingTypesRef.current.flights;
+    const storeFlightsState = storeTripInputs?.booking_types?.flights;
 
-    if (hasOrigin && currentFlightsState === 'off') {
+    if (hasOrigin && currentFlightsState === 'off' && storeFlightsState === 'off') {
       const updated = { ...bookingTypesRef.current, flights: 'suggested' as BookingTypeState };
       bookingTypesRef.current = updated;
       setLocalBookingTypes(updated);
@@ -303,7 +308,12 @@ export function useLocalBookingSettings(
         };
       }
     }
-  }, [storeTripInputs?.origin, hasDocument, commitTripInputs]);
+  }, [
+    storeTripInputs?.origin,
+    storeTripInputs?.booking_types?.flights,
+    hasDocument,
+    commitTripInputs,
+  ]);
 
   // Helper to commit settings with debounce and queue support
   const commitWithDebounce = useCallback(

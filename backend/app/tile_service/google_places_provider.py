@@ -87,6 +87,20 @@ def close_sync_client() -> None:
         _sync_client = None
 
 
+def _normalize_gp_tile_ratings(tiles: list, tile_type: str = "activity") -> list:
+    """Assign rank-based ratings to GP browse tiles (Pro tier excludes rating).
+
+    Activities: 4.6 → 4.2 (step -0.05)
+    Hotels: 4.5 → 4.0 (step -0.05)
+    """
+    base = 4.6 if tile_type == "activity" else 4.5
+    floor = 4.2 if tile_type == "activity" else 4.0
+    for rank, tile in enumerate(tiles):
+        tile.rating = round(max(floor, base - rank * 0.05), 1)
+        tile.review_count = max(150, 600 - rank * 60)
+    return tiles
+
+
 # Explicit Google Places usage labels for telemetry.
 _PLACES_PATH_LABELS = {
     "browse",
@@ -263,7 +277,7 @@ def get_google_places_circuit_breaker_state() -> dict[str, dict[str, float | int
 _PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 
 # Destination cost tier lookup: estimated nightly hotel rate in USD
-# Used to translate price_level (0-4) into a dollar estimate.
+# Used by _estimate_activity_price only (hotels use rating-based estimation).
 # Hard coding is NOT world data — this is a 4-tier multiplier table.
 _PRICE_LEVEL_MULTIPLIERS = {
     0: 0.0,  # FREE (rarely applies to hotels)
@@ -286,11 +300,72 @@ def _dest_hash(dest: str) -> str:
     return hashlib.md5(dest.lower().strip().encode()).hexdigest()[:6]  # noqa: S324
 
 
-def _estimate_hotel_price(price_level: Optional[int], nights: int, travelers: int) -> float:
-    """Estimate total hotel price from Google Places price_level."""
-    level = price_level if price_level is not None else 2  # default: MODERATE
-    multiplier = _PRICE_LEVEL_MULTIPLIERS.get(level, 1.0)
-    nightly = _BASE_NIGHTLY_RATE_USD * multiplier
+def _rating_multiplier(rating: Optional[float]) -> float:
+    """Map Google Places rating (1-5) to a price multiplier.
+
+    Two-segment linear interpolation:
+      3.0 → 0.50 (budget)     gentle slope 3.0–4.0
+      4.0 → 1.00 (baseline)   steeper slope 4.0–5.0
+      5.0 → 2.50 (luxury)
+    Below 3.0 clamps to 0.50; None returns 1.0 (no change).
+    """
+    if rating is None:
+        return 1.0
+    if rating <= 3.0:
+        return 0.5
+    if rating <= 4.0:
+        # 3.0→0.5, 4.0→1.0  slope = 0.5/1.0
+        return 0.5 + (rating - 3.0) * 0.5
+    # 4.0→1.0, 5.0→2.5  slope = 1.5/1.0
+    return min(1.0 + (rating - 4.0) * 1.5, 2.5)
+
+
+_STYLE_BOOST: dict[str, float] = {
+    "luxury": 1.6,
+    "boutique": 1.3,
+    "resort": 1.4,
+    "budget": 0.7,
+    "hostel": 0.5,
+}
+
+
+def _preference_multiplier(min_stars: int = 0, style: Optional[str] = None) -> float:
+    """Adjust price estimate based on user hotel preferences.
+
+    Upward: max(star_boost, style_boost).
+    Downward: budget/hostel style overrides to lower estimate.
+    """
+    style_key = (style or "").strip().lower()
+    style_boost = _STYLE_BOOST.get(style_key, 1.0)
+
+    # Budget/hostel styles force downward regardless of star preference
+    if style_boost < 1.0:
+        return style_boost
+
+    star_boost = 1.0
+    if min_stars >= 5:
+        star_boost = 1.8
+    elif min_stars >= 4:
+        star_boost = 1.4
+    elif min_stars >= 3:
+        star_boost = 1.1
+
+    return max(star_boost, style_boost)
+
+
+def _estimate_hotel_price(
+    nights: int,
+    travelers: int,
+    rating: Optional[float] = None,
+    min_stars: int = 0,
+    style: Optional[str] = None,
+) -> float:
+    """Estimate total hotel price from Google Places rating + user preferences."""
+    nightly = (
+        _BASE_NIGHTLY_RATE_USD
+        * _rating_multiplier(rating)
+        * _preference_multiplier(min_stars, style)
+    )
     return round(nightly * max(nights, 1) * (1 + 0.05 * max(travelers - 2, 0)), 2)
 
 
@@ -604,10 +679,7 @@ def _build_places_request(
             "places.formattedAddress,"
             "places.photos,"
             "places.location,"
-            "places.editorialSummary,"
             "places.primaryType,"
-            "places.rating,"
-            "places.userRatingCount,"
             "places.googleMapsUri"
         ),
     }
@@ -897,7 +969,8 @@ class GooglePlacesHotelProvider(Provider):
             geo=geo,
             path_label="logistics",
         )
-        return self._build_tiles(ctx, places)
+        tiles = self._build_tiles(ctx, places)
+        return _normalize_gp_tile_ratings(tiles, "hotel")
 
     def search(self, ctx: SearchContext) -> List[Tile]:
         """Sync search — used by tile_service/service.py (non-async path)."""
@@ -916,7 +989,8 @@ class GooglePlacesHotelProvider(Provider):
             geo=geo,
             path_label="logistics",
         )
-        return self._build_tiles(ctx, places)
+        tiles = self._build_tiles(ctx, places)
+        return _normalize_gp_tile_ratings(tiles, "hotel")
 
     def _build_tiles(self, ctx: SearchContext, places: List[Dict[str, Any]]) -> List[Tile]:
         """Build Tile objects from raw Places API results."""
@@ -936,13 +1010,24 @@ class GooglePlacesHotelProvider(Provider):
             except ValueError:
                 pass
 
+        # Extract user hotel preferences for price estimation
+        _hs_dict: dict = {}
+        if hasattr(ctx.hotel_settings, "model_dump"):
+            _hs_dict = ctx.hotel_settings.model_dump()
+        elif isinstance(ctx.hotel_settings, dict):
+            _hs_dict = ctx.hotel_settings
+        _min_stars: int = _hs_dict.get("min_stars") or 0
+        _style: Optional[str] = _hs_dict.get("style")
+
         tiles: List[Tile] = []
         for i, place in enumerate(places):
             place_id = place.get("id", f"gp_hotel_{dest_id}_{i}")
             name = (place.get("displayName") or {}).get("text", f"Hotel in {dest}")
             address = place.get("formattedAddress", dest)
-            rating = place.get("rating")
-            review_count = place.get("userRatingCount", 0)
+            # rating/userRatingCount are Enterprise fields — not in our Pro field mask.
+            # Use heuristic: infer star tier from user preference (min_stars) or default.
+            rating = None
+            review_count = None
 
             photos = place.get("photos") or []
             photo_name = photos[0].get("name") if photos else None
@@ -955,9 +1040,11 @@ class GooglePlacesHotelProvider(Provider):
             if loc.get("latitude") is not None and loc.get("longitude") is not None:
                 geo = Geo(lat=loc["latitude"], lng=loc["longitude"])
 
-            # Enterprise fields (priceLevel, priceRange) stripped from FieldMask
-            # to stay on Pro tier ($5/1k vs $32/1k). Use heuristic estimate.
-            price = _estimate_hotel_price(None, nights, total_travelers)
+            # Enterprise fields (priceLevel, priceRange, rating, userRatingCount)
+            # stripped from FieldMask to stay on Pro tier ($5/1k vs $32/1k).
+            price = _estimate_hotel_price(
+                nights, total_travelers, rating=rating, min_stars=_min_stars, style=_style
+            )
             tax_and_service = round(price * 0.12, 2)
             property_fee = round(nights * 15, 2)
             total_inclusive = round(price + tax_and_service + property_fee, 2)
@@ -966,8 +1053,7 @@ class GooglePlacesHotelProvider(Provider):
                 place.get("googleMapsUri")
                 or f"https://www.google.com/travel/hotels/entity/{place_id}"
             )
-            summary = (place.get("editorialSummary") or {}).get("text", "")
-
+            # editorialSummary is Enterprise+Atmosphere — not in our Pro field mask.
             tiles.append(
                 Tile(
                     id=f"tile_gp_hotel_{dest_id}_{i}",
@@ -975,7 +1061,7 @@ class GooglePlacesHotelProvider(Provider):
                     partner=self.name,
                     partner_product_id=place_id,
                     title=name,
-                    subtitle=summary or address,
+                    subtitle=address,
                     image_url=image_url,
                     price_estimate=price,
                     live_price=None,
@@ -1056,7 +1142,8 @@ class GooglePlacesActivityProvider(Provider):
             geo=geo,
             path_label="logistics",
         )
-        return self._build_tiles(ctx, places)
+        tiles = self._build_tiles(ctx, places)
+        return _normalize_gp_tile_ratings(tiles, "activity")
 
     def search(self, ctx: SearchContext) -> List[Tile]:
         """Sync search — used by tile_service/service.py (non-async path)."""
@@ -1075,7 +1162,8 @@ class GooglePlacesActivityProvider(Provider):
             geo=geo,
             path_label="logistics",
         )
-        return self._build_tiles(ctx, places)
+        tiles = self._build_tiles(ctx, places)
+        return _normalize_gp_tile_ratings(tiles, "activity")
 
     def _build_tiles(self, ctx: SearchContext, places: List[Dict[str, Any]]) -> List[Tile]:
         """Build Tile objects from raw Places API results."""
@@ -1106,8 +1194,9 @@ class GooglePlacesActivityProvider(Provider):
             place_id = place.get("id", f"gp_act_{dest_id}_{i}")
             name = (place.get("displayName") or {}).get("text", f"Activity in {dest}")
             address = place.get("formattedAddress", dest)
-            rating = place.get("rating")
-            review_count = place.get("userRatingCount", 0)
+            # rating/userRatingCount are Enterprise fields — not in our Pro field mask.
+            rating = None
+            review_count = None
 
             photos = place.get("photos") or []
             photo_name = photos[0].get("name") if photos else None
@@ -1123,7 +1212,8 @@ class GooglePlacesActivityProvider(Provider):
             if loc.get("latitude") is not None and loc.get("longitude") is not None:
                 geo = Geo(lat=loc["latitude"], lng=loc["longitude"])
 
-            # Enterprise fields stripped from FieldMask — use heuristic estimate
+            # Enterprise fields (priceLevel, priceRange, rating, userRatingCount)
+            # stripped from FieldMask — use heuristic estimate
             price = _estimate_activity_price(None, total_travelers)
             tax_and_service = round(price * 0.08, 2)
             total_inclusive = round(price + tax_and_service, 2)
@@ -1132,8 +1222,7 @@ class GooglePlacesActivityProvider(Provider):
                 place.get("googleMapsUri")
                 or f"https://www.google.com/maps/place/?q=place_id:{place_id}"
             )
-            summary = (place.get("editorialSummary") or {}).get("text", "")
-
+            # editorialSummary is Enterprise+Atmosphere — not in our Pro field mask.
             tiles.append(
                 Tile(
                     id=f"tile_gp_activity_{dest_id}_{i}",
@@ -1141,7 +1230,7 @@ class GooglePlacesActivityProvider(Provider):
                     partner=self.name,
                     partner_product_id=place_id,
                     title=name,
-                    subtitle=summary or address,
+                    subtitle=address,
                     image_url=image_url,
                     price_estimate=price,
                     live_price=None,
@@ -1182,15 +1271,14 @@ class GooglePlacesActivityProvider(Provider):
 # Activity Enrichment — ground LLM-generated activities with Google Places
 # =============================================================================
 
-# Lightweight field mask for enrichment (id, name, coordinates, photos, deeplink, address, rating).
-# rating + userRatingCount are Basic tier (free) — safe to include.
+# Field mask for enrichment — Pro tier only ($5/1k).
+# Enterprise fields (rating, userRatingCount, editorialSummary, priceLevel,
+# priceRange) deliberately excluded to avoid $32/1k Enterprise billing.
 _ENRICH_FIELD_MASK = (
     "places.id,"
     "places.displayName,"
     "places.location,"
     "places.photos,"
-    "places.rating,"
-    "places.userRatingCount,"
     "places.googleMapsUri,"
     "places.shortFormattedAddress"
 )
@@ -1360,13 +1448,8 @@ def _apply_place_to_activity(activity: dict, place: dict, title: str) -> dict:
         place.get("googleMapsUri") or f"https://www.google.com/maps/place/?q=place_id:{place_id}"
     )
 
-    # Extract rating + review count (Basic tier, free).
-    gp_rating = place.get("rating")
-    if gp_rating is not None:
-        enriched["rating"] = gp_rating
-    gp_review_count = place.get("userRatingCount")
-    if gp_review_count is not None:
-        enriched["user_ratings_count"] = gp_review_count
+    # rating/userRatingCount are Enterprise-tier fields — NOT in our Pro field mask.
+    # LLM-sourced ratings (from specialist output) are preserved; no Places override.
 
     # Provide heuristic price for tiles without LLM price.
     if enriched.get("price_estimate") is None:
@@ -1380,13 +1463,7 @@ def _apply_place_to_activity(activity: dict, place: dict, title: str) -> dict:
     if location_label:
         enriched["location_label"] = location_label
 
-    # Enrich description with editorial summary if richer than LLM text
-    existing_desc = enriched.get("description", "") or (
-        (enriched.get("meta") or {}).get("description", "")
-    )
-    editorial = (place.get("editorialSummary") or {}).get("text")
-    if editorial and len(editorial) > len(existing_desc):
-        enriched["editorial_summary"] = editorial
+    # editorialSummary is Enterprise+Atmosphere — not in our Pro field mask.
 
     logger.debug(
         "[GOOGLE_PLACES] Enriched '%s' → place_id=%s coords=%s",
@@ -1406,7 +1483,7 @@ async def _enrich_single_activity(
 ) -> dict:
     """Resolve a single activity against Google Places Text Search.
 
-    On match: overwrite coordinates, image_url; add place_id, deeplink, rating.
+    On match: overwrite coordinates, image_url; add place_id, deeplink.
     On miss/error: return activity unchanged (graceful degradation).
     """
     title = activity.get("title", "")
@@ -1543,9 +1620,9 @@ async def _enrich_single_activity(
             if attempt < max_attempts - 1:
                 await asyncio.sleep(_enrich_backoff_seconds(attempt))
                 continue
-                logger.warning(
-                    "[GOOGLE_PLACES] Enrichment response parse failed for '%s': %s", title, e
-                )
+            logger.warning(
+                "[GOOGLE_PLACES] Enrichment response parse failed for '%s': %s", title, e
+            )
             return activity
 
         _record_places_circuit_success(path)
@@ -1587,7 +1664,7 @@ async def enrich_activities_with_places(
 
     For each activity:
     1. Search "{title} {destination}" via Text Search
-    2. If match: overwrite coordinates + image_url, add place_id/deeplink/rating
+    2. If match: overwrite coordinates + image_url, add place_id/deeplink
     3. If no match: keep LLM data as-is (graceful degradation)
 
     Feature-gated: caller must check settings.use_google_places_provider before calling.

@@ -14,6 +14,8 @@ from __future__ import annotations
 from typing import Any, Dict
 from unittest.mock import patch
 
+import pytest
+
 from app.planner.coordinator import (
     _canonicalize_applied_updates,
     _compute_coordinator_s3_state,
@@ -22,9 +24,11 @@ from app.planner.coordinator import (
     _inject_specialist_tiles_into_state,
     _norm_topic,
     _normalize_specialist_plan_keys,
+    _run_local_intel,
     _short_circuit_message,
     _specialist_content_to_tiles,
     _tile_refresh_types,
+    build_brief,
     build_trip_state_summary,
     plan_turn,
 )
@@ -434,7 +438,7 @@ class TestNormTopic:
 class TestShortCircuitMessage:
     def test_reset_message(self) -> None:
         msg = _short_circuit_message("RESET")
-        assert "Reset" in msg
+        assert "reset" in msg.lower()
 
     def test_greeting_message(self) -> None:
         msg = _short_circuit_message("GREETING")
@@ -458,6 +462,76 @@ class TestCanonicalizeAppliedUpdates:
         assert "destination" in result
         assert "budget" in result
         assert "travelers" in result
+
+
+class _DummyAsyncLock:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        return False
+
+
+class TestLocalIntel:
+    @pytest.mark.asyncio
+    async def test_none_travelers_are_normalized_for_enrichment(self, monkeypatch: Any) -> None:
+        captured: Dict[str, Any] = {}
+
+        def _fake_build_enrichment_closure(
+            *,
+            destination: str,
+            start_date: str | None,
+            end_date: str | None,
+            adults: int,
+            children: int,
+            session_id: str = "",
+        ) -> object:
+            captured.update(
+                {
+                    "destination": destination,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "adults": adults,
+                    "children": children,
+                    "session_id": session_id,
+                }
+            )
+
+            async def _noop() -> None:
+                return None
+
+            return _noop
+
+        import importlib
+
+        from app.config import settings as app_settings
+
+        local_expert_module = importlib.import_module("app.planner.nodes.local_expert")
+
+        monkeypatch.setattr(app_settings, "local_expert_use_llm", True)
+        monkeypatch.setattr(
+            local_expert_module,
+            "build_enrichment_closure",
+            _fake_build_enrichment_closure,
+        )
+        monkeypatch.setattr(local_expert_module, "_pending_lock", _DummyAsyncLock())
+        monkeypatch.setattr(local_expert_module, "_pending_enrichments", {})
+        monkeypatch.setattr(local_expert_module, "_MAX_PENDING_ENRICHMENTS", 3)
+
+        state = _make_state(
+            trip_plan={
+                "destination": "Rome",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+                "adults": None,
+                "children": None,
+            }
+        )
+
+        section = await _run_local_intel(state, session_id="session-123")
+        assert section is not None
+        assert captured["adults"] == 1
+        assert captured["children"] == 0
 
 
 class TestNormalizeSpecialistPlanKeys:
@@ -497,6 +571,30 @@ class TestBuildTripStateSummary:
         assert summary["destination"] is None
         assert summary["categories"] == []
         assert summary["has_itinerary"] is False
+
+
+class TestBuildBrief:
+    def test_none_travelers_default_to_safe_values(self) -> None:
+        """Explicit None travelers should default to 1 adult and 0 children."""
+        classifier = _make_classifier(
+            destination="Bali",
+            start_date="2026-03-01",
+            end_date="2026-03-07",
+        )
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+                "adults": None,
+                "children": None,
+            },
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+        )
+
+        brief = build_brief("diving", state, classifier, other_plans={})
+        assert brief.adults == 1
+        assert brief.children == 0
 
 
 class TestTileRefreshTypes:

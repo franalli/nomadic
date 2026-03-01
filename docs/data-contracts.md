@@ -71,7 +71,7 @@ Media type: `text/event-stream`. Events:
 | Event         | Data                                                                                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `token`       | `{type: "token", data: "..."}`                                                          | Streaming text chunk                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `node_status` | `{type: "node_status", data: {node, status: "started"\|"completed", label, icon_key, estimated_duration_ms}}` | Coordinator step progress mapped to legacy node/tool names. Current payload contains only `node`, `status`, `label`, `icon_key`, `estimated_duration_ms`. Common values: `extract_trip_fields`, `get_specialist_advice`, `get_local_intel`, `search_tiles`, `build_itinerary`, `response`. |
+| `node_status` | `{type: "node_status", data: {node, status: "started"\|"completed", label, icon_key, estimated_duration_ms}}` | Coordinator step progress mapped to legacy node/tool names. Current payload contains only `node`, `status`, `label`, `icon_key`, `estimated_duration_ms`. Common values: `get_specialist_advice`, `get_local_intel`, `search_tiles`, `build_itinerary`, `response`. `CLASSIFY` and `SHORT_CIRCUIT` steps emit no `node_status` event. |
 | `complete`    | `{type: "complete", data: {document, session_state, version, ...}}`                     | Full response envelope. `document` includes `itinerary_day_cards`, `suggested_responses`, `suggested_response_meta`, `suggestion_chips` (structured chips with action routing), `constraints_validated`, `constraint_violations`, `tiles_replaced`, and `ack_status`/`ack_updates`/`applied_updates`. When `day_cards` are present: `plan_view_state=S3_ITINERARY_READY` if conflict count is 0, `S3_EDITING` if conflicts exist, and `S3_PARTIAL_CONFLICT` on partial-failure path with returned day cards. When no concrete cards are produced: `S3_BLOCKED`. **`observability`** subfield currently emits `tokens`, `today_iso`, and `ready_to_generate_now`. Optional frontend fields such as `extraction_confidence`, `short_circuit_type`, `llm_calls_made`, `cache_hits`, and `confidence_routing` are reserved and not populated by backend today. |
 | `partial`     | `{type: "partial", data: {kind: "strategy_sections"\|"tiles"\|"trip_inputs", payload: unknown}}` | Progressive render before `complete`. In the coordinator flow, emitted after classify/apply (`trip_inputs`), specialist/local-intel updates (`strategy_sections`), and tile refresh (`tiles`, ID-keyed map matching `document.tiles`). Frontend merges via `store.mergeEnvelope(envelope, generation)` so stale events from prior send cycles are ignored. Errors must not crash stream -- wrapped defensively. `complete` event reconciles any differences. |
 | `error`       | `{type: "error", message: "..."}`                                                       | Error details                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -198,13 +198,14 @@ Legacy 7-node graph state -- still exists as import target for shared types (`Tr
 ```
 PlanDocumentData
   |-- trip_inputs: DocumentTripInputs
-  |     |-- destination?, origin?, start_date?, end_date?
+  |     |-- destination?, destination_iata?, origin?, origin_iata?
+  |     |-- start_date?, end_date?
   |     |-- adults?, children?, budget?, currency
   |     |-- requires_assistance?, missing_fields[]
   |     |-- booking_types: BookingTypes (tri-state: off|suggested|on)
   |     |-- flight_settings, hotel_settings, transport_settings
   |     |    hotel_settings includes: min_stars, amenities[], style?, location?
-  |     |-- activity_settings: {categories[], day_preferences: {activity: count}, activities_per_day? (1-5, null = auto)}
+  |     |-- activity_settings: {categories[], skill_level?, day_preferences: {activity: count}, activities_per_day (1-3, default 2)}
   |     '-- date_flex, trip_duration?, date_window_start/end?
   |
   |-- branches: DocumentBranch[]
@@ -303,7 +304,7 @@ PlanDocumentData
 
 | Model                         | Purpose                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GraphPlanRequest`            | Plan generation: message, trip_inputs, session_state, document_id, ui_phase, expected_version, thread_id, reset, suggestion_clicked. `trip_inputs` is capped at 100 keys and `message` is capped at 2000 chars. Session state bootstrap/merge handled by shared `_prepare_graph_plan_session_state()` (used by `/graph_plan/stream`). User-owned settings (`activity_settings`, `hotel_settings`, `flight_settings`, `transport_settings`, `booking_types`) use deep merge via `_merge_user_owned_trip_settings()` to avoid clobbering omitted keys. |
+| `GraphPlanRequest`            | Plan generation: message, trip_inputs, session_state, document_id, ui_phase, expected_version, thread_id, reset, suggestion_clicked. `trip_inputs` is capped at 100 keys, `session_state` is capped at 200 keys, and `message` is capped at 2000 chars. Session state bootstrap/merge handled by shared `_prepare_graph_plan_session_state()` (used by `/graph_plan/stream`). User-owned settings (`activity_settings`, `hotel_settings`, `flight_settings`, `transport_settings`, `booking_types`) use deep merge via `_merge_user_owned_trip_settings()` to avoid clobbering omitted keys. |
 | `ExpandItineraryRequest`      | Stage 2->3: `idempotency_key` (max length 200), strategy_sections, tiles, preferences, trip_inputs, force_full_rebuild, refresh_activity_categories?. **`refresh_activity_categories`:** When set, re-searches activity tiles for these categories before building (used by activity pill changes at S3 to swap stale tiles without an agent turn). **Tile source selection:** `force_full_rebuild=true` (auto-expand after chat) uses DB tiles (authoritative -- written by `apply_planner_update`); `force_full_rebuild=false` (preference regen / manual) uses frontend tiles (includes hearted tiles, filters); empty frontend tiles falls back to DB tiles. **Idempotency:** `idempotency_key` checked via `check_idempotency()` in `backend/app/request_dedup.py` (TTLCache, 30s TTL, 1000 max entries). |
 | `PlanDocumentPatch`           | CRDT update: version, branches?, tiles?, selections?, trip_inputs?, remove_branch_ids?, remove_tile_ids?, preferred_tile_ids? The nested `DocumentTripInputsPatch` (used for `trip_inputs?`) supports partial updates for all user-owned settings: `booking_types`, `flight_settings`, `hotel_settings`, `activity_settings`, `transport_settings`, `date_flex`, `trip_duration`, `date_window_start`, `date_window_end`. Explicit `null` clears are supported; non-nullable fields reset to defaults (`currency -> "USD"`, `date_flex -> false`). |
 | `PlanDocumentResponse`        | Document fetch: version, updated_by, document, updated_at, changes_made: bool                                                                                                                                                                                                                                                                                                                                    |
@@ -331,16 +332,21 @@ PlanDocumentData
 ### PlanViewState (density-driven rendering)
 
 ```
-Backend PlanViewState Literal (schemas.py) uses the legacy S-prefixed states as
-the backend payload contract.
+PlanViewState Literal (schemas.py) defines two families:
+  - P-prefix (core density levels): P0_MINIMAL, P1_ENRICHED, P2_LOGISTICS, P3_FINALIZED, P3_EDITING, P3_BLOCKED
+  - S-prefix (legacy aliases, marked for removal): S0_BOOTSTRAP, S1_FRAMING, S2_STRATEGY_READY, S2_BLOCKED,
+    S3_ITINERARY_READY, S3_EDITING, S3_PARTIAL_CONFLICT, S3_BLOCKED
 
-Backend-emitted state graph:
+PlanDocumentData.plan_view_state default: "P0_MINIMAL"
+
+Backend coordinator still emits S-prefix states:
   S0_BOOTSTRAP -> S2_STRATEGY_READY -> S3_ITINERARY_READY
-                                 |-- S2_BLOCKED        |-- S3_EDITING
-                                                       |-- S3_PARTIAL_CONFLICT
-                                                       '-- S3_BLOCKED
+                                       |-- S3_EDITING
+                                       |-- S3_PARTIAL_CONFLICT
+                                       '-- S3_BLOCKED
 
-P-prefixed alias states are not used for backend payload contract anymore.
+Note: S2_BLOCKED and S1_FRAMING are defined in the Literal type but never emitted
+by the coordinator. Frontend VIEW_STATE_ORDER handles both P and S families.
 
 Hydration guards:
   Downgrade protection (setFromPlanResponse, mergeEnvelope): S3->S2 blocked when day_cards exist

@@ -14,7 +14,7 @@ import { TravelersSheet } from '@/components/plan/sheets/TravelersSheet';
 import { TripSettingsSheet } from '@/components/plan/sheets/TripSettingsSheet';
 import { parseISODateLocal } from '@/lib/date-utils';
 import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
-import { DEFAULT_BOOKING_TYPES } from '@/state/documentStore';
+import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { PlanViewState } from '@/types/plan-envelope';
@@ -99,11 +99,17 @@ export function LandingSheets({
         onOpenChange={(open) => !open && closeSheet()}
         value={tripInputs.origin || ''}
         onSave={async (value) => {
+          // Build atomic update: origin + flights upgrade in single PATCH
+          const currentBT = useDocumentStore.getState().document?.trip_inputs?.booking_types;
+          const updates: Partial<DocumentTripInputs> = { origin: value };
+          if (currentBT && currentBT.flights === 'off') {
+            updates.booking_types = { ...currentBT, flights: 'suggested' };
+          }
           // SYNC: Update store immediately so RefreshButton sees new value
-          storeUpdateTripInputs({ origin: value });
-          // ASYNC: Persist to backend
+          storeUpdateTripInputs(updates);
+          // ASYNC: Persist to backend (single PATCH)
           try {
-            await storeCommitTripInputs({ origin: value });
+            await storeCommitTripInputs(updates);
             closeSheet();
             addToast(`Origin: ${value}`, 'confirmation');
             // Trigger flight fetch via graph pipeline when plan is active

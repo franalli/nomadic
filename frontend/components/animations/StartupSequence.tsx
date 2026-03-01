@@ -107,7 +107,7 @@ export const StartupSequence = memo(function StartupSequence({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.5, ease: 'easeOut' }}
           className={cn(
-            'fixed inset-0 z-[9999] flex flex-col items-center justify-center',
+            'fixed inset-0 z-[1201] flex flex-col items-center justify-center',
             'font-mono select-none',
             // Light Mode: Drafting Paper
             'bg-zinc-50',
@@ -221,16 +221,15 @@ export const StartupSequence = memo(function StartupSequence({
               stiffness: 200,
               damping: 20,
             }}
-            className={cn(
-              'absolute bottom-20 z-10',
-              'w-2 h-2 rounded-full',
-              // Light: Solid Black Dot with subtle shadow (per Section 14)
-              'bg-zinc-900 shadow-md ring-1 ring-black/5',
-              // Dark: Glowing White Beacon (per Section 14)
-              'dark:bg-white dark:ring-0',
-              'dark:shadow-[0_0_15px_-3px_rgba(255,255,255,0.4)]'
-            )}
-          />
+              className={cn(
+                'absolute bottom-20 z-10',
+                'w-2 h-2 rounded-full',
+                // Light: Solid Black Dot with subtle shadow (per Section 14)
+                'bg-zinc-900 ring-1 ring-black/5',
+                // Dark: Glowing White Beacon (per Section 14)
+                'dark:bg-white dark:ring-0'
+              )}
+            />
 
           {/* Safe area padding for mobile */}
           <div className="pb-safe" />

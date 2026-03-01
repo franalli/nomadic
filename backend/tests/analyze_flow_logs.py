@@ -146,6 +146,30 @@ FLOW_EXPECTED_TOOLS: dict[int, dict[str, Any]] = {
         "forbidden_tools": [],
         "max_llm_calls": 12,  # 2 turns
     },
+    18: {
+        "name": "Price + Star Rating in Day Cards",
+        "required_tools": ["extract_trip_fields", "build_itinerary"],
+        "forbidden_tools": [],
+        "max_llm_calls": 14,  # 2 turns
+    },
+    19: {
+        "name": "Extend Trip — Preserves Day Cards",
+        "required_tools": ["extract_trip_fields", "build_itinerary"],
+        "forbidden_tools": [],
+        "max_llm_calls": 18,  # 4 turns (initial + gen + extend + gen)
+    },
+    20: {
+        "name": "Add Tier 1 — Hiking After Plan",
+        "required_tools": ["extract_trip_fields", "get_specialist_advice", "build_itinerary"],
+        "forbidden_tools": [],
+        "max_llm_calls": 20,  # 4 turns
+    },
+    21: {
+        "name": "Long Trip Tile Density — Extend 10 Days",
+        "required_tools": ["extract_trip_fields", "build_itinerary"],
+        "forbidden_tools": [],
+        "max_llm_calls": 20,  # 4 turns
+    },
 }
 
 # ── Coordinator step ordering contract ───────────────────────────────────────
@@ -323,8 +347,9 @@ def check_llm_calls(backend_log: str, flow_num: int, report: FlowReport) -> int:
 
     # Check for duplicate classifier calls (should be exactly 1 per turn)
     classifier_count = call_counts.get("classifier", 0)
-    multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17}
-    max_classify = 2 if flow_num in multi_turn_flows else 1
+    multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21}
+    four_turn_flows = {19, 20, 21}
+    max_classify = 4 if flow_num in four_turn_flows else (2 if flow_num in multi_turn_flows else 1)
     if classifier_count > max_classify:
         report.warn(f"Excessive classifier calls: {classifier_count} (expected ≤{max_classify})")
 
@@ -417,7 +442,7 @@ def check_tool_contract(backend_log: str, sse_data: str, flow_num: int, report: 
     for tool, count in tool_counts.items():
         if count > 1 and tool not in ("extract_trip_fields",):
             # extract_trip_fields can be called in multi-turn flows
-            multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17}
+            multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21}
             max_expected = 2 if flow_num in multi_turn_flows else 1
             if count > max_expected:
                 report.warn(
@@ -765,7 +790,9 @@ def check_enrichment_gaps(backend_log: str, report: FlowReport) -> None:
     )
     for enriched, total, dest in enrichment_lines:
         if int(enriched) < int(total):
-            report.warn(f"Partial GP enrichment for {dest}: {enriched}/{total} activities")
+            report.info(
+                f"Partial GP enrichment for {dest}: {enriched}/{total} activities (cap-limited)"
+            )
 
 
 # ── SSE semantic checks ──────────────────────────────────────────────────────
@@ -1135,6 +1162,105 @@ def check_image_urls(sse_data: str, flow_num: int, report: FlowReport) -> None:
         report.metrics["tiles_with_images"] = f"{total - missing}/{total}"
 
 
+def check_specialist_tile_presence(
+    sse_data: str,
+    backend_log: str,
+    flow_num: int,
+    report: FlowReport,
+) -> None:
+    """When specialist advice was dispatched, verify matching tiles exist.
+
+    If get_specialist_advice was called successfully but zero tiles with
+    matching specialist tags appear in the output, the specialist result
+    was silently dropped (e.g. TripBrief crash).
+    """
+    spec = FLOW_EXPECTED_TOOLS.get(flow_num, {})
+    if spec.get("skip_sse"):
+        return
+
+    # Check if specialist was dispatched
+    specialist_topics: list[str] = []
+    for m in re.finditer(r"\[dispatch_specialist_with_brief\] Dispatching (\w+)", backend_log):
+        specialist_topics.append(m.group(1).lower())
+
+    if not specialist_topics:
+        return
+
+    complete_events = _parse_sse_complete_events(sse_data)
+    for evt in complete_events:
+        tiles = evt.get("tiles") or {}
+        if not isinstance(tiles, dict):
+            continue
+
+        for topic in specialist_topics:
+            matching = 0
+            for tile_id, tile in tiles.items():
+                if not isinstance(tile, dict):
+                    continue
+                tags = [t.lower() for t in (tile.get("tags") or [])]
+                title = (tile.get("title") or "").lower()
+                meta = tile.get("meta") or {}
+                source_cats = [c.lower() for c in (meta.get("source_categories") or [])]
+                if (
+                    topic in tags
+                    or topic in title
+                    or topic in source_cats
+                    or tile_id.startswith(f"exp_{topic}")
+                ):
+                    matching += 1
+
+            report.metrics[f"specialist_{topic}_tiles"] = matching
+            if matching == 0:
+                report.error(
+                    f"Specialist '{topic}' was dispatched but zero matching tiles "
+                    f"in output — specialist result may have been silently dropped"
+                )
+
+
+def check_day_fill_rate(
+    sse_data: str,
+    flow_num: int,
+    report: FlowReport,
+) -> None:
+    """Check that interior days have adequate activity fill rate.
+
+    Warn if < 50%, error if < 30%. Skips arrival/departure day.
+    """
+    spec = FLOW_EXPECTED_TOOLS.get(flow_num, {})
+    if spec.get("skip_sse"):
+        return
+
+    complete_events = _parse_sse_complete_events(sse_data)
+    for evt in complete_events:
+        day_cards = evt.get("day_cards") or []
+        if len(day_cards) < 3:
+            continue
+
+        # Interior days = skip first and last (arrival/departure)
+        interior = day_cards[1:-1]
+        with_acts = 0
+        for day in interior:
+            blocks = day.get("blocks") or []
+            has_activity = any(b.get("booking_category") == "activity" for b in blocks)
+            if has_activity:
+                with_acts += 1
+
+        total = max(1, len(interior))
+        rate = with_acts / total
+        report.metrics["day_fill_rate"] = f"{with_acts}/{total} ({rate:.0%})"
+
+        if rate < 0.3:
+            report.error(
+                f"Day fill rate {rate:.0%} — {with_acts}/{total} interior days "
+                f"have activities (< 30% threshold)"
+            )
+        elif rate < 0.5:
+            report.warn(
+                f"Day fill rate {rate:.0%} — {with_acts}/{total} interior days "
+                f"have activities (< 50% threshold)"
+            )
+
+
 def check_bookend_blocks(sse_data: str, flow_num: int, report: FlowReport) -> None:
     """Verify first day has arrival block, last day has departure block."""
     spec = FLOW_EXPECTED_TOOLS.get(flow_num, {})
@@ -1230,6 +1356,8 @@ def analyze_flow(
     check_day_card_continuity(sse_data, flow_num, report)
     check_image_urls(sse_data, flow_num, report)
     check_bookend_blocks(sse_data, flow_num, report)
+    check_specialist_tile_presence(sse_data, backend_log, flow_num, report)
+    check_day_fill_rate(sse_data, flow_num, report)
 
     return report
 

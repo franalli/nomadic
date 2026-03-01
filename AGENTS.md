@@ -2,7 +2,7 @@
 
 ## Project
 
-Nomadic - AI travel planning with LangGraph + FastAPI + Next.js + Gemini 2.5 Flash.
+Nomadic - AI travel planning with coordinator-driven FastAPI + Next.js.
 
 ## Role
 
@@ -11,12 +11,11 @@ You review, analyze, find bugs, suggest tests, and audit security.
 
 ## Current Sprint (update every session)
 
-- Focus: [describe focus]
-- Secondary: [secondary priority or "none"]
-- Active work: backend planner intent/constraints/logistics + itinerary/experience services, new `activity_browser.py` path, frontend strategy/timeline/chat/layout rendering, and SSoT doc alignment in `docs/*`
+- Focus: UX polish, cost optimization, and shipping speed
+- Secondary: post-demo delivery hardening across frontend/backend planner interactions
+- Active work: UX and interaction polish, cost-aware recommendation optimizations, and SSoT doc alignment in `docs/*`
 - Known broken: none explicitly tracked in current working diff
 - Do not touch this sprint:
-  - 7-node graph invariant
   - `llm_factory.py` provider/model-routing contract
   - API/schema compatibility surfaces
 
@@ -25,13 +24,12 @@ You review, analyze, find bugs, suggest tests, and audit security.
 1. Do NOT refactor files beyond the scope of the current task.
 2. Do NOT add new dependencies without explicit approval.
 3. Do NOT rename, move, or restructure existing files or functions.
-4. Do NOT create new LangGraph nodes. 7-node invariant is law:
-   - `router`, `architect`, `specialist`, `local_expert`, `logistics`, `guard`, `synthesizer`
+4. Do NOT bypass coordinator architecture — planner turns flow through `coordinator.execute_turn()` and StepType execution contracts.
 5. Do NOT touch mobile-specific components unless explicitly asked.
 6. Do NOT modify API contracts or shared schemas without explicit approval.
 7. Limit changes to 8 files per task unless approved.
 8. Never do broad directory scans or read `node_modules`; reference specific files.
-9. Do NOT modify Synthesizer model routing (`_MODEL_BY_COMPLEXITY`) without measuring quality impact.
+9. Do NOT modify coordinator step mapping/status contract (`plan_turn`, `_step_node_name`, `_build_envelope`) without measuring UX impact.
 10. All LLM construction must use `get_llm_by_model()` from `llm_factory.py`.
     - No direct `ChatOpenAI()` or `ChatGoogleGenerativeAI()` in node/service code.
 11. No hard-coded world data.
@@ -114,7 +112,7 @@ ALWAYS read these before reviewing architecture, APIs, schemas, frontend state, 
 These four docs override your assumptions. Read before generating code.
 
 - `docs/plan_graph_analysis.md`
-  - Governs backend architecture and node structure.
+  - Governs backend architecture, coordinator + nodes/services.
   - MUST verify plan against spec before writing planner code.
 - `docs/design-system.md`
   - Governs UI styling, tokens, and component patterns.
@@ -132,22 +130,19 @@ These four docs override your assumptions. Read before generating code.
 
 0. Keep it simple. No over-engineering.
 1. `TripPlan` is SSoT for all trip state.
-2. Data over agents: flights/hotels are data fetchers in `LogisticsNode`, not agents.
-3. Domain experts are agents:
-   - Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing) use `VerticalSpecialist`.
-   - Tier 2 (Sailing/Cooking/Yoga) are lightweight tile filters.
-4. Architect sees the whole picture to avoid context fracture.
-5. Safe routing: LLM-based intent classification via `settings.router_model`, no regex routing.
-6. Constraint injector: Specialist runs before Architect calls tools.
-7. One voice: Synthesizer enforces consistent tone across nodes.
-8. Centralized LLM factory: `get_llm_by_model()` handles provider detection, model params, and structured output retry. Models are configured via `settings.*_model` env vars.
+2. Data over Agents — flights/hotels are data fetchers via coordinator tile search, not agent personas.
+3. Domain Experts remain modular — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing/Climbing/Sailing/Wildlife Safari) run through specialist dispatch; Tier 2 (Cooking/Yoga/Nightlife/etc.) remain lightweight tile filters.
+4. Coordinator Architecture — `coordinator.execute_turn()` classifies, plans deterministic steps, executes modules, and builds the envelope.
+5. Safe Routing — LLM-based intent/change classification via `router_extraction.classify_change()` and `settings.router_model`, no regex.
+6. Deterministic state transitions — step execution + `_build_envelope()` own state/view-state/ack updates.
+7. One Voice — `conversationalist.py` streams the final assistant response.
+8. Centralized LLM Factory — `get_llm_by_model()` handles provider detection (OpenAI/Gemini), model-specific params, structured output retry. Models configured via `settings.*_model` env vars.
 
 ### Stack
 
 - Frontend: Next.js 16, React 19, TypeScript, Tailwind, Zustand, Framer Motion, Mapbox GL
 - Backend: Python 3.12, FastAPI, SQLAlchemy, Alembic, LangGraph, LangChain (OpenAI + Gemini)
-- LLM providers via `llm_factory.py`: OpenAI (`gpt-4o`, `gpt-4o-mini`), Google (`gemini-2.5-flash`)
-- Structured output is handled through `llm_structured.py` retry wrappers
+- LLM Providers: OpenAI (gpt-4o family), Google (gemini-2.5 family) — via `llm_factory.py`; models configured per `settings.*_model` env vars
 - Testing: Vitest (frontend), pytest (backend)
 - Linting: ESLint + Prettier (frontend), Ruff (backend)
 
@@ -168,8 +163,8 @@ cd backend && ruff check . --fix
 rm -f backend/test_plan_document_pytest.db*
 
 # Environment
-# frontend/.env.local -> NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN
-# backend/.env -> DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY
+# frontend/.env.local -> NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN, NEXT_PUBLIC_DEBUG_LOGS
+# backend/.env -> DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY, ROUTER_MODEL, EXTRACTION_MODEL, SPECIALIST_MODEL, LOCAL_EXPERT_MODEL, GUARD_MODEL, SYNTHESIZER_PLANNING_MODEL, SYNTHESIZER_EXPLORATION_MODEL, EXPERIENCE_MODEL, IATA_RESOLVER_MODEL, UNSPLASH_ACCESS_KEY, GOOGLE_MAPS_API_KEY, DEBUG, DEBUG_PLAN_MESSAGES, CLEAR_L2_ON_RESET
 cd backend && alembic upgrade head
 docker compose up db --build
 ```
@@ -193,9 +188,7 @@ docker compose up db --build
 
 ## Performance Notes
 
-- Synthesizer model routing uses `_MODEL_BY_COMPLEXITY`; models are configured via `settings.*_model` env vars; do not change routing without quality measurement.
-- Prompt templates are cached in memory. Restart server after modifying:
-  - `backend/app/prompts/synthesizer.txt`
+Coordinator routing and response generation rely on `settings.*_model` env vars (`router_model`, `specialist_model`, `synthesizer_planning_model`, etc.) via `llm_factory.py`. Do not bypass `get_llm_by_model()` or alter coordinator step sequencing/status mapping without measuring quality and UX impact.
 
 ## Response Style
 

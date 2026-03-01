@@ -118,14 +118,19 @@ export function BookingPlanningView({
       <div id="booking-section">
         <div className="px-6 pt-0 pb-1">
           {savedTileIds.size > 0 && (
-            <span className={cn('mt-2 inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 font-medium text-primary', DS.textSize.micro)}>
+            <span
+              className={cn(
+                'mt-2 inline-flex items-center rounded-full bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-900/10 dark:text-emerald-300',
+                DS.textSize.micro
+              )}
+            >
               {savedTileIds.size} in trip
             </span>
           )}
           {/* Section-level lock message - only show if dates are NOT set */}
           {/* @see docs/ux_unified_architecture.md Section XII - Tiles-first logic */}
           {!hasDates && (
-            <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
               <Lock className="h-3 w-3" />
               <span>
                 Booking links unlock after you{' '}
@@ -133,7 +138,7 @@ export function BookingPlanningView({
                   <button
                     type="button"
                     onClick={() => onOpenSheet('dates')}
-                    className="text-primary underline underline-offset-2 hover:text-primary/80"
+                    className="text-emerald-700 underline underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
                   >
                     set trip dates
                   </button>
@@ -165,13 +170,13 @@ export function BookingPlanningView({
                   />
                 ))}
                 {stayTiles.length > 6 && (
-                  <p className="pt-2 text-xs text-muted-foreground">
+                  <p className="pt-2 text-xs text-zinc-500 dark:text-zinc-400">
                     +{stayTiles.length - 6} more stays available
                   </p>
                 )}
               </>
             ) : (
-              <p className="py-2 text-xs text-muted-foreground">No stays found yet.</p>
+              <p className="py-2 text-xs text-zinc-500 dark:text-zinc-400">No stays found yet.</p>
             )}
           </div>
         )}
@@ -194,13 +199,13 @@ export function BookingPlanningView({
                   />
                 ))}
                 {flightTiles.length > 6 && (
-                  <p className="pt-2 text-xs text-muted-foreground">
+                  <p className="pt-2 text-xs text-zinc-500 dark:text-zinc-400">
                     +{flightTiles.length - 6} more flights available
                   </p>
                 )}
               </>
             ) : (
-              <p className="py-2 text-xs text-muted-foreground">No flights found yet.</p>
+              <p className="py-2 text-xs text-zinc-500 dark:text-zinc-400">No flights found yet.</p>
             )}
           </div>
         )}
@@ -223,13 +228,15 @@ export function BookingPlanningView({
                   />
                 ))}
                 {filteredActivityTiles.length > 6 && (
-                  <p className="pt-2 text-xs text-muted-foreground">
+                  <p className="pt-2 text-xs text-zinc-500 dark:text-zinc-400">
                     +{filteredActivityTiles.length - 6} more activities available
                   </p>
                 )}
               </>
             ) : (
-              <p className="py-2 text-xs text-muted-foreground">No activities found yet.</p>
+              <p className="py-2 text-xs text-zinc-500 dark:text-zinc-400">
+                No activities found yet.
+              </p>
             )}
           </div>
         )}

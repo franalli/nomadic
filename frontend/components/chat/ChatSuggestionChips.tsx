@@ -26,6 +26,7 @@ interface ChatSuggestionChipsProps {
   onUpdateBookingTypes?: (settings: Partial<BookingTypes>) => void;
   onOpenSheet?: (sheet: SheetType) => void;
   onSendMessage: (message: string, options?: { suggestionClicked?: string }) => void;
+  onConfirmReset?: () => void;
   onOpenFlights: () => void;
   onOpenStays: () => void;
   onOpenActivities: () => void;
@@ -48,7 +49,7 @@ const OPEN_PILL_TARGETS = new Set([
   'activities',
 ]);
 
-const TRIGGER_ACTION_TARGETS = new Set(['set_direct_flights_only']);
+const TRIGGER_ACTION_TARGETS = new Set(['set_direct_flights_only', 'confirm_reset']);
 
 const ACTION_TARGET_ALIASES: Record<string, string> = {
   activity: 'activities',
@@ -151,6 +152,7 @@ export function ChatSuggestionChips({
   bookingTypes,
   onUpdateFlightSettings,
   onUpdateBookingTypes,
+  onConfirmReset,
   onOpenSheet,
   onSendMessage,
   onOpenFlights,
@@ -210,6 +212,7 @@ export function ChatSuggestionChips({
               bookingTypes,
               onUpdateFlightSettings,
               onUpdateBookingTypes,
+              onConfirmReset,
               ensureSettingsFlushed: () => useDocumentStore.getState().ensureSettingsFlushed(),
               toast,
             });
