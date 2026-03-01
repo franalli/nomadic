@@ -18,7 +18,18 @@ const compat = new FlatCompat({
 
 export default [
   {
-    ignores: ['node_modules/', '.next/', 'out/', 'dist/', 'coverage/'],
+    ignores: [
+      'node_modules/',
+      '.next/',
+      'out/',
+      'dist/',
+      'coverage/',
+      'e2e/**',
+      'playwright.config.ts',
+      'playwright.config.js',
+      'playwright.config.mjs',
+      'playwright.config.cjs',
+    ],
   },
   ...compat.extends(
     'plugin:import/recommended',

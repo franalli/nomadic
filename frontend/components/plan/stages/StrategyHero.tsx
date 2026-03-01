@@ -193,7 +193,7 @@ export function StrategyHero({
     return () => {
       cancelled = true;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- polling lifecycle controlled by isSheetOpen + section.id; not restarted on every render
+
   }, [hasTravelIntelligence, isSheetOpen, section.id, section.specialist_type, enrichmentRetryNonce, documentExists, messageSendNonce]);
 
   const handleRetryEnrichment = () => {

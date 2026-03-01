@@ -58,11 +58,11 @@ import {
 } from '@/components/ui/tooltip';
 import { apiFetch } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
-import { placeholderImageForTile } from '@/lib/placeholders';
 import {
   getSignedGooglePlacesPhotoProxyUrl,
   normalizeGooglePlacesPhotoName,
 } from '@/lib/googlePlacesPhoto';
+import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
 import { usePreferenceActions, useTilePreference } from '@/state/documentStore';
 import type { Tile } from '@/types/tile';

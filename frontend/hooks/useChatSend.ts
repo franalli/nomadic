@@ -497,7 +497,23 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         }
       }
     },
-    [onGeneratePlanStart, selectedBranchId, sessionState, addMessage, delayedLoader, actionLoader, hasBranches, onUserMessageSubmit, toast, executeStream, setActiveStatus, setGenerateTriggered, scrollToBottom, updateMessage]
+    [
+      onGeneratePlanStart,
+      selectedBranchId,
+      sessionState,
+      filterMessages,
+      addMessage,
+      delayedLoader,
+      actionLoader,
+      hasBranches,
+      onUserMessageSubmit,
+      toast,
+      executeStream,
+      setActiveStatus,
+      setGenerateTriggered,
+      updateMessage,
+      streamingMessageId,
+    ]
   );
 
   const addAssistantMessage = useCallback((message: string) => {
