@@ -1712,6 +1712,15 @@ def _inject_specialist_tiles_into_state(state: Dict[str, Any]) -> None:
     item so Phase 2 reads it during ActivityBlock construction.
     """
     strategy_sections = state.get("strategy_sections", [])
+    if not strategy_sections:
+        cats = state.get("trip_settings", {}).get("activity_settings", {}).get("categories", [])
+        tier1 = [c for c in cats if c in TIER1_SPECIALIST_NAMES]
+        if tier1:
+            logger.warning(
+                "[coordinator] _inject_specialist_tiles: strategy_sections EMPTY "
+                "but Tier 1 categories present: %s — specialist content will be lost",
+                tier1,
+            )
     destination = state.get("trip_plan", {}).get("destination", "")
     if not destination:
         return

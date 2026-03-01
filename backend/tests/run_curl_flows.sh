@@ -25,6 +25,7 @@
 #   19  Extend trip — extend dates preserves existing day card structure
 #   20  Add Tier 1 activity — hiking after initial cultural plan
 #   21  Long trip tile density — extend by 10 days, ≥60% fill rate
+#   22  Specialist survival — diving sections/tiles survive origin add
 #
 # Architecture contract (from plan_graph_analysis.md + data-contracts.md):
 #   - SSE event types: token, node_status, partial, complete, error
@@ -1998,6 +1999,128 @@ _flow_end 21
 echo ""
 fi
 
+# ── Flow 22: Specialist Survival — Origin Add ──────────────────────────────
+# Regression test: specialist strategy_sections + tiles must survive a
+# non-dispatch turn (origin add). Tests the strategy_sections hydration fix.
+
+if should_run 22; then
+_flow_begin 22
+echo ""
+echo "═══ Flow 22: Specialist Survival — Origin Add ═══"
+F=true
+
+if fresh_session; then
+
+echo "  → Turn 1: Diving in Bali, March 15-22"
+if send_message "Diving in Bali, March 15-22"; then
+
+SECS_T1=$(extract_doc "strategy_sections")
+SEC_CT_T1=$(jlen "$SECS_T1")
+check_gte "Turn 1: strategy_sections ≥ 1" "$SEC_CT_T1" 1 || F=false
+
+TOOLS_T1=$(extract_tools)
+echo "  ℹ  Turn 1 tools: $TOOLS_T1"
+check_contains "Turn 1: get_specialist_advice called" "$TOOLS_T1" "get_specialist_advice" || F=false
+
+# Diving tiles should exist
+TILES_T1=$(extract_doc "tiles")
+HAS_DIVING_T1=$(echo "$TILES_T1" | python3 -c "
+import sys,json
+try:
+    t=json.load(sys.stdin)
+    vals=t.values() if isinstance(t,dict) else t
+    found=0
+    for v in vals:
+        if not isinstance(v,dict): continue
+        tags=v.get('tags',[])
+        title=(v.get('title','')+'').lower()
+        src=v.get('source_agent','').lower()
+        if 'diving' in tags or 'dive' in title or 'snorkel' in title or src=='vertical_specialist':
+            found+=1
+    print('true' if found>=1 else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Turn 1: diving tiles present" "$HAS_DIVING_T1" "true" || F=false
+
+echo "  → Turn 2: I'm flying from Dubai"
+if send_message "I'm flying from Dubai"; then
+
+# Origin extracted
+ORIGIN=$(extract_top "session_state.trip_plan.origin")
+check_not_empty "Turn 2: origin extracted" "$ORIGIN" || F=false
+
+# THE regression check — strategy_sections survive non-dispatch turn
+SECS_T2=$(extract_doc "strategy_sections")
+SEC_CT_T2=$(jlen "$SECS_T2")
+check_gte "Turn 2: strategy_sections ≥ 1 (PRESERVED)" "$SEC_CT_T2" 1 || F=false
+
+# Diving tiles still present
+TILES_T2=$(extract_doc "tiles")
+HAS_DIVING_T2=$(echo "$TILES_T2" | python3 -c "
+import sys,json
+try:
+    t=json.load(sys.stdin)
+    vals=t.values() if isinstance(t,dict) else t
+    found=0
+    for v in vals:
+        if not isinstance(v,dict): continue
+        tags=v.get('tags',[])
+        title=(v.get('title','')+'').lower()
+        src=v.get('source_agent','').lower()
+        if 'diving' in tags or 'dive' in title or 'snorkel' in title or src=='vertical_specialist':
+            found+=1
+    print('true' if found>=1 else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Turn 2: diving tiles preserved" "$HAS_DIVING_T2" "true" || F=false
+
+# Destination preserved
+DEST_T2=$(extract_top "session_state.trip_plan.destination")
+DEST_LC=$(echo "$DEST_T2" | tr '[:upper:]' '[:lower:]')
+check_contains "Turn 2: destination preserved (Bali)" "$DEST_LC" "bali" || F=false
+
+# Flights enabled (origin triggers flight search)
+BT=$(extract_top "session_state.trip_settings.booking_types")
+BT_FLIGHTS=$(echo "$BT" | python3 -c "
+import sys,json
+try:
+    bt=json.load(sys.stdin)
+    f=bt.get('flights','off')
+    print('true' if f and f != 'off' else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Turn 2: flights enabled" "$BT_FLIGHTS" "true" || F=false
+
+# Section content integrity — preserved sections include diving
+HAS_DIVING_SEC=$(echo "$SECS_T2" | python3 -c "
+import sys,json
+try:
+    secs=json.load(sys.stdin)
+    found=any(s.get('specialist_type','').lower()=='diving' for s in secs)
+    print('true' if found else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Turn 2: strategy_sections contain diving specialist" "$HAS_DIVING_SEC" "true" || F=false
+
+# plan_view_state should remain at S2 (not regress to S0)
+PVS_T2=$(extract_doc "plan_view_state")
+check_not_contains "Turn 2: plan_view_state not S0 (no regression)" "$PVS_T2" "S0" || F=false
+
+# day_cards should be absent/empty (no itinerary built yet)
+DC_T2=$(extract_doc "day_cards")
+DC_CT_T2=$(jlen "$DC_T2")
+check "Turn 2: day_cards empty (no itinerary built)" "$DC_CT_T2" "0" || F=false
+
+# get_specialist_advice should NOT be called on a logistics-only turn
+TOOLS_T2=$(extract_tools)
+echo "  ℹ  Turn 2 tools: $TOOLS_T2"
+check_not_contains "Turn 2: get_specialist_advice NOT called (no re-dispatch)" "$TOOLS_T2" "get_specialist_advice" || F=false
+
+else F=false; fi; else F=false; fi; else F=false; fi
+$F && _flow pass 22 || _flow fail 22
+_flow_end 22
+echo ""
+fi
 
 # ── Final report ─────────────────────────────────────────────────────────────
 # Analyze all captured logs, print combined report, delete temp files.
