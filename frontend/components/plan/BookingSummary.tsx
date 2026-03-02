@@ -63,7 +63,7 @@ export function BookingSummary({ tiles, dayCards, state }: BookingSummaryProps) 
               >
                 <span>{tile.title}</span>
                 {tile.price_estimate != null && tile.price_estimate > 0 && (
-                  <span className="text-zinc-400 dark:text-zinc-500">
+                  <span className="text-zinc-900 dark:text-zinc-300">
                     {'· ~$'}
                     {Math.round(tile.price_estimate)}
                     {'/night'}

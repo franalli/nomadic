@@ -103,11 +103,14 @@ const SPECIALIST_MARKER_COLORS: Record<string, string> = {
   flight:          '#60a5fa', // blue-400
   arrival:         '#60a5fa', // blue-400
   departure:       '#60a5fa', // blue-400
-  hotel:           '#71717a', // zinc-500
-  accommodation:   '#71717a', // zinc-500
-  stay:            '#71717a', // zinc-500
-  'check-in':      '#71717a', // zinc-500
-  'check-out':     '#71717a', // zinc-500
+  hotel:           '#10b981', // emerald-500
+  accommodation:    '#10b981', // emerald-500
+  lodging:         '#10b981', // emerald-500
+  stay:            '#10b981', // emerald-500
+  'check-in':      '#10b981', // emerald-500
+  'check-out':     '#10b981', // emerald-500
+  check_in:        '#10b981', // emerald-500
+  check_out:       '#10b981', // emerald-500
 };
 
 /** Pin icon per activity/specialist type for map markers. */
@@ -150,6 +153,9 @@ const PIN_ICON: Record<string, LucideIcon> = {
   stay:            Bed,
   'check-in':      Bed,
   'check-out':     Bed,
+  check_in:        Bed,
+  check_out:       Bed,
+  lodging:         Bed,
 };
 
 /** Combined pin config derived from color + icon maps. */
@@ -322,13 +328,16 @@ export const MapMarkerItem = memo(function MapMarkerItem({
           className={cn(
             'flex items-center justify-center rounded-full shadow-xl border-2 transition-all',
             isActive ? 'w-10 h-10 border-white' : 'w-8 h-8 border-white/80',
+            isActive
+              ? 'ring-2 ring-emerald-300/85 shadow-[0_0_16px_rgba(16,185,129,0.45)]'
+              : isHovered && 'ring-2 ring-emerald-400/80 shadow-[0_0_12px_rgba(16,185,129,0.35)]',
             isDimmed && 'grayscale'
           )}
           style={{ backgroundColor: markerBg }}
         >
           <MarkerIcon
             className="text-white"
-            size={isActive ? 20 : 16}
+            size={isActive ? 20 : isHovered ? 18 : 16}
           />
         </div>
 

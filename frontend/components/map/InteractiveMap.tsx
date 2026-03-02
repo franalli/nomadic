@@ -10,6 +10,7 @@ import MapboxMap, { type ErrorEvent, Layer, type MapRef, Marker, Source } from '
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { debugLog } from '@/lib/debug';
 import { DS } from '@/lib/design-system';
+import { isDarkTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/state/uiStore';
 
@@ -92,10 +93,7 @@ export function InteractiveMap({
   const lastClickRef = useRef<number>(0);
   const [isMapReady, setIsMapReady] = useState(false);
 
-  // Dark mode detection for map style
-  const [isDark, setIsDark] = useState(() =>
-    typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
-  );
+  const isDark = isDarkTheme();
 
   const safeDefaultCenter = useMemo(() => {
     const normalized = normalizeMapCoordinates({
@@ -127,13 +125,6 @@ export function InteractiveMap({
   }, [items]);
 
   const droppedCoordinateSignature = droppedCoordinateIds.join('|');
-
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e: MediaQueryListEvent) => setIsDark(e.matches);
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
 
   useEffect(() => {
     if (!droppedCoordinateSignature) return;

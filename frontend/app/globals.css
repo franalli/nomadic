@@ -66,59 +66,57 @@
   /* --topic-color is set inline by components via getSpecialistColorRgb() from lib/specialists.ts */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* YC-ready dark palette - locked hex values */
-    /* Background shifted cooler (-3° hue) for depth contrast with chat panel */
-    --bg: 147 25% 5%;              /* was 150, now 147 - cooler */
-    --bg-soft: 152 25% 10%;
-    --bg-strong: 147 30% 4%;       /* was 150, now 147 - cooler */
-    --surface: 152 28% 8%;         /* #0F1A16 */
-    --border: 152 30% 17%;         /* #1F3A30 */
+.dark {
+  /* YC-ready dark palette - locked hex values */
+  /* Background shifted cooler (-3° hue) for depth contrast with chat panel */
+  --bg: 147 25% 5%;              /* was 150, now 147 - cooler */
+  --bg-soft: 152 25% 10%;
+  --bg-strong: 147 30% 4%;       /* was 150, now 147 - cooler */
+  --surface: 152 28% 8%;         /* #0F1A16 */
+  --border: 152 30% 17%;         /* #1F3A30 */
 
-    --text: 150 18% 91%;           /* #E6ECE9 */
-    --text-soft: 148 12% 66%;      /* #9FB2A9 */
-    --text-muted: 150 10% 47%;     /* #6E847A */
-    --text-onDark: 160 40% 15%;
+  --text: 150 18% 91%;           /* #E6ECE9 */
+  --text-soft: 148 12% 66%;      /* #9FB2A9 */
+  --text-muted: 150 10% 47%;     /* #6E847A */
+  --text-onDark: 160 40% 15%;
 
-    --charcoal: 35 20% 88%;
-    --sand: 25 30% 20%;
-    --bronze: 31 89% 55%;          /* #F28C28 */
-    --sky: 160 40% 45%;
+  --charcoal: 35 20% 88%;
+  --sand: 25 30% 20%;
+  --bronze: 31 89% 55%;          /* #F28C28 */
+  --sky: 160 40% 45%;
 
-    /* Core theme tokens */
-    --background: 147 25% 5%;      /* was 150, now 147 - cooler */
-    --foreground: 150 18% 91%;     /* #E6ECE9 */
+  /* Core theme tokens */
+  --background: 147 25% 5%;      /* was 150, now 147 - cooler */
+  --foreground: 150 18% 91%;     /* #E6ECE9 */
 
-    --card: 152 28% 8%;            /* #0F1A16 */
-    --card-foreground: 150 18% 91%;
+  --card: 152 28% 8%;            /* #0F1A16 */
+  --card-foreground: 150 18% 91%;
 
-    --popover: 152 28% 9%;
-    --popover-foreground: 150 18% 91%;
+  --popover: 152 28% 9%;
+  --popover-foreground: 150 18% 91%;
 
-    --primary: 160 40% 42%;
-    --primary-foreground: 0 0% 100%;
+  --primary: 160 40% 42%;
+  --primary-foreground: 0 0% 100%;
 
-    --secondary: 25 30% 22%;
-    --secondary-foreground: 25 50% 80%;
+  --secondary: 25 30% 22%;
+  --secondary-foreground: 25 50% 80%;
 
-    --muted: 152 25% 12%;
-    --muted-foreground: 150 10% 47%;  /* #6E847A */
+  --muted: 152 25% 12%;
+  --muted-foreground: 150 10% 47%;  /* #6E847A */
 
-    --accent: 31 89% 55%;          /* #F28C28 */
-    --accent-foreground: 0 0% 100%;
+  --accent: 31 89% 55%;          /* #F28C28 */
+  --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 70% 50%;
-    --destructive-foreground: 0 0% 98%;
+  --destructive: 0 70% 50%;
+  --destructive-foreground: 0 0% 98%;
 
-    --input: 152 25% 18%;
-    --ring: 38 92% 50%;  /* Amber-500 for focus rings */
+  --input: 152 25% 18%;
+  --ring: 38 92% 50%;  /* Amber-500 for focus rings */
 
-    /* Constraint state colors (locked) */
-    --color-cta-orange: 32 100% 50%;       /* #FF8A00 - buttons, primary actions, focused inputs */
-    --color-state-amber: 41 73% 55%;       /* #E2A23A - constraint icons (set) */
-    --color-conflict-amber: 38 75% 45%;    /* #C88A1E - conflicted icons + dashed borders */
-  }
+  /* Constraint state colors (locked) */
+  --color-cta-orange: 32 100% 50%;       /* #FF8A00 - buttons, primary actions, focused inputs */
+  --color-state-amber: 41 73% 55%;       /* #E2A23A - constraint icons (set) */
+  --color-conflict-amber: 38 75% 45%;    /* #C88A1E - conflicted icons + dashed borders */
 }
 
 html {
@@ -138,32 +136,30 @@ input[type="number"]::-webkit-outer-spin-button {
   cursor: pointer;
 }
 
-@media (prefers-color-scheme: dark) {
-  input[type="number"]::-webkit-inner-spin-button,
-  input[type="number"]::-webkit-outer-spin-button {
-    filter: invert(1);
-  }
+.dark input[type="number"]::-webkit-inner-spin-button,
+.dark input[type="number"]::-webkit-outer-spin-button {
+  filter: invert(1);
+}
 
-  /* Firefox number input */
-  input[type="number"] {
-    -moz-appearance: textfield;
-  }
+/* Firefox number input */
+.dark input[type="number"] {
+  -moz-appearance: textfield;
+}
 
-  /* Select dropdown styling for dark mode */
-  select {
-    background-color: hsl(160 25% 12%);
-    color: hsl(35 25% 92%);
-  }
+/* Select dropdown styling for dark mode */
+.dark select {
+  background-color: hsl(160 25% 12%);
+  color: hsl(35 25% 92%);
+}
 
-  select option {
-    background-color: hsl(160 25% 12%);
-    color: hsl(35 25% 92%);
-  }
+.dark select option {
+  background-color: hsl(160 25% 12%);
+  color: hsl(35 25% 92%);
+}
 
-  select option:hover,
-  select option:checked {
-    background-color: hsl(160 40% 20%);
-  }
+.dark select option:hover,
+.dark select option:checked {
+  background-color: hsl(160 40% 20%);
 }
 
 @keyframes compass-spin {
@@ -576,36 +572,6 @@ input[type="number"]::-webkit-outer-spin-button {
   --chip-open-shadow: 0 0 0 2px rgba(16, 185, 129, 0.12);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Dark mode semantic tokens - improved contrast for WCAG AA */
-    --theme-bg: #080A0B;
-    --theme-panel: #0B0F10;
-    --theme-surface-2: rgba(255, 255, 255, 0.08);   /* was 0.04 - chips more visible */
-    --theme-overlay: rgba(255, 255, 255, 0.08);     /* was 0.06 - better hover states */
-    --theme-border: rgba(255, 255, 255, 0.12);      /* card/chip outlines */
-    --theme-hairline: rgba(255, 255, 255, 0.06);    /* subtle dividers */
-    --theme-text: rgba(255, 255, 255, 0.92);
-    --theme-text-muted: rgba(255, 255, 255, 0.78);  /* was 0.70 - WCAG AA compliant */
-    --theme-link-muted: rgba(255, 255, 255, 0.50);  /* footer links - improved contrast */
-    --theme-link-muted-hover: rgba(255, 255, 255, 0.70);
-    --theme-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-
-    /* Chip state tokens - dark mode */
-    --chip-bg: transparent;
-    --chip-border: rgba(82, 82, 91, 0.30);       /* zinc-600/30 — unset ghost border */
-    --chip-text: rgba(113, 113, 122, 1.0);        /* zinc-500 — muted label */
-    --chip-border-hover: rgba(113, 113, 122, 0.50); /* zinc-500/50 */
-    --chip-bg-hover: rgba(39, 39, 42, 0.30);      /* zinc-800/30 — hover fill */
-    --chip-active-bg: rgba(2, 44, 34, 0.40);      /* emerald-950/40 — set state */
-    --chip-active-border: rgba(5, 150, 105, 0.50); /* emerald-600/50 */
-    --chip-active-text: rgba(255, 255, 255, 1.0); /* white */
-    --chip-active-icon: rgba(52, 211, 153, 0.95); /* emerald-400 */
-    --chip-open-border: rgba(5, 150, 105, 0.65);
-    --chip-open-shadow: 0 0 0 2px rgba(5, 150, 105, 0.18);
-  }
-}
-
 /* Support explicit theme classes (for manual theme switching) */
 .light {
   /* "Architectural Sketch" - ink on vellum */
@@ -896,19 +862,7 @@ input[type="number"]::-webkit-outer-spin-button {
   }
 }
 
-/* Dark mode version with stronger glow */
-@media (prefers-color-scheme: dark) {
-  @keyframes pulse-fab {
-    0%, 100% {
-      box-shadow: 0 0 24px -6px rgba(16, 185, 129, 0.6),
-                  0 0 0 0 rgba(16, 185, 129, 0.5);
-    }
-    50% {
-      box-shadow: 0 0 24px -6px rgba(16, 185, 129, 0.6),
-                  0 0 0 12px rgba(16, 185, 129, 0);
-    }
-  }
-}
+/* Dark mode keyframes retained in light mode fallback for centralized class-based theme switching. */
 
 /* ===== Topography Variables (Single Source of Truth) ===== */
 /* SVG used as mask-image; background-color controls stroke color */
@@ -919,15 +873,6 @@ input[type="number"]::-webkit-outer-spin-button {
   --topo-opacity: 0.03;
   --topo-color: rgba(0, 0, 0, 0.22);
   --topo-scale: 1400px;
-}
-
-/* Dark mode via OS preference */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --topo-opacity: 0.035;
-    --topo-color: rgba(255, 255, 255, 0.50);
-    --elevated: 222 20% 11%;
-  }
 }
 
 /* Also support .dark class for manual toggle (if added later) */
@@ -941,11 +886,6 @@ input[type="number"]::-webkit-outer-spin-button {
 @media (max-width: 768px) {
   :root {
     --topo-opacity: 0.04;
-  }
-}
-@media (max-width: 768px) and (prefers-color-scheme: dark) {
-  :root {
-    --topo-opacity: 0.045;
   }
 }
 @media (max-width: 768px) {
@@ -985,12 +925,6 @@ input[type="number"]::-webkit-outer-spin-button {
   transform: translateZ(0);
 }
 
-/* Dark mode: normal blend (multiply would darken too much) */
-@media (prefers-color-scheme: dark) {
-  .appTopo::before {
-    mix-blend-mode: normal;
-  }
-}
 .dark .appTopo::before {
   mix-blend-mode: normal;
 }
@@ -1032,16 +966,6 @@ input[type="number"]::-webkit-outer-spin-button {
   );
 }
 
-/* Dark mode: lighter edge vignette */
-@media (prefers-color-scheme: dark) {
-  .rightCanvas::after {
-    background: radial-gradient(
-      ellipse 90% 80% at 50% 50%,
-      transparent 50%,
-      rgba(255, 255, 255, 0.01) 100%
-    );
-  }
-}
 .dark .rightCanvas::after {
   background: radial-gradient(
     ellipse 90% 80% at 50% 50%,

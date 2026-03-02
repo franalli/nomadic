@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { MapboxErrorSuppressor } from '@/components/map/MapboxErrorSuppressor';
 import { ConsentManager } from '@/components/nomadic/consent-manager';
 import { Providers } from '@/components/providers/Providers';
+import { THEME_CLASS } from '@/lib/theme';
 
 export const metadata = {
   title: 'Nomadic – Interactive Travel Planner',
@@ -13,7 +14,7 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={THEME_CLASS}>
       <body className="min-h-screen bg-bg text-text">
         {/* Skip link for keyboard navigation */}
         <a

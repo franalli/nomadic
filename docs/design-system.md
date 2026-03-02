@@ -2671,6 +2671,35 @@ A placeholder slot in the timeline that invites the user to fill empty days.
 | Hover | `hover:border-zinc-400 hover:bg-zinc-50` | `dark:hover:border-white/20 dark:hover:bg-white/[0.04]` |
 | Border radius | `rounded-xl` | Same |
 
+### 31.3.1 End-of-Day CTA (`+ Add activity`)
+
+In rich itinerary mode, each filled day card ends with an optional CTA that opens the activity picker. This CTA stays subordinate to existing activity cards.
+
+| State | Light Mode | Dark Mode |
+|-------|------------|-----------|
+| Default | `border-2 border-dashed border-white/10 text-zinc-500` | Same |
+| Hover | `hover:border-emerald-500/30 hover:text-emerald-400 hover:shadow-[0_0_15px_-5px_rgba(16,185,129,0.15)]` | Same |
+| Active | `active:scale-[0.98]` (inherits hover palette) | Same |
+
+**Style contract:**
+- Keep as dashed, no solid fill.
+- No shimmer or background sweep.
+- Apply via:
+
+```tsx
+<button className={cn(
+  'w-full py-3 rounded-xl border-2 border-dashed transition-all duration-200',
+  'border-white/10 text-zinc-500',
+  'hover:border-emerald-500/30 hover:text-emerald-400',
+  'hover:shadow-[0_0_15px_-5px_rgba(16,185,129,0.15)]',
+  'active:scale-[0.98]'
+)}>
+  + Add activity
+</button>
+```
+
+**Implementation:** `frontend/components/plan/TimelineBlockList.tsx`
+
 ### 31.4 Map Error Fallback (MapErrorBoundary)
 
 The fallback UI displayed when the Mapbox component throws an error.
@@ -2749,6 +2778,30 @@ Empty day placeholder with specialist chip picker and "Generate Activities" CTA.
 | Rejection message | `bg-amber-50 border-amber-200 text-amber-700` | `dark:bg-amber-900/20 dark:border-amber-700/30 dark:text-amber-300` |
 
 **Rule:** Rejection message amber IS approved semantic usage (constraint-driven rejection). CTA uses `DS.actions.primary`. Disabled state: `opacity-50 cursor-not-allowed` (not `opacity-60`).
+
+### 31.9 Timeline↔Map Hover Coupling
+
+Activity block hover and map POI hover must stay synchronized to maintain spatial context.
+
+| Actor | State | Timeline Block | Map Marker |
+|-------|-------|----------------|-----------|
+| Default | Idle | `transition-all duration-300` base visual only | Marker inner: `w-8 h-8 border-white/80`, shadow hidden, icon size `16`, no tooltip |
+| Hover from card | `onMouseEnter` / `onMouseLeave` | On block container: `useUIStore.setHoveredActivityId(blockId)` | Marker selected by `hoveredActivityId` gets `ring-2 ring-emerald-400/80`, `shadow-[0_0_12px_rgba(16,185,129,0.35)]`, icon size `18` |
+| Hover from map | `onMouseEnter` / `onMouseLeave` on marker | Sets same `hoveredActivityId` for the corresponding block | Same as default when not active |
+| Active | `activeBlockId` or `activeItemId` | Ring on active block: `ring-2 ring-emerald-500 ring-offset-2 rounded-xl scale-[1.01]` | Active marker takes precedence over hover: `w-10 h-10`, `ring-2 ring-emerald-300/85`, `shadow-[0_0_16px_rgba(16,185,129,0.45)]`, icon size `20` |
+| Day filter | `highlightedDay` mismatch | Informational row-level highlight only | `opacity-30 grayscale` when marker day != highlighted day |
+| Tooltip | Card hover or active | Tooltip follows map marker visibility rules | `showTooltip` when `isActive || isHovered`; tooltip remains dark (`bg-black/90`, `border-white/10`, `z-[9999]`) |
+
+**State source:** `useUIStore.hoveredActivityId` controls hover synchronization.
+
+**Map marker interaction classes (MapMarkerItem):**
+```tsx
+isActive
+  ? 'w-10 h-10 ring-2 ring-emerald-300/85 shadow-[0_0_16px_rgba(16,185,129,0.45)]'
+  : isHovered && 'ring-2 ring-emerald-400/80 shadow-[0_0_12px_rgba(16,185,129,0.35)]'
+```
+
+**Implementation:** `frontend/components/plan/TimelineBlockList.tsx`, `frontend/components/map/MapMarkerItem.tsx`
 
 ---
 

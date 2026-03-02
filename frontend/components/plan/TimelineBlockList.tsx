@@ -301,6 +301,8 @@ export function TimelineBlockList({
           return (
             <div
               key={blockIndex}
+              onMouseEnter={() => useUIStore.getState().setHoveredActivityId(blockId)}
+              onMouseLeave={() => useUIStore.getState().setHoveredActivityId(null)}
               id={`timeline-item-${blockId}`}
               data-map-id={blockId}
               className={cn(
@@ -433,12 +435,14 @@ export function TimelineBlockList({
           type="button"
           onClick={() => onBrowse(card.day_number, card.date ?? null)}
           className={cn(
-            'w-full py-2 rounded-lg text-sm font-medium transition-colors',
-            'border-2 border-dashed',
-            'border-zinc-200 dark:border-white/10',
-            'text-zinc-400 dark:text-zinc-500',
-            'hover:border-zinc-900 hover:text-zinc-600',
-            'dark:hover:border-white/25 dark:hover:text-zinc-300',
+            "w-full py-3 rounded-xl text-sm font-medium border-2 border-dashed transition-all duration-200",
+            "border-white/10 text-zinc-500",
+            "hover:border-emerald-500/30 hover:text-emerald-400",
+            "hover:shadow-[0_0_15px_-5px_rgba(16,185,129,0.15)]",
+            "active:scale-[0.98]",
+            disableFillDayActions
+              ? 'cursor-not-allowed pointer-events-none'
+              : ''
           )}
         >
           + Add activity

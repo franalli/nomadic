@@ -142,24 +142,27 @@ export function FreeDayCard({
           onClick={onBrowse}
           disabled={isDisabled}
           className={cn(
-            'text-xs font-medium',
-            'text-zinc-500 dark:text-zinc-400',
+            'text-sm font-medium inline-flex items-center gap-1.5',
+            'text-zinc-600 dark:text-zinc-400',
             'hover:text-emerald-600 dark:hover:text-emerald-400',
             'transition-colors',
             isDisabled && 'opacity-50 cursor-not-allowed pointer-events-none'
           )}
         >
-          <span className="relative inline-block">
-            <span className="relative z-10 inline-flex items-center gap-1.5"><Search className="h-3.5 w-3.5" />Browse more activities</span>
+          <Search className="h-3.5 w-3.5 text-zinc-500 dark:text-zinc-400" />
+          <span className="relative inline-flex">
+            <span className={cn(isDisabled && 'text-zinc-500 dark:text-zinc-400', !isDisabled && 'text-zinc-600 dark:text-zinc-400')}>
+              Browse more activities
+            </span>
             {!isDisabled && (
               <span
                 aria-hidden="true"
                 className={cn(
-                  'pointer-events-none absolute inset-0 z-20',
+                  'pointer-events-none absolute inset-0 z-10',
                   'text-transparent bg-clip-text',
-                  'bg-[linear-gradient(90deg,transparent,rgba(52,211,153,0.38),transparent)]',
-                  '[background-size:240%_100%]',
-                  'motion-safe:animate-[scan-shimmer_4.8s_ease-in-out_infinite]'
+                  'bg-[linear-gradient(90deg,transparent,rgba(16,185,129,0.28),transparent)]',
+                  'bg-[length:240%_100%]',
+                  'motion-safe:animate-[scan-shimmer_6.6s_ease-in-out_infinite]'
                 )}
               >
                 Browse more activities
@@ -180,6 +183,8 @@ export function FreeDayCard({
           }
           className={cn(
             DS.actions.primary,
+            'bg-zinc-900 text-white hover:bg-zinc-800',
+            'dark:bg-emerald-600 dark:hover:bg-emerald-500',
             'w-full px-4 py-2 text-sm font-medium flex items-center justify-center gap-1.5',
             'disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none'
           )}
