@@ -5,17 +5,29 @@
 **/*.pyd
 .venv/
 backend/.venv/
-**/.pytest_cache/
 **/.ruff_cache/
 *.egg-info/
 .prof_plan_graph.out
 
+# Environment variables
+.env
+.env.*
+**/.env
+**/.env.*
+
 # Node / Frontend
 **/node_modules/
 frontend/.next/
+**/.next/
 frontend/.turbo/
+**/.turbo/
 **/*.tsbuildinfo
+*.tsbuildinfo
 **/tsconfig.tsbuildinfo
+frontend/node_modules
+frontend/.next
+frontend/.turbo
+**/.next
 package-lock.json
 **/package-lock.json
 
@@ -23,7 +35,6 @@ package-lock.json
 **/dist/
 **/build/
 **/out/
-**/coverage/
 
 # Logs
 **/*.log
@@ -32,11 +43,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Test artifacts
-backend/tests/e2e/generated_results/
-backend/tests/e2e/nightly_results/
-backend/test_artifacts/
-e2e_results/
+# Generated docs snapshots
+docs/key_files/
 
 # Cache and temp files
 **/.cache/
@@ -53,7 +61,10 @@ tmpclaude-*-cwd
 backend/.benchmarks/
 
 # Database
-db-data/
+db-data
+
+# OS
+nul
 
 # Alembic auto-generated migrations
 backend/migrations/versions/
