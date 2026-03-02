@@ -43,6 +43,7 @@ Map each changed file to its affected SSoT doc(s):
 | `frontend/components/plan/*`                     | `docs/ux_unified_architecture.md` (component responsibilities, rendering)            |
 | `frontend/components/chat/*`                     | `docs/ux_unified_architecture.md` (chat panel, suggestion chips)                     |
 | `frontend/components/tiles/*`                    | `docs/design-system.md` (tile card patterns, component mapping)                      |
+| `frontend/components/animations/*`                | `docs/ux_unified_architecture.md` (startup boot flow, motion overlay handling)      |
 | `frontend/state/*`                               | `docs/data-contracts.md` (frontend state store, key actions, guards)                 |
 | `frontend/types/*`                               | `docs/data-contracts.md` (schema reference)                                          |
 | `frontend/lib/design-system.ts`                  | `docs/design-system.md` (tokens, materials, actions, pills)                          |

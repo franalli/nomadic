@@ -8,10 +8,11 @@
  * hold-to-delete, and constraint sub-cards.
  */
 
-import { CheckCircle, MoreVertical, RefreshCw, Trash2 } from 'lucide-react';
+import { CheckCircle, MapPin, MoreVertical, RefreshCw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { trackDeeplinkClick } from '@/lib/api';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
@@ -52,6 +53,8 @@ export interface ActivityCardInlineActionsProps {
   onUnassign?: () => void;
   onRemove?: () => void;
   isRemovable?: boolean;
+  deeplink?: string;
+  tileId?: string;
 }
 
 export function ActivityCardInlineActions({
@@ -61,11 +64,39 @@ export function ActivityCardInlineActions({
   onUnassign,
   onRemove,
   isRemovable,
+  deeplink,
+  tileId,
 }: ActivityCardInlineActionsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <>
+      {/* External deeplink — emerald glass pill */}
+      {deeplink && deeplink !== '' && (
+        <a
+          href={deeplink}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (tileId) trackDeeplinkClick(tileId);
+          }}
+          className={cn(
+            'inline-flex items-center gap-1 px-2 py-1 rounded-full self-center shrink-0',
+            'text-[10px] font-bold uppercase tracking-wider',
+            'transition-all duration-150 active:scale-95',
+            'bg-emerald-50 border border-emerald-500/30 text-emerald-700',
+            'hover:bg-emerald-100 hover:border-emerald-500/60',
+            'dark:bg-emerald-950/40 dark:border-emerald-500/25 dark:text-emerald-400',
+            'dark:hover:bg-emerald-900/50 dark:hover:border-emerald-400/50',
+            'dark:hover:shadow-[0_0_12px_-3px_rgba(16,185,129,0.3)]',
+          )}
+        >
+          <MapPin className="w-3 h-3" />
+          View
+        </a>
+      )}
+
       {/* Action Button (Book) - only show in booking mode when not booked */}
       {mode === 'booking' && !isBooked && onBook && (
         <button

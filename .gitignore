@@ -1,12 +1,14 @@
 # Node
 frontend/node_modules
 frontend/.next
+**/.next
 frontend/.turbo
 *.tsbuildinfo
 
 # Python
 **/__pycache__/
 backend/.venv
+**/.pytest_cache/
 
 # OS
 .DS_Store
@@ -44,6 +46,11 @@ tmpclaude-*-cwd
 
 # Benchmarks
 .benchmarks/
+
+# Test artifacts
+**/test-results/
+coverage/
+htmlcov/
 
 # Key files snapshot (auto-generated)
 docs/key_files/

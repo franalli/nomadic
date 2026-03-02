@@ -10,10 +10,11 @@
  */
 
 
-import { Heart } from 'lucide-react';
+import { Heart, MapPin } from 'lucide-react';
 import Image from 'next/image';
 import { useCallback, useMemo, useState } from 'react';
 
+import { trackDeeplinkClick } from '@/lib/api';
 import { DS } from '@/lib/design-system';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
@@ -172,6 +173,32 @@ export function SuggestionCard({
           </button>
         )}
         */}
+
+        {/* Deeplink VIEW pill */}
+        {tile.deeplink_url && tile.deeplink_url !== '' && tile.deeplink_url !== '#' && (
+          <a
+            href={tile.deeplink_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              e.stopPropagation();
+              trackDeeplinkClick(tile.id);
+            }}
+            className={cn(
+              'inline-flex items-center gap-1 px-2 py-1 rounded-full self-center shrink-0',
+              'text-[10px] font-bold uppercase tracking-wider',
+              'transition-all duration-150 active:scale-95',
+              'bg-emerald-50 border border-emerald-500/30 text-emerald-700',
+              'hover:bg-emerald-100 hover:border-emerald-500/60',
+              'dark:bg-emerald-950/40 dark:border-emerald-500/25 dark:text-emerald-400',
+              'dark:hover:bg-emerald-900/50 dark:hover:border-emerald-400/50',
+              'dark:hover:shadow-[0_0_12px_-3px_rgba(16,185,129,0.3)]',
+            )}
+          >
+            <MapPin className="w-3 h-3" />
+            View
+          </a>
+        )}
 
         {/* Save button */}
         <button

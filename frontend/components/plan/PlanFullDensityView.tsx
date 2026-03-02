@@ -17,6 +17,7 @@ import type { DocumentTripInputs } from '@/types/document';
 import type { DestinationCard, PlanViewModel, PlanViewState, StrategySection } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
+import { BookingSummary } from './BookingSummary';
 import { FullDensityTimeline } from './FullDensityTimeline';
 import type { GenerationState } from './planStateHelpers';
 import { type TimelineVariant } from './TimelineThread';
@@ -401,6 +402,11 @@ export function PlanFullDensityView({
           hasDestinationIntel={hasDestinationIntel}
           isTravelIntelPending={isTravelIntelPending}
           travelAdviceLabel={travelAdviceLabel}
+        />
+        <BookingSummary
+          tiles={effectiveTiles}
+          dayCards={viewModel.day_cards ?? []}
+          state={state}
         />
         </div>
 

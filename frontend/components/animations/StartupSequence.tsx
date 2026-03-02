@@ -40,6 +40,7 @@ export const StartupSequence = memo(function StartupSequence({
   const [isVisible, setIsVisible] = useState(true);
   const [shouldSkip, setShouldSkip] = useState(false);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Check if already booted this session or reduced motion preferred
   useEffect(() => {
@@ -66,6 +67,7 @@ export const StartupSequence = memo(function StartupSequence({
   useEffect(() => {
     return () => {
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (completionTimeoutRef.current) clearTimeout(completionTimeoutRef.current);
     };
   }, []);
 
@@ -87,14 +89,28 @@ export const StartupSequence = memo(function StartupSequence({
       timers.push(setTimeout(() => {
         setPhase('done');
         sessionStorage.setItem(SESSION_KEY, 'true');
-        timers.push(setTimeout(() => {
-          setIsVisible(false);
-          onComplete();
-        }, 500));
       }, 700));
     }
 
     return () => timers.forEach(clearTimeout);
+  }, [phase, shouldSkip]);
+
+  // Run completion after we enter `done` so effect cleanup from phase changes
+  // cannot cancel the handoff to the app shell.
+  useEffect(() => {
+    if (shouldSkip || phase !== 'done') return;
+
+    completionTimeoutRef.current = setTimeout(() => {
+      setIsVisible(false);
+      onComplete();
+    }, 500);
+
+    return () => {
+      if (completionTimeoutRef.current) {
+        clearTimeout(completionTimeoutRef.current);
+        completionTimeoutRef.current = null;
+      }
+    };
   }, [phase, onComplete, shouldSkip]);
 
   if (!isVisible || shouldSkip) return null;

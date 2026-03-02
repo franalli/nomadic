@@ -6,7 +6,7 @@ Provider cascade: curated → google_places → mock
 
 Price estimation: price_level (0-4) × destination cost tier.
 Photos: Placeholder images only (avoid exposing Google API keys in client URLs).
-Deeplinks: Google Hotels deeplink for hotels, Google Maps for activities.
+Deeplinks: Google Travel Hotels (preferred) with Maps fallback for hotels, Google Maps for activities.
 
 Quota exhaustion or API errors → returns empty list → mock fallback applies.
 """
@@ -1042,17 +1042,24 @@ class GooglePlacesHotelProvider(Provider):
 
             # Enterprise fields (priceLevel, priceRange, rating, userRatingCount)
             # stripped from FieldMask to stay on Pro tier ($5/1k vs $32/1k).
-            price = _estimate_hotel_price(
+            total_price = _estimate_hotel_price(
                 nights, total_travelers, rating=rating, min_stars=_min_stars, style=_style
             )
-            tax_and_service = round(price * 0.12, 2)
+            # Positional variance: top-ranked results skew ~15% pricier
+            n = len(places)
+            if n > 1:
+                position_factor = 1.0 + 0.15 * (n - i - 1) / (n - 1)
+                total_price = round(total_price * position_factor, 2)
+            nightly_rate = round(total_price / max(nights, 1), 2)
+            tax_and_service = round(total_price * 0.12, 2)
             property_fee = round(nights * 15, 2)
-            total_inclusive = round(price + tax_and_service + property_fee, 2)
+            total_inclusive = round(total_price + tax_and_service + property_fee, 2)
 
             deeplink = (
-                place.get("googleMapsUri")
-                or f"https://www.google.com/travel/hotels/entity/{place_id}"
-            )
+                f"https://www.google.com/travel/hotels/entity/{place_id}"
+                if place_id and not place_id.startswith("gp_hotel_")
+                else place.get("googleMapsUri", "")
+            ) or place.get("googleMapsUri", "")
             # editorialSummary is Enterprise+Atmosphere — not in our Pro field mask.
             tiles.append(
                 Tile(
@@ -1063,10 +1070,10 @@ class GooglePlacesHotelProvider(Provider):
                     title=name,
                     subtitle=address,
                     image_url=image_url,
-                    price_estimate=price,
+                    price_estimate=nightly_rate,
                     live_price=None,
                     currency=ctx.currency or "USD",
-                    price_basis="per_trip",
+                    price_basis="per_night",
                     is_estimate_only=True,
                     deeplink_url=deeplink,
                     rating=rating,

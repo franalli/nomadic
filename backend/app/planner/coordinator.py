@@ -416,6 +416,8 @@ def _normalize_tile_fields(tile: Dict[str, Any]) -> Dict[str, Any]:
                 pass
     if not tile.get("deeplink_url") and tile.get("deeplink"):
         tile["deeplink_url"] = tile["deeplink"]
+    if not tile.get("deeplink") and tile.get("deeplink_url"):
+        tile["deeplink"] = tile["deeplink_url"]
     return tile
 
 

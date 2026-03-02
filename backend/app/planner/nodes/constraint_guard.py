@@ -150,7 +150,12 @@ def check_budget_constraint(
         allocation = _get_budget_allocation(plan.budget, category)
 
         for tile in category_tiles:
-            price = tile.get("price_estimate") or tile.get("live_price") or 0
+            price = (
+                tile.get("total_inclusive")
+                or tile.get("price_estimate")
+                or tile.get("live_price")
+                or 0
+            )
             category_cost += price
 
         # Check if category exceeds allocation

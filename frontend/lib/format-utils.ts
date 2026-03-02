@@ -140,11 +140,14 @@ export function formatPrice(amount: number, currency: string = 'USD'): string {
  * @example formatTilePrice(tileWithNoPrice) → ""
  */
 export function formatTilePrice(tile: Tile): string {
-  const price = tile.total_inclusive ?? tile.price_estimate;
+  const basis = tile.price_basis;
+  // For per-unit bases, prefer the per-unit price_estimate over the all-in total
+  const price = (basis === 'per_night' || basis === 'per_person')
+    ? (tile.price_estimate ?? tile.total_inclusive)
+    : (tile.total_inclusive ?? tile.price_estimate);
   if (price == null) return '';
 
   const formatted = formatPrice(price, tile.currency || 'USD');
-  const basis = tile.price_basis;
 
   if (basis === 'per_night') return `${formatted} /night`;
   if (basis === 'per_person') return `${formatted} /person`;
@@ -161,18 +164,22 @@ export function formatTilePrice(tile: Tile): string {
  * @example formatTilePriceDetailed(flightTile) → { perUnit: "$899 total" }
  */
 export function formatTilePriceDetailed(tile: Tile): { perUnit: string; total?: string } {
-  const price = tile.total_inclusive ?? tile.price_estimate;
+  const basis = tile.price_basis;
+  // For per-unit bases, prefer the per-unit price_estimate over the all-in total
+  const price = (basis === 'per_night' || basis === 'per_person')
+    ? (tile.price_estimate ?? tile.total_inclusive)
+    : (tile.total_inclusive ?? tile.price_estimate);
   if (price == null) return { perUnit: '' };
 
   const currency = tile.currency || 'USD';
   const formatted = formatPrice(price, currency);
-  const basis = tile.price_basis;
 
   if (basis === 'per_night') {
     const meta = tile.meta as Record<string, unknown> | undefined;
     const nights = typeof meta?.nights === 'number' ? meta.nights : null;
-    if (nights && nights > 1) {
-      const total = formatPrice(price * nights, currency);
+    const totalPrice = tile.total_inclusive ?? (nights ? price * nights : null);
+    if (nights && nights > 1 && totalPrice) {
+      const total = formatPrice(totalPrice, currency);
       return {
         perUnit: `${formatted} /night`,
         total: `${total} total (${nights} nights)`,

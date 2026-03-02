@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional, Tuple
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field
 
@@ -160,6 +161,49 @@ class DayBlockOutput(BaseModel):
     unschedulable: bool = False
     unschedulable_reason: Optional[str] = None
     unschedulable_days_needed: Optional[int] = None
+
+
+def _ensure_block_display_floor(
+    block: DayBlockOutput,
+    destination: str,
+) -> DayBlockOutput:
+    """Guarantee minimum viable display data for every activity block.
+
+    Runs AFTER all enrichment. Fills gaps with computed fallbacks
+    so frontend cards never show empty deeplinks next to fully-enriched
+    browse tiles.
+    """
+    if block.is_buffer:
+        return block
+
+    # Deeplink: prefer place_id (exact), then named search (finds listing),
+    # then raw coords (generic pin — last resort when no title).
+    if not block.deeplink:
+        if block.google_place_id:
+            block.deeplink = (
+                f"https://www.google.com/maps/place/?q=place_id:{block.google_place_id}"
+            )
+        elif block.summary:
+            # Named search finds the actual venue listing (with photos, reviews)
+            # rather than dropping a generic pin at coordinates.
+            block.deeplink = (
+                f"https://www.google.com/maps/search/{quote(f'{block.summary} {destination}')}"
+            )
+        elif block.coordinates and block.coordinates.get("lat") and block.coordinates.get("lng"):
+            lat, lng = block.coordinates["lat"], block.coordinates["lng"]
+            block.deeplink = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+
+    # Image: deterministic Unsplash placeholder keyed on specialist type
+    if not block.image_url:
+        from app.placeholders import get_activity_image
+
+        block.image_url = get_activity_image(
+            block.specialist_type or block.activity_type or "activity",
+            destination,
+            block.summary,
+        )
+
+    return block
 
 
 class DayCardOutput(BaseModel):
@@ -659,6 +703,53 @@ class ItineraryBuilder:
             # Critical: Phases 5.5, 5.25, and 6 add blocks AFTER _distribute_activities sort
             days = self._sort_blocks_chronologically(days)
             days = self._annotate_activity_axes(days)
+
+            # Final dedup: remove same-title activity duplicates within each day.
+            # Prefers user_preferred blocks over auto-placed ones.
+            for day in days:
+                seen_titles: dict[str, int] = {}
+                to_remove: list[int] = []
+                for i, block in enumerate(day.blocks):
+                    if block.is_buffer or block.activity_type in (
+                        "free_day",
+                        "check-in",
+                        "check-out",
+                        "check_in",
+                        "check_out",
+                        "arrival",
+                        "departure",
+                    ):
+                        continue
+                    key = _normalize_title_key(block.summary)
+                    if not key:
+                        continue
+                    if key in seen_titles:
+                        prev_idx = seen_titles[key]
+                        prev_block = day.blocks[prev_idx]
+                        # Keep the user-preferred version, drop the other
+                        if (
+                            getattr(block, "preference_status", None) == "user_preferred"
+                            and getattr(prev_block, "preference_status", None) != "user_preferred"
+                        ):
+                            to_remove.append(prev_idx)
+                            seen_titles[key] = i
+                        else:
+                            to_remove.append(i)
+                    else:
+                        seen_titles[key] = i
+                if to_remove:
+                    removed_titles = [day.blocks[i].summary for i in to_remove]
+                    day.blocks = [b for i, b in enumerate(day.blocks) if i not in set(to_remove)]
+                    _debug_itinerary(
+                        f"🧹 Final dedup Day {day.day_number}: removed {len(removed_titles)} "
+                        f"duplicates: {removed_titles}"
+                    )
+
+            # Display floor: guarantee deeplink + image on every activity block
+            # Runs AFTER all block-producing phases so no path is missed.
+            for day in days:
+                for block in day.blocks:
+                    _ensure_block_display_floor(block, self.destination)
 
             # Phase 7: Detect post-placement conflicts (overflow)
             conflicts = self._detect_temporal_conflicts(days)
@@ -2149,6 +2240,17 @@ class ItineraryBuilder:
                 )
                 continue
 
+            # Deduplicate by title (cross-source: a specialist or experience block
+            # may already cover the same venue under a different tile ID)
+            title_key = _normalize_title_key(tile.get("title"))
+            existing_title_keys = {_normalize_title_key(b.summary) for b in day.blocks if b.summary}
+            if title_key and title_key in existing_title_keys:
+                _debug_itinerary(
+                    f"📌 Phase 5.55: Skipping pinned '{tile.get('title')}' "
+                    f"— title already on Day {preferred_day}"
+                )
+                continue
+
             # Build the block using the shared converter
             block = self._experience_tile_to_block(tile, preferred_day, 0)
             block.id = tile_id  # Preserve original tile_id for dedup in later phases
@@ -2417,9 +2519,9 @@ class ItineraryBuilder:
             )
         )
 
-        # Cross-source dedup: collect normalized titles from ALL existing
-        # blocks (e.g. specialist content_added from Phase 2) so we don't
-        # place a duplicate tile for the same venue.
+        # Cross-source dedup is GLOBAL across all days: experience tiles should not
+        # re-create venues already placed by specialist dispatch. Per-day scoping
+        # would allow the same venue to appear twice in the itinerary.
         existing_titles: set[str] = set()
         for day in days:
             for block in day.blocks:
@@ -2867,8 +2969,10 @@ class ItineraryBuilder:
                 preference_status="user_preferred",
                 booking_category="activity",
                 booked_tile=tile,
-                google_place_id=tile.get("google_place_id"),
-                deeplink=tile.get("deeplink"),
+                google_place_id=tile.get("google_place_id")
+                or tile.get("place_id")
+                or (tile.get("meta") or {}).get("place_id"),
+                deeplink=tile.get("deeplink") or tile.get("deeplink_url") or tile.get("maps_uri"),
             )
 
             # Insert respecting period order
@@ -3021,8 +3125,12 @@ class ItineraryBuilder:
                         preference_status="user_preferred",
                         booking_category="activity",
                         booked_tile=tile,
-                        google_place_id=tile.get("google_place_id"),
-                        deeplink=tile.get("deeplink"),
+                        google_place_id=tile.get("google_place_id")
+                        or tile.get("place_id")
+                        or (tile.get("meta") or {}).get("place_id"),
+                        deeplink=tile.get("deeplink")
+                        or tile.get("deeplink_url")
+                        or tile.get("maps_uri"),
                     )
                     day.blocks.append(activity_block)
                     if title_key:

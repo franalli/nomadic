@@ -265,6 +265,19 @@ Mobile skips heavy animations for performance:
 
 #### Loading States
 
+Initial page bootstrap uses a startup motion overlay in `frontend/components/animations/StartupSequence.tsx`:
+
+```
+First load:
+├─ `StartupSequence` shown with typing/grid/verify/beacon phases
+├─ App shell remains hidden while overlay plays
+└─ Transition completes via `onComplete` when phase reaches `done` (or sessionStorage short-circuit)
+```
+
+Subsequent navigations in same tab:
+- Skip overlay when `sessionStorage.nomadic_has_booted` is present
+- Keep shell visible immediately (single-render entry path)
+
 ```
 isExpandingItinerary = true:
 ├─ Tiles: 60% opacity, pointer-events-none

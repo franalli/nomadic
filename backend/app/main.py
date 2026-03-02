@@ -2911,8 +2911,9 @@ async def fill_day_endpoint(
                 price_level=(
                     tile.get("price_level") or _price_estimate_to_level(tile.get("price_estimate"))
                 ),
-                google_place_id=tile.get("google_place_id"),
-                deeplink=tile.get("deeplink"),
+                google_place_id=tile.get("google_place_id")
+                or (tile.get("meta") or {}).get("place_id"),
+                deeplink=tile.get("deeplink") or tile.get("deeplink_url") or tile.get("maps_uri"),
             )
         )
 
@@ -3276,6 +3277,23 @@ async def insert_activity_block(
 
     tile = body.tile
     block_id = f"browse_activity_{tile.get('id', 'unknown')}_{body.day_number}"
+
+    # Deduplicate: if a block with this ID or same title already exists, return as-is
+    import re
+
+    def _norm(s: str | None) -> str:
+        return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+    existing_ids = {b.id for b in day_card.blocks if b.id}
+    existing_titles = {_norm(b.summary) for b in day_card.blocks if b.summary}
+    tile_title = _norm(tile.get("title"))
+    if block_id in existing_ids or (tile_title and tile_title in existing_titles):
+        return InsertActivityBlockResponse(
+            day_number=body.day_number,
+            day_card=day_card.model_dump(),
+            version=doc.version,
+            inserted_block_id=block_id,
+        )
 
     # Map geo → coordinates dict (DayBlock.coordinates is {lat, lng})
     geo = tile.get("geo")

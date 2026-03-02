@@ -18,6 +18,7 @@
 import {
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
   Heart,
   Lock,
   MapPin,
@@ -345,25 +346,23 @@ export const TileDetailsModal = memo(function TileDetailsModal({
             </button>
           </div>
 
-          {/* Booking unlock status */}
-          {isBookingUnlocked ? (
-            // S3: View deal button enabled
-            tile?.deeplink_url && (
-              <button
-                type="button"
-                onClick={() => window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer')}
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2.5 font-medium text-white transition-colors hover:bg-emerald-600"
-              >
-                View deal
-              </button>
-            )
-          ) : (
-            // S2: Locked state with actionable CTA
+          {/* Deeplink — always visible when available */}
+          {tile?.deeplink_url && tile.deeplink_url !== '#' && (
+            <button
+              type="button"
+              onClick={() => window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer')}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2.5 font-medium text-white transition-colors hover:bg-emerald-600"
+            >
+              {tile.type === 'hotel' || tile.type === 'accommodation' || tile.type === 'stay'
+                ? 'View on Google Travel'
+                : 'View on Google Maps'}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </button>
+          )}
+
+          {/* Set trip dates CTA — only when booking not unlocked */}
+          {!isBookingUnlocked && (
             <div className="mt-3 space-y-2">
-              <div className="flex items-center justify-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-500">
-                <Lock className="h-3 w-3" />
-                <span>Booking links are locked</span>
-              </div>
               {onOpenSheet && (
                 <button
                   type="button"
@@ -373,7 +372,8 @@ export const TileDetailsModal = memo(function TileDetailsModal({
                   }}
                   className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-100 dark:bg-zinc-800 py-2 text-sm font-medium text-zinc-800 dark:text-zinc-200 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-700"
                 >
-                  Set trip dates to unlock
+                  <Lock className="h-3 w-3" />
+                  Set trip dates to unlock booking
                 </button>
               )}
               {!onOpenSheet && (

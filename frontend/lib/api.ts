@@ -962,3 +962,14 @@ export async function getSpecialistEnrichment(sectionId: string): Promise<{
   if (!res.ok) return null;
   return res.json();
 }
+
+/**
+ * Fire-and-forget deeplink click tracking.
+ * Reuses existing /api/tiles/click endpoint.
+ */
+export function trackDeeplinkClick(tileId: string, branchId?: string): void {
+  apiFetch('/api/tiles/click', {
+    method: 'POST',
+    body: JSON.stringify({ tile_id: tileId, branch_id: branchId }),
+  }).catch(() => {});
+}

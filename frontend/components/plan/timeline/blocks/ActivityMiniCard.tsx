@@ -230,6 +230,7 @@ export function ActivityMiniCard({
           onUnassign={onUnassign}
           onRemove={onRemove}
           isRemovable={isRemovable}
+          deeplink={block.deeplink}
         />
       </div>
 
