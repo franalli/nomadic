@@ -212,7 +212,7 @@ export function BrowseActivitiesSheet({
               onClick={() => onSelectActivity?.(tile)}
               className={cn(
                 DS.infoBox.container,
-                'w-full text-left transition-all',
+                'w-full text-left transition-all overflow-hidden',
                 onSelectActivity &&
                   'hover:border-zinc-300 dark:hover:border-white/20 active:scale-[0.99]'
               )}
@@ -244,9 +244,9 @@ export function BrowseActivitiesSheet({
                       {tile.subtitle}
                     </p>
                   )}
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap min-w-0">
                     {tile.rating != null && (
-                      <span className="flex items-center gap-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                      <span className="flex items-center gap-0.5 text-xs text-zinc-500 dark:text-zinc-400 min-w-0">
                         <Star className="w-3 h-3 fill-current text-amber-400" />
                         {tile.rating.toFixed(1)}
                         {tile.review_count != null && (
@@ -255,17 +255,17 @@ export function BrowseActivitiesSheet({
                       </span>
                     )}
                     {tile.price_estimate && (
-                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400 min-w-0">
                         {tile.price_estimate}
                       </span>
                     )}
                     {tile.duration && (
-                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400 min-w-0">
                         {tile.duration}
                       </span>
                     )}
                     {tile.location_label && (
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500 truncate">
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500 min-w-0 truncate flex-1">
                         {tile.location_label}
                       </span>
                     )}
