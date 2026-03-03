@@ -491,11 +491,8 @@ export function NomadicLanding() {
           }
           headerContent={
             <div className="flex w-full items-center min-w-0">
-              {/* Left zone: logo + tagline — width mirrors the 480px chat rail minus header px-6 */}
-              <div className={cn(
-                'flex items-center gap-2 shrink-0',
-                showHeaderPills ? 'w-[456px]' : ''
-              )}>
+              {/* Left zone: logo + tagline */}
+              <div className="flex items-center gap-2 shrink-0">
                 <Compass className="text-primary h-5 w-5" />
                 <span className="text-foreground text-lg font-semibold">Nomadic</span>
                 {!showHeaderPills && (
@@ -506,9 +503,9 @@ export function NomadicLanding() {
                 )}
               </div>
 
-              {/* Pills zone: left edge aligns with plan panel below */}
+              {/* Pills zone: fills available space between logo and actions */}
               {showHeaderPills && tripInputs && (
-                <div className="flex-1 min-w-0 overflow-x-auto no-scrollbar pl-14">
+                <div className="flex-1 min-w-0 flex justify-center px-3">
                   <TripSummaryPills
                     compact
                     tripInputs={tripInputs}

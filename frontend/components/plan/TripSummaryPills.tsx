@@ -48,6 +48,7 @@ interface SegmentProps {
   muted?: boolean;
   active?: boolean;
   disabled?: boolean;
+  compact?: boolean;
   onClick?: () => void;
   id?: string;
   ariaControls?: string;
@@ -86,6 +87,7 @@ function Segment({
   muted = false,
   active = false,
   disabled = false,
+  compact = false,
   onClick,
   id,
   ariaControls,
@@ -103,8 +105,10 @@ function Segment({
       aria-controls={ariaControls}
       aria-expanded={ariaExpanded}
       className={cn(
-        'inline-flex items-center gap-1.5 h-8 rounded-full px-3',
-        'text-[13px] whitespace-nowrap transition-all duration-150',
+        'inline-flex items-center gap-1.5 h-8 rounded-full',
+        compact ? 'px-2' : 'px-3',
+        compact ? 'text-[12px]' : 'text-[13px]',
+        'whitespace-nowrap transition-all duration-150',
         'hover:bg-white/[0.08]',
         interactive ? 'cursor-pointer' : 'cursor-default opacity-70',
         muted
@@ -391,7 +395,7 @@ export function TripSummaryPills({
   return (
     <div className={cn(
       compact
-        ? 'overflow-x-auto no-scrollbar flex-nowrap'
+        ? ''
         : 'overflow-x-auto no-scrollbar flex-nowrap -mx-4 px-4 py-2 lg:overflow-x-visible lg:flex-wrap',
     )}>
       <div
@@ -416,6 +420,7 @@ export function TripSummaryPills({
               isSet={segment.isSet}
               onClick={segment.onClick}
               disabled={segment.disabled}
+              compact={compact}
             />
             {idx < coreSegments.length - 1 && <SegDot />}
           </Fragment>
@@ -435,6 +440,7 @@ export function TripSummaryPills({
                   active={flightsActive}
                   onClick={onToggleFlights}
                   disabled={disabled}
+                  compact={compact}
                 />
                 {(showStays || showAdvice) && <SegDot />}
               </>
@@ -450,6 +456,7 @@ export function TripSummaryPills({
                   active={staysActive}
                   onClick={onToggleStays}
                   disabled={disabled}
+                  compact={compact}
                 />
                 {showAdvice && <SegDot />}
               </>
@@ -465,6 +472,7 @@ export function TripSummaryPills({
                 active={travelAdviceActive}
                 onClick={onToggleTravelAdvice}
                 disabled={disabled}
+                compact={compact}
                 ariaControls="destination-intel-panel"
                 ariaExpanded={travelAdviceActive}
                 trailing={
