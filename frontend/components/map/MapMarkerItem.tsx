@@ -20,6 +20,7 @@ import { memo } from 'react';
 import { Marker } from 'react-map-gl/mapbox';
 
 import { DS } from '@/lib/design-system';
+import { getSpecialistColor } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/state/uiStore';
 
@@ -58,59 +59,26 @@ interface PinConfig {
 }
 
 /**
- * Hex color per activity/specialist type for map marker pins.
+ * Map-only color overrides for logistics and uncategorized marker types
+ * not covered by getSpecialistColor() from specialists.ts (the SSoT).
  *
  * DS exception: Mapbox GL markers require inline hex color values for
  * dynamic backgroundColor styling — Tailwind JIT purges unknown classes.
- * Amber/orange on climbing/wildlife_safari/adventure falls under the DS
- * "specialist highlight" allowance (design-system.md §Color).
- *
- * Tier 1 = specialist types (specialist_registry.py)
- * Tier 2 = general activity categories (experience_generator)
- * Logistics = flight/hotel/accommodation markers
  */
-const SPECIALIST_MARKER_COLORS: Record<string, string> = {
-  // ── Tier 1: Specialist types ──
-  diving:          '#06b6d4', // cyan-500
-  hiking:          '#10b981', // emerald-500
-  skiing:          '#3b82f6', // blue-500
-  cycling:         '#84cc16', // lime-500
-  surfing:         '#6366f1', // indigo-500
-  sailing:         '#06b6d4', // cyan-500
-  climbing:        '#f97316', // orange-500
-  wildlife_safari: '#f59e0b', // amber-500
-  // ── Tier 2: General activity categories ──
-  yoga:            '#a855f7', // purple-500
-  wellness:        '#8b5cf6', // violet-500
-  spa:             '#8b5cf6', // violet-500
-  nightlife:       '#d946ef', // fuchsia-500
-  cooking:         '#ec4899', // pink-500
-  culture:         '#f43f5e', // rose-500
-  cultural:        '#f43f5e', // rose-500
-  temples:         '#f43f5e', // rose-500
-  food:            '#ef4444', // red-500
-  beach:           '#10b981', // emerald-500
-  shopping:        '#ec4899', // pink-500
-  sightseeing:     '#0ea5e9', // sky-500
-  photography:     '#0ea5e9', // sky-500
-  relaxation:      '#eab308', // yellow-500
-  nature:          '#22c55e', // green-500
-  tours:           '#3b82f6', // blue-500
-  adventure:       '#f97316', // orange-500
-  family:          '#f59e0b', // amber-500
-  activity:        '#a855f7', // purple-500
-  // ── Logistics ──
+const MAP_LOGISTICS_COLORS: Record<string, string> = {
   flight:          '#60a5fa', // blue-400
   arrival:         '#60a5fa', // blue-400
   departure:       '#60a5fa', // blue-400
   hotel:           '#10b981', // emerald-500
-  accommodation:    '#10b981', // emerald-500
+  accommodation:   '#10b981', // emerald-500
   lodging:         '#10b981', // emerald-500
   stay:            '#10b981', // emerald-500
   'check-in':      '#10b981', // emerald-500
   'check-out':     '#10b981', // emerald-500
   check_in:        '#10b981', // emerald-500
   check_out:       '#10b981', // emerald-500
+  family:          '#f59e0b', // amber-500
+  activity:        '#a855f7', // purple-500
 };
 
 /** Horizontal surfboard icon for surfing map markers. */
@@ -179,11 +147,16 @@ const PIN_ICON: Record<string, LucideIcon> = {
   lodging:         Bed,
 };
 
-/** Combined pin config derived from color + icon maps. */
+/** Resolve marker hex color: logistics local map, then specialist SSoT. */
+function getMarkerColor(type: string): string {
+  return MAP_LOGISTICS_COLORS[type] ?? getSpecialistColor(type);
+}
+
+/** Combined pin config derived from icon map + color resolution. */
 const PIN_CONFIG: Record<string, PinConfig> = Object.fromEntries(
-  Object.keys(SPECIALIST_MARKER_COLORS).map((key) => [
+  Object.keys(PIN_ICON).map((key) => [
     key,
-    { icon: PIN_ICON[key] ?? MapPin, color: SPECIALIST_MARKER_COLORS[key] },
+    { icon: PIN_ICON[key] ?? MapPin, color: getMarkerColor(key) },
   ])
 );
 
@@ -225,10 +198,14 @@ function normalizeTypeKey(type: string): string {
 export function getPinConfig(type: string, source?: MapItem['source']): PinConfig {
   const normalizedType = normalizeTypeKey(type);
   const categoryPin = PIN_CONFIG[normalizedType];
+  if (categoryPin) return categoryPin;
+  // Fallback: type not in PIN_ICON but may have a specialist color
+  const color = getMarkerColor(normalizedType);
+  const fallbackDefault = color !== getSpecialistColor() ? { icon: MapPin, color } : null;
   if (source === 'browse') {
-    return categoryPin ?? BROWSE_PIN;
+    return fallbackDefault ?? BROWSE_PIN;
   }
-  return categoryPin ?? DEFAULT_PIN;
+  return fallbackDefault ?? DEFAULT_PIN;
 }
 
 function toTitleCase(value: string): string {
@@ -393,7 +370,7 @@ export const MapMarkerItem = memo(function MapMarkerItem({
                   <>
                     <span className="text-zinc-500">•</span>
                     <span className="inline-flex items-center gap-0.5">
-                      <Star className="w-2.5 h-2.5 fill-current text-amber-400" />
+                      <Star className="w-2.5 h-2.5 fill-current text-zinc-400 dark:text-zinc-500" />
                       <span>
                         {item.rating.toFixed(1)}
                         {item.reviewCount != null && ` (${formatReviewCount(item.reviewCount)})`}

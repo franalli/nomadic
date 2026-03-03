@@ -29,7 +29,8 @@ class MemoryCache:
         self._cache_lock = RLock()
         self._stats_lock = RLock()
         default_keys = ["l1_hits", "l1_misses", "l2_hits", "l2_misses", "writes"]
-        self._stats: dict[str, int] = {k: 0 for k in (stat_keys or default_keys)}
+        all_keys = list(dict.fromkeys(default_keys + (stat_keys or [])))
+        self._stats: dict[str, int] = {k: 0 for k in all_keys}
 
     # -- Stats --
 

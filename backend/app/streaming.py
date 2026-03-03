@@ -323,6 +323,39 @@ def _seed_trip_plan_from_inputs(session_state: Dict[str, Any]) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Shared enrichment cleanup
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _cleanup_pending_enrichment(session_id: str, source: str = "unknown") -> bool:
+    """Clean up any pending Phase B enrichment for a session.
+
+    Shared by both SSE and NDJSON generators to ensure enrichment state
+    is cleaned up on client disconnect or generator exit.
+
+    Returns True if a stale entry was found and removed.
+    """
+    try:
+        from app.planner.nodes.local_expert import (
+            _pending_enrichments,
+            _pending_lock,
+        )
+
+        async with _pending_lock:
+            stale_entry = _pending_enrichments.pop(session_id, None)
+        if stale_entry:
+            logger.info(
+                "[%s] Cleaned up unfired Phase B enrichment for session=%s",
+                source,
+                session_id,
+            )
+            return True
+    except Exception:
+        pass  # Cleanup failure must not mask real errors
+    return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SSE Generator
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1405,29 +1438,19 @@ async def generate_sse(
         finally:
             # Clean up any pending Phase B enrichment that was never fired
             # (e.g., SSE generator exited early due to client disconnect/timeout).
-            try:
-                from app.planner.nodes.local_expert import (
-                    _pending_enrichments as _pe_finally,
-                )
-                from app.planner.nodes.local_expert import (
-                    _pending_lock as _pl_finally,
-                )
-                from app.planner.nodes.local_expert import (
-                    _persist_travel_intelligence,
-                )
+            _had_stale = await _cleanup_pending_enrichment(session_id, source="SSE")
+            # Persist failure state for stale enrichments (SSE-specific)
+            if _had_stale:
+                try:
+                    from app.planner.nodes.local_expert import (
+                        _persist_travel_intelligence,
+                    )
 
-                async with _pl_finally:
-                    _stale_entry = _pe_finally.pop(session_id, None)
-                if _stale_entry is not None:
-                    logger.warning("[SSE] Cleaned up unfired enrichment for %s", session_id)
-                    try:
-                        await _persist_travel_intelligence(
-                            session_id, None, enrichment_state="failed", error_code="sse_exit"
-                        )
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    await _persist_travel_intelligence(
+                        session_id, None, enrichment_state="failed", error_code="sse_exit"
+                    )
+                except Exception:
+                    pass
             await release_sse_slot(session_key, ip_key)
 
 
@@ -2097,3 +2120,4 @@ async def generate_ndjson(
             yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
         finally:
             logger.debug("[NDJSON] Generator exiting for session=%s", session_id)
+            await _cleanup_pending_enrichment(session_id, source="NDJSON")

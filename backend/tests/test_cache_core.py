@@ -210,10 +210,20 @@ class TestStatsTracking:
         for value in stats.values():
             assert value == 0
 
-    def test_custom_stat_keys(self):
+    def test_custom_stat_keys_are_additive(self):
         cache = MemoryCache(maxsize=10, ttl=60, stat_keys=["hits", "misses", "evictions"])
         stats = cache.get_stats()
-        assert set(stats.keys()) == {"hits", "misses", "evictions"}
+        # Custom keys extend defaults, not replace them
+        assert set(stats.keys()) == {
+            "l1_hits",
+            "l1_misses",
+            "l2_hits",
+            "l2_misses",
+            "writes",
+            "hits",
+            "misses",
+            "evictions",
+        }
 
     def test_increment_stat(self):
         cache = MemoryCache(maxsize=10, ttl=60)

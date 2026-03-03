@@ -101,16 +101,18 @@ Be strict."""
 # Thread-safe feasibility cache (24h TTL, 256 entries max)
 _feasibility_cache: MemoryCache = MemoryCache(maxsize=256, ttl=86400)
 _feasibility_inflight: dict[str, asyncio.Future] = {}
+_feasibility_inflight_lock: asyncio.Lock = asyncio.Lock()
 
 
-def cancel_feasibility_inflight() -> int:
+async def cancel_feasibility_inflight() -> int:
     """Cancel all inflight feasibility futures. Returns count cancelled."""
-    count = 0
-    for _key, fut in list(_feasibility_inflight.items()):
-        if not fut.done():
-            fut.cancel()
-            count += 1
-    _feasibility_inflight.clear()
+    async with _feasibility_inflight_lock:
+        count = 0
+        for _key, fut in list(_feasibility_inflight.items()):
+            if not fut.done():
+                fut.cancel()
+                count += 1
+        _feasibility_inflight.clear()
     return count
 
 
@@ -150,22 +152,33 @@ async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
     except Exception:
         pass  # L2 miss or error — fall through to LLM
 
-    if cache_key in _feasibility_inflight:
-        return await _feasibility_inflight[cache_key]
+    owner = False
+    future: asyncio.Future | None = None
 
-    # Skip dedup under pressure to avoid unbounded memory growth
-    if len(_feasibility_inflight) > 200:
+    async with _feasibility_inflight_lock:
+        if cache_key in _feasibility_inflight:
+            future = _feasibility_inflight[cache_key]
+        elif len(_feasibility_inflight) > 200:
+            # Skip dedup under pressure to avoid unbounded memory growth
+            future = None
+        else:
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+            _feasibility_inflight[cache_key] = future
+            owner = True
+
+    # Pressure bypass: no dedup, call LLM directly
+    if future is None:
         result = await _check_feasibility_llm(topic, destination)
         pair = (result.possible, result.reason)
         _feasibility_cache.set(cache_key, pair)
         return pair
 
-    # No await between here and registering the future — asyncio's cooperative
-    # scheduling makes this check-and-set atomic. If you add an await here,
-    # two coroutines can both pass the check above and fire duplicate LLM calls.
-    loop = asyncio.get_running_loop()
-    future: asyncio.Future = loop.create_future()
-    _feasibility_inflight[cache_key] = future
+    # Non-owner: just await the shared future
+    if not owner:
+        return await future
+
+    # Owner: perform the LLM call and resolve the shared future
     try:
         result = await _check_feasibility_llm(topic, destination)
         cached_result = (result.possible, result.reason)
@@ -195,7 +208,8 @@ async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
         future.set_exception(e)
         raise
     finally:
-        _feasibility_inflight.pop(cache_key, None)
+        async with _feasibility_inflight_lock:
+            _feasibility_inflight.pop(cache_key, None)
 
 
 async def check_feasibility(

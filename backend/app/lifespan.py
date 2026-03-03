@@ -156,7 +156,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     # 1c. Cancel inflight feasibility checks
     from app.planner.services.feasibility_service import cancel_feasibility_inflight
 
-    cancelled_feasibility = cancel_feasibility_inflight()
+    cancelled_feasibility = await cancel_feasibility_inflight()
     if cancelled_feasibility:
         logger.info("[Shutdown] Cancelled %d inflight feasibility checks", cancelled_feasibility)
 

@@ -27,6 +27,17 @@ _session_id_ctx: ContextVar[str | None] = ContextVar("spend_guard_session_id", d
 # TODO: Before scaling to multi-instance, replace module-level dicts with
 # Redis counters (INCRBY + daily-key TTL) so budget isolation survives restarts
 # and is shared across workers.
+#
+# Planned Redis key schema:
+#   spend:{session_id}:{YYYY-MM-DD}  — per-session daily spend (float cents)
+#   spend:global:{YYYY-MM-DD}        — global daily spend (float cents)
+#   spend:provider:{provider}:{YYYY-MM-DD} — per-provider daily spend
+#
+# Operations:
+#   INCRBY / INCRBYFLOAT on the relevant key before each paid call.
+#   SET TTL = 86400 (24h) on first write via SET NX + EXPIRE, so keys
+#   auto-expire one day after creation and do not require manual cleanup.
+#   Use a Lua script or MULTI/EXEC to atomically check cap + increment.
 _spend_lock = Lock()
 _spend_day_key = datetime.now(UTC).date().isoformat()
 _session_spend_usd: dict[str, float] = {}
@@ -34,9 +45,11 @@ _global_spend_usd = 0.0
 _provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0}
 
 if not settings.spend_guard_enabled:
-    logger.critical(
+    _level = logging.CRITICAL if not settings.is_dev else logging.WARNING
+    logger.log(
+        _level,
         "SPEND GUARD DISABLED — all LLM and Places API calls are uncapped. "
-        "Set SPEND_GUARD_ENABLED=true in production."
+        "Set SPEND_GUARD_ENABLED=true in production.",
     )
 
 

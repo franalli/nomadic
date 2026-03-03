@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,9 +12,12 @@ from starlette.requests import Request
 from app import main
 from app.config import settings
 from app.planner.llm_factory import get_llm_by_model
+from app.services import spend_guard as sg_module
 from app.services.spend_guard import (
     SpendLimitExceeded,
+    _reserve_or_raise,
     clear_spend_guard_counters,
+    get_spend_guard_snapshot,
     spend_guard_scope,
 )
 
@@ -127,3 +131,109 @@ def test_llm_spend_guard_is_noop_without_session_context(
         mock_cls.return_value = MagicMock()
         # No spend_guard_scope(...) set => no principal to budget against.
         get_llm_by_model("gpt-4o")
+
+
+# ---------------------------------------------------------------------------
+# Day-roll reset
+# ---------------------------------------------------------------------------
+def test_dayroll_reset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Counters reset when the UTC date advances (simulated via _current_day_key mock)."""
+    monkeypatch.setattr(settings, "spend_guard_enabled", True)
+    monkeypatch.setattr(settings, "spend_guard_session_daily_cap_usd", 1.0)
+    monkeypatch.setattr(settings, "spend_guard_global_daily_cap_usd", 1.0)
+    clear_spend_guard_counters()
+
+    # Spend some budget on day-1
+    with spend_guard_scope("sess-day"):
+        _reserve_or_raise(provider="llm", estimated_usd=0.50, source="test")
+
+    snap1 = get_spend_guard_snapshot()
+    assert snap1["global_spend_usd"] == pytest.approx(0.50)
+
+    # Simulate date advancing to tomorrow
+    monkeypatch.setattr(sg_module, "_current_day_key", lambda: "2099-01-02")
+
+    # Next reservation triggers rollover; counters should be zero + the new reservation
+    with spend_guard_scope("sess-day"):
+        _reserve_or_raise(provider="llm", estimated_usd=0.10, source="test")
+
+    snap2 = get_spend_guard_snapshot()
+    assert snap2["day"] == "2099-01-02"
+    assert snap2["global_spend_usd"] == pytest.approx(0.10)
+
+
+# ---------------------------------------------------------------------------
+# Concurrent access under _spend_lock
+# ---------------------------------------------------------------------------
+def test_concurrent_access_under_spend_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent reserve calls are serialised by _spend_lock and never exceed the cap."""
+    monkeypatch.setattr(settings, "spend_guard_enabled", True)
+    monkeypatch.setattr(settings, "spend_guard_session_daily_cap_usd", 100.0)
+    # Global cap allows exactly 10 x $0.10 = $1.00
+    monkeypatch.setattr(settings, "spend_guard_global_daily_cap_usd", 1.0)
+    clear_spend_guard_counters()
+
+    n_threads = 20
+    cost_per_call = 0.10
+    successes: list[bool] = []
+    failures: list[bool] = []
+
+    def _attempt(idx: int) -> str:
+        try:
+            with spend_guard_scope(f"sess-{idx}"):
+                _reserve_or_raise(
+                    provider="llm",
+                    estimated_usd=cost_per_call,
+                    source=f"thread-{idx}",
+                )
+            return "ok"
+        except SpendLimitExceeded:
+            return "exceeded"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_threads) as pool:
+        results = list(pool.map(_attempt, range(n_threads)))
+
+    successes = [r for r in results if r == "ok"]
+    failures = [r for r in results if r == "exceeded"]
+
+    # Exactly 10 should succeed ($1.00 cap / $0.10 per call)
+    assert len(successes) == 10
+    assert len(failures) == 10
+
+    snap = get_spend_guard_snapshot()
+    assert snap["global_spend_usd"] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Session-less requests enforce global cap only
+# ---------------------------------------------------------------------------
+def test_session_less_requests_enforce_global_cap_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When session_id is None the per-session cap is skipped but global cap is enforced."""
+    monkeypatch.setattr(settings, "spend_guard_enabled", True)
+    # Tiny session cap — should NOT trigger because there is no session
+    monkeypatch.setattr(settings, "spend_guard_session_daily_cap_usd", 0.001)
+    monkeypatch.setattr(settings, "spend_guard_global_daily_cap_usd", 0.50)
+    clear_spend_guard_counters()
+
+    # First call: no session context, should succeed (global cap not reached)
+    _reserve_or_raise(
+        provider="llm",
+        estimated_usd=0.30,
+        session_id=None,
+        source="test-no-session",
+    )
+    snap = get_spend_guard_snapshot()
+    assert snap["global_spend_usd"] == pytest.approx(0.30)
+
+    # Second call: still no session, pushes past global cap
+    with pytest.raises(SpendLimitExceeded) as exc_info:
+        _reserve_or_raise(
+            provider="llm",
+            estimated_usd=0.30,
+            session_id=None,
+            source="test-no-session-2",
+        )
+
+    assert exc_info.value.scope == "global"

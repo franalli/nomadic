@@ -1105,6 +1105,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         trip_inputs: { ...DEFAULT_TRIP_INPUTS },
         branches: [],
         tiles: {},
+        // Bootstrap: initial document creation — no prior state to guard
         plan_view_state: 'S0_BOOTSTRAP' as const,
       };
       set({ document, version: 0 });
@@ -1171,6 +1172,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         trip_inputs: { ...DEFAULT_TRIP_INPUTS },
         branches: [],
         tiles: {},
+        // Bootstrap: initial document creation — no prior state to guard
         plan_view_state: 'S0_BOOTSTRAP',
       };
       version = 0; // New document starts at version 0
@@ -1260,20 +1262,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           // PATCH responses can be stale for plan_view_state. Preserve current
           // S3 state when itinerary day_cards already exist.
           plan_view_state: (() => {
-            const responsePVS = response.document.plan_view_state;
-            const currentPVS = currentDoc?.plan_view_state;
-            const hasDayCards =
-              Array.isArray(currentDoc?.day_cards) && (currentDoc?.day_cards?.length ?? 0) > 0;
-            if (
-              hasDayCards
-              && currentPVS?.startsWith('S3_')
-              && responsePVS
-              && !responsePVS.startsWith('S3_')
-              && responsePVS !== 'S0_EMPTY'
-            ) {
-              return currentPVS;
-            }
-            return responsePVS ?? currentPVS;
+            const hasDayCards = Array.isArray(currentDoc?.day_cards) && (currentDoc?.day_cards?.length ?? 0) > 0;
+            const wouldDowngrade = shouldBlockViewStateDowngrade(currentDoc?.plan_view_state, response.document.plan_view_state, hasDayCards);
+            return wouldDowngrade ? currentDoc?.plan_view_state : (response.document.plan_view_state ?? currentDoc?.plan_view_state);
           })(),
           // Also preserve tiles which may come from graph
           tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
@@ -1345,21 +1336,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
               // PATCH responses can be stale for plan_view_state. Preserve current
               // S3 state when itinerary day_cards already exist.
               plan_view_state: (() => {
-                const responsePVS = retryResponse.document.plan_view_state;
-                const currentPVS = currentDocRetry?.plan_view_state;
-                const hasDayCards =
-                  Array.isArray(currentDocRetry?.day_cards)
-                  && (currentDocRetry?.day_cards?.length ?? 0) > 0;
-                if (
-                  hasDayCards
-                  && currentPVS?.startsWith('S3_')
-                  && responsePVS
-                  && !responsePVS.startsWith('S3_')
-                  && responsePVS !== 'S0_EMPTY'
-                ) {
-                  return currentPVS;
-                }
-                return responsePVS ?? currentPVS;
+                const hasDayCards = Array.isArray(currentDocRetry?.day_cards) && (currentDocRetry?.day_cards?.length ?? 0) > 0;
+                const wouldDowngrade = shouldBlockViewStateDowngrade(currentDocRetry?.plan_view_state, retryResponse.document.plan_view_state, hasDayCards);
+                return wouldDowngrade ? currentDocRetry?.plan_view_state : (retryResponse.document.plan_view_state ?? currentDocRetry?.plan_view_state);
               })(),
               tiles: currentDocRetry?.tiles && Object.keys(currentDocRetry.tiles).length > 0
                 ? currentDocRetry.tiles
@@ -1665,12 +1644,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         // PATCH responses carry stale plan_view_state from DB blob.
         // Never let a PATCH downgrade from S3 → S0/S2 (see commitTripInputs).
         plan_view_state: (() => {
-          const responsePVS = response.document.plan_view_state;
-          const currentPVS = currentDoc?.plan_view_state;
-          if (currentPVS?.startsWith('S3_') && responsePVS && !responsePVS.startsWith('S3_')) {
-            return currentPVS;
-          }
-          return responsePVS ?? currentPVS;
+          const hasDayCards = Array.isArray(currentDoc?.day_cards) && (currentDoc?.day_cards?.length ?? 0) > 0;
+          const wouldDowngrade = shouldBlockViewStateDowngrade(currentDoc?.plan_view_state, response.document.plan_view_state, hasDayCards);
+          return wouldDowngrade ? currentDoc?.plan_view_state : (response.document.plan_view_state ?? currentDoc?.plan_view_state);
         })(),
         strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
         executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,

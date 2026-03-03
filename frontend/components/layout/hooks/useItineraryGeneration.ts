@@ -352,6 +352,7 @@ export function useItineraryGeneration({
                 );
                 storeMergeEnvelope({
                   day_cards: dayCards as unknown as PlanDocumentData['day_cards'],
+                  // Backend CONSTRAINT_CONFLICT sets this state intentionally; mergeEnvelope guards downgrade
                   plan_view_state:
                     'S3_PARTIAL_CONFLICT' as PlanDocumentData['plan_view_state'],
                 });
