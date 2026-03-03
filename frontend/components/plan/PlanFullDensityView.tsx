@@ -1,7 +1,6 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Building2, Compass, Lightbulb, Plane } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -188,7 +187,6 @@ export function PlanFullDensityView({
   // Only show spinner when truly no data yet — once we have categories, stop spinning
   const isTravelIntelPending = enrichmentStillPending && intelCategories.length === 0;
   const hasDestinationIntel = intelCategories.length > 0;
-  const travelAdviceLabel = 'Travel Advice';
   useEffect(() => {
     setEnrichedLocalExpertSection(null);
   }, [intelDestinationKey, localExpertSectionId]);
@@ -333,89 +331,32 @@ export function PlanFullDensityView({
     return () => { observer.disconnect(); };
   }, [scrollContainerRef]);
 
-  const showRowTwoChips = hasDestinationIntel || hasItineraryContent;
-
-  const subduedTogglePillClass = cn(
-    'inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-sm font-semibold whitespace-nowrap transition-colors',
-    'border-zinc-300 dark:border-white/15 bg-zinc-100 dark:bg-white/[0.06]',
-    'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/10',
-  );
+  const showTravelAdviceSegment = hasDestinationIntel || isTravelIntelPending;
+  const showCommandBar = (effectiveTripInputs && onOpenSheet) || hasItineraryContent || showTravelAdviceSegment;
 
   return (
     <div className="flex flex-col">
       {/* Unified chip row — trip summary pills + action chips — full width above content+map */}
-      {(effectiveTripInputs && onOpenSheet) || showRowTwoChips ? (
-        <div className="px-4 pb-2 pt-3">
+      {showCommandBar ? (
+        <div className="px-4 pb-2 pt-1">
           {effectiveTripInputs && onOpenSheet ? (
             <TripSummaryPills
               tripInputs={effectiveTripInputs}
               dayCards={viewModel.day_cards}
               onOpenSheet={onOpenSheet}
               disabled={isStreaming}
-            >
-              {showRowTwoChips && (
-                <>
-                  <div className="h-5 w-px bg-zinc-300 dark:bg-white/15 mx-1" />
-                  {flightCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={onToggleFlights}
-                      className={cn(subduedTogglePillClass, 'relative')}
-                    >
-                      <Plane className="w-3 h-3 shrink-0" />
-                      Flights
-                      <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
-                        {flightCount}
-                      </span>
-                    </button>
-                  )}
-                  {stayCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={onToggleStays}
-                      className={cn(subduedTogglePillClass, 'relative')}
-                    >
-                      <Building2 className="w-3 h-3 shrink-0" />
-                      Stays
-                      <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
-                        {stayCount}
-                      </span>
-                    </button>
-                  )}
-                  {hasDestinationIntel && (
-                    <button
-                      id="destination-intel-trigger"
-                      type="button"
-                      aria-expanded={intelExpanded}
-                      aria-controls="destination-intel-panel"
-                      aria-busy={isAnyRegenerating || isTravelIntelPending ? true : undefined}
-                      onClick={() => setIntelExpanded(v => !v)}
-                      className={cn(
-                        subduedTogglePillClass,
-                        'relative max-w-[360px] justify-between',
-                        isAnyRegenerating && 'opacity-70'
-                      )}
-                    >
-                      <span className="flex items-center gap-1.5 min-w-0">
-                        <Lightbulb className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{travelAdviceLabel}</span>
-                      </span>
-                      {isTravelIntelPending && (
-                        <Compass
-                          className="w-3 h-3 compass-spin text-emerald-500"
-                          aria-label="Travel advice is loading"
-                        />
-                      )}
-                      {travelIntelItemCount > 0 && !isTravelIntelPending && (
-                        <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
-                          {travelIntelItemCount}
-                        </span>
-                      )}
-                    </button>
-                  )}
-                </>
-              )}
-            </TripSummaryPills>
+              flightCount={hasItineraryContent ? flightCount : 0}
+              stayCount={hasItineraryContent ? stayCount : 0}
+              travelAdviceCount={travelIntelItemCount}
+              showTravelAdvice={showTravelAdviceSegment}
+              isTravelAdvicePending={isTravelIntelPending}
+              flightsActive={flightsExpanded}
+              staysActive={staysExpanded}
+              travelAdviceActive={intelExpanded}
+              onToggleFlights={onToggleFlights}
+              onToggleStays={onToggleStays}
+              onToggleTravelAdvice={() => setIntelExpanded((v) => !v)}
+            />
           ) : null}
 
           {hasDestinationIntel && intelExpanded && (
@@ -532,7 +473,11 @@ export function PlanFullDensityView({
             <motion.div key="desktop-map" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
               transition={{ duration: REVEAL_TIMING.MAP_FADE / 1000, delay: REVEAL_TIMING.MAP_DELAY / 1000, ease: [0.4, 0, 0.2, 1] }} className="flex-1 min-w-[350px] self-stretch pt-10"
             >
-              <div className="sticky top-0 overflow-hidden rounded-xl" style={{ height: `calc(100vh - ${headerOffset}px)` }}>
+              <div
+                className="sticky top-0 relative overflow-hidden rounded-xl"
+                style={{ height: `calc(100vh - ${headerOffset}px)` }}
+              >
+                <div className="absolute left-0 top-0 bottom-0 z-10 w-6 bg-gradient-to-r from-zinc-950/15 via-zinc-950/5 to-transparent pointer-events-none dark:from-zinc-950/35 dark:via-zinc-950/10" />
                 <div className="h-full w-full">
                   <MapErrorBoundary className="h-full w-full">
                     <InteractiveMap

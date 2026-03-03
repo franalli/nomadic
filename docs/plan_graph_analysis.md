@@ -142,6 +142,11 @@ backend/app/planner/
 - `LOCAL_INTEL` remains sequential to avoid concurrent writes to `strategy_sections`.
 - Partial failures in parallel groups are recorded in `turn_meta["partial_failures"]` and surfaced via `ack_updates`.
 
+### Idempotent / Short-Circuit Routing
+
+- Repeated messages with no effective `fields_changed` and an existing itinerary now route to `GENERATE_RESPONSE` only, skipping specialist + logistics + builder.
+- A dedicated `INITIAL_PLAN` guard also skips full recomputation when an itinerary already exists and no fields changed; otherwise it continues with selective tile/build steps when strategy is already present.
+
 ---
 
 ## Envelope and Chip Pipeline
@@ -180,7 +185,8 @@ LLM-based intent classification + field extraction. Single LLM call produces `Ro
   1. `RouterOutput` from `_classify_and_extract_with_llm()`
   2. `ChangeClassification` from `_classify_change_type()` (retries once on transient failure)
   3. Merge into `ClassifierOutput`.
-- `_validate_extraction()` -- Post-extraction validation
+- `_validate_extraction()` -- Post-extraction validation, including past-date normalization
+  - Dates within the last 7 days are now treated as intentional and left untouched; older past dates are bumped to next occurrence.
 
 **RouterOutput Schema:**
 
@@ -259,6 +265,8 @@ Recent behavior:
 - Specialist outputs are additionally capped after parsing so `max_acts` is never exceeded in cacheable payloads.
 - Constraint text is anchored to relative wording (for example, "day before departure"), and cached outputs are re-anchored by `_reanchor_constraint_dates()` before merge.
 - "feasible + zero activities" outputs are converted to `caveat` responses and skipped for L2 cache write, preventing stale empty specialist cache entries.
+- Prompt guidance now uses explicit exact bounds (`EXACTLY`) and hard caps (`Do NOT generate more than Y`) to prevent specialist over-generation.
+- Safety buffer days are explicitly excluded from the specialist activity-count ceiling in prompt context.
 
 **LLM-first architecture:** Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
 
@@ -271,6 +279,9 @@ City logistics concierge with Phase A/B architecture.
 **Phase A (instant):** Static skeleton from constraint data. Returns Trip Overview card immediately. Stashes Phase B enrichment closure in `_pending_enrichments` dict.
 
 **Phase B (background):** LLM enrichment fired after DB commit in `streaming.py`. Uses `build_enrichment_closure()`, with module-level `_pending_enrichments` dict, `_pending_lock`, and `_active_destination_enrichments` set for dedupe.
+
+Recent behavior:
+- Cache reuse path seeds legacy list reconstruction from prior-turn `constraints_applied`/`content_added` so repeated turns keep stable high-signal Travel Intel density while avoiding duplicate entries.
 
 ### LogisticsNode (`logistics_node.py`)
 
@@ -286,6 +297,7 @@ Flight/hotel/activity fetching with safety logic.
 - Hotel-star filtering now cascades down (`min_stars-1 ... 1`) before fallback-to-originals, with applied threshold tracked in `state.metadata`.
 - General-only trips (no specialist/categories) call `browse_activities()` across default categories to seed larger activity pools for long itineraries.
 - Experience tiles are stashed into `metadata["browseable_activities"]`, and Google Places backfill now propagates rating/review_count/deeplink when available.
+- When generated Tier 2 tiles are below expected density (`free_days * activities_per_day`), logistics executes a browse fallback using mapped alternative categories, appends successful backfill tiles, and preserves them in browseable activity metadata.
 
 ### ConstraintGuard (`constraint_guard.py`)
 
@@ -491,7 +503,9 @@ Each specialist type has its own constraint generator:
 
 - `total_activities_input`: Activities fed into distribution
 - `total_activities_placed`: Activities actually placed on timeline (excludes buffers, logistics, free days)
-- Drop ratio (`1 - placed/input`) is captured in `turn_meta['builder_result']` (via `success`, `placed`, and `dropped` counters) for guard suppression and suggestion-chip telemetry
+- `activities_placed`: alias used in coordinator `builder_result` payload for placed count
+- `activities_dropped`: dropped-count in coordinator `builder_result` (`total_activities_input - activities_placed`)
+- Drop ratio (`1 - activities_placed/total_activities_input`) is captured in `turn_meta['builder_result']` (via `success`, `activities_placed`, and `activities_dropped`) for guard suppression and suggestion-chip telemetry
 
 **Preference Weighting:**
 
@@ -891,7 +905,7 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 | Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
 |-------|-------------|---------|--------|--------|------------|---------|
 | Specialist | `specialist_cache.py` | 128 | 1h | 168h (env: SPECIALIST_CACHE_TTL_HOURS) | `specialist::v4::{topic}::{dest}::{iso_month}::m::{skill}::{dpref}::{phash}` | LLM outputs. Dates coarsened to ISO month (YYYY-MM); duration dropped (specialist content is duration-agnostic). |
-| Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month_or_quarter}::n{tiles_per_category}` | Tier 2 tiles. Seasonal categories keep `YYYY-MM`; non-seasonal categories normalize to `YYYY-QN` for higher cache reuse. |
+| Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month_or_half_year}::n{tiles_per_category}` | Tier 2 tiles. Seasonal categories keep `YYYY-MM`; non-seasonal categories normalize to `YYYY-H1`/`YYYY-H2` for higher cache reuse. |
 | Tile | `tile_cache.py` | 256 | 24h | 72h (env: TILE_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
 | Browse | `activity_browser.py` | 256 | 6h | 72h (env: TILE_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
 | Places Enrichment | `google_places_provider.py` | 2048 | 24h | 168h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v2::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups |
@@ -904,7 +918,7 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 - On composite cache miss it probes `experience_single` entries first from L1 (`_mem`) and then L2.
 - Cached per-category tiles are merged with state metadata before generation; only newly introduced categories are regenerated.
 - Regenerated tiles are merged back into state metadata (`generated_tier2_categories`) and written back to the relevant caches, so subsequent turns reuse them.
-- Month normalization is category-aware: any seasonal category in the request keeps month precision; fully non-seasonal sets collapse to quarter buckets.
+- Month normalization is category-aware: any seasonal category in the request keeps month precision; fully non-seasonal sets collapse to half-year buckets.
 
 ### Cache Invalidation Triggers
 
@@ -1134,7 +1148,8 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 
 Coordinator complete payload includes `plan_view_state`, `tiles`, `strategy_sections`, `itinerary_day_cards`, `constraints_validated`, `constraint_violations`, `ack_status`, `ack_updates`, and `applied_updates`. `ack_status` now supports `partial` when only partial-failure updates were generated.
 
-`coordinator._build_envelope()` also emits envelope-level `trip_settings` (fresh booking/hotel/activity settings) and now serializes `itinerary_day_cards=[]` when builder runs but returns no cards.
+`coordinator._build_envelope()` also emits envelope-level `trip_settings` (fresh booking/hotel/activity settings), plus `itinerary_overview`, `itinerary_assumptions`, and `hotel_filter_cascaded` when present in turn/persistent metadata.
+It now serializes `itinerary_day_cards=[]` when builder runs but returns no cards.
 
 ### DB Session Ownership
 
@@ -1311,6 +1326,9 @@ Built by `_build_envelope()` in `coordinator.py`.
         "itinerary_day_cards": [...] | null,
         "constraints_validated": [...],
         "constraint_violations": [...],
+        "itinerary_overview": str | null,
+        "itinerary_assumptions": str | null,
+        "hotel_filter_cascaded": str | null,
         "ack_status": "applied" | "partial" | "rejected" | "no_change",
         "ack_updates": [{"field": str, "to": str}],
         "applied_updates": [...],

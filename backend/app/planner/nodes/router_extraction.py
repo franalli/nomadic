@@ -690,6 +690,10 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
     ) -> tuple[Optional[datetime.date], bool]:
         if date_value is None or date_value >= today:
             return date_value, False
+        # Tolerance: dates within the past 7 days are likely intentional
+        days_past = (today - date_value).days
+        if days_past <= 7:
+            return date_value, False
         bumped = _bump_to_next_occurrence(date_value, today)
         logger.warning(
             f"Past {field_name}: {date_value.isoformat()} → {bumped.isoformat()} "

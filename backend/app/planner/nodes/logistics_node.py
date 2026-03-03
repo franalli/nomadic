@@ -1723,6 +1723,77 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     )
                     exp_stash.append(td)
                 state.metadata["browseable_activities"] = exp_stash
+
+                # Backfill Tier 2 if experience tiles insufficient for trip density
+                _apd_bf = (
+                    _act_settings.activities_per_day if _act_settings.activities_per_day else 2
+                )
+                _trip_days_bf = 0
+                if plan.start_date and plan.end_date:
+                    try:
+                        from datetime import datetime as _dt_bf
+
+                        _sd_bf = _dt_bf.strptime(str(plan.start_date)[:10], "%Y-%m-%d")
+                        _ed_bf = _dt_bf.strptime(str(plan.end_date)[:10], "%Y-%m-%d")
+                        _trip_days_bf = max(0, (_ed_bf - _sd_bf).days + 1)
+                    except (ValueError, TypeError):
+                        pass
+                _free_bf = max(1, _trip_days_bf - 2)  # exclude arrival/departure
+                _needed_bf = _free_bf * _apd_bf
+                if len(experience_tiles) < _needed_bf:
+                    _shortfall_bf = _needed_bf - len(experience_tiles)
+                    logger.info(
+                        "[logistics_node] Tier 2 backfill: have %d tiles, need %d "
+                        "(free=%d x apd=%d), backfilling %d",
+                        len(experience_tiles),
+                        _needed_bf,
+                        _free_bf,
+                        _apd_bf,
+                        _shortfall_bf,
+                    )
+                    _TIER2_BROWSE_MAP = {
+                        "yoga": ["spa", "nature"],
+                        "cooking": ["food", "cultural"],
+                        "nightlife": ["nightlife", "food"],
+                        "wellness": ["spa", "nature"],
+                        "photography": ["tours", "cultural"],
+                    }
+                    _browse_cats_bf: list[str] = []
+                    for _cat_bf in tier2_cats:
+                        _browse_cats_bf.extend(_TIER2_BROWSE_MAP.get(_cat_bf.lower(), ["tours"]))
+                    _browse_cats_bf = list(dict.fromkeys(_browse_cats_bf))  # dedup
+
+                    try:
+                        from app.services.activity_browser import (
+                            browse_activities as _browse_bf,
+                        )
+
+                        _geo_bf: tuple[float, float] | None = (
+                            (dest_lat, dest_lng)
+                            if dest_lat is not None and dest_lng is not None
+                            else None
+                        )
+                        backfill_tiles = await _browse_bf(
+                            destination=str(plan.destination) or "",
+                            center=_geo_bf,
+                            categories=_browse_cats_bf[:4],
+                            max_results=min(20, _shortfall_bf + 4),
+                        )
+                        if backfill_tiles:
+                            for _bt in backfill_tiles:
+                                if isinstance(_bt, dict):
+                                    _bt.setdefault("source_agent", "tier2_browse_backfill")
+                            experience_tiles.extend(backfill_tiles)
+                            state.tiles["activities"] = experience_tiles
+                            activity_dicts = experience_tiles
+                            logger.info(
+                                "[logistics_node] Tier 2 backfill added %d tiles",
+                                len(backfill_tiles),
+                            )
+                    except Exception as _bf_err:
+                        logger.warning(
+                            "[logistics_node] Tier 2 browse backfill failed: %s", _bf_err
+                        )
             else:
                 # Fallback: keyword match existing tiles (original behavior)
                 matching = [t for t in activity_dicts if _tile_matches_categories(t, tier2_cats)]
@@ -1809,6 +1880,78 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     )
                     exp_stash.append(td)
                 state.metadata["browseable_activities"] = exp_stash
+
+                # Backfill Tier 2 if experience tiles insufficient for trip density
+                _apd_bf2 = (
+                    _act_settings2.activities_per_day if _act_settings2.activities_per_day else 2
+                )
+                _trip_days_bf2 = 0
+                if plan.start_date and plan.end_date:
+                    try:
+                        from datetime import datetime as _dt_bf2
+
+                        _sd_bf2 = _dt_bf2.strptime(str(plan.start_date)[:10], "%Y-%m-%d")
+                        _ed_bf2 = _dt_bf2.strptime(str(plan.end_date)[:10], "%Y-%m-%d")
+                        _trip_days_bf2 = max(0, (_ed_bf2 - _sd_bf2).days + 1)
+                    except (ValueError, TypeError):
+                        pass
+                _free_bf2 = max(1, _trip_days_bf2 - 2)  # exclude arrival/departure
+                _needed_bf2 = _free_bf2 * _apd_bf2
+                if len(experience_tiles) < _needed_bf2:
+                    _shortfall_bf2 = _needed_bf2 - len(experience_tiles)
+                    logger.info(
+                        "[logistics_node] Tier 2 backfill (pure): have %d tiles, need %d "
+                        "(free=%d x apd=%d), backfilling %d",
+                        len(experience_tiles),
+                        _needed_bf2,
+                        _free_bf2,
+                        _apd_bf2,
+                        _shortfall_bf2,
+                    )
+                    _TIER2_BROWSE_MAP2 = {
+                        "yoga": ["spa", "nature"],
+                        "cooking": ["food", "cultural"],
+                        "nightlife": ["nightlife", "food"],
+                        "wellness": ["spa", "nature"],
+                        "photography": ["tours", "cultural"],
+                    }
+                    _browse_cats_bf2: list[str] = []
+                    for _cat_bf2 in tier2_only:
+                        _browse_cats_bf2.extend(_TIER2_BROWSE_MAP2.get(_cat_bf2.lower(), ["tours"]))
+                    _browse_cats_bf2 = list(dict.fromkeys(_browse_cats_bf2))  # dedup
+
+                    try:
+                        from app.services.activity_browser import (
+                            browse_activities as _browse_bf2,
+                        )
+
+                        _geo_bf2: tuple[float, float] | None = (
+                            (dest_lat, dest_lng)
+                            if dest_lat is not None and dest_lng is not None
+                            else None
+                        )
+                        backfill_tiles2 = await _browse_bf2(
+                            destination=str(plan.destination) or "",
+                            center=_geo_bf2,
+                            categories=_browse_cats_bf2[:4],
+                            max_results=min(20, _shortfall_bf2 + 4),
+                        )
+                        if backfill_tiles2:
+                            for _bt2 in backfill_tiles2:
+                                if isinstance(_bt2, dict):
+                                    _bt2.setdefault("source_agent", "tier2_browse_backfill")
+                            experience_tiles.extend(backfill_tiles2)
+                            state.tiles["activities"] = experience_tiles
+                            activity_dicts = experience_tiles
+                            logger.info(
+                                "[logistics_node] Tier 2 backfill (pure) added %d tiles",
+                                len(backfill_tiles2),
+                            )
+                    except Exception as _bf_err2:
+                        logger.warning(
+                            "[logistics_node] Tier 2 browse backfill (pure) failed: %s",
+                            _bf_err2,
+                        )
         else:
             # General-only trip (no specialist, no categories) — e.g. "7 days in Rome".
             # Initial _fetch_activities returns ~5 generic GP tiles, too few for multi-day.

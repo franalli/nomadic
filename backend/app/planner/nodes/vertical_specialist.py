@@ -388,10 +388,15 @@ def _build_specialist_prompt(
     min_acts = min(min_acts, max_acts)
 
     activity_count_instruction = (
-        f"- Generate exactly {min_acts} activities"
+        f"- Generate EXACTLY {min_acts} activities. Do NOT generate more than {min_acts}."
         if min_acts == max_acts
-        else f"- Generate {min_acts}-{max_acts} activities to fill available days"
+        else f"- Generate EXACTLY {min_acts} to {max_acts} activities. Do NOT generate more than {max_acts}."
     )
+    if _buffer_days > 0:
+        activity_count_instruction += (
+            f"\n- Note: {_buffer_days} day(s) are reserved as a safety buffer "
+            f"(e.g., 24h no-fly rule) and are already excluded from the count above."
+        )
 
     user_prompt = f"""Plan {topic} activities for {destination}.
 

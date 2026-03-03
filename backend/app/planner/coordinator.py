@@ -594,6 +594,20 @@ def plan_turn(
                 estimated_wall_ms=3000,
             )
 
+    # Safety: if classifier says INITIAL_PLAN but itinerary already built and
+    # no fields actually changed, skip to response-only.
+    if (
+        change_type == ChangeType.INITIAL_PLAN
+        and state.get("day_cards")
+        and not state.get("turn_meta", {}).get("fields_changed")
+    ):
+        return ExecutionPlan(
+            steps=[ExecutionStep(step_type=StepType.GENERATE_RESPONSE)],
+            reason="INITIAL_PLAN — itinerary exists + no field changes, response only",
+            estimated_llm_calls=1,
+            estimated_wall_ms=800,
+        )
+
     # ----- Idempotent input short-circuit -----
     # If classifier extracted fields but none actually changed (all identical to
     # existing state), and a built itinerary already exists, skip the full
@@ -2125,11 +2139,21 @@ async def _search_tiles(
 
     turn_meta = dict(state.get("turn_meta", {}))
     turn_meta["tiles_replaced"] = True
-    # Merge resolved IATA codes back from GraphState
-    if graph_state.trip_plan.origin_iata and not trip_plan.get("origin_iata"):
+    # Always prefer freshly-resolved IATA from logistics_node
+    if graph_state.trip_plan.origin_iata:
         state["trip_plan"]["origin_iata"] = graph_state.trip_plan.origin_iata
-    if graph_state.trip_plan.destination_iata and not trip_plan.get("destination_iata"):
+    if graph_state.trip_plan.destination_iata:
         state["trip_plan"]["destination_iata"] = graph_state.trip_plan.destination_iata
+    # Merge booking_types upgrades (flights/hotels auto-enabled by logistics_node)
+    gs_settings = graph_state.metadata.get("trip_settings")
+    if isinstance(gs_settings, dict):
+        gs_bt = gs_settings.get("booking_types", {})
+        if isinstance(gs_bt, dict):
+            coord_bt = state.setdefault("trip_settings", {}).setdefault("booking_types", {})
+            for key in ("flights", "hotels"):
+                gs_val = gs_bt.get(key)
+                if gs_val and gs_val != "off" and coord_bt.get(key) in ("off", None, ""):
+                    coord_bt[key] = gs_val
     flight_status = graph_state.metadata.get("flight_search_status")
     if isinstance(flight_status, str) and flight_status:
         turn_meta["flight_search_status"] = flight_status
@@ -2495,6 +2519,8 @@ async def _build_itinerary(
             "activities_dropped": 0,
             "conflicts": [],
             "warnings": [str(exc)],
+            "overview": None,
+            "assumptions": None,
         }
         state["turn_meta"] = turn_meta
         state["day_cards"] = []
@@ -2688,6 +2714,12 @@ def _build_envelope(
 
     builder_result = turn_meta.get("builder_result", {})
     builder_ran = isinstance(builder_result, dict) and builder_result.get("success") is not None
+    if builder_ran and not builder_result.get("overview"):
+        logger.debug(
+            "[coordinator] _build_envelope: builder_ran=%s but overview missing, keys=%s",
+            builder_ran,
+            list(builder_result.keys()),
+        )
 
     if not has_core:
         # Check if we have destination but just missing dates
@@ -2849,6 +2881,7 @@ def _build_envelope(
         "tiles_replaced": tiles_replaced,
         "constraints_validated": constraints_validated,
         "constraint_violations": constraint_violations,
+        "hotel_filter_cascaded": turn_meta.get("hotel_filter_cascaded"),
         "browseable_activities": browseable_activities,
         "can_expand_to_itinerary": bool(strategy_sections) and ready_to_generate,
         "itinerary_day_cards": (

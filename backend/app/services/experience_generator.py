@@ -139,28 +139,28 @@ _SEASONAL_CATEGORIES: frozenset[str] = frozenset(
 
 
 def _normalize_month_for_cache(month: str, categories: list[str]) -> str:
-    """Normalize month to quarter for non-seasonal categories.
+    """Normalize month to half-year for non-seasonal categories.
 
     Seasonal categories (skiing, surfing, diving, etc.) keep month precision
     since availability varies by month. Non-seasonal categories (yoga, cooking,
-    nightlife) are month-agnostic so we normalize to quarter for better cache hits.
+    nightlife) are month-agnostic so we normalize to half-year for better cache hits.
 
     Mixed lists: if ANY category is seasonal, the entire key keeps month precision
-    (e.g. ["diving", "yoga"] → keeps "2026-03", not "2026-Q1").
+    (e.g. ["diving", "yoga"] → keeps "2026-03", not "2026-H1").
     """
     if not month or month == "unknown":
         return month
     has_seasonal = any(c.lower().strip() in _SEASONAL_CATEGORIES for c in categories)
     if has_seasonal:
         return month
-    # Normalize to quarter: 2026-01..03 → 2026-Q1, etc.
+    # Normalize to half-year: 2026-01..06 → 2026-H1, 2026-07..12 → 2026-H2
     try:
         parts = month.split("-")
         if len(parts) >= 2:
             year = parts[0]
             m = int(parts[1])
-            quarter = (m - 1) // 3 + 1
-            return f"{year}-Q{quarter}"
+            half = "H1" if m <= 6 else "H2"
+            return f"{year}-{half}"
     except (ValueError, IndexError):
         pass
     return month

@@ -1702,7 +1702,7 @@ useSessionHydration() runs
 | --- | --- |
 | `StrategyStageRenderer` | Data density computation, conditional rendering, single renderer for all modes. Heavy computation and effects are delegated to `useStrategyStageOrchestration`. |
 | `useStrategyStageOrchestration` | Hook centralising all heavy computation, state, and effects for `StrategyStageRenderer` (keeps renderer under ~300 lines). Owns `DataDensity` computation, map POI extraction, infeasibility toast notifications, scroll-position freeze/restore on itinerary arrival, and booking drawer state. |
-| `PlanFullDensityView` | Full-density view (map + timeline + booking/intel controls). Receives all props from `StrategyStageRenderer`, renders the flex desktop map layout (content: flex-1 min 480px max 800px; map: flex-1 min 350px), owns the row-two toggle chips (Flights, Stays, Destination Travel Intel), and fetches/polls Local Expert enrichment for the destination intel panel. |
+| `PlanFullDensityView` | Full-density view (map + timeline + booking/intel controls). Receives all props from `StrategyStageRenderer`, renders the flex desktop map layout (content: flex-1 min 480px max 800px; map: flex-1 min 350px), owns `TripSummaryPills` command bar for Flights/Stays/Travel Advice toggles, and fetches/polls Local Expert enrichment for the destination intel panel. |
 | `PlanDensityViews` | Density loading view (`PlanMirrorLoader`) only. |
 | `PlanTimelineSection` | Timeline section for full-density view — handles DnD wrapping (`ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`), skeleton loading, regeneration overlay, and wraps `TimelineThread` in `ErrorBoundary` for crash isolation. |
 | `TimelineBlockList` | Renders one day’s timeline blocks, splitting compact vs full variants and injecting optional DnD/slot render-props for drag/drop and free-day actions. |
@@ -1710,6 +1710,7 @@ useSessionHydration() runs
 | `MapMarkerItem` | Memoized per-marker renderer used by `InteractiveMap` for POI pins; applies type-based icon/color config, active/hover state visuals, and day-based dimming while limiting marker rerender churn. |
 | `useBookingDrawerState` | Hook managing booking drawer open/close state and the fill-day API call triggered when a tile is added to a specific day via the drawer. Extracted from `StrategyStageRenderer`. |
 | `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
+| `TripSummaryPills` | Unified command bar for trip inputs plus module actions: destination/origin/dates/travelers/budget/activities plus inline command segments for Flights, Stays, and Destination Travel Advice (with pending/badge state). |
 | `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack/StrategyHero) |
 | `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts`. Accepts three optional render props for DnD injection: `blockWrapper?: (block: DayBlock, dayNumber: number, children: ReactNode) => ReactNode` (wraps each block — only applied when `useRichBlocks=true`); `dayWrapper?: (dayNumber: number, children: ReactNode) => ReactNode` (wraps the block-list container for activity days only — **not** applied to free/empty days); `freeDayDropSlot?: (dayNumber: number) => ReactNode` (renders a drop zone inside `FreeDayCard` between the subtitle and chips — preferred for free days to avoid highlighting the entire card). All three default to identity no-ops. **Map sync:** `IntersectionObserver` on `scrollContainerRef` tracks visible day headers → `useMapSync.setVisibleDayNumber()`. Listens to `scrollTargetDayNumber` → `scrollIntoView()` + 2s highlight ring. **Constraint dedup:** `getConstraintDisplayModes(block)` deduplicates constraint badges per render pass — passes `constraintDisplayModes` Map to `ActivityMiniCard`. **Compact days:** `getDayVariant(card)` returns `'compact'` for single-block non-logistics days. |
 | `ItineraryDndWrapper` | `@dnd-kit/core` `DndContext` wrapper (`closestCorners`, `PointerSensor` with 8px activation distance). Orchestrates drag state, calls `validateArrangement()` then `applyArrangement()` on drop, applies store update via `mergeEnvelope` + `setState({version})`. Uses `claimMutation`/`releaseMutation` for the store mutation gate. Shows `DragOverlay` with `DragPreviewCard`. **Undo on drag:** Before applying arrangement, captures `previousDayCards` + `previousVersion` snapshot, sets `documentStore.setUndoEntry({ type: 'drag_move', label, previousDayCards, previousVersion })`, and calls `showMutationToast(label, toast)` to display an Undo CTA. Mounts `useUndoStack` for auto-expire side effect (clears `undoEntry` after 8s). |
@@ -1733,7 +1734,7 @@ useSessionHydration() runs
 | `useActivityColorMap` | Hook (`frontend/hooks/useActivityColorMap.ts`) that builds activity-name → specialist color hints from tiles/day cards/strategy sections for chat highlighting. |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
-| `BookingSection` | Renders booking tiles when available; supports controlled expand/collapse for stays and flights from `PlanFullDensityView` row-two toggle chips |
+| `BookingSection` | Renders booking tiles when available; supports controlled expand/collapse for stays and flights from command controls rendered in `TripSummaryPills` |
 | `NextStepBar` | CTA bar — accepts `nextAction` prop, early-returns null for `expand_itinerary` (handled by auto-expand), renders only for `finalize_plan` action. Currently `getNextAction()` never returns `finalize_plan`, so NextStepBar does not render in practice. |
 | `OriginPromptCard` | Inline prompt to set origin (shown in S2 when destination+dates set but no origin, 2+ specialists) |
 | `ItineraryProgressIndicator` | Progress indicator for multi-specialist auto-trigger itinerary generation |
@@ -1770,7 +1771,7 @@ useSessionHydration() runs
 - `components/chat/HoldToDeleteButton.tsx` -- moved to `components/plan/timeline/blocks/HoldToDeleteButton.tsx`
 - `SuggestionClickEvent` (schema) / `/api/suggestions/click` (endpoint) -- suggestion-click analytics removed
 - `PlanSpecialistsSection` -- removed; destination intel controls moved into `PlanFullDensityView`
-- `StrategyConstraintBar` -- removed; row-two toggle chips now live directly in `PlanFullDensityView`
+- `StrategyConstraintBar` -- removed; command controls for flights/stays/travel-advice now live in the unified `TripSummaryPills` bar inside `PlanFullDensityView`
 - `TripAlertBanner` -- removed from plan surfaces
 
 ### TimelineVariant Mapping
@@ -2794,11 +2795,11 @@ Gear icons provide quick access to category-wide settings sheets from timeline b
 | Block/Card Type | Gear Location | Opens Sheet | Callback Prop | Status |
 |-----------------|---------------|-------------|---------------|--------|
 | `AgentCard` (diving/hiking/skiing/cycling/sailing) | Header right | `ActivitiesSheet` | `onOpenActivitySettings` | Active |
-| `SuggestionCard` (hotel) | Image top-right, beside heart | `StaysSheet` | `onOpenStaysSettings` | **Hidden** (TODO) |
+| `SuggestionCard` (hotel) | Image top-right, beside heart | `StaysSheet` | `onOpenStaysSettings` | Hidden |
 | `LogisticsBlock` (arrival/departure) | Top-right | `FlightsSheet` | `onOpenFlightsSettings` | Active |
 | `LogisticsBlock` (check-in) | Top-right | `StaysSheet` | `onOpenStaysSettings` | Active |
-| `TileCard` (hotel) | Image overlay, beside heart | `StaysSheet` | `onOpenStaysSettings` | **Hidden** (TODO) |
-| `MiniCard` (hotel) | Thumbnail corner | `StaysSheet` | `onOpenStaysSettings` | **Hidden** (TODO) |
+| `TileCard` (hotel) | Image overlay, beside heart | `StaysSheet` | `onOpenStaysSettings` | Hidden |
+| `MiniCard` (hotel) | Thumbnail corner | `StaysSheet` | `onOpenStaysSettings` | Hidden |
 
 > **Note:** Hotel/stays gear icons are currently hidden (commented out in `SuggestionCard.tsx`) as the filtering modal is not yet wired up. Non-functional controls are worse than no controls for demo purposes.
 

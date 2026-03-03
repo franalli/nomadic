@@ -82,25 +82,22 @@ export function ChatStatusHeader({
         transition={FADE_TRANSITION}
         className={cn(
           'relative z-40 shrink-0',
-          '-mx-4 -mt-4 mb-2',
-          'w-[calc(100%+2rem)]',
-          'overflow-hidden',
+          'mb-2 overflow-hidden',
           showHero
-            ? 'h-[120px]'
-            : 'h-14 border-b border-border/80 bg-background/80 backdrop-blur-md',
+            ? '-mx-2 -mt-5 h-[120px] w-[calc(100%+1rem)]'
+            : '-mx-4 -mt-4 w-[calc(100%+2rem)] h-14 border-b border-border/80 bg-background/80 backdrop-blur-md',
         )}
       >
         {/* Hero image — only when destination image available */}
         {showHero && (
-          <img
-            src={destinationImageUrl!}
-            alt={destination}
-            className="absolute inset-0 h-full w-full object-cover brightness-90 saturate-[1.1]"
-          />
-        )}
-        {/* Scrim: bottom half fades hard to panel background, top stays clear */}
-        {showHero && (
-          <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
+          <div className="relative h-full overflow-hidden rounded-2xl ring-1 ring-white/10 shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
+            <img
+              src={destinationImageUrl!}
+              alt={destination ?? 'Destination'}
+              className="h-full w-full object-cover brightness-90 saturate-[1.1]"
+            />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-zinc-950/80 via-zinc-950/20 to-transparent" />
+          </div>
         )}
         {!showHero && (
           <div className="absolute inset-0 z-10 flex items-center gap-2 px-4">

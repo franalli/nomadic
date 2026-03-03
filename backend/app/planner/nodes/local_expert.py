@@ -131,21 +131,30 @@ def _append_recommendation(
     )
 
 
-def _enrich_legacy_lists(response: LocalExpertOutput) -> LocalExpertOutput:
+def _enrich_legacy_lists(
+    response: LocalExpertOutput,
+    existing_constraints: list | None = None,
+    existing_recommendations: list | None = None,
+) -> LocalExpertOutput:
     """
     Ensure legacy `constraints` and `recommendations` lists are sufficiently rich.
 
     The frontend Travel Intel card currently consumes these flattened arrays.
     When the model returns sparse legacy arrays but rich typed category fields,
     we deterministically backfill from typed fields to keep UX density consistent.
+
+    Args:
+        existing_constraints: Prior-turn constraints to seed dedup set. These
+            are carried forward and new items are appended after them.
+        existing_recommendations: Prior-turn recommendations for dedup seeding.
     """
     MIN_CONSTRAINTS = 8
     MIN_RECOMMENDATIONS = 8
     MAX_CONSTRAINTS = 12
     MAX_RECOMMENDATIONS = 12
 
-    constraints_out: list[LocalConstraint] = []
-    constraint_seen: set[str] = set()
+    constraints_out: list[LocalConstraint] = list(existing_constraints or [])
+    constraint_seen: set[str] = {_norm_text(c.description) for c in constraints_out}
 
     for c in response.constraints:
         _append_constraint(
@@ -156,8 +165,10 @@ def _enrich_legacy_lists(response: LocalExpertOutput) -> LocalExpertOutput:
             severity=c.severity or "info",
         )
 
-    recommendations_out: list[LocalRecommendation] = []
+    recommendations_out: list[LocalRecommendation] = list(existing_recommendations or [])
     recommendation_seen: set[str] = set()
+    for r in recommendations_out:
+        recommendation_seen.add(_norm_text(f"{r.title}::{r.description}"))
     for r in response.recommendations:
         _append_recommendation(
             recommendations_out,
@@ -923,10 +934,41 @@ async def local_expert(state: GraphState) -> GraphState:
 
     # Session state can be stale (pre-enrichment skeleton). Always check destination-scoped
     # specialist cache before re-running Phase A/Phase B so repeated turns avoid recomputation.
+    # Extract prior-turn constraints/recommendations for dedup seeding (Issue 12).
+    _prior_constraints: list[LocalConstraint] = []
+    _prior_recommendations: list[LocalRecommendation] = []
+    if cached_section:
+        for cd in cached_section.get("constraints_applied") or []:
+            desc = cd.get("rule") or cd.get("reason") or ""
+            if desc.strip():
+                _prior_constraints.append(
+                    LocalConstraint(
+                        type=cd.get("type", "general"),
+                        description=desc.strip(),
+                        severity=cd.get("severity", "info"),
+                    )
+                )
+        for rd in cached_section.get("content_added") or []:
+            title = (rd.get("title") or "").strip()
+            desc = (rd.get("description") or "").strip()
+            if title or desc:
+                _prior_recommendations.append(
+                    LocalRecommendation(
+                        title=title,
+                        description=desc,
+                        category=rd.get("type") or rd.get("category") or "logistics",
+                        logic_hook=rd.get("logic_hook") or "",
+                    )
+                )
+
     if settings.local_expert_use_llm:
         cached_response = await _get_cached_local_expert_output(plan.destination, log)
         if cached_response is not None:
-            cached_response = _enrich_legacy_lists(cached_response)
+            cached_response = _enrich_legacy_lists(
+                cached_response,
+                existing_constraints=_prior_constraints,
+                existing_recommendations=_prior_recommendations,
+            )
             if _has_rich_local_expert_output(cached_response):
                 section = _build_section_from_cached_output(plan.destination, cached_response)
                 upsert_section(state.metadata, section, mode="appendable")

@@ -31,8 +31,8 @@ class TestCacheKeyGeneration:
         from app.services.experience_generator import _experience_cache_key
 
         key = _experience_cache_key("Bali", ["yoga", "cooking"], "2026-03")
-        # Non-seasonal categories normalize month to quarter
-        assert key == "experience::v2::bali::cooking|yoga::2026-Q1::n2"
+        # Non-seasonal categories normalize month to half-year
+        assert key == "experience::v2::bali::cooking|yoga::2026-H1::n2"
 
     def test_categories_sorted_alphabetically(self):
         from app.services.experience_generator import _experience_cache_key

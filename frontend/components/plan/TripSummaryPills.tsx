@@ -2,25 +2,18 @@
 /**
  * TripSummaryPills
  *
- * Compact pill row for displaying and editing trip constraints in the header.
- * This is the ONLY interactive trip input surface in Plan mode (S1+).
- *
- * Reads tripInputs and computes display values internally.
- * All formatting is done here, not passed as props.
+ * Unified command bar for trip inputs + module openers.
+ * Replaces standalone pills with one elevated command surface.
  */
 
 'use client';
 
-import { Activity, Calendar, DollarSign, MapPin, Plane, Users } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { LucideIcon } from 'lucide-react';
+import { Activity, Building2, Calendar, Compass, DollarSign, Lightbulb, MapPin, Plane, Users } from 'lucide-react';
+import { Fragment, type ReactNode } from 'react';
 
-import { CoreChip } from '@/components/plan/CoreChip';
-import { canonicalCategoryKey, TIER1_CONSTRAINT_HINTS,toCategoryKey } from '@/lib/categoryNormalization';
-import {
-  formatBudgetForPills,
-  formatDateRangeForPills,
-  formatTravelersForPills,
-} from '@/lib/format-utils';
+import { canonicalCategoryKey, TIER1_CONSTRAINT_HINTS, toCategoryKey } from '@/lib/categoryNormalization';
+import { formatBudgetForPills, formatDateRangeForPills, formatTravelersForPills } from '@/lib/format-utils';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
@@ -30,19 +23,146 @@ interface TripSummaryPillsProps {
   tripInputs: DocumentTripInputs;
   dayCards?: DayCard[];
   onOpenSheet: (sheet: SheetType) => void;
-  disabled?: boolean; // Disable all pills during streaming/generation
-  /** Use 'onImage' when pills are on hero/photo background */
+  disabled?: boolean;
   variant?: 'default' | 'onImage';
-  /** When true, make all pills except destination read-only (demo-safe for itinerary state) */
   readOnlyExceptDestination?: boolean;
-  /** Extra chips (e.g. Stays, Travel Advice, PDF) rendered after the budget pill */
-  children?: ReactNode;
+  flightCount?: number;
+  stayCount?: number;
+  travelAdviceCount?: number;
+  showTravelAdvice?: boolean;
+  isTravelAdvicePending?: boolean;
+  flightsActive?: boolean;
+  staysActive?: boolean;
+  travelAdviceActive?: boolean;
+  onToggleFlights?: () => void;
+  onToggleStays?: () => void;
+  onToggleTravelAdvice?: () => void;
+}
+
+interface SegmentProps {
+  icon: LucideIcon;
+  label: string;
+  badge?: number;
+  isSet?: boolean;
+  muted?: boolean;
+  active?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+  id?: string;
+  ariaControls?: string;
+  ariaExpanded?: boolean;
+  trailing?: ReactNode;
+}
+
+interface CoreSegmentItem {
+  key: string;
+  icon: LucideIcon;
+  label: string;
+  isSet?: boolean;
+  badge?: number;
+  onClick?: () => void;
+  disabled?: boolean;
 }
 
 const NON_ACTIVITY_TYPES = new Set([
-  'arrival', 'departure', 'check-in', 'check-out', 'check_in', 'check_out',
-  'free_day', 'rest_day', 'buffer', 'decompression_buffer',
+  'arrival',
+  'departure',
+  'check-in',
+  'check-out',
+  'check_in',
+  'check_out',
+  'free_day',
+  'rest_day',
+  'buffer',
+  'decompression_buffer',
 ]);
+
+function Segment({
+  icon: Icon,
+  label,
+  badge,
+  isSet = false,
+  muted = false,
+  active = false,
+  disabled = false,
+  onClick,
+  id,
+  ariaControls,
+  ariaExpanded,
+  trailing,
+}: SegmentProps) {
+  const interactive = Boolean(onClick) && !disabled;
+
+  return (
+    <button
+      id={id}
+      type="button"
+      onClick={onClick}
+      disabled={!interactive}
+      aria-controls={ariaControls}
+      aria-expanded={ariaExpanded}
+      className={cn(
+        'relative inline-flex items-center gap-1.5 h-8 rounded-full px-3',
+        'text-[13px] whitespace-nowrap transition-all duration-150',
+        'hover:bg-white/[0.08]',
+        interactive ? 'cursor-pointer' : 'cursor-default opacity-70',
+        muted
+          ? cn(
+              active ? 'text-zinc-200' : 'text-zinc-400',
+              'font-medium',
+              'hover:text-zinc-200'
+            )
+          : isSet
+            ? 'font-semibold text-zinc-100'
+            : 'text-zinc-500'
+      )}
+    >
+      <Icon
+        className={cn(
+          'h-4 w-4 shrink-0',
+          muted
+            ? cn(active ? 'text-zinc-300' : 'text-zinc-500')
+            : isSet
+              ? 'text-emerald-400/80'
+              : 'text-zinc-600'
+        )}
+      />
+      <span>{label}</span>
+      {trailing}
+      {badge && badge > 0 ? <CountBadge count={badge} /> : null}
+    </button>
+  );
+}
+
+function SegDot() {
+  return (
+    <div className="flex items-center px-1.5">
+      <div className="w-1 h-1 rounded-full bg-emerald-500/50 shadow-[0_0_6px_rgba(16,185,129,0.3)]" />
+    </div>
+  );
+}
+
+function GroupDivider() {
+  return (
+    <div className="flex items-center px-2">
+      <div className="w-px h-5 bg-white/[0.15]" />
+    </div>
+  );
+}
+
+function CountBadge({ count }: { count: number }) {
+  return (
+    <span
+      className={cn(
+        'absolute -top-1.5 -right-1 min-w-[18px] h-[18px] rounded-full px-1',
+        'flex items-center justify-center text-[10px] font-bold',
+        'bg-white text-zinc-900 shadow-sm'
+      )}
+    >
+      {count}
+    </span>
+  );
+}
 
 function resolveBlockCategory(block: DayBlock): string | null {
   if (block.is_buffer) return null;
@@ -51,7 +171,7 @@ function resolveBlockCategory(block: DayBlock): string | null {
 
   const bookedTile = block.booked_tile as Record<string, unknown> | undefined;
   const meta = bookedTile?.meta && typeof bookedTile.meta === 'object'
-    ? bookedTile.meta as Record<string, unknown>
+    ? (bookedTile.meta as Record<string, unknown>)
     : undefined;
 
   return (
@@ -74,7 +194,9 @@ function inferConstraintCategories(block: DayBlock): string[] {
 
   const textParts: string[] = [];
   if (typeof block.buffer_reason === 'string') textParts.push(block.buffer_reason);
-  if (Array.isArray(block.constraints)) textParts.push(...block.constraints.filter((c): c is string => typeof c === 'string'));
+  if (Array.isArray(block.constraints)) {
+    textParts.push(...block.constraints.filter((c): c is string => typeof c === 'string'));
+  }
   if (Array.isArray(block.active_constraints)) {
     block.active_constraints.forEach((c) => {
       if (typeof c.id === 'string') textParts.push(c.id);
@@ -86,7 +208,7 @@ function inferConstraintCategories(block: DayBlock): string[] {
   if (!text) return Array.from(categories);
 
   Object.entries(TIER1_CONSTRAINT_HINTS).forEach(([category, patterns]) => {
-    if (patterns.some((p) => p.test(text))) {
+    if (patterns.some((pattern) => pattern.test(text))) {
       categories.add(category);
     }
   });
@@ -121,21 +243,22 @@ function deriveScheduledDayCounts(
   const selected = Array.from(new Set(selectedCategories));
 
   if (selected.length > 0) {
-    // When user selected categories, those categories are authoritative for label/count display.
     selected.forEach((cat) => categoryToDays.set(cat, new Set<number>()));
 
     dayCards.forEach((card) => {
       card.blocks?.forEach((block) => {
         const inferredConstraints = new Set(inferConstraintCategories(block));
         selected.forEach((selectedCategory) => {
-          if (inferredConstraints.has(selectedCategory) || blockMatchesCategory(block, selectedCategory)) {
+          if (
+            inferredConstraints.has(selectedCategory) ||
+            blockMatchesCategory(block, selectedCategory)
+          ) {
             categoryToDays.get(selectedCategory)?.add(card.day_number);
           }
         });
       });
     });
   } else {
-    // No user-selected categories: infer directly from itinerary metadata/constraints.
     dayCards.forEach((card) => {
       card.blocks?.forEach((block) => {
         const category = resolveBlockCategory(block);
@@ -164,24 +287,26 @@ export function TripSummaryPills({
   dayCards,
   onOpenSheet,
   disabled = false,
-  variant = 'default',
+  variant: _variant = 'default',
   readOnlyExceptDestination = false,
-  children,
+  flightCount = 0,
+  stayCount = 0,
+  travelAdviceCount = 0,
+  showTravelAdvice = false,
+  isTravelAdvicePending = false,
+  flightsActive = false,
+  staysActive = false,
+  travelAdviceActive = false,
+  onToggleFlights,
+  onToggleStays,
+  onToggleTravelAdvice,
 }: TripSummaryPillsProps) {
-  // Compute display values
   const destination = tripInputs.destination || null;
-  const origin = tripInputs.origin || null;
-  const dateRange = formatDateRangeForPills(
-    tripInputs.start_date,
-    tripInputs.end_date
-  );
-  const travelers = formatTravelersForPills(
-    tripInputs.adults,
-    tripInputs.children
-  );
+  const origin = tripInputs.origin?.trim() || null;
+  const dateRange = formatDateRangeForPills(tripInputs.start_date, tripInputs.end_date);
+  const travelers = formatTravelersForPills(tripInputs.adults, tripInputs.children);
   const budget = formatBudgetForPills(tripInputs.budget, tripInputs.currency);
 
-  // Activity pill label — always derive from actual itinerary when day_cards exist.
   const activityCategories = tripInputs.activity_settings?.categories ?? [];
   const normalizedSelected = activityCategories
     .map((c) => canonicalCategoryKey(c))
@@ -196,93 +321,161 @@ export function TripSummaryPills({
     const effectiveSelected = dedupedSelected.length > 0 ? dedupedSelected : scheduledKeys;
     selectedActivityCount = effectiveSelected.length;
   }
-  const activityLabel = selectedActivityCount > 0 ? 'Activities' : null;
+  const hasActivitiesSet = selectedActivityCount > 0;
 
-  // Origin/budget visibility: only show when already set (progressive discovery — ghost pills confuse the UI)
+  const showFlights = flightCount > 0 && !!onToggleFlights;
+  const showStays = stayCount > 0 && !!onToggleStays;
+  const showAdvice = (showTravelAdvice || travelAdviceCount > 0 || isTravelAdvicePending) && !!onToggleTravelAdvice;
+  const showModuleGroup = showFlights || showStays || showAdvice;
   const showOrigin = !!origin;
   const showBudget = !!budget;
 
+  const coreSegments: CoreSegmentItem[] = [
+    {
+      key: 'destination',
+      icon: MapPin,
+      label: destination || 'Where to?',
+      isSet: !!destination,
+      onClick: destination ? undefined : () => onOpenSheet('destination'),
+      disabled,
+    },
+    ...(showOrigin
+      ? [{
+          key: 'origin',
+          icon: Plane,
+          label: origin,
+          isSet: true,
+          onClick: readOnlyExceptDestination ? undefined : () => onOpenSheet('origin'),
+          disabled: disabled || readOnlyExceptDestination,
+        }]
+      : []),
+    {
+      key: 'dates',
+      icon: Calendar,
+      label: dateRange || 'Dates',
+      isSet: !!dateRange,
+      onClick: readOnlyExceptDestination ? undefined : () => onOpenSheet('dates'),
+      disabled: disabled || readOnlyExceptDestination,
+    },
+    {
+      key: 'travelers',
+      icon: Users,
+      label: travelers,
+      isSet: true,
+      onClick: readOnlyExceptDestination ? undefined : () => onOpenSheet('travelers'),
+      disabled: disabled || readOnlyExceptDestination,
+    },
+    ...(showBudget
+      ? [{
+          key: 'budget',
+          icon: DollarSign,
+          label: budget,
+          isSet: true,
+          onClick: readOnlyExceptDestination ? undefined : () => onOpenSheet('budget'),
+          disabled: disabled || readOnlyExceptDestination,
+        }]
+      : []),
+    {
+      key: 'activities',
+      icon: Activity,
+      label: 'Activities',
+      badge: hasActivitiesSet ? selectedActivityCount : undefined,
+      isSet: hasActivitiesSet,
+      onClick: readOnlyExceptDestination ? undefined : () => onOpenSheet('activities'),
+      disabled: disabled || readOnlyExceptDestination,
+    },
+  ];
+
   return (
-    <div
-      className={cn(
-        'flex items-center gap-x-1.5',
-        '[&>*]:shrink-0',
-        'overflow-x-auto no-scrollbar -mx-4 px-4 py-2',
-        'md:overflow-x-visible md:mx-0 md:px-0 md:py-0 md:flex-wrap md:gap-y-2'
-      )}
-    >
-      <CoreChip
-        icon={MapPin}
-        label="Destination"
-        value={destination}
-        placeholder="Add destination"
-        tone={destination ? 'default' : 'missing'}
-        onClick={destination ? undefined : () => onOpenSheet('destination')}
-        disabled={disabled}
-        variant={variant}
-      />
+    <div className={cn(
+      'overflow-x-auto no-scrollbar flex-nowrap -mx-4 px-4 py-2',
+      'lg:overflow-x-visible lg:flex-wrap',
+    )}>
+      <div
+        className={cn(
+          'inline-flex items-center',
+          'h-10 rounded-xl',
+          'px-1.5',
+          'bg-white/[0.05]',
+          'backdrop-blur-xl',
+          'border border-white/[0.08]',
+          'shadow-[0_2px_20px_rgba(0,0,0,0.4),0_4px_24px_rgba(16,185,129,0.06),inset_0_1px_0_rgba(255,255,255,0.06)]',
+          'overflow-visible',
+        )}
+      >
+        {coreSegments.map((segment, idx) => (
+          <Fragment key={segment.key}>
+            <Segment
+              icon={segment.icon}
+              label={segment.label}
+              badge={segment.badge}
+              isSet={segment.isSet}
+              onClick={segment.onClick}
+              disabled={segment.disabled}
+            />
+            {idx < coreSegments.length - 1 && <SegDot />}
+          </Fragment>
+        ))}
 
-      {showOrigin && (
-        <CoreChip
-          icon={Plane}
-          label="Origin"
-          value={origin}
-          placeholder="Add origin"
-          tone="default"
-          onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('origin')}
-          disabled={disabled || readOnlyExceptDestination}
-          variant={variant}
-        />
-      )}
+        {showModuleGroup ? (
+          <>
+            <GroupDivider />
 
-      <CoreChip
-        icon={Calendar}
-        label="Dates"
-        value={dateRange}
-        placeholder="Add dates"
-        tone={dateRange ? 'default' : 'missing'}
-        onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('dates')}
-        disabled={disabled || readOnlyExceptDestination}
-        variant={variant}
-      />
+            {showFlights ? (
+              <>
+                <Segment
+                  icon={Plane}
+                  label="Flights"
+                  badge={flightCount}
+                  muted
+                  active={flightsActive}
+                  onClick={onToggleFlights}
+                  disabled={disabled}
+                />
+                {(showStays || showAdvice) && <SegDot />}
+              </>
+            ) : null}
 
-      <CoreChip
-        icon={Users}
-        label="Travelers"
-        value={travelers}
-        placeholder="1 adult"
-        tone="default"
-        onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('travelers')}
-        disabled={disabled || readOnlyExceptDestination}
-        variant={variant}
-      />
+            {showStays ? (
+              <>
+                <Segment
+                  icon={Building2}
+                  label="Stays"
+                  badge={stayCount}
+                  muted
+                  active={staysActive}
+                  onClick={onToggleStays}
+                  disabled={disabled}
+                />
+                {showAdvice && <SegDot />}
+              </>
+            ) : null}
 
-      <CoreChip
-        icon={Activity}
-        label="Activities"
-        value={activityLabel}
-        placeholder="Activities"
-        tone="default"
-        badge={selectedActivityCount > 0 ? selectedActivityCount : undefined}
-        onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('activities')}
-        disabled={disabled || readOnlyExceptDestination}
-        variant={variant}
-      />
-
-      {showBudget && (
-        <CoreChip
-          icon={DollarSign}
-          label="Budget"
-          value={budget}
-          placeholder="Add budget"
-          tone="default"
-          onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('budget')}
-          disabled={disabled || readOnlyExceptDestination}
-          variant={variant}
-        />
-      )}
-
-      {children}
+            {showAdvice ? (
+              <Segment
+                id="destination-intel-trigger"
+                icon={Lightbulb}
+                label="Advice"
+                badge={travelAdviceCount > 0 ? travelAdviceCount : undefined}
+                muted
+                active={travelAdviceActive}
+                onClick={onToggleTravelAdvice}
+                disabled={disabled}
+                ariaControls="destination-intel-panel"
+                ariaExpanded={travelAdviceActive}
+                trailing={
+                  isTravelAdvicePending ? (
+                    <Compass
+                      className="h-4 w-4 shrink-0 text-emerald-500 compass-spin"
+                      aria-label="Travel advice is loading"
+                    />
+                  ) : undefined
+                }
+              />
+            ) : null}
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

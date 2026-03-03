@@ -30,6 +30,21 @@ _QUALIFIERS = frozenset(
         "kayaking",
         "raft",
         "rafting",
+        "session",
+        "class",
+        "lesson",
+        "workshop",
+        "experience",
+        "tour",
+        "adventure",
+        "excursion",
+        "morning",
+        "evening",
+        "sunrise",
+        "sunset",
+        "guided",
+        "private",
+        "group",
     }
 )
 

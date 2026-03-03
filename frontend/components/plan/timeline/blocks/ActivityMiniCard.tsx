@@ -184,6 +184,10 @@ export function ActivityMiniCard({
   const activityBorderClass = isUnschedulable
     ? 'border-l-amber-500'
     : borderAccentClass[st] || 'border-l-zinc-300 dark:border-l-zinc-600';
+  const hasEmeraldAccent = !isUnschedulable && activityBorderClass.includes('border-l-emerald-500');
+  const activityGlowClass = hasEmeraldAccent
+    ? 'shadow-[inset_2px_0_8px_rgba(16,185,129,0.15),var(--tw-shadow)]'
+    : null;
 
   const resolvedTitle = resolveTitle(block, isUnschedulable);
   const activeConstraints = block.active_constraints ?? [];
@@ -199,6 +203,7 @@ export function ActivityMiniCard({
               ? 'bg-zinc-700/70 border-emerald-500/40 shadow-lg shadow-emerald-500/10'
               : 'bg-white dark:bg-zinc-800/50 hover:shadow-soft',
           activityBorderClass,
+          activityGlowClass,
         )}
       >
         {/* Thumbnail */}

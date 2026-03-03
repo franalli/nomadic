@@ -436,6 +436,11 @@ def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
         price_estimate = 35.0
         price_level = 2
 
+    # Final fallback: no price_level AND no rating — assign moderate default
+    if price_estimate is None:
+        price_estimate = 35.0
+        price_level = 2
+
     photos = place.get("photos", [])
     image_url = None
     photo_name = None
@@ -474,6 +479,22 @@ def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
         "maps_uri": maps_uri,
         "photo_name": photo_name,
     }
+
+
+def _fill_missing_ratings(tiles: list[dict]) -> None:
+    """Assign synthetic rank-based ratings to browse tiles missing GP rating.
+
+    Mirrors the hotel normalization logic in google_places_provider but
+    operates on dict tiles from the activity browser pipeline.
+    """
+    base, floor = 4.6, 4.2
+    rank = 0
+    for tile in tiles:
+        if tile.get("rating") is None:
+            tile["rating"] = round(max(floor, base - rank * 0.05), 1)
+            tile["review_count"] = max(150, 600 - rank * 60)
+            tile["user_ratings_count"] = tile["review_count"]
+            rank += 1
 
 
 async def _browse_activities_impl(
@@ -577,6 +598,7 @@ async def _browse_activities_impl(
             break
 
     tiles = await _enrich_tiles_with_llm(destination, valid_categories, tiles)
+    _fill_missing_ratings(tiles)
 
     usage_after = get_google_places_usage_counters().get("browse", {})
     had_places_failures = (

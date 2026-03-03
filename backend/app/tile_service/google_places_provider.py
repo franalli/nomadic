@@ -1671,7 +1671,7 @@ async def _enrich_single_activity(
         # like GP "Liberty Wreck" for specialist "USAT Liberty Shipwreck").
         reverse_overlap = _token_overlap_ratio(gp_name, simplified_title) if gp_name else 0.0
         best_overlap = max(overlap, reverse_overlap)
-        if best_overlap < 0.6 and gp_name:
+        if best_overlap < 0.45 and gp_name:
             logger.debug(
                 "[GOOGLE_PLACES] Low overlap (%.0f%%) for '%s' vs GP '%s' — rejecting",
                 best_overlap * 100,
