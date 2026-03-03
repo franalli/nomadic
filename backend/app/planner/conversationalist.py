@@ -663,6 +663,8 @@ def _resolve_voice_block(
 
     if user_message.strip().upper() in ("GENERATE_PLAN_NOW", "GENERATE_PLAN_TRIGGER"):
         voice_block = _VOICE_PLAN_GENERATED
+    elif classifier.reasoning and "GENERATE_PLAN_NOW" in classifier.reasoning:
+        voice_block = _VOICE_PLAN_GENERATED
 
     return voice_block
 

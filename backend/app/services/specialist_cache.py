@@ -66,34 +66,40 @@ def _specialist_cache_key(
     day_pref: Optional[int] = None,
 ) -> str:
     """
-    Generate stable cache key with ISO-month bucketing.
+    Generate stable cache key with topic-aware date bucketing.
 
     Format:
-    specialist::v4::{topic}::{dest}::{iso_month}::m::{skill}::{dpref}::{phash}
+    specialist::v4::{topic}::{dest}::{start}::{end}::{skill}::{dpref}::{phash}
 
-    Dates are coarsened to ISO month — specialist content is conceptually
-    date-independent. Duration is dropped because d6 vs d7 produces
-    unnecessary misses, and specialist plans don't vary by trip length.
-    Date-anchored constraints (e.g., diving no-fly buffer) are re-anchored
-    by the itinerary builder at schedule time.
+    Date bucketing varies by topic:
+    - local_expert: actual start/end dates (date-specific cultural events)
+    - Tier 1 specialists: ISO-month midpoint (season-agnostic, avoids
+      adjacent-week misses). Duration dropped — specialist plans don't
+      vary by trip length. Date-anchored constraints (e.g., diving no-fly
+      buffer) are re-anchored by the itinerary builder at schedule time.
     """
     from datetime import date as date_type
 
     from app.planner.specialist_registry import prompt_hash
 
     dest_normalized = destination.lower().strip() if destination else "unknown"
-    # Coarsen dates to ISO month — a diving plan for Bali is the same whether
-    # dates are Mar 15-21 or Mar 22-28. Adjacent-week misses are eliminated.
-    try:
-        s = date_type.fromisoformat(start_date[:10])
-        e = date_type.fromisoformat(end_date[:10]) if end_date else s
-        # Use midpoint date's month for cross-month trips (e.g. Mar 31-Apr 7 → April)
-        midpoint = s + (e - s) / 2
-        start = f"{midpoint.year}-{midpoint.month:02d}"
-        end = "m"  # Duration dropped — specialist content is duration-agnostic
-    except (ValueError, TypeError, AttributeError):
-        start = start_date[:7] if start_date else "unknown"
-        end = "unknown"
+    # Topic-aware date bucketing (W2):
+    # - local_expert: date-specific (cultural events like Nyepi are date-dependent)
+    # - Tier 1 specialists: month-bucketed (season-agnostic, avoids adjacent-week misses)
+    if topic == "local_expert":
+        start = start_date[:10] if start_date else "unknown"
+        end = end_date[:10] if end_date else start
+    else:
+        try:
+            s = date_type.fromisoformat(start_date[:10])
+            e = date_type.fromisoformat(end_date[:10]) if end_date else s
+            # Use midpoint date's month for cross-month trips (e.g. Mar 31-Apr 7 → April)
+            midpoint = s + (e - s) / 2
+            start = f"{midpoint.year}-{midpoint.month:02d}"
+            end = "m"  # Duration dropped — specialist content is duration-agnostic
+        except (ValueError, TypeError, AttributeError):
+            start = start_date[:7] if start_date else "unknown"
+            end = "unknown"
     skill = skill_level or "any"
     dpref = f"dp{day_pref}" if day_pref is not None else "dpany"
     phash = prompt_hash(topic)

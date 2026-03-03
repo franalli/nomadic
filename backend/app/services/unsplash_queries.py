@@ -56,7 +56,7 @@ DESTINATION_QUERIES: dict[str, str] = {
     "prague": "prague charles bridge old town",
     "vienna": "vienna schonbrunn palace",
     "budapest": "budapest parliament danube",
-    "lisbon": "lisbon tram alfama",
+    "lisbon": "lisbon portugal cityscape",
     "madrid": "madrid plaza mayor",
     "milan": "milan duomo cathedral",
     "venice": "venice grand canal gondola",

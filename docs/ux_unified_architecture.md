@@ -154,7 +154,7 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 | usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (1.5s debounce to batch rapid toggles, AbortController cancels stale regens, deferred during active streaming) |
 | useMapSync | `hooks/useMapSync.ts` | Zustand store for two-way map↔timeline sync (visibleDayNumber, scrollTargetDayNumber, highlightedCardId) |
 | useUndoStack | `hooks/useUndoStack.ts` | Exposes undo entry from documentStore with 8s auto-expire timer |
-| useLandingHandlers | `layout/hooks/useLandingHandlers.ts` | Bundles landing lifecycle handlers for `NomadicLanding`: reset/session restart, plan receipt tracking, generate/finalize actions, gear-sheet controls, user message topic detection, and mobile send/stop plumbing. |
+| useLandingHandlers | `frontend/components/layout/hooks/useLandingHandlers.ts` | Bundles landing lifecycle handlers for `NomadicLanding`: reset/session restart, plan receipt tracking, generate/finalize actions, gear-sheet controls, user message topic detection, and mobile send/stop plumbing. |
 
 ### Progressive Disclosure Rules
 

@@ -1589,8 +1589,21 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             # So itinerary builder has activities for non-specialist days
             free_day_backfill = state.metadata.get("browseable_activities", [])
             if free_day_backfill:
-                # Cap to ~4 free days × 2 apd = 8 tiles max
-                max_backfill = 8
+                # Dynamic cap: free_days × apd, floor of 8 to avoid sparse plans
+                _bf_settings = get_trip_settings(state)
+                _bf_apd = _bf_settings.activity_settings.activities_per_day or 2
+                _bf_trip_days = 7  # default
+                try:
+                    if plan.start_date and plan.end_date:
+                        from datetime import datetime as _dt_bf
+
+                        _bf_sd = _dt_bf.strptime(str(plan.start_date)[:10], "%Y-%m-%d")
+                        _bf_ed = _dt_bf.strptime(str(plan.end_date)[:10], "%Y-%m-%d")
+                        _bf_trip_days = max(1, (_bf_ed - _bf_sd).days + 1)
+                except (ValueError, TypeError):
+                    pass
+                _bf_free_days = max(0, _bf_trip_days - 2)  # exclude arrival/departure
+                max_backfill = max(8, _bf_free_days * _bf_apd)
                 # Group by browse_category for diversity (avoid monoculture)
                 from collections import defaultdict as _defaultdict
 

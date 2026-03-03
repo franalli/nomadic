@@ -1285,17 +1285,20 @@ def _apply_classifier_to_state(
     existing_cats: List[str] = list(activity_settings.get("categories", []))
     new_cats = list(existing_cats)
 
-    # On destination change, preserve user's category selections (e.g. diving).
-    # The feasibility pre-check handles whether an activity is viable at the new
-    # destination — the coordinator shouldn't preemptively clear categories.
-    # Only clear day_preferences since day assignments are destination-specific.
+    # On destination change: clear day_preferences (destination-specific),
+    # clear specialist strategy sections (stale content), and drop Tier 1
+    # categories not re-mentioned in the new message. This prevents stale
+    # specialists from re-dispatching at the new destination. Categories
+    # that ARE mentioned persist and get feasibility-checked later.
+    # Tier 2 categories (yoga, nightlife) are preserved since they're
+    # not specialist-dispatched.
     if classifier.change_type == ChangeType.DESTINATION_CHANGE:
         if activity_settings.get("day_preferences"):
             activity_settings["day_preferences"] = {}
         # Clear specialist strategy sections — they contain destination-specific
         # content (one_liner, content_added, hero_image) that is stale after
         # destination change. Preserve local_expert sections as they'll be
-        # rebuilt independently. Categories persist (user still wants them).
+        # rebuilt independently.
         # Note: for non-GENERATE_PLAN_NOW paths, _clear_planning_artifacts()
         # wipes all sections anyway; this matters for GENERATE_PLAN_NOW reuse.
         existing_sections = state.get("strategy_sections", [])
@@ -1304,6 +1307,21 @@ def _apply_classifier_to_state(
             for s in existing_sections
             if isinstance(s, dict) and s.get("specialist_type") == "local_expert"
         ]
+        # Clear Tier 1 categories not mentioned in the new message —
+        # prevents stale specialists (e.g. diving) from re-dispatching
+        # at the new destination when the user didn't ask for them.
+        mentioned = {
+            _norm_topic(c)
+            for c in list(classifier.specialist_hints) + list(classifier.activity_categories)
+            if c and _norm_topic(c)
+        }
+        stale = [
+            c
+            for c in new_cats
+            if _norm_topic(c) in TIER1_SPECIALIST_NAMES and _norm_topic(c) not in mentioned
+        ]
+        if stale:
+            new_cats = [c for c in new_cats if c not in stale]
 
     # Add specialist hints as categories
     for hint in classifier.specialist_hints:
@@ -2259,7 +2277,9 @@ async def _search_tiles(
     executed_topics = [
         _norm_topic(s.get("specialist_type"))
         for s in strategy_sections
-        if isinstance(s, dict) and s.get("specialist_type")
+        if isinstance(s, dict)
+        and s.get("specialist_type")
+        and s.get("feasibility_status") != "infeasible"
     ]
     if not executed_topics:
         activity_settings = settings_for_search.get("activity_settings", {})
@@ -2523,8 +2543,9 @@ async def _refresh_enrichment_states(state: Dict[str, Any], session_id: str) -> 
             data = get_document_data(doc)
             db_sections = data.strategy_sections or []
 
-            # Build lookup of enrichment states from DB
+            # Build lookup of enrichment states + travel_intelligence from DB
             db_enrichment_by_type: Dict[str, dict] = {}
+            db_ti_by_type: Dict[str, dict] = {}
             for db_sec in db_sections:
                 st = getattr(db_sec, "specialist_type", None)
                 enr = getattr(db_sec, "local_expert_enrichment", None)
@@ -2532,6 +2553,11 @@ async def _refresh_enrichment_states(state: Dict[str, Any], session_id: str) -> 
                     enr_dict = enr if isinstance(enr, dict) else enr.model_dump()
                     if enr_dict.get("state") in ("ready", "failed"):
                         db_enrichment_by_type[st] = enr_dict
+                ti = getattr(db_sec, "travel_intelligence", None)
+                if st and ti:
+                    ti_dict = ti if isinstance(ti, dict) else ti.model_dump()
+                    if ti_dict:
+                        db_ti_by_type[st] = ti_dict
 
             # Patch in-memory sections
             for section in sections:
@@ -2548,6 +2574,9 @@ async def _refresh_enrichment_states(state: Dict[str, Any], session_id: str) -> 
                         st,
                         db_enrichment_by_type[st].get("state"),
                     )
+                if st in db_ti_by_type and not section.get("travel_intelligence"):
+                    section["travel_intelligence"] = db_ti_by_type[st]
+                    logger.debug("[coordinator] Refreshed travel_intelligence for %s", st)
 
             # If any sections still pending, Phase B may not have finished writing.
             # Brief retry to avoid a wasted turn.
@@ -2570,6 +2599,11 @@ async def _refresh_enrichment_states(state: Dict[str, Any], session_id: str) -> 
                             enr_dict = enr if isinstance(enr, dict) else enr.model_dump()
                             if enr_dict.get("state") in ("ready", "failed"):
                                 db_enrichment_by_type[st] = enr_dict
+                        ti = getattr(db_sec, "travel_intelligence", None)
+                        if st and ti:
+                            ti_dict = ti if isinstance(ti, dict) else ti.model_dump()
+                            if ti_dict:
+                                db_ti_by_type[st] = ti_dict
                     for section in sections:
                         if not isinstance(section, dict):
                             continue
@@ -2584,6 +2618,8 @@ async def _refresh_enrichment_states(state: Dict[str, Any], session_id: str) -> 
                                 st,
                                 db_enrichment_by_type[st].get("state"),
                             )
+                        if st in db_ti_by_type and not section.get("travel_intelligence"):
+                            section["travel_intelligence"] = db_ti_by_type[st]
     except Exception as exc:
         logger.debug("[coordinator] Enrichment state refresh failed (non-fatal): %s", exc)
 
@@ -3142,6 +3178,12 @@ def _build_envelope(
             "state": "ready" if has_content else "not_available",
         }
 
+    # Strip internal _cache_* keys before emitting to SSE (F6)
+    strategy_sections_clean = [
+        {k: v for k, v in s.items() if not k.startswith("_cache_")} if isinstance(s, dict) else s
+        for s in strategy_sections
+    ]
+
     document: Dict[str, Any] = {
         "trip_context_id": None,
         "trip_inputs": trip_inputs,
@@ -3153,7 +3195,7 @@ def _build_envelope(
         "suggested_response_meta": suggestion_chip_meta,
         "suggestion_chips": suggestion_chips,
         "plan_view_state": plan_view_state,
-        "strategy_sections": strategy_sections,
+        "strategy_sections": strategy_sections_clean,
         "pending_strategy_topics": [],
         "executed_strategy_topics": executed_topics,
         "origin_just_set": origin_just_set,
@@ -3247,9 +3289,11 @@ async def _execute_step(
         other_plans = state.get("specialist_plans", {})
         removed_topics = {_norm_topic(t) for t in classifier.removal_targets if _norm_topic(t)}
 
-        # Handle pre-checked infeasible specialists (skip LLM dispatch)
+        # Handle pre-checked infeasible specialists (skip LLM dispatch).
+        # Capture ALL infeasible prechecks (not just those in dispatch list)
+        # so sections are rebuilt after the full invalidation wipe below.
         prechecks = state.get("turn_meta", {}).get("feasibility_prechecks", {})
-        infeasible_in_dispatch = {t: prechecks[t] for t in topics if t in prechecks}
+        all_infeasible = {t: v for t, v in prechecks.items() if v[0] == "infeasible"}
         feasible_topics = [t for t in topics if t not in prechecks]
 
         if feasible_topics:
@@ -3290,11 +3334,11 @@ async def _execute_step(
 
         # Build sections for infeasible specialists directly (no LLM call).
         # Placed AFTER full invalidation wipe so sections survive initial_plan/destination_change.
-        if infeasible_in_dispatch:
+        if all_infeasible:
             from app.planner.services.section_builder import build_specialist_section
 
             trip_plan_snap: Dict[str, Any] = state.get("trip_plan", {})
-            for inf_topic, (inf_status, inf_reason, inf_alt) in infeasible_in_dispatch.items():
+            for inf_topic, (inf_status, inf_reason, inf_alt) in all_infeasible.items():
                 section = build_specialist_section(
                     topic=inf_topic,
                     destination=trip_plan_snap.get("destination"),
@@ -3577,7 +3621,12 @@ async def execute_turn(
         # Step 4a: Pre-check feasibility for geographic-constrained specialists.
         # Runs BEFORE plan_turn() so _compute_dispatch_list() can filter out
         # infeasible topics — preventing phantom DISPATCH_SPECIALISTS steps.
-        if classifier.intent == "PLANNING":
+        # Skip on GPN triggers — plan already exists, feasibility was checked earlier.
+        is_gpn_trigger = user_message.strip().upper() in (
+            "GENERATE_PLAN_NOW",
+            "GENERATE_PLAN_TRIGGER",
+        ) or (classifier.reasoning and "GENERATE_PLAN_NOW" in classifier.reasoning)
+        if classifier.intent == "PLANNING" and not is_gpn_trigger:
             dest = state.get("trip_plan", {}).get("destination") or classifier.destination
             # Determine candidate topics from activity settings (same source as _compute_dispatch_list)
             activity_settings_fc = state.get("trip_settings", {}).get("activity_settings", {})
@@ -3607,10 +3656,21 @@ async def execute_turn(
                                 },
                             }
 
-        # Build strategy sections for infeasible specialists directly (no LLM call).
-        # Done here because _compute_dispatch_list filters them out of the dispatch
-        # list, so _execute_step's DISPATCH_SPECIALISTS branch never sees them.
-        if classifier.intent == "PLANNING":
+        # Step 4b: Plan the turn (feasibility prechecks are now available for _compute_dispatch_list)
+        plan = plan_turn(classifier, state)
+        logger.info(
+            "[coordinator] Execution plan: %s (steps=%d, est_llm=%d)",
+            plan.reason,
+            len(plan.steps),
+            plan.estimated_llm_calls,
+        )
+
+        # Build infeasible sections when no DISPATCH_SPECIALISTS step will run
+        # (all topics infeasible → dispatch_list is empty). When a dispatch step
+        # DOES run, its _execute_step branch builds infeasible sections AFTER the
+        # full invalidation wipe, preventing the wipe from destroying them.
+        has_dispatch_step = any(s.step_type == StepType.DISPATCH_SPECIALISTS for s in plan.steps)
+        if not has_dispatch_step and classifier.intent == "PLANNING":
             _fc_prechecks = state.get("turn_meta", {}).get("feasibility_prechecks", {})
             if _fc_prechecks:
                 from app.planner.services.section_builder import build_specialist_section
@@ -3636,15 +3696,6 @@ async def execute_turn(
                     _sections = [s for s in _sections if s.get("specialist_type") != _fc_topic]
                     _sections.append(_fc_section)
                     state["strategy_sections"] = _sections
-
-        # Step 4b: Plan the turn (feasibility prechecks are now available for _compute_dispatch_list)
-        plan = plan_turn(classifier, state)
-        logger.info(
-            "[coordinator] Execution plan: %s (steps=%d, est_llm=%d)",
-            plan.reason,
-            len(plan.steps),
-            plan.estimated_llm_calls,
-        )
 
         # Step 5: Execute plan steps
         # Group parallel steps together

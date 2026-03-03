@@ -669,6 +669,8 @@ async def generate_specialist_output_llm(
             ):
                 deficit = min(target_activities, available_days * 5) - len(output.activities)
                 original_count = len(output.activities)
+                # Cap repeats to 1x the original set (W5)
+                deficit = min(deficit, original_count)
                 if output.activities:
                     for i in range(deficit):
                         source_activity = output.activities[i % original_count]

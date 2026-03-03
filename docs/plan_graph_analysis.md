@@ -652,7 +652,7 @@ Pydantic structured output is used for LLM calls that need **guaranteed schema e
 2. **`method="function_calling"`** -- Explicit `method="function_calling"` is used for cross-provider compatibility (OpenAI + Gemini).
 3. **`parsed is None` guard** -- Every call site checks `if parsed is None: raise ValueError(...)`. No silent fallback to empty data.
 4. **`extract_token_usage()`** -- Centralized in `llm_factory.py`. Handles `include_raw=True` dict unwrapping, LangChain 0.2+ `usage_metadata`, and `response_metadata["token_usage"]` fallback.
-5. **`resolve_schema_refs(schema)`** -- Inlines `$defs` pointers for Gemini function calling. Used for schemas with few `$defs` (e.g., `LLMSpecialistOutput`: 2). Do NOT use for deeply nested schemas.
+5. **Gemini schema pipeline** -- Use `gemini_safe_schema(strip_unsupported_schema_keys(resolve_schema_refs(schema)))` for Gemini function-calling compatibility. `resolve_schema_refs(schema)` alone is not sufficient.
 6. **`patterns_registry.py`** -- Shared regex/keyword lists used by multiple planner modules. Centralizes `BUDGET_PATTERNS`, `TRAVELER_PATTERNS`, and `SETTINGS_KEYWORDS`.
 
 ---
@@ -782,9 +782,9 @@ Two parallel serialization paths:
 
 ## Specialist Domain Knowledge
 
-> **SSoT:** All specialist configuration (keywords, constraints, enhancements, flags, backfill affinity) lives in `backend/app/planner/specialist_registry.py`. Top destinations and activities are LLM-generated per prompt file -- no hardcoded destination lists. Tier 2 is open-ended (no fixed validation set). `display_name(category)` provides canonical display names. `backfill_affinity_tags` drives complementary category selection for free-day backfill. Adding a specialist requires only: 1) add entry to `SPECIALIST_REGISTRY`, 2) create `prompts/specialists/{topic}.txt`.
+> **SSoT:** All specialist configuration (keywords, constraints, enhancements, flags, backfill affinity) lives in `backend/app/planner/specialist_registry.py`. Top destinations and activities are LLM-generated per prompt file -- no hardcoded destination lists. Tier 2 is open-ended (no fixed validation set). `display_name(category)` provides canonical display names. `backfill_affinity_tags` drives complementary category selection for free-day backfill. Adding a specialist requires: 1) add entry to `SPECIALIST_REGISTRY`, 2) update `_EXPECTED_SPECIALISTS`, 3) create `prompts/specialists/{topic}.txt`.
 
-**Fill-Day Validation:** `validate_fill_day_placement(target_day, specialist_type, day_cards, total_days, has_departure_flight)` checks placement against registry constraints: cross-domain buffers on adjacent days, no-fly buffer proximity to departure, arrival/departure day restrictions, and `min_days_needed`. Returns `FillDayRejection(code, reason, suggestion)` or `None` if valid.
+**Fill-Day Validation:** `validate_fill_day_placement(target_day, specialist_type, day_cards, total_days, has_departure_flight)` checks placement against registry constraints: no-fly buffer proximity to departure, cross-domain forward adjacency, and cross-domain reverse adjacency. Returns `FillDayRejection(code, reason, suggestion)` or `None` if valid.
 
 ### Diving
 
@@ -1134,7 +1134,7 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 │                                                                              │
 │  1. Restore session state with restore_agent_state()                         │
 │  2. Execute coordinator steps (classify, specialists/tile fetch, builder)    │
-│  3. Forward SSE events as emitted: token/node_status/partial/complete/error  │
+│  3. Forward SSE events immediately: token/node_status/partial/feasibility_warning/error │
 │  4. Persist complete envelope via apply_planner_update()                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1147,7 +1147,7 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 | `token` | `string` | Response text streamed from `conversationalist.generate_response_streaming()` |
 | `partial` | `{kind: "strategy_sections"\|"tiles"\|"trip_inputs", payload: any}` | Progressive render from coordinator step outputs |
 | `feasibility_warning` | `{topic, status, reason, alternative}` | Coordinator feasibility signal. Forwarded by `generate_sse()` as a public SSE event for frontend toast display. |
-| `complete` | `{...result}` | Full result object from `_build_envelope()` |
+| `complete` | `{document, session_state, version, updated_at, ...}` | Public SSE payload built in `generate_sse()` after `apply_planner_update()`, wrapping/normalizing coordinator `_build_envelope()` output |
 | `error` | `{message}` | Error information |
 
 ### Step-to-node mapping (`_step_node_name`)

@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 
-import { StartupSequence } from '@/components/animations/StartupSequence';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
 import { MobileChatInput } from '@/components/chat/MobileChatInput';
 import { FloatingBuildButton } from '@/components/layout/FloatingBuildButton';
@@ -580,26 +579,10 @@ export function NomadicLanding() {
   );
 }
 
-// Inner component with startup animation
-function AppWithStartup() {
-  const [hasBooted, setHasBooted] = useState(false);
-
-  return (
-    <>
-      {!hasBooted && <StartupSequence onComplete={() => setHasBooted(true)} />}
-      <div
-        className={
-          hasBooted ? 'opacity-100 transition-opacity duration-300' : 'opacity-0'
-        }
-      >
-        <ErrorBoundary label="App">
-          <NomadicLanding />
-        </ErrorBoundary>
-      </div>
-    </>
-  );
-}
-
 export default function NomadicLandingWithProvider() {
-  return <AppWithStartup />;
+  return (
+    <ErrorBoundary label="App">
+      <NomadicLanding />
+    </ErrorBoundary>
+  );
 }

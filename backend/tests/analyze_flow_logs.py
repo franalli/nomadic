@@ -170,6 +170,30 @@ FLOW_EXPECTED_TOOLS: dict[int, dict[str, Any]] = {
         "forbidden_tools": [],
         "max_llm_calls": 20,  # 4 turns
     },
+    22: {
+        "name": "Specialist Survival — Origin Add",
+        "required_tools": ["extract_trip_fields", "get_specialist_advice"],
+        "forbidden_tools": [],
+        "max_llm_calls": 14,  # 2 turns
+    },
+    23: {
+        "name": "Infeasible Activity — Skiing in Bali",
+        "required_tools": ["extract_trip_fields"],
+        "forbidden_tools": ["get_specialist_advice"],
+        "max_llm_calls": 8,
+    },
+    24: {
+        "name": "Mixed Feasible + Infeasible — Diving + Skiing",
+        "required_tools": ["extract_trip_fields", "get_specialist_advice"],
+        "forbidden_tools": [],
+        "max_llm_calls": 10,
+    },
+    25: {
+        "name": "Activity Switch — Diving → Hiking (Swap)",
+        "required_tools": ["extract_trip_fields", "get_specialist_advice"],
+        "forbidden_tools": [],
+        "max_llm_calls": 14,  # 2 turns
+    },
 }
 
 # ── Coordinator step ordering contract ───────────────────────────────────────
@@ -347,7 +371,7 @@ def check_llm_calls(backend_log: str, flow_num: int, report: FlowReport) -> int:
 
     # Check for duplicate classifier calls (should be exactly 1 per turn)
     classifier_count = call_counts.get("classifier", 0)
-    multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21}
+    multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 25}
     four_turn_flows = {19, 20, 21}
     max_classify = 4 if flow_num in four_turn_flows else (2 if flow_num in multi_turn_flows else 1)
     if classifier_count > max_classify:
@@ -458,7 +482,7 @@ def check_tool_contract(backend_log: str, sse_data: str, flow_num: int, report: 
             if tool == "response":
                 max_expected = num_turns
             else:
-                multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21}
+                multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 25}
                 max_expected = 2 if flow_num in multi_turn_flows else 1
             if count > max_expected:
                 report.warn(

@@ -28,6 +28,7 @@
 #   22  Specialist survival — diving sections/tiles survive origin add
 #   23  Infeasible activity — skiing in Bali triggers feasibility_warning SSE + infeasible section
 #   24  Mixed feasible + infeasible — diving (feasible) + skiing (infeasible) in Bali
+#   25  Activity switch — diving → hiking (swap), validates removal + addition
 #
 # Architecture contract (from plan_graph_analysis.md + data-contracts.md):
 #   - SSE event types: token, node_status, partial, complete, error, feasibility_warning
@@ -2321,6 +2322,101 @@ check_gt "Tokens streamed" "$TOKEN_CT" 0 || F=false
 else F=false; fi; else F=false; fi
 $F && _flow pass 24 || _flow fail 24
 _flow_end 24
+echo ""
+fi
+
+
+# =============================================================================
+#  FLOW 25: Activity Switch — Diving → Hiking (Swap)
+# =============================================================================
+# Turn 1: Diving in Bali. Turn 2: "Switch to hiking instead of diving."
+# Validates:
+#   1. diving removed from categories
+#   2. hiking added to categories
+#   3. get_specialist_advice called for hiking
+#   4. No diving tiles in output
+#   5. Hiking section present
+
+if should_run 25; then
+_flow_begin 25
+echo ""
+echo "═══ Flow 25: Activity Switch — Diving → Hiking (Swap) ═══"
+F=true
+
+if fresh_session; then
+
+echo "  → Turn 1: Diving in Bali for a week starting March 15"
+if send_message "I want diving in Bali for a week starting March 15"; then
+
+DEST=$(extract_top "session_state.trip_plan.destination")
+check_not_empty "Turn 1: destination extracted" "$DEST" || F=false
+
+CATS_T1=$(extract_top "session_state.trip_settings.activity_settings.categories")
+check_contains "Turn 1: categories include diving" "$CATS_T1" "diving" || F=false
+
+echo "  → Turn 2: Switch to hiking instead of diving"
+if send_message "Actually, I want hiking instead of diving"; then
+
+# Categories should include hiking but NOT diving
+CATS_T2=$(extract_top "session_state.trip_settings.activity_settings.categories")
+check_contains "Turn 2: categories include hiking" "$CATS_T2" "hiking" || F=false
+check_not_contains "Turn 2: categories do NOT include diving" "$CATS_T2" "diving" || F=false
+
+# Specialist dispatch should have been attempted for hiking
+TOOLS=$(extract_tools)
+echo "  ℹ  Turn 2 tools: $TOOLS"
+check_contains "Turn 2: get_specialist_advice called" "$TOOLS" "get_specialist_advice" || F=false
+
+# Strategy sections should have hiking, not diving
+SECS=$(extract_doc "strategy_sections")
+HAS_HIKING_SEC=$(echo "$SECS" | python3 -c "
+import sys,json
+try:
+    secs=json.load(sys.stdin)
+    found=any(s.get('specialist_type','').lower()=='hiking' for s in secs)
+    print('true' if found else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Hiking section present" "$HAS_HIKING_SEC" "true" || F=false
+
+HAS_DIVING_SEC=$(echo "$SECS" | python3 -c "
+import sys,json
+try:
+    secs=json.load(sys.stdin)
+    found=any(s.get('specialist_type','').lower()=='diving' for s in secs)
+    print('true' if found else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Diving section removed" "$HAS_DIVING_SEC" "false" || F=false
+
+# ── Verify no diving specialist tiles remain ──
+TILES=$(extract_doc "tiles")
+HAS_DIVING_TILES=$(echo "$TILES" | python3 -c "
+import sys,json
+try:
+    raw=sys.stdin.read().strip()
+    if not raw: print('false'); sys.exit()
+    t=json.loads(raw)
+    vals=t.values() if isinstance(t,dict) else (t if isinstance(t,list) else [])
+    found=0
+    for v in vals:
+        if not isinstance(v,dict): continue
+        meta=v.get('meta',{}) or {}
+        spec_type=(meta.get('specialist_type','') or '').lower()
+        if spec_type=='diving':
+            found+=1
+    print('true' if found>=1 else 'false')
+except: print('false')
+" 2>/dev/null | head -1 || echo "false")
+check "No diving specialist tiles remain" "$HAS_DIVING_TILES" "false" || F=false
+
+# Tokens streamed (conversationalist still runs)
+TOKEN_CT=$(count_sse "token")
+check_gt "Tokens streamed" "$TOKEN_CT" 0 || F=false
+
+else F=false; fi; else F=false; fi; else F=false; fi
+$F && _flow pass 25 || _flow fail 25
+_flow_end 25
 echo ""
 fi
 

@@ -823,7 +823,15 @@ def _build_current_trip_context(state: "GraphState") -> str:
         return ""
 
     duration = (end - start).days + 1
-    return f"Current trip: {tp.destination}, {tp.start_date} to {tp.end_date} ({duration} days)"
+    context = f"Current trip: {tp.destination}, {tp.start_date} to {tp.end_date} ({duration} days)"
+
+    # Include current activities so LLM can infer removal from implicit switch language
+    categories = (
+        state.metadata.get("trip_settings", {}).get("activity_settings", {}).get("categories", [])
+    )
+    if categories:
+        context += f"\nCurrent activities: {', '.join(categories)}"
+    return context
 
 
 def _build_context_fingerprint(current_trip_context: str) -> str:
@@ -963,7 +971,8 @@ async def _classify_and_extract_with_llm(
 # Lightweight Change Type Classification (small schema for Gemini)
 # =============================================================================
 
-_CHANGE_TYPE_PROMPT = """You are a change classifier for a travel planning system.
+_CHANGE_TYPE_PROMPT = (
+    """You are a change classifier for a travel planning system.
 
 ## Current Trip State
 {trip_state_json}
@@ -1005,17 +1014,24 @@ Classify how the user message changes the existing trip plan.
 - **informs**: Domains that should know about the change but don't re-run
 
 Rules:
+- affects values must be Tier 1 specialist names only ("""
+    + _SPECIALIST_NAMES_CSV
+    + """). Never include "local_expert", "logistics", or infrastructure keys.
 - GREETING → change_type="greeting", empty affects/preserves/informs
 - RESET → change_type="reset", empty affects/preserves/informs
 - QUESTION → change_type="question", empty affects/preserves/informs
 - No existing plan → change_type="initial_plan"
 - destination_change → affects=ALL existing specialists
+- If removal_targets is non-empty AND (activity_categories or specialist_hints is non-empty) → change_type="swap_activity"
+- If only removal_targets is non-empty → change_type="remove_activity"
+- "switch to X", "replace X with Y", "X instead of Y" → swap_activity
 - day_count/swap/add/remove/spatial → affects=only relevant specialists
 
 ## User Message
 "{user_message}"
 
 Respond with valid JSON matching the schema exactly."""
+)
 
 
 async def _classify_change_type(
@@ -1161,6 +1177,7 @@ def _heuristic_change_classification(
         or router_output.end_date
         or router_output.specialist_hints
         or router_output.activity_categories
+        or router_output.removal_targets
         or router_output.planning_ready
         or router_output.budget
     )
@@ -1208,6 +1225,14 @@ def _heuristic_change_classification(
         change_type = ChangeType.DESTINATION_CHANGE
     elif router_output.start_date or router_output.end_date:
         change_type = ChangeType.DATE_CHANGE if has_existing_plan else ChangeType.INITIAL_PLAN
+    elif (
+        router_output.removal_targets
+        and (router_output.activity_categories or router_output.specialist_hints)
+        and has_existing_plan
+    ):
+        change_type = ChangeType.SWAP_ACTIVITY
+    elif router_output.removal_targets and has_existing_plan:
+        change_type = ChangeType.REMOVE_ACTIVITY
     elif router_output.activity_categories or affects:
         change_type = ChangeType.ADD_ACTIVITY if has_existing_plan else ChangeType.INITIAL_PLAN
     else:
@@ -1255,6 +1280,18 @@ async def classify_change(
     from app.planner.schemas.coordinator_schemas import ChangeType, ClassifierOutput
 
     # =========================================================================
+    # Short-circuit: empty/whitespace messages → GREETING (W9)
+    # Avoids wasting an LLM call on no-content input.
+    # =========================================================================
+    if not user_message or not user_message.strip():
+        return ClassifierOutput(
+            intent="GREETING",
+            change_type=ChangeType.GREETING,
+            reasoning="Empty message — treated as greeting",
+            confidence=1.0,
+        )
+
+    # =========================================================================
     # Short-circuit: GENERATE_PLAN_NOW / GENERATE_PLAN_TRIGGER
     # Saves one LLM call and ensures consistent full-rebuild behavior.
     # =========================================================================
@@ -1283,7 +1320,14 @@ async def classify_change(
             adults=summary.get("adults", 1) or 1,
             children=summary.get("children", 0) or 0,
             budget=summary.get("budget"),
-        )
+        ),
+        metadata={
+            "trip_settings": {
+                "activity_settings": {
+                    "categories": summary.get("categories", []),
+                },
+            },
+        },
     )
 
     router_output, _ = await _classify_and_extract_with_llm(user_message, fallback_state)

@@ -502,14 +502,15 @@ def _to_travel_intelligence_dict(response: LocalExpertOutput) -> dict:
 
 
 async def _get_cached_local_expert_output(
-    destination: str, log, start_date: str | None = None
+    destination: str,
+    log,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> LocalExpertOutput | None:
-    """Destination+month-scoped cache lookup (L1/L2) for local_expert enrichment payload."""
+    """Destination+date-scoped cache lookup (L1/L2) for local_expert enrichment payload."""
     from app.db import _get_async_session_factory
     from app.services.specialist_cache import get_cached_specialist_output
 
-    # Month granularity — local expert constraints are season-dependent
-    cache_month = start_date[:7] if start_date else None
     async_session_factory = _get_async_session_factory()
     try:
         async with async_session_factory() as cache_db:
@@ -517,8 +518,8 @@ async def _get_cached_local_expert_output(
                 cache_db,
                 topic="local_expert",
                 destination=destination,
-                start_date=cache_month,
-                end_date=None,
+                start_date=start_date,
+                end_date=end_date,
                 skill_level=None,
                 day_pref=None,
             )
@@ -677,9 +678,10 @@ Output as JSON with "constraints" and "recommendations" arrays."""
     _user_context = user_context
     _destination = destination
     _session_id = session_id or ""
-    # Use trip month for cache granularity — local expert constraints
-    # are season/date-dependent (e.g. Nyepi in March, monsoon in July)
-    _cache_month = start_date[:7] if start_date else None
+    # Use actual dates for cache granularity — local expert constraints
+    # are date-dependent (e.g. Nyepi in March, cultural events on specific dates)
+    _cache_start = start_date if start_date else None
+    _cache_end = end_date if end_date else None
 
     async def _enrich() -> None:
         """Background LLM enrichment — writes travel_intelligence to DB."""
@@ -711,8 +713,8 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                         cache_db,
                         topic="local_expert",
                         destination=_destination,
-                        start_date=_cache_month,
-                        end_date=None,
+                        start_date=_cache_start,
+                        end_date=_cache_end,
                         skill_level=None,
                         day_pref=None,
                     )
@@ -800,8 +802,8 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                         cache_db,
                         topic="local_expert",
                         destination=_destination,
-                        start_date=_cache_month,
-                        end_date=None,
+                        start_date=_cache_start,
+                        end_date=_cache_end,
                         output=response.model_dump(),
                         skill_level=None,
                         day_pref=None,
@@ -975,7 +977,7 @@ async def local_expert(state: GraphState) -> GraphState:
 
     if settings.local_expert_use_llm:
         cached_response = await _get_cached_local_expert_output(
-            plan.destination, log, start_date=plan.start_date
+            plan.destination, log, start_date=plan.start_date, end_date=plan.end_date
         )
         if cached_response is not None:
             cached_response = _enrich_legacy_lists(
