@@ -208,7 +208,7 @@ class TestPydanticModels:
             category="yoga",
         )
         assert tile.duration_hours == 2.0
-        assert tile.price_estimate == 40
+        assert tile.price_estimate == 0
         assert tile.time_of_day == "morning"
         assert tile.skill_level == "beginner"
 

@@ -89,20 +89,6 @@ def close_sync_client() -> None:
         _sync_client = None
 
 
-def _normalize_gp_tile_ratings(tiles: list, tile_type: str = "activity") -> list:
-    """Assign rank-based ratings to GP browse tiles (Pro tier excludes rating).
-
-    Activities: 4.6 → 4.2 (step -0.05)
-    Hotels: 4.5 → 4.0 (step -0.05)
-    """
-    base = 4.6 if tile_type == "activity" else 4.5
-    floor = 4.2 if tile_type == "activity" else 4.0
-    for rank, tile in enumerate(tiles):
-        tile.rating = round(max(floor, base - rank * 0.05), 1)
-        tile.review_count = max(150, 600 - rank * 60)
-    return tiles
-
-
 # Explicit Google Places usage labels for telemetry.
 _PLACES_PATH_LABELS = {
     "browse",
@@ -375,7 +361,7 @@ def _estimate_activity_price(price_level: Optional[int], travelers: int) -> floa
     """Estimate activity price per trip from Google Places price_level."""
     level = price_level if price_level is not None else 2
     multiplier = _PRICE_LEVEL_MULTIPLIERS.get(level, 1.0)
-    per_person = max(25.0, 60.0 * multiplier)
+    per_person = 60.0 * multiplier
     return round(per_person * max(travelers, 1), 2)
 
 
@@ -977,7 +963,7 @@ class GooglePlacesHotelProvider(Provider):
             path_label="logistics",
         )
         tiles = self._build_tiles(ctx, places)
-        return _normalize_gp_tile_ratings(tiles, "hotel")
+        return tiles
 
     def search(self, ctx: SearchContext) -> List[Tile]:
         """Sync search — used by tile_service/service.py (non-async path)."""
@@ -998,7 +984,7 @@ class GooglePlacesHotelProvider(Provider):
             path_label="logistics",
         )
         tiles = self._build_tiles(ctx, places)
-        return _normalize_gp_tile_ratings(tiles, "hotel")
+        return tiles
 
     def _build_tiles(self, ctx: SearchContext, places: List[Dict[str, Any]]) -> List[Tile]:
         """Build Tile objects from raw Places API results."""
@@ -1033,7 +1019,6 @@ class GooglePlacesHotelProvider(Provider):
             name = (place.get("displayName") or {}).get("text", f"Hotel in {dest}")
             address = place.get("formattedAddress", dest)
             # rating/userRatingCount are Enterprise fields — not in our Pro field mask.
-            # Use heuristic: infer star tier from user preference (min_stars) or default.
             rating = None
             review_count = None
 
@@ -1158,7 +1143,7 @@ class GooglePlacesActivityProvider(Provider):
             path_label="logistics",
         )
         tiles = self._build_tiles(ctx, places)
-        return _normalize_gp_tile_ratings(tiles, "activity")
+        return tiles
 
     def search(self, ctx: SearchContext) -> List[Tile]:
         """Sync search — used by tile_service/service.py (non-async path)."""
@@ -1178,7 +1163,7 @@ class GooglePlacesActivityProvider(Provider):
             path_label="logistics",
         )
         tiles = self._build_tiles(ctx, places)
-        return _normalize_gp_tile_ratings(tiles, "activity")
+        return tiles
 
     def _build_tiles(self, ctx: SearchContext, places: List[Dict[str, Any]]) -> List[Tile]:
         """Build Tile objects from raw Places API results."""

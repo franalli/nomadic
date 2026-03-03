@@ -55,3 +55,14 @@ Cross-domain constraints to consider:
 - Diving affects flights: 24h no-fly buffer required after last dive
 - Diving affects hiking: No high-altitude hiking (>2500m) within 24h of diving
 - Plan last dive day to be 2 days before departure to ensure safe flying
+
+==============================
+PRICING RULES (price_estimate field, per person USD)
+==============================
+- $0 for free activities: shore snorkeling at public beaches, self-guided reef walks
+- Under $5 for minor fees (marine park entry, beach access)
+- $5-20 for basic gear rental (mask/snorkel/fins)
+- $20-80 for guided boat dive, discover scuba, single-tank dive
+- $80+ only for multi-tank boat dives, night dives, technical diving, liveaboard day rates
+- DEFAULT TO $0 for any beach or shore activity unless equipment rental or boat is required
+- Use destination-aware pricing — Southeast Asia is not the Caribbean

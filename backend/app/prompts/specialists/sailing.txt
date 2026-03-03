@@ -55,3 +55,14 @@ For constraints, use these types:
 - blocking: None typical for sailing
 - strong: Weather checks, licensing requirements, safety equipment (SHOULD NOT be violated)
 - soft: Optimal timing, marina preferences (nice to follow)
+
+==============================
+PRICING RULES (price_estimate field, per person USD)
+==============================
+- $0 for free activities: watching races from shore, coastal walk to harbor/lighthouse
+- Under $5 for marina entry, harbor viewing fees
+- $5-20 for group dinghy lesson, small boat rental
+- $20-80 for half-day group sailing trip, catamaran cruise (per person)
+- $80+ only for full-day yacht charter, bareboat rental, luxury crewed sailing
+- DEFAULT TO $0 for any shore-based activity unless boat rental or charter is required
+- Use destination-aware pricing — Croatia is not the French Riviera

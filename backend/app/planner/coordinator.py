@@ -1719,6 +1719,7 @@ def _llm_output_to_plan_dict(
                 "elevation_meters": activity.get("elevation_meters"),
                 "certification_required": activity.get("certification_required"),
                 "logic_hook": activity.get("logic_hook"),
+                "price_estimate": activity.get("price_estimate"),
             }
         )
 
@@ -1785,6 +1786,7 @@ def _plan_to_strategy_section(
                 ),
                 "intensity": "moderate",
                 "duration_hours": dp.get("duration_hours", 3.0),
+                "price_estimate": dp.get("price_estimate"),
             }
         )
 
@@ -1877,7 +1879,8 @@ def _specialist_content_to_tiles(
                 "subtitle": f"{topic.capitalize()} activity",
                 "image_url": item.get("image_url"),
                 "price_estimate": item.get("price_estimate")
-                or _SPECIALIST_DEFAULT_PRICE.get(topic, 50.0),
+                if item.get("price_estimate") is not None
+                else _SPECIALIST_DEFAULT_PRICE.get(topic, 20.0),
                 "price_level": None,
                 "currency": "USD",
                 "price_basis": "per_person",
@@ -2166,11 +2169,7 @@ async def _post_build_enrich_placed_activities(
                         block["coordinates"] = ex_coords
                     if existing.get("deeplink"):
                         block["deeplink"] = existing["deeplink"]
-                    if existing.get("rating") and not block.get("rating"):
-                        block["rating"] = existing["rating"]
-                    ex_reviews = existing.get("user_ratings_count") or existing.get("review_count")
-                    if ex_reviews and not block.get("review_count"):
-                        block["review_count"] = ex_reviews
+                    # Rating propagation disabled — no real provider sources exist
                     if existing.get("price_level") is not None and block.get("price_level") is None:
                         block["price_level"] = existing["price_level"]
                     photo_name = existing.get("photo_name") or ""
@@ -2228,14 +2227,7 @@ async def _post_build_enrich_placed_activities(
             deeplink = enriched_tile.get("deeplink")
             if deeplink:
                 block["deeplink"] = deeplink
-            # Rating / review count / price level
-            if enriched_tile.get("rating") and not block.get("rating"):
-                block["rating"] = enriched_tile["rating"]
-            en_reviews = enriched_tile.get("user_ratings_count") or enriched_tile.get(
-                "review_count"
-            )
-            if en_reviews and not block.get("review_count"):
-                block["review_count"] = en_reviews
+            # Rating propagation disabled — no real provider sources exist
             if enriched_tile.get("price_level") is not None and block.get("price_level") is None:
                 block["price_level"] = enriched_tile["price_level"]
             # Photo: signed URL from photo_name

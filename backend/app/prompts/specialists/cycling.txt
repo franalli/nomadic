@@ -23,3 +23,14 @@ ACTIVITY GENERATION:
 - Include distance_km and elevation_meters for each ride
 - Add surface type (road, gravel, MTB)
 - Consider traffic levels and road quality
+
+==============================
+PRICING RULES (price_estimate field, per person USD)
+==============================
+- $0 for free activities: self-guided ride on public roads/paths, cycling through town
+- Under $5 for minor trail access fees
+- $5-20 for bike rental (half/full day), basic guided group ride
+- $20-80 for guided cycling tour, e-bike rental, mountain bike park day pass
+- $80+ only for premium tours with support vehicle, helicopter shuttle MTB
+- DEFAULT TO $0 for any self-guided ride unless bike rental or guide is required
+- Use destination-aware pricing — Vietnam is not the Netherlands

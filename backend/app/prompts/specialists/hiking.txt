@@ -57,3 +57,14 @@ For constraints, use these types:
 Cross-domain constraints to consider:
 - If trip includes diving: High-altitude hiking (>2500m) requires 24h buffer before/after diving
 - Multi-day treks may conflict with other specialist activities
+
+==============================
+PRICING RULES (price_estimate field, per person USD)
+==============================
+- $0 for free activities: public trails, parks, beaches, viewpoints, self-guided walks
+- Under $5 for minor entry fees (national park passes, temple donations)
+- $5-20 for guided group tours, bike rentals, equipment hire
+- $20-80 for certified guide required (volcano treks, technical climbs)
+- $80+ only for premium equipment-intensive activities (heli-access, luxury lodge treks)
+- DEFAULT TO $0 for any trail, path, or walk unless a guide or entry fee is explicitly required
+- Use destination-aware pricing — Poland is not Switzerland, Bali is not Norway

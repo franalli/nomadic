@@ -24,3 +24,14 @@ ACTIVITY GENERATION:
 - Include wave_height range and best tide conditions
 - Add skill level requirements
 - Consider seasonal swell patterns
+
+==============================
+PRICING RULES (price_estimate field, per person USD)
+==============================
+- $0 for free activities: surfing at public beach breaks, body surfing, beach access
+- Under $5 for minor beach fees
+- $5-20 for board rental, wax/leash, basic gear hire
+- $20-80 for group surf lesson, guided session, board + wetsuit rental
+- $80+ only for private lessons, surf camp day rate, boat trips to outer reefs
+- DEFAULT TO $0 for any beach activity unless equipment rental or instruction is required
+- Use destination-aware pricing — Bali is not Hawaii

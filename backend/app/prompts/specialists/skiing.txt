@@ -71,3 +71,14 @@ CRITICAL SEASONALITY CHECK:
 - Southern Hemisphere (NZ, Chile, Argentina): June to September only
 - If trip dates fall OUTSIDE ski season, set feasibility_status to "infeasible"
 - Exception: Glacier skiing available year-round at Zermatt, Hintertux, Les 2 Alpes
+
+==============================
+PRICING RULES (price_estimate field, per person USD)
+==============================
+- $0 for free activities: cross-country on public trails, snowshoeing on free paths
+- Under $5 for minor trail fees
+- $5-20 for small local hill day pass, beginner rope tow
+- $20-80 for mid-size resort day pass, half-day group lesson
+- $80+ only for major resort day pass, private lessons, heli-skiing, cat-skiing
+- DEFAULT TO $0 for any self-guided trail activity unless a lift pass or guide is required
+- Use destination-aware pricing — Eastern Europe is not the Swiss Alps

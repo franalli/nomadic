@@ -203,7 +203,7 @@ async def _enrich_tiles_with_llm(
     for tile in tiles:
         if not isinstance(tile, dict):
             continue
-        if tile.get("duration") and tile.get("price_estimate"):
+        if tile.get("duration") and tile.get("price_estimate") is not None:
             continue
         tile_id = tile.get("id")
         title = tile.get("title")
@@ -239,6 +239,12 @@ async def _enrich_tiles_with_llm(
             "Rules:\n"
             "- duration_hours: 0.5 to 8.0\n"
             "- price_band: one of Free, $, $$, $$$, $$$$\n"
+            "  Free = public access (parks, trails, beaches, viewpoints, markets)\n"
+            "  $ = under $30 (museum entry, local class, bike rental)\n"
+            "  $$ = $30-80 (guided tour, cooking class, spa)\n"
+            "  $$$ = $80-150 (private guide, luxury experience)\n"
+            "  $$$$ = $150+ (helicopter tour, private charter)\n"
+            "- Public/free activities MUST be Free.\n"
             "- Use realistic, conservative tourist defaults for the destination.\n\n"
             f"Destination: {destination}\n"
             f"Categories: {', '.join(categories) if categories else 'general'}\n"
@@ -475,22 +481,6 @@ def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
     }
 
 
-def _fill_missing_ratings(tiles: list[dict]) -> None:
-    """Assign synthetic rank-based ratings to browse tiles missing GP rating.
-
-    Mirrors the hotel normalization logic in google_places_provider but
-    operates on dict tiles from the activity browser pipeline.
-    """
-    base, floor = 4.6, 4.2
-    rank = 0
-    for tile in tiles:
-        if tile.get("rating") is None:
-            tile["rating"] = round(max(floor, base - rank * 0.05), 1)
-            tile["review_count"] = max(150, 600 - rank * 60)
-            tile["user_ratings_count"] = tile["review_count"]
-            rank += 1
-
-
 async def _browse_activities_impl(
     destination: str,
     center: Optional[tuple[float, float]],
@@ -583,7 +573,6 @@ async def _browse_activities_impl(
             break
 
     tiles = await _enrich_tiles_with_llm(destination, valid_categories, tiles)
-    _fill_missing_ratings(tiles)
 
     usage_after = get_google_places_usage_counters().get("browse", {})
     had_places_failures = (

@@ -153,12 +153,22 @@ export function useLandingEffects({
   // ─── Auto-swipe to Plan on first content (one-shot) ───────────────────
 
   const didAutoSwipeRef = useRef(false);
+  const hasPlanContent = hasStrategyContent || hasTilesReady || hasDayCardsReady;
   useEffect(() => {
-    if (hasEverHadPlan && !didAutoSwipeRef.current && !isDesktop && !isHydrating) {
+    if (isDesktop || isHydrating) return;
+
+    // Session reset / fresh draft: allow auto-swipe again for the next first content.
+    if (!hasPlanContent) {
+      didAutoSwipeRef.current = false;
+      return;
+    }
+
+    const { activePage } = useMobileNavStore.getState();
+    if (!didAutoSwipeRef.current && activePage === 0) {
       didAutoSwipeRef.current = true;
       mobileNavigateToPlan();
     }
-  }, [hasEverHadPlan, isDesktop, isHydrating, mobileNavigateToPlan]);
+  }, [hasPlanContent, isDesktop, isHydrating, mobileNavigateToPlan]);
 
   // ─── Local pending topics ──────────────────────────────────────────────
 

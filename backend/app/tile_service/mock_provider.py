@@ -177,8 +177,8 @@ class MockHotelProvider(Provider):
                     price_basis="per_trip",
                     is_estimate_only=source_mode == "cache",
                     deeplink_url="https://example.com/hotel/mock?aff_id=DEMO",
-                    rating=self._get_hotel_rating(i),
-                    review_count=100 * i,
+                    rating=None,
+                    review_count=None,
                     location_label=f"Central {dest}",
                     geo=Geo(lat=38.72 + 0.01 * i, lng=-9.13),
                     tags=(
@@ -343,8 +343,8 @@ class MockFlightProvider(Provider):
                     price_basis="per_trip",
                     is_estimate_only=source_mode == "cache",
                     deeplink_url="https://example.com/flights/search?aff_id=DEMO",
-                    rating=4.3 + 0.05 * idx,
-                    review_count=120 + 35 * idx,
+                    rating=None,
+                    review_count=None,
                     location_label=f"{origin} → {dest}",
                     tags=["flight", option["stops"], cabin_class]
                     + (["within-budget"] if budget_limit else []),
@@ -698,8 +698,8 @@ class MockActivityProvider(Provider):
                     price_basis="per_trip",
                     is_estimate_only=source_mode == "cache",
                     deeplink_url="https://example.com/activities/book?aff_id=DEMO",
-                    rating=4.5 + 0.06 * idx,
-                    review_count=220 + 55 * idx,
+                    rating=None,
+                    review_count=None,
                     location_label=dest,
                     tags=["activity", activity["category"]]
                     + list(activity_tags)

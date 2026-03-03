@@ -356,6 +356,182 @@ async def test_logistics_sets_no_origin_flight_skip_metadata(
 
 
 @pytest.mark.asyncio
+async def test_hotel_star_filter_skips_when_no_star_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GraphState(
+        trip_plan=TripPlan(destination="Bali", start_date="2026-02-15", end_date="2026-02-25")
+    )
+    state.tiles = {"hotels": [], "activities": [], "flights": []}
+    state.metadata.update(
+        {
+            "trip_settings": {
+                "booking_types": {
+                    "hotels": "suggested",
+                    "flights": "off",
+                    "ground_transport": "off",
+                    "activities": "off",
+                },
+                "flight_settings": {
+                    "round_trip": True,
+                    "cabin_class": "economy",
+                    "direct_only": False,
+                },
+                "hotel_settings": {"min_stars": 5, "amenities": []},
+                "activity_settings": {
+                    "categories": [],
+                    "skill_level": None,
+                    "day_preferences": {},
+                },
+                "transport_settings": {"car": False, "train": False, "bus": False},
+                "date_flex": False,
+                "trip_duration": None,
+                "date_window_start": None,
+                "date_window_end": None,
+            },
+        }
+    )
+
+    async def _fake_fetch_hotels(*_args, **_kwargs):
+        return [
+            {"id": "hotel_unknown_1", "rating": None, "meta": {"place_id": "gp_1"}},
+            {"id": "hotel_unknown_2", "meta": {"place_id": "gp_2"}},
+        ]
+
+    monkeypatch.setattr(logistics_node_module, "_fetch_hotels", _fake_fetch_hotels)
+    monkeypatch.setattr(settings, "use_google_places_provider", False)
+
+    await _search_hotels_and_activities(state, state.trip_plan)
+
+    assert [h["id"] for h in state.tiles.get("hotels", [])] == [
+        "hotel_unknown_1",
+        "hotel_unknown_2",
+    ]
+    assert state.metadata.get("hotel_filter_empty") is None
+    assert state.metadata.get("hotel_filter_min_stars") is None
+    assert state.metadata.get("hotel_filter_actual_stars") is None
+    assert state.metadata.get("hotel_filter_cascaded") is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_hotels_google_places_cache_hit_strips_legacy_meta_stars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.tile_cache as tile_cache_module
+
+    class _SessionCtx:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+    def _fake_async_session_factory():
+        return _SessionCtx()
+
+    cached_hotels = [
+        {
+            "id": "hotel_cached_1",
+            "meta": {"place_id": "gp_cached_1", "stars": 5},
+            "rating": None,
+        }
+    ]
+
+    async def _fake_get_cached_tiles(*_args, **_kwargs):
+        return cached_hotels
+
+    async def _fake_set_cached_tiles(*_args, **_kwargs):
+        raise AssertionError("set_cached_tiles should not be called on cache hit")
+
+    monkeypatch.setattr(tile_cache_module, "get_cached_tiles", _fake_get_cached_tiles)
+    monkeypatch.setattr(tile_cache_module, "set_cached_tiles", _fake_set_cached_tiles)
+
+    plan = TripPlan(destination="Bali", start_date="2026-02-15", end_date="2026-02-25")
+    hotels = await logistics_node_module._fetch_hotels(
+        _fake_async_session_factory,
+        plan,
+        {"min_stars": 5},
+        "google_places",
+        "bali",
+        "2026-02-15",
+        "2026-02-25",
+        {},
+        {},
+    )
+
+    assert len(hotels) == 1
+    assert (hotels[0].get("meta") or {}).get("place_id") == "gp_cached_1"
+    assert "stars" not in (hotels[0].get("meta") or {})
+
+
+@pytest.mark.asyncio
+async def test_fetch_hotels_google_places_fresh_results_strip_meta_stars_before_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.tile_cache as tile_cache_module
+    import app.tile_service.google_places_provider as gp_module
+
+    class _SessionCtx:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+    def _fake_async_session_factory():
+        return _SessionCtx()
+
+    class _FakeGooglePlacesHotelProvider:
+        async def search_async(self, _ctx):
+            return [SimpleNamespace(id="fake_tile")]
+
+    captured_tiles = {}
+
+    async def _fake_get_cached_tiles(*_args, **_kwargs):
+        return None
+
+    async def _fake_set_cached_tiles(
+        _db,
+        _provider,
+        _tile_type,
+        _destination,
+        _start,
+        _end,
+        tiles,
+        _variant,
+    ):
+        captured_tiles["tiles"] = tiles
+
+    monkeypatch.setattr(tile_cache_module, "get_cached_tiles", _fake_get_cached_tiles)
+    monkeypatch.setattr(tile_cache_module, "set_cached_tiles", _fake_set_cached_tiles)
+    monkeypatch.setattr(settings, "use_google_places_provider", True)
+    monkeypatch.setattr(gp_module, "GooglePlacesHotelProvider", _FakeGooglePlacesHotelProvider)
+    monkeypatch.setattr(
+        logistics_node_module,
+        "_tile_to_dict",
+        lambda _tile: {"id": "hotel_fresh_1", "meta": {"place_id": "gp_fresh_1", "stars": 4}},
+    )
+
+    plan = TripPlan(destination="Bali", start_date="2026-02-15", end_date="2026-02-25")
+    hotels = await logistics_node_module._fetch_hotels(
+        _fake_async_session_factory,
+        plan,
+        {"min_stars": 5},
+        "google_places",
+        "bali",
+        "2026-02-15",
+        "2026-02-25",
+        {},
+        {},
+    )
+
+    assert len(hotels) == 1
+    assert (hotels[0].get("meta") or {}).get("place_id") == "gp_fresh_1"
+    assert "stars" not in (hotels[0].get("meta") or {})
+    assert "stars" not in ((captured_tiles.get("tiles") or [{}])[0].get("meta") or {})
+
+
+@pytest.mark.asyncio
 async def test_search_hotels_activities_skips_activity_fetch_when_activities_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

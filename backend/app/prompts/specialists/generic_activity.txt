@@ -48,3 +48,14 @@ For constraints, use these types:
 
 Focus on authenticity — recommend experiences that genuinely represent
 the local culture and best-practice approach for this activity type.
+
+==============================
+PRICING RULES (price_estimate field, per person USD)
+==============================
+- $0 for free activities: public parks, beaches, markets, viewpoints, self-guided walks, temples (no fee)
+- Under $5 for minor entry fees (museum, temple donation, parking)
+- $5-20 for local class, street food tour, bike rental, guided group walk
+- $20-80 for cooking class, spa session, guided experience, cultural performance
+- $80+ only for premium private tours, luxury spa, helicopter tours, private charters
+- DEFAULT TO $0 for any walk, market visit, park, or public space unless entry fee or guide is required
+- Use destination-aware pricing — local costs vary hugely by country

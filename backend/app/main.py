@@ -2953,8 +2953,8 @@ async def fill_day_endpoint(
                 coordinates=block_coordinates,
                 booked_tile=tile,
                 booking_category="activity",
-                rating=tile.get("rating"),
-                review_count=tile.get("user_ratings_count") or tile.get("review_count"),
+                rating=None,
+                review_count=None,
                 price_level=(
                     tile.get("price_level") or _price_estimate_to_level(tile.get("price_estimate"))
                 ),
@@ -3378,8 +3378,8 @@ async def insert_activity_block(
         summary=tile.get("title", "Activity"),
         image_url=tile.get("image_url"),
         duration=tile.get("duration"),
-        rating=tile.get("rating"),
-        review_count=tile.get("review_count"),
+        rating=None,
+        review_count=None,
         price_level=tile.get("price_level") or (tile.get("meta") or {}).get("price_level"),
         coordinates=coordinates,
         intensity=None,

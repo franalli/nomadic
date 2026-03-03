@@ -121,6 +121,8 @@ class ItineraryBlock(BaseModel):
     duration_hours: Optional[float] = None
     location: Optional[str] = None
     coordinates: Optional[List[float]] = None  # [lng, lat] for Mapbox - Bridge Mode map POIs
+    # Price
+    price_estimate: Optional[float] = None
     # Specialist metadata
     source_specialist: Optional[str] = None  # "diving", "hiking", etc.
     skill_level: Optional[str] = None  # "beginner", "intermediate", "advanced"

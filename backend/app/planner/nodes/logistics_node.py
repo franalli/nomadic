@@ -897,6 +897,26 @@ async def _fetch_hotels(
     _dest_norm = (plan.destination or "").lower().strip()
     hotel_cache_variant = f"{_dest_norm}::stars{_min_stars}" if _min_stars > 0 else _dest_norm
 
+    def _normalize_google_places_hotels(hotels: list[dict]) -> list[dict]:
+        if provider != "google_places":
+            return hotels
+
+        normalized: list[dict] = []
+        for hotel in hotels:
+            if not isinstance(hotel, dict):
+                normalized.append(hotel)
+                continue
+            meta = hotel.get("meta")
+            if isinstance(meta, dict) and "stars" in meta:
+                meta_clean = dict(meta)
+                meta_clean.pop("stars", None)
+                hotel_clean = dict(hotel)
+                hotel_clean["meta"] = meta_clean
+                normalized.append(hotel_clean)
+            else:
+                normalized.append(hotel)
+        return normalized
+
     async with async_session_factory() as db:
         # =====================================================================
         # HOTELS CACHE CHECK
@@ -914,7 +934,7 @@ async def _fetch_hotels(
                 f"Provider cache HIT (L2): hotels for {plan.destination}",
                 data=f"{len(cached_hotels)} hotels",
             )
-            hotel_dicts = cached_hotels
+            hotel_dicts = _normalize_google_places_hotels(cached_hotels)
         else:
             _debug_log(f"[TILE_CACHE] Hotels MISS - fetching from {provider}")
 
@@ -971,6 +991,7 @@ async def _fetch_hotels(
 
             # Convert to dicts and cache
             hotel_dicts = [_tile_to_dict(tile) for tile in hotel_tiles]
+            hotel_dicts = _normalize_google_places_hotels(hotel_dicts)
 
             if hotel_dicts:
                 await set_cached_tiles(
@@ -984,6 +1005,7 @@ async def _fetch_hotels(
                     hotel_cache_variant,
                 )
 
+    hotel_dicts = _normalize_google_places_hotels(hotel_dicts)
     return hotel_dicts
 
 
@@ -1242,61 +1264,88 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     if min_stars > 0:
         before = len(hotel_dicts)
         pre_filter = list(hotel_dicts)
-        hotel_dicts = [
-            h
-            for h in hotel_dicts
-            if (h.get("meta") or {}).get("stars", h.get("rating") or 0) >= min_stars
-        ]
-        if before != len(hotel_dicts):
-            log(
-                "LOGISTICS",
-                f"Hotel star filter: {before} → {len(hotel_dicts)} ({min_stars}+ stars)",
+        metadata_keys = (
+            "hotel_filter_empty",
+            "hotel_filter_min_stars",
+            "hotel_filter_actual_stars",
+            "hotel_filter_cascaded",
+        )
+
+        def _hotel_star_signal(tile: dict[str, Any]) -> float | None:
+            meta = tile.get("meta")
+            stars = meta.get("stars") if isinstance(meta, dict) else None
+            for raw_value in (stars, tile.get("rating")):
+                if raw_value is None:
+                    continue
+                try:
+                    return float(raw_value)
+                except (TypeError, ValueError):
+                    continue
+            return None
+
+        def _passes_star_filter(tile: dict[str, Any], threshold: int) -> bool:
+            signal = _hotel_star_signal(tile)
+            # Missing star/rating is "unknown", not a failed star match.
+            return signal is None or signal >= threshold
+
+        tiles_with_signal = sum(1 for h in hotel_dicts if _hotel_star_signal(h) is not None)
+        if tiles_with_signal == 0:
+            logger.info(
+                "[logistics_node] Skipping hotel star filter (%d+ stars): "
+                "no star/rating signal in fetched tiles",
+                min_stars,
             )
-        if not hotel_dicts and before > 0:
-            # Cascade: try progressively lower star thresholds
-            for cascade_stars in range(min_stars - 1, 0, -1):
-                hotel_dicts = [
-                    h
-                    for h in pre_filter
-                    if (h.get("meta") or {}).get("stars", h.get("rating") or 0) >= cascade_stars
-                ]
-                if hotel_dicts:
+            for key in metadata_keys:
+                state.metadata.pop(key, None)
+        else:
+            hotel_dicts = [h for h in hotel_dicts if _passes_star_filter(h, min_stars)]
+            if before != len(hotel_dicts):
+                log(
+                    "LOGISTICS",
+                    f"Hotel star filter: {before} → {len(hotel_dicts)} ({min_stars}+ stars)",
+                )
+            if not hotel_dicts and before > 0:
+                # Cascade: try progressively lower star thresholds.
+                for cascade_stars in range(min_stars - 1, 0, -1):
+                    hotel_dicts = [h for h in pre_filter if _passes_star_filter(h, cascade_stars)]
+                    if hotel_dicts:
+                        logger.info(
+                            "[logistics_node] Hotel star filter (%d+ stars) found 0 — "
+                            "cascaded to %d+ stars: %d hotels",
+                            min_stars,
+                            cascade_stars,
+                            len(hotel_dicts),
+                        )
+                        state.metadata["hotel_filter_empty"] = True
+                        state.metadata["hotel_filter_min_stars"] = min_stars
+                        state.metadata["hotel_filter_actual_stars"] = cascade_stars
+                        state.metadata["hotel_filter_cascaded"] = {
+                            "requested": min_stars,
+                            "actual": cascade_stars,
+                            "found_at_stars": cascade_stars,
+                            "count": len(hotel_dicts),
+                        }
+                        break
+                if not hotel_dicts:
+                    # Even 1-star cascade found nothing — keep originals.
                     logger.info(
-                        "[logistics_node] Hotel star filter (%d+ stars) found 0 — "
-                        "cascaded to %d+ stars: %d hotels",
+                        "[logistics_node] Hotel star filter (%d+ stars) cascade found 0 — "
+                        "keeping originals",
                         min_stars,
-                        cascade_stars,
-                        len(hotel_dicts),
                     )
+                    hotel_dicts = pre_filter
                     state.metadata["hotel_filter_empty"] = True
                     state.metadata["hotel_filter_min_stars"] = min_stars
-                    state.metadata["hotel_filter_actual_stars"] = cascade_stars
+                    state.metadata["hotel_filter_actual_stars"] = 0
                     state.metadata["hotel_filter_cascaded"] = {
                         "requested": min_stars,
-                        "actual": cascade_stars,
-                        "found_at_stars": cascade_stars,
+                        "actual": 0,
+                        "found_at_stars": 0,
                         "count": len(hotel_dicts),
                     }
-                    break
-            if not hotel_dicts:
-                # Even 1-star cascade found nothing — keep originals
-                logger.info(
-                    "[logistics_node] Hotel star filter (%d+ stars) cascade found 0 — keeping originals",
-                    min_stars,
-                )
-                hotel_dicts = pre_filter
-                state.metadata["hotel_filter_empty"] = True
-                state.metadata["hotel_filter_min_stars"] = min_stars
-                state.metadata["hotel_filter_cascaded"] = {
-                    "requested": min_stars,
-                    "actual": 0,
-                    "found_at_stars": 0,
-                    "count": len(hotel_dicts),
-                }
-        elif hotel_dicts:
-            state.metadata.pop("hotel_filter_empty", None)
-            state.metadata.pop("hotel_filter_min_stars", None)
-            state.metadata.pop("hotel_filter_cascaded", None)
+            elif hotel_dicts:
+                for key in metadata_keys:
+                    state.metadata.pop(key, None)
 
     # Store in state
     state.tiles["hotels"] = hotel_dicts

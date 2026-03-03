@@ -83,6 +83,8 @@ class LLMActivity(BaseModel):
     certification_required: Optional[str] = None
     vertical_meters: Optional[int] = None
     logic_hook: Optional[str] = None
+    # LLM-generated price (None → falls back to registry default)
+    price_estimate: Optional[float] = None
     # LLM-generated coordinates (replaces hardcoded ACTIVITY_COORDINATES)
     lat: Optional[float] = None
     lng: Optional[float] = None
@@ -1046,6 +1048,7 @@ def convert_llm_output_to_specialist_output(
                 duration_hours=activity.duration_hours,
                 location=activity.location,
                 coordinates=coordinates,  # [lng, lat] for Mapbox POI pins
+                price_estimate=activity.price_estimate,
             )
         )
 
@@ -2085,7 +2088,9 @@ async def _merge_specialist_into_state(
             "coordinates": block.coordinates,
             "intensity": intensity,
             "duration_hours": block.duration_hours,
-            "price_estimate": _default_price,
+            "price_estimate": block.price_estimate
+            if block.price_estimate is not None
+            else _default_price,
             "category": topic,
             "source_agent": topic,
         }

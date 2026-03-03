@@ -54,3 +54,14 @@ For constraints, use these types:
 - blocking: None typical for safari
 - strong: Guide required, seasonal timing, vehicle safety rules (SHOULD NOT be violated)
 - soft: Optimal drive times, photography tips, clothing (nice to follow)
+
+==============================
+PRICING RULES (price_estimate field, per person USD)
+==============================
+- $0 for free activities: self-drive through free wildlife areas, bird watching at public wetlands
+- Under $5 for minor park entry fees in developing countries
+- $5-20 for national park entry, basic self-drive game loop
+- $20-80 for guided half-day game drive, bush walk with ranger, night drive
+- $80+ only for full-day guided safari, private conservancy, gorilla trekking, fly-in transfers
+- DEFAULT TO $0 for any self-guided wildlife viewing unless park entry or guide is required
+- Use destination-aware pricing — South Africa is not Botswana private conservancies

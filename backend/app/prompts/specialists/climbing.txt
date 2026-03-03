@@ -58,3 +58,14 @@ For constraints, use these types:
 - blocking: Guide required for alpine/ice routes (CANNOT be violated)
 - strong: Gear inspection, altitude acclimatization, weather checks (SHOULD NOT be violated)
 - soft: Rest days, warm-up recommendations (nice to follow)
+
+==============================
+PRICING RULES (price_estimate field, per person USD)
+==============================
+- $0 for free activities: bouldering at public crags, self-guided sport climbing (own gear)
+- Under $5 for crag access fees, parking
+- $5-20 for gear rental, indoor gym day pass
+- $20-80 for guided outdoor session, via ferrata with gear rental
+- $80+ only for multi-pitch guided climb, alpine route, ice climbing course
+- DEFAULT TO $0 for any self-guided climb unless gear rental or guide is required
+- Use destination-aware pricing — Thailand is not Chamonix

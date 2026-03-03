@@ -300,7 +300,9 @@ class ExperienceTile(BaseModel):
     # REMOVED: subtitle field (unused by frontend - not rendered anywhere)
     category: str = Field(description="Category from the requested list, e.g. 'yoga'")
     duration_hours: float = Field(default=2.0, description="Activity duration in hours")
-    price_estimate: int = Field(default=40, description="Price per person in USD")
+    price_estimate: int = Field(
+        default=0, description="Price per person in USD. Use 0 for free activities."
+    )
     time_of_day: str = Field(
         default="morning", description="When activity happens: morning, afternoon, or evening"
     )
@@ -329,9 +331,18 @@ _EXPERIENCE_FLAT_SCHEMA: dict = gemini_safe_schema(
 
 SYSTEM_PROMPT = """Generate real, bookable activities for a destination. Each must be a REAL \
 venue or experience (not generic). Single sessions only (1-4h), not multi-day retreats. \
-Vary time_of_day (morning/afternoon/evening). Include realistic local pricing in USD. \
+Vary time_of_day (morning/afternoon/evening). \
 For each activity, write a vivid one-sentence description that hooks the traveler.
-Example: "Sunrise Yoga at Ubud Studio", description "Traditional flow with rice paddy views"."""
+Example: "Sunrise Yoga at Ubud Studio", description "Traditional flow with rice paddy views".
+
+PRICING RULES (price_estimate field, per person USD):
+- $0 for free activities: public parks, beaches, walking trails, viewpoints, markets, temples (no fee)
+- Under $5 for minor entry fees (museum, temple donation)
+- $5-20 for local class, street food tour, bike rental, yoga drop-in
+- $20-80 for guided tour, spa session, cooking workshop, boat trip
+- $80+ only for private guide, luxury spa, helicopter tour, private charter
+- DEFAULT TO $0 for any walk, market visit, park, or public space unless entry fee or guide is required
+- Use destination-aware pricing — local costs vary hugely by country"""
 # ~45 tokens (vs ~80 current) - structured output schema already constrains fields
 
 
@@ -363,7 +374,7 @@ def _build_user_prompt(
             f"Generate {tiles_per_category} activities per category. "
             "Each must be a REAL place/experience."
         ),
-        "Include realistic local pricing in USD.",
+        "Use the PRICING RULES to set realistic prices. Free activities = $0.",
     ]
 
     if budget:
@@ -402,21 +413,6 @@ def _clamp_tile_durations(tiles: list, max_hours: float = 4.0) -> list:
                 f"{meta['duration_hours']}h → {max_hours}h"
             )
             meta["duration_hours"] = max_hours
-    return tiles
-
-
-def _normalize_experience_ratings(tiles: list[dict]) -> list[dict]:
-    """Overwrite ratings on all experience tiles with deterministic heuristic.
-
-    LLM sometimes hallucinate rating/review_count from training data, producing
-    inconsistent presence across tiles. Replace ALL ratings with a deterministic
-    rank-based value so every tile renders consistently in the UI.
-
-    Range: 4.7 → 4.4 (curated "best of" tiles are inherently high quality).
-    """
-    for rank, tile in enumerate(tiles):
-        tile["rating"] = round(max(4.3, 4.7 - (rank * 0.05)), 1)
-        tile["review_count"] = max(200, 800 - rank * 80)
     return tiles
 
 
@@ -789,7 +785,6 @@ async def generate_experience_tiles_for_day(
         except Exception as e:
             logger.warning("[EXPERIENCE] fill-day enrichment failed, using LLM data: %s", e)
 
-    all_tiles = _normalize_experience_ratings(all_tiles)
     logger.info(f"[EXPERIENCE] fill-day: generated {len(all_tiles)} tiles for day {day_number}")
     return all_tiles
 
@@ -1331,4 +1326,4 @@ async def generate_experiences(
             normalized_categories,
             hydrated_count,
         )
-    return _normalize_experience_ratings(_clamp_tile_durations(tiles))
+    return _clamp_tile_durations(tiles)
