@@ -180,7 +180,7 @@ class Settings(BaseSettings):
     # Nondeterministic LLM — shorter TTL lets model improvements flow through
     experience_cache_ttl_hours: int = 72
     # Google Places enrichment of LLM-generated activities (Tier1/Tier2)
-    google_places_enrichment_cache_ttl_hours: int = 168
+    google_places_enrichment_cache_ttl_hours: int = 720  # 30 days — venue data is stable
     # Max activities to enrich per call (caps Google Places API spend)
     google_places_enrichment_cap: int = int(os.getenv("GOOGLE_PLACES_ENRICHMENT_CAP", "3"))
     # Wipe L2 (PostgreSQL) on session reset — for local dev/testing only
@@ -218,11 +218,12 @@ class Settings(BaseSettings):
     )  # Session creation throttle per IP
     spend_guard_enabled: bool = os.getenv("SPEND_GUARD_ENABLED", "true").lower() == "true"
     # Hard daily cost caps (USD) for paid external APIs.
+    # Code defaults are conservative; .env overrides for dev (3) and prod (3).
     spend_guard_session_daily_cap_usd: float = float(
-        os.getenv("SPEND_GUARD_SESSION_DAILY_CAP_USD", "2.0")
+        os.getenv("SPEND_GUARD_SESSION_DAILY_CAP_USD", "1.0")
     )
     spend_guard_global_daily_cap_usd: float = float(
-        os.getenv("SPEND_GUARD_GLOBAL_DAILY_CAP_USD", "10.0")
+        os.getenv("SPEND_GUARD_GLOBAL_DAILY_CAP_USD", "5.0")
     )
     # Estimated per-LLM-call token envelope used for pre-call budgeting.
     spend_guard_llm_prompt_tokens_estimate: int = int(
@@ -234,9 +235,9 @@ class Settings(BaseSettings):
     spend_guard_llm_unknown_model_estimated_call_usd: float = float(
         os.getenv("SPEND_GUARD_LLM_UNKNOWN_MODEL_ESTIMATED_CALL_USD", "0.02")
     )
-    # Google Places Text Search billable-call estimate (USD) — Pro tier ($32/1000).
+    # Google Places Text Search billable-call estimate (USD) — Pro tier Text Search $5/1k + Photo $7/1k blended.
     spend_guard_places_estimated_call_usd: float = float(
-        os.getenv("SPEND_GUARD_PLACES_ESTIMATED_CALL_USD", "0.032")
+        os.getenv("SPEND_GUARD_PLACES_ESTIMATED_CALL_USD", "0.007")
     )
 
     # Validation cache settings
@@ -401,8 +402,6 @@ class Settings(BaseSettings):
     google_places_circuit_breaker_open_seconds: int = int(
         os.getenv("GOOGLE_PLACES_CIRCUIT_BREAKER_OPEN_SECONDS", "30")
     )
-    # Max activities to enrich with Google Places per call (cap API cost)
-    google_places_enrichment_cap: int = int(os.getenv("GOOGLE_PLACES_ENRICHMENT_CAP", "3"))
 
 
 settings = Settings()

@@ -127,6 +127,7 @@ from app.schemas import (  # noqa: E402
     TripInputValidationRequest,
     TripInputValidationResponse,
 )
+from app.services.cache_core import MemoryCache  # noqa: E402
 from app.services.itinerary_builder import POI_TYPE_ALIASES as _POI_TYPE_ALIASES  # noqa: E402
 from app.services.itinerary_builder import (  # noqa: E402
     _price_estimate_to_level,
@@ -806,6 +807,10 @@ def health():
     }
 
 
+# Photo proxy server-side cache: 500 photos × ~50KB = ~25MB peak memory
+_photo_bytes_cache: MemoryCache = MemoryCache(maxsize=500, ttl=86400)
+
+
 @app.get("/api/media/google-places-photo")
 @limiter.limit("120/minute")
 async def proxy_google_places_photo(
@@ -859,6 +864,20 @@ async def proxy_google_places_photo(
         return Response(
             status_code=304,
             headers={"ETag": etag, "Cache-Control": "private, max-age=604800"},
+        )
+
+    # Server-side photo cache — session-independent for cross-session sharing
+    photo_cache_key = f"photo::{photo_name}::{max_width}x{max_height}"
+    cached_photo = _photo_bytes_cache.get(photo_cache_key)
+    if isinstance(cached_photo, tuple) and len(cached_photo) == 2:
+        cached_bytes, cached_ct = cached_photo
+        return Response(
+            content=cached_bytes,
+            media_type=cached_ct,
+            headers={
+                "Cache-Control": "private, max-age=604800",
+                "ETag": etag,
+            },
         )
 
     from app.tile_service.google_places_provider import (
@@ -916,6 +935,9 @@ async def proxy_google_places_photo(
 
     _record_places_circuit_success("photo_proxy")
     record_google_places_usage("photo_proxy", "success")
+
+    # Persist in server-side cache for cross-session reuse
+    _photo_bytes_cache.set(photo_cache_key, (upstream.content, content_type))
 
     headers = {
         "Cache-Control": "private, max-age=604800",  # 7 days — photo resource names are stable
@@ -1360,6 +1382,7 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
         "places_enrichment_memory": _enrich_mem.clear(),
         "iata_memory": clear_iata_cache(),
         "unsplash_memory": unsplash_memory_before,
+        "photo_bytes_memory": _photo_bytes_cache.clear(),
     }
 
     await clear_unsplash_memory_cache()

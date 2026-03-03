@@ -1,7 +1,7 @@
 'use client';
 
 import { Compass, Loader2, RotateCcw } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 
@@ -24,6 +24,7 @@ import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { PdfExportButton } from '@/components/plan/PdfExportButton';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { computeDataDensity, type DataDensity, StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
+import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { useToast } from '@/components/ui/toast';
@@ -35,6 +36,7 @@ import { DS } from '@/lib/design-system';
 import { cn, formatDateForDisplay } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import { useMobileNavStore } from '@/state/mobileNavStore';
+import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { ToastType } from '@/types/hooks';
 
 export function NomadicLanding() {
@@ -239,6 +241,34 @@ export function NomadicLanding() {
         hasDates
       )
     : 'empty';
+
+  // Header pills visibility — show when there's a destination and real plan data
+  const showHeaderPills = hasDestination && dataDensity !== 'empty';
+
+  // Read toggle states from shared store for header pills
+  const {
+    staysExpanded: headerStaysActive,
+    flightsExpanded: headerFlightsActive,
+    intelExpanded: headerIntelActive,
+    travelAdviceCount: headerAdviceCount,
+    showTravelAdvice: headerShowAdvice,
+    isTravelAdvicePending: headerAdvicePending,
+    toggleStays: headerToggleStays,
+    toggleFlights: headerToggleFlights,
+    toggleIntel: headerToggleIntel,
+  } = usePanelToggleStore();
+
+  // Compute flight/stay counts for header pills (same logic as PlanFullDensityView)
+  const headerFlightCount = useMemo(
+    () => Object.values(tiles).filter(t => t.type === 'flight').length,
+    [tiles]
+  );
+  const headerStayCount = useMemo(
+    () => Object.values(tiles).filter(t =>
+      t.type === 'hotel' || t.type === 'stay' || t.type === 'accommodation'
+    ).length,
+    [tiles]
+  );
 
   // Trip inputs editor
   const tripInputsEditor = useTripInputsEditor({
@@ -460,18 +490,43 @@ export function NomadicLanding() {
             ) : undefined
           }
           headerContent={
-            <div className="flex w-full items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <Compass className="text-primary h-5 w-5" />
-                  <span className="text-foreground text-lg font-semibold">Nomadic</span>
-                </div>
-                <span className="text-foreground hidden text-sm sm:inline">
+            <div className="flex w-full items-center gap-3 min-w-0">
+              {/* Left zone: logo + tagline */}
+              <div className="flex items-center gap-2 shrink-0">
+                <Compass className="text-primary h-5 w-5" />
+                <span className="text-foreground text-lg font-semibold">Nomadic</span>
+                <span className="text-foreground hidden xl:inline text-sm">
                   <span className="text-muted-foreground/30 mx-2">|</span>
                   Change your mind. Keep the plan.
                 </span>
               </div>
-              <div className="flex items-center gap-2">
+
+              {/* Center zone: compact pills */}
+              {showHeaderPills && tripInputs && (
+                <div className="flex-1 min-w-0 overflow-hidden flex justify-center">
+                  <TripSummaryPills
+                    compact
+                    tripInputs={tripInputs}
+                    dayCards={planViewModel.day_cards}
+                    onOpenSheet={openSheet}
+                    disabled={isGenerating}
+                    flightCount={hasItineraryContent ? headerFlightCount : 0}
+                    stayCount={hasItineraryContent ? headerStayCount : 0}
+                    travelAdviceCount={headerAdviceCount}
+                    showTravelAdvice={headerShowAdvice}
+                    isTravelAdvicePending={headerAdvicePending}
+                    flightsActive={headerFlightsActive}
+                    staysActive={headerStaysActive}
+                    travelAdviceActive={headerIntelActive}
+                    onToggleFlights={headerToggleFlights}
+                    onToggleStays={headerToggleStays}
+                    onToggleTravelAdvice={headerToggleIntel}
+                  />
+                </div>
+              )}
+
+              {/* Right zone: PDF + Reset */}
+              <div className="flex items-center gap-2 shrink-0">
                 <PdfExportButton
                   tripInputs={tripInputs}
                   dayCards={planViewModel.day_cards ?? []}

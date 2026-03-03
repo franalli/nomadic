@@ -396,16 +396,26 @@ if total_activity_days > max_capacity:
     auto_truncate_proportionally()  # Silent trim, no conflict
 ```
 
-**Phase 2.5: Enrich Activities from Tiles**
+**Phase 2.5: Prepare Activities + Post-Build Enrichment**
 
 Specialist `content_added` is first converted to synthetic activity tiles (`source_agent='vertical_specialist'`) in
-`coordinator._inject_specialist_tiles_into_state()`. These tiles are enriched with Google Places data (`enrich_activities_with_places`)
-before builder placement. Builder enrichment follows this order:
+`coordinator._inject_specialist_tiles_into_state()`. Pre-build preparation (`_prepare_activity_tiles_for_build`) applies:
+1. Geocode fallback for tiles missing geo (cheap Geocoding API call, L1+L2 cached)
+2. Photo URL signing for tiles with `photo_name` (free, local computation)
+3. Unsplash placeholder fallback for tiles still missing images (free, local)
+
+Builder enrichment follows this order:
 1. direct `tile_id` match between `ActivityOutput.tile_id` and coordinator-generated specialist tiles
 2. normalized-title fallback against all activity tiles.
 
 The matched tile object is stored on each enriched activity (`activity._matched_tile`) and drives `booked_tile` assignment in
 `ItineraryBuilder._assign_booked_tiles_for_frontend()`, which powers richer photos/metadata in frontend cards.
+
+**Post-build enrichment** (`_post_build_enrich_placed_activities`) runs after the builder returns day cards. It enriches only
+blocks that were actually placed in the itinerary and lack a `google_place_id`, using `enrich_activities_with_places` with
+`path_label="post_build_enrich"`. This defers expensive Google Places API calls to after placement, so only placed blocks
+(typically 3-5) incur API cost instead of all candidate tiles (10+). Enriched fields (coordinates, google_place_id, deeplink,
+signed photo URL) are written back directly to the day_card blocks.
 
 **Key Insight:** The no-fly buffer only restricts DIVING placement, not total capacity. Day 7 of an 8-day trip can have hiking activities even though diving is blocked (24h before flight). The buffer doesn't reduce total trip capacity -- it restricts which activities can go where.
 
@@ -908,10 +918,12 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 | Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month_or_half_year}::n{tiles_per_category}` | Tier 2 tiles. Seasonal categories keep `YYYY-MM`; non-seasonal categories normalize to `YYYY-H1`/`YYYY-H2` for higher cache reuse. |
 | Tile | `tile_cache.py` | 256 | 24h | 72h (env: TILE_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
 | Browse | `activity_browser.py` | 256 | 6h | 72h (env: TILE_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
-| Places Enrichment | `google_places_provider.py` | 2048 | 24h | 168h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v2::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups |
+| Places Enrichment | `google_places_provider.py` | 2048 | 48h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v2::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups. Title normalized via `_normalize_title_for_cache` (strips specialist qualifiers for higher hit rate). |
+| Geocode | `google_places_provider.py` | 1000 (TTLCache) | 24h | 8760h (1yr) | `geocode::v1::{normalized_dest}` | Geocoding API lat/lng results. L2 uses `cache_type='geocode'`. |
+| Photo Proxy | `main.py` | 500 | 24h | N/A | `photo::{photo_name}::{width}x{height}` | Server-side photo bytes cache. Skips upstream fetch + spend guard on hit. |
 | Router | `router_cache.py` | 500 | 1h | N/A | `router::v3::SHA256({normalized_text}:{today_date}:{context_fingerprint})[:32]` | NL extraction |
 
-**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'experience_single'`, `'tiles'`). Browse and Places enrichment L2 entries use `cache_type='tiles'`.
+**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'experience_single'`, `'tiles'`, `'geocode'`, `'iata'`). Browse and Places enrichment L2 entries use `cache_type='tiles'`.
 
 **Experience cache recovery (incremental regen):** `experience_generator.py` now supports category-by-category reuse to avoid recomputing unchanged Tier 2 categories:
 

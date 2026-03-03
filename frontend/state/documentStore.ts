@@ -1875,9 +1875,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // DEBUG: Log document state when setting
     debugLog('[documentStore] setFromPlanResponse:', {
       strategy_sections_count: response.document.strategy_sections?.length ?? 0,
-      strategy_sections: response.document.strategy_sections,
+      strategy_section_ids: response.document.strategy_sections?.map((s: any) => s.id),
       plan_view_state: response.document.plan_view_state,
-      executed_strategy_topics: response.document.executed_strategy_topics,
+      executed_strategy_topic_count: response.document.executed_strategy_topics?.length ?? 0,
       tiles_count: Object.keys(response.document.tiles ?? {}).length,
       tiles_keys: Object.keys(response.document.tiles ?? {}),
       destinationChanged,
@@ -2389,11 +2389,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // ============================================================
     let dayCardsToMerge: DayCard[] | undefined;
 
+    let nextIsRegenerating = get().isRegenerating;
+
     if (envelope.day_cards !== undefined) {
       // If day_cards explicitly provided, use them
       dayCardsToMerge = envelope.day_cards;
-      if (envelope.day_cards.length > 0 && get().isRegenerating) {
-        set({ isRegenerating: false });
+      if (envelope.day_cards.length > 0 && nextIsRegenerating) {
+        nextIsRegenerating = false;
       }
       debugLog(`[documentStore.mergeEnvelope] 📅 Day Cards: ${envelope.day_cards.length} cards provided`);
     } else if (destinationChanged) {
@@ -2403,7 +2405,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     } else if (datesChanged) {
       // Date changed: PRESERVE stale cards to avoid flash, overlay handles UX
       dayCardsToMerge = currentDayCards;
-      set({ isRegenerating: true });
+      nextIsRegenerating = true;
       debugLog('[documentStore.mergeEnvelope] Day Cards: PRESERVED (dates changed, awaiting rebuild)');
     } else if (hasDayCards) {
       // Preserve existing day_cards when itinerary exists
@@ -2464,6 +2466,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       updatedBy: 'planner',
       updatedAt: new Date().toISOString(),
       generation: envelope.generation !== undefined ? envelope.generation : get().generation,
+      isRegenerating: nextIsRegenerating,
       ...(envelope.browseable_activities !== undefined && {
         browseableActivities: envelope.browseable_activities,
       }),

@@ -541,53 +541,44 @@ async def _browse_activities_impl(
     before_errors = int(usage_before.get("errors", 0))
     before_quota = int(usage_before.get("quota_exhausted", 0))
 
-    # Collect Places API types to search and preserve all category owners per type.
-    # Shared types are queried once and then labeled under each matching category.
-    types_to_search: List[str] = []
-    categories_by_type: Dict[str, List[str]] = {}
+    # Build reverse mapping: Google Places primaryType → list of browse categories
+    type_to_categories: Dict[str, List[str]] = {}
     for cat in valid_categories:
-        for place_type in CATEGORY_TO_PLACES_TYPES[cat][:2]:  # Max 2 types per category
-            if place_type not in types_to_search:
-                types_to_search.append(place_type)
-            owners = categories_by_type.setdefault(place_type, [])
+        for place_type in CATEGORY_TO_PLACES_TYPES[cat]:
+            owners = type_to_categories.setdefault(place_type, [])
             if cat not in owners:
                 owners.append(cat)
 
-    # Parallel search across types (capped at max_results)
-    results_per_type: Dict[str, List[Dict[str, Any]]] = {}
+    # Single broad query instead of per-type parallel searches (1 API call vs 6-8)
+    broad_query = f"popular {', '.join(valid_categories)} things to do in {destination}"
     had_search_errors = False
+    try:
+        places = await _call_places_api_async(
+            query=broad_query,
+            included_type=None,
+            max_results=max_results,
+            geo=geo,
+            path_label="browse",
+        )
+    except Exception as e:
+        had_search_errors = True
+        logger.warning("[BROWSE] Broad search failed: %s", e)
+        places = []
 
-    async def _search_type(place_type: str) -> None:
-        nonlocal had_search_errors
-        try:
-            places = await _call_places_api_async(
-                query=f"{place_type} in {destination}",
-                included_type=place_type,
-                max_results=4,
-                geo=geo,
-                path_label="browse",
-            )
-            categories_for_type = categories_by_type.get(place_type) or [valid_categories[0]]
-            expanded_tiles: List[Dict[str, Any]] = []
-            for place in places:
-                for category in categories_for_type:
-                    expanded_tiles.append(_place_to_tile(place, category))
-            results_per_type[place_type] = expanded_tiles
-        except Exception as e:
-            had_search_errors = True
-            logger.warning("[BROWSE] Search failed for %s: %s", place_type, e)
-            results_per_type[place_type] = []
-
-    await asyncio.gather(*[_search_type(place_type) for place_type in types_to_search])
-
-    # Flatten and deduplicate by (place_id, category) so shared places can appear in both tabs.
+    # Post-classify each result by matching primaryType to category owners.
+    # Unmatched types round-robin across requested categories for even distribution.
+    _rr_idx = 0
     seen_keys: set[tuple[str, str]] = set()
     tiles: List[Dict[str, Any]] = []
-    for place_type in types_to_search:
-        tile_list = results_per_type.get(place_type, [])
-        for tile in tile_list:
+    for place in places:
+        primary_type = place.get("primaryType", "")
+        matched_categories = type_to_categories.get(primary_type)
+        if not matched_categories:
+            matched_categories = [valid_categories[_rr_idx % len(valid_categories)]]
+            _rr_idx += 1
+        for category in matched_categories:
+            tile = _place_to_tile(place, category)
             pid = tile.get("place_id", "")
-            category = str(tile.get("category", ""))
             dedupe_key = (pid, category) if pid else (str(tile.get("id", "")), category)
             if dedupe_key not in seen_keys:
                 seen_keys.add(dedupe_key)

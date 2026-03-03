@@ -111,6 +111,7 @@ _PLACES_PATH_LABELS = {
     "logistics",
     "geocode",
     "photo_proxy",
+    "post_build_enrich",
 }
 _PLACES_COUNTER_FIELDS = (
     "requests",
@@ -498,6 +499,70 @@ _geocode_cache: TTLCache = TTLCache(maxsize=1000, ttl=86400)
 # threading.Lock OK: <1us critical section (dict lookup + optional API call guard)
 _geocode_thread_lock = Lock()
 
+_GEOCODE_L2_TTL_HOURS = 8760  # 1 year — geocode results are extremely stable
+
+
+_GEOCODE_L2_SENTINEL = "NEGATIVE"  # Sentinel for known-bad destinations
+
+
+async def _get_cached_geocode(key: str) -> tuple[float, float] | None | str:
+    """Read geocode result from L2 (ResponseCache) and promote to L1 on hit.
+
+    Returns:
+        (lat, lng) on positive hit, _GEOCODE_L2_SENTINEL on negative hit, None on miss.
+    """
+    from app.db import _get_async_session_factory
+    from app.db_models import ResponseCache
+
+    cache_key = f"geocode::v1::{key}"
+    async_session_factory = _get_async_session_factory()
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(
+                select(ResponseCache)
+                .where(ResponseCache.cache_key == cache_key)
+                .where(ResponseCache.cache_type == "geocode")
+                .where(ResponseCache.expires_at > datetime.now(UTC))
+            )
+            row = result.scalar_one_or_none()
+            if not row or not row.response_json:
+                return None
+            coords = row.response_json.get("coords")
+            if coords is None:
+                # Negative cache: destination was previously not found
+                with _geocode_thread_lock:
+                    _geocode_cache[key] = None
+                record_google_places_usage("geocode", "cache_hit", cache="geocode_l2_negative")
+                return _GEOCODE_L2_SENTINEL
+            if isinstance(coords, list) and len(coords) == 2:
+                pair = (float(coords[0]), float(coords[1]))
+                with _geocode_thread_lock:
+                    _geocode_cache[key] = pair
+                record_google_places_usage("geocode", "cache_hit", cache="geocode_l2")
+                return pair
+    except Exception as e:
+        logger.debug("[GOOGLE_PLACES] Geocode L2 read failed key=%s err=%s", key, e)
+    return None
+
+
+async def _set_cached_geocode(key: str, coords: tuple[float, float] | None) -> None:
+    """Persist geocode result to L2 (ResponseCache). Pass None for negative cache."""
+    from app.db import _get_async_session_factory
+
+    cache_key = f"geocode::v1::{key}"
+    async_session_factory = _get_async_session_factory()
+    try:
+        async with async_session_factory() as db:
+            await l2_upsert(
+                db,
+                cache_key=cache_key,
+                cache_type="geocode",
+                response_json={"coords": list(coords) if coords else None},
+                ttl=timedelta(hours=_GEOCODE_L2_TTL_HOURS),
+            )
+    except Exception as e:
+        logger.debug("[GOOGLE_PLACES] Geocode L2 write failed key=%s err=%s", key, e)
+
 
 async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
     """Return (lat, lng) for a destination string using the Geocoding API, or None on failure.
@@ -517,6 +582,13 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
             record_google_places_usage(path, "cache_hit", cache="geocode")
             return _geocode_cache[key]
     record_google_places_usage(path, "cache_miss", cache="geocode")
+
+    # L2 check (ResponseCache persistence)
+    l2_result = await _get_cached_geocode(key)
+    if l2_result is _GEOCODE_L2_SENTINEL:
+        return None  # Known-bad destination, skip API call
+    if l2_result is not None:
+        return l2_result
 
     if _is_places_circuit_open(path):
         record_google_places_usage(path, "error", reason="circuit_open", mode="geocode")
@@ -556,12 +628,14 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
             coords: tuple[float, float] = (loc["lat"], loc["lng"])
             with _geocode_thread_lock:
                 _geocode_cache[key] = coords
+            await _set_cached_geocode(key, coords)
             record_google_places_usage(path, "success", mode="geocode")
             logger.debug("[GOOGLE_PLACES] Geocoded '%s' → %s", dest, coords)
             return coords
         # Destination not found (empty results) — cache None to avoid retrying bad input
         with _geocode_thread_lock:
             _geocode_cache[key] = None
+        await _set_cached_geocode(key, None)
         record_google_places_usage(path, "empty", mode="geocode")
     except SpendLimitExceeded as exc:
         record_google_places_usage(path, "error", reason="spend_cap", mode="geocode")
@@ -1294,7 +1368,7 @@ _ENRICH_FIELD_MASK = (
 
 
 # Aggressive enrichment cache: L1 memory + L2 ResponseCache.
-_ENRICH_L1_TTL_SECONDS = 86400  # 24h hot cache
+_ENRICH_L1_TTL_SECONDS = 172800  # 48h hot cache
 _ENRICH_L1_MAX_SIZE = 2048
 _ENRICH_L2_TTL_HOURS = int(
     getattr(settings, "google_places_enrichment_cache_ttl_hours", settings.tile_cache_ttl_hours)
@@ -1307,6 +1381,21 @@ _ENRICH_RETRY_BASE_MS_DEFAULT = 250
 
 def _normalize_for_cache(value: str) -> str:
     return " ".join((value or "").lower().strip().split())
+
+
+def _normalize_title_for_cache(title: str) -> str:
+    """Strip specialist qualifiers before normalizing for cache key.
+
+    E.g. "USAT Liberty Shipwreck Dive" and "USAT Liberty Shipwreck Diving
+    Experience" collapse to the same key, sharing one cache entry.
+
+    Tradeoff: titles differing only by sport qualifier (e.g. "Kuta Reef Dive"
+    vs "Kuta Reef Surf") will share a cache entry. This is acceptable because
+    the Google Places query uses the full destination for disambiguation, and
+    the same physical location is returned regardless of sport qualifier.
+    """
+    simplified = _simplify_specialist_title(title)
+    return _normalize_for_cache(simplified)
 
 
 def _enrich_max_parallel() -> int:
@@ -1349,7 +1438,7 @@ def _retry_after_seconds(header: str | None) -> float | None:
 
 
 def _enrich_cache_key(title: str, destination: str) -> str:
-    title_norm = _normalize_for_cache(title) or "unknown"
+    title_norm = _normalize_title_for_cache(title) or "unknown"
     dest_norm = _normalize_for_cache(destination) or "unknown"
     query_sig = stable_hash_short(
         {

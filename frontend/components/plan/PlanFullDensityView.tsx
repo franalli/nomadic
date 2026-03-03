@@ -6,7 +6,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
-import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useMapSync } from '@/hooks/useMapSync';
 import { REVEAL_TIMING } from '@/lib/animation-config';
 import { getSpecialistEnrichment } from '@/lib/api';
@@ -15,6 +14,7 @@ import { calculateMapCenter, extractPOIsFromSections } from '@/lib/ghost-timelin
 import { buildDestinationIntel } from '@/lib/travelIntel';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
+import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { DestinationCard, PlanViewModel, PlanViewState, StrategySection } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
@@ -85,7 +85,7 @@ export function PlanFullDensityView({
   isStreaming, isAnyRegenerating, isRegenUpdating, isDesktop,
   preferenceCount, effectiveMode, timelineVariant,
   timelineSectionRef, scrollContainerRef, handleSaveTile, handleOpenBookingDrawer,
-  onOpenStaysSettings, onOpenFlightsSettings, onOpenSheet,
+  onOpenStaysSettings, onOpenFlightsSettings, onOpenSheet: _onOpenSheet,
 }: PlanFullDensityViewProps): ReactNode {
   const strategySections = useMemo(
     () => viewModel.strategy_sections ?? [],
@@ -127,22 +127,11 @@ export function PlanFullDensityView({
     useMapSync.getState().requestScrollTo(item.dayNumber, itemId);
   }, [fullModeMapItems]);
 
-  const stayCount = useMemo(
-    () => Object.values(effectiveTiles).filter(t =>
-      t.type === 'hotel' || t.type === 'stay' || t.type === 'accommodation'
-    ).length,
-    [effectiveTiles]
-  );
-
-  const flightCount = useMemo(
-    () => Object.values(effectiveTiles).filter(t => t.type === 'flight').length,
-    [effectiveTiles]
-  );
-  const [staysExpanded, setStaysExpanded] = useState(false);
-  const [flightsExpanded, setFlightsExpanded] = useState(false);
-  const [intelExpanded, setIntelExpanded] = useState(false);
-  const onToggleStays = useCallback(() => setStaysExpanded((v) => !v), []);
-  const onToggleFlights = useCallback(() => setFlightsExpanded((v) => !v), []);
+  const staysExpanded = usePanelToggleStore((s) => s.staysExpanded);
+  const flightsExpanded = usePanelToggleStore((s) => s.flightsExpanded);
+  const intelExpanded = usePanelToggleStore((s) => s.intelExpanded);
+  const onToggleStays = usePanelToggleStore((s) => s.toggleStays);
+  const onToggleFlights = usePanelToggleStore((s) => s.toggleFlights);
 
   const intelDestinationKey = normalizeDestinationKey(effectiveFullDest);
   const localExpertSection = useMemo(
@@ -332,33 +321,20 @@ export function PlanFullDensityView({
   }, [scrollContainerRef]);
 
   const showTravelAdviceSegment = hasDestinationIntel || isTravelIntelPending;
-  const showCommandBar = (effectiveTripInputs && onOpenSheet) || hasItineraryContent || showTravelAdviceSegment;
+
+  useEffect(() => {
+    usePanelToggleStore.getState().setTravelAdviceData({
+      count: travelIntelItemCount,
+      show: showTravelAdviceSegment,
+      pending: isTravelIntelPending,
+    });
+  }, [travelIntelItemCount, showTravelAdviceSegment, isTravelIntelPending]);
 
   return (
     <div className="flex flex-col">
-      {/* Unified chip row — trip summary pills + action chips — full width above content+map */}
-      {showCommandBar ? (
+      {/* Destination intel panel + regen status — pills moved to header */}
+      {(hasDestinationIntel || (hasDestinationIntel && isAnyRegenerating)) && (
         <div className="px-4 pb-2 pt-1">
-          {effectiveTripInputs && onOpenSheet ? (
-            <TripSummaryPills
-              tripInputs={effectiveTripInputs}
-              dayCards={viewModel.day_cards}
-              onOpenSheet={onOpenSheet}
-              disabled={isStreaming}
-              flightCount={hasItineraryContent ? flightCount : 0}
-              stayCount={hasItineraryContent ? stayCount : 0}
-              travelAdviceCount={travelIntelItemCount}
-              showTravelAdvice={showTravelAdviceSegment}
-              isTravelAdvicePending={isTravelIntelPending}
-              flightsActive={flightsExpanded}
-              staysActive={staysExpanded}
-              travelAdviceActive={intelExpanded}
-              onToggleFlights={onToggleFlights}
-              onToggleStays={onToggleStays}
-              onToggleTravelAdvice={() => setIntelExpanded((v) => !v)}
-            />
-          ) : null}
-
           {hasDestinationIntel && intelExpanded && (
             <div
               id="destination-intel-panel"
@@ -397,7 +373,7 @@ export function PlanFullDensityView({
             </div>
           )}
         </div>
-      ) : null}
+      )}
 
       {/* OriginPromptCard + BookingSection — full width above timeline+map row */}
       {state === 'S2_STRATEGY_READY' &&

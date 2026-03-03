@@ -663,6 +663,12 @@ Output as JSON with "constraints" and "recommendations" arrays."""
     if activity_categories:
         user_context += f"\nPlanned activities: {', '.join(activity_categories)}"
 
+    user_context += (
+        "\n\nIMPORTANT: Only include constraints and cultural events that overlap "
+        "with or directly affect the travel dates above. Do not mention events "
+        "outside the travel window unless they cause closures or impacts during the trip."
+    )
+
     # Snapshot all values so the closure captures only immutable strings/ints
     _system_prompt = system_prompt
     _user_context = user_context

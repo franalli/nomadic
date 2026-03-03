@@ -20,6 +20,7 @@ import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { debugLog } from '@/lib/debug';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
+import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { Tile } from '@/types/tile';
 
@@ -130,6 +131,7 @@ export function useLandingHandlers({
       setGearActivitiesSheetOpen(false);
       setGearStaysSheetOpen(false);
       setGearFlightsSheetOpen(false);
+      usePanelToggleStore.getState().reset();
       closeSheet();
       if (!isDesktop) mobileNavReset();
       await branchManagerStartNewSession();

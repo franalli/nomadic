@@ -649,6 +649,14 @@ def plan_turn(
 
     # Specialist dispatch
     dispatch_list = _compute_dispatch_list(classifier, state)
+    if dispatch_list != sorted(
+        _norm_topic(a) for a in (classifier.affects or []) if _norm_topic(a)
+    ):
+        logger.debug(
+            "[coordinator] dispatch_list=%s differs from classifier.affects=%s",
+            dispatch_list,
+            classifier.affects,
+        )
     preserve_list = _compute_preserve_list(classifier, state)
     if dispatch_list and has_destination:
         steps.append(
@@ -1914,11 +1922,12 @@ def _inject_specialist_tiles_into_state(state: Dict[str, Any]) -> None:
 _ENRICHABLE_SOURCES = {"vertical_specialist", "experience_generator"}
 
 
-async def _enrich_activity_tiles(state: Dict[str, Any]) -> None:
-    """Enrich specialist + experience tiles with Google Places data.
+async def _prepare_activity_tiles_for_build(state: Dict[str, Any]) -> None:
+    """Prepare specialist + experience tiles for the itinerary builder.
 
-    Gated by settings.use_google_places_provider. Graceful degradation: tiles
-    work with LLM coordinates if enrichment fails.
+    Light-weight pre-build pass: geocode fallback, photo URL signing, and
+    Unsplash placeholders. Actual Google Places enrichment is deferred to
+    _post_build_enrich_placed_activities (runs after builder places blocks).
     """
     if not settings.use_google_places_provider:
         return
@@ -1928,43 +1937,14 @@ async def _enrich_activity_tiles(state: Dict[str, Any]) -> None:
     if not isinstance(activity_tiles, list):
         return
 
-    tiles_to_enrich = [
-        t
-        for t in activity_tiles
-        if isinstance(t, dict) and t.get("source_agent") in _ENRICHABLE_SOURCES
-    ]
-    if not tiles_to_enrich:
-        return
-
     destination = state.get("trip_plan", {}).get("destination", "")
     if not destination:
         return
 
     try:
-        from app.tile_service.google_places_provider import (
-            _geocode_destination_async,
-            enrich_activities_with_places,
-        )
+        from app.tile_service.google_places_provider import _geocode_destination_async
 
-        _tp = state.get("trip_plan", {})
-        _travelers = (_tp.get("adults") or 0) + (_tp.get("children") or 0) or 1
-        enriched = await enrich_activities_with_places(
-            tiles_to_enrich, destination, path_label="activity_enrich", travelers=_travelers
-        )
-
-        # Replace enriched tiles in the activity list
-        enriched_by_id = {t.get("id"): t for t in enriched if isinstance(t, dict)}
-        for i, t in enumerate(activity_tiles):
-            if isinstance(t, dict) and t.get("id") in enriched_by_id:
-                enriched_tile = enriched_by_id[t["id"]]
-                # Sync geo from verified Google Places coordinates so Phase 2.5
-                # (which reads geo, not coordinates) gets the best data.
-                coords = enriched_tile.get("coordinates")
-                if isinstance(coords, list) and len(coords) == 2:
-                    enriched_tile["geo"] = {"lng": coords[0], "lat": coords[1]}
-                activity_tiles[i] = enriched_tile
-
-        # Geocode fallback for tiles still missing geo after enrichment
+        # Geocode fallback for tiles missing geo (cheap, needed for builder placement)
         for i, t in enumerate(activity_tiles):
             if (
                 isinstance(t, dict)
@@ -1977,8 +1957,7 @@ async def _enrich_activity_tiles(state: Dict[str, Any]) -> None:
                     t["geo"] = {"lng": coords[1], "lat": coords[0]}
                     activity_tiles[i] = t
 
-        # Resolve photo_name → signed proxy URL for enriched tiles.
-        # GP photos are of the actual place and should override Unsplash placeholders.
+        # Resolve photo_name → signed proxy URL (free, local computation)
         session_id = state.get("session_id", "")
         if session_id:
             from app.tile_service.google_places_provider import build_signed_photo_url
@@ -1994,7 +1973,7 @@ async def _enrich_activity_tiles(state: Dict[str, Any]) -> None:
                     if signed_url:
                         tile["image_url"] = signed_url
 
-        # Unsplash fallback for specialist tiles that failed GP enrichment
+        # Unsplash placeholder fallback (free, local computation)
         from app.placeholders import get_placeholder_image
 
         for idx, tile in enumerate(activity_tiles):
@@ -2014,12 +1993,107 @@ async def _enrich_activity_tiles(state: Dict[str, Any]) -> None:
 
         tiles["activities"] = activity_tiles
         state["tiles"] = tiles
+    except Exception as exc:
+        logger.warning("[coordinator] Activity tile pre-build prep failed (graceful): %s", exc)
+
+
+async def _post_build_enrich_placed_activities(
+    state: Dict[str, Any], day_cards: list[Dict[str, Any]]
+) -> None:
+    """Enrich placed activity blocks with Google Places data after builder runs.
+
+    Only enriches blocks that were actually placed in the itinerary (not dropped),
+    and only those missing a google_place_id. Respects enrichment_cap=3 via
+    enrich_activities_with_places.
+    """
+    if not settings.use_google_places_provider:
+        return
+
+    destination = state.get("trip_plan", {}).get("destination", "")
+    if not destination:
+        return
+
+    try:
+        from app.tile_service.google_places_provider import (
+            build_signed_photo_url,
+            enrich_activities_with_places,
+        )
+
+        # Collect non-buffer blocks missing google_place_id that have a summary
+        proxies: list[Dict[str, Any]] = []
+        block_locations: list[tuple[int, int]] = []  # (day_idx, block_idx)
+        for day_idx, card in enumerate(day_cards):
+            blocks = card.get("blocks", [])
+            for block_idx, block in enumerate(blocks):
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type", "")
+                if block_type in ("buffer", "travel", "flight", "hotel_checkin", "hotel_checkout"):
+                    continue
+                if block.get("google_place_id"):
+                    continue
+                summary = block.get("summary", "")
+                if not summary:
+                    continue
+                coords = block.get("coordinates")
+                proxies.append(
+                    {
+                        "id": block.get("id", f"post_enrich_{day_idx}_{block_idx}"),
+                        "title": summary,
+                        "coordinates": coords if isinstance(coords, list) else None,
+                        "photo_name": None,
+                        "image_url": block.get("image_url"),
+                        "meta": {},
+                    }
+                )
+                block_locations.append((day_idx, block_idx))
+
+        if not proxies:
+            return
+
+        _tp = state.get("trip_plan", {})
+        _travelers = (_tp.get("adults") or 0) + (_tp.get("children") or 0) or 1
+        enriched = await enrich_activities_with_places(
+            proxies, destination, path_label="post_build_enrich", travelers=_travelers
+        )
+
+        # Write enriched fields back to day_card blocks
+        session_id = state.get("session_id", "")
+        enriched_by_id = {t.get("id"): t for t in enriched if isinstance(t, dict)}
+        for proxy, (day_idx, block_idx) in zip(proxies, block_locations, strict=True):
+            enriched_tile = enriched_by_id.get(proxy["id"])
+            if not enriched_tile:
+                continue
+            block = day_cards[day_idx]["blocks"][block_idx]
+            # Coordinates
+            coords = enriched_tile.get("coordinates")
+            if isinstance(coords, list) and len(coords) == 2:
+                block["coordinates"] = coords
+            # Google Place ID + deeplink
+            gp_id = enriched_tile.get("google_place_id")
+            if gp_id:
+                block["google_place_id"] = gp_id
+            deeplink = enriched_tile.get("deeplink")
+            if deeplink:
+                block["deeplink"] = deeplink
+            # Photo: signed URL from photo_name
+            photo_name = (
+                (enriched_tile.get("meta") or {}).get("photo_name")
+                or enriched_tile.get("photo_name")
+                or ""
+            )
+            if photo_name and session_id:
+                signed_url = build_signed_photo_url(session_id, photo_name)
+                if signed_url:
+                    block["image_url"] = signed_url
+
         logger.info(
-            "[coordinator] Enriched %d activity tiles via Google Places",
-            len(enriched),
+            "[coordinator] Post-build enriched %d/%d placed blocks via Google Places",
+            len(enriched_by_id),
+            len(proxies),
         )
     except Exception as exc:
-        logger.warning("[coordinator] Activity tile enrichment failed (graceful): %s", exc)
+        logger.warning("[coordinator] Post-build enrichment failed (graceful): %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -2430,7 +2504,7 @@ async def _build_itinerary(
 
     # Inject specialist content_added items as real tiles
     _inject_specialist_tiles_into_state(state)
-    await _enrich_activity_tiles(state)
+    await _prepare_activity_tiles_for_build(state)
 
     tiles: Dict[str, Any] = state.get("tiles", {})
     strategy_sections = state.get("strategy_sections", [])
@@ -2502,6 +2576,7 @@ async def _build_itinerary(
         if result.day_cards:
             day_cards = [card.model_dump() for card in result.day_cards]
             state["day_cards"] = day_cards
+            await _post_build_enrich_placed_activities(state, day_cards)
             logger.info("[coordinator] _build_itinerary: produced %d day_cards", len(day_cards))
             return day_cards
 
@@ -2688,6 +2763,13 @@ def _build_envelope(
     if tiles.get("hotels") and bt.get("hotels") in ("off", None):
         bt["hotels"] = "suggested"
     trip_inputs["booking_types"] = bt
+
+    # Persist reconciled booking_types back to state for next turn
+    existing_bt = trip_settings.get("booking_types", {})
+    if bt != existing_bt:
+        updated_ts = dict(trip_settings)
+        updated_ts["booking_types"] = bt
+        state["trip_settings"] = updated_ts
 
     is_flex_dates = bool(trip_plan.get("date_flex"))
 
@@ -3248,7 +3330,9 @@ async def execute_turn(
         if classifier.intent == "PLANNING":
             _apply_classifier_to_state(state, classifier)
             if classifier.change_type in _FULL_INVALIDATION_CHANGES:
-                _clear_planning_artifacts(state)
+                # GENERATE_PLAN_NOW reuses existing strategy/tiles — skip clear
+                if not (classifier.reasoning and "GENERATE_PLAN_NOW" in classifier.reasoning):
+                    _clear_planning_artifacts(state)
             yield {
                 "type": "partial",
                 "data": {

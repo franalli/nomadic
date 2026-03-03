@@ -399,11 +399,20 @@ def _build_outcome_block(state: Dict[str, Any]) -> str:
     turn_meta: Dict[str, Any] = state.get("turn_meta", {})
     if turn_meta.get("hotel_filter_empty"):
         min_stars = turn_meta.get("hotel_filter_min_stars", "?")
-        parts.append(
-            f"REQUIRED: Tell the user their {min_stars}-star hotel filter "
-            "matched no results, so you're showing all available hotels. "
-            "Suggest they try a lower star rating."
-        )
+        cascade = turn_meta.get("hotel_filter_cascaded")
+        actual_stars = cascade.get("actual", 0) if isinstance(cascade, dict) else 0
+        if actual_stars and actual_stars > 0:
+            parts.append(
+                f"REQUIRED: Tell the user no {min_stars}-star hotels were found, "
+                f"so you're showing {actual_stars}+ star hotels instead. "
+                "Suggest they try adjusting their star rating."
+            )
+        else:
+            parts.append(
+                f"REQUIRED: Tell the user their {min_stars}-star hotel filter "
+                "matched no results, so you're showing all available hotels. "
+                "Suggest they try a lower star rating."
+            )
 
     return "## Outcome (what the system just did)\n" + "\n".join(f"- {p}" for p in parts)
 

@@ -1779,6 +1779,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                             categories=_browse_cats_bf[:4],
                             max_results=min(20, _shortfall_bf + 4),
                         )
+                        backfill_tiles = backfill_tiles[:_shortfall_bf]
                         if backfill_tiles:
                             for _bt in backfill_tiles:
                                 if isinstance(_bt, dict):
@@ -2111,6 +2112,18 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     planned = state.metadata.get("planned_specialist_count", 0)
     if specialist_days == 0 and planned > 0:
         specialist_days = planned * 2
+
+    # Guard: no specialist days if no Tier 1 categories are active
+    if specialist_days > 0:
+        active_cats = set(
+            state.metadata.get("trip_settings", {})
+            .get("activity_settings", {})
+            .get("categories", [])
+        )
+        from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES
+
+        if not active_cats.intersection(TIER1_SPECIALIST_NAMES):
+            specialist_days = 0
 
     free_days = max(0, trip_days - specialist_days - min(2, trip_days - 1))
     tile_cap_ceiling = min(40, max(12, free_days * 2))

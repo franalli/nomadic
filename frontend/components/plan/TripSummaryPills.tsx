@@ -26,6 +26,7 @@ interface TripSummaryPillsProps {
   disabled?: boolean;
   variant?: 'default' | 'onImage';
   readOnlyExceptDestination?: boolean;
+  compact?: boolean;
   flightCount?: number;
   stayCount?: number;
   travelAdviceCount?: number;
@@ -102,7 +103,7 @@ function Segment({
       aria-controls={ariaControls}
       aria-expanded={ariaExpanded}
       className={cn(
-        'relative inline-flex items-center gap-1.5 h-8 rounded-full px-3',
+        'inline-flex items-center gap-1.5 h-8 rounded-full px-3',
         'text-[13px] whitespace-nowrap transition-all duration-150',
         'hover:bg-white/[0.08]',
         interactive ? 'cursor-pointer' : 'cursor-default opacity-70',
@@ -154,9 +155,9 @@ function CountBadge({ count }: { count: number }) {
   return (
     <span
       className={cn(
-        'absolute -top-1.5 -right-1 min-w-[18px] h-[18px] rounded-full px-1',
-        'flex items-center justify-center text-[10px] font-bold',
-        'bg-white text-zinc-900 shadow-sm'
+        'ml-0.5 min-w-[18px] h-[18px] rounded-full px-1',
+        'inline-flex items-center justify-center text-[10px] font-bold',
+        'bg-white/20 text-zinc-200'
       )}
     >
       {count}
@@ -289,6 +290,7 @@ export function TripSummaryPills({
   disabled = false,
   variant: _variant = 'default',
   readOnlyExceptDestination = false,
+  compact = false,
   flightCount = 0,
   stayCount = 0,
   travelAdviceCount = 0,
@@ -388,13 +390,15 @@ export function TripSummaryPills({
 
   return (
     <div className={cn(
-      'overflow-x-auto no-scrollbar flex-nowrap -mx-4 px-4 py-2',
-      'lg:overflow-x-visible lg:flex-wrap',
+      compact
+        ? 'overflow-x-auto no-scrollbar flex-nowrap'
+        : 'overflow-x-auto no-scrollbar flex-nowrap -mx-4 px-4 py-2 lg:overflow-x-visible lg:flex-wrap',
     )}>
       <div
         className={cn(
           'inline-flex items-center',
-          'h-10 rounded-xl',
+          compact ? 'h-9' : 'h-10',
+          'rounded-xl',
           'px-1.5',
           'bg-white/[0.05]',
           'backdrop-blur-xl',
