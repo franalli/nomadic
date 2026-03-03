@@ -149,8 +149,8 @@ function UnifiedChipRowInner({
   // Check if travelers has been modified from default
   const isTravelersDefault = travelers === '1 adult';
 
-  // Budget: progressive discovery — only show when user has set it
-  const showBudget = !!budget;
+  // Budget: always visible in setup/landing — progressive discovery only in itinerary view
+  const isBudgetDefault = !budget;
 
   return (
     <div className="flex flex-col gap-2 w-full">
@@ -162,7 +162,7 @@ function UnifiedChipRowInner({
           <SetupCoreChip icon={Plane} label="Origin" value={origin} onClick={onOpenOrigin} isMobile disabled={isBookingMode} />
           <SetupCoreChip icon={Calendar} label="Dates" value={dateRange} onClick={onOpenDates} isMobile disabled={isBookingMode} />
           <SetupCoreChip icon={Users} label="Travelers" value={travelers} onClick={onOpenTravelers} isDefault={isTravelersDefault} isMobile disabled={isBookingMode} />
-          {showBudget && <SetupCoreChip icon={DollarSign} label="Budget" value={budget} onClick={onOpenBudget} isMobile disabled={isBookingMode} />}
+          <SetupCoreChip icon={DollarSign} label="Budget" value={budget} onClick={onOpenBudget} isDefault={isBudgetDefault} isMobile={isMobile} disabled={isBookingMode} />
         </ChipScrollContainer>
       ) : (
         /* Desktop: single row, centered. Parent ChatMessageList uses overflow-x-clip + -mx-4 px-4
@@ -172,7 +172,7 @@ function UnifiedChipRowInner({
           <SetupCoreChip icon={Plane} label="Origin" value={origin} onClick={onOpenOrigin} disabled={isBookingMode} />
           <SetupCoreChip icon={Calendar} label="Dates" value={dateRange} onClick={onOpenDates} disabled={isBookingMode} />
           <SetupCoreChip icon={Users} label="Travelers" value={travelers} onClick={onOpenTravelers} isDefault={isTravelersDefault} disabled={isBookingMode} />
-          {showBudget && <SetupCoreChip icon={DollarSign} label="Budget" value={budget} onClick={onOpenBudget} disabled={isBookingMode} />}
+          <SetupCoreChip icon={DollarSign} label="Budget" value={budget} onClick={onOpenBudget} isDefault={isBudgetDefault} disabled={isBookingMode} />
         </ChipScrollContainer>
       )}
 
@@ -189,16 +189,15 @@ function UnifiedChipRowInner({
             disabled={isBookingMode}
           />
 
-          {showBudget && (
-            <SetupCoreChip
-              icon={DollarSign}
-              label="Budget"
-              value={budget}
-              onClick={onOpenBudget}
-              isMobile={isMobile}
-              disabled={isBookingMode}
-            />
-          )}
+          <SetupCoreChip
+            icon={DollarSign}
+            label="Budget"
+            value={budget}
+            onClick={onOpenBudget}
+            isDefault={isBudgetDefault}
+            isMobile={isMobile}
+            disabled={isBookingMode}
+          />
         </ChipScrollContainer>
       )}
 
@@ -230,7 +229,8 @@ function UnifiedChipRowInner({
 
         <ModuleChip
           icon={Ticket}
-          label={selectedActivityCount > 0 ? `Activities(${selectedActivityCount})` : 'Activities'}
+          label="Activities"
+          badge={selectedActivityCount > 0 ? selectedActivityCount : undefined}
           state={getActivitiesState()}
           summary={null}
           onClick={onOpenActivities}

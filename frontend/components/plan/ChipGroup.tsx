@@ -336,6 +336,8 @@ export interface ModuleChipProps {
   isMobile?: boolean;
   /** Disabled state (e.g., in BOOKING mode) */
   disabled?: boolean;
+  /** Notification badge count — renders a small circle at top-right when > 0 */
+  badge?: number;
 }
 
 export const ModuleChip = memo(function ModuleChip({
@@ -346,6 +348,7 @@ export const ModuleChip = memo(function ModuleChip({
   onClick,
   isMobile = false,
   disabled = false,
+  badge,
 }: ModuleChipProps) {
   const isOff = state === 'off';
   const isOnDefault = state === 'on-default';
@@ -359,7 +362,7 @@ export const ModuleChip = memo(function ModuleChip({
       disabled={disabled}
       className={cn(
         // Mobile: h-11 (44px) for Apple's minimum, Desktop: h-9 (36px) compact for narrow panels
-        'inline-flex items-center gap-1.5 rounded-full flex-shrink-0',
+        'relative inline-flex items-center gap-1.5 rounded-full flex-shrink-0',
         isMobile ? 'h-11 px-5' : 'h-9 px-4',
         'transition-all duration-200 ease-out active:scale-[0.95]',
 
@@ -406,6 +409,11 @@ export const ModuleChip = memo(function ModuleChip({
       {/* Custom dot indicator - emerald to show customization */}
       {isOnCustom && (
         <span className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-600" />
+      )}
+      {badge != null && badge > 0 && (
+        <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+          {badge}
+        </span>
       )}
     </button>
   );

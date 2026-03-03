@@ -1,7 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Building2, ChevronDown, Compass, Lightbulb, Plane } from 'lucide-react';
+import { Building2, Compass, Lightbulb, Plane } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 
@@ -70,6 +70,7 @@ export interface FullDensityTimelineProps {
   hasDestinationIntel: boolean;
   isTravelIntelPending: boolean;
   travelAdviceLabel: string;
+  travelAdviceCount: number;
 }
 
 // =============================================================================
@@ -113,6 +114,7 @@ export function FullDensityTimeline({
   hasDestinationIntel,
   isTravelIntelPending,
   travelAdviceLabel,
+  travelAdviceCount,
 }: FullDensityTimelineProps): ReactNode {
   const [intelExpanded, setIntelExpanded] = useState(false);
 
@@ -145,22 +147,26 @@ export function FullDensityTimeline({
               <button
                 type="button"
                 onClick={onToggleFlights}
-                className={subduedTogglePillClass}
+                className={cn(subduedTogglePillClass, 'relative')}
               >
                 <Plane className="w-3 h-3 shrink-0" />
-                Flights ({flightCount})
-                <ChevronDown className={cn('w-3 h-3 transition-transform', flightsExpanded && 'rotate-180')} />
+                Flights
+                <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+                  {flightCount}
+                </span>
               </button>
             )}
             {stayCount > 0 && (
               <button
                 type="button"
                 onClick={onToggleStays}
-                className={subduedTogglePillClass}
+                className={cn(subduedTogglePillClass, 'relative')}
               >
                 <Building2 className="w-3 h-3 shrink-0" />
-                Stays ({stayCount})
-                <ChevronDown className={cn('w-3 h-3 transition-transform', staysExpanded && 'rotate-180')} />
+                Stays
+                <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+                  {stayCount}
+                </span>
               </button>
             )}
             {hasDestinationIntel && (
@@ -173,7 +179,7 @@ export function FullDensityTimeline({
                 onClick={() => setIntelExpanded(v => !v)}
                 className={cn(
                   subduedTogglePillClass,
-                  'max-w-[360px] justify-between',
+                  'relative max-w-[360px] justify-between',
                   isAnyRegenerating && 'opacity-70'
                 )}
               >
@@ -181,15 +187,17 @@ export function FullDensityTimeline({
                   <Lightbulb className="w-3 h-3 shrink-0" />
                   <span className="truncate">{travelAdviceLabel}</span>
                 </span>
-                <span className="flex items-center gap-1 shrink-0">
-                  {isTravelIntelPending && (
-                    <Compass
-                      className="w-3 h-3 compass-spin text-emerald-500"
-                      aria-label="Travel advice is loading"
-                    />
-                  )}
-                  <ChevronDown className={cn('w-3 h-3 transition-transform', intelExpanded && 'rotate-180')} />
-                </span>
+                {isTravelIntelPending && (
+                  <Compass
+                    className="w-3 h-3 compass-spin text-emerald-500"
+                    aria-label="Travel advice is loading"
+                  />
+                )}
+                {travelAdviceCount > 0 && !isTravelIntelPending && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+                    {travelAdviceCount}
+                  </span>
+                )}
               </button>
             )}
             <PdfExportButton

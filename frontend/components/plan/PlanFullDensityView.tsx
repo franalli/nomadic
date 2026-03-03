@@ -176,11 +176,11 @@ export function PlanFullDensityView({
     () => effectiveStrategySections.find((s) => s.specialist_type === 'local_expert'),
     [effectiveStrategySections]
   );
-  const isTravelIntelPending = localExpertEnrichmentState(effectiveLocalExpertSection) === 'pending';
+  const enrichmentStillPending = localExpertEnrichmentState(effectiveLocalExpertSection) === 'pending';
+  // Only show spinner when truly no data yet — once we have categories, stop spinning
+  const isTravelIntelPending = enrichmentStillPending && intelCategories.length === 0;
   const hasDestinationIntel = intelCategories.length > 0;
-  const travelAdviceLabel = isTravelIntelPending
-    ? 'Travel Advice'
-    : `Travel Advice (${travelIntelItemCount})`;
+  const travelAdviceLabel = 'Travel Advice';
   useEffect(() => {
     setEnrichedLocalExpertSection(null);
   }, [intelDestinationKey, localExpertSectionId]);
@@ -218,14 +218,14 @@ export function PlanFullDensityView({
     }
 
     const run = async () => {
-      const maxPendingMs = 75_000;
+      const maxPendingMs = 20_000;
       const startedAt = Date.now();
       let pendingAttempts = 0;
       let transientErrors = 0;
       const startTurn = turnCounterRef.current;
 
-      // Initial delay: Phase B LLM enrichment takes 10-20s, skip wasted early polls
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // Brief initial delay before first poll
+      await new Promise((resolve) => setTimeout(resolve, 1500));
       if (cancelled) return;
 
       while (!cancelled) {
@@ -401,6 +401,7 @@ export function PlanFullDensityView({
           hasDestinationIntel={hasDestinationIntel}
           isTravelIntelPending={isTravelIntelPending}
           travelAdviceLabel={travelAdviceLabel}
+          travelAdviceCount={isTravelIntelPending ? 0 : travelIntelItemCount}
         />
         <BookingSummary
           tiles={effectiveTiles}

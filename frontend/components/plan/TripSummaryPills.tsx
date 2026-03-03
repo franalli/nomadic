@@ -192,7 +192,7 @@ export function TripSummaryPills({
     const effectiveSelected = dedupedSelected.length > 0 ? dedupedSelected : scheduledKeys;
     selectedActivityCount = effectiveSelected.length;
   }
-  const activityLabel = selectedActivityCount > 0 ? `Activities(${selectedActivityCount})` : null;
+  const activityLabel = selectedActivityCount > 0 ? 'Activities' : null;
 
   // Origin/budget visibility: only show when already set (progressive discovery — ghost pills confuse the UI)
   const showOrigin = !!origin;
@@ -223,7 +223,7 @@ export function TripSummaryPills({
           label="Origin"
           value={origin}
           placeholder="Add origin"
-          tone={origin ? 'default' : 'optional'}
+          tone="default"
           onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('origin')}
           disabled={disabled || readOnlyExceptDestination}
           variant={variant}
@@ -257,7 +257,8 @@ export function TripSummaryPills({
         label="Activities"
         value={activityLabel}
         placeholder="Activities"
-        tone={activityLabel ? 'default' : 'optional'}
+        tone="default"
+        badge={selectedActivityCount > 0 ? selectedActivityCount : undefined}
         onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('activities')}
         disabled={disabled || readOnlyExceptDestination}
         variant={variant}

@@ -12,7 +12,6 @@
 'use client';
 
 import type { LucideIcon } from 'lucide-react';
-import { Check } from 'lucide-react';
 import { memo } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -29,6 +28,8 @@ interface CoreChipProps {
   variant?: 'default' | 'onImage';
   /** Optional className override for visual hierarchy */
   className?: string;
+  /** Notification badge count — renders a small circle at top-right when > 0 */
+  badge?: number;
 }
 
 export const CoreChip = memo(function CoreChip({
@@ -41,6 +42,7 @@ export const CoreChip = memo(function CoreChip({
   disabled = false,
   variant = 'default',
   className,
+  badge,
 }: CoreChipProps) {
   const hasValue = !!value;
   const displayText = value || placeholder || label;
@@ -53,7 +55,7 @@ export const CoreChip = memo(function CoreChip({
       disabled={disabled}
       className={cn(
         // Flexible sizing
-        'snap-start min-w-0',
+        'relative snap-start min-w-0',
         // Base transition
         'transition-all duration-[120ms] ease-out active:scale-[0.98]',
         // Disabled state
@@ -112,8 +114,10 @@ export const CoreChip = memo(function CoreChip({
         // Glowing status dot for frosted glass pills
         <div className="w-1 h-1 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
       )}
-      {hasValue && !isOnImage && (
-        <Check className="h-2.5 w-2.5 text-[var(--chip-active-icon)]" />
+      {badge != null && badge > 0 && (
+        <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+          {badge}
+        </span>
       )}
     </button>
   );
