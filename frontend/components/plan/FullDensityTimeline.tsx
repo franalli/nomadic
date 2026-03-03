@@ -7,6 +7,7 @@ import { useState } from 'react';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
+import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { REVEAL_TIMING } from '@/lib/animation-config';
 import type { MapPOI } from '@/lib/ghost-timeline-adapter';
 import { buildDestinationIntel } from '@/lib/travelIntel';
@@ -14,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { PlanViewModel, PlanViewState, StrategySection } from '@/types/plan-envelope';
+import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
 import { BookingSection } from './BookingSection';
@@ -71,6 +73,8 @@ export interface FullDensityTimelineProps {
   isTravelIntelPending: boolean;
   travelAdviceLabel: string;
   travelAdviceCount: number;
+  /** Handler to open trip-input sheets (passed to TripSummaryPills) */
+  onOpenSheet?: (sheet: SheetType) => void;
 }
 
 // =============================================================================
@@ -115,6 +119,7 @@ export function FullDensityTimeline({
   isTravelIntelPending,
   travelAdviceLabel,
   travelAdviceCount,
+  onOpenSheet,
 }: FullDensityTimelineProps): ReactNode {
   const [intelExpanded, setIntelExpanded] = useState(false);
 
@@ -139,10 +144,85 @@ export function FullDensityTimeline({
           </div>
         )}
 
-      {/* Row 2 chips — Flights/Stays + destination intel */}
-      {showRowTwoChips && (
-        <div className="px-4 pb-2 pt-1">
-          <div className="flex items-center gap-2">
+      {/* Unified chip row — trip summary pills + row 2 chips */}
+      <div className="px-4 pb-2 pt-3">
+        {effectiveTripInputs && onOpenSheet ? (
+          <TripSummaryPills
+            tripInputs={effectiveTripInputs}
+            dayCards={viewModel.day_cards}
+            onOpenSheet={onOpenSheet}
+            disabled={isStreaming}
+          >
+            {showRowTwoChips && (
+              <>
+                <div className="h-5 w-px bg-zinc-300 dark:bg-white/15 mx-1" />
+                {flightCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={onToggleFlights}
+                    className={cn(subduedTogglePillClass, 'relative')}
+                  >
+                    <Plane className="w-3 h-3 shrink-0" />
+                    Flights
+                    <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+                      {flightCount}
+                    </span>
+                  </button>
+                )}
+                {stayCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={onToggleStays}
+                    className={cn(subduedTogglePillClass, 'relative')}
+                  >
+                    <Building2 className="w-3 h-3 shrink-0" />
+                    Stays
+                    <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+                      {stayCount}
+                    </span>
+                  </button>
+                )}
+                {hasDestinationIntel && (
+                  <button
+                    id="destination-intel-trigger"
+                    type="button"
+                    aria-expanded={intelExpanded}
+                    aria-controls="destination-intel-panel"
+                    aria-busy={isAnyRegenerating || isTravelIntelPending ? true : undefined}
+                    onClick={() => setIntelExpanded(v => !v)}
+                    className={cn(
+                      subduedTogglePillClass,
+                      'relative max-w-[360px] justify-between',
+                      isAnyRegenerating && 'opacity-70'
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <Lightbulb className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{travelAdviceLabel}</span>
+                    </span>
+                    {isTravelIntelPending && (
+                      <Compass
+                        className="w-3 h-3 compass-spin text-emerald-500"
+                        aria-label="Travel advice is loading"
+                      />
+                    )}
+                    {travelAdviceCount > 0 && !isTravelIntelPending && (
+                      <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+                        {travelAdviceCount}
+                      </span>
+                    )}
+                  </button>
+                )}
+                <PdfExportButton
+                  tripInputs={effectiveTripInputs}
+                  dayCards={viewModel.day_cards ?? []}
+                  tiles={effectiveTiles}
+                />
+              </>
+            )}
+          </TripSummaryPills>
+        ) : showRowTwoChips ? (
+          <div className="flex items-center gap-2 relative z-10">
             {flightCount > 0 && (
               <button
                 type="button"
@@ -206,46 +286,46 @@ export function FullDensityTimeline({
               tiles={effectiveTiles}
             />
           </div>
+        ) : null}
 
-          {hasDestinationIntel && intelExpanded && (
-            <div
-              id="destination-intel-panel"
-              aria-labelledby="destination-intel-trigger"
-              className="mt-2 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900/40"
-            >
-              <div className="max-h-[280px] space-y-3 overflow-y-auto px-3 py-3">
-                {intelCategories.map((category) => (
-                  <div key={category.key} className="space-y-1">
-                    <p className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                      <span>{category.icon}</span>
-                      <span>{category.label}</span>
-                    </p>
-                    <ul className="list-disc list-outside marker:text-emerald-400 space-y-1 pl-10">
-                      {category.items.map((item) => (
-                        <li
-                          key={`${category.key}-${item}`}
-                          className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400"
-                        >
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
+        {hasDestinationIntel && intelExpanded && (
+          <div
+            id="destination-intel-panel"
+            aria-labelledby="destination-intel-trigger"
+            className="mt-2 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900/40"
+          >
+            <div className="max-h-[280px] space-y-3 overflow-y-auto px-3 py-3">
+              {intelCategories.map((category) => (
+                <div key={category.key} className="space-y-1">
+                  <p className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    <span>{category.icon}</span>
+                    <span>{category.label}</span>
+                  </p>
+                  <ul className="list-disc list-outside marker:text-emerald-400 space-y-1 pl-10">
+                    {category.items.map((item) => (
+                      <li
+                        key={`${category.key}-${item}`}
+                        className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400"
+                      >
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
             </div>
-          )}
+          </div>
+        )}
 
-          {hasDestinationIntel && isAnyRegenerating && !isRegenUpdating && (
-            <div className="mt-2 flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-zinc-900/60 px-3 py-2">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-              <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                Updating plan...
-              </p>
-            </div>
-          )}
-        </div>
-      )}
+        {hasDestinationIntel && isAnyRegenerating && !isRegenUpdating && (
+          <div className="mt-2 flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-zinc-900/60 px-3 py-2">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              Updating plan...
+            </p>
+          </div>
+        )}
+      </div>
 
       <AnimatePresence>
         {effectiveTiles && Object.keys(effectiveTiles).length > 0 && (

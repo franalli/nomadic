@@ -596,6 +596,8 @@ def build_enrichment_closure(
     session_id: str = "",
     budget: float | None = None,
     vibe: str | None = None,
+    origin: str | None = None,
+    activity_categories: list[str] | None = None,
 ) -> object:
     """Build the Phase B enrichment async callable.
 
@@ -641,10 +643,14 @@ Output as JSON with "constraints" and "recommendations" arrays."""
         f"Dates: {start_date or 'Not specified'} to {end_date or 'Not specified'}\n"
         f"Travelers: {adults} adults" + (f", {children} children" if children else "")
     )
+    if origin:
+        user_context += f"\nOrigin: {origin}"
     if budget:
         user_context += f"\nBudget: ~${budget:,.0f} total"
     if vibe:
         user_context += f"\nTrip vibe: {vibe}"
+    if activity_categories:
+        user_context += f"\nPlanned activities: {', '.join(activity_categories)}"
 
     # Snapshot all values so the closure captures only immutable strings/ints
     _system_prompt = system_prompt
@@ -1136,6 +1142,10 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     if settings.local_expert_use_llm:
         # Snapshot all values needed by the background closure — no live state capture
         _session_id = state.metadata.get("session_id")
+        _ts = get_trip_settings(state)
+        _activity_cats = (
+            list(_ts.activity_settings.categories) if _ts.activity_settings.categories else []
+        )
 
         _enrich = build_enrichment_closure(
             destination=plan.destination,
@@ -1146,6 +1156,8 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
             session_id=_session_id or "",
             budget=getattr(plan, "budget", None),
             vibe=getattr(plan, "vibe", None),
+            origin=plan.origin,
+            activity_categories=_activity_cats or None,
         )
 
         # Stash enrichment coroutine-factory in module-level dict so streaming.py can fire it

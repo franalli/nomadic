@@ -383,6 +383,10 @@ def _build_specialist_prompt(
         max_acts = min(max_acts, desired)
         min_acts = min(min_acts, max_acts)
 
+    # Final cap: never exceed what the builder can actually place
+    max_acts = min(max_acts, available_days)
+    min_acts = min(min_acts, max_acts)
+
     activity_count_instruction = (
         f"- Generate exactly {min_acts} activities"
         if min_acts == max_acts
@@ -2098,10 +2102,12 @@ async def _merge_specialist_into_state(
             _cap = settings.google_places_enrichment_cap
             to_enrich = content_added[:_cap]
             keep_as_is = content_added[_cap:]
+            _travelers = (state.trip_plan.adults or 0) + (state.trip_plan.children or 0) or 1
             enriched = await enrich_activities_with_places(
                 to_enrich,
                 destination=state.trip_plan.destination or "",
                 path_label="tier1_enrich",
+                travelers=_travelers,
             )
             content_added = enriched + keep_as_is
         except Exception as e:

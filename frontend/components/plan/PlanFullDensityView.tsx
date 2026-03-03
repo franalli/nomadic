@@ -15,6 +15,7 @@ import { buildDestinationIntel } from '@/lib/travelIntel';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
 import type { DestinationCard, PlanViewModel, PlanViewState, StrategySection } from '@/types/plan-envelope';
+import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
 import { BookingSummary } from './BookingSummary';
@@ -70,6 +71,7 @@ interface PlanFullDensityViewProps {
   handleOpenBookingDrawer: (category: 'hotel' | 'flight' | 'activity', dayNumber?: number) => void;
   onOpenStaysSettings?: () => void;
   onOpenFlightsSettings?: () => void;
+  onOpenSheet?: (sheet: SheetType) => void;
 }
 
 export function PlanFullDensityView({
@@ -79,7 +81,7 @@ export function PlanFullDensityView({
   isStreaming, isAnyRegenerating, isRegenUpdating, isDesktop,
   preferenceCount, effectiveMode, timelineVariant,
   timelineSectionRef, scrollContainerRef, handleSaveTile, handleOpenBookingDrawer,
-  onOpenStaysSettings, onOpenFlightsSettings,
+  onOpenStaysSettings, onOpenFlightsSettings, onOpenSheet,
 }: PlanFullDensityViewProps): ReactNode {
   const strategySections = useMemo(
     () => viewModel.strategy_sections ?? [],
@@ -402,6 +404,7 @@ export function PlanFullDensityView({
           isTravelIntelPending={isTravelIntelPending}
           travelAdviceLabel={travelAdviceLabel}
           travelAdviceCount={isTravelIntelPending ? 0 : travelIntelItemCount}
+          onOpenSheet={onOpenSheet}
         />
         <BookingSummary
           tiles={effectiveTiles}

@@ -32,6 +32,7 @@ export type Tile = {
   score?: number;
   source?: string;
   source_agent?: string;
+  category?: string;
 
   // Expedia Rapid API pricing fields
   /** Total price including all taxes and fees (property_inclusive from Expedia) */

@@ -129,6 +129,9 @@ class Tile(BaseModel):
     # Agent provenance - which specialist agent produced this tile
     source_agent: Optional[str] = None  # "diving", "hiking", etc. - set at creation
 
+    # Category for browse-sheet filtering
+    category: Optional[str] = None  # flight | hotel | activity | diving | hiking | etc.
+
     # Expedia Rapid API pricing fields for compliance
     total_inclusive: Optional[float] = None  # Total price including all taxes/fees
     tax_and_service_fee: Optional[float] = None  # Combined taxes and service fees

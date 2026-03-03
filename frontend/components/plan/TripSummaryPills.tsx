@@ -11,6 +11,7 @@
 
 'use client';
 
+import type { ReactNode } from 'react';
 import { Activity, Calendar, DollarSign, MapPin, Plane, Users } from 'lucide-react';
 
 import { CoreChip } from '@/components/plan/CoreChip';
@@ -34,6 +35,8 @@ interface TripSummaryPillsProps {
   variant?: 'default' | 'onImage';
   /** When true, make all pills except destination read-only (demo-safe for itinerary state) */
   readOnlyExceptDestination?: boolean;
+  /** Extra chips (e.g. Stays, Travel Advice, PDF) rendered after the budget pill */
+  children?: ReactNode;
 }
 
 const NON_ACTIVITY_TYPES = new Set([
@@ -163,6 +166,7 @@ export function TripSummaryPills({
   disabled = false,
   variant = 'default',
   readOnlyExceptDestination = false,
+  children,
 }: TripSummaryPillsProps) {
   // Compute display values
   const destination = tripInputs.destination || null;
@@ -201,7 +205,7 @@ export function TripSummaryPills({
   return (
     <div
       className={cn(
-        'flex items-center gap-1.5 flex-wrap',
+        'flex items-center gap-x-1.5 gap-y-3 flex-wrap',
         // Prevent pills from shrinking
         '[&>*]:shrink-0'
       )}
@@ -277,6 +281,7 @@ export function TripSummaryPills({
         />
       )}
 
+      {children}
     </div>
   );
 }

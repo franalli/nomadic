@@ -748,6 +748,7 @@ async def logistics_node(state: GraphState) -> GraphState:
                 },
                 "source": flight_source,
                 "source_agent": "logistics_node",
+                "category": "flight",
             }
             processed_options.append(option)
 
@@ -1273,6 +1274,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     state.metadata["hotel_filter_cascaded"] = {
                         "requested": min_stars,
                         "actual": cascade_stars,
+                        "found_at_stars": cascade_stars,
                         "count": len(hotel_dicts),
                     }
                     break
@@ -1288,6 +1290,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 state.metadata["hotel_filter_cascaded"] = {
                     "requested": min_stars,
                     "actual": 0,
+                    "found_at_stars": 0,
                     "count": len(hotel_dicts),
                 }
         elif hotel_dicts:
@@ -1829,7 +1832,9 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 except (ValueError, TypeError):
                     pass
             _free_days = max(0, _trip_days - 2)  # exclude arrival/departure
-            _browse_max = min(40, max(20, _free_days * 2))
+            _apd = get_trip_settings(state).activity_settings.activities_per_day
+            # 1.5x buffer for variety/filtering, floor of 8 to avoid empty browse
+            _browse_max = min(40, max(8, int(_free_days * _apd * 1.5)))
 
             try:
                 browse_tiles = await _browse_activities(

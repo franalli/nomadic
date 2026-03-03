@@ -346,6 +346,8 @@ class ItineraryBuilderInput:
     activity_categories: Optional[List[str]] = None  # User-selected categories from pills
     activity_day_preferences: Optional[Dict[str, int]] = None  # {"diving": 3, "hiking": 2}
     activities_per_day: Optional[int] = None  # Target activities per day (e.g., 2 for "2 a day")
+    adults: int = 1
+    children: int = 0
     # Browse tiles explicitly added by user (source="browse_add") — survive graph re-runs
     user_pinned_tiles: Optional[Dict[str, Any]] = None  # tile_id → {tile, preferred_day, source}
 
@@ -545,7 +547,11 @@ class ItineraryBuilder:
         self._warnings: List[str] = []
         self._nofly_buffer_days: int = 0
         self._day_preferences = input_data.activity_day_preferences or {}
-        self._activities_per_day: int = max(1, min(input_data.activities_per_day or 2, 5))
+        self._children: int = input_data.children
+        base_apd = input_data.activities_per_day or 2
+        if self._children > 0:
+            base_apd = min(base_apd, 2)
+        self._activities_per_day: int = max(1, min(base_apd, 5))
         # Active categories for Phase 5.25 preferred-tile category filter.
         # None means "no filter" (user didn't specify categories).
         # set() means "user explicitly cleared all categories — skip all".

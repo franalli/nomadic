@@ -487,6 +487,8 @@ class TestLocalIntel:
             session_id: str = "",
             budget: float | None = None,
             vibe: str | None = None,
+            origin: str | None = None,
+            activity_categories: list[str] | None = None,
         ) -> object:
             captured.update(
                 {

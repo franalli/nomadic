@@ -101,6 +101,7 @@ THE 12 CATEGORIES (COVER ALL)
 INPUT DATA
 ==============================
 - Destination: {destination}
+- Origin: {origin} (if provided — use for transit/visa advice)
 - Dates: {start_date} to {end_date}
 - Travelers: {adults} adults
 - Trip Duration: Calculate from dates

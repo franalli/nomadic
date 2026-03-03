@@ -1825,6 +1825,8 @@ async def generate_ndjson(
                 activity_categories=activity_categories,
                 activity_day_preferences=day_preferences,
                 activities_per_day=apd,
+                adults=trip_inputs_data.get("adults", 1) or 1,
+                children=trip_inputs_data.get("children", 0) or 0,
                 user_pinned_tiles=doc_data.user_pinned_tiles if doc_data else None,
             )
 

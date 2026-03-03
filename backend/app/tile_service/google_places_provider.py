@@ -1427,7 +1427,7 @@ async def _set_cached_enrichment(cache_key: str, payload: dict[str, Any]) -> Non
         logger.debug("[GOOGLE_PLACES] Enrichment L2 write failed key=%s err=%s", cache_key, e)
 
 
-def _apply_place_to_activity(activity: dict, place: dict, title: str) -> dict:
+def _apply_place_to_activity(activity: dict, place: dict, title: str, travelers: int = 1) -> dict:
     """Apply a cached/live Places match onto one activity payload."""
     enriched = dict(activity)
     loc = place.get("location", {})
@@ -1462,7 +1462,7 @@ def _apply_place_to_activity(activity: dict, place: dict, title: str) -> dict:
 
     # Provide heuristic price for tiles without LLM price.
     if enriched.get("price_estimate") is None:
-        enriched["price_estimate"] = _estimate_activity_price(None, travelers=2)
+        enriched["price_estimate"] = _estimate_activity_price(None, travelers=travelers)
         enriched["price_basis"] = "per_person"
         enriched["currency"] = "USD"
         enriched["is_estimate_only"] = True
@@ -1489,6 +1489,7 @@ async def _enrich_single_activity(
     destination: str,
     api_key: str,
     path_label: str,
+    travelers: int = 1,
 ) -> dict:
     """Resolve a single activity against Google Places Text Search.
 
@@ -1523,7 +1524,7 @@ async def _enrich_single_activity(
             place = cached_payload.get("place")
             if isinstance(place, dict):
                 try:
-                    return _apply_place_to_activity(activity, place, title)
+                    return _apply_place_to_activity(activity, place, title, travelers=travelers)
                 except Exception as e:
                     logger.warning(
                         "[GOOGLE_PLACES] Cached enrichment parse failed for '%s': %s", title, e
@@ -1688,7 +1689,7 @@ async def _enrich_single_activity(
                     f"{_quote(f'{simplified_title} {destination}')}"
                 )
             return activity
-        enriched = _apply_place_to_activity(activity, place, title)
+        enriched = _apply_place_to_activity(activity, place, title, travelers=travelers)
         await _set_cached_enrichment(cache_key, {"matched": True, "place": place})
         record_google_places_usage(path, "success", mode="enrichment")
         return enriched
@@ -1703,6 +1704,7 @@ async def enrich_activities_with_places(
     activities: list[dict],
     destination: str,
     path_label: str = "tier2_enrich",
+    travelers: int = 1,
 ) -> list[dict]:
     """Post-process LLM-generated activities by resolving each against Google Places.
 
@@ -1730,7 +1732,9 @@ async def enrich_activities_with_places(
 
     async def _enrich_with_limit(activity: dict) -> dict:
         async with semaphore:
-            return await _enrich_single_activity(client, activity, destination, api_key, path)
+            return await _enrich_single_activity(
+                client, activity, destination, api_key, path, travelers=travelers
+            )
 
     async with httpx.AsyncClient(timeout=8.0) as client:
         coros = [_enrich_with_limit(activity) for activity in to_enrich]

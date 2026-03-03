@@ -452,6 +452,12 @@ def _normalize_tile_fields(tile: Dict[str, Any]) -> Dict[str, Any]:
         tile["deeplink_url"] = tile["deeplink"]
     if not tile.get("deeplink") and tile.get("deeplink_url"):
         tile["deeplink"] = tile["deeplink_url"]
+    if not tile.get("category"):
+        tile["category"] = (
+            (tile.get("meta") or {}).get("category")
+            or tile.get("type")  # "flight", "hotel", "activity"
+            or "activity"
+        )
     return tile
 
 
@@ -1926,8 +1932,10 @@ async def _enrich_activity_tiles(state: Dict[str, Any]) -> None:
             enrich_activities_with_places,
         )
 
+        _tp = state.get("trip_plan", {})
+        _travelers = (_tp.get("adults") or 0) + (_tp.get("children") or 0) or 1
         enriched = await enrich_activities_with_places(
-            tiles_to_enrich, destination, path_label="activity_enrich"
+            tiles_to_enrich, destination, path_label="activity_enrich", travelers=_travelers
         )
 
         # Replace enriched tiles in the activity list
@@ -2228,6 +2236,7 @@ async def _run_local_intel(
                 build_enrichment_closure,
             )
 
+            _activity_settings = state.get("trip_settings", {}).get("activity_settings", {})
             _enrich = build_enrichment_closure(
                 destination=destination,
                 start_date=trip_plan.get("start_date"),
@@ -2237,6 +2246,10 @@ async def _run_local_intel(
                 session_id=session_id,
                 budget=trip_plan.get("budget"),
                 vibe=trip_plan.get("vibe"),
+                origin=trip_plan.get("origin"),
+                activity_categories=_activity_settings.get("categories", [])
+                if _activity_settings
+                else [],
             )
             async with _pending_lock:
                 if len(_pending_enrichments) >= _MAX_PENDING_ENRICHMENTS:
@@ -2324,6 +2337,42 @@ async def _refresh_enrichment_states(state: Dict[str, Any], session_id: str) -> 
                         st,
                         db_enrichment_by_type[st].get("state"),
                     )
+
+            # If any sections still pending, Phase B may not have finished writing.
+            # Brief retry to avoid a wasted turn.
+            still_pending = any(
+                isinstance(s, dict)
+                and isinstance(s.get("local_expert_enrichment"), dict)
+                and s["local_expert_enrichment"].get("state") == "pending"
+                for s in sections
+            )
+            if still_pending:
+                await asyncio.sleep(0.8)
+                doc = await get_document(db, session=db_session)
+                if doc:
+                    data = get_document_data(doc)
+                    db_sections_retry = data.strategy_sections or []
+                    for db_sec in db_sections_retry:
+                        st = getattr(db_sec, "specialist_type", None)
+                        enr = getattr(db_sec, "local_expert_enrichment", None)
+                        if st and enr:
+                            enr_dict = enr if isinstance(enr, dict) else enr.model_dump()
+                            if enr_dict.get("state") in ("ready", "failed"):
+                                db_enrichment_by_type[st] = enr_dict
+                    for section in sections:
+                        if not isinstance(section, dict):
+                            continue
+                        enr = section.get("local_expert_enrichment", {})
+                        if not isinstance(enr, dict) or enr.get("state") != "pending":
+                            continue
+                        st = section.get("specialist_type", "")
+                        if st in db_enrichment_by_type:
+                            section["local_expert_enrichment"] = db_enrichment_by_type[st]
+                            logger.debug(
+                                "[coordinator] Retry refreshed enrichment for %s: %s",
+                                st,
+                                db_enrichment_by_type[st].get("state"),
+                            )
     except Exception as exc:
         logger.debug("[coordinator] Enrichment state refresh failed (non-fatal): %s", exc)
 
@@ -2404,6 +2453,8 @@ async def _build_itinerary(
             origin=trip_plan.get("origin"),
             activity_categories=activity_categories,
             activities_per_day=activities_per_day,
+            adults=trip_plan.get("adults", 1) or 1,
+            children=trip_plan.get("children", 0) or 0,
         )
 
         builder = ItineraryBuilder()
