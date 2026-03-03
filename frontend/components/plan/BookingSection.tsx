@@ -394,11 +394,6 @@ export function BookingSection({
                     {totalTiles} options found • Add items to your trip
                   </p>
                 </div>
-                {savedTileIds.size > 0 && (
-                  <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                    {savedTileIds.size} in trip
-                  </span>
-                )}
               </div>
 
               {/* Category Sections */}

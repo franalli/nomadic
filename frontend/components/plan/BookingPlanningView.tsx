@@ -117,16 +117,6 @@ export function BookingPlanningView({
     <ModalErrorBoundary>
       <div id="booking-section">
         <div className="px-6 pt-0 pb-1">
-          {savedTileIds.size > 0 && (
-            <span
-              className={cn(
-                'mt-2 inline-flex items-center rounded-full bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-900/10 dark:text-emerald-300',
-                DS.textSize.micro
-              )}
-            >
-              {savedTileIds.size} in trip
-            </span>
-          )}
           {/* Section-level lock message - only show if dates are NOT set */}
           {/* @see docs/ux_unified_architecture.md Section XII - Tiles-first logic */}
           {!hasDates && (
