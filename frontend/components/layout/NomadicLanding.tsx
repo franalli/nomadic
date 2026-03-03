@@ -21,6 +21,7 @@ import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBooki
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { LandingSheets } from '@/components/layout/LandingSheets';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
+import { PdfExportButton } from '@/components/plan/PdfExportButton';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { computeDataDensity, type DataDensity, StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
@@ -470,24 +471,31 @@ export function NomadicLanding() {
                   Change your mind. Keep the plan.
                 </span>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={handleStartNewSession}
-                disabled={isResettingSession}
-                className={cn(
-                  DS.textSize.micro,
-                  'font-bold uppercase tracking-widest text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-60'
-                )}
-              >
-                {isResettingSession ? (
-                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                ) : (
-                  <RotateCcw className="mr-1.5 h-3 w-3" />
-                )}
-                {isResettingSession ? 'Resetting' : 'Reset'}
-              </Button>
+              <div className="flex items-center gap-2">
+                <PdfExportButton
+                  tripInputs={tripInputs}
+                  dayCards={planViewModel.day_cards ?? []}
+                  tiles={tiles}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleStartNewSession}
+                  disabled={isResettingSession}
+                  className={cn(
+                    DS.textSize.micro,
+                    'font-bold uppercase tracking-widest text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-60'
+                  )}
+                >
+                  {isResettingSession ? (
+                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                  ) : (
+                    <RotateCcw className="mr-1.5 h-3 w-3" />
+                  )}
+                  {isResettingSession ? 'Resetting' : 'Reset'}
+                </Button>
+              </div>
             </div>
           }
         />

@@ -1,11 +1,13 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
+import { Building2, Compass, Lightbulb, Plane } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
+import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useMapSync } from '@/hooks/useMapSync';
 import { REVEAL_TIMING } from '@/lib/animation-config';
 import { getSpecialistEnrichment } from '@/lib/api';
@@ -13,22 +15,16 @@ import type { MapPOI } from '@/lib/ghost-timeline-adapter';
 import { calculateMapCenter, extractPOIsFromSections } from '@/lib/ghost-timeline-adapter';
 import { buildDestinationIntel } from '@/lib/travelIntel';
 import { cn } from '@/lib/utils';
+import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { DestinationCard, PlanViewModel, PlanViewState, StrategySection } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
-import { Building2, Compass, Lightbulb, Plane } from 'lucide-react';
-
-import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
-
-import { useDocumentStore } from '@/state/documentStore';
-
 import { BookingSection } from './BookingSection';
 import { BookingSummary } from './BookingSummary';
 import { FullDensityTimeline } from './FullDensityTimeline';
 import { OriginPromptCard } from './OriginPromptCard';
-import { PdfExportButton } from './PdfExportButton';
 import type { GenerationState } from './planStateHelpers';
 import { type TimelineVariant } from './TimelineThread';
 
@@ -417,11 +413,6 @@ export function PlanFullDensityView({
                       )}
                     </button>
                   )}
-                  <PdfExportButton
-                    tripInputs={effectiveTripInputs}
-                    dayCards={viewModel.day_cards ?? []}
-                    tiles={effectiveTiles}
-                  />
                 </>
               )}
             </TripSummaryPills>

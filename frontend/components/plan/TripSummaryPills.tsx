@@ -208,7 +208,7 @@ export function TripSummaryPills({
         'flex items-center gap-x-1.5',
         '[&>*]:shrink-0',
         'overflow-x-auto no-scrollbar -mx-4 px-4 py-2',
-        'md:overflow-x-visible md:mx-0 md:px-0 md:py-0 md:flex-wrap'
+        'md:overflow-x-visible md:mx-0 md:px-0 md:py-0 md:flex-wrap md:gap-y-2'
       )}
     >
       <CoreChip

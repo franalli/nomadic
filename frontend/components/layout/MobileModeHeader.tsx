@@ -1,13 +1,16 @@
 'use client';
 
-import { Check, Compass, Loader2, MoreVertical, RotateCcw } from 'lucide-react';
+import { Check, Compass, Download, Loader2, MoreVertical, RotateCcw } from 'lucide-react';
 import Link from 'next/link';
-import { memo, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { DS } from '@/lib/design-system';
+import { extractTripPdfData } from '@/lib/pdfData';
 import { cn } from '@/lib/utils';
+import { useDocumentStore } from '@/state/documentStore';
 import type { PlanState } from '@/types/plan-envelope';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,7 +81,38 @@ function MobileModeHeaderInner({
   const isDesktop = useIsDesktop();
   const [menuOpen, setMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [pdfState, setPdfState] = useState<'idle' | 'loading'>('idle');
   useEffect(() => setMounted(true), []);
+
+  const { tripInputs, dayCards, tiles } = useDocumentStore(
+    useShallow((s) => ({
+      tripInputs: s.document?.trip_inputs,
+      dayCards: s.document?.day_cards,
+      tiles: s.document?.tiles,
+    }))
+  );
+  const hasDayCards = (dayCards?.length ?? 0) > 0;
+
+  const handlePdfExport = useCallback(async () => {
+    if (pdfState === 'loading' || !dayCards?.length) return;
+    setPdfState('loading');
+    try {
+      const [{ pdf }, { saveAs }, { TripPdfDocument }] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('file-saver'),
+        import('@/components/plan/pdf/TripPdfDocument'),
+      ]);
+      const data = extractTripPdfData(tripInputs, dayCards, tiles ?? {});
+      const blob = await pdf(<TripPdfDocument data={data} />).toBlob();
+      const dest = (data.destination || 'Trip').replace(/\s+/g, '-');
+      saveAs(blob, `${dest}.pdf`);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    } finally {
+      setPdfState('idle');
+      setMenuOpen(false);
+    }
+  }, [pdfState, tripInputs, dayCards, tiles]);
 
   // Don't render on desktop - split view shows both panels
   if (isDesktop) {
@@ -144,6 +178,25 @@ function MobileModeHeaderInner({
                         <RotateCcw className="h-3.5 w-3.5" />
                       )}
                       <span>{isResetting ? 'Resetting...' : 'Reset Trip'}</span>
+                    </button>
+                    <div className="h-px bg-border my-1" />
+                  </>
+                )}
+
+                {hasDayCards && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={pdfState === 'loading'}
+                      onClick={handlePdfExport}
+                      className={cn('flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-50', DS.textSize.micro)}
+                    >
+                      {pdfState === 'loading' ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Download className="h-3.5 w-3.5" />
+                      )}
+                      <span>{pdfState === 'loading' ? 'Exporting...' : 'Download PDF'}</span>
                     </button>
                     <div className="h-px bg-border my-1" />
                   </>
