@@ -121,7 +121,7 @@ function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = fal
         >
           Plan
           {planTabEnabled && hasNewPlanContent && activePage !== 1 && (
-            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500" />
+            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse ring-2 ring-white dark:ring-zinc-950" />
           )}
         </button>
       </div>

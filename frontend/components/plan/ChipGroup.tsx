@@ -338,6 +338,8 @@ export interface ModuleChipProps {
   disabled?: boolean;
   /** Notification badge count — renders a small circle at top-right when > 0 */
   badge?: number;
+  /** If false, keep icon even when chip is on (used for suggested/default landing toggles). */
+  showCompletionCheckWhenOn?: boolean;
 }
 
 export const ModuleChip = memo(function ModuleChip({
@@ -349,11 +351,13 @@ export const ModuleChip = memo(function ModuleChip({
   isMobile = false,
   disabled = false,
   badge,
+  showCompletionCheckWhenOn = true,
 }: ModuleChipProps) {
   const isOff = state === 'off';
   const isOnDefault = state === 'on-default';
   const isOnCustom = state === 'on-custom';
   const isOn = isOnDefault || isOnCustom;
+  const showCompletionCheck = isOn && showCompletionCheckWhenOn;
 
   return (
     <button
@@ -393,12 +397,16 @@ export const ModuleChip = memo(function ModuleChip({
         disabled && 'opacity-50 cursor-not-allowed pointer-events-none'
       )}
     >
-      {/* Checkmark for active state (replaces icon position) */}
-      {/* DS: zinc-900 light / emerald dark for accent elements */}
-      {isOn ? (
-        <Check className="h-4 w-4 flex-shrink-0 text-white dark:text-emerald-500" strokeWidth={2.5} />
+      {/* Completion check only for explicitly-enabled/configured states. */}
+      {showCompletionCheck ? (
+        <Check className="h-4 w-4 flex-shrink-0 text-current" strokeWidth={2.5} />
       ) : (
-        <Icon className="h-5 w-5 flex-shrink-0 text-zinc-400 dark:text-zinc-500" />
+        <Icon
+          className={cn(
+            'h-5 w-5 flex-shrink-0',
+            isOn ? 'text-current' : 'text-zinc-400 dark:text-zinc-500'
+          )}
+        />
       )}
       <span className="text-sm">
         {label}
@@ -406,12 +414,17 @@ export const ModuleChip = memo(function ModuleChip({
           <span className="ml-1.5 text-xs opacity-75">· {summary}</span>
         )}
       </span>
-      {/* Custom dot indicator - emerald to show customization */}
-      {isOnCustom && (
-        <span className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-600" />
-      )}
       {badge != null && badge > 0 && (
-        <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+        <span
+          className={cn(
+            'absolute -top-1.5 -right-1.5',
+            'min-w-[18px] h-[18px] px-1 rounded-full',
+            'bg-emerald-500 text-white',
+            'text-[10px] font-bold',
+            'flex items-center justify-center',
+            'shadow-sm'
+          )}
+        >
           {badge}
         </span>
       )}

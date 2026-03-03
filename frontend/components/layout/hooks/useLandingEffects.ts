@@ -150,6 +150,16 @@ export function useLandingEffects({
     setHasEverHadPlan,
   ]);
 
+  // ─── Auto-swipe to Plan on first content (one-shot) ───────────────────
+
+  const didAutoSwipeRef = useRef(false);
+  useEffect(() => {
+    if (hasEverHadPlan && !didAutoSwipeRef.current && !isDesktop && !isHydrating) {
+      didAutoSwipeRef.current = true;
+      mobileNavigateToPlan();
+    }
+  }, [hasEverHadPlan, isDesktop, isHydrating, mobileNavigateToPlan]);
+
   // ─── Local pending topics ──────────────────────────────────────────────
 
   // Clear local pending topics when backend responds with executed_strategy_topics

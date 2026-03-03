@@ -39,7 +39,6 @@ import type { ViewMode } from '@/types/plan-envelope';
 
 import type { ModuleState } from './ChipGroup';
 import {
-  getActivitySelectedCount,
   getFlightChipSummary,
   getHotelChipSummary,
   inferCategoriesFromDayCards,
@@ -144,7 +143,9 @@ function UnifiedChipRowInner({
     if (!isBookingEnabled(bookingTypes.activities)) return 'off';
     return isActivityCustom(activitySettings, inferredActivityCategories) ? 'on-custom' : 'on-default';
   };
-  const selectedActivityCount = getActivitySelectedCount(activitySettings, inferredActivityCategories);
+  const flightState = getFlightState();
+  const staysState = getStaysState();
+  const activitiesState = getActivitiesState();
 
   // Check if travelers has been modified from default
   const isTravelersDefault = travelers === '1 adult';
@@ -210,32 +211,35 @@ function UnifiedChipRowInner({
         <ModuleChip
           icon={Plane}
           label="Flights"
-          state={getFlightState()}
+          state={flightState}
           summary={getFlightChipSummary(flightSettings)}
           onClick={onOpenFlights}
           isMobile={isMobile}
           disabled={isBookingMode}
+          showCompletionCheckWhenOn={false}
         />
 
         <ModuleChip
           icon={Hotel}
           label="Stays"
-          state={getStaysState()}
+          state={staysState}
           summary={getHotelChipSummary(hotelSettings)}
           onClick={onOpenStays}
           isMobile={isMobile}
           disabled={isBookingMode}
+          showCompletionCheckWhenOn={false}
         />
 
         <ModuleChip
           icon={Ticket}
           label="Activities"
-          badge={selectedActivityCount > 0 ? selectedActivityCount : undefined}
-          state={getActivitiesState()}
+          badge={undefined}
+          state={activitiesState}
           summary={null}
           onClick={onOpenActivities}
           isMobile={isMobile}
           disabled={isBookingMode}
+          showCompletionCheckWhenOn={false}
         />
       </div>
     </div>
