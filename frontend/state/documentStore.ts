@@ -1875,7 +1875,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // DEBUG: Log document state when setting
     debugLog('[documentStore] setFromPlanResponse:', {
       strategy_sections_count: response.document.strategy_sections?.length ?? 0,
-      strategy_section_ids: response.document.strategy_sections?.map((s: any) => s.id),
+      strategy_section_ids: response.document.strategy_sections?.map((s) => s.id),
       plan_view_state: response.document.plan_view_state,
       executed_strategy_topic_count: response.document.executed_strategy_topics?.length ?? 0,
       tiles_count: Object.keys(response.document.tiles ?? {}).length,

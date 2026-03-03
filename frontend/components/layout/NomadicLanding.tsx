@@ -8,7 +8,6 @@ import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { StartupSequence } from '@/components/animations/StartupSequence';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
 import { MobileChatInput } from '@/components/chat/MobileChatInput';
-import { TripStatusBar } from '@/components/chat/TripStatusBar';
 import { FloatingBuildButton } from '@/components/layout/FloatingBuildButton';
 import {
   useBranchManager,
@@ -466,18 +465,7 @@ export function NomadicLanding() {
           onReset={handleStartNewSession}
           isResetting={isResettingSession}
           planTabEnabled={planTabEnabled}
-          mobileStatusBar={
-            !isDesktop &&
-            (hasDestination ||
-              Boolean(tripInputs.origin) ||
-              Boolean(tripInputs.start_date)) ? (
-              <TripStatusBar
-                tripInputs={tripInputs}
-                specialists={docExecutedTopics ?? []}
-                onOpenSheet={openSheet}
-              />
-            ) : undefined
-          }
+          mobileStatusBar={undefined}
           mobileInput={
             !isDesktop ? (
               <MobileChatInput

@@ -345,7 +345,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               hasDestination: Boolean(doc.trip_inputs?.destination),
               destination: doc.trip_inputs?.destination,
               strategy_sections_count: doc.strategy_sections?.length ?? 0,
-              strategy_section_ids: doc.strategy_sections?.map((s: any) => s.id),
+              strategy_section_ids: doc.strategy_sections?.map((s) => s.id),
               executed_strategy_topic_count: doc.executed_strategy_topics?.length ?? 0,
               pending_strategy_topic_count: doc.pending_strategy_topics?.length ?? 0,
             });

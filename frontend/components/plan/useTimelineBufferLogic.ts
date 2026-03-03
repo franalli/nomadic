@@ -4,16 +4,16 @@
  * useTimelineBufferLogic
  *
  * Encapsulates the buffer/exclusion constraint logic for free day cards.
- * Determines which activity categories are excluded based on:
- * 1. Buffer blocks on the same day (BUFFER_EXCLUSIONS)
- * 2. Adjacent day specialist types (ADJACENT_EXCLUSIONS)
+ * Determines which activity categories are excluded based on
+ * same-day buffer blocks (BUFFER_EXCLUSIONS). Adjacent-day cross-domain
+ * safety is enforced by the backend constraint guard during generation.
  *
  * Extracted from TimelineThread to reduce file size.
  */
 
 import { useMemo } from 'react';
 
-import { ADJACENT_EXCLUSIONS, BUFFER_EXCLUSIONS } from '@/lib/categoryNormalization';
+import { BUFFER_EXCLUSIONS } from '@/lib/categoryNormalization';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
 const CATEGORY_ICONS: Record<string, string> = {
@@ -35,29 +35,19 @@ export interface BufferLogicResult {
  */
 export function computeBufferExclusions(
   bufferBlocks: DayBlock[],
-  dayCards: DayCard[],
-  currentDayNumber: number,
+  _dayCards: DayCard[],
+  _currentDayNumber: number,
   categories: string[] | undefined,
 ): BufferLogicResult {
-  // Build excluded category set from two sources:
-  // 1. Buffer blocks on this day (same-day exclusion)
-  // 2. Adjacent day specialist types (forward/reverse cross-domain)
+  // Build excluded category set from same-day buffer blocks only.
+  // Adjacent-day cross-domain safety is enforced by the backend constraint
+  // guard during generation — the frontend chips show all user-selected
+  // categories so the user retains full agency over free day planning.
   const excludedByConstraint = new Set<string>();
   for (const buf of bufferBlocks) {
     const st = (buf.specialist_type || '').toLowerCase();
     if (st && BUFFER_EXCLUSIONS[st]) {
       BUFFER_EXCLUSIONS[st].forEach(cat => excludedByConstraint.add(cat));
-    }
-  }
-  const adjDays = dayCards.filter(
-    dc => Math.abs(dc.day_number - currentDayNumber) === 1
-  );
-  for (const adjDay of adjDays) {
-    for (const adjBlock of adjDay.blocks) {
-      const st = (adjBlock.specialist_type || '').toLowerCase();
-      if (st && ADJACENT_EXCLUSIONS[st]) {
-        ADJACENT_EXCLUSIONS[st].forEach(cat => excludedByConstraint.add(cat));
-      }
     }
   }
   const filteredCategories = categories
