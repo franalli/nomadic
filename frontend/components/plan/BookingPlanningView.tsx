@@ -15,8 +15,6 @@ import { useCallback, useState } from 'react';
 
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { ModalErrorBoundary } from '@/components/ui/ModalErrorBoundary';
-import { DS } from '@/lib/design-system';
-import { cn } from '@/lib/utils';
 import type { ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
