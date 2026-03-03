@@ -2608,6 +2608,8 @@ Updates to Section 6 — new components discovered in audit:
 | `S2AgentCard` | `plan/stages/S2AgentCard.tsx` | `DS.textSize.*` | Legacy specialist card with topic CSS vars; `shadow-card` on card, `hover:shadow-soft` on hover |
 | `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Loading shell only (`PlanMirrorLoader`); keeps live indicator dot. |
 | `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (raw pattern) | Full-density itinerary layout; subdued toggle pills for Flights/Stays/Travel Intel and sticky desktop map column |
+| `BookingSummary` | `plan/BookingSummary.tsx` | `DS.materials.glass`, `DS.text.label`, `DS.textSize.micro` | Stage-3-only venue-link summary (stays + activities) rendered below timeline |
+| `TripChromeBar` | `plan/TripChromeBar.tsx` | `DS.segments.container`, `DS.segments.segment`, `DS.segments.segmentActive`, `DS.segments.segmentInactive` | Horizontal segmented trip-status/module bar (destination, dates, travelers, activities, module toggles) |
 | `TimelineThread` | `plan/TimelineThread.tsx` | `DS.textSize.*` | Day-thread renderer; constraint/status chips with light/dark contrast pairs and unschedulable overlays |
 | `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
 | `InlineDatePrompt` | `plan/timeline/InlineDatePrompt.tsx` | `DS.actions.primary` | Inline CTA to set dates within timeline |

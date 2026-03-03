@@ -9,9 +9,3 @@ import type { StrategySection } from '@/types/plan-envelope';
 
 export const DESTINATION_INTEL_CACHE = new Map<string, StrategySection>();
 export const DESTINATION_INTEL_INFLIGHT = new Map<string, Promise<void>>();
-
-/** Clear all enrichment caches — call on session reset for a clean slate. */
-export function clearEnrichmentCache(): void {
-  DESTINATION_INTEL_CACHE.clear();
-  DESTINATION_INTEL_INFLIGHT.clear();
-}

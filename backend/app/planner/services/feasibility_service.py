@@ -18,6 +18,7 @@ from app.planner.llm_factory import (
     resolve_schema_refs,
     strip_unsupported_schema_keys,
 )
+from app.planner.specialist_registry import SPECIALIST_REGISTRY
 from app.planner.specialist_registry import get as get_specialist_config
 from app.services.cache_core import MemoryCache
 
@@ -57,15 +58,19 @@ async def _check_feasibility_llm(topic: str, destination: str) -> FeasibilityChe
             dict(_FEASIBILITY_FLAT_SCHEMA), include_raw=True, method="function_calling"
         )
 
+        all_rules = [
+            f"- {cfg.geographic_rule}"
+            for cfg in SPECIALIST_REGISTRY.values()
+            if cfg.geographic_rule
+        ]
+        rules_block = "\n".join(all_rules) if all_rules else "Use geographic common sense."
+
         prompt = f"""Is {topic} activity possible in {destination}?
 
 Rules:
-- Diving requires coastline, large lakes, or dedicated dive facilities
-- Skiing requires mountains with reliable snow or indoor ski facilities
-- Hiking requires terrain suitable for walking trails
-- Surfing requires ocean waves
+{rules_block}
 
-Be strict. Landlocked cities cannot have diving. Alpine towns without coast cannot have diving."""
+Be strict."""
 
         result = await structured_llm.ainvoke(prompt)
         if isinstance(result, dict) and "parsed" in result:
@@ -122,6 +127,29 @@ async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
     if cached is not None:
         return cached
 
+    # L2: database cache (survives process restarts)
+    try:
+        from app.db import _get_async_session_factory
+        from app.services.specialist_cache import get_cached_specialist_output
+
+        async_session_factory = _get_async_session_factory()
+        async with async_session_factory() as cache_db:
+            l2_payload = await get_cached_specialist_output(
+                cache_db,
+                topic=f"feasibility:{topic}",
+                destination=destination,
+                start_date=None,
+                end_date=None,
+                skill_level=None,
+                day_pref=None,
+            )
+        if l2_payload and isinstance(l2_payload, dict):
+            pair = (l2_payload.get("possible", True), l2_payload.get("reason", ""))
+            _feasibility_cache.set(cache_key, pair)
+            return pair
+    except Exception:
+        pass  # L2 miss or error — fall through to LLM
+
     if cache_key in _feasibility_inflight:
         return await _feasibility_inflight[cache_key]
 
@@ -142,6 +170,25 @@ async def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
         result = await _check_feasibility_llm(topic, destination)
         cached_result = (result.possible, result.reason)
         _feasibility_cache.set(cache_key, cached_result)
+        # L2 write (best-effort)
+        try:
+            from app.db import _get_async_session_factory
+            from app.services.specialist_cache import set_cached_specialist_output
+
+            _sf = _get_async_session_factory()
+            async with _sf() as _db:
+                await set_cached_specialist_output(
+                    _db,
+                    topic=f"feasibility:{topic}",
+                    destination=destination,
+                    start_date=None,
+                    end_date=None,
+                    output={"possible": result.possible, "reason": result.reason},
+                    skill_level=None,
+                    day_pref=None,
+                )
+        except Exception:
+            pass
         future.set_result(cached_result)
         return cached_result
     except Exception as e:
@@ -188,3 +235,30 @@ async def check_feasibility(
         return ("caveat", reason, None)
 
     return ("feasible", None, None)
+
+
+async def batch_feasibility_precheck(
+    topics: list[str],
+    destination: str,
+) -> dict[str, tuple[str, str | None, str | None]]:
+    """Parallel feasibility checks for multiple topics.
+
+    Only checks topics with has_geographic_constraint=True.
+    Uses existing cache + singleflight dedup.
+
+    Returns: {topic: (status, reason, alternative)} for non-feasible topics only.
+    """
+    topics_to_check = [
+        t
+        for t in topics
+        if t in SPECIALIST_REGISTRY and SPECIALIST_REGISTRY[t].has_geographic_constraint
+    ]
+    if not topics_to_check:
+        return {}
+
+    results = await asyncio.gather(*[check_feasibility(t, destination) for t in topics_to_check])
+    return {
+        topic: result
+        for topic, result in zip(topics_to_check, results, strict=True)
+        if result[0] != "feasible"
+    }

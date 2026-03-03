@@ -239,6 +239,10 @@ class Settings(BaseSettings):
     spend_guard_places_estimated_call_usd: float = float(
         os.getenv("SPEND_GUARD_PLACES_ESTIMATED_CALL_USD", "0.007")
     )
+    # Provider-specific daily cap for Google Places API spend (USD).
+    spend_guard_places_daily_cap_usd: float = float(
+        os.getenv("SPEND_GUARD_PLACES_DAILY_CAP_USD", "2.00")
+    )
 
     # Validation cache settings
     validation_cache_size: int = 5000  # Increased for progressive learning of unknown places
@@ -393,6 +397,13 @@ class Settings(BaseSettings):
     use_google_places_provider: bool = (
         os.getenv("USE_GOOGLE_PLACES_PROVIDER", "false").lower() == "true"
     )
+    google_places_photos_enabled: bool = (
+        os.getenv("GOOGLE_PLACES_PHOTOS_ENABLED", "true").lower() == "true"
+    )
+    google_places_enrichment_enabled: bool = (
+        os.getenv("GOOGLE_PLACES_ENRICHMENT_ENABLED", "true").lower() == "true"
+    )
+    google_places_photo_signed_ttl_max: int = 60 * 60  # 1 hour
     google_places_circuit_breaker_enabled: bool = (
         os.getenv("GOOGLE_PLACES_CIRCUIT_BREAKER_ENABLED", "true").lower() == "true"
     )

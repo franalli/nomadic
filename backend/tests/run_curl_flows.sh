@@ -26,9 +26,11 @@
 #   20  Add Tier 1 activity — hiking after initial cultural plan
 #   21  Long trip tile density — extend by 10 days, ≥60% fill rate
 #   22  Specialist survival — diving sections/tiles survive origin add
+#   23  Infeasible activity — skiing in Bali triggers feasibility_warning SSE + infeasible section
+#   24  Mixed feasible + infeasible — diving (feasible) + skiing (infeasible) in Bali
 #
 # Architecture contract (from plan_graph_analysis.md + data-contracts.md):
-#   - SSE event types: token, node_status, partial, complete, error
+#   - SSE event types: token, node_status, partial, complete, error, feasibility_warning
 #   - complete payload: {type:"complete", data:{document:{...}, session_state:{...}, ...}}
 #   - session_state MUST be round-tripped for multi-turn (messages live there)
 #   - node_status.data.node = tool name, status = "started"|"completed"
@@ -455,6 +457,27 @@ with open(sys.argv[1]) as f:
             d = obj.get("data", {})
             if d.get("status") == "started": tools.append(d.get("node", ""))
 print(",".join(tools))
+PYEOF
+}
+
+# Extract data from first SSE event of a given type (e.g. feasibility_warning)
+extract_sse_data() {
+  python3 - "$RESP" "$1" "$2" <<'PYEOF'
+import sys, json
+event_type, key = sys.argv[2], sys.argv[3]
+with open(sys.argv[1]) as f:
+    for line in f:
+        if not line.startswith("data: "): continue
+        try: obj = json.loads(line[6:])
+        except: continue
+        if obj.get("type") == event_type:
+            val = obj.get("data", {})
+            for p in key.split("."):
+                if isinstance(val, dict): val = val.get(p)
+                else: val = None; break
+            if val is not None:
+                print(json.dumps(val) if isinstance(val, (dict, list)) else val)
+            break
 PYEOF
 }
 
@@ -2131,6 +2154,176 @@ $F && _flow pass 22 || _flow fail 22
 _flow_end 22
 echo ""
 fi
+
+# =============================================================================
+#  FLOW 23: Infeasible Activity — Skiing in Bali
+# =============================================================================
+# Skiing is geographically impossible in Bali.  The pre-check should:
+#   1. Emit a feasibility_warning SSE event BEFORE specialist dispatch
+#   2. NOT call get_specialist_advice for skiing (no LLM waste)
+#   3. Include an infeasible strategy_section for skiing
+#   4. Complete event still arrives with a valid envelope
+
+if should_run 23; then
+_flow_begin 23
+echo ""
+echo "═══ Flow 23: Infeasible Activity — Skiing in Bali ═══"
+F=true
+
+if fresh_session; then
+if send_message "I want to go skiing in Bali for a week starting March 15"; then
+
+# ── SSE: feasibility_warning event emitted ──
+FW_CT=$(count_sse "feasibility_warning")
+check_gte "feasibility_warning SSE events ≥ 1" "$FW_CT" 1 || F=false
+
+# ── feasibility_warning data ──
+FW_TOPIC=$(extract_sse_data "feasibility_warning" "topic")
+FW_STATUS=$(extract_sse_data "feasibility_warning" "status")
+FW_REASON=$(extract_sse_data "feasibility_warning" "reason")
+check "feasibility_warning topic is skiing" "$FW_TOPIC" "skiing" || F=false
+check "feasibility_warning status is infeasible" "$FW_STATUS" "infeasible" || F=false
+check_not_empty "feasibility_warning has reason" "$FW_REASON" || F=false
+
+# ── Complete event still arrives ──
+COMPLETE_CT=$(count_sse "complete")
+check "Complete event present" "$COMPLETE_CT" "1" || F=false
+
+# ── Destination extracted ──
+DEST=$(extract_top "session_state.trip_plan.destination")
+DEST_LC=$(echo "$DEST" | tr '[:upper:]' '[:lower:]')
+check_contains "Destination is Bali" "$DEST_LC" "bali" || F=false
+
+# ── Strategy section for skiing is infeasible ──
+SECS=$(extract_doc "strategy_sections")
+SEC_CT=$(jlen "$SECS")
+check_gte "strategy_sections ≥ 1" "$SEC_CT" 1 || F=false
+
+HAS_INFEASIBLE_SKIING=$(echo "$SECS" | python3 -c "
+import sys,json
+try:
+    secs=json.load(sys.stdin)
+    found=any(
+        s.get('specialist_type','').lower()=='skiing'
+        and s.get('feasibility_status')=='infeasible'
+        for s in secs
+    )
+    print('true' if found else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Skiing section marked infeasible" "$HAS_INFEASIBLE_SKIING" "true" || F=false
+
+# ── get_specialist_advice should NOT be called (no LLM dispatch for skiing) ──
+TOOLS=$(extract_tools)
+echo "  ℹ  Tools called: $TOOLS"
+check_not_contains "get_specialist_advice NOT called (infeasible skip)" "$TOOLS" "get_specialist_advice" || F=false
+
+# ── Tokens streamed (conversationalist still runs) ──
+TOKEN_CT=$(count_sse "token")
+check_gt "Tokens streamed" "$TOKEN_CT" 0 || F=false
+
+else F=false; fi; else F=false; fi
+$F && _flow pass 23 || _flow fail 23
+_flow_end 23
+echo ""
+fi
+
+
+# =============================================================================
+#  FLOW 24: Mixed Feasible + Infeasible — Diving + Skiing in Bali
+# =============================================================================
+# Diving in Bali is feasible. Skiing is infeasible.
+# Validates that:
+#   1. Only skiing triggers feasibility_warning (not diving)
+#   2. Diving gets full specialist dispatch (get_specialist_advice called)
+#   3. Both activities have strategy_sections with correct feasibility_status
+#   4. Diving produces tiles; skiing does not
+
+if should_run 24; then
+_flow_begin 24
+echo ""
+echo "═══ Flow 24: Mixed — Diving (feasible) + Skiing (infeasible) in Bali ═══"
+F=true
+
+if fresh_session; then
+if send_message "I want diving and skiing in Bali for a week starting March 15"; then
+
+# ── Exactly 1 feasibility_warning (skiing only, not diving) ──
+FW_CT=$(count_sse "feasibility_warning")
+check "feasibility_warning count = 1 (skiing only)" "$FW_CT" "1" || F=false
+
+FW_TOPIC=$(extract_sse_data "feasibility_warning" "topic")
+check "feasibility_warning topic is skiing" "$FW_TOPIC" "skiing" || F=false
+
+# ── get_specialist_advice CALLED (diving is feasible → dispatched) ──
+TOOLS=$(extract_tools)
+echo "  ℹ  Tools called: $TOOLS"
+check_contains "get_specialist_advice called (diving dispatched)" "$TOOLS" "get_specialist_advice" || F=false
+
+# ── Strategy sections: diving feasible, skiing infeasible ──
+SECS=$(extract_doc "strategy_sections")
+SEC_CT=$(jlen "$SECS")
+check_gte "strategy_sections ≥ 2" "$SEC_CT" 2 || F=false
+
+DIVING_STATUS=$(echo "$SECS" | python3 -c "
+import sys,json
+try:
+    secs=json.load(sys.stdin)
+    for s in secs:
+        if s.get('specialist_type','').lower()=='diving':
+            print(s.get('feasibility_status','unknown'))
+            break
+    else: print('missing')
+except: print('error')
+" 2>/dev/null || echo "error")
+check "Diving section is feasible" "$DIVING_STATUS" "feasible" || F=false
+
+SKIING_STATUS=$(echo "$SECS" | python3 -c "
+import sys,json
+try:
+    secs=json.load(sys.stdin)
+    for s in secs:
+        if s.get('specialist_type','').lower()=='skiing':
+            print(s.get('feasibility_status','unknown'))
+            break
+    else: print('missing')
+except: print('error')
+" 2>/dev/null || echo "error")
+check "Skiing section is infeasible" "$SKIING_STATUS" "infeasible" || F=false
+
+# ── Diving tiles exist ──
+TILES=$(extract_doc "tiles")
+HAS_DIVING_TILES=$(echo "$TILES" | python3 -c "
+import sys,json
+try:
+    raw=sys.stdin.read().strip()
+    if not raw: print('false'); sys.exit()
+    t=json.loads(raw)
+    vals=t.values() if isinstance(t,dict) else (t if isinstance(t,list) else [])
+    found=0
+    for v in vals:
+        if not isinstance(v,dict): continue
+        tags=v.get('tags',[]) or []
+        title=(v.get('title','') or '').lower()
+        meta=v.get('meta',{}) or {}
+        spec_type=(meta.get('specialist_type','') or '').lower()
+        if 'diving' in tags or 'dive' in title or 'snorkel' in title or spec_type=='diving':
+            found+=1
+    print('true' if found>=1 else 'false')
+except: print('false')
+" 2>/dev/null | head -1 || echo "false")
+check "Diving tiles present" "$HAS_DIVING_TILES" "true" || F=false
+
+# ── Tokens streamed ──
+TOKEN_CT=$(count_sse "token")
+check_gt "Tokens streamed" "$TOKEN_CT" 0 || F=false
+
+else F=false; fi; else F=false; fi
+$F && _flow pass 24 || _flow fail 24
+_flow_end 24
+echo ""
+fi
+
 
 # ── Final report ─────────────────────────────────────────────────────────────
 # Analyze all captured logs, print combined report, delete temp files.

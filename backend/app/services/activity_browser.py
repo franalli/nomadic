@@ -61,7 +61,7 @@ MAX_BROWSE_RESULTS = 20
 # Cache tuning
 L1_TTL_SECONDS = 21600  # 6h, warm enough for repeated browse usage
 L1_MAX_SIZE = 256
-L2_TTL_HOURS = settings.tile_cache_ttl_hours
+L2_TTL_HOURS = settings.google_places_enrichment_cache_ttl_hours
 
 # L1 memory cache and in-flight singleflight tracking.
 _browse_cache = MemoryCache(maxsize=L1_MAX_SIZE, ttl=L1_TTL_SECONDS)
@@ -183,12 +183,6 @@ async def _set_cached_browse(cache_key: str, tiles: list[dict[str, Any]]) -> Non
             )
     except Exception as e:
         logger.debug("[BROWSE] L2 write failed key=%s err=%s", cache_key, e)
-
-
-def _price_level_to_range(price_level: Optional[int]) -> Optional[str]:
-    """Map Google Places price_level (0-4) to human-readable range."""
-    mapping = {0: "Free", 1: "$", 2: "$$", 3: "$$$", 4: "$$$$"}
-    return mapping.get(price_level) if price_level is not None else None
 
 
 def _duration_hours_to_label(hours: float) -> str:

@@ -38,8 +38,9 @@ class TestTilesPerCategory:
 
         Diving = 5 content items = 5 specialist days.
         trip_days = 13, specialist_days = 5, free_days = max(0, 13 - 5 - 2) = 6.
-        With niche specialist present, cap = 4.
-        result = min(base, 4) = 4.
+        apd=2: base=max(2,(11*2)//1)=22, cap=4 (specialist_days>0)
+        APD>1: needed=ceil(6*2/1)=12, tile_cap_ceiling=12, cap=12
+        tiles=min(22,12)=12
         """
         state = _make_state(
             start_date="2026-03-01",
@@ -51,11 +52,13 @@ class TestTilesPerCategory:
                 },
             ],
         )
+        # Tier1 guard requires active categories to include diving
+        state.metadata.setdefault("trip_settings", {})["activity_settings"] = {
+            "categories": ["diving"]
+        }
 
         result = _compute_tiles_per_category(state, {"yoga"})
-        # With a niche specialist, cap is 4
-        assert result >= 2, f"Expected >= 2 tiles for 13-day trip with free days, got {result}"
-        # And not inflated beyond hard cap (12)
+        assert result >= 4, f"Expected >= 4 tiles (minimum floor), got {result}"
         assert result <= 12, f"Expected <= 12 tiles (hard cap), got {result}"
 
     def test_all_specialist_days_no_free(self):
@@ -77,8 +80,8 @@ class TestTilesPerCategory:
 
         result = _compute_tiles_per_category(state, {"yoga"})
         # All days occupied by specialist — tile count should not be inflated
-        # The formula clamps to minimum 2
-        assert result >= 2, f"Expected >= 2 (minimum), got {result}"
+        # Minimum floor is 4
+        assert result >= 4, f"Expected >= 4 (minimum floor), got {result}"
 
     def test_single_category_scaling(self):
         """Yoga-only 10-day trip → tile count scales with free days.

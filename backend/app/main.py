@@ -172,7 +172,7 @@ logger = logging.getLogger(__name__)
 
 _GOOGLE_PLACES_PHOTO_NAME_RE = re.compile(r"^places/[A-Za-z0-9_-]+/photos/[A-Za-z0-9_-]+$")
 
-_GOOGLE_PLACES_PHOTO_MAX_SIGNED_TTL_SECONDS = 30 * 60
+_GOOGLE_PLACES_PHOTO_MAX_SIGNED_TTL_SECONDS = settings.google_places_photo_signed_ttl_max
 
 
 def _media_proxy_signing_secret() -> str:
@@ -181,7 +181,6 @@ def _media_proxy_signing_secret() -> str:
         settings.media_proxy_signing_key
         or settings.admin_api_key
         or settings.google_maps_api_secret
-        or settings.google_maps_api_key
         or ""
     ).strip()
     if not secret:
@@ -238,9 +237,11 @@ def _attach_signed_photo_urls_to_browse_tiles(
     session_id: str,
     max_width: int = 256,
     max_height: int = 256,
-    ttl_seconds: int = 300,
+    ttl_seconds: int = 3600,
 ) -> list[dict[str, Any]]:
     """Rewrite browse tile image URLs to signed proxy URLs when photo_name is present."""
+    if not settings.google_places_photos_enabled:
+        return tiles
     for tile in tiles:
         if not isinstance(tile, dict):
             continue
@@ -827,6 +828,9 @@ async def proxy_google_places_photo(
 
     Keeps API keys on the backend while returning image bytes to the client.
     """
+    if not settings.google_places_photos_enabled:
+        raise HTTPException(status_code=503, detail="Google Places photos disabled")
+
     session_id = get_session_from_request(request)
     session = await get_session_by_token(db, session_id)
     if not session:
@@ -866,10 +870,18 @@ async def proxy_google_places_photo(
             headers={"ETag": etag, "Cache-Control": "private, max-age=604800"},
         )
 
+    from app.tile_service.google_places_provider import (
+        _is_places_circuit_open,
+        _record_places_circuit_failure,
+        _record_places_circuit_success,
+        record_google_places_usage,
+    )
+
     # Server-side photo cache — session-independent for cross-session sharing
     photo_cache_key = f"photo::{photo_name}::{max_width}x{max_height}"
     cached_photo = _photo_bytes_cache.get(photo_cache_key)
     if isinstance(cached_photo, tuple) and len(cached_photo) == 2:
+        record_google_places_usage("photo_proxy", "cache_hit")
         cached_bytes, cached_ct = cached_photo
         return Response(
             content=cached_bytes,
@@ -879,13 +891,6 @@ async def proxy_google_places_photo(
                 "ETag": etag,
             },
         )
-
-    from app.tile_service.google_places_provider import (
-        _is_places_circuit_open,
-        _record_places_circuit_failure,
-        _record_places_circuit_success,
-        record_google_places_usage,
-    )
 
     if _is_places_circuit_open("photo_proxy"):
         return JSONResponse(status_code=503, content={"detail": "Service temporarily unavailable"})
@@ -957,10 +962,13 @@ async def signed_google_places_photo_url(
     name: str,
     max_width: int = 640,
     max_height: int = 480,
-    ttl_seconds: int = 300,
+    ttl_seconds: int = 3600,
     db: AsyncSession = async_db_dependency,
 ):
     """Issue short-lived, session-bound signed URLs for Google Places photo proxy."""
+    if not settings.google_places_photos_enabled:
+        raise HTTPException(status_code=503, detail="Google Places photos disabled")
+
     session_id = get_session_from_request(request)
     session = await get_session_by_token(db, session_id)
     if not session:

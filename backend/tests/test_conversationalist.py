@@ -7,6 +7,7 @@ from app.planner.conversationalist import (
     _VOICE_DESTINATION_SET,
     _VOICE_FALLBACK,
     _VOICE_GREETING,
+    _VOICE_INFEASIBLE_ACTIVITY,
     _VOICE_PLAN_GENERATED,
     _VOICE_PREFERENCE_CHANGE,
     _VOICE_QUESTION,
@@ -245,6 +246,7 @@ class TestSentenceLimitDict:
             _VOICE_QUESTION,
             _VOICE_GREETING,
             _VOICE_FALLBACK,
+            _VOICE_INFEASIBLE_ACTIVITY,
         }
         assert set(_SENTENCE_LIMIT.keys()) == expected
 

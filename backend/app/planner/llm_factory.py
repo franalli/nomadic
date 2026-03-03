@@ -11,7 +11,6 @@ All imports are lazy so unused providers add zero startup cost.
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Mapping
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -282,48 +281,3 @@ def gemini_safe_schema(node: object) -> object:
     if isinstance(node, list):
         return [gemini_safe_schema(item) for item in node]
     return node
-
-
-def extract_json_content(response: object) -> str:
-    """
-    Extract JSON string from a LangChain AIMessage response.
-
-    Handles:
-    - String content (OpenAI standard)
-    - List content (Gemini multi-part)
-    - Markdown code fence stripping (```json ... ```)
-
-    Returns raw JSON string for Pydantic model_validate_json().
-    """
-    content = getattr(response, "content", response)
-
-    # Handle Gemini list-of-parts response
-    if isinstance(content, list):
-        parts = []
-        for p in content:
-            if isinstance(p, str):
-                parts.append(p)
-            elif isinstance(p, dict):
-                parts.append(p.get("text", ""))
-            elif hasattr(p, "text"):
-                parts.append(p.text)
-        content = "".join(parts)
-
-    if not isinstance(content, str):
-        content = str(content)
-
-    content = content.strip()
-
-    # Strip markdown code fences (```json ... ``` or ``` ... ```)
-    # Try closed fence first, then fall back to unclosed (LLM truncation)
-    fence_match = re.search(r"```(?:json)?\s*\r?\n(.*?)\r?\n\s*```", content, re.DOTALL)
-    if fence_match:
-        content = fence_match.group(1).strip()
-    else:
-        # Unclosed fence: extract everything after the opening fence marker
-        # Strip trailing backticks in case the closing ``` is on the same line as content
-        open_match = re.search(r"```(?:json)?\s*\r?\n(.*)", content, re.DOTALL)
-        if open_match:
-            content = open_match.group(1).strip().rstrip("`")
-
-    return content

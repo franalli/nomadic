@@ -100,9 +100,13 @@ class TestComputeTilesPerCategory:
                     "content_added": [{"title": "Reef Dive"}, {"title": "Wreck Dive"}],
                 },
             ],
+            categories=["diving"],
         )
 
-        # apd=2 (default): base=max(2,(8*2)//1)=16, cap=4→lifted to 12, tiles=12
+        # specialist_days=2, free=6, total_placeable=8
+        # apd=2: base=max(2,(8*2)//1)=16, cap=4 (specialist_days>0)
+        # APD>1: needed=ceil(6*2/1)=12, tile_cap_ceiling=12, cap=12
+        # tiles=min(16,12)=12
         result = _compute_tiles_per_category(state, {"yoga"})
         assert result == 12
 
@@ -154,6 +158,7 @@ class TestComputeTilesPerCategory:
                 },
             ],
             activities_per_day=2,
+            categories=["diving"],
         )
 
         # trip_days = 10, specialist_days = 2
@@ -179,10 +184,13 @@ class TestComputeTilesPerCategory:
                 },
             ],
             activities_per_day=1,
+            categories=["diving"],
         )
 
-        # cap = 4 (specialist_days > 0), tiles_per_cat = min(8, 4) = 4
-        # Coverage floor: min_needed = ceil(6 * 1 / 1) = 6
+        # specialist_days=2, free=6, total_placeable=8
+        # base = max(2, (8*1)//1) = 8, cap = 4 (specialist_days > 0)
+        # APD=1: no needed lift. tiles = min(8, 4) = 4
+        # Coverage floor: 4*1=4 < 6*1=6, min_needed = ceil(6/1) = 6
         # tiles_per_cat = max(4, min(6, 12)) = 6
         result = _compute_tiles_per_category(state, {"yoga"})
         assert result == 6, f"APD=1 mixed trip with coverage floor should be 6, got {result}"
@@ -254,6 +262,7 @@ class TestComputeTilesPerCategory:
                 },
             ],
             activities_per_day=2,
+            categories=["diving"],
         )
 
         # specialist_days = 2, free_days = 15 - 2 - 2 = 11 (>7)

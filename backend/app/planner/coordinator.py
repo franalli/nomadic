@@ -13,6 +13,7 @@ SSE event contract is identical to plan_graph.py:
   - {"type": "token",       "data": str}
   - {"type": "node_status", "data": {...}}
   - {"type": "partial",     "data": {kind, payload}}
+  - {"type": "feasibility_warning", "data": {topic, status, reason, alternative}}
   - {"type": "complete",    "data": {...}}
   - {"type": "error",       "message": str}
 """
@@ -558,10 +559,14 @@ def plan_turn(
     #   - day_cards present  → skip to GENERATE_RESPONSE only (full itinerary ready)
     #   - strategy_sections present but no day_cards → skip specialists/local_intel,
     #     run SEARCH_TILES + BUILD_ITINERARY + GENERATE_RESPONSE
+    categories_changed = "activity_categories" in state.get("turn_meta", {}).get(
+        "fields_changed", []
+    )
     if (
         change_type == ChangeType.INITIAL_PLAN
         and classifier.reasoning
         and "GENERATE_PLAN_NOW" in classifier.reasoning
+        and not categories_changed
     ):
         if state.get("day_cards"):
             return ExecutionPlan(
@@ -784,19 +789,21 @@ def _compute_dispatch_list(
     # Filter to Tier 1 specialists only (Tier 2 are handled via tiles)
     tier1_active = sorted({c for c in all_categories if c in TIER1_SPECIALIST_NAMES})
 
+    # Filter out topics that feasibility pre-check marked as infeasible.
+    # Caveats are kept — the activity IS possible but with limitations.
+    prechecks = state.get("turn_meta", {}).get("feasibility_prechecks", {})
+    if prechecks:
+        tier1_active = [
+            t for t in tier1_active if prechecks.get(t, ("feasible",))[0] != "infeasible"
+        ]
+
     if classifier.change_type in _FULL_INVALIDATION_CHANGES:
         if classifier.change_type == ChangeType.DESTINATION_CHANGE:
-            # Only dispatch specialists explicitly mentioned in the new message.
-            # Check affects, specialist_hints, AND activity_categories.
-            mentioned = (
-                {_norm_topic(t) for t in classifier.affects}
-                | {_norm_topic(h) for h in classifier.specialist_hints}
-                | {_norm_topic(c) for c in classifier.activity_categories}
-            )
-            new_specialists = [c for c in tier1_active if c in mentioned]
-            if not new_specialists and not mentioned & TIER1_SPECIALIST_NAMES:
-                return []  # Don't carry forward from old destination
-            return new_specialists if new_specialists else tier1_active
+            # Dispatch all active Tier 1 categories for the new destination.
+            # Categories are preserved through destination change (feasibility
+            # pre-check handles viability), so tier1_active includes both
+            # carried-forward and newly mentioned categories.
+            return tier1_active
         # Fresh start — dispatch all active Tier 1 specialists
         return tier1_active
 
@@ -1156,6 +1163,20 @@ def _merge_doc_settings(
             sorted(old_cats),
             sorted(new_cats),
         )
+        removed_cats = {_norm_topic(c) for c in old_cats - new_cats}
+        if removed_cats:
+            existing_sections = state.get("strategy_sections", [])
+            state["strategy_sections"] = [
+                s
+                for s in existing_sections
+                if not isinstance(s, dict)
+                or _norm_topic(s.get("specialist_type", "")) not in removed_cats
+            ]
+            sp = state.get("specialist_plans", {})
+            if isinstance(sp, dict):
+                for key in list(sp.keys()):
+                    if _norm_topic(key) in removed_cats:
+                        sp.pop(key, None)
 
 
 def _apply_classifier_to_state(
@@ -1264,13 +1285,25 @@ def _apply_classifier_to_state(
     existing_cats: List[str] = list(activity_settings.get("categories", []))
     new_cats = list(existing_cats)
 
-    # On destination change, clear stale categories — e.g. "diving" is irrelevant
-    # after switching from Bali to Lisbon.  Specialist hints from the NEW message
-    # will be re-added below.
+    # On destination change, preserve user's category selections (e.g. diving).
+    # The feasibility pre-check handles whether an activity is viable at the new
+    # destination — the coordinator shouldn't preemptively clear categories.
+    # Only clear day_preferences since day assignments are destination-specific.
     if classifier.change_type == ChangeType.DESTINATION_CHANGE:
-        new_cats = []
         if activity_settings.get("day_preferences"):
             activity_settings["day_preferences"] = {}
+        # Clear specialist strategy sections — they contain destination-specific
+        # content (one_liner, content_added, hero_image) that is stale after
+        # destination change. Preserve local_expert sections as they'll be
+        # rebuilt independently. Categories persist (user still wants them).
+        # Note: for non-GENERATE_PLAN_NOW paths, _clear_planning_artifacts()
+        # wipes all sections anyway; this matters for GENERATE_PLAN_NOW reuse.
+        existing_sections = state.get("strategy_sections", [])
+        state["strategy_sections"] = [
+            s
+            for s in existing_sections
+            if isinstance(s, dict) and s.get("specialist_type") == "local_expert"
+        ]
 
     # Add specialist hints as categories
     for hint in classifier.specialist_hints:
@@ -1690,6 +1723,7 @@ def _llm_output_to_plan_dict(
         "transit_requirements": [],
         "estimated_cost": None,
         "editorial": llm_output.get("editorial", ""),
+        "alternative_suggestion": llm_output.get("alternative_suggestion"),
         "confidence": 0.8,
     }
 
@@ -1755,7 +1789,7 @@ def _plan_to_strategy_section(
         end_date=trip_plan.get("end_date"),
         feasibility_status=plan_dict.get("feasibility_status", "feasible"),
         feasibility_reason=plan_dict.get("feasibility_reason"),
-        alternative_suggestion=None,
+        alternative_suggestion=plan_dict.get("alternative_suggestion"),
         constraints=constraints,
         content_added=content_added,
         enhancements=[],
@@ -1931,6 +1965,8 @@ async def _prepare_activity_tiles_for_build(state: Dict[str, Any]) -> None:
     """
     if not settings.use_google_places_provider:
         return
+    if not settings.google_places_enrichment_enabled:
+        return
 
     tiles = state.get("tiles", {})
     activity_tiles = tiles.get("activities", [])
@@ -1942,22 +1978,56 @@ async def _prepare_activity_tiles_for_build(state: Dict[str, Any]) -> None:
         return
 
     try:
-        from app.tile_service.google_places_provider import _geocode_destination_async
+        from app.data.demo_curation import is_hero_destination
+        from app.tile_service.google_places_provider import (
+            _geocode_destination_async,
+            _normalize_title_for_cache,
+        )
 
-        # Geocode fallback for tiles missing geo (cheap, needed for builder placement)
-        for i, t in enumerate(activity_tiles):
-            if (
-                isinstance(t, dict)
-                and t.get("source_agent") in _ENRICHABLE_SOURCES
-                and not t.get("geo")
-            ):
-                query = f"{t.get('title', '')}, {destination}"
-                coords = await _geocode_destination_async(query)
-                if coords:
-                    t["geo"] = {"lng": coords[1], "lat": coords[0]}
-                    activity_tiles[i] = t
+        skip_geocode = is_hero_destination(destination)
 
-        # Resolve photo_name → signed proxy URL (free, local computation)
+        if not skip_geocode:
+            # GAP 7: Build lookup from existing tiles that already have geo + google_place_id
+            _geo_by_title: dict[str, dict] = {}
+            for t in activity_tiles:
+                if isinstance(t, dict) and t.get("geo") and t.get("google_place_id"):
+                    _geo_by_title[_normalize_title_for_cache(t.get("title", ""))] = t.get("geo")
+
+            # Geocode fallback for tiles missing geo (cheap, needed for builder placement)
+            for i, t in enumerate(activity_tiles):
+                if (
+                    isinstance(t, dict)
+                    and t.get("source_agent") in _ENRICHABLE_SOURCES
+                    and not t.get("geo")
+                ):
+                    # GAP 7: Try reuse from existing GP tile first
+                    cached_geo = _geo_by_title.get(_normalize_title_for_cache(t.get("title", "")))
+                    if cached_geo:
+                        t["geo"] = dict(cached_geo)
+                        activity_tiles[i] = t
+                        continue
+                    query = f"{t.get('title', '')}, {destination}"
+                    coords = await _geocode_destination_async(query)
+                    if coords:
+                        t["geo"] = {"lng": coords[1], "lat": coords[0]}
+                        activity_tiles[i] = t
+
+            # FIX 15: Destination-level geocode fallback for remaining tiles with no geo
+            dest_geo = None
+            for i, t in enumerate(activity_tiles):
+                if (
+                    isinstance(t, dict)
+                    and t.get("source_agent") in _ENRICHABLE_SOURCES
+                    and not t.get("geo")
+                ):
+                    if dest_geo is None:
+                        coords = await _geocode_destination_async(destination)
+                        dest_geo = {"lng": coords[1], "lat": coords[0]} if coords else {}
+                    if dest_geo:
+                        t["geo"] = dict(dest_geo)
+                        activity_tiles[i] = t
+
+        # Resolve photo_name -> signed proxy URL (free, local computation)
         session_id = state.get("session_id", "")
         if session_id:
             from app.tile_service.google_places_provider import build_signed_photo_url
@@ -2008,20 +2078,38 @@ async def _post_build_enrich_placed_activities(
     """
     if not settings.use_google_places_provider:
         return
+    if not settings.google_places_enrichment_enabled:
+        return
 
     destination = state.get("trip_plan", {}).get("destination", "")
     if not destination:
         return
 
+    from app.data.demo_curation import is_hero_destination
+
+    if is_hero_destination(destination):
+        logger.info("[coordinator] Skipping post-build enrichment for curated: %s", destination)
+        return
+
     try:
         from app.tile_service.google_places_provider import (
+            _normalize_title_for_cache,
             build_signed_photo_url,
             enrich_activities_with_places,
         )
 
+        # Build lookup of existing GP-enriched activity tiles to avoid re-searching
+        existing_tiles = state.get("tiles", {}).get("activities", [])
+        _gp_by_title: dict[str, dict] = {}
+        for t in existing_tiles:
+            if isinstance(t, dict) and t.get("google_place_id"):
+                _gp_by_title[_normalize_title_for_cache(t.get("title", ""))] = t
+
         # Collect non-buffer blocks missing google_place_id that have a summary
         proxies: list[Dict[str, Any]] = []
         block_locations: list[tuple[int, int]] = []  # (day_idx, block_idx)
+        _reused_count = 0
+        session_id = state.get("session_id", "")
         for day_idx, card in enumerate(day_cards):
             blocks = card.get("blocks", [])
             for block_idx, block in enumerate(blocks):
@@ -2034,6 +2122,26 @@ async def _post_build_enrich_placed_activities(
                     continue
                 summary = block.get("summary", "")
                 if not summary:
+                    continue
+                # Check if an existing GP tile matches this block
+                existing = _gp_by_title.get(_normalize_title_for_cache(summary))
+                if existing:
+                    block["google_place_id"] = existing.get("google_place_id")
+                    ex_coords = existing.get("coordinates")
+                    if isinstance(ex_coords, list) and len(ex_coords) >= 2:
+                        block["coordinates"] = {"lng": ex_coords[0], "lat": ex_coords[1]}
+                    elif isinstance(ex_coords, dict):
+                        block["coordinates"] = ex_coords
+                    if existing.get("deeplink"):
+                        block["deeplink"] = existing["deeplink"]
+                    photo_name = existing.get("photo_name") or ""
+                    if photo_name and session_id:
+                        signed_url = build_signed_photo_url(session_id, photo_name)
+                        if signed_url:
+                            block["image_url"] = signed_url
+                    elif existing.get("image_url"):
+                        block["image_url"] = existing["image_url"]
+                    _reused_count += 1
                     continue
                 coords = block.get("coordinates")
                 proxies.append(
@@ -2048,6 +2156,10 @@ async def _post_build_enrich_placed_activities(
                 )
                 block_locations.append((day_idx, block_idx))
 
+        if _reused_count:
+            logger.info(
+                "[coordinator] Reused %d existing GP tiles, skipped enrichment", _reused_count
+            )
         if not proxies:
             return
 
@@ -2058,7 +2170,6 @@ async def _post_build_enrich_placed_activities(
         )
 
         # Write enriched fields back to day_card blocks
-        session_id = state.get("session_id", "")
         enriched_by_id = {t.get("id"): t for t in enriched if isinstance(t, dict)}
         for proxy, (day_idx, block_idx) in zip(proxies, block_locations, strict=True):
             enriched_tile = enriched_by_id.get(proxy["id"])
@@ -2520,7 +2631,11 @@ async def _build_itinerary(
         return None
 
     try:
-        from app.services.itinerary_builder import ItineraryBuilder, ItineraryBuilderInput
+        from app.services.itinerary_builder import (
+            ItineraryBuilder,
+            ItineraryBuilderInput,
+            PreferenceOverrideInput,
+        )
         from app.utils.tile_utils import flatten_tiles_to_id_map
 
         tile_id_map = flatten_tiles_to_id_map(tiles)
@@ -2544,6 +2659,50 @@ async def _build_itinerary(
             else None
         )
 
+        # Build preferences from user-pinned tiles (extends itinerary_adapter
+        # pattern with tile-type routing into hotel/flight/activity buckets)
+        pinned_tiles = state.get("metadata", {}).get("user_pinned_tiles", {})
+        preferences = None
+        if pinned_tiles:
+            active_cats = set(c.lower() for c in (categories or []))
+            day_map: dict[str, int] = {}
+            priority_map: dict[str, str] = {}
+            pref_activity_ids: list[str] = []
+            pref_hotel_ids: list[str] = []
+            pref_flight_ids: list[str] = []
+            for tid, pinned in pinned_tiles.items():
+                tile_data = pinned.get("tile", pinned)
+                tile_type = (tile_data.get("type") or "").lower()
+                tile_cat = ((tile_data.get("meta") or {}).get("category", "") or "").lower()
+                # Classify by tile type
+                if tile_type == "hotel":
+                    pref_hotel_ids.append(tid)
+                elif tile_type == "flight":
+                    pref_flight_ids.append(tid)
+                else:
+                    # Activity — apply category filter
+                    if active_cats and tile_cat and tile_cat not in active_cats:
+                        continue
+                    pref_activity_ids.append(tid)
+                pday = pinned.get("preferred_day")
+                if pday is not None:
+                    day_map[tid] = pday
+                priority_map[tid] = pinned.get("priority", "high")
+            if pref_activity_ids or pref_hotel_ids or pref_flight_ids:
+                preferences = PreferenceOverrideInput(
+                    preferred_activity_ids=pref_activity_ids,
+                    preferred_hotel_ids=pref_hotel_ids,
+                    preferred_flight_ids=pref_flight_ids,
+                    pinned_day_map=day_map,
+                    pinned_priority_map=priority_map,
+                )
+
+        day_preferences = (
+            activity_settings.get("day_preferences")
+            if isinstance(activity_settings, dict)
+            else None
+        )
+
         builder_input = ItineraryBuilderInput(
             start_date=start_date,
             end_date=end_date,
@@ -2551,10 +2710,15 @@ async def _build_itinerary(
             tiles=tile_id_map,
             destination=destination,
             origin=trip_plan.get("origin"),
+            preferences=preferences,
             activity_categories=activity_categories,
+            activity_day_preferences=day_preferences,
             activities_per_day=activities_per_day,
             adults=trip_plan.get("adults", 1) or 1,
             children=trip_plan.get("children", 0) or 0,
+            user_pinned_tiles=pinned_tiles or None,
+            budget=trip_plan.get("budget"),
+            currency=trip_plan.get("currency", "USD"),
         )
 
         builder = ItineraryBuilder()
@@ -2764,6 +2928,18 @@ def _build_envelope(
         bt["flights"] = "suggested"
     if tiles.get("hotels") and bt.get("hotels") in ("off", None):
         bt["hotels"] = "suggested"
+
+    # Second pass: sync from trip_settings state mutations.
+    # _apply_classifier_to_state() may have upgraded booking_types (e.g.
+    # flights → "suggested" on origin detection) but tiles may not exist
+    # yet on this turn, so the tile-based reconciliation above misses it.
+    settings_bt = trip_settings.get("booking_types", {})
+    if isinstance(settings_bt, dict):
+        for btype in ("flights", "hotels", "activities"):
+            settings_val = settings_bt.get(btype)
+            if settings_val in ("suggested", "on") and bt.get(btype) in ("off", None):
+                bt[btype] = settings_val
+
     trip_inputs["booking_types"] = bt
 
     # Persist reconciled booking_types back to state for next turn
@@ -2947,6 +3123,25 @@ def _build_envelope(
         if not ba.get("deeplink_url") and ba.get("deeplink"):
             ba["deeplink_url"] = ba["deeplink"]
 
+    # Stub fix: resolve stuck "pending" local_expert_enrichment states.
+    # Phase B (async enrichment) may not have completed yet on this turn.
+    # If the section has populated content, mark it "ready"; if empty, "not_available".
+    for section in strategy_sections:
+        if not isinstance(section, dict):
+            continue
+        enr = section.get("local_expert_enrichment")
+        if not isinstance(enr, dict) or enr.get("state") != "pending":
+            continue
+        has_content = bool(
+            section.get("constraints_applied")
+            or section.get("content_added")
+            or section.get("travel_intelligence")
+        )
+        section["local_expert_enrichment"] = {
+            **enr,
+            "state": "ready" if has_content else "not_available",
+        }
+
     document: Dict[str, Any] = {
         "trip_context_id": None,
         "trip_inputs": trip_inputs,
@@ -3052,14 +3247,22 @@ async def _execute_step(
         other_plans = state.get("specialist_plans", {})
         removed_topics = {_norm_topic(t) for t in classifier.removal_targets if _norm_topic(t)}
 
-        results = await _dispatch_specialists_parallel(
-            topics=topics,
-            state=state,
-            classifier=classifier,
-            other_plans=other_plans,
-            is_replan=is_replan,
-            preserves=preserves,
-        )
+        # Handle pre-checked infeasible specialists (skip LLM dispatch)
+        prechecks = state.get("turn_meta", {}).get("feasibility_prechecks", {})
+        infeasible_in_dispatch = {t: prechecks[t] for t in topics if t in prechecks}
+        feasible_topics = [t for t in topics if t not in prechecks]
+
+        if feasible_topics:
+            results = await _dispatch_specialists_parallel(
+                topics=feasible_topics,
+                state=state,
+                classifier=classifier,
+                other_plans=other_plans,
+                is_replan=is_replan,
+                preserves=preserves,
+            )
+        else:
+            results = {}
 
         # Store specialist plans and build strategy sections
         specialist_plans = dict(state.get("specialist_plans", {}))
@@ -3084,6 +3287,32 @@ async def _execute_step(
                 for s in state.get("strategy_sections", [])
                 if isinstance(s, dict) and s.get("specialist_type") == "local_expert"
             ]
+
+        # Build sections for infeasible specialists directly (no LLM call).
+        # Placed AFTER full invalidation wipe so sections survive initial_plan/destination_change.
+        if infeasible_in_dispatch:
+            from app.planner.services.section_builder import build_specialist_section
+
+            trip_plan_snap: Dict[str, Any] = state.get("trip_plan", {})
+            for inf_topic, (inf_status, inf_reason, inf_alt) in infeasible_in_dispatch.items():
+                section = build_specialist_section(
+                    topic=inf_topic,
+                    destination=trip_plan_snap.get("destination"),
+                    start_date=trip_plan_snap.get("start_date"),
+                    end_date=trip_plan_snap.get("end_date"),
+                    feasibility_status=inf_status,
+                    feasibility_reason=inf_reason,
+                    alternative_suggestion=inf_alt,
+                    constraints=[],
+                    content_added=[],
+                    enhancements=[],
+                    hero_image=None,
+                )
+                sections = list(state.get("strategy_sections", []))
+                sections = [s for s in sections if s.get("specialist_type") != inf_topic]
+                sections.append(section)
+                state["strategy_sections"] = sections
+
         for topic, llm_output_dict in results.items():
             if llm_output_dict is not None:
                 brief = build_brief(topic, state, classifier, specialist_plans)
@@ -3345,7 +3574,70 @@ async def execute_turn(
         elif classifier.intent == "RESET":
             pass
 
-        # Step 4: Plan the turn
+        # Step 4a: Pre-check feasibility for geographic-constrained specialists.
+        # Runs BEFORE plan_turn() so _compute_dispatch_list() can filter out
+        # infeasible topics — preventing phantom DISPATCH_SPECIALISTS steps.
+        if classifier.intent == "PLANNING":
+            dest = state.get("trip_plan", {}).get("destination") or classifier.destination
+            # Determine candidate topics from activity settings (same source as _compute_dispatch_list)
+            activity_settings_fc = state.get("trip_settings", {}).get("activity_settings", {})
+            candidate_topics = [
+                c for c in activity_settings_fc.get("categories", []) if c in TIER1_SPECIALIST_NAMES
+            ]
+            if dest and candidate_topics:
+                from app.planner.services.feasibility_service import batch_feasibility_precheck
+
+                feasibility_prechecks = await batch_feasibility_precheck(candidate_topics, dest)
+                if feasibility_prechecks:
+                    state["turn_meta"]["feasibility_prechecks"] = feasibility_prechecks
+                    logger.info(
+                        "[coordinator] Feasibility pre-check: %s",
+                        {t: s for t, (s, _, _) in feasibility_prechecks.items()},
+                    )
+                    # Emit SSE warnings for immediate frontend toast feedback
+                    for topic, (status, reason, alternative) in feasibility_prechecks.items():
+                        if status == "infeasible":
+                            yield {
+                                "type": "feasibility_warning",
+                                "data": {
+                                    "topic": topic,
+                                    "status": status,
+                                    "reason": reason,
+                                    "alternative": alternative,
+                                },
+                            }
+
+        # Build strategy sections for infeasible specialists directly (no LLM call).
+        # Done here because _compute_dispatch_list filters them out of the dispatch
+        # list, so _execute_step's DISPATCH_SPECIALISTS branch never sees them.
+        if classifier.intent == "PLANNING":
+            _fc_prechecks = state.get("turn_meta", {}).get("feasibility_prechecks", {})
+            if _fc_prechecks:
+                from app.planner.services.section_builder import build_specialist_section
+
+                _tp_snap: Dict[str, Any] = state.get("trip_plan", {})
+                for _fc_topic, (_fc_status, _fc_reason, _fc_alt) in _fc_prechecks.items():
+                    if _fc_status != "infeasible":
+                        continue
+                    _fc_section = build_specialist_section(
+                        topic=_fc_topic,
+                        destination=_tp_snap.get("destination"),
+                        start_date=_tp_snap.get("start_date"),
+                        end_date=_tp_snap.get("end_date"),
+                        feasibility_status=_fc_status,
+                        feasibility_reason=_fc_reason,
+                        alternative_suggestion=_fc_alt,
+                        constraints=[],
+                        content_added=[],
+                        enhancements=[],
+                        hero_image=None,
+                    )
+                    _sections = list(state.get("strategy_sections", []))
+                    _sections = [s for s in _sections if s.get("specialist_type") != _fc_topic]
+                    _sections.append(_fc_section)
+                    state["strategy_sections"] = _sections
+
+        # Step 4b: Plan the turn (feasibility prechecks are now available for _compute_dispatch_list)
         plan = plan_turn(classifier, state)
         logger.info(
             "[coordinator] Execution plan: %s (steps=%d, est_llm=%d)",

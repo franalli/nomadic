@@ -29,6 +29,7 @@ const TileThumbnail = memo(function TileThumbnail({ tile }: { tile: Tile }) {
       <img
         src={imageSrc}
         alt={tile.title}
+        loading="lazy"
         className="w-full h-full object-cover"
         onError={handleError}
       />

@@ -173,6 +173,7 @@ export function LogisticsBlock({
           <img
             src={resolvedImage}
             alt={hotelName || config.label}
+            loading="lazy"
             className={(type === 'arrival' || type === 'departure')
               ? 'w-7 h-7 object-contain'
               : 'w-full h-full object-cover'

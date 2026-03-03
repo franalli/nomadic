@@ -175,6 +175,7 @@ function ImageCarousel({ images, title }: { images: string[]; title?: string }) 
       <img
         src={images[currentIndex]}
         alt={title ?? ''}
+        loading="lazy"
         className="h-full w-full object-cover"
       />
 

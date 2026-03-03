@@ -4,8 +4,8 @@
 
 - **Focus:** UX polish, cost optimization, and shipping speed
 - **Secondary:** Post-demo delivery hardening across frontend/backend planner interactions
-- **Active files:** `docs/*` (SSoT reconciliation scope for this session)
-- **Active work:** UX and interaction polish, cost-aware recommendation optimizations, and SSoT doc alignment in `docs/*`
+- **Active files:** `backend/app/config.py`, `backend/app/main.py`, `backend/app/planner/coordinator.py`, `backend/app/planner/conversationalist.py`, `backend/app/planner/services/feasibility_service.py`, `backend/app/planner/specialist_registry.py`, `backend/app/tile_service/google_places_provider.py`, `frontend/hooks/useChatSend.ts`, `frontend/hooks/useChatSse.ts`, `frontend/lib/api.ts`, `frontend/lib/googlePlacesPhoto.ts`, `docs/repo_structure.md`, `docs/plan_graph_analysis.md`, `docs/data-contracts.md`, `docs/design-system.md`, `docs/ux_unified_architecture.md`, `.claude/agents/frontend-specialist.md`, `.codex/agents/frontend-specialist.md`, `CLAUDE.md`
+- **Active work:** UX and interaction polish, cost-aware recommendation optimizations, SSoT doc alignment in `docs/*`, and agent-spec trigger/ownership reconciliation
 - **Known broken:** none explicitly tracked in current working diff
 - **DO NOT touch this sprint:** `backend/app/planner/llm_factory.py` provider/model-routing contract, API/schema compatibility surfaces
 
@@ -118,7 +118,7 @@ These four docs override your assumptions. Read before generating code.
 
 - **Frontend:** Next.js 16, React 19, TypeScript, Tailwind, Zustand, Framer Motion, Mapbox GL
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy, Alembic, LangGraph, LangChain (OpenAI + Gemini)
-- **LLM Providers:** OpenAI (gpt-4o family), Google (gemini-2.5 family) — via `llm_factory.py`; models configured per `settings.*_model` env vars
+- **LLM Providers:** OpenAI + Google Gemini via `llm_factory.py`; models configured via `settings.*_model` env vars
 - **Testing:** Vitest (frontend), pytest (backend)
 - **Linting:** ESLint + Prettier (frontend), Ruff (backend)
 
@@ -142,7 +142,7 @@ rm -f backend/test_plan_document_pytest.db*
 
 # Environment
 frontend/.env.local → NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN, NEXT_PUBLIC_DEBUG_LOGS
-backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY, ROUTER_MODEL, EXTRACTION_MODEL, SPECIALIST_MODEL, LOCAL_EXPERT_MODEL, GUARD_MODEL, SYNTHESIZER_PLANNING_MODEL, SYNTHESIZER_EXPLORATION_MODEL, EXPERIENCE_MODEL, IATA_RESOLVER_MODEL, UNSPLASH_ACCESS_KEY, GOOGLE_MAPS_API_KEY, DEBUG, DEBUG_PLAN_MESSAGES, CLEAR_L2_ON_RESET
+backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY, ROUTER_MODEL, EXTRACTION_MODEL, SPECIALIST_MODEL, LOCAL_EXPERT_MODEL, GUARD_MODEL, SYNTHESIZER_PLANNING_MODEL, SYNTHESIZER_EXPLORATION_MODEL, EXPERIENCE_MODEL, IATA_RESOLVER_MODEL, UNSPLASH_ACCESS_KEY, GOOGLE_MAPS_API_KEY, GOOGLE_MAPS_API_SECRET, ADMIN_API_KEY, MEDIA_PROXY_SIGNING_KEY, FRONTEND_ORIGIN, COOKIE_DOMAIN, GOOGLE_PLACES_PHOTOS_ENABLED, MAX_SESSIONS_PER_IP_HOUR, DEBUG, DEBUG_PLAN_MESSAGES, CLEAR_L2_ON_RESET
 cd backend && alembic upgrade head      # DB migrations
 docker compose up db --build            # Docker DB
 ```

@@ -45,6 +45,30 @@ _QUALIFIERS = frozenset(
         "guided",
         "private",
         "group",
+        # Articles
+        "the",
+        "a",
+        "an",
+        # Prepositions
+        "at",
+        "in",
+        "of",
+        "and",
+        # Generic filler
+        "site",
+        "spot",
+    }
+)
+
+_TRAILING_SUFFIXES = frozenset(
+    {
+        "point",
+        "area",
+        "center",
+        "centre",
+        "complex",
+        "park",
+        "beach",
     }
 )
 
@@ -55,9 +79,16 @@ def simplify_specialist_title(title: str) -> str:
     Specialist tiles often have names like "USAT Liberty Shipwreck Dive"
     that are too domain-specific for Google Places text search. Removing
     sport qualifiers yields "USAT Liberty Shipwreck" which matches better.
+
+    Trailing venue-type words are also stripped (preserves "Central Park"
+    as input but strips "Dive Site" -> "Dive").
     """
     words = title.split()
     simplified = [w for w in words if w.lower() not in _QUALIFIERS]
+    # Strip trailing venue-type words only when >1 word remains
+    # (preserves "Central Park", "Kuta Beach"; strips "Surf Session Beach" → "Surf Session")
+    while len(simplified) > 1 and simplified[-1].lower() in _TRAILING_SUFFIXES:
+        simplified.pop()
     return " ".join(simplified) if simplified else title
 
 

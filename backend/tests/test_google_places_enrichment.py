@@ -26,12 +26,19 @@ _ASYNCIO_SLEEP = "app.tile_service.google_places_provider.asyncio.sleep"
 
 
 @pytest.fixture(autouse=True)
-def _clear_enrich_l1_cache():
-    from app.tile_service.google_places_provider import _enrich_mem
+def _clear_enrich_state():
+    import app.tile_service.google_places_provider as provider
 
-    _enrich_mem.clear()
+    provider._enrich_mem.clear()
+    provider._enrich_inflight.clear()
+    # Reset shared httpx client so tests using httpx.AsyncClient mock get a fresh client
+    provider._places_http_client = None
+    # Reset circuit breaker state from previous tests
+    provider.clear_google_places_circuit_breaker()
     yield
-    _enrich_mem.clear()
+    provider._enrich_mem.clear()
+    provider._enrich_inflight.clear()
+    provider._places_http_client = None
 
 
 class _FakeResponse:
@@ -70,6 +77,8 @@ class _FakeClient:
 class _FakeAsyncHttpClient:
     """httpx.AsyncClient test double for end-to-end enrichment tests."""
 
+    is_closed = False
+
     def __init__(self, post_handler, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
         self._post_handler = post_handler
 
@@ -79,7 +88,7 @@ class _FakeAsyncHttpClient:
     async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN001
         return False
 
-    async def post(self, url, headers=None, json=None):  # noqa: ANN001, ANN002, ANN003
+    async def post(self, url, headers=None, json=None, **kwargs):  # noqa: ANN001, ANN002, ANN003
         return await self._post_handler(url=url, headers=headers, json=json)
 
 

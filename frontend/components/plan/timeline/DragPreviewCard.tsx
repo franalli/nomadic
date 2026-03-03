@@ -42,6 +42,7 @@ export function DragPreviewCard({ block }: DragPreviewCardProps) {
           <img
             src={block.image_url}
             alt=""
+            loading="eager"
             className="h-10 w-10 rounded-lg object-cover shrink-0"
           />
         )}

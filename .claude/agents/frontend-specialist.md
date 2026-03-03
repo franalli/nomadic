@@ -7,7 +7,8 @@ description: >
   pill chips, timeline blocks, tile cards, Framer Motion, Mapbox, mobile layout,
   ghost timeline, content policy guard, loader states, fill-day flow,
   preference auto-regen, stream parser, browse activities, booking drawer,
-  undo stack, drag-and-drop, travel intelligence, consent/legal,
+  undo stack, drag-and-drop, travel intelligence, consent/legal, trip chrome bar,
+  booking summary, enrichment cache, theme mode constants,
   or any file under frontend/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
@@ -32,7 +33,7 @@ Before ANY code change, read the relevant SSoT doc:
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 
-- **Coordinator architecture is law.** Backend emits `plan_view_state` from coordinator envelopes — frontend reads it, never fabricates it (exception: `S1_DESTINATION_SET` is frontend-only).
+- **Coordinator architecture is law.** Backend emits `plan_view_state` from coordinator envelopes — frontend reads it, never fabricates it (frontend-only guards: `S0_EMPTY`, `S1_DESTINATION_SET`).
 - **TripPlan is the only state SSoT.** No parallel state objects on frontend.
 - **No hardcoded world data.** No location lists, city enums, airport codes, coordinate lookups.
 - **Single Renderer Pattern.** `StrategyStageRenderer` adapts to data density — never swap for separate view components.
@@ -55,7 +56,8 @@ frontend/
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
                      PlanHeader, NextStepBar, planStateHelpers,
                      CoreChip, UnifiedChipRow, TripHealthBar, TripSummaryPills,
-                     BookingPlanningView, ChipGroup, ChipScrollContainer,
+                     BookingPlanningView, BookingSummary, TripChromeBar,
+                     ChipGroup, ChipScrollContainer,
                      FullDensityTimeline, PdfExportButton,
                      TimelineBlockList,
                      TimelineDayCard, useTimelineBufferLogic,
@@ -99,7 +101,6 @@ frontend/
   hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
                      usePreferenceAutoRegen, useScrollCollapse, useSheetManager,
                      useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation,
-                     useActivityColorMap,
                      useChatEffects, useChatScrolling, useChatSend, useChatSse,
                      useMapSync, useUndoStack
   types/           → chat.ts, document.ts, generated.ts, hooks.ts, loader.ts,
@@ -111,9 +112,12 @@ frontend/
                      date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      pdfData.ts, summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
+                     enrichment-cache.ts, theme.ts,
                      categoryNormalization.ts, popular-places.ts, showMutationToast.ts,
                      googlePlacesPhoto.ts, travelIntel.ts,
                      use-sync-external-store-shim.js
+  e2e/             → Playwright end-to-end tests (`rome-golden-path.spec.ts`)
+  playwright.config.ts → Playwright test runner configuration
   __tests__/       → Vitest tests
   public/          → Static assets (logos, marketing imagery)
   scripts/         → Frontend utility scripts (build/dev support)
@@ -130,7 +134,7 @@ frontend/
 
 - **Changing `documentStore` shape** → Read `data-contracts.md` Section 3 first. Store shape is a shared contract.
 - **Modifying streaming callbacks** → SSE (graph_plan) and NDJSON (expand-itinerary) have different protocols. Read both `streamParser.ts` and `api.ts`.
-- **Touching `plan_view_state` logic** → Backend is SSoT. Frontend reads, never fabricates (except `S1_DESTINATION_SET`).
+- **Touching `plan_view_state` logic** → Backend is SSoT. Frontend reads, never fabricates (frontend-only guards: `S0_EMPTY`, `S1_DESTINATION_SET`).
 - **Editing timeline variant mapping** → S3_ITINERARY_READY→"real", S3_EDITING/S2_STRATEGY_READY→"draft", all others→"ghost". Read `StrategyStageRenderer.tsx` (`computeTimelineVariant`).
 - **Modifying fill-day flow** → Requires `claimFillDay`/`releaseFillDay` mutex. Read `documentStore.ts` guards.
 - **Changing S3→S2 transitions** → Downgrade blocked when day_cards exist. This is intentional.
@@ -193,7 +197,7 @@ Always filter before mapping: `items.filter(img => img.image_url).map(...)`. App
 
 ### Dates Gate Plan Tab
 
-Plan tab MUST be locked until `start_date` is set. Strategy content alone does NOT unlock it.
+Plan tab MUST be locked until destination + full date range (`start_date` + `end_date`) are set. Strategy content alone does NOT unlock it.
 
 ### Right Panel Never Empty
 
@@ -201,7 +205,7 @@ After first user interaction, always show something: hero, cards, or full plan.
 
 ### Streaming
 
-- SSE (`/api/graph_plan/stream`): `onToken`, `onComplete`, `onError`, `onNodeStatus`, `onPartial`
+- SSE (`/api/graph_plan/stream`): `onToken`, `onComplete`, `onError`, `onNodeStatus`, `onPartial`, `onFeasibilityWarning`
 - NDJSON (`/api/expand-itinerary`): `progress` → `envelope` → `done`
 - Always add `X-CSRF-Token` header on unsafe methods
 - Retry: 3 max, exponential backoff 1s→10s + random jitter
@@ -210,6 +214,7 @@ After first user interaction, always show something: hero, cards, or full plan.
 
 - S3→S2 downgrade blocked when day_cards exist
 - Destination change clears: chat, tiles, strategy, day_cards
+- Frontend-only guard states: `S0_EMPTY` (reset intent) and `S1_DESTINATION_SET` (ordering guard)
 - `expandInProgress` mutex prevents preference-regen loops during expand
 - `_fillingDays` per-day mutex prevents concurrent fill-day on same day
 - `graphBuiltItinerary` check in `useChatSse.ts` skips expand when graph response already includes day_cards

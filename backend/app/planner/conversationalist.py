@@ -128,6 +128,16 @@ def _build_trip_context_block(state: Dict[str, Any]) -> str:
     if categories:
         parts.append(f"Activities: {', '.join(c.title() for c in categories)}")
 
+    booking_types = trip_settings.get("booking_types", {})
+    disabled = [k for k in ("flights", "hotels", "activities") if booking_types.get(k) == "off"]
+    if disabled:
+        parts.append(f"Disabled: {', '.join(disabled)} (user turned off)")
+
+    day_prefs = activity_settings.get("day_preferences", {})
+    if day_prefs:
+        pref_parts = [f"{k}: {v} day{'s' if v != 1 else ''}" for k, v in day_prefs.items()]
+        parts.append(f"Day allocation: {', '.join(pref_parts)}")
+
     if not parts:
         return ""
 
@@ -561,6 +571,16 @@ Be specific. Reference actual plan content. Have a point of view.
 Never be generic. If you don't have specialist data, be brief and honest.\
 """
 
+_VOICE_INFEASIBLE_ACTIVITY: str = """\
+## Voice: Infeasible Activity
+Sentence count: 2-3 MAX.
+1. Lead with what's NOT possible and why, in one direct sentence.
+2. Immediately pivot to the best alternative activity or destination.
+3. If the rest of the plan is solid, end with a quick nudge toward it.
+Do NOT apologize. Do NOT say "unfortunately". State the fact and redirect.
+Tone: matter-of-fact expert redirecting to something better.\
+"""
+
 # Sentence limits per voice block — hard-enforced during streaming.
 # These mirror the "Sentence count: X MAX" declarations in each voice block
 # so the system never relies solely on the LLM to self-regulate.
@@ -574,6 +594,7 @@ _SENTENCE_LIMIT: Dict[str, int] = {
     _VOICE_QUESTION: 3,
     _VOICE_GREETING: 1,
     _VOICE_FALLBACK: 2,
+    _VOICE_INFEASIBLE_ACTIVITY: 3,
 }
 _DEFAULT_SENTENCE_LIMIT: int = 3
 
@@ -607,6 +628,29 @@ def _resolve_voice_block(
     user_message: str,
 ) -> str:
     """Resolve the voice block for the current turn."""
+    # Check if ANY specialist is newly infeasible this turn
+    prechecks = state.get("turn_meta", {}).get("feasibility_prechecks", {})
+    has_infeasible_this_turn = (
+        any(
+            isinstance(v, tuple) and len(v) >= 1 and v[0] == "infeasible"
+            for v in prechecks.values()
+        )
+        if prechecks
+        else False
+    )
+
+    if not has_infeasible_this_turn:
+        affected = set(classifier.affects) if classifier.affects else set()
+        has_infeasible_this_turn = any(
+            isinstance(s, dict)
+            and s.get("feasibility_status") == "infeasible"
+            and s.get("specialist_type") in affected
+            for s in state.get("strategy_sections", [])
+        )
+
+    if has_infeasible_this_turn:
+        return _VOICE_INFEASIBLE_ACTIVITY
+
     change_key = classifier.change_type.value
     day_cards = state.get("day_cards", [])
 

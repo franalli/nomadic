@@ -390,10 +390,11 @@ class TestComputeTilesPerCategory:
         result = _compute_tiles_per_category(state, {"yoga"})
         assert result == 38
 
-    def test_very_short_trip_minimum_2(self):
+    def test_very_short_trip_minimum_4(self):
         # 2-day trip, 0 specialist
-        # trip_days = 2, free = max(0, 2-0-2) = 0, placeable = 0
-        # tiles_per_cat = min(max(2, 0//1), 4) = 2
+        # trip_days = 2, free = max(0, 2-0-1) = 1, placeable = 1
+        # base = max(2, (1*2)//1) = 2, cap = 4, tiles = 2
+        # Minimum floor: max(2, 4) = 4
         tp = TripPlan(
             destination="Bali",
             start_date="2026-03-01",
@@ -401,12 +402,15 @@ class TestComputeTilesPerCategory:
         )
         state = _make_state(trip_plan=tp)
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 2
+        assert result == 4
 
     def test_with_specialist_days(self):
         # 10-day trip, 3 specialist days (from strategy_sections), 2 categories
         # trip_days = 10, specialist_days = 3, free = max(0,10-3-2) = 5
-        # total_placeable = 5+3 = 8, tiles_per_cat = min(max(2,8//2),4) = min(4,4) = 4
+        # total_placeable = 5+3 = 8
+        # apd=2: base=max(2,(8*2)//2)=8, cap=4 (specialist_days>0)
+        # APD>1: needed=ceil(5*2/2)=5, cap=min(max(4,5),12)=5
+        # tiles=min(8,5)=5
         tp = TripPlan(
             destination="Bali",
             start_date="2026-03-01",
@@ -420,11 +424,13 @@ class TestComputeTilesPerCategory:
                         "specialist_type": "diving",
                         "content_added": [{}, {}, {}],
                     }
-                ]
+                ],
+                "trip_settings": {
+                    "activity_settings": {"categories": ["diving"]},
+                },
             },
         )
         result = _compute_tiles_per_category(state, {"yoga", "nightlife"})
-        # apd=2: base=max(2,(8*2)//2)=8, cap=4→lifted to 5, tiles=5
         assert result == 5
 
     def test_local_expert_sections_not_counted_as_specialist_days(self):

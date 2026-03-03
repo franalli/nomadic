@@ -437,13 +437,29 @@ def check_tool_contract(backend_log: str, sse_data: str, flow_num: int, report: 
         if tool in tools_called:
             report.error(f"Forbidden tool '{tool}' was called — violates flow contract")
 
+    # Count turns from complete SSE events
+    num_turns = 0
+    for line in sse_data.splitlines():
+        if not line.startswith("data: "):
+            continue
+        try:
+            obj = json.loads(line[6:])
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if obj.get("type") == "complete":
+            num_turns += 1
+    num_turns = max(num_turns, 1)
+
     # Check for duplicate tool calls in same turn
     tool_counts = Counter(tools_called)
     for tool, count in tool_counts.items():
         if count > 1 and tool not in ("extract_trip_fields",):
-            # extract_trip_fields can be called in multi-turn flows
-            multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21}
-            max_expected = 2 if flow_num in multi_turn_flows else 1
+            # response is expected once per turn in multi-turn flows
+            if tool == "response":
+                max_expected = num_turns
+            else:
+                multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21}
+                max_expected = 2 if flow_num in multi_turn_flows else 1
             if count > max_expected:
                 report.warn(
                     f"Tool '{tool}' called {count}× (expected ≤{max_expected}) — possible waste"

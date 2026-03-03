@@ -57,7 +57,7 @@ async def _get_places_http_client() -> httpx.AsyncClient:
         return _places_http_client
     async with _places_client_lock:
         if _places_http_client is None or _places_http_client.is_closed:
-            _places_http_client = httpx.AsyncClient()
+            _places_http_client = httpx.AsyncClient(timeout=10.0)
         return _places_http_client
 
 
@@ -111,7 +111,6 @@ _PLACES_PATH_LABELS = {
     "logistics",
     "geocode",
     "photo_proxy",
-    "post_build_enrich",
 }
 _PLACES_COUNTER_FIELDS = (
     "requests",
@@ -435,7 +434,7 @@ def _get_photo_url(photo_name: str) -> Optional[str]:
 
 
 _PHOTO_NAME_RE = re.compile(r"^places/[A-Za-z0-9_-]+/photos/[A-Za-z0-9_-]+$")
-_PHOTO_SIGNED_TTL_MAX = 30 * 60
+_PHOTO_SIGNED_TTL_MAX = settings.google_places_photo_signed_ttl_max
 
 
 def _media_signing_secret() -> str:
@@ -459,14 +458,18 @@ def build_signed_photo_url(
     *,
     max_width: int = 256,
     max_height: int = 256,
-    ttl_seconds: int = 300,
+    ttl_seconds: int = 3600,
 ) -> Optional[str]:
     """Construct a signed proxy URL for a Google Places photo.
 
     Mirrors the signing logic from main._build_signed_google_places_photo_url
     to avoid circular imports. The proxy endpoint at
     /api/media/google-places-photo validates these signatures.
+
+    Returns None when photos are disabled so callers fall back to Unsplash placeholders.
     """
+    if not settings.google_places_photos_enabled:
+        return None
     if not isinstance(photo_name, str) or not _PHOTO_NAME_RE.fullmatch(photo_name.strip()):
         return None
     secret = _media_signing_secret()
@@ -499,70 +502,6 @@ _geocode_cache: TTLCache = TTLCache(maxsize=1000, ttl=86400)
 # threading.Lock OK: <1us critical section (dict lookup + optional API call guard)
 _geocode_thread_lock = Lock()
 
-_GEOCODE_L2_TTL_HOURS = 8760  # 1 year — geocode results are extremely stable
-
-
-_GEOCODE_L2_SENTINEL = "NEGATIVE"  # Sentinel for known-bad destinations
-
-
-async def _get_cached_geocode(key: str) -> tuple[float, float] | None | str:
-    """Read geocode result from L2 (ResponseCache) and promote to L1 on hit.
-
-    Returns:
-        (lat, lng) on positive hit, _GEOCODE_L2_SENTINEL on negative hit, None on miss.
-    """
-    from app.db import _get_async_session_factory
-    from app.db_models import ResponseCache
-
-    cache_key = f"geocode::v1::{key}"
-    async_session_factory = _get_async_session_factory()
-    try:
-        async with async_session_factory() as db:
-            result = await db.execute(
-                select(ResponseCache)
-                .where(ResponseCache.cache_key == cache_key)
-                .where(ResponseCache.cache_type == "geocode")
-                .where(ResponseCache.expires_at > datetime.now(UTC))
-            )
-            row = result.scalar_one_or_none()
-            if not row or not row.response_json:
-                return None
-            coords = row.response_json.get("coords")
-            if coords is None:
-                # Negative cache: destination was previously not found
-                with _geocode_thread_lock:
-                    _geocode_cache[key] = None
-                record_google_places_usage("geocode", "cache_hit", cache="geocode_l2_negative")
-                return _GEOCODE_L2_SENTINEL
-            if isinstance(coords, list) and len(coords) == 2:
-                pair = (float(coords[0]), float(coords[1]))
-                with _geocode_thread_lock:
-                    _geocode_cache[key] = pair
-                record_google_places_usage("geocode", "cache_hit", cache="geocode_l2")
-                return pair
-    except Exception as e:
-        logger.debug("[GOOGLE_PLACES] Geocode L2 read failed key=%s err=%s", key, e)
-    return None
-
-
-async def _set_cached_geocode(key: str, coords: tuple[float, float] | None) -> None:
-    """Persist geocode result to L2 (ResponseCache). Pass None for negative cache."""
-    from app.db import _get_async_session_factory
-
-    cache_key = f"geocode::v1::{key}"
-    async_session_factory = _get_async_session_factory()
-    try:
-        async with async_session_factory() as db:
-            await l2_upsert(
-                db,
-                cache_key=cache_key,
-                cache_type="geocode",
-                response_json={"coords": list(coords) if coords else None},
-                ttl=timedelta(hours=_GEOCODE_L2_TTL_HOURS),
-            )
-    except Exception as e:
-        logger.debug("[GOOGLE_PLACES] Geocode L2 write failed key=%s err=%s", key, e)
-
 
 async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
     """Return (lat, lng) for a destination string using the Geocoding API, or None on failure.
@@ -582,13 +521,6 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
             record_google_places_usage(path, "cache_hit", cache="geocode")
             return _geocode_cache[key]
     record_google_places_usage(path, "cache_miss", cache="geocode")
-
-    # L2 check (ResponseCache persistence)
-    l2_result = await _get_cached_geocode(key)
-    if l2_result is _GEOCODE_L2_SENTINEL:
-        return None  # Known-bad destination, skip API call
-    if l2_result is not None:
-        return l2_result
 
     if _is_places_circuit_open(path):
         record_google_places_usage(path, "error", reason="circuit_open", mode="geocode")
@@ -628,14 +560,12 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
             coords: tuple[float, float] = (loc["lat"], loc["lng"])
             with _geocode_thread_lock:
                 _geocode_cache[key] = coords
-            await _set_cached_geocode(key, coords)
             record_google_places_usage(path, "success", mode="geocode")
             logger.debug("[GOOGLE_PLACES] Geocoded '%s' → %s", dest, coords)
             return coords
         # Destination not found (empty results) — cache None to avoid retrying bad input
         with _geocode_thread_lock:
             _geocode_cache[key] = None
-        await _set_cached_geocode(key, None)
         record_google_places_usage(path, "empty", mode="geocode")
     except SpendLimitExceeded as exc:
         record_google_places_usage(path, "error", reason="spend_cap", mode="geocode")
@@ -1031,7 +961,8 @@ class GooglePlacesHotelProvider(Provider):
     async def search_async(self, ctx: SearchContext) -> List[Tile]:
         """Async search — use from async contexts (logistics_node) to avoid blocking the event loop."""
         dest = ctx.destination or "Somewhere"
-        max_results = min(ctx.max_results_per_vertical, 10)
+        # Cap at 3: UI shows 3-5 hotels, builder uses top-1. Saves ~40% hotel photo proxy calls.
+        max_results = min(ctx.max_results_per_vertical, 3)
         geo: tuple[float, float] | None = None
         if ctx.destination_lat is not None and ctx.destination_lng is not None:
             geo = (ctx.destination_lat, ctx.destination_lng)
@@ -1051,7 +982,8 @@ class GooglePlacesHotelProvider(Provider):
     def search(self, ctx: SearchContext) -> List[Tile]:
         """Sync search — used by tile_service/service.py (non-async path)."""
         dest = ctx.destination or "Somewhere"
-        max_results = min(ctx.max_results_per_vertical, 10)
+        # Cap at 3: UI shows 3-5 hotels, builder uses top-1. Saves ~40% hotel photo proxy calls.
+        max_results = min(ctx.max_results_per_vertical, 3)
         geo: tuple[float, float] | None = None
         if ctx.destination_lat is not None and ctx.destination_lng is not None:
             geo = (ctx.destination_lat, ctx.destination_lng)
@@ -1368,7 +1300,7 @@ _ENRICH_FIELD_MASK = (
 
 
 # Aggressive enrichment cache: L1 memory + L2 ResponseCache.
-_ENRICH_L1_TTL_SECONDS = 172800  # 48h hot cache
+_ENRICH_L1_TTL_SECONDS = 86400  # 24h hot cache
 _ENRICH_L1_MAX_SIZE = 2048
 _ENRICH_L2_TTL_HOURS = int(
     getattr(settings, "google_places_enrichment_cache_ttl_hours", settings.tile_cache_ttl_hours)
@@ -1377,6 +1309,21 @@ _enrich_mem = MemoryCache(maxsize=_ENRICH_L1_MAX_SIZE, ttl=_ENRICH_L1_TTL_SECOND
 _ENRICH_MAX_PARALLEL_DEFAULT = 4
 _ENRICH_RETRY_ATTEMPTS_DEFAULT = 2
 _ENRICH_RETRY_BASE_MS_DEFAULT = 250
+
+# Singleflight dedup for concurrent enrichment of the same activity title.
+_enrich_inflight: dict[str, asyncio.Future[dict]] = {}
+_enrich_inflight_lock = asyncio.Lock()
+
+
+def _transplant_enrichment(target: dict, source: dict) -> dict:
+    """Copy GP enrichment fields from source to target activity."""
+    out = dict(target)
+    for key in ("google_place_id", "coordinates", "deeplink", "photo_name"):
+        if source.get(key):
+            out[key] = source[key]
+    if source.get("meta", {}).get("photo_name"):
+        out.setdefault("meta", {})["photo_name"] = source["meta"]["photo_name"]
+    return out
 
 
 def _normalize_for_cache(value: str) -> str:
@@ -1451,7 +1398,7 @@ def _enrich_cache_key(title: str, destination: str) -> str:
     return make_cache_key(
         "places",
         "enrich",
-        "v2",
+        "v3",
         dest_norm[:80],
         title_norm[:120],
         f"q{query_sig}",
@@ -1648,6 +1595,7 @@ async def _enrich_single_activity(
                     "pageSize": 1,
                     "languageCode": "en",
                 },
+                timeout=8.0,
             )
         except SpendLimitExceeded as exc:
             record_google_places_usage(path, "error", mode="enrichment", reason="spend_cap")
@@ -1819,15 +1767,49 @@ async def enrich_activities_with_places(
     to_enrich = activities[:max_enrich]
     passthrough = activities[max_enrich:]
 
-    async def _enrich_with_limit(activity: dict) -> dict:
-        async with semaphore:
-            return await _enrich_single_activity(
-                client, activity, destination, api_key, path, travelers=travelers
-            )
+    client = await _get_places_http_client()
 
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        coros = [_enrich_with_limit(activity) for activity in to_enrich]
-        raw_results = await asyncio.gather(*coros, return_exceptions=True)
+    async def _enrich_with_limit(activity: dict) -> dict:
+        title_key = (
+            _normalize_title_for_cache(activity.get("title", ""))
+            + "::"
+            + _normalize_for_cache(destination)
+        )
+
+        # Register-or-join under a single lock acquisition
+        future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
+        async with _enrich_inflight_lock:
+            existing_future = _enrich_inflight.get(title_key)
+            if existing_future is not None:
+                pass_to_wait = existing_future
+            else:
+                _enrich_inflight[title_key] = future
+                pass_to_wait = None
+
+        if pass_to_wait is not None:
+            try:
+                result = await asyncio.shield(pass_to_wait)
+                return _transplant_enrichment(activity, result)
+            except Exception:
+                return activity
+
+        try:
+            async with semaphore:
+                result = await _enrich_single_activity(
+                    client, activity, destination, api_key, path, travelers=travelers
+                )
+            future.set_result(result)
+            return result
+        except Exception as exc:
+            if not future.done():
+                future.set_exception(exc)
+            raise
+        finally:
+            async with _enrich_inflight_lock:
+                _enrich_inflight.pop(title_key, None)
+
+    coros = [_enrich_with_limit(activity) for activity in to_enrich]
+    raw_results = await asyncio.gather(*coros, return_exceptions=True)
 
     # On exception, keep original activity (graceful degradation)
     final: list[dict] = []

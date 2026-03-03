@@ -218,6 +218,7 @@ export function TileDetailsInfo({
                     <img
                       src={pp.logo}
                       alt={pp.partner}
+                      loading="lazy"
                       className="h-6 w-auto object-contain"
                     />
                   ) : (

@@ -69,7 +69,7 @@ export async function getSignedGooglePlacesPhotoProxyUrl(
         name: normalized,
         max_width: String(width),
         max_height: String(height),
-        ttl_seconds: '300',
+        ttl_seconds: '1800',
       });
       const res = await apiFetch(`/api/media/google-places-photo-url?${params.toString()}`, {
         cache: 'no-store',

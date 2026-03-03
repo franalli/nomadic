@@ -35,6 +35,7 @@ export function DestinationMapPlaceholder({
         <img
           src={imageUrl}
           alt={destination}
+          loading="lazy"
           className="absolute inset-0 h-full w-full object-cover opacity-40 blur-sm"
         />
       ) : (

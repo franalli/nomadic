@@ -155,7 +155,7 @@ backend/
 │   │   ├── __init__.py
 │   │   ├── activity_browser.py      # On-demand Google Places search for Browse Activities sheet
 │   │   ├── cache_core.py            # Shared MemoryCache primitive (TTLCache + RLock + stats) + l2_upsert()
-│   │   ├── experience_generator.py  # Tier 2 experience tile generation via gpt-4o-mini (L1+L2 cache)
+│   │   ├── experience_generator.py  # Tier 2 experience tile generation via settings.experience_model (L1+L2 cache)
 │   │   ├── itinerary_builder.py     # Itinerary construction service
 │   │   ├── regen_strategy.py        # Selective regeneration strategy computation
 │   │   ├── router_cache.py          # Thread-safe L1 cache for router extraction (context-aware)
@@ -219,6 +219,7 @@ backend/
 │   ├── test_agent_multiturn.py           # Agent multi-turn conversation tests
 │   ├── test_chip_generator.py            # Chip output and deterministic variant generation tests
 │   ├── test_conflict_resolution.py       # Conflict resolution & constraint alias tests
+│   ├── test_contracts.py                 # Backend/frontend schema parity contract tests
 │   ├── test_conversationalist.py         # Conversationalist streaming + response tests
 │   ├── test_coordinator.py              # Coordinator turn flow + step execution tests
 │   ├── test_cross_domain_constraints.py  # Cross-domain constraint tests
@@ -251,6 +252,7 @@ backend/
 │   ├── test_specialist_structured.py     # Specialist structured output tests
 │   ├── test_spend_guard.py              # Spend guard tests
 │   ├── test_stage11_day_preferences.py   # Stage 11 day preference tests
+│   ├── test_graph_integration.py         # ItineraryBuilder full-pipeline integration tests
 │   ├── test_tile_cache.py                # Tile cache tests (L1/L2, thread safety)
 │   ├── test_typed_meta.py                # Typed metadata bridge tests
 │   ├── test_admin_utils.py               # Admin utility tests
@@ -370,6 +372,7 @@ frontend/
 │   │
 │   ├── plan/                   # Plan view components
 │   │   ├── BookingPlanningView.tsx           # Booking controls rendered in full-density planning context
+│   │   ├── BookingSummary.tsx                # Quick links summary for bookable stays/activities
 │   │   ├── PdfExportButton.tsx               # Export generated itinerary to PDF
 │   │   ├── BookingSection.tsx
 │   │   ├── BrowseActivitiesSheet.tsx  # Bottom sheet for browsing categorized activity tiles (Tier 1 free days)
@@ -393,6 +396,7 @@ frontend/
 │   │   ├── TimelineBlockList.tsx
 │   │   ├── TimelineDayCard.tsx
 │   │   ├── TimelineThread.tsx
+│   │   ├── TripChromeBar.tsx            # Horizontal trip-config and module toggle bar
 │   │   ├── TripHealthBar.tsx
 │   │   ├── TripSummaryPills.tsx
 │   │   ├── UnifiedChipRow.tsx
@@ -495,7 +499,6 @@ frontend/
 │
 ├── hooks/                      # Custom React hooks
 │   ├── useActionLoader.ts
-│   ├── useActivityColorMap.ts
 │   ├── useChatEffects.ts         # ChatPanel side effects (scroll, focus, ready-to-generate; extracted from ChatPanel)
 │   ├── useChatScrolling.ts       # Chat scroll container, auto-scroll, collapse header (extracted from ChatPanel)
 │   ├── useChatSend.ts            # Chat send orchestration + SSE lifecycle (extracted from ChatPanel)
@@ -520,6 +523,7 @@ frontend/
 │   ├── debug.ts                # Debug/logging utilities
 │   ├── pdfData.ts              # Transform day cards + tiles to PDF-ready shape
 │   ├── design-system.ts        # Design system tokens
+│   ├── enrichment-cache.ts     # Destination-intel enrichment cache + in-flight dedupe
 │   ├── specialist-colors.ts    # Specialist-to-color text class mappings (SSoT for specialist badge text colors)
 │   ├── fillDayGuards.ts        # Fill-day client cooldown guard helpers
 │   ├── format-utils.ts         # Formatting utilities
@@ -536,6 +540,7 @@ frontend/
 │   ├── statusCopyMap.ts        # Status text mappings
 │   ├── streamParser.ts         # Stream parsing utilities
 │   ├── summary.ts              # Summary utilities
+│   ├── theme.ts                # Theme mode constants for app-level styling
 │   ├── tileSelectors.ts        # Tile selection logic
 │   ├── tileUtils.ts            # Tile utilities
 │   ├── travelIntel.ts          # Travel intelligence data helpers
@@ -597,6 +602,7 @@ frontend/
 ├── next-env.d.ts
 ├── package.json
 ├── package-lock.json
+├── playwright.config.ts
 ├── postcss.config.mjs
 ├── tailwind.config.mts
 ├── tsconfig.json

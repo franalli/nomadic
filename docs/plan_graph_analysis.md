@@ -69,7 +69,7 @@ backend/app/planner/
 ├── conversationalist.py     # Final response generation (single streaming LLM call)
 ├── coordinator.py           # Deterministic turn planner + step executor + envelope builder
 ├── hashing.py               # Stable hashing utilities (make_cache_key, field_hash)
-├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing) + extract_token_usage(), resolve_schema_refs(), extract_json_content()
+├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing) + extract_token_usage(), resolve_schema_refs()
 ├── patterns_registry.py     # Shared regex/keyword patterns (BUDGET_PATTERNS, TRAVELER_PATTERNS, SETTINGS_KEYWORDS)
 ├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
 ├── test_mode.py             # Test mode detection
@@ -294,6 +294,8 @@ Flight/hotel/activity fetching with safety logic.
 - Two-tier activity system (Tier 1 specialist + Tier 2 experience)
 - No-fly safety logic (registry-driven via `_NOFLY_CATEGORIES`)
 - Hotels and activities fetched in parallel via `asyncio.gather()`
+- Google Places hotel providers cap hotel results at top-3 per fetch (cost guard for photo-proxy traffic)
+- `build_signed_photo_url()` now returns `None` when photos are disabled and caps requested TTL by `settings.google_places_photo_signed_ttl_max` (default max 3600s; default request 1800s)
 - Hotel-star filtering now cascades down (`min_stars-1 ... 1`) before fallback-to-originals, with applied threshold tracked in `state.metadata`.
 - General-only trips (no specialist/categories) call `browse_activities()` across default categories to seed larger activity pools for long itineraries.
 - Experience tiles are stashed into `metadata["browseable_activities"]`, and Google Places backfill now propagates rating/review_count/deeplink when available.
@@ -651,8 +653,7 @@ Pydantic structured output is used for LLM calls that need **guaranteed schema e
 3. **`parsed is None` guard** -- Every call site checks `if parsed is None: raise ValueError(...)`. No silent fallback to empty data.
 4. **`extract_token_usage()`** -- Centralized in `llm_factory.py`. Handles `include_raw=True` dict unwrapping, LangChain 0.2+ `usage_metadata`, and `response_metadata["token_usage"]` fallback.
 5. **`resolve_schema_refs(schema)`** -- Inlines `$defs` pointers for Gemini function calling. Used for schemas with few `$defs` (e.g., `LLMSpecialistOutput`: 2). Do NOT use for deeply nested schemas.
-6. **`extract_json_content(response)`** -- Extracts JSON string from AIMessage. Handles OpenAI string content, Gemini multi-part list content, and markdown code fence stripping.
-7. **`patterns_registry.py`** -- Shared regex/keyword lists used by multiple planner modules. Centralizes `BUDGET_PATTERNS`, `TRAVELER_PATTERNS`, and `SETTINGS_KEYWORDS`.
+6. **`patterns_registry.py`** -- Shared regex/keyword lists used by multiple planner modules. Centralizes `BUDGET_PATTERNS`, `TRAVELER_PATTERNS`, and `SETTINGS_KEYWORDS`.
 
 ---
 
@@ -917,8 +918,8 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 | Specialist | `specialist_cache.py` | 128 | 1h | 168h (env: SPECIALIST_CACHE_TTL_HOURS) | `specialist::v4::{topic}::{dest}::{iso_month}::m::{skill}::{dpref}::{phash}` | LLM outputs. Dates coarsened to ISO month (YYYY-MM); duration dropped (specialist content is duration-agnostic). |
 | Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month_or_half_year}::n{tiles_per_category}` | Tier 2 tiles. Seasonal categories keep `YYYY-MM`; non-seasonal categories normalize to `YYYY-H1`/`YYYY-H2` for higher cache reuse. |
 | Tile | `tile_cache.py` | 256 | 24h | 72h (env: TILE_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
-| Browse | `activity_browser.py` | 256 | 6h | 72h (env: TILE_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
-| Places Enrichment | `google_places_provider.py` | 2048 | 48h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v2::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups. Title normalized via `_normalize_title_for_cache` (strips specialist qualifiers for higher hit rate). |
+| Browse | `activity_browser.py` | 256 | 6h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
+| Places Enrichment | `google_places_provider.py` | 2048 | 24h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v3::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups. Title normalized via `_normalize_title_for_cache` (strips specialist qualifiers for higher hit rate). |
 | Geocode | `google_places_provider.py` | 1000 (TTLCache) | 24h | 8760h (1yr) | `geocode::v1::{normalized_dest}` | Geocoding API lat/lng results. L2 uses `cache_type='geocode'`. |
 | Photo Proxy | `main.py` | 500 | 24h | N/A | `photo::{photo_name}::{width}x{height}` | Server-side photo bytes cache. Skips upstream fetch + spend guard on hit. |
 | Router | `router_cache.py` | 500 | 1h | N/A | `router::v3::SHA256({normalized_text}:{today_date}:{context_fingerprint})[:32]` | NL extraction |
@@ -1145,6 +1146,7 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 | `node_status` | `{node, status, label, icon_key, estimated_duration_ms}` | Coordinator step progress mapped to legacy node/tool names |
 | `token` | `string` | Response text streamed from `conversationalist.generate_response_streaming()` |
 | `partial` | `{kind: "strategy_sections"\|"tiles"\|"trip_inputs", payload: any}` | Progressive render from coordinator step outputs |
+| `feasibility_warning` | `{topic, status, reason, alternative}` | Coordinator feasibility signal. Forwarded by `generate_sse()` as a public SSE event for frontend toast display. |
 | `complete` | `{...result}` | Full result object from `_build_envelope()` |
 | `error` | `{message}` | Error information |
 

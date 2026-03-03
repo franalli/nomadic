@@ -13,7 +13,7 @@ import { getSendBurstGuardReason } from '@/components/chat/ChatPanel';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { type ChatSseRefs, useChatSse } from '@/hooks/useChatSse';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
-import { type streamGraphPlan } from '@/lib/api';
+import { type SSEFeasibilityWarningEvent, type streamGraphPlan } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { nextEnvelopeBufferGeneration, useDocumentStore } from '@/state/documentStore';
@@ -227,6 +227,11 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     onAutoExpandItinerary,
     scrollToBottom,
     scrollPanelIntoView,
+    onFeasibilityWarning: useCallback((data: SSEFeasibilityWarningEvent['data']) => {
+      if (data.status === 'infeasible' && data.reason) {
+        toast(data.reason);
+      }
+    }, [toast]),
   });
 
   // Stop streaming when user clicks the stop button

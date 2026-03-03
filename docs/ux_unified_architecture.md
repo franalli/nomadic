@@ -1119,7 +1119,7 @@ Replaced fragile string-matching `getMarkerIcon()`/`getMarkerColor()` helpers wi
 
 **Route overlay status:**
 
-`frontend/lib/route-utils.ts` was removed. `InteractiveMap` still supports an optional `routeGeoJson` prop, but current plan views do not generate or pass route geometry.
+There is no route-geometry utility module in the current frontend. `InteractiveMap` still supports an optional `routeGeoJson` prop, but current plan views do not generate or pass route geometry.
 
 **Fly-to on day highlight (`InteractiveMap.tsx`):**
 - When `highlightedDay` changes, the map computes the average `lat`/`lng` of all pins for that day and calls `map.flyTo()` with `zoom: 13` (single pin) or `zoom: 11` (multiple pins).
@@ -1662,7 +1662,7 @@ useSessionHydration() runs
 | Endpoint | Function | When Called | Fields Persisted |
 |----------|----------|-------------|------------------|
 | `POST /api/graph_plan/stream` | `apply_planner_update()` | Streaming chat | All |
-| `POST /api/expand-itinerary/stream` | `apply_planner_update()` | Build Itinerary CTA | `day_cards`, `plan_view_state` |
+| `POST /api/expand-itinerary` | `apply_planner_update()` | Build Itinerary CTA | `day_cards`, `plan_view_state` |
 | `PATCH /api/document` | `apply_user_patch()` | Tile selection, settings sheets | `branches.selections`, `trip_inputs.*_settings` |
 
 ### Implementation Files
@@ -1672,7 +1672,7 @@ useSessionHydration() runs
 | Schema | `backend/app/schemas.py` | `PlanDocumentData` class |
 | Persistence | `backend/app/crud_document.py` | `apply_planner_update()` |
 | Endpoints | `backend/app/main.py` | Graph plan SSE stream |
-| Hydration | `frontend/.../useSessionHydration.ts` | Session restore hook |
+| Hydration | `frontend/components/layout/hooks/useSessionHydration.ts` | Session restore hook |
 | Store | `frontend/state/documentStore.ts` | `fetchDocument()` |
 
 ### Session Lifecycle
@@ -1703,6 +1703,7 @@ useSessionHydration() runs
 | `StrategyStageRenderer` | Data density computation, conditional rendering, single renderer for all modes. Heavy computation and effects are delegated to `useStrategyStageOrchestration`. |
 | `useStrategyStageOrchestration` | Hook centralising all heavy computation, state, and effects for `StrategyStageRenderer` (keeps renderer under ~300 lines). Owns `DataDensity` computation, map POI extraction, infeasibility toast notifications, scroll-position freeze/restore on itinerary arrival, and booking drawer state. |
 | `PlanFullDensityView` | Full-density view (map + timeline + booking/intel controls). Receives all props from `StrategyStageRenderer`, renders the flex desktop map layout (content: flex-1 min 480px max 800px; map: flex-1 min 350px), owns `TripSummaryPills` command bar for Flights/Stays/Travel Advice toggles, and fetches/polls Local Expert enrichment for the destination intel panel. |
+| `BookingSummary` | Supplemental booking-links panel rendered by `PlanFullDensityView` under the timeline. Shows deep links for bookable stays (`tiles`) and mapped itinerary activities (`day_cards`) in Stage 3 states. |
 | `PlanDensityViews` | Density loading view (`PlanMirrorLoader`) only. |
 | `PlanTimelineSection` | Timeline section for full-density view — handles DnD wrapping (`ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`), skeleton loading, regeneration overlay, and wraps `TimelineThread` in `ErrorBoundary` for crash isolation. |
 | `TimelineBlockList` | Renders one day’s timeline blocks, splitting compact vs full variants and injecting optional DnD/slot render-props for drag/drop and free-day actions. |
@@ -1727,11 +1728,10 @@ useSessionHydration() runs
 | `useChatEffects` | Hook centralising ChatPanel side effects: scroll-on-load, ready-to-generate detection, input focus, node-status → activeStatus mapping, history loading. Extracted from ChatPanel. |
 | `useChatScrolling` | Hook managing scroll container ref, auto-scroll-to-bottom, user-scrolled-up detection, and mobile setup header collapse. Extracted from ChatPanel. |
 | `useChatSse` | Hook owning the `streamGraphPlan` call and all SSE callbacks (`onToken`, `onNodeStatus`, `onPartial`, `onComplete`, `onError`). Extracted from ChatPanel. Returns `executeStream` function. No JSX. |
-| `ChatMessageList` | Scrollable message list renderer — owns scroll container div and all message rendering. Includes assistant color-map data from `useActivityColorMap` so known activity mentions can be visually emphasized. |
+| `ChatMessageList` | Scrollable message list renderer — owns scroll container div and all message rendering. |
 | `ChatInputHandler` | Thin wrapper around `ChatInputBar` converting ChatPanel-level callbacks to form-submit signatures. Extracted from ChatPanel. |
 | `ChatSuggestionBar` | Thin wrapper around `ChatSuggestionChips` for ChatPanel integration. Extracted from ChatPanel. Forwards trigger-action callbacks including `onConfirmReset` (`confirm_reset` target). |
 | `ChatMessageRenderer` | Renders individual chat messages: user bubbles and assistant bubbles with markdown/specialist deep links/streaming pulse/retry button and color-marked activity mentions. |
-| `useActivityColorMap` | Hook (`frontend/hooks/useActivityColorMap.ts`) that builds activity-name → specialist color hints from tiles/day cards/strategy sections for chat highlighting. |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available; supports controlled expand/collapse for stays and flights from command controls rendered in `TripSummaryPills` |

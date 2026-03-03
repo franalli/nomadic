@@ -636,6 +636,13 @@ async def generate_sse(
                     elif event["type"] == "complete":
                         logger.debug(f"[{request_id}] Stream complete after {token_count} tokens")
                         final_result = event["data"]
+                    elif event["type"] == "feasibility_warning":
+                        # Forward feasibility warnings for frontend toast feedback
+                        logger.debug(
+                            f"[{request_id}] Feasibility warning: "
+                            f"{event.get('data', {}).get('topic')}"
+                        )
+                        yield f"event: feasibility_warning\ndata: {json.dumps(event)}\n\n"
                     elif event["type"] == "error":
                         # Forward graph errors to frontend with actual message
                         error_msg = event.get("message", "Unknown graph error")
@@ -1828,6 +1835,8 @@ async def generate_ndjson(
                 adults=trip_inputs_data.get("adults", 1) or 1,
                 children=trip_inputs_data.get("children", 0) or 0,
                 user_pinned_tiles=doc_data.user_pinned_tiles if doc_data else None,
+                budget=trip_inputs_data.get("budget"),
+                currency=trip_inputs_data.get("currency", "USD"),
             )
 
             try:

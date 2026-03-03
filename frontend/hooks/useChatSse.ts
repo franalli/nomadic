@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { isBootstrap } from '@/components/plan/planStateHelpers';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
-import { type SSENodeStatusEvent, type SSEPartialEvent, streamGraphPlan } from '@/lib/api';
+import { type SSEFeasibilityWarningEvent, type SSENodeStatusEvent, type SSEPartialEvent, streamGraphPlan } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { useChatStore } from '@/state/chatStore';
@@ -104,6 +104,7 @@ export interface ChatSseCallbacks {
     response?: GraphPlanResponse;
   }) => void;
   onAutoExpandItinerary?: (options?: { forceFullRebuild?: boolean }) => void;
+  onFeasibilityWarning?: (data: SSEFeasibilityWarningEvent['data']) => void;
   scrollToBottom: (force?: boolean) => void;
   scrollPanelIntoView: () => void;
 }
@@ -151,6 +152,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
     filterMessages,
     onPlanResult,
     onAutoExpandItinerary,
+    onFeasibilityWarning,
     scrollToBottom,
     scrollPanelIntoView,
   } = callbacks;
@@ -280,6 +282,11 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             } catch (partialError) {
               debugLog('[SSE] Partial merge failed (will reconcile on complete):', partialError);
             }
+          },
+
+          onFeasibilityWarning: (data: SSEFeasibilityWarningEvent['data']) => {
+            if (isStaleRequest()) return;
+            onFeasibilityWarning?.(data);
           },
 
           onComplete: (response) => {
@@ -613,6 +620,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
       filterMessages,
       onPlanResult,
       onAutoExpandItinerary,
+      onFeasibilityWarning,
       queueCompletionScroll,
     ]
   );

@@ -1711,6 +1711,14 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 state.tiles["activities"] = experience_tiles
                 _backfill_experience_tiles_from_gp(experience_tiles, activity_dicts)
                 activity_dicts = experience_tiles
+                # Geo fallback: fill missing geo from destination center
+                if dest_lat is not None and dest_lng is not None:
+                    for _tile in experience_tiles:
+                        if isinstance(_tile, dict) and not _tile.get("geo"):
+                            _tile["geo"] = {
+                                "lat": dest_lat,
+                                "lng": dest_lng,
+                            }
                 used_tier2_categories = set(tier2_cats)
                 # Mark that Tier 2 tiles were generated (for synthesizer gate)
                 state.metadata["tier2_tiles_generated"] = True
@@ -1869,6 +1877,14 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                 state.tiles["activities"] = experience_tiles
                 _backfill_experience_tiles_from_gp(experience_tiles, activity_dicts)
                 activity_dicts = experience_tiles
+                # Geo fallback: fill missing geo from destination center
+                if dest_lat is not None and dest_lng is not None:
+                    for _tile in experience_tiles:
+                        if isinstance(_tile, dict) and not _tile.get("geo"):
+                            _tile["geo"] = {
+                                "lat": dest_lat,
+                                "lng": dest_lng,
+                            }
                 used_tier2_categories = set(tier2_only)
                 # Mark that Tier 2 tiles were generated (for synthesizer gate)
                 state.metadata["tier2_tiles_generated"] = True
@@ -2125,6 +2141,21 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
         if not active_cats.intersection(TIER1_SPECIALIST_NAMES):
             specialist_days = 0
 
+    # If specialists were planned but some are infeasible, reduce specialist_days estimate.
+    # Infeasible specialists contribute no content but planned count may have included them.
+    infeasible_cats = set()
+    for section in state.metadata.get("strategy_sections", []):
+        if (
+            isinstance(section, dict)
+            and section.get("feasibility_status") == "infeasible"
+            and section.get("specialist_type") not in ("local_expert", "general")
+        ):
+            infeasible_cats.add(section.get("specialist_type", ""))
+    if infeasible_cats and specialist_days > 0:
+        # Reduce planned estimate by ~2 days per infeasible specialist
+        infeasible_reduction = len(infeasible_cats) * 2
+        specialist_days = max(0, specialist_days - infeasible_reduction)
+
     free_days = max(0, trip_days - specialist_days - min(2, trip_days - 1))
     tile_cap_ceiling = min(40, max(12, free_days * 2))
     # Specialist days can hold ~1 co-scheduled experience tile each
@@ -2163,6 +2194,9 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     if total_tiles_planned < total_tiles_needed:
         min_needed = math.ceil(total_tiles_needed / max(len(tier2_cats), 1))
         tiles_per_cat = max(tiles_per_cat, min(min_needed, tile_cap_ceiling))
+
+    # Minimum floor: ensure at least 4 tiles per category for buffer
+    tiles_per_cat = max(tiles_per_cat, 4)
 
     log(
         "LOGISTICS",

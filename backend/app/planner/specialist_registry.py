@@ -55,6 +55,7 @@ class SpecialistConfig:
 
     # --- Feasibility flags ---
     has_geographic_constraint: bool = False  # triggers LLM feasibility check
+    geographic_rule: str = ""  # human-readable rule for LLM feasibility prompt
     has_nofly_buffer: bool = False  # diving: 24h no-fly
     has_altitude_buffer: bool = False  # hiking/climbing: acclimatization
 
@@ -145,6 +146,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
             "Book a dive shop for equipment rental in advance",
         ],
         has_geographic_constraint=True,
+        geographic_rule="Diving requires coastline, large lakes, or dedicated dive facilities. Landlocked cities cannot have diving.",
         has_nofly_buffer=True,
         min_days_needed=4,  # arrival + dive + no-fly buffer + departure
         domain_default_principles=[
@@ -328,6 +330,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
         default_price_estimate=120.0,
         backfill_affinity_tags=["outdoors", "culture"],
         has_geographic_constraint=True,
+        geographic_rule="Skiing requires mountains with reliable snow or indoor ski facilities. Tropical destinations without mountains cannot have skiing.",
         min_days_needed=3,
         domain_default_principles=[
             "Slope difficulty progression",

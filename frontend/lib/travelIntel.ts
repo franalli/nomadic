@@ -22,15 +22,6 @@ export interface IntelCategory {
   items: string[];
 }
 
-export interface TripAlert {
-  id: string;
-  type: string;
-  severity: 'blocking' | 'strong';
-  icon: string;
-  title: string;
-  description: string;
-}
-
 const TRIP_ALERT_TYPES = new Set([
   'visa',
   'health',
@@ -254,48 +245,6 @@ export function isTripAlertConstraint(constraint: RawConstraint): boolean {
   const type = inferConstraintType(constraint);
   if (type === 'safety' && !looksLikeSafetyText(constraintDetails(constraint))) return false;
   return TRIP_ALERT_TYPES.has(type);
-}
-
-function constraintId(constraint: RawConstraint): string {
-  const type = inferConstraintType(constraint);
-  const core = constraintText(constraint) || cleanText(constraint.rule) || cleanText(constraint.reason);
-  return `${type}:${normalizeText(core || 'unknown')}`;
-}
-
-export function extractTripAlerts(sections: StrategySection[] | undefined): TripAlert[] {
-  if (!sections || sections.length === 0) return [];
-
-  const alerts: TripAlert[] = [];
-  const seen = new Set<string>();
-
-  for (const section of sections) {
-    for (const raw of section.constraints_applied ?? []) {
-      const constraint = raw as RawConstraint;
-      if (!isTripAlertConstraint(constraint)) continue;
-      const id = constraintId(constraint);
-      if (seen.has(id)) continue;
-      seen.add(id);
-
-      const severity = inferConstraintSeverity(constraint) as 'blocking' | 'strong';
-      const type = inferConstraintType(constraint);
-      const title = constraintText(constraint) || 'Trip advisory';
-      const description = constraintDetails(constraint) || title;
-
-      alerts.push({
-        id,
-        type,
-        severity,
-        icon: severity === 'blocking' ? '🔴' : '⚠️',
-        title,
-        description,
-      });
-    }
-  }
-
-  return alerts.sort((a, b) => {
-    if (a.severity === b.severity) return a.title.localeCompare(b.title);
-    return a.severity === 'blocking' ? -1 : 1;
-  });
 }
 
 function classifyTextToCategory(text: string): IntelCategoryKey | null {

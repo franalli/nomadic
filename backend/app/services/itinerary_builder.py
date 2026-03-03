@@ -350,6 +350,8 @@ class ItineraryBuilderInput:
     children: int = 0
     # Browse tiles explicitly added by user (source="browse_add") — survive graph re-runs
     user_pinned_tiles: Optional[Dict[str, Any]] = None  # tile_id → {tile, preferred_day, source}
+    budget: Optional[float] = None
+    currency: str = "USD"
 
 
 # =============================================================================
@@ -511,6 +513,10 @@ class ItineraryBuilder:
         self._nofly_buffer_days: int = 0
         self._day_preferences: Dict[str, int] = {}
         self._activities_per_day: int = 2
+        self._budget: Optional[float] = None
+        self._currency: str = "USD"  # TODO: use for currency-aware price formatting
+        self._num_days: int = 0
+        self._children: int = 0
         # None = no category filter, set() = user explicitly cleared categories.
         self._active_categories: Optional[set[str]] = None
 
@@ -552,6 +558,9 @@ class ItineraryBuilder:
         if self._children > 0:
             base_apd = min(base_apd, 2)
         self._activities_per_day: int = max(1, min(base_apd, 5))
+        self._budget = input_data.budget
+        self._currency = input_data.currency
+        self._num_days = 0  # set after date parsing
         # Active categories for Phase 5.25 preferred-tile category filter.
         # None means "no filter" (user didn't specify categories).
         # set() means "user explicitly cleared all categories — skip all".
@@ -589,6 +598,7 @@ class ItineraryBuilder:
 
             # Validate minimum trip duration (2+ days required)
             trip_duration = (end - start).days + 1
+            self._num_days = trip_duration
             if trip_duration < 2:
                 logger.warning(
                     f"[ItineraryBuilder] Trip too short: {trip_duration} day(s). "
@@ -2777,6 +2787,19 @@ class ItineraryBuilder:
                 headroom = rem_hours / DAY_CAPACITY_HOURS
                 score = complement * 0.7 + headroom * 0.3
 
+                # Soft budget-density penalty: avoid stacking expensive tiles
+                if self._budget and self._num_days:
+                    daily_budget = self._budget / self._num_days
+                    if daily_budget < 200:
+                        tile_pl = tile.get("price_level") or 0
+                        day_expensive = any(
+                            (b.price_level or 0) >= 3
+                            for b in days[day_idx].blocks
+                            if not b.is_buffer
+                        )
+                        if tile_pl >= 3 and day_expensive:
+                            score *= 0.8
+
                 if score > best_score:
                     best_score = score
                     best_cand_idx = cand_idx
@@ -3153,6 +3176,16 @@ class ItineraryBuilder:
                     if tile_hours > remaining_hours or remaining_blocks < 1:
                         continue
                     score = self._time_slot_score(day, tile_tod)
+                    # Soft budget-density penalty
+                    if self._budget and self._num_days:
+                        daily_budget = self._budget / self._num_days
+                        if daily_budget < 200:
+                            tile_pl = tile.get("price_level") or 0
+                            day_expensive = any(
+                                (b.price_level or 0) >= 3 for b in day.blocks if not b.is_buffer
+                            )
+                            if tile_pl >= 3 and day_expensive:
+                                score *= 0.8
                     if score > best_score:
                         best_score = score
                         best_idx = i

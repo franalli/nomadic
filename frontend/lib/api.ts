@@ -728,7 +728,17 @@ export interface SSEPartialEvent {
   };
 }
 
-type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent | SSENodeStatusEvent | SSEPartialEvent;
+export interface SSEFeasibilityWarningEvent {
+  type: 'feasibility_warning';
+  data: {
+    topic: string;
+    status: 'infeasible' | 'caveat';
+    reason: string | null;
+    alternative: string | null;
+  };
+}
+
+type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent | SSENodeStatusEvent | SSEPartialEvent | SSEFeasibilityWarningEvent;
 
 /**
  * Callbacks for streaming graph plan responses.
@@ -744,6 +754,8 @@ interface StreamGraphPlanCallbacks {
   onNodeStatus?: (status: SSENodeStatusEvent['data']) => void;
   /** Called when partial data is available before completion (progressive rendering) */
   onPartial?: (data: SSEPartialEvent['data']) => void;
+  /** Called when a feasibility warning is received (e.g., activity impossible at destination) */
+  onFeasibilityWarning?: (data: SSEFeasibilityWarningEvent['data']) => void;
 }
 
 /**
@@ -837,6 +849,8 @@ export function streamGraphPlan(
                     callbacks.onNodeStatus?.(parsed.data);
                   } else if (parsed.type === 'partial') {
                     callbacks.onPartial?.(parsed.data);
+                  } else if (parsed.type === 'feasibility_warning') {
+                    callbacks.onFeasibilityWarning?.(parsed.data);
                   } else if (parsed.type === 'complete') {
                     callbacks.onComplete(parsed.data);
                   } else if (parsed.type === 'error') {

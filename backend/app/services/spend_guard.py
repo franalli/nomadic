@@ -98,6 +98,22 @@ def spend_guard_scope(session_id: str | None):
         _session_id_ctx.reset(token)
 
 
+def _check_provider_cap(provider: str, estimated_usd: float, source: str) -> None:
+    """Provider-specific daily cap. Must be called inside _spend_lock."""
+    if provider == "places":
+        cap = max(0.0, float(settings.spend_guard_places_daily_cap_usd))
+        current = _provider_spend_usd.get("places", 0.0)
+        if cap > 0 and (current + estimated_usd) > cap:
+            raise SpendLimitExceeded(
+                provider=provider,
+                scope="provider",
+                limit_usd=cap,
+                current_usd=current,
+                requested_usd=estimated_usd,
+                source=source,
+            )
+
+
 def _reserve_or_raise(
     *,
     provider: str,
@@ -131,6 +147,7 @@ def _reserve_or_raise(
                     requested_usd=estimated_usd,
                     source=source,
                 )
+            _check_provider_cap(provider, estimated_usd, source)
             _global_spend_usd += estimated_usd
             _provider_spend_usd[provider] = _provider_spend_usd.get(provider, 0.0) + estimated_usd
         return
@@ -163,6 +180,8 @@ def _reserve_or_raise(
                 requested_usd=estimated_usd,
                 source=source,
             )
+
+        _check_provider_cap(provider, estimated_usd, source)
 
         _session_spend_usd[sid] = session_current + estimated_usd
         _global_spend_usd = global_current + estimated_usd
