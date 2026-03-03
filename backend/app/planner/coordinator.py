@@ -2065,9 +2065,11 @@ async def _post_build_enrich_placed_activities(
             if not enriched_tile:
                 continue
             block = day_cards[day_idx]["blocks"][block_idx]
-            # Coordinates
+            # Coordinates — DayCard schema expects {lat, lng} dict
             coords = enriched_tile.get("coordinates")
-            if isinstance(coords, list) and len(coords) == 2:
+            if isinstance(coords, list) and len(coords) >= 2:
+                block["coordinates"] = {"lng": coords[0], "lat": coords[1]}
+            elif isinstance(coords, dict):
                 block["coordinates"] = coords
             # Google Place ID + deeplink
             gp_id = enriched_tile.get("google_place_id")

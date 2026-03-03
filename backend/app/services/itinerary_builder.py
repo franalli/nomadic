@@ -3013,6 +3013,8 @@ class ItineraryBuilder:
 
             # Resolve coordinates: DayBlock uses {lat, lng}, browse tiles carry geo {lat, lng}
             _coords = tile.get("coordinates")
+            if isinstance(_coords, list) and len(_coords) >= 2:
+                _coords = {"lng": _coords[0], "lat": _coords[1]}
             if not _coords:
                 _geo = tile.get("geo")
                 if isinstance(_geo, dict) and "lat" in _geo and "lng" in _geo:
@@ -3182,7 +3184,12 @@ class ItineraryBuilder:
                         review_count=tile.get("review_count"),
                         price_level=tile.get("price_level"),
                         coordinates=(
-                            tile.get("coordinates")
+                            (
+                                {"lng": tile["coordinates"][0], "lat": tile["coordinates"][1]}
+                                if isinstance(tile.get("coordinates"), list)
+                                and len(tile["coordinates"]) >= 2
+                                else tile.get("coordinates")
+                            )
                             or (
                                 {"lat": tile["geo"]["lat"], "lng": tile["geo"]["lng"]}
                                 if isinstance(tile.get("geo"), dict)

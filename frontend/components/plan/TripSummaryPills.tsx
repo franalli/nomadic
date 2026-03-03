@@ -157,7 +157,7 @@ function CountBadge({ count }: { count: number }) {
       className={cn(
         'ml-0.5 min-w-[18px] h-[18px] rounded-full px-1',
         'inline-flex items-center justify-center text-[10px] font-bold',
-        'bg-white/20 text-zinc-200'
+        'bg-white text-zinc-900'
       )}
     >
       {count}

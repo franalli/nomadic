@@ -75,7 +75,7 @@ export function SplitLayoutView({
     <div className="flex flex-col h-[100dvh] lg:h-screen overflow-hidden">
       {/* Compact Header (branding) - always visible on desktop, mode-aware on mobile */}
       {headerContent && (
-        <header className="hidden lg:flex items-center h-12 px-6 border-b border-[var(--theme-hairline)] bg-[var(--theme-panel)]">
+        <header className="hidden lg:flex items-center h-14 px-6 border-b border-[var(--theme-hairline)] bg-[var(--theme-panel)]">
           {headerContent}
         </header>
       )}
@@ -120,7 +120,7 @@ export function SplitLayoutView({
             <aside
               className={cn(
                 'relative z-10 flex flex-col',
-                'h-[calc(100vh-48px)]',
+                'h-[calc(100vh-56px)]',
                 'transition-all duration-500 ease-[cubic-bezier(0.25,0.1,0.25,1)]',
                 isLanding
                   ? 'w-[640px] mx-auto'
@@ -174,7 +174,7 @@ export function SplitLayoutView({
             <main
               className={cn(
                 'flex flex-col',
-                'h-[calc(100vh-48px)]',
+                'h-[calc(100vh-56px)]',
                 'rightCanvas',
                 'transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] delay-100',
                 isLanding

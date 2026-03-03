@@ -6,6 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
+import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useMapSync } from '@/hooks/useMapSync';
 import { REVEAL_TIMING } from '@/lib/animation-config';
 import { getSpecialistEnrichment } from '@/lib/api';
@@ -127,11 +128,24 @@ export function PlanFullDensityView({
     useMapSync.getState().requestScrollTo(item.dayNumber, itemId);
   }, [fullModeMapItems]);
 
+  const stayCount = useMemo(
+    () => Object.values(effectiveTiles).filter(t =>
+      t.type === 'hotel' || t.type === 'stay' || t.type === 'accommodation'
+    ).length,
+    [effectiveTiles]
+  );
+
+  const flightCount = useMemo(
+    () => Object.values(effectiveTiles).filter(t => t.type === 'flight').length,
+    [effectiveTiles]
+  );
+
   const staysExpanded = usePanelToggleStore((s) => s.staysExpanded);
   const flightsExpanded = usePanelToggleStore((s) => s.flightsExpanded);
   const intelExpanded = usePanelToggleStore((s) => s.intelExpanded);
   const onToggleStays = usePanelToggleStore((s) => s.toggleStays);
   const onToggleFlights = usePanelToggleStore((s) => s.toggleFlights);
+  const onToggleIntel = usePanelToggleStore((s) => s.toggleIntel);
 
   const intelDestinationKey = normalizeDestinationKey(effectiveFullDest);
   const localExpertSection = useMemo(
@@ -332,8 +346,31 @@ export function PlanFullDensityView({
 
   return (
     <div className="flex flex-col">
-      {/* Destination intel panel + regen status — pills moved to header */}
-      {(hasDestinationIntel || (hasDestinationIntel && isAnyRegenerating)) && (
+      {/* Mobile-only: TripSummaryPills (desktop pills live in the header) */}
+      {!isDesktop && effectiveTripInputs && _onOpenSheet && (
+        <div className="px-4 pb-2 pt-1">
+          <TripSummaryPills
+            tripInputs={effectiveTripInputs}
+            dayCards={viewModel.day_cards}
+            onOpenSheet={_onOpenSheet}
+            disabled={isStreaming}
+            flightCount={hasItineraryContent ? flightCount : 0}
+            stayCount={hasItineraryContent ? stayCount : 0}
+            travelAdviceCount={travelIntelItemCount}
+            showTravelAdvice={showTravelAdviceSegment}
+            isTravelAdvicePending={isTravelIntelPending}
+            flightsActive={flightsExpanded}
+            staysActive={staysExpanded}
+            travelAdviceActive={intelExpanded}
+            onToggleFlights={onToggleFlights}
+            onToggleStays={onToggleStays}
+            onToggleTravelAdvice={onToggleIntel}
+          />
+        </div>
+      )}
+
+      {/* Destination intel panel + regen status */}
+      {hasDestinationIntel && (
         <div className="px-4 pb-2 pt-1">
           {hasDestinationIntel && intelExpanded && (
             <div

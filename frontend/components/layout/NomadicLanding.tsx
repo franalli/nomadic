@@ -490,20 +490,25 @@ export function NomadicLanding() {
             ) : undefined
           }
           headerContent={
-            <div className="flex w-full items-center gap-3 min-w-0">
-              {/* Left zone: logo + tagline */}
-              <div className="flex items-center gap-2 shrink-0">
+            <div className="flex w-full items-center min-w-0">
+              {/* Left zone: logo + tagline — width mirrors the 480px chat rail minus header px-6 */}
+              <div className={cn(
+                'flex items-center gap-2 shrink-0',
+                showHeaderPills ? 'w-[456px]' : ''
+              )}>
                 <Compass className="text-primary h-5 w-5" />
                 <span className="text-foreground text-lg font-semibold">Nomadic</span>
-                <span className="text-foreground hidden xl:inline text-sm">
-                  <span className="text-muted-foreground/30 mx-2">|</span>
-                  Change your mind. Keep the plan.
-                </span>
+                {!showHeaderPills && (
+                  <span className="text-foreground hidden xl:inline text-sm">
+                    <span className="text-muted-foreground/30 mx-2">|</span>
+                    Change your mind. Keep the plan.
+                  </span>
+                )}
               </div>
 
-              {/* Center zone: compact pills */}
+              {/* Pills zone: left edge aligns with plan panel below */}
               {showHeaderPills && tripInputs && (
-                <div className="flex-1 min-w-0 overflow-hidden flex justify-center">
+                <div className="flex-1 min-w-0 overflow-x-auto no-scrollbar pl-14">
                   <TripSummaryPills
                     compact
                     tripInputs={tripInputs}
@@ -526,7 +531,7 @@ export function NomadicLanding() {
               )}
 
               {/* Right zone: PDF + Reset */}
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0 ml-auto">
                 <PdfExportButton
                   tripInputs={tripInputs}
                   dayCards={planViewModel.day_cards ?? []}
