@@ -245,12 +245,20 @@ class Resolution(BaseModel):
     feasibility: Literal["recommended", "possible", "not_recommended"]
 
 
+class ItineraryAssumptionsOutput(BaseModel):
+    """Itinerary planning assumptions."""
+
+    assumptions: List[str] = Field(default_factory=list)
+    flexible_elements: List[str] = Field(default_factory=list)
+
+
 class ItineraryResult(BaseModel):
     """Result from itinerary builder."""
 
     success: bool
     day_cards: List[DayCardOutput] = Field(default_factory=list)
     overview: Optional[ItineraryOverviewOutput] = None
+    assumptions: Optional[ItineraryAssumptionsOutput] = None
     conflicts: List[BuilderConflict] = Field(default_factory=list)
     resolutions: List[Resolution] = Field(default_factory=list)
     error: Optional[str] = None
@@ -704,6 +712,55 @@ class ItineraryBuilder:
             days = self._sort_blocks_chronologically(days)
             days = self._annotate_activity_axes(days)
 
+            # Phase 6.8: Final "Free Day" relabel cleanup.
+            # Phases 5.6 and 5.25 place activities onto free days and sometimes
+            # rename the label inline, but not all code paths trigger the rename.
+            # This pass catches any day still labeled "Free Day" that actually
+            # has non-buffer, non-placeholder activity blocks.
+            _NON_ACTIVITY_TYPES = frozenset(
+                {
+                    "free_day",
+                    "check-in",
+                    "check-out",
+                    "check_in",
+                    "check_out",
+                    "arrival",
+                    "departure",
+                    "rest_day",
+                    "buffer",
+                    "decompression_buffer",
+                }
+            )
+            for day in days:
+                if day.label != "Free Day":
+                    continue
+                real_activities = [
+                    b
+                    for b in day.blocks
+                    if not b.is_buffer and b.activity_type not in _NON_ACTIVITY_TYPES
+                ]
+                if real_activities:
+                    # Derive label from the dominant specialist category, or
+                    # fall back to "Day N".
+                    specialist_types = [
+                        b.specialist_type
+                        for b in real_activities
+                        if b.specialist_type
+                        and b.specialist_type not in ("general", "local_expert")
+                    ]
+                    if specialist_types:
+                        # Use the most common specialist type
+                        dominant = max(set(specialist_types), key=specialist_types.count)
+                        day.label = f"{dominant.replace('_', ' ').title()} Day"
+                    else:
+                        day.label = f"Day {day.day_number}"
+                    # Also remove the free_day placeholder block if it's still present
+                    day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
+                    _debug_itinerary(
+                        f"🏷️ Phase 6.8: Relabeled Day {day.day_number} "
+                        f"from 'Free Day' to '{day.label}'"
+                    )
+
             # Final dedup: remove same-title activity duplicates within each day.
             # Prefers user_preferred blocks over auto-placed ones.
             for day in days:
@@ -760,6 +817,7 @@ class ItineraryBuilder:
 
             # Compute overview
             overview = self._compute_overview(days)
+            assumptions = self._compute_assumptions(days, merged_constraints)
 
             _debug_itinerary(
                 f"✅ Success: generated {len(days)} day cards with "
@@ -788,6 +846,7 @@ class ItineraryBuilder:
                 success=True,
                 day_cards=days,
                 overview=overview,
+                assumptions=assumptions,
                 conflicts=conflicts,
                 resolutions=[],
                 dropped_preferred_count=dropped_preferred_count,
@@ -1324,6 +1383,11 @@ class ItineraryBuilder:
                     is_buffer=False,
                     intensity=activity.intensity,
                     image_url=activity.image_url,
+                    rating=activity.rating,
+                    review_count=activity.user_ratings_count,
+                    price_level=activity.price_level,
+                    google_place_id=activity.google_place_id,
+                    deeplink=activity.deeplink,
                     unschedulable=True,
                     unschedulable_reason=reason,
                     unschedulable_days_needed=(
@@ -3783,6 +3847,72 @@ class ItineraryBuilder:
             duration_label=f"{total_days} days",
             base_structure=base_structure,
             activity_density=activity_density,
+        )
+
+    # =========================================================================
+    # Assumptions Computation
+    # =========================================================================
+
+    def _compute_assumptions(
+        self,
+        days: List[DayCardOutput],
+        merged_constraints: List[MergedConstraint],
+    ) -> ItineraryAssumptionsOutput:
+        """Derive planning assumptions from builder state for frontend display."""
+        assumptions: List[str] = []
+        flexible_elements: List[str] = []
+
+        total_days = len(days)
+        usable_days = max(1, total_days - 2)
+
+        # Activities-per-day assumption
+        activity_count = sum(
+            1
+            for d in days
+            for b in d.blocks
+            if not b.is_buffer
+            and b.activity_type not in ("arrival", "departure", "check-in", "check-out", "free_day")
+        )
+        if usable_days > 0:
+            avg = round(activity_count / usable_days, 1)
+            assumptions.append(f"{avg} activities per day on average")
+
+        # Constraints applied
+        blocking = [c for c in merged_constraints if c.severity == ConstraintSeverity.BLOCKING]
+        if blocking:
+            assumptions.append(
+                f"{len(blocking)} safety constraint{'s' if len(blocking) != 1 else ''} applied"
+            )
+
+        # Hotel check-in assumption
+        has_checkin = any(
+            b.activity_type in ("check-in", "check_in") for d in days for b in d.blocks
+        )
+        if has_checkin:
+            assumptions.append("Hotel check-in at 3 PM")
+
+        # Free days as flexible elements
+        free_days = [d for d in days if any(b.activity_type == "free_day" for b in d.blocks)]
+        if free_days:
+            flexible_elements.append(
+                f"{len(free_days)} free day{'s' if len(free_days) != 1 else ''} available to fill"
+            )
+
+        # Unbooked tiles as flexible elements
+        unbooked = sum(
+            1
+            for d in days
+            for b in d.blocks
+            if not b.is_buffer
+            and not b.booked_tile
+            and b.activity_type not in ("arrival", "departure", "check-in", "check-out", "free_day")
+        )
+        if unbooked:
+            flexible_elements.append(f"{unbooked} activities with alternatives available")
+
+        return ItineraryAssumptionsOutput(
+            assumptions=assumptions[:4],  # Max 4 per schema
+            flexible_elements=flexible_elements[:3],  # Max 3 per schema
         )
 
     # =========================================================================

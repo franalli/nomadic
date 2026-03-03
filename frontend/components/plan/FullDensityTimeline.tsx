@@ -18,6 +18,7 @@ import type { Tile } from '@/types/tile';
 
 import { BookingSection } from './BookingSection';
 import { OriginPromptCard } from './OriginPromptCard';
+import { PdfExportButton } from './PdfExportButton';
 import type { GenerationState } from './planStateHelpers';
 import { PlanTimelineSection } from './PlanTimelineSection';
 import type { TimelineVariant } from './TimelineThread';
@@ -115,10 +116,10 @@ export function FullDensityTimeline({
 }: FullDensityTimelineProps): ReactNode {
   const [intelExpanded, setIntelExpanded] = useState(false);
 
-  const showRowTwoChips = hasDestinationIntel || (hasItineraryContent && (flightCount > 0 || stayCount > 0));
+  const showRowTwoChips = hasDestinationIntel || hasItineraryContent;
 
   const subduedTogglePillClass = cn(
-    'inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-sm whitespace-nowrap transition-colors',
+    'inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-sm font-semibold whitespace-nowrap transition-colors',
     'border-zinc-300 dark:border-white/15 bg-zinc-100 dark:bg-white/[0.06]',
     'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/10',
   );
@@ -191,6 +192,11 @@ export function FullDensityTimeline({
                 </span>
               </button>
             )}
+            <PdfExportButton
+              tripInputs={effectiveTripInputs}
+              dayCards={viewModel.day_cards ?? []}
+              tiles={effectiveTiles}
+            />
           </div>
 
           {hasDestinationIntel && intelExpanded && (

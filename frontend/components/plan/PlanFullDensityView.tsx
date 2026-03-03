@@ -168,7 +168,7 @@ export function PlanFullDensityView({
       return { ...section, ...enrichedLocalExpertSection };
     });
   }, [enrichedLocalExpertSection, localExpertSectionId, strategySections]);
-  const { categories: intelCategories } = useMemo(
+  const { categories: intelCategories, tipCount: travelIntelItemCount } = useMemo(
     () => buildDestinationIntel(effectiveStrategySections),
     [effectiveStrategySections]
   );
@@ -178,10 +178,9 @@ export function PlanFullDensityView({
   );
   const isTravelIntelPending = localExpertEnrichmentState(effectiveLocalExpertSection) === 'pending';
   const hasDestinationIntel = intelCategories.length > 0;
-  const travelIntelSectionCount = intelCategories.length;
   const travelAdviceLabel = isTravelIntelPending
     ? 'Travel Advice'
-    : `Travel Advice (${travelIntelSectionCount})`;
+    : `Travel Advice (${travelIntelItemCount})`;
   useEffect(() => {
     setEnrichedLocalExpertSection(null);
   }, [intelDestinationKey, localExpertSectionId]);

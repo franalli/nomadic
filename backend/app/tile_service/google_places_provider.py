@@ -36,6 +36,8 @@ from app.services.spend_guard import SpendLimitExceeded, reserve_places_spend_or
 
 from .models import SearchContext
 from .provider_base import Provider
+from .title_utils import simplify_specialist_title as _simplify_specialist_title
+from .title_utils import token_overlap_ratio as _token_overlap_ratio
 
 logger = logging.getLogger(__name__)
 
@@ -1530,7 +1532,9 @@ async def _enrich_single_activity(
 
     record_google_places_usage(path, "cache_miss", cache="enrichment")
 
-    query = f"{title} {destination}"
+    # Simplify specialist titles for better GP matching
+    simplified = _simplify_specialist_title(title)
+    query = f"{simplified} {destination}"
     max_attempts = _enrich_retry_attempts()
     places: list[dict] = []
     for attempt in range(max_attempts):
@@ -1651,6 +1655,39 @@ async def _enrich_single_activity(
 
     try:
         place = places[0]
+        # Validate relevance via token overlap — specialist titles like
+        # "USAT Liberty Shipwreck Dive" may get an unrelated GP result.
+        # Reject GP results below 60% overlap to avoid enriching with
+        # unrelated places (e.g. a restaurant matching a dive site name).
+        gp_name = ""
+        display_name = place.get("displayName")
+        if isinstance(display_name, dict):
+            gp_name = display_name.get("text", "")
+        simplified_title = _simplify_specialist_title(title)
+        overlap = _token_overlap_ratio(simplified_title, gp_name)
+        # Also check reverse overlap — GP name tokens found in simplified title.
+        # Accept if EITHER direction meets threshold (handles partial name matches
+        # like GP "Liberty Wreck" for specialist "USAT Liberty Shipwreck").
+        reverse_overlap = _token_overlap_ratio(gp_name, simplified_title) if gp_name else 0.0
+        best_overlap = max(overlap, reverse_overlap)
+        if best_overlap < 0.6 and gp_name:
+            logger.debug(
+                "[GOOGLE_PLACES] Low overlap (%.0f%%) for '%s' vs GP '%s' — rejecting",
+                best_overlap * 100,
+                title,
+                gp_name,
+            )
+            await _set_cached_enrichment(cache_key, {"matched": False})
+            record_google_places_usage(path, "empty", mode="enrichment", reason="low_overlap")
+            # Fallback deeplink so tile is never without a link
+            if not activity.get("deeplink") and not activity.get("deeplink_url"):
+                from urllib.parse import quote as _quote
+
+                activity["deeplink"] = (
+                    f"https://www.google.com/maps/search/"
+                    f"{_quote(f'{simplified_title} {destination}')}"
+                )
+            return activity
         enriched = _apply_place_to_activity(activity, place, title)
         await _set_cached_enrichment(cache_key, {"matched": True, "place": place})
         record_google_places_usage(path, "success", mode="enrichment")

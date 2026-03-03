@@ -56,12 +56,14 @@ frontend/
                      PlanHeader, NextStepBar, planStateHelpers,
                      CoreChip, UnifiedChipRow, TripHealthBar, TripSummaryPills,
                      BookingPlanningView, ChipGroup, ChipScrollContainer,
-                     FullDensityTimeline, TimelineBlockList,
+                     FullDensityTimeline, PdfExportButton,
+                     TimelineBlockList,
                      TimelineDayCard, useTimelineBufferLogic,
                      ItineraryProgressIndicator, OriginPromptCard,
                      DestinationIntelCard, DestinationMapPlaceholder,
                      PlanDensityViews, PlanFullDensityView, PlanTimelineSection,
                      BrowseActivitiesSheet, useBookingDrawerState, useStrategyStageOrchestration
+      pdf/        → TripPdfDocument
       booking/     → BookingDrawer, CategorySection, CheckoutSidebar
       modals/      → AlternativesModal
       stages/      → S2StrategyView, StrategyHero,
@@ -108,7 +110,7 @@ frontend/
                      contentPolicyGuard.ts, ghost-timeline-adapter.ts, fillDayGuards.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
-                     summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
+                     pdfData.ts, summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
                      categoryNormalization.ts, popular-places.ts, showMutationToast.ts,
                      googlePlacesPhoto.ts, travelIntel.ts,
                      use-sync-external-store-shim.js

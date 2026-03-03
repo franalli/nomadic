@@ -42,9 +42,19 @@ from app.planner.schemas.coordinator_schemas import (
     StepType,
     TripBrief,
 )
-from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES, TIER2_CATEGORY_ALIASES
+from app.planner.specialist_registry import (
+    SPECIALIST_REGISTRY,
+    TIER1_SPECIALIST_NAMES,
+    TIER2_CATEGORY_ALIASES,
+)
 
 logger = logging.getLogger(__name__)
+
+# Derived from specialist_registry — per-person price estimate fallbacks
+# for specialist tiles when content_added items don't carry a price.
+_SPECIALIST_DEFAULT_PRICE: dict[str, float] = {
+    topic: cfg.default_price_estimate for topic, cfg in SPECIALIST_REGISTRY.items()
+}
 
 # Keys used for change-detection snapshots (snapshot creation + envelope comparison).
 _CHANGE_DETECTION_KEYS = (
@@ -73,6 +83,30 @@ _FAILURE_LABELS = {
 def _norm_topic(topic: str) -> str:
     """Normalize specialist topic IDs to lowercase canonical form."""
     return (topic or "").strip().lower()
+
+
+def _has_local_intel_for_destination(state: Dict[str, Any], destination: str | None) -> bool:
+    """Return True when a local_expert section already matches the given destination."""
+    dest_norm = (destination or "").strip().lower()
+    if not dest_norm:
+        return False
+
+    sections = state.get("strategy_sections", [])
+    if not isinstance(sections, list):
+        return False
+
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        if _norm_topic(str(section.get("specialist_type", ""))) != "local_expert":
+            continue
+
+        title = str(section.get("title", "")).strip().lower()
+        one_liner = str(section.get("one_liner", "")).strip().lower()
+        if dest_norm in title or dest_norm in one_liner:
+            return True
+
+    return False
 
 
 def _normalize_specialist_plan_keys(state: Dict[str, Any]) -> None:
@@ -460,6 +494,7 @@ def _clear_planning_artifacts(state: Dict[str, Any]) -> None:
     persistent_meta = state.get("persistent_meta", {})
     if isinstance(persistent_meta, dict):
         persistent_meta.pop("itinerary_overview", None)
+        persistent_meta.pop("itinerary_assumptions", None)
         persistent_meta.pop("browseable_activities", None)
 
 
@@ -512,16 +547,70 @@ def plan_turn(
             estimated_wall_ms=800,
         )
 
-    # Short-circuit GENERATE_PLAN_NOW when itinerary is already built
+    # Short-circuit GENERATE_PLAN_NOW when planning artifacts already exist.
+    # Two tiers:
+    #   - day_cards present  → skip to GENERATE_RESPONSE only (full itinerary ready)
+    #   - strategy_sections present but no day_cards → skip specialists/local_intel,
+    #     run SEARCH_TILES + BUILD_ITINERARY + GENERATE_RESPONSE
     if (
         change_type == ChangeType.INITIAL_PLAN
         and classifier.reasoning
         and "GENERATE_PLAN_NOW" in classifier.reasoning
+    ):
+        if state.get("day_cards"):
+            return ExecutionPlan(
+                steps=[ExecutionStep(step_type=StepType.GENERATE_RESPONSE)],
+                reason="GENERATE_PLAN_NOW — itinerary exists, response only",
+                estimated_llm_calls=1,
+                estimated_wall_ms=800,
+            )
+        if state.get("strategy_sections"):
+            trip_plan_gp: Dict[str, Any] = state.get("trip_plan", {})
+            has_dest_gp = bool(trip_plan_gp.get("destination") or classifier.destination)
+            has_dates_gp = bool(
+                (trip_plan_gp.get("start_date") or classifier.start_date)
+                and (trip_plan_gp.get("end_date") or classifier.end_date)
+            )
+            gp_steps: List[ExecutionStep] = []
+            if has_dest_gp and has_dates_gp:
+                gp_steps.append(
+                    ExecutionStep(
+                        step_type=StepType.SEARCH_TILES,
+                        params={"tile_types": ["flights", "hotels", "activities"]},
+                    )
+                )
+                gp_steps.append(ExecutionStep(step_type=StepType.BUILD_ITINERARY))
+            gp_steps.append(ExecutionStep(step_type=StepType.GENERATE_RESPONSE))
+            return ExecutionPlan(
+                steps=gp_steps,
+                reason="GENERATE_PLAN_NOW — strategy exists, skip specialists",
+                estimated_llm_calls=1,
+                estimated_wall_ms=3000,
+            )
+
+    # ----- Idempotent input short-circuit -----
+    # If classifier extracted fields but none actually changed (all identical to
+    # existing state), and a built itinerary already exists, skip the full
+    # pipeline and just generate a response.  This avoids re-running specialists
+    # + tiles + builder when the user repeats the same inputs.
+    # Exclude INITIAL_PLAN to allow genuine "plan it" requests even with no changes.
+    turn_meta_fc = state.get("turn_meta", {})
+    _fields_changed = (
+        turn_meta_fc.get("fields_changed", []) if isinstance(turn_meta_fc, dict) else []
+    )
+    if (
+        not _fields_changed
+        and change_type not in (ChangeType.INITIAL_PLAN, ChangeType.RESET, ChangeType.GREETING)
         and state.get("day_cards")
     ):
+        logger.info(
+            "[coordinator] Idempotent input — no effective field changes, "
+            "skipping pipeline (change_type=%s)",
+            change_type.value,
+        )
         return ExecutionPlan(
             steps=[ExecutionStep(step_type=StepType.GENERATE_RESPONSE)],
-            reason="GENERATE_PLAN_NOW — itinerary exists, response only",
+            reason=f"Idempotent input ({change_type.value}) — no field changes, response only",
             estimated_llm_calls=1,
             estimated_wall_ms=800,
         )
@@ -556,6 +645,8 @@ def plan_turn(
         estimated_wall_ms += 4000  # Parallel, so one specialist's time
 
     # Local intel (for initial plans, destination changes, or Tier 1 activity changes)
+    target_destination = classifier.destination or trip_plan.get("destination")
+    has_local_intel_for_target = _has_local_intel_for_destination(state, target_destination)
     _activity_change_types = {ChangeType.ADD_ACTIVITY, ChangeType.REMOVE_ACTIVITY}
     _affects_tier1 = bool(
         (
@@ -564,11 +655,17 @@ def plan_turn(
         )
         or any(_norm_topic(h) in TIER1_SPECIALIST_NAMES for h in classifier.specialist_hints)
     )
-    needs_local_intel = change_type in (
-        ChangeType.INITIAL_PLAN,
-        ChangeType.DESTINATION_CHANGE,
-        ChangeType.DATE_CHANGE,
-    ) or (change_type in _activity_change_types and _affects_tier1)
+    needs_local_intel = (
+        change_type in (ChangeType.INITIAL_PLAN, ChangeType.DESTINATION_CHANGE)
+        and not has_local_intel_for_target
+    ) or (
+        change_type in _activity_change_types
+        and _affects_tier1
+        and not any(
+            isinstance(s, dict) and s.get("specialist_type") == "local_expert"
+            for s in state.get("strategy_sections", [])
+        )
+    )
     if needs_local_intel and has_destination:
         steps.append(
             ExecutionStep(
@@ -1081,6 +1178,12 @@ def _apply_classifier_to_state(
                         "summary": f"{state_field}: {old_val} -> {value}",
                     }
                 )
+
+    # Clear stale IATA codes when location changes so the resolver re-resolves.
+    if "destination" in fields_changed:
+        trip_plan.pop("destination_iata", None)
+    if "origin" in fields_changed:
+        trip_plan.pop("origin_iata", None)
 
     # Duration days
     if classifier.duration_days is not None:
@@ -1679,7 +1782,8 @@ def _specialist_content_to_tiles(
                 "title": title,
                 "subtitle": f"{topic.capitalize()} activity",
                 "image_url": item.get("image_url"),
-                "price_estimate": None,
+                "price_estimate": item.get("price_estimate")
+                or _SPECIALIST_DEFAULT_PRICE.get(topic, 50.0),
                 "price_level": None,
                 "currency": "USD",
                 "price_basis": "per_person",
@@ -2024,6 +2128,9 @@ async def _search_tiles(
     if graph_state.metadata.get("hotel_filter_empty"):
         turn_meta["hotel_filter_empty"] = True
         turn_meta["hotel_filter_min_stars"] = graph_state.metadata.get("hotel_filter_min_stars")
+    hotel_cascade = graph_state.metadata.get("hotel_filter_cascaded")
+    if isinstance(hotel_cascade, dict):
+        turn_meta["hotel_filter_cascaded"] = hotel_cascade
     if "activities" in requested_types:
         browseable = graph_state.metadata.get("browseable_activities")
         turn_meta["browseable_activities"] = browseable if isinstance(browseable, list) else []
@@ -2058,6 +2165,11 @@ async def _run_local_intel(
     trip_plan: Dict[str, Any] = state.get("trip_plan", {})
     destination = trip_plan.get("destination")
     if not destination:
+        return None
+
+    # Local intel should run once per destination; skip if already present.
+    if _has_local_intel_for_destination(state, destination):
+        logger.debug("[coordinator] Local intel already present for %s — skipping", destination)
         return None
 
     try:
@@ -2123,6 +2235,8 @@ async def _run_local_intel(
                 adults=trip_plan.get("adults", 1) or 1,
                 children=trip_plan.get("children", 0) or 0,
                 session_id=session_id,
+                budget=trip_plan.get("budget"),
+                vibe=trip_plan.get("vibe"),
             )
             async with _pending_lock:
                 if len(_pending_enrichments) >= _MAX_PENDING_ENRICHMENTS:
@@ -2306,6 +2420,7 @@ async def _build_itinerary(
             "conflicts": [c.model_dump() for c in result.conflicts],
             "warnings": result.warnings,
             "overview": result.overview.model_dump() if result.overview else None,
+            "assumptions": result.assumptions.model_dump() if result.assumptions else None,
         }
         state["turn_meta"] = turn_meta
 
@@ -2547,9 +2662,11 @@ def _build_envelope(
     # Write to persistent_meta
     persistent_meta = dict(state.get("persistent_meta", {}))
     persistent_meta["plan_view_state"] = plan_view_state
-    # Persist itinerary_overview so it survives across turns where builder doesn't re-run
+    # Persist itinerary_overview and assumptions so they survive across turns where builder doesn't re-run
     if builder_ran and builder_result.get("overview"):
         persistent_meta["itinerary_overview"] = builder_result["overview"]
+    if builder_ran and builder_result.get("assumptions"):
+        persistent_meta["itinerary_assumptions"] = builder_result["assumptions"]
     # Persist browseable_activities so they survive turn_meta reset between turns
     browseable_from_turn = turn_meta.get("browseable_activities")
     if isinstance(browseable_from_turn, list) and browseable_from_turn:
@@ -2690,6 +2807,11 @@ def _build_envelope(
             builder_result.get("overview")
             if builder_ran
             else persistent_meta.get("itinerary_overview")
+        ),
+        "itinerary_assumptions": (
+            builder_result.get("assumptions")
+            if builder_ran
+            else persistent_meta.get("itinerary_assumptions")
         ),
         "ack_status": ack_status,
         "ack_updates": ack_updates,

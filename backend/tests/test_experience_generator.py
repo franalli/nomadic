@@ -410,6 +410,28 @@ class TestPromptBuilding:
         prompt = _build_user_prompt("Bali", ["yoga"], "bad-month")
         assert "bad-month" in prompt  # Falls back to raw string
 
+    def test_vibe_children_skill_injection(self):
+        from app.services.experience_generator import _build_user_prompt
+
+        prompt = _build_user_prompt(
+            "Bali",
+            ["yoga"],
+            "2026-03",
+            vibe="adventure",
+            children=2,
+            skill_level="intermediate",
+        )
+        assert "adventure" in prompt
+        assert "family-friendly" in prompt.lower() or "children" in prompt.lower()
+        assert "intermediate" in prompt
+
+    def test_no_vibe_no_injection(self):
+        from app.services.experience_generator import _build_user_prompt
+
+        prompt = _build_user_prompt("Bali", ["yoga"], "2026-03")
+        assert "vibe" not in prompt.lower()
+        assert "children" not in prompt.lower() or "family" not in prompt.lower()
+
 
 # =============================================================================
 # Generate Experiences (mocked LLM)

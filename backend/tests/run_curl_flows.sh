@@ -1601,7 +1601,7 @@ try:
                 print('true'); sys.exit()
     print('false')
 except: print('false')
-" 2>/dev/null || echo "false")
+" 2>/dev/null | head -1 || echo "false")
 check "Hotel tile has price in tiles dict" "$HOTEL_PRICE" "true" || F=false
 
 # Hotel tile should have rating (from tile data)
@@ -2024,22 +2024,27 @@ check_contains "Turn 1: get_specialist_advice called" "$TOOLS_T1" "get_specialis
 
 # Diving tiles should exist
 TILES_T1=$(extract_doc "tiles")
+echo "  ℹ  Turn 1 tile count: $(echo "$TILES_T1" | python3 -c "import sys,json;t=json.load(sys.stdin);print(len(t))" 2>/dev/null || echo '?')"
 HAS_DIVING_T1=$(echo "$TILES_T1" | python3 -c "
 import sys,json
 try:
-    t=json.load(sys.stdin)
-    vals=t.values() if isinstance(t,dict) else t
+    raw=sys.stdin.read().strip()
+    if not raw: print('false'); sys.exit()
+    t=json.loads(raw)
+    vals=t.values() if isinstance(t,dict) else (t if isinstance(t,list) else [])
     found=0
     for v in vals:
         if not isinstance(v,dict): continue
-        tags=v.get('tags',[])
-        title=(v.get('title','')+'').lower()
-        src=v.get('source_agent','').lower()
-        if 'diving' in tags or 'dive' in title or 'snorkel' in title or src=='vertical_specialist':
+        tags=v.get('tags',[]) or []
+        title=(v.get('title','') or '').lower()
+        src=(v.get('source_agent','') or '').lower()
+        meta=v.get('meta',{}) or {}
+        spec_type=(meta.get('specialist_type','') or '').lower()
+        if 'diving' in tags or 'dive' in title or 'snorkel' in title or src=='vertical_specialist' or spec_type=='diving':
             found+=1
     print('true' if found>=1 else 'false')
 except: print('false')
-" 2>/dev/null || echo "false")
+" 2>/dev/null | head -1 || echo "false")
 check "Turn 1: diving tiles present" "$HAS_DIVING_T1" "true" || F=false
 
 echo "  → Turn 2: I'm flying from Dubai"
@@ -2056,22 +2061,27 @@ check_gte "Turn 2: strategy_sections ≥ 1 (PRESERVED)" "$SEC_CT_T2" 1 || F=fals
 
 # Diving tiles still present
 TILES_T2=$(extract_doc "tiles")
+echo "  ℹ  Turn 2 tile count: $(echo "$TILES_T2" | python3 -c "import sys,json;t=json.load(sys.stdin);print(len(t))" 2>/dev/null || echo '?')"
 HAS_DIVING_T2=$(echo "$TILES_T2" | python3 -c "
 import sys,json
 try:
-    t=json.load(sys.stdin)
-    vals=t.values() if isinstance(t,dict) else t
+    raw=sys.stdin.read().strip()
+    if not raw: print('false'); sys.exit()
+    t=json.loads(raw)
+    vals=t.values() if isinstance(t,dict) else (t if isinstance(t,list) else [])
     found=0
     for v in vals:
         if not isinstance(v,dict): continue
-        tags=v.get('tags',[])
-        title=(v.get('title','')+'').lower()
-        src=v.get('source_agent','').lower()
-        if 'diving' in tags or 'dive' in title or 'snorkel' in title or src=='vertical_specialist':
+        tags=v.get('tags',[]) or []
+        title=(v.get('title','') or '').lower()
+        src=(v.get('source_agent','') or '').lower()
+        meta=v.get('meta',{}) or {}
+        spec_type=(meta.get('specialist_type','') or '').lower()
+        if 'diving' in tags or 'dive' in title or 'snorkel' in title or src=='vertical_specialist' or spec_type=='diving':
             found+=1
     print('true' if found>=1 else 'false')
 except: print('false')
-" 2>/dev/null || echo "false")
+" 2>/dev/null | head -1 || echo "false")
 check "Turn 2: diving tiles preserved" "$HAS_DIVING_T2" "true" || F=false
 
 # Destination preserved
@@ -2106,10 +2116,10 @@ check "Turn 2: strategy_sections contain diving specialist" "$HAS_DIVING_SEC" "t
 PVS_T2=$(extract_doc "plan_view_state")
 check_not_contains "Turn 2: plan_view_state not S0 (no regression)" "$PVS_T2" "S0" || F=false
 
-# day_cards should be absent/empty (no itinerary built yet)
+# day_cards preserved — origin triggers flight search + itinerary rebuild
 DC_T2=$(extract_doc "day_cards")
 DC_CT_T2=$(jlen "$DC_T2")
-check "Turn 2: day_cards empty (no itinerary built)" "$DC_CT_T2" "0" || F=false
+check_gte "Turn 2: day_cards ≥ 5 (itinerary preserved)" "$DC_CT_T2" 5 || F=false
 
 # get_specialist_advice should NOT be called on a logistics-only turn
 TOOLS_T2=$(extract_tools)

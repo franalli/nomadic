@@ -194,8 +194,9 @@ export function TripSummaryPills({
   }
   const activityLabel = selectedActivityCount > 0 ? `Activities(${selectedActivityCount})` : null;
 
-  // Origin visibility: only show when origin is already set (ghost pill confuses destination relationship)
+  // Origin/budget visibility: only show when already set (progressive discovery — ghost pills confuse the UI)
   const showOrigin = !!origin;
+  const showBudget = !!budget;
 
   return (
     <div
@@ -262,17 +263,18 @@ export function TripSummaryPills({
         variant={variant}
       />
 
-      <CoreChip
-        icon={DollarSign}
-        label="Budget"
-        value={budget}
-        placeholder="Budget (optional)"
-        tone="optional"
-        onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('budget')}
-        disabled={disabled || readOnlyExceptDestination}
-        variant={variant}
-        className="italic"
-      />
+      {showBudget && (
+        <CoreChip
+          icon={DollarSign}
+          label="Budget"
+          value={budget}
+          placeholder="Add budget"
+          tone="default"
+          onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('budget')}
+          disabled={disabled || readOnlyExceptDestination}
+          variant={variant}
+        />
+      )}
 
     </div>
   );

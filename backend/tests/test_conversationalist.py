@@ -339,6 +339,43 @@ class TestTripContextUrgency:
         assert "Start day:" not in result
         assert "Destination: Tokyo" in result
 
+    def test_vibe_included(self):
+        state = {"trip_plan": {"destination": "Bali", "vibe": "adventure"}, "trip_settings": {}}
+        result = _build_trip_context_block(state)
+        assert "adventure" in result
+
+    def test_pace_label(self):
+        state = {
+            "trip_plan": {"destination": "Bali"},
+            "trip_settings": {"activity_settings": {"activities_per_day": 1}},
+        }
+        result = _build_trip_context_block(state)
+        assert "relaxed" in result
+
+    def test_hotel_style_included(self):
+        state = {
+            "trip_plan": {"destination": "Bali"},
+            "trip_settings": {"hotel_settings": {"style": "boutique"}},
+        }
+        result = _build_trip_context_block(state)
+        assert "boutique" in result
+
+    def test_flight_class_non_economy(self):
+        state = {
+            "trip_plan": {"destination": "Bali"},
+            "trip_settings": {"flight_settings": {"cabin_class": "business"}},
+        }
+        result = _build_trip_context_block(state)
+        assert "business" in result
+
+    def test_economy_flight_not_shown(self):
+        state = {
+            "trip_plan": {"destination": "Bali"},
+            "trip_settings": {"flight_settings": {"cabin_class": "economy"}},
+        }
+        result = _build_trip_context_block(state)
+        assert "Flight class" not in result
+
 
 # ---------------------------------------------------------------------------
 # _build_from_strategy_sections — constraint relevance tagging

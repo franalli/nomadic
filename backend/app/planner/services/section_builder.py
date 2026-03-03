@@ -158,6 +158,22 @@ def build_local_expert_section(
         "content_blocks": content_added,
         "impact_areas": ["Logistics", "Timing", "Culture"],
         "destination_gallery": gallery_images,  # "Vibe Trio" images for Magazine Layout
+        "hero_image": (
+            (gallery_images[0].get("image_url") or gallery_images[0].get("url"))
+            if gallery_images
+            else None
+        ),
+        "vibe_trio": (
+            [
+                {
+                    "label": img.get("label", ""),
+                    "image_url": img.get("image_url") or img.get("url", ""),
+                }
+                for img in gallery_images[:3]
+            ]
+            if gallery_images
+            else None
+        ),
         # Comprehensive 12-category travel intelligence
         "travel_intelligence": travel_intelligence,
     }

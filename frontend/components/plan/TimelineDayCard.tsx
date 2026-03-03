@@ -115,7 +115,7 @@ export function TimelineDayCard({
   const isSafety = isSafetyDay(card);
 
   return (
-    <div className="relative z-10">
+    <div className="relative z-10 rounded-2xl bg-black/[0.015] dark:bg-white/[0.006] px-3 py-4 -mx-3">
       {/* Day header with icon -- observed for scroll->map sync */}
       <button
         ref={(el) => dayHeaderRef?.(card.day_number, el)}

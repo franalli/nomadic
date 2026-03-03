@@ -2,12 +2,12 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** UX polish, cost optimization, and shipping speed
-- **Secondary:** post-demo delivery hardening across frontend/backend planner interactions
-- **Active work:** UX and interaction polish, cost-aware recommendation optimizations, and SSoT doc alignment in `docs/*`
-- **Active files:** `backend/app/*`, `backend/tests/*`, `frontend/components/*`, `frontend/hooks/*`, `frontend/lib/*`, `docs/*`, `.claude/agents/*`, `.claude/commands/*`, `.codex/agents/*`, `.codex/skills/*`, `CLAUDE.md`
-- **Known broken:** none explicitly tracked in current working diff
-- **DO NOT touch this sprint:** `llm_factory.py` provider/model-routing contract, API/schema compatibility surfaces
+- **Focus:** [describe focus]
+- **Secondary:** [secondary priority or "none"]
+- **Active files:** `backend/tests/test_contracts.py`, `backend/tests/test_graph_integration.py`, `frontend/components/plan/PdfExportButton.tsx`, `frontend/components/plan/pdf/TripPdfDocument.tsx`, `frontend/lib/pdfData.ts`, `docs/repo_structure.md`, `docs/ux_unified_architecture.md`, `.claude/agents/frontend-specialist.md`
+- **Active work:** [update per session]
+- **Known broken:** [update per session]
+- **DO NOT touch this sprint:** [frozen files/features]
 
 ---
 

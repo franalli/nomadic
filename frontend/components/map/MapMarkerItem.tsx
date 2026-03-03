@@ -14,7 +14,7 @@ import {
   Anchor, Bed, Bike, Binoculars, Camera, Church, Compass, Dumbbell,
   Flower2, Landmark, type LucideIcon,
   MapPin, Mountain, Music, Palmtree, Plane, Search, ShoppingBag, Snowflake, Star,
-  Sunset, Utensils, Waves, Wind,
+  Sunset, Utensils, Waves,
 } from 'lucide-react';
 import { memo } from 'react';
 import { Marker } from 'react-map-gl/mapbox';
@@ -113,6 +113,27 @@ const SPECIALIST_MARKER_COLORS: Record<string, string> = {
   check_out:       '#10b981', // emerald-500
 };
 
+/** Horizontal surfboard icon for surfing map markers. */
+function SurfboardIcon({ className, size = 16 }: { className?: string; size?: number }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <ellipse cx="12" cy="12" rx="11" ry="3.5" />
+      <line x1="8" y1="12" x2="5" y2="9.5" />
+    </svg>
+  );
+}
+
 /** Pin icon per activity/specialist type for map markers. */
 const PIN_ICON: Record<string, LucideIcon> = {
   // ── Tier 1: Specialist types ──
@@ -120,7 +141,7 @@ const PIN_ICON: Record<string, LucideIcon> = {
   hiking:          Mountain,
   skiing:          Snowflake,
   cycling:         Bike,
-  surfing:         Wind,
+  surfing:         SurfboardIcon as unknown as LucideIcon,
   sailing:         Anchor,
   climbing:        Compass,
   wildlife_safari: Binoculars,

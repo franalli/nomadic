@@ -431,6 +431,11 @@ def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
     if price_level is not None:
         price_estimate = {0: 0, 1: 15, 2: 35, 3: 65, 4: 120}.get(price_level)
 
+    # Fallback: GP returned the place but no priceLevel — default moderate
+    if price_estimate is None and rating is not None:
+        price_estimate = 35.0
+        price_level = 2
+
     photos = place.get("photos", [])
     image_url = None
     photo_name = None
@@ -476,6 +481,7 @@ async def _browse_activities_impl(
     center: Optional[tuple[float, float]],
     valid_categories: list[str],
     cache_key: str,
+    max_results: int = MAX_BROWSE_RESULTS,
 ) -> list[dict[str, Any]]:
     from app.tile_service.google_places_provider import (
         _call_places_api_async,
@@ -526,7 +532,7 @@ async def _browse_activities_impl(
             if cat not in owners:
                 owners.append(cat)
 
-    # Parallel search across types (max 20 total results)
+    # Parallel search across types (capped at max_results)
     results_per_type: Dict[str, List[Dict[str, Any]]] = {}
     had_search_errors = False
 
@@ -565,9 +571,9 @@ async def _browse_activities_impl(
             if dedupe_key not in seen_keys:
                 seen_keys.add(dedupe_key)
                 tiles.append(tile)
-            if len(tiles) >= MAX_BROWSE_RESULTS:
+            if len(tiles) >= max_results:
                 break
-        if len(tiles) >= MAX_BROWSE_RESULTS:
+        if len(tiles) >= max_results:
             break
 
     tiles = await _enrich_tiles_with_llm(destination, valid_categories, tiles)
@@ -597,6 +603,7 @@ async def browse_activities(
     center: Optional[tuple[float, float]],
     categories: List[str],
     date: Optional[str] = None,
+    max_results: int = MAX_BROWSE_RESULTS,
 ) -> List[Dict[str, Any]]:
     """
     Search Google Places for activities in the given categories near the destination.
@@ -606,9 +613,10 @@ async def browse_activities(
         center: (lat, lng) tuple for search center, or None to geocode destination
         categories: List of category keys from CATEGORY_TO_PLACES_TYPES
         date: ISO date string (used for month-level cache key)
+        max_results: Maximum number of tiles to return (default MAX_BROWSE_RESULTS)
 
     Returns:
-        List of tile dicts (up to MAX_BROWSE_RESULTS)
+        List of tile dicts (up to max_results)
     """
     month = _month_from_date(date)
 
@@ -617,7 +625,9 @@ async def browse_activities(
     if not valid_categories:
         valid_categories = ["cultural", "food", "nature"]
 
-    cache_key = _cache_key(destination, valid_categories, month, center)
+    # Include max_results in cache key when non-default to avoid stale short results
+    cache_key_suffix = f":mr{max_results}" if max_results != MAX_BROWSE_RESULTS else ""
+    cache_key = _cache_key(destination, valid_categories, month, center) + cache_key_suffix
 
     # Fast path: L1 hit (before singleflight lock).
     cached = _browse_cache.get(cache_key)
@@ -644,7 +654,9 @@ async def browse_activities(
             logger.debug("[VERIFY][BROWSE] singleflight_waiter key=%s", cache_key)
         else:
             task = asyncio.create_task(
-                _browse_activities_impl(destination, center, valid_categories, cache_key)
+                _browse_activities_impl(
+                    destination, center, valid_categories, cache_key, max_results
+                )
             )
             _browse_inflight_tasks[cache_key] = task
             owner = True

@@ -95,8 +95,35 @@ def _build_trip_context_block(state: Dict[str, Any]) -> str:
     if origin:
         parts.append(f"Origin: {origin}")
 
-    # Activity categories
+    vibe = trip_plan.get("vibe")
+    if vibe:
+        parts.append(f"Trip vibe: {vibe}")
+
+    # Activity pacing / skill / accommodation preferences
     activity_settings = trip_settings.get("activity_settings", {})
+    apd = activity_settings.get("activities_per_day")
+    if apd:
+        pace_label = {1: "relaxed", 2: "moderate", 3: "packed"}.get(apd, f"{apd}/day")
+        parts.append(f"Pace: {pace_label} ({apd} activities/day)")
+
+    skill_level = activity_settings.get("skill_level")
+    if skill_level and skill_level != "beginner":
+        parts.append(f"Skill level: {skill_level}")
+
+    hotel_settings = trip_settings.get("hotel_settings", {})
+    hotel_style = hotel_settings.get("style")
+    hotel_stars = hotel_settings.get("min_stars")
+    if hotel_style:
+        parts.append(f"Hotel preference: {hotel_style}")
+    elif hotel_stars and hotel_stars > 0:
+        parts.append(f"Hotel preference: {hotel_stars}+ stars")
+
+    flight_settings = trip_settings.get("flight_settings", {})
+    cabin_class = flight_settings.get("cabin_class")
+    if cabin_class and cabin_class != "economy":
+        parts.append(f"Flight class: {cabin_class.replace('_', ' ')}")
+
+    # Activity categories
     categories: List[str] = activity_settings.get("categories", [])
     if categories:
         parts.append(f"Activities: {', '.join(c.title() for c in categories)}")

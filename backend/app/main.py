@@ -1972,11 +1972,13 @@ async def get_specialist_enrichment(
         status_blob = section.local_expert_enrichment or {}
         enrichment_state = ""
         error_code = None
+        travel_intelligence = section.travel_intelligence or {}
+        has_travel_intelligence = bool(travel_intelligence)
         if isinstance(status_blob, dict):
             enrichment_state = str(status_blob.get("state") or "").lower().strip()
             error_code = status_blob.get("error_code")
 
-        if enrichment_state == "ready":
+        if enrichment_state == "ready" or (not enrichment_state and has_travel_intelligence):
             return SpecialistEnrichmentResponse(
                 section_id=section_id,
                 status="ready",
@@ -1997,8 +1999,7 @@ async def get_specialist_enrichment(
             )
 
         # Backward compatibility for documents that predate local_expert_enrichment.
-        ti = section.travel_intelligence or {}
-        if not ti or not any(v for v in ti.values() if v):
+        if not has_travel_intelligence:
             return JSONResponse(
                 status_code=202,
                 content={"status": "pending", "section_id": section_id, "retry_after_ms": 1500},
@@ -2436,6 +2437,15 @@ async def fill_day_endpoint(
     if not destination:
         raise HTTPException(status_code=400, detail="No destination set")
 
+    # Extract trip context for experience personalization
+    _fill_day_vibe: str | None = None
+    for _b in doc_data.branches:
+        if _b.is_primary and _b.vibe:
+            _fill_day_vibe = _b.vibe
+            break
+    _fill_day_children = ti.children or 0
+    _fill_day_skill = ti.activity_settings.skill_level if ti.activity_settings else None
+
     async def _enrich_generated_tiles_with_places(
         generated_tiles: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
@@ -2780,6 +2790,9 @@ async def fill_day_endpoint(
                 day_number=body.day_number,
                 budget=budget_int,
                 tiles_per_day=1,
+                vibe=_fill_day_vibe,
+                children=_fill_day_children,
+                skill_level=_fill_day_skill,
             )
 
         # Tag fill-day tiles so the builder won't redistribute them
@@ -2839,6 +2852,9 @@ async def fill_day_endpoint(
                 day_number=body.day_number,
                 budget=budget_int,
                 tiles_per_day=1,
+                vibe=_fill_day_vibe,
+                children=_fill_day_children,
+                skill_level=_fill_day_skill,
             )
 
         for tile in tiles:

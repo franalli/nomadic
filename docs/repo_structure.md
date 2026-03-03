@@ -370,6 +370,7 @@ frontend/
 │   │
 │   ├── plan/                   # Plan view components
 │   │   ├── BookingPlanningView.tsx           # Booking controls rendered in full-density planning context
+│   │   ├── PdfExportButton.tsx               # Export generated itinerary to PDF
 │   │   ├── BookingSection.tsx
 │   │   ├── BrowseActivitiesSheet.tsx  # Bottom sheet for browsing categorized activity tiles (Tier 1 free days)
 │   │   ├── ChipGroup.tsx
@@ -385,6 +386,8 @@ frontend/
 │   │   ├── PlanFullDensityView.tsx         # Full-density view (map + specialists + timeline)
 │   │   ├── PlanHeader.tsx
 │   │   ├── PlanTimelineSection.tsx         # Timeline section with DnD wiring for full-density view
+│   │   ├── pdf/                            # PDF export rendering subtree
+│   │   │   └── TripPdfDocument.tsx          # @react-pdf renderer for itinerary output
 │   │   ├── planStateHelpers.ts
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
 │   │   ├── TimelineBlockList.tsx
@@ -515,6 +518,7 @@ frontend/
 │   ├── date-utils.ts           # Date formatting/parsing utilities
 │   ├── dayIntensity.ts         # Day intensity scoring (relaxed/balanced/packed) from DayBlock hours
 │   ├── debug.ts                # Debug/logging utilities
+│   ├── pdfData.ts              # Transform day cards + tiles to PDF-ready shape
 │   ├── design-system.ts        # Design system tokens
 │   ├── specialist-colors.ts    # Specialist-to-color text class mappings (SSoT for specialist badge text colors)
 │   ├── fillDayGuards.ts        # Fill-day client cooldown guard helpers
@@ -648,4 +652,5 @@ docs/
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
 5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. Dependency: `@dnd-kit/core`.
-6. **Agent Specs Canonical Source** - `.claude/agents/*` are canonical specialist specs; `.codex/agents/*` are wrappers that reference those canonical files.
+6. **PDF Export Path** - `frontend/lib/pdfData.ts` prepares itinerary/doc data for `frontend/components/plan/pdf/TripPdfDocument.tsx` and `frontend/components/plan/PdfExportButton.tsx`.
+7. **Agent Specs Canonical Source** - `.claude/agents/*` are canonical specialist specs; `.codex/agents/*` are wrappers that reference those canonical files.

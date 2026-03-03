@@ -342,6 +342,9 @@ def _build_user_prompt(
     budget: int | None = None,
     tier1_specialists: list[str] | None = None,
     tiles_per_category: int = 2,
+    vibe: str | None = None,
+    children: int = 0,
+    skill_level: str | None = None,
 ) -> str:
     """Build the user message for experience generation."""
     # Parse month name from YYYY-MM
@@ -373,6 +376,13 @@ def _build_user_prompt(
             f"Note: {specialists_str} specialist(s) already handle those domains — "
             f"avoid overlap (e.g., don't suggest snorkeling when diving specialist is active)."
         )
+
+    if vibe:
+        parts.append(f"Trip vibe: {vibe}. Match activity tone and intensity to this vibe.")
+    if children and children > 0:
+        parts.append("Travelers include children — include family-friendly options where possible.")
+    if skill_level and skill_level != "beginner":
+        parts.append(f"Skill level: {skill_level}. Suggest activities appropriate for this level.")
 
     return "\n".join(parts)
 
@@ -500,6 +510,9 @@ async def generate_single_category(
     tier1_specialists: list[str] | None = None,
     tiles_per_category: int = 2,
     base_index: int = 0,  # Offset for tile IDs and image variants
+    vibe: str | None = None,
+    children: int = 0,
+    skill_level: str | None = None,
 ) -> list[dict]:
     """Generate tiles for a SINGLE category. Used for parallel generation.
 
@@ -580,7 +593,15 @@ async def generate_single_category(
         )
 
         user_prompt = _build_user_prompt(
-            destination, [category], month, budget, tier1_specialists, tiles_per_category
+            destination,
+            [category],
+            month,
+            budget,
+            tier1_specialists,
+            tiles_per_category,
+            vibe=vibe,
+            children=children,
+            skill_level=skill_level,
         )
 
         for _attempt in range(2):
@@ -683,6 +704,9 @@ async def generate_experience_tiles_for_day(
     day_number: int,
     budget: int | None = None,
     tiles_per_day: int = 3,
+    vibe: str | None = None,
+    children: int = 0,
+    skill_level: str | None = None,
 ) -> list[dict]:
     """
     Generate experience tiles for a single free day.
@@ -729,6 +753,9 @@ async def generate_experience_tiles_for_day(
                 budget=budget,
                 tiles_per_category=count,
                 base_index=base_index,
+                vibe=vibe,
+                children=children,
+                skill_level=skill_level,
             )
         )
         base_index += count
@@ -779,6 +806,9 @@ async def _parallel_category_generate(
     budget: int | None,
     tier1_specialists: list[str] | None,
     tiles_per_category: int,
+    vibe: str | None = None,
+    children: int = 0,
+    skill_level: str | None = None,
 ) -> list[dict]:
     """Per-category parallel LLM generation. Returns flat list of tile dicts."""
     start_t = time.time()
@@ -794,6 +824,9 @@ async def _parallel_category_generate(
                 tier1_specialists=tier1_specialists,
                 tiles_per_category=tiles_per_category,
                 base_index=base_index,
+                vibe=vibe,
+                children=children,
+                skill_level=skill_level,
             )
         )
         base_index += tiles_per_category
@@ -848,6 +881,10 @@ async def _generate_experiences_impl(
     tier1_specialists: list[str] | None = None,
     tiles_per_category: int = 2,
     state=None,
+    vibe: str | None = None,
+    adults: int = 1,
+    children: int = 0,
+    skill_level: str | None = None,
 ) -> list[dict]:
     """
     Generate Tier 2 experience tiles via gpt-4o-mini structured output.
@@ -1017,7 +1054,15 @@ async def _generate_experiences_impl(
                 )
 
                 user_prompt = _build_user_prompt(
-                    destination, new_cats, month, budget, tier1_specialists, tiles_per_category
+                    destination,
+                    new_cats,
+                    month,
+                    budget,
+                    tier1_specialists,
+                    tiles_per_category,
+                    vibe=vibe,
+                    children=children,
+                    skill_level=skill_level,
                 )
 
                 result = await structured_llm.ainvoke(
@@ -1064,12 +1109,28 @@ async def _generate_experiences_impl(
             except (ValidationError, Exception) as e:
                 logger.warning(f"[EXPERIENCE] Batch failed, falling back to parallel: {e}")
                 new_tile_dicts = await _parallel_category_generate(
-                    new_cats, destination, month, budget, tier1_specialists, tiles_per_category
+                    new_cats,
+                    destination,
+                    month,
+                    budget,
+                    tier1_specialists,
+                    tiles_per_category,
+                    vibe=vibe,
+                    children=children,
+                    skill_level=skill_level,
                 )
         else:
             # Large request: per-category parallel calls (avoids structured output degradation)
             new_tile_dicts = await _parallel_category_generate(
-                new_cats, destination, month, budget, tier1_specialists, tiles_per_category
+                new_cats,
+                destination,
+                month,
+                budget,
+                tier1_specialists,
+                tiles_per_category,
+                vibe=vibe,
+                children=children,
+                skill_level=skill_level,
             )
 
         duration_ms = int((time.time() - start_t) * 1000)
@@ -1182,6 +1243,10 @@ async def generate_experiences(
     tier1_specialists: list[str] | None = None,
     tiles_per_category: int = 2,
     state=None,
+    vibe: str | None = None,
+    adults: int = 1,
+    children: int = 0,
+    skill_level: str | None = None,
 ) -> list[dict]:
     """
     Public entrypoint with singleflight dedupe for identical in-flight requests.
@@ -1221,6 +1286,10 @@ async def generate_experiences(
                     tier1_specialists=tier1_specialists,
                     tiles_per_category=tiles_per_category,
                     state=state,
+                    vibe=vibe,
+                    adults=adults,
+                    children=children,
+                    skill_level=skill_level,
                 )
             )
             _inflight_generation_tasks[cache_key] = task

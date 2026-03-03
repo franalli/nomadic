@@ -409,6 +409,29 @@ remain valid if trip dates change
 - For infeasible destinations (e.g., diving in landlocked areas), \
 set feasibility_status to "infeasible" with reason"""
 
+    # Inject budget + vibe context when available
+    _budget_total = getattr(trip_plan, "budget_total", None) or getattr(trip_plan, "budget", None)
+    _budget_alloc = getattr(trip_plan, "budget_allocation_pct", None)
+    _trip_vibe = getattr(trip_plan, "trip_vibe", None) or getattr(trip_plan, "vibe", None)
+    trip_context_parts: list[str] = []
+    if _budget_total:
+        if _budget_alloc:
+            alloc_amount = int(_budget_total * _budget_alloc)
+            trip_context_parts.append(
+                f"- Trip budget: ~${_budget_total:,.0f} total, ~${alloc_amount:,} allocated to {topic} activities. "
+                "Suggest activities within this budget range."
+            )
+        else:
+            trip_context_parts.append(
+                f"- Trip budget: ~${_budget_total:,.0f} total. Suggest activities within this budget range."
+            )
+    if _trip_vibe:
+        trip_context_parts.append(
+            f"- Trip vibe: {_trip_vibe}. Tailor activity tone and intensity accordingly."
+        )
+    if trip_context_parts:
+        user_prompt += "\n\nTRIP CONTEXT:\n" + "\n".join(trip_context_parts)
+
     # Append coordinator scheduling context if provided
     if scheduling_context:
         user_prompt += f"\n\n{scheduling_context}"
@@ -775,6 +798,9 @@ class _BriefAsTripPlan:
         "destination",
         "activities_per_day",
         "categories",
+        "budget_total",
+        "budget_allocation_pct",
+        "trip_vibe",
     )
 
     def __init__(self, brief: TripBrief) -> None:
@@ -785,6 +811,9 @@ class _BriefAsTripPlan:
         self.destination: str = brief.destination
         self.activities_per_day: int = brief.activities_per_day
         self.categories: list = getattr(brief, "categories", [])
+        self.budget_total: float | None = brief.budget_total
+        self.budget_allocation_pct: float = brief.budget_allocation_pct
+        self.trip_vibe: str | None = brief.trip_vibe
 
 
 async def dispatch_specialist_with_brief(
@@ -994,6 +1023,9 @@ def convert_llm_output_to_specialist_output(
         # Use Unsplash service with activity context for location-specific images
         # Variant cycles through prefetched images (0-5)
         image_url = get_image_url_sync(destination, variant=i % 6, activities=[topic])
+        # Fallback: try destination-only image if activity-filtered lookup returned empty
+        if not image_url:
+            image_url = get_image_url_sync(destination, variant=i % 6)
         # Use LLM-generated coordinates ([lng, lat] Mapbox convention)
         coordinates = [activity.lng, activity.lat] if activity.lat and activity.lng else None
         content_blocks.append(
@@ -2017,18 +2049,9 @@ async def _merge_specialist_into_state(
         "cycling": "moderate",
         "surfing": "moderate",
     }
-    # Default price estimates per specialist type — overridden by Places enrichment when available.
-    # These are rough per-person baselines used only when Google Places returns no priceLevel.
-    _default_price_estimate: dict[str, float] = {
-        "diving": 85.0,
-        "hiking": 45.0,
-        "skiing": 120.0,
-        "cycling": 55.0,
-        "surfing": 65.0,
-        "climbing": 75.0,
-        "sailing": 95.0,
-        "wildlife_safari": 110.0,
-    }
+    # Default price estimates — derived from specialist_registry.default_price_estimate.
+    _cfg = get_specialist_config(topic)
+    _default_price = _cfg.default_price_estimate if _cfg else 50.0
     content_added = []
     for block in output.content_blocks:
         if block.is_buffer:
@@ -2054,7 +2077,9 @@ async def _merge_specialist_into_state(
             "coordinates": block.coordinates,
             "intensity": intensity,
             "duration_hours": block.duration_hours,
-            "price_estimate": _default_price_estimate.get(topic, 50.0),
+            "price_estimate": _default_price,
+            "category": topic,
+            "source_agent": topic,
         }
         content_added.append(content_item)
 

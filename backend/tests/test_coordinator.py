@@ -485,6 +485,8 @@ class TestLocalIntel:
             adults: int,
             children: int,
             session_id: str = "",
+            budget: float | None = None,
+            vibe: str | None = None,
         ) -> object:
             captured.update(
                 {

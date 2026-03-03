@@ -2825,6 +2825,7 @@ Small rounded toggle pills for collapsing/expanding sub-sections (Stays, Flights
 | Transition | `transition-colors` | Same |
 
 **Rule:** Border must be `dark:border-white/15` (not `/10`) to meet Tactile Rule. Use `h-7` for consistent row height across collapsible toggles.
+**Interaction Rule (Hard):** Row-two pills are mutually exclusive with no exceptions. Opening one (`Flights`, `Stays`, `Travel Advice`) must close the other two first. Only one row-two panel can be open at any time.
 
 ```tsx
 <button

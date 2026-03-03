@@ -594,6 +594,8 @@ def build_enrichment_closure(
     adults: int,
     children: int,
     session_id: str = "",
+    budget: float | None = None,
+    vibe: str | None = None,
 ) -> object:
     """Build the Phase B enrichment async callable.
 
@@ -639,6 +641,10 @@ Output as JSON with "constraints" and "recommendations" arrays."""
         f"Dates: {start_date or 'Not specified'} to {end_date or 'Not specified'}\n"
         f"Travelers: {adults} adults" + (f", {children} children" if children else "")
     )
+    if budget:
+        user_context += f"\nBudget: ~${budget:,.0f} total"
+    if vibe:
+        user_context += f"\nTrip vibe: {vibe}"
 
     # Snapshot all values so the closure captures only immutable strings/ints
     _system_prompt = system_prompt
@@ -649,16 +655,19 @@ Output as JSON with "constraints" and "recommendations" arrays."""
     async def _enrich() -> None:
         """Background LLM enrichment — writes travel_intelligence to DB."""
         destination_key = (_destination or "").strip().lower()
+        session_key = _session_id.strip()
+        enrichment_key = f"{session_key}::{destination_key}" if destination_key else session_key
 
         async with _active_enrichment_lock:
-            if destination_key and destination_key in _active_destination_enrichments:
+            if enrichment_key and enrichment_key in _active_destination_enrichments:
                 logger.debug(
-                    "LOCAL_EXPERT Phase B: in-flight dedupe HIT for %s — skipping",
-                    _destination,
+                    "LOCAL_EXPERT Phase B: in-flight dedupe HIT for %s/%s — skipping",
+                    session_key,
+                    destination_key,
                 )
                 return
-            if destination_key:
-                _active_destination_enrichments.add(destination_key)
+            if enrichment_key:
+                _active_destination_enrichments.add(enrichment_key)
 
         try:
             # Destination-scoped cache check (L1 memory -> L2 response_cache)
@@ -833,9 +842,9 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                 )
             logger.debug("LOCAL_EXPERT Phase B: non-fatal unexpected error: %s", type(e).__name__)
         finally:
-            if destination_key:
+            if enrichment_key:
                 async with _active_enrichment_lock:
-                    _active_destination_enrichments.discard(destination_key)
+                    _active_destination_enrichments.discard(enrichment_key)
 
     return _enrich
 
@@ -962,6 +971,58 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
         for c in constraint_list
     ]
 
+    # Enforce minimum constraint floor (6) for consistent UX density.
+    # LLM non-determinism can produce 3 or 12 constraints; this ensures
+    # the Travel Intel card always has enough content.
+    _MIN_CONSTRAINT_FLOOR = 6
+    if len(constraints_applied) < _MIN_CONSTRAINT_FLOOR:
+        _existing_rules = {c["rule"] for c in constraints_applied}
+        _generic_fallbacks = [
+            {
+                "rule": "Check visa requirements before travel",
+                "type": "visa",
+                "severity": "warning",
+                "reason": "Check visa requirements before travel",
+            },
+            {
+                "rule": "Travel insurance recommended for international trips",
+                "type": "safety",
+                "severity": "info",
+                "reason": "Travel insurance recommended for international trips",
+            },
+            {
+                "rule": "Carry photocopies of passport and important documents",
+                "type": "safety",
+                "severity": "info",
+                "reason": "Carry photocopies of passport and important documents",
+            },
+            {
+                "rule": "Register with your embassy for safety alerts",
+                "type": "safety",
+                "severity": "info",
+                "reason": "Register with your embassy for safety alerts",
+            },
+            {
+                "rule": "Confirm hotel bookings and transfers before departure",
+                "type": "booking_window",
+                "severity": "info",
+                "reason": "Confirm hotel bookings and transfers before departure",
+            },
+            {
+                "rule": "Check local currency and exchange options",
+                "type": "money",
+                "severity": "info",
+                "reason": "Check local currency and exchange options",
+            },
+        ]
+        for fb in _generic_fallbacks:
+            if (
+                fb["rule"] not in _existing_rules
+                and len(constraints_applied) < _MIN_CONSTRAINT_FLOOR
+            ):
+                constraints_applied.append(fb)
+                _existing_rules.add(fb["rule"])
+
     # Fetch destination gallery ("Vibe Trio") if available
     dest_key = plan.destination.lower().strip()
     gallery_images = []
@@ -1083,6 +1144,8 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
             adults=plan.adults,
             children=plan.children,
             session_id=_session_id or "",
+            budget=getattr(plan, "budget", None),
+            vibe=getattr(plan, "vibe", None),
         )
 
         # Stash enrichment coroutine-factory in module-level dict so streaming.py can fire it
@@ -1190,7 +1253,7 @@ async def _persist_travel_intelligence(
             if travel_intelligence is not None:
                 section.travel_intelligence = travel_intelligence
                 if response.constraints:
-                    section.constraints_applied = [
+                    _enriched_constraints = [
                         {
                             "rule": c.description,
                             "type": c.type,
@@ -1199,6 +1262,56 @@ async def _persist_travel_intelligence(
                         }
                         for c in response.constraints
                     ]
+                    # Enforce minimum constraint floor (6) for Phase B as well
+                    _MIN_PB_FLOOR = 6
+                    if len(_enriched_constraints) < _MIN_PB_FLOOR:
+                        _pb_rules = {c["rule"] for c in _enriched_constraints}
+                        _pb_fallbacks = [
+                            {
+                                "rule": "Check visa requirements before travel",
+                                "type": "visa",
+                                "severity": "warning",
+                                "reason": "Check visa requirements before travel",
+                            },
+                            {
+                                "rule": "Travel insurance recommended",
+                                "type": "safety",
+                                "severity": "info",
+                                "reason": "Travel insurance recommended",
+                            },
+                            {
+                                "rule": "Carry photocopies of important documents",
+                                "type": "safety",
+                                "severity": "info",
+                                "reason": "Carry photocopies of important documents",
+                            },
+                            {
+                                "rule": "Register with your embassy for alerts",
+                                "type": "safety",
+                                "severity": "info",
+                                "reason": "Register with your embassy for alerts",
+                            },
+                            {
+                                "rule": "Confirm bookings before departure",
+                                "type": "booking_window",
+                                "severity": "info",
+                                "reason": "Confirm bookings before departure",
+                            },
+                            {
+                                "rule": "Check local currency and exchange options",
+                                "type": "money",
+                                "severity": "info",
+                                "reason": "Check local currency and exchange options",
+                            },
+                        ]
+                        for _fb in _pb_fallbacks:
+                            if (
+                                _fb["rule"] not in _pb_rules
+                                and len(_enriched_constraints) < _MIN_PB_FLOOR
+                            ):
+                                _enriched_constraints.append(_fb)
+                                _pb_rules.add(_fb["rule"])
+                    section.constraints_applied = _enriched_constraints
                 if response.recommendations:
                     section.content_added = [
                         {

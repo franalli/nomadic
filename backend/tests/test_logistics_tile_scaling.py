@@ -208,8 +208,8 @@ class TestComputeTilesPerCategory:
         result = _compute_tiles_per_category(state, {"yoga", "cooking", "nightlife"})
         assert result >= 5, f"Expected >= 5 tiles per cat for 3-cat APD=2 trip, got {result}"
 
-    def test_apd3_long_horizon_capped_at_20(self):
-        """APD=3 on a 14-day trip: long free-day horizon raises hard cap to 20."""
+    def test_apd3_long_horizon_capped_at_ceiling(self):
+        """APD=3 on a 14-day trip: long free-day horizon caps at duration-aware ceiling."""
         state = _make_state(
             start_date="2026-03-01",
             end_date="2026-03-14",
@@ -220,14 +220,14 @@ class TestComputeTilesPerCategory:
         # trip_days = 14, free_days = 12, total_placeable = 12
         # base = max(2, (12 * 3) // 1) = 36
         # needed_per_cat = ceil(12 * 3 / 1) = 36
-        # free_days > 7 -> tile_cap_ceiling = 20
-        # cap = min(max(cap, 36), 20) = 20
-        # result = min(36, 20) = 20
+        # tile_cap_ceiling = min(40, max(12, 12*2)) = 24
+        # cap = min(max(cap, 36), 24) = 24
+        # result = min(36, 24) = 24
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 20, f"Should hard-cap at 20 for long horizons, got {result}"
+        assert result == 24, f"Should cap at duration-aware ceiling (24), got {result}"
 
-    def test_apd3_boundary_free_days_7_caps_at_12(self):
-        """Boundary: free_days==7 keeps the 12 cap ceiling."""
+    def test_apd3_boundary_free_days_7_caps_at_ceiling(self):
+        """Boundary: free_days==7 caps at duration-aware ceiling."""
         state = _make_state(
             start_date="2026-03-01",
             end_date="2026-03-09",  # 9 days => free_days=7
@@ -236,13 +236,14 @@ class TestComputeTilesPerCategory:
         )
 
         # trip_days = 9, free_days = 7
-        # tile_cap_ceiling = 12 (free_days not > 7)
-        # base = (7 * 3) = 21, needed_per_cat=21, result=min(21,12)=12
+        # tile_cap_ceiling = min(40, max(12, 7*2)) = 14
+        # base = (7 * 3) = 21, needed_per_cat=21, cap=min(max(4,21),14)=14
+        # result = min(21, 14) = 14
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 12, f"Expected 12 at free_days=7 boundary, got {result}"
+        assert result == 14, f"Expected 14 at free_days=7 boundary, got {result}"
 
-    def test_apd2_mixed_long_horizon_caps_at_20(self):
-        """Mixed Tier1+Tier2 long trips use the 20 ceiling when free_days > 7."""
+    def test_apd2_mixed_long_horizon_caps_at_ceiling(self):
+        """Mixed Tier1+Tier2 long trips use the duration-aware ceiling."""
         state = _make_state(
             start_date="2026-03-01",
             end_date="2026-03-15",  # 15 days
@@ -256,7 +257,8 @@ class TestComputeTilesPerCategory:
         )
 
         # specialist_days = 2, free_days = 15 - 2 - 2 = 11 (>7)
-        # tile_cap_ceiling = 20, cap starts at 4 (mixed) then APD raises to 20
-        # base = (free+specialist)*2 = 13*2 = 26, result=min(26,20)=20
+        # tile_cap_ceiling = min(40, max(12, 11*2)) = 22
+        # cap starts at 4 (mixed) then APD raises to min(max(4,22),22)=22
+        # base = (free+specialist)*2 = 13*2 = 26, result=min(26,22)=22
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 20, f"Expected mixed long-horizon cap of 20, got {result}"
+        assert result == 22, f"Expected mixed long-horizon cap of 22, got {result}"

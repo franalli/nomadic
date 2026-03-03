@@ -67,6 +67,9 @@ class SpecialistConfig:
     # --- Constraint canonicalization ---
     constraint_aliases: dict[str, list[str]] = field(default_factory=dict)
 
+    # --- Pricing ---
+    default_price_estimate: float = 50.0  # per-person baseline when GP returns no priceLevel
+
     # --- Backfill affinity (used by mock_provider to sort supplemental activities) ---
     backfill_affinity_tags: list[str] = field(default_factory=list)
 
@@ -149,6 +152,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
             "Depth and time limits for safe diving",
             "Equipment and certification requirements",
         ],
+        default_price_estimate=85.0,
         backfill_affinity_tags=["water", "outdoors"],
         constraint_aliases={
             "min_24h_buffer_after_dive": [
@@ -251,6 +255,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
             "Check weather forecasts before departure",
             "Download offline maps for the trails",
         ],
+        default_price_estimate=45.0,
         backfill_affinity_tags=["outdoors", "culture"],
         has_altitude_buffer=True,
         min_days_needed=3,
@@ -320,6 +325,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
             "Book ski passes in advance for better rates",
             "Consider private lessons for the first day",
         ],
+        default_price_estimate=120.0,
         backfill_affinity_tags=["outdoors", "culture"],
         has_geographic_constraint=True,
         min_days_needed=3,
@@ -356,6 +362,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
             "mountain biking": "cycling",
             "road cycling": "cycling",
         },
+        default_price_estimate=55.0,
         backfill_affinity_tags=["outdoors", "culture"],
         enhancements=[
             "Rent a quality bike from a reputable local shop",
@@ -432,6 +439,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
                 "icon": "🏄",
             },
         ],
+        default_price_estimate=65.0,
         backfill_affinity_tags=["water", "outdoors"],
         enhancements=[
             "Check swell forecast and tide charts before each session",
@@ -495,6 +503,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
                 "icon": "🧗",
             },
         ],
+        default_price_estimate=75.0,
         backfill_affinity_tags=["outdoors", "culture"],
         enhancements=[
             "Hire a local climbing guide for unfamiliar crags",
@@ -539,6 +548,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
             "yacht": "sailing",
             "charter": "sailing",
         },
+        default_price_estimate=95.0,
         backfill_affinity_tags=["water", "outdoors"],
         enhancements=[
             "Check marine weather forecast before departure",
@@ -592,6 +602,7 @@ SPECIALIST_REGISTRY: dict[str, SpecialistConfig] = {
                 "icon": "🦁",
             },
         ],
+        default_price_estimate=110.0,
         backfill_affinity_tags=["outdoors", "culture"],
         enhancements=[
             "Book game drives at dawn and dusk for best sightings",

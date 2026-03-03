@@ -438,10 +438,11 @@ class TestEmptyKnowledgeFallback:
         mocks["build_section"].assert_called_once()
         call_kwargs = mocks["build_section"].call_args
 
-        # Skeleton: empty lists (Phase B populates async)
+        # Skeleton: empty must_dos/content_added (Phase B populates async)
+        # Constraint floor ensures at least 6 static fallback constraints
         assert call_kwargs.kwargs["must_dos"] == []
         assert call_kwargs.kwargs["content_added"] == []
-        assert call_kwargs.kwargs["constraints_applied"] == []
+        assert len(call_kwargs.kwargs["constraints_applied"]) >= 6
         # one_liner uses destination name
         assert "Timbuktu" in call_kwargs.kwargs["one_liner"]
 

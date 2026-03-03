@@ -667,9 +667,20 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
         extracted["end_date"] = end_date_obj.isoformat()
 
     def _bump_year_safe(date_value: datetime.date) -> datetime.date:
+        """Always bump +1 year (used for end_date cross-year adjustment)."""
         target_year = date_value.year + 1
         max_day = monthrange(target_year, date_value.month)[1]
         return date_value.replace(year=target_year, day=min(date_value.day, max_day))
+
+    def _bump_to_next_occurrence(date_value: datetime.date, today: datetime.date) -> datetime.date:
+        """Try same-year first (date may still be upcoming), otherwise next year."""
+        max_day_same = monthrange(today.year, date_value.month)[1]
+        same_year = date_value.replace(year=today.year, day=min(date_value.day, max_day_same))
+        if same_year >= today:
+            return same_year
+        target_year = today.year + 1
+        max_day_next = monthrange(target_year, date_value.month)[1]
+        return date_value.replace(year=target_year, day=min(date_value.day, max_day_next))
 
     def _auto_bump_past_date(
         *,
@@ -679,10 +690,10 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
     ) -> tuple[Optional[datetime.date], bool]:
         if date_value is None or date_value >= today:
             return date_value, False
-        bumped = _bump_year_safe(date_value)
+        bumped = _bump_to_next_occurrence(date_value, today)
         logger.warning(
             f"Past {field_name}: {date_value.isoformat()} → {bumped.isoformat()} "
-            f"(auto-bumped +1yr, today={today_date})"
+            f"(auto-bumped to next occurrence, today={today_date})"
         )
         extracted[field_name] = bumped.isoformat()
         date_auto_adjustments.append(
