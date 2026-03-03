@@ -15,13 +15,10 @@
 import { Loader2 } from 'lucide-react';
 import React from 'react';
 
-import { isBootstrap } from '@/components/plan/planStateHelpers';
-import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { getStatusPillText } from '@/lib/statusCopyMap';
-import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
-import type { DayCard, PlanViewState } from '@/types/plan-envelope';
+import type { DayCard } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 
 interface PlanHeaderProps {
@@ -47,21 +44,17 @@ interface PlanHeaderProps {
 export function PlanHeader({
   isGenerating = false,
   fallbackTitle,
-  planViewState = 'S0_BOOTSTRAP',
+  planViewState: _planViewState = 'S0_BOOTSTRAP',
   isExpandingItinerary = false,
   tripInputs: propTripInputs,
-  dayCards,
-  onOpenSheet,
-  isStreaming = false,
+  dayCards: _dayCards,
+  onOpenSheet: _onOpenSheet,
+  isStreaming: _isStreaming = false,
   isCollapsed = false,
 }: PlanHeaderProps) {
   const tripInputs = useTripInputsWithFallback(propTripInputs);
   const title = fallbackTitle || tripInputs?.destination || '';
   const statusPillText = getStatusPillText(isGenerating, isExpandingItinerary);
-
-  // Check if we should show pills (S1+ with tripInputs and handler)
-  const showPills =
-    !isBootstrap(planViewState as PlanViewState) && tripInputs && onOpenSheet;
 
   // Format date range for collapsed view (hooks must be called unconditionally)
   const startDate = tripInputs?.start_date;
@@ -106,24 +99,8 @@ export function PlanHeader({
     );
   }
 
-  // Plan panel header: chips only, no hero image (hero lives in ChatPanel)
-  if (!showPills) return null;
-
-  return (
-    <div className={cn(
-      'relative flex-shrink-0 px-4 pt-3 pb-1.5',
-      (isGenerating || isExpandingItinerary) && 'opacity-80',
-    )}>
-      <TripSummaryPills
-        tripInputs={tripInputs}
-        dayCards={dayCards}
-        onOpenSheet={onOpenSheet}
-        disabled={isStreaming}
-        variant="default"
-        readOnlyExceptDestination={false}
-      />
-    </div>
-  );
+  // Plan panel pills now rendered inline in FullDensityTimeline
+  return null;
 }
 
 export default PlanHeader;

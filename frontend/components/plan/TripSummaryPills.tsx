@@ -11,8 +11,8 @@
 
 'use client';
 
-import type { ReactNode } from 'react';
 import { Activity, Calendar, DollarSign, MapPin, Plane, Users } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 import { CoreChip } from '@/components/plan/CoreChip';
 import { canonicalCategoryKey, TIER1_CONSTRAINT_HINTS,toCategoryKey } from '@/lib/categoryNormalization';
@@ -205,9 +205,10 @@ export function TripSummaryPills({
   return (
     <div
       className={cn(
-        'flex items-center gap-x-1.5 gap-y-3 flex-wrap',
-        // Prevent pills from shrinking
-        '[&>*]:shrink-0'
+        'flex items-center gap-x-1.5',
+        '[&>*]:shrink-0',
+        'overflow-x-auto no-scrollbar -mx-4 px-4 py-2',
+        'md:overflow-x-visible md:mx-0 md:px-0 md:py-0 md:flex-wrap'
       )}
     >
       <CoreChip

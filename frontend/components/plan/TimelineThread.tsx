@@ -37,8 +37,8 @@ const variantConfig: Record<TimelineVariant, { badge: string | null; badgeClass:
     badgeClass: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
   },
   draft: {
-    badge: 'Draft Itinerary',
-    badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    badge: null,
+    badgeClass: '',
   },
   real: {
     badge: null,

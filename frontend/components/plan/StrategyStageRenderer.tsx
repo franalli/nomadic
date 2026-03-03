@@ -112,6 +112,7 @@ export function StrategyStageRenderer({
         handleSaveTile={o.handleSaveTile} handleOpenBookingDrawer={o.handleOpenBookingDrawer}
         onOpenStaysSettings={onOpenStaysSettings}
         onOpenFlightsSettings={onOpenFlightsSettings}
+        onOpenSheet={onOpenSheet}
       />
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps -- onOpenActivitySettings etc intentionally excluded
@@ -121,7 +122,7 @@ export function StrategyStageRenderer({
     o.isRegenUpdating, o.isDesktop, o.preferenceCount,
     o.effectiveMode, o.timelineSectionRef, o.scrollContainerRef, o.handleSaveTile, o.handleOpenBookingDrawer,
     state, viewModel, destinationCard, generation, savedTileIds, isExpandingItinerary,
-    onRefineAssumptions,
+    onRefineAssumptions, onOpenSheet,
   ]);
 
   const bookContent = useMemo(() => (

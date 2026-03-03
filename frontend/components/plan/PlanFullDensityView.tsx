@@ -18,8 +18,17 @@ import type { DestinationCard, PlanViewModel, PlanViewState, StrategySection } f
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
+import { Building2, Compass, Lightbulb, Plane } from 'lucide-react';
+
+import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
+
+import { useDocumentStore } from '@/state/documentStore';
+
+import { BookingSection } from './BookingSection';
 import { BookingSummary } from './BookingSummary';
 import { FullDensityTimeline } from './FullDensityTimeline';
+import { OriginPromptCard } from './OriginPromptCard';
+import { PdfExportButton } from './PdfExportButton';
 import type { GenerationState } from './planStateHelpers';
 import { type TimelineVariant } from './TimelineThread';
 
@@ -136,6 +145,7 @@ export function PlanFullDensityView({
   );
   const [staysExpanded, setStaysExpanded] = useState(false);
   const [flightsExpanded, setFlightsExpanded] = useState(false);
+  const [intelExpanded, setIntelExpanded] = useState(false);
   const onToggleStays = useCallback(() => setStaysExpanded((v) => !v), []);
   const onToggleFlights = useCallback(() => setFlightsExpanded((v) => !v), []);
 
@@ -306,60 +316,194 @@ export function PlanFullDensityView({
     localExpertSectionId,
   ]);
 
-  // Measure the spacer height so the map top-aligns with Day 1.
-  //
-  // The map column sits inside flexRowRef. sticky top-0 snaps the map to the
-  // scroll container's top edge (just below PlanHeader) when the user scrolls.
-  //
-  // Spacer = distance from the flex row top to the timeline section top.
-  // Using the flex row (not the scroll container) as reference is correct because
-  // the spacer div lives inside the map column which starts at the flex row top.
-  //
-  // Map height = calc(100vh - headerOffset) where headerOffset is the scroll
-  // container's distance from the viewport top (= PlanHeader height). This fills
-  // the scroll container's visible viewport exactly after the map sticks.
+  // Map sticky offset: distance from viewport top to scroll container top.
+  // The sticky map fills calc(100vh - headerOffset) so it occupies the
+  // scroll container's visible viewport exactly when it sticks.
   const flexRowRef = useRef<HTMLDivElement>(null);
   const contentColRef = useRef<HTMLDivElement>(null);
-  const [mapSpacerHeight, setMapSpacerHeight] = useState(0);
   const [headerOffset, setHeaderOffset] = useState(0);
   useLayoutEffect(() => {
-    const contentCol = contentColRef.current;
     const scrollContainer = scrollContainerRef.current;
-    if (!contentCol || !scrollContainer) return;
+    if (!scrollContainer) return;
 
     const measure = () => {
-      const flexRow = flexRowRef.current;
-      const timelineSection = timelineSectionRef.current;
       const scrollRect = scrollContainer.getBoundingClientRect();
-      // PlanHeader height = scroll container's distance from viewport top.
-      // Used to correctly size the sticky map: calc(100vh - headerOffset).
       setHeaderOffset(Math.round(scrollRect.top));
-
-      if (!flexRow || !timelineSection) {
-        // Timeline not mounted yet — map starts flush with content column top
-        setMapSpacerHeight(0);
-        return;
-      }
-      const rowRect = flexRow.getBoundingClientRect();
-      const sectionRect = timelineSection.getBoundingClientRect();
-      // Spacer = flex row top → timeline section top (content above Day 1).
-      const h = sectionRect.top - rowRect.top;
-      setMapSpacerHeight(Math.max(0, h));
     };
 
     const observer = new ResizeObserver(measure);
-    observer.observe(contentCol);
-    // Measure immediately and after content settles
+    observer.observe(scrollContainer);
     measure();
-    const t1 = setTimeout(measure, 100);
-    const t2 = setTimeout(measure, 500);
-    return () => { observer.disconnect(); clearTimeout(t1); clearTimeout(t2); };
+    return () => { observer.disconnect(); };
+  }, [scrollContainerRef]);
 
-  }, [hasItineraryContent, staysExpanded, flightsExpanded, stayCount, flightCount, showDesktopMap, scrollContainerRef, timelineSectionRef]);
+  const showRowTwoChips = hasDestinationIntel || hasItineraryContent;
+
+  const subduedTogglePillClass = cn(
+    'inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-sm font-semibold whitespace-nowrap transition-colors',
+    'border-zinc-300 dark:border-white/15 bg-zinc-100 dark:bg-white/[0.06]',
+    'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/10',
+  );
 
   return (
     <div className="flex flex-col">
-      {/* Content + map — side by side, map top-aligned with Day 1 */}
+      {/* Unified chip row — trip summary pills + action chips — full width above content+map */}
+      {(effectiveTripInputs && onOpenSheet) || showRowTwoChips ? (
+        <div className="px-4 pb-2 pt-3">
+          {effectiveTripInputs && onOpenSheet ? (
+            <TripSummaryPills
+              tripInputs={effectiveTripInputs}
+              dayCards={viewModel.day_cards}
+              onOpenSheet={onOpenSheet}
+              disabled={isStreaming}
+            >
+              {showRowTwoChips && (
+                <>
+                  <div className="h-5 w-px bg-zinc-300 dark:bg-white/15 mx-1" />
+                  {flightCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={onToggleFlights}
+                      className={cn(subduedTogglePillClass, 'relative')}
+                    >
+                      <Plane className="w-3 h-3 shrink-0" />
+                      Flights
+                      <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+                        {flightCount}
+                      </span>
+                    </button>
+                  )}
+                  {stayCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={onToggleStays}
+                      className={cn(subduedTogglePillClass, 'relative')}
+                    >
+                      <Building2 className="w-3 h-3 shrink-0" />
+                      Stays
+                      <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+                        {stayCount}
+                      </span>
+                    </button>
+                  )}
+                  {hasDestinationIntel && (
+                    <button
+                      id="destination-intel-trigger"
+                      type="button"
+                      aria-expanded={intelExpanded}
+                      aria-controls="destination-intel-panel"
+                      aria-busy={isAnyRegenerating || isTravelIntelPending ? true : undefined}
+                      onClick={() => setIntelExpanded(v => !v)}
+                      className={cn(
+                        subduedTogglePillClass,
+                        'relative max-w-[360px] justify-between',
+                        isAnyRegenerating && 'opacity-70'
+                      )}
+                    >
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <Lightbulb className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{travelAdviceLabel}</span>
+                      </span>
+                      {isTravelIntelPending && (
+                        <Compass
+                          className="w-3 h-3 compass-spin text-emerald-500"
+                          aria-label="Travel advice is loading"
+                        />
+                      )}
+                      {travelIntelItemCount > 0 && !isTravelIntelPending && (
+                        <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-zinc-900 text-[11px] font-bold shadow-sm dark:bg-zinc-100 dark:text-zinc-900">
+                          {travelIntelItemCount}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                  <PdfExportButton
+                    tripInputs={effectiveTripInputs}
+                    dayCards={viewModel.day_cards ?? []}
+                    tiles={effectiveTiles}
+                  />
+                </>
+              )}
+            </TripSummaryPills>
+          ) : null}
+
+          {hasDestinationIntel && intelExpanded && (
+            <div
+              id="destination-intel-panel"
+              aria-labelledby="destination-intel-trigger"
+              className="mt-2 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900/40"
+            >
+              <div className="max-h-[280px] space-y-3 overflow-y-auto px-3 py-3">
+                {intelCategories.map((category) => (
+                  <div key={category.key} className="space-y-1">
+                    <p className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                      <span>{category.icon}</span>
+                      <span>{category.label}</span>
+                    </p>
+                    <ul className="list-disc list-outside marker:text-emerald-400 space-y-1 pl-10">
+                      {category.items.map((item) => (
+                        <li
+                          key={`${category.key}-${item}`}
+                          className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400"
+                        >
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {hasDestinationIntel && isAnyRegenerating && !isRegenUpdating && (
+            <div className="mt-2 flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-zinc-900/60 px-3 py-2">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                Updating plan...
+              </p>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {/* OriginPromptCard + BookingSection — full width above timeline+map row */}
+      {state === 'S2_STRATEGY_READY' &&
+        effectiveTripInputs?.destination && effectiveTripInputs?.start_date &&
+        effectiveTripInputs?.end_date && !effectiveTripInputs?.origin &&
+        (viewModel.executed_strategy_topics?.length ?? 0) >= 2 && (
+          <div className="px-4 mb-4">
+            <OriginPromptCard
+              onSetOrigin={(origin) => { useDocumentStore.getState().commitTripInputs({ origin }); }}
+            />
+          </div>
+        )}
+
+      <AnimatePresence>
+        {effectiveTiles && Object.keys(effectiveTiles).length > 0 && (
+          <motion.section
+            key="tiles-section" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            transition={{ duration: REVEAL_TIMING.TILES_FADE / 1000 }}
+            id="tiles-section"
+            className={cn('mt-1', isExpandingItinerary && 'opacity-60 pointer-events-none')}
+          >
+            <BookingSection
+              state={state} tiles={effectiveTiles} generation={generation}
+              hasStrategyContent={hasSectionData} savedTileIds={savedTileIds}
+              onSaveTile={handleSaveTile} hasDates={!!effectiveTripInputs?.start_date}
+              mode={effectiveMode as 'planning' | 'booking'}
+              strategySections={effectiveStrategySections}
+              onOpenStaysSettings={onOpenStaysSettings}
+              isExpanded={staysExpanded}
+              onToggleExpanded={onToggleStays}
+              flightsExpanded={flightsExpanded}
+              onToggleFlights={onToggleFlights}
+            />
+          </motion.section>
+        )}
+      </AnimatePresence>
+
+      {/* Timeline (left) + Map (right) — side by side, both start at same vertical position */}
       <div ref={flexRowRef} className={cn('flex', showDesktopMap && 'gap-6')}>
         <div
           ref={contentColRef}
@@ -367,25 +511,16 @@ export function PlanFullDensityView({
           style={showDesktopMap ? DESKTOP_MAP_CONTENT_STYLE : undefined}
         >
         <FullDensityTimeline
-          state={state}
           viewModel={viewModel}
-          effectiveStrategySections={effectiveStrategySections}
-          effectiveTiles={effectiveTiles}
-          effectiveTripInputs={effectiveTripInputs}
-          generation={generation}
-          savedTileIds={savedTileIds}
-          hasSectionData={hasSectionData}
           hasItineraryContent={hasItineraryContent}
           isExpandingItinerary={isExpandingItinerary}
           isStreaming={isStreaming}
-          isAnyRegenerating={isAnyRegenerating}
           isRegenUpdating={isRegenUpdating}
           isDesktop={isDesktop}
           preferenceCount={preferenceCount}
-          effectiveMode={effectiveMode}
           timelineVariant={timelineVariant}
           timelineSectionRef={timelineSectionRef}
-          handleSaveTile={handleSaveTile}
+          savedTileIds={savedTileIds}
           handleOpenBookingDrawer={handleOpenBookingDrawer}
           onOpenStaysSettings={onOpenStaysSettings}
           onOpenFlightsSettings={onOpenFlightsSettings}
@@ -393,18 +528,6 @@ export function PlanFullDensityView({
           mapCenter={mapCenter}
           hasDestinationCenter={destinationCenter !== null}
           fullModePOIs={fullModePOIs}
-          stayCount={stayCount}
-          flightCount={flightCount}
-          staysExpanded={staysExpanded}
-          flightsExpanded={flightsExpanded}
-          onToggleStays={onToggleStays}
-          onToggleFlights={onToggleFlights}
-          intelCategories={intelCategories}
-          hasDestinationIntel={hasDestinationIntel}
-          isTravelIntelPending={isTravelIntelPending}
-          travelAdviceLabel={travelAdviceLabel}
-          travelAdviceCount={isTravelIntelPending ? 0 : travelIntelItemCount}
-          onOpenSheet={onOpenSheet}
         />
         <BookingSummary
           tiles={effectiveTiles}
@@ -416,11 +539,9 @@ export function PlanFullDensityView({
         <AnimatePresence>
           {showDesktopMap && (
             <motion.div key="desktop-map" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              transition={{ duration: REVEAL_TIMING.MAP_FADE / 1000, delay: REVEAL_TIMING.MAP_DELAY / 1000, ease: [0.4, 0, 0.2, 1] }} className="flex-1 min-w-[350px] self-stretch"
+              transition={{ duration: REVEAL_TIMING.MAP_FADE / 1000, delay: REVEAL_TIMING.MAP_DELAY / 1000, ease: [0.4, 0, 0.2, 1] }} className="flex-1 min-w-[350px] self-stretch pt-10"
             >
-              {/* Spacer pushes map down so sticky top-0 aligns with Day 1 */}
-              <div style={{ height: mapSpacerHeight }} />
-              <div className="sticky overflow-hidden" style={{ top: `${headerOffset}px`, height: `calc(100vh - ${headerOffset}px)` }}>
+              <div className="sticky top-0 overflow-hidden rounded-xl" style={{ height: `calc(100vh - ${headerOffset}px)` }}>
                 <div className="h-full w-full">
                   <MapErrorBoundary className="h-full w-full">
                     <InteractiveMap
