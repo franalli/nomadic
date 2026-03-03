@@ -109,6 +109,10 @@ class SafetyHealth(BaseModel):
     common_concerns: List[str] = Field(default_factory=list)
     emergency_number: str = Field(default="", description="Emergency contact")
     nearest_hospital: str = Field(default="", description="Tourist-friendly hospital")
+    advisory_level: str = Field(default="none", description="none | caution | warning | avoid")
+    advisory_reason: str = Field(
+        default="", description="Brief reason for advisory if caution or higher"
+    )
 
 
 class VisaEntry(BaseModel):

@@ -22,6 +22,7 @@ nomadic/
 │   │   └── verify-build.md
 │   ├── plans/                  # Persisted planning artifacts and run notes
 │   │   ├── parsed-discovering-liskov.md
+│   │   ├── unified-dreaming-oasis.md
 │   ├── settings.json           # Claude Code settings
 │   └── settings.local.json     # Local Claude Code settings
 ├── .codex/                     # Codex wrappers + skills

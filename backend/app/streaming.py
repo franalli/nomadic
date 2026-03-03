@@ -422,17 +422,14 @@ async def generate_sse(
                         session_state["branches"] = [b.model_dump() for b in document_data.branches]
                     # Restore specialist content so non-dispatch turns
                     # (origin/budget/travelers) preserve strategy_sections
-                    # and day_cards. Document is the authoritative source for
-                    # these fields; session_state may carry them from the
-                    # frontend round-trip but document always wins to ensure
-                    # SSoT consistency. If document persistence failed on the
-                    # prior turn, the list stays empty and the truthiness
-                    # guard skips the overwrite, preserving round-tripped data.
-                    if document_data.strategy_sections:
+                    # and day_cards. Document is the authoritative source;
+                    # empty lists from document will clear session state,
+                    # ensuring intentional resets propagate correctly.
+                    if document_data.strategy_sections is not None:
                         session_state["strategy_sections"] = [
                             s.model_dump() for s in document_data.strategy_sections
                         ]
-                    if document_data.day_cards:
+                    if document_data.day_cards is not None:
                         session_state["day_cards"] = [
                             dc.model_dump() for dc in document_data.day_cards
                         ]

@@ -24,6 +24,7 @@ THE 12 CATEGORIES (COVER ALL)
    - Hospital/clinic recommendations for tourists
    - Travel insurance notes
    - Areas to avoid (if any)
+   - Travel advisory assessment: Rate advisory_level as none/caution/warning/avoid based on current geopolitical, health, or natural disaster risks for the travel dates. Be specific about the concern in advisory_reason.
 
 3. MONEY & COSTS
    - Currency and exchange tips
@@ -133,7 +134,9 @@ OUTPUT FORMAT (JSON)
     "emergency_number": "Local emergency number",
     "nearest_hospital": "Name and area of tourist-friendly hospital",
     "vaccinations": ["Recommended vaccines if any"],
-    "areas_to_avoid": ["Specific areas with reason"]
+    "areas_to_avoid": ["Specific areas with reason"],
+    "advisory_level": "none | caution | warning | avoid",
+    "advisory_reason": "Brief reason if caution or higher (e.g., 'Active travel advisory due to regional instability')"
   },
 
   "money_costs": {

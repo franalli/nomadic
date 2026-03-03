@@ -8,10 +8,13 @@ from app.planner.conversationalist import (
     _VOICE_FALLBACK,
     _VOICE_GREETING,
     _VOICE_INFEASIBLE_ACTIVITY,
+    _VOICE_INITIAL_PLAN,
     _VOICE_PLAN_GENERATED,
     _VOICE_PREFERENCE_CHANGE,
     _VOICE_QUESTION,
+    _build_diff_block,
     _build_from_strategy_sections,
+    _build_outcome_block,
     _build_trip_context_block,
     _build_turn_context_block,
     _detect_user_energy,
@@ -188,7 +191,7 @@ class TestResolveVoiceBlock:
 
     def test_initial_plan(self):
         c = _make_classifier(ChangeType.INITIAL_PLAN)
-        assert _resolve_voice_block(c, {}, "Rome please") == _VOICE_DESTINATION_SET
+        assert _resolve_voice_block(c, {}, "Rome please") == _VOICE_INITIAL_PLAN
 
     def test_date_change(self):
         c = _make_classifier(ChangeType.DATE_CHANGE)
@@ -239,6 +242,7 @@ class TestSentenceLimitDict:
     def test_all_voice_blocks_have_limits(self):
         expected = {
             _VOICE_DESTINATION_SET,
+            _VOICE_INITIAL_PLAN,
             _VOICE_DATES_SET,
             _VOICE_PLAN_GENERATED,
             _VOICE_ACTIVITY_CHANGE,
@@ -476,3 +480,274 @@ class TestBuildResponseContext:
         msgs = build_response_context(state, c, "hello")
         system = msgs[0]["content"]
         assert "What the User Sees Right Now" not in system
+
+
+# ---------------------------------------------------------------------------
+# _build_diff_block
+# ---------------------------------------------------------------------------
+
+
+class TestBuildDiffBlock:
+    """Tests for the field-diff block passed to the conversationalist."""
+
+    def test_with_diffs(self):
+        state = {
+            "turn_meta": {
+                "field_diffs": {
+                    "trip_plan.start_date": {"from": "2026-02-01", "to": "2026-03-15"},
+                    "trip_plan.budget": {"from": 3000, "to": 5000},
+                }
+            }
+        }
+        result = _build_diff_block(state)
+        assert "What Changed This Turn" in result
+        assert "start_date" in result
+        assert "2026-02-01" in result
+        assert "\u2192" in result  # arrow
+        assert "2026-03-15" in result
+        assert "budget" in result
+
+    def test_empty_diffs(self):
+        state = {"turn_meta": {"field_diffs": {}}}
+        assert _build_diff_block(state) == ""
+
+    def test_missing_turn_meta(self):
+        assert _build_diff_block({}) == ""
+
+    def test_none_values_shown_as_none(self):
+        state = {
+            "turn_meta": {
+                "field_diffs": {
+                    "trip_plan.destination": {"from": None, "to": "Bali"},
+                }
+            }
+        }
+        result = _build_diff_block(state)
+        assert "(none)" in result
+        assert "Bali" in result
+
+    def test_strips_prefix(self):
+        """trip_plan. and trip_settings. prefixes should be stripped."""
+        state = {
+            "turn_meta": {
+                "field_diffs": {
+                    "trip_settings.activity_settings": {"from": {}, "to": {"a": 1}},
+                }
+            }
+        }
+        result = _build_diff_block(state)
+        assert "trip_settings." not in result
+        assert "activity_settings" in result
+
+    def test_caps_at_eight_entries(self):
+        diffs = {f"trip_plan.field_{i}": {"from": i, "to": i + 1} for i in range(12)}
+        state = {"turn_meta": {"field_diffs": diffs}}
+        result = _build_diff_block(state)
+        # 8 entries max + header line
+        lines = [ln for ln in result.strip().split("\n") if ln.startswith("- ")]
+        assert len(lines) == 8
+
+
+# ---------------------------------------------------------------------------
+# _build_outcome_block — budget health
+# ---------------------------------------------------------------------------
+
+
+class TestOutcomeBlockBudget:
+    """Tests for budget utilization in the outcome block."""
+
+    _BASE_DAY_CARDS = [
+        {
+            "day_number": i,
+            "blocks": [{"summary": "Surf lesson", "activity_type": "activity"}],
+        }
+        for i in range(1, 6)  # 5-day trip
+    ]
+
+    def test_budget_with_hotel_and_flights(self):
+        state = {
+            "trip_plan": {"budget": 5000, "adults": 2, "currency": "USD"},
+            "day_cards": self._BASE_DAY_CARDS,
+            "tiles": {
+                "hotels": [
+                    {"selected": True, "price_estimate": 200, "price_basis": "per_night"},
+                ],
+                "flights": [
+                    {"price_estimate": 400, "price_basis": "per_person"},
+                ],
+            },
+        }
+        result = _build_outcome_block(state)
+        assert "Budget:" in result
+        # Hotel: 200 * 4 nights = 800; Flights: 400 * 2 adults = 800
+        assert "Hotels $800" in result
+        assert "Flights $800" in result
+        assert "of $5,000" in result
+
+    def test_no_budget_no_line(self):
+        state = {
+            "trip_plan": {},
+            "day_cards": self._BASE_DAY_CARDS,
+            "tiles": {"hotels": [{"selected": True, "price_estimate": 200}]},
+        }
+        result = _build_outcome_block(state)
+        assert "Budget:" not in result
+
+    def test_zero_budget_no_line(self):
+        state = {
+            "trip_plan": {"budget": 0},
+            "day_cards": self._BASE_DAY_CARDS,
+            "tiles": {"hotels": [{"selected": True, "price_estimate": 200}]},
+        }
+        result = _build_outcome_block(state)
+        assert "Budget:" not in result
+
+    def test_non_numeric_price_no_crash(self):
+        state = {
+            "trip_plan": {"budget": 5000, "adults": 1},
+            "day_cards": self._BASE_DAY_CARDS,
+            "tiles": {
+                "hotels": [
+                    {"selected": True, "price_estimate": "not-a-number"},
+                ],
+            },
+        }
+        result = _build_outcome_block(state)
+        # Should not crash; budget line absent since total_est == 0
+        assert "Itinerary:" in result
+
+    def test_currency_eur(self):
+        state = {
+            "trip_plan": {"budget": 3000, "adults": 1, "currency": "EUR"},
+            "day_cards": self._BASE_DAY_CARDS,
+            "tiles": {
+                "hotels": [
+                    {"selected": True, "price_estimate": 150, "price_basis": "per_night"},
+                ],
+            },
+        }
+        result = _build_outcome_block(state)
+        assert "EUR " in result
+        assert "$" not in result
+
+    def test_no_tiles_no_crash(self):
+        state = {
+            "trip_plan": {"budget": 5000},
+            "day_cards": self._BASE_DAY_CARDS,
+        }
+        result = _build_outcome_block(state)
+        assert "Itinerary:" in result
+        assert "Budget:" not in result
+
+    def test_activity_cost_per_person(self):
+        state = {
+            "trip_plan": {"budget": 5000, "adults": 2},
+            "day_cards": self._BASE_DAY_CARDS,
+            "tiles": {
+                "activities": [
+                    {"price_estimate": 50, "price_basis": "per_person"},
+                    {"price_estimate": 100, "price_basis": "per_group"},
+                ],
+            },
+        }
+        result = _build_outcome_block(state)
+        # 50*2 + 100 = 200
+        assert "Activities $200" in result
+
+
+# ---------------------------------------------------------------------------
+# _build_from_strategy_sections — advisory surfacing
+# ---------------------------------------------------------------------------
+
+
+class TestAdvisorySurfacing:
+    """Tests for travel advisory level appearing in specialist findings."""
+
+    def test_warning_level_shown(self):
+        sections = [
+            {
+                "specialist_type": "local_expert",
+                "travel_intelligence": {
+                    "safety_health": {
+                        "advisory_level": "warning",
+                        "advisory_reason": "Regional instability affecting transit",
+                    }
+                },
+            }
+        ]
+        result = _build_from_strategy_sections(sections, None)
+        assert "TRAVEL ADVISORY (WARNING)" in result
+        assert "Regional instability" in result
+
+    def test_avoid_level_shown(self):
+        sections = [
+            {
+                "specialist_type": "local_expert",
+                "travel_intelligence": {
+                    "safety_health": {
+                        "advisory_level": "avoid",
+                        "advisory_reason": "Active conflict zone",
+                    }
+                },
+            }
+        ]
+        result = _build_from_strategy_sections(sections, None)
+        assert "TRAVEL ADVISORY (AVOID)" in result
+
+    def test_caution_level_not_shown(self):
+        """Caution is below the warning threshold — no bold advisory."""
+        sections = [
+            {
+                "specialist_type": "local_expert",
+                "travel_intelligence": {
+                    "safety_health": {
+                        "advisory_level": "caution",
+                        "advisory_reason": "Petty crime in tourist areas",
+                    }
+                },
+            }
+        ]
+        result = _build_from_strategy_sections(sections, None)
+        assert "TRAVEL ADVISORY" not in result
+
+    def test_none_level_not_shown(self):
+        sections = [
+            {
+                "specialist_type": "local_expert",
+                "travel_intelligence": {
+                    "safety_health": {
+                        "advisory_level": "none",
+                        "advisory_reason": "",
+                    }
+                },
+            }
+        ]
+        result = _build_from_strategy_sections(sections, None)
+        assert "TRAVEL ADVISORY" not in result
+
+    def test_missing_safety_health_no_crash(self):
+        sections = [
+            {
+                "specialist_type": "local_expert",
+                "travel_intelligence": {"visa": ["30-day visa on arrival"]},
+            }
+        ]
+        result = _build_from_strategy_sections(sections, None)
+        assert "TRAVEL ADVISORY" not in result
+        assert "Visa" in result
+
+    def test_warning_without_reason_not_shown(self):
+        """Warning with empty reason should not produce a useless banner."""
+        sections = [
+            {
+                "specialist_type": "local_expert",
+                "travel_intelligence": {
+                    "safety_health": {
+                        "advisory_level": "warning",
+                        "advisory_reason": "",
+                    }
+                },
+            }
+        ]
+        result = _build_from_strategy_sections(sections, None)
+        assert "TRAVEL ADVISORY" not in result

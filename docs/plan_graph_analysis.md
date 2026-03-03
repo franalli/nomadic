@@ -267,6 +267,7 @@ Recent behavior:
 - "feasible + zero activities" outputs are converted to `caveat` responses and skipped for L2 cache write, preventing stale empty specialist cache entries.
 - Prompt guidance now uses explicit exact bounds (`EXACTLY`) and hard caps (`Do NOT generate more than Y`) to prevent specialist over-generation.
 - Safety buffer days are explicitly excluded from the specialist activity-count ceiling in prompt context.
+- `SafetyHealth` now includes advisory fields: `advisory_level` (`none`, `caution`, `warning`, `avoid`) and `advisory_reason`.
 
 **LLM-first architecture:** Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
 
@@ -282,6 +283,7 @@ City logistics concierge with Phase A/B architecture.
 
 Recent behavior:
 - Cache reuse path seeds legacy list reconstruction from prior-turn `constraints_applied`/`content_added` so repeated turns keep stable high-signal Travel Intel density while avoiding duplicate entries.
+- `local_expert.txt` now explicitly requests travel advisory reasoning (`advisory_level` + `advisory_reason`) so advisory context can be surfaced in plan summaries.
 
 ### LogisticsNode (`logistics_node.py`)
 
@@ -353,7 +355,8 @@ Coordinator/build path usage -- called from `coordinator._build_itinerary()` and
 │  3.    Anchor Placement - Arrival/departure from flights       │
 │  4.    Buffer Injection - Safety blocks by severity            │
 │  5.    Activity Distribution - Round-robin interleaving        │
-│        (includes day preference capping internally)            │
+│        (includes day preference capping internally; periods      │
+│        avoid duplicate morning/afternoon/evening collisions)   │
 │  5.5   Free Day Placeholders - Empty day handling              │
 │  5.55  Restore Browse-Pinned Tiles - User-added Google Places  │
 │  5.6   Experience Tile Placement - Tier 2 on free/spare days   │
@@ -479,6 +482,8 @@ In Phase 5.6:
   same capacity + time-slot scoring pass.
 - `_day_remaining_capacity()` enforces both time-hour and block capacity, and clamps placements
   to `_activities_per_day` as a hard per-day ceiling after prior allocations.
+- If `period` collides with existing blocks on a day, placement shifts to the first open slot in
+  morning/afternoon/evening before writing the block.
 
 **Phase 5.25: Preferred Activity Placement (Two-Pass)**
 
@@ -486,6 +491,7 @@ Runs AFTER Phase 5.6 (experience tile placement). The builder populates remainin
 
 1. **Pass 1 (Unified Slot Model):** Collects preferred tiles from `preferences.preferred_activity_ids`. **D3 category filter:** Before collecting, each tile is checked against `self._active_categories` (derived from `input_data.activity_categories`, set at `ItineraryBuilder.__init__`). If the user has explicitly set categories (`activity_categories is not None`) and a tile's category is not in the active set, it is skipped. Builds slot map (3 periods per day), places via round-robin on least-loaded days.
 2. **Pass 2 (Co-Schedule Fallback):** Tiles that couldn't fit in Pass 1 are deferred. Re-scans using `_day_remaining_capacity()` + `_time_slot_score()` for hour-based placement on specialist days with spare capacity.
+   If the target period is occupied, the block is moved to the first available slot on that day.
 
 Activity blocks created this way have `preference_status: "user_preferred"` for UI attribution.
 
@@ -1110,13 +1116,14 @@ backend/app/prompts/
 
 1. **Persona** -- destination-aware (with local culture/style hints) or generic persona block
 2. Trip context block (`_build_trip_context_block`)
-3. **"What the User Sees Right Now"** -- rendered when `day_cards` or `strategy_sections` exist in state, giving the LLM awareness of the current UI surface
+3. **"What the User Sees Right Now"** -- rendered dynamically when `day_cards` or `strategy_sections` exist in state, including day/activity counts and visible hotel/itinerary context while avoiding direct UI description
 4. Specialist findings (`_build_specialist_findings_block`)
 5. Itinerary status (`_build_itinerary_status_block`)
-6. Outcome (`_build_outcome_block`) for mutation turns (add/remove/settings/date/spatial preference/logistics changes)
-7. Turn context (`_build_turn_context_block`)
-8. **Already-Said dedup block** with recent assistant replies (max 3), to prevent repetitive responses
-9. **Hard rules** (`_VOICE_BASE`) + intent-specific voice block with per-intent sentence limits (enforced by `_enforce_sentence_limit()`)
+6. Outcome (`_build_outcome_block`) for mutation turns (add/remove/settings/date/spatial preference/logistics changes), including optional budget usage summary from candidate tiles
+7. Diff block (`_build_diff_block`) with top-tracked `trip_plan`/`trip_settings` field deltas for change-aware responses
+8. Turn context (`_build_turn_context_block`)
+9. **Already-Said dedup block** with recent assistant replies (max 6), to prevent repetitive responses
+10. **Hard rules** (`_VOICE_BASE`) + intent-specific voice block with per-intent sentence limits (enforced by `_enforce_sentence_limit()`)
 
 This keeps the final assistant turn aligned with what the backend just applied, and prevents it from repeating already delivered content.
 

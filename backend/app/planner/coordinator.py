@@ -24,6 +24,7 @@ import asyncio
 import copy
 import logging
 import time
+import uuid
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import quote
@@ -718,8 +719,11 @@ def plan_turn(
                 act_settings = state.get("trip_settings", {}).get("activity_settings", {})
                 if isinstance(act_settings, dict) and act_settings.get("categories"):
                     tile_types = [*tile_types, "activities"]
-        # Tiles can run in parallel with specialists when both are needed
+        # Tiles can run in parallel with specialists when both are needed,
+        # EXCEPT for swap/add where specialists must update categories first
         parallel_with = StepType.DISPATCH_SPECIALISTS if dispatch_list else None
+        if dispatch_list and change_type in (ChangeType.SWAP_ACTIVITY, ChangeType.ADD_ACTIVITY):
+            parallel_with = None  # Force sequential: specialists → tiles
         steps.append(
             ExecutionStep(
                 step_type=StepType.SEARCH_TILES,
@@ -1784,6 +1788,16 @@ def _plan_to_strategy_section(
             }
         )
 
+    # Backfill image_url for content blocks
+    from app.planner.nodes.vertical_specialist import _get_curated_image
+
+    dest = trip_plan.get("destination", "")
+    for item in content_added:
+        if not item.get("image_url"):
+            item["image_url"] = _get_curated_image(
+                topic, dest, item.get("title", "")
+            ) or get_activity_image(topic, dest, item.get("title", ""))
+
     # Hero image
     hero_image = None
     if content_added:
@@ -2152,6 +2166,13 @@ async def _post_build_enrich_placed_activities(
                         block["coordinates"] = ex_coords
                     if existing.get("deeplink"):
                         block["deeplink"] = existing["deeplink"]
+                    if existing.get("rating") and not block.get("rating"):
+                        block["rating"] = existing["rating"]
+                    ex_reviews = existing.get("user_ratings_count") or existing.get("review_count")
+                    if ex_reviews and not block.get("review_count"):
+                        block["review_count"] = ex_reviews
+                    if existing.get("price_level") is not None and block.get("price_level") is None:
+                        block["price_level"] = existing["price_level"]
                     photo_name = existing.get("photo_name") or ""
                     if photo_name and session_id:
                         signed_url = build_signed_photo_url(session_id, photo_name)
@@ -2207,6 +2228,16 @@ async def _post_build_enrich_placed_activities(
             deeplink = enriched_tile.get("deeplink")
             if deeplink:
                 block["deeplink"] = deeplink
+            # Rating / review count / price level
+            if enriched_tile.get("rating") and not block.get("rating"):
+                block["rating"] = enriched_tile["rating"]
+            en_reviews = enriched_tile.get("user_ratings_count") or enriched_tile.get(
+                "review_count"
+            )
+            if en_reviews and not block.get("review_count"):
+                block["review_count"] = en_reviews
+            if enriched_tile.get("price_level") is not None and block.get("price_level") is None:
+                block["price_level"] = enriched_tile["price_level"]
             # Photo: signed URL from photo_name
             photo_name = (
                 (enriched_tile.get("meta") or {}).get("photo_name")
@@ -2960,9 +2991,9 @@ def _build_envelope(
     # overrides (flights="off" when not in this refresh) must not leak
     # into the envelope when tiles actually exist.
     bt = dict(trip_inputs.get("booking_types", {}))
-    if tiles.get("flights") and bt.get("flights") in ("off", None):
+    if tiles.get("flights") and bt.get("flights") in ("off", None, ""):
         bt["flights"] = "suggested"
-    if tiles.get("hotels") and bt.get("hotels") in ("off", None):
+    if tiles.get("hotels") and bt.get("hotels") in ("off", None, ""):
         bt["hotels"] = "suggested"
 
     # Second pass: sync from trip_settings state mutations.
@@ -2973,7 +3004,7 @@ def _build_envelope(
     if isinstance(settings_bt, dict):
         for btype in ("flights", "hotels", "activities"):
             settings_val = settings_bt.get(btype)
-            if settings_val in ("suggested", "on") and bt.get(btype) in ("off", None):
+            if settings_val in ("suggested", "on") and bt.get(btype) in ("off", None, ""):
                 bt[btype] = settings_val
 
     trip_inputs["booking_types"] = bt
@@ -3050,6 +3081,25 @@ def _build_envelope(
     browseable_from_turn = turn_meta.get("browseable_activities")
     if isinstance(browseable_from_turn, list) and browseable_from_turn:
         persistent_meta["browseable_activities"] = browseable_from_turn
+    # Persist travel_intelligence per specialist so it survives async Phase B timing
+    active_specialist_types: set[str] = set()
+    for section in strategy_sections:
+        if isinstance(section, dict):
+            ti = section.get("travel_intelligence")
+            st = section.get("specialist_type", "")
+            if st:
+                active_specialist_types.add(st)
+            if ti and ti != {} and st:
+                persistent_meta[f"travel_intelligence_{st}"] = ti
+    # Clean orphaned travel_intelligence keys for removed specialists
+    stale_keys = [
+        k
+        for k in persistent_meta
+        if k.startswith("travel_intelligence_")
+        and k[len("travel_intelligence_") :] not in active_specialist_types
+    ]
+    for k in stale_keys:
+        del persistent_meta[k]
     state["persistent_meta"] = persistent_meta
 
     # Compute whether state changed this turn via hash comparison.
@@ -3154,6 +3204,8 @@ def _build_envelope(
     origin_just_set = bool(turn_meta.get("origin_just_set", False))
     tiles_replaced = bool(turn_meta.get("tiles_replaced", False))
     browseable_activities = turn_meta.get("browseable_activities", [])
+    if not browseable_activities:
+        browseable_activities = persistent_meta.get("browseable_activities", [])
     # Normalize deeplink → deeplink_url for browseable activities
     for ba in browseable_activities:
         if not ba.get("deeplink_url") and ba.get("deeplink"):
@@ -3178,6 +3230,17 @@ def _build_envelope(
             "state": "ready" if has_content else "not_available",
         }
 
+    # Backfill travel_intelligence from persistent_meta (async Phase B may not have completed)
+    for section in strategy_sections:
+        if not isinstance(section, dict):
+            continue
+        ti = section.get("travel_intelligence")
+        if not ti:
+            st = section.get("specialist_type", "")
+            pm_ti = persistent_meta.get(f"travel_intelligence_{st}")
+            if pm_ti:
+                section["travel_intelligence"] = pm_ti
+
     # Strip internal _cache_* keys before emitting to SSE (F6)
     strategy_sections_clean = [
         {k: v for k, v in s.items() if not k.startswith("_cache_")} if isinstance(s, dict) else s
@@ -3190,6 +3253,7 @@ def _build_envelope(
         "branches": [],
         "tiles": flattened_tiles,
         "assistant_message": assistant_message,
+        "assistant_message_id": str(uuid.uuid4()),
         "ready_to_generate": ready_to_generate,
         "suggested_responses": suggested_replies,
         "suggested_response_meta": suggestion_chip_meta,
@@ -3210,12 +3274,12 @@ def _build_envelope(
         ),
         "itinerary_overview": (
             builder_result.get("overview")
-            if builder_ran
+            if builder_ran and builder_result.get("overview")
             else persistent_meta.get("itinerary_overview")
         ),
         "itinerary_assumptions": (
             builder_result.get("assumptions")
-            if builder_ran
+            if builder_ran and builder_result.get("assumptions")
             else persistent_meta.get("itinerary_assumptions")
         ),
         "ack_status": ack_status,
@@ -3775,6 +3839,23 @@ async def execute_turn(
                     node_name = _step_node_name(step)
                     if node_name:
                         yield _node_status(node_name, "completed", label, icon, duration)
+
+        # Compute field diffs for conversationalist context
+        _pre_briefs = state.get("_pre_change_briefs", {})
+        if isinstance(_pre_briefs, dict) and _pre_briefs:
+            field_diffs: Dict[str, Any] = {}
+            for key in ("trip_plan", "trip_settings"):
+                pre_val = _pre_briefs.get(key, {})
+                post_val = state.get(key, {})
+                if isinstance(pre_val, dict) and isinstance(post_val, dict):
+                    for field in set(list(pre_val.keys()) + list(post_val.keys())):
+                        old = pre_val.get(field)
+                        new = post_val.get(field)
+                        if old != new:
+                            field_diffs[f"{key}.{field}"] = {"from": old, "to": new}
+            if field_diffs:
+                turn_meta = state.setdefault("turn_meta", {})
+                turn_meta["field_diffs"] = field_diffs
 
         # Step 6: Generate response (LLM only when planned)
         should_generate_response = any(

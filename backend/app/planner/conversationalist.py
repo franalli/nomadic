@@ -193,6 +193,13 @@ def _build_from_strategy_sections(
                 for category, items in ti.items():
                     if isinstance(items, list) and items:
                         lines.append(f"  - {category.replace('_', ' ').title()}: {items[0]}")
+            # Travel advisory surfacing
+            advisory = ti.get("safety_health", {}) if isinstance(ti, dict) else {}
+            if isinstance(advisory, dict):
+                level = advisory.get("advisory_level", "none")
+                reason = advisory.get("advisory_reason", "")
+                if level in ("warning", "avoid") and reason:
+                    lines.insert(0, f"**TRAVEL ADVISORY ({level.upper()}):** {reason}")
             if lines:
                 blocks.append("\n".join(lines))
             continue
@@ -346,6 +353,35 @@ def _build_turn_context_block(
     return "## This Turn\n" + "\n".join(f"- {p}" for p in parts)
 
 
+def _build_diff_block(state: Dict[str, Any]) -> str:
+    """Build a human-readable summary of what fields changed this turn.
+
+    Reads ``turn_meta.field_diffs`` populated by the coordinator after step
+    execution.  Returns an empty string when there are no diffs.
+    """
+    field_diffs: Dict[str, Any] = state.get("turn_meta", {}).get("field_diffs", {})
+    if not field_diffs:
+        return ""
+
+    lines: List[str] = []
+    for raw_key, diff in list(field_diffs.items())[:8]:
+        # Strip 'trip_plan.' and 'trip_settings.' prefixes for readability
+        label = raw_key
+        for prefix in ("trip_plan.", "trip_settings."):
+            if label.startswith(prefix):
+                label = label[len(prefix) :]
+                break
+        old = diff.get("from")
+        new = diff.get("to")
+        old_str = str(old) if old is not None else "(none)"
+        new_str = str(new) if new is not None else "(none)"
+        lines.append(f"- {label}: {old_str} \u2192 {new_str}")
+
+    if not lines:
+        return ""
+    return "## What Changed This Turn\n" + "\n".join(lines)
+
+
 def _build_outcome_block(state: Dict[str, Any]) -> str:
     """What the system did this turn — so the LLM can confirm or caveat honestly."""
     day_cards: List[Any] = state.get("day_cards", [])
@@ -386,6 +422,102 @@ def _build_outcome_block(state: Dict[str, Any]) -> str:
         usable_days = max(1, len(day_cards) - 2)  # minus arrival/departure
         apd = round(total_activities / usable_days, 1)
         parts.append(f"Density: ~{apd} activities/day")
+
+    # Budget utilization — estimate spend from tiles
+    budget = state.get("trip_plan", {}).get("budget")
+    if budget and budget > 0:
+        tiles_for_budget = state.get("tiles", {})
+        if isinstance(tiles_for_budget, dict):
+            hotel_cost = 0.0
+            flight_cost = 0.0
+            activity_cost = 0.0
+            adults = state.get("trip_plan", {}).get("adults", 1) or 1
+            trip_nights = max(1, len(day_cards) - 1) if day_cards else 0
+
+            # Hotels: selected hotel price * nights
+            for ht in tiles_for_budget.get("hotels", []) or []:
+                ht_d = (
+                    ht
+                    if isinstance(ht, dict)
+                    else (ht.model_dump() if hasattr(ht, "model_dump") else {})
+                )
+                if ht_d.get("selected"):
+                    hp = ht_d.get("price_estimate") or ht_d.get("live_price") or 0
+                    try:
+                        hp = float(hp)
+                    except (ValueError, TypeError):
+                        hp = 0
+                    basis = ht_d.get("price_basis", "per_night")
+                    if basis == "per_night" and trip_nights > 0:
+                        hotel_cost = hp * trip_nights
+                    else:
+                        hotel_cost = hp
+                    break
+
+            # Flights: cheapest flight * adults
+            flight_tiles = tiles_for_budget.get("flights", []) or []
+            if flight_tiles:
+                flight_prices = []
+                for ft in flight_tiles:
+                    ft_d = (
+                        ft
+                        if isinstance(ft, dict)
+                        else (ft.model_dump() if hasattr(ft, "model_dump") else {})
+                    )
+                    fp = ft_d.get("price_estimate") or 0
+                    try:
+                        fp = float(fp)
+                    except (ValueError, TypeError):
+                        fp = 0
+                    if fp > 0:
+                        flight_prices.append(fp)
+                if flight_prices:
+                    basis = "per_person"
+                    if flight_tiles:
+                        ft0 = flight_tiles[0]
+                        ft0_d = (
+                            ft0
+                            if isinstance(ft0, dict)
+                            else (ft0.model_dump() if hasattr(ft0, "model_dump") else {})
+                        )
+                        basis = ft0_d.get("price_basis", "per_person")
+                    cheapest = min(flight_prices)
+                    flight_cost = cheapest * adults if basis == "per_person" else cheapest
+
+            # Activities: sum estimates for placed activities
+            for at in tiles_for_budget.get("activities", []) or []:
+                at_d = (
+                    at
+                    if isinstance(at, dict)
+                    else (at.model_dump() if hasattr(at, "model_dump") else {})
+                )
+                ap = at_d.get("price_estimate") or 0
+                try:
+                    ap = float(ap)
+                except (ValueError, TypeError):
+                    ap = 0
+                basis = at_d.get("price_basis", "per_person")
+                if basis == "per_person":
+                    activity_cost += ap * adults
+                else:
+                    activity_cost += ap
+
+            total_est = hotel_cost + flight_cost + activity_cost
+            if total_est > 0:
+                pct = round(total_est / budget * 100)
+                breakdown: List[str] = []
+                currency = state.get("trip_plan", {}).get("currency", "USD")
+                sym = "$" if currency == "USD" else f"{currency} "
+                if hotel_cost > 0:
+                    breakdown.append(f"Hotels {sym}{hotel_cost:,.0f}")
+                if flight_cost > 0:
+                    breakdown.append(f"Flights {sym}{flight_cost:,.0f}")
+                if activity_cost > 0:
+                    breakdown.append(f"Activities {sym}{activity_cost:,.0f}")
+                parts.append(
+                    f"Budget: ~{sym}{total_est:,.0f} of {sym}{budget:,.0f} ({pct}%)"
+                    + (f" — {', '.join(breakdown)}" if breakdown else "")
+                )
 
     # Hotel selection — tiles are category-keyed: {"hotels": [...], ...}
     tiles = state.get("tiles", {})
@@ -513,6 +645,16 @@ Do NOT list activities. Do NOT promise what you'll do next.
 Tone: confident local who knows the place.\
 """
 
+_VOICE_INITIAL_PLAN: str = """\
+## Voice: First Plan Reveal
+Sentence count: 4-5 MAX.
+1. Open with one editorial hook — the boldest or most unexpected thing about this itinerary.
+2. Highlight 1-2 standout activities by name.
+3. One actionable nudge — what to customize or explore further.
+Constraints and day-by-day details are visible in the UI — don't list them.
+Tone: excited but opinionated travel editor revealing something special.\
+"""
+
 _VOICE_DATES_SET: str = """\
 ## Voice: Dates Confirmed
 Sentence count: 1-2 MAX.
@@ -587,6 +729,7 @@ Tone: matter-of-fact expert redirecting to something better.\
 # Keys MUST be the exact module-level _VOICE_* constants (looked up by identity).
 _SENTENCE_LIMIT: Dict[str, int] = {
     _VOICE_DESTINATION_SET: 2,
+    _VOICE_INITIAL_PLAN: 5,
     _VOICE_DATES_SET: 2,
     _VOICE_PLAN_GENERATED: 2,
     _VOICE_ACTIVITY_CHANGE: 2,
@@ -601,7 +744,7 @@ _DEFAULT_SENTENCE_LIMIT: int = 3
 # Map ChangeType enum values -> voice block
 _VOICE_BY_CHANGE_TYPE: Dict[str, str] = {
     # Initial planning
-    "initial_plan": _VOICE_DESTINATION_SET,
+    "initial_plan": _VOICE_INITIAL_PLAN,
     "destination_change": _VOICE_DESTINATION_SET,
     # Dates
     "date_change": _VOICE_DATES_SET,
@@ -779,14 +922,64 @@ def build_response_context(
     if trip_block:
         system_parts.append(trip_block)
 
-    # 2. What the user sees (UI awareness — only when plan content exists)
-    if state.get("day_cards") or state.get("strategy_sections"):
-        system_parts.append(
-            "## What the User Sees Right Now\n"
-            "The user sees a timeline with day cards, a map with pins, "
-            "and trip pills at the top. NEVER describe what's visible. "
-            "Add editorial value, not description."
-        )
+    # 2. What the user sees (UI awareness — dynamic based on actual state)
+    _day_cards = state.get("day_cards", [])
+    _strategy_sections = state.get("strategy_sections", [])
+    _tiles = state.get("tiles", {}) if isinstance(state.get("tiles"), dict) else {}
+    if _day_cards or _strategy_sections:
+        ui_parts: List[str] = []
+        if _day_cards:
+            n_days = len(_day_cards)
+            # Count non-buffer, non-arrival/departure activities
+            _act_count = 0
+            for _dc in _day_cards:
+                _dc_d = (
+                    _dc
+                    if isinstance(_dc, dict)
+                    else (_dc.model_dump() if hasattr(_dc, "model_dump") else {})
+                )
+                for _b in _dc_d.get("blocks", []):
+                    _b_d = (
+                        _b
+                        if isinstance(_b, dict)
+                        else (_b.model_dump() if hasattr(_b, "model_dump") else {})
+                    )
+                    if _b_d.get("is_buffer"):
+                        continue
+                    _nm = (_b_d.get("summary") or _b_d.get("activity_type") or "").lower()
+                    if _nm not in ("arrival", "departure", "free day", ""):
+                        _act_count += 1
+            # Specialist topics from strategy_sections
+            _topics = [
+                s.get("specialist_type", "").replace("_", " ").title()
+                for s in _strategy_sections
+                if isinstance(s, dict)
+                and s.get("specialist_type")
+                and s.get("specialist_type") != "local_expert"
+            ]
+            topic_str = f" across {', '.join(_topics)}" if _topics else ""
+            ui_parts.append(
+                f"User sees: {n_days}-day timeline with {_act_count} activities{topic_str}"
+            )
+        elif _strategy_sections:
+            _topics = [
+                s.get("specialist_type", "").replace("_", " ").title()
+                for s in _strategy_sections
+                if isinstance(s, dict)
+                and s.get("specialist_type")
+                and s.get("specialist_type") != "local_expert"
+            ]
+            if _topics:
+                ui_parts.append(
+                    f"User sees: specialist plans for {', '.join(_topics)}, no itinerary yet"
+                )
+            else:
+                ui_parts.append("User sees: destination intel loaded, no itinerary yet")
+        hotel_tiles = _tiles.get("hotels", [])
+        if isinstance(hotel_tiles, list) and hotel_tiles:
+            ui_parts.append(f"{len(hotel_tiles)} hotel options visible")
+        ui_parts.append("NEVER describe what's visible. Add editorial value, not description.")
+        system_parts.append("## What the User Sees Right Now\n" + "\n".join(ui_parts))
 
     # 3. Specialist findings (now reads strategy_sections)
     specialist_block = _build_specialist_findings_block(state, classifier)
@@ -819,9 +1012,14 @@ def build_response_context(
     turn_block = _build_turn_context_block(classifier, user_message)
     system_parts.append(turn_block)
 
+    # 6b. Diff block — what fields changed this turn (for change-aware responses)
+    diff_block = _build_diff_block(state)
+    if diff_block:
+        system_parts.append(diff_block)
+
     # 7. Dedup: show the LLM what it already said (so it doesn't repeat)
     recent_assistant_msgs = [
-        str(msg.content)[:300]
+        str(msg.content)[:500]
         for msg in (state.get("messages", []) or [])[-6:]
         if isinstance(msg, AIMessage)
     ]

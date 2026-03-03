@@ -1298,7 +1298,7 @@ class ItineraryBuilder:
         # Auto-truncate if total activities exceed capacity
         # Recalculate total after diving truncation
         total_activity_days = sum(len(acts) for acts in activities_by_specialist.values())
-        max_capacity = usable_days * MAX_BLOCKS_PER_DAY
+        max_capacity = usable_days * min(MAX_BLOCKS_PER_DAY, self._activities_per_day)
         if total_activity_days > max_capacity:
             excess = total_activity_days - max_capacity
             logger.info(
@@ -1969,9 +1969,17 @@ class ItineraryBuilder:
                         day = days[best_day_idx]
                         is_user_preferred = getattr(activity, "is_user_preferred", False)
                         matched_tile = getattr(activity, "_matched_tile", None)
+                        # Dedup period against existing blocks on this day
+                        _existing_periods = {b.period for b in day.blocks if b.period}
+                        _candidate_period = periods[period_ptr % len(periods)]
+                        if _candidate_period in _existing_periods:
+                            _candidate_period = next(
+                                (p for p in periods if p not in _existing_periods),
+                                _candidate_period,
+                            )
                         block = DayBlockOutput(
                             id=activity.tile_id or f"act_{spec}_{best_day_idx}_{len(day.blocks)}",
-                            period=periods[period_ptr % len(periods)],
+                            period=_candidate_period,
                             activity_type=spec,
                             intensity=activity.intensity,
                             summary=activity.title,
@@ -2059,9 +2067,10 @@ class ItineraryBuilder:
                         self._dive_wrap_attempts = 0
                     continue
 
-            # Check if day is truly full (at max capacity)
+            # Check if day is truly full (respect user's activities-per-day preference)
             non_buffer_blocks = [b for b in current_day.blocks if not b.is_buffer]
-            if len(non_buffer_blocks) >= MAX_BLOCKS_PER_DAY:
+            max_for_day = min(MAX_BLOCKS_PER_DAY, self._activities_per_day)
+            if len(non_buffer_blocks) >= max_for_day:
                 day_ptr += 1
                 if day_ptr >= len(available_day_indices):
                     day_ptr = 0
@@ -2635,6 +2644,8 @@ class ItineraryBuilder:
             deduped.append(t)
         unplaced = deduped
 
+        _PERIOD_ORDER = ["morning", "afternoon", "evening"]
+
         # ─────────────────────────────────────────────────────────
         # Pass 0: Place pinned tiles (from fill-day) on target day
         # ─────────────────────────────────────────────────────────
@@ -2657,6 +2668,11 @@ class ItineraryBuilder:
                         if getattr(b, "booking_category", None) == "activity"
                     )
                     block = self._experience_tile_to_block(tile, day_match.day_number, exp_count)
+                    pinned_used = {b.period for b in day_match.blocks if b.period}
+                    if block.period in pinned_used:
+                        block.period = next(
+                            (p for p in _PERIOD_ORDER if p not in pinned_used), block.period
+                        )
                     day_match.blocks.append(block)
                     # Remove free_day placeholder so Pass 1 doesn't double-fill
                     day_match.blocks = [
@@ -2695,6 +2711,7 @@ class ItineraryBuilder:
             day = days[day_idx]
             day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
 
+            used_periods: set[str] = {b.period for b in day.blocks if b.period}
             placed_today = 0
             used_hours = 0.0
             while unplaced and placed_today < target_per_day:
@@ -2711,6 +2728,11 @@ class ItineraryBuilder:
                 block = self._experience_tile_to_block(
                     unplaced.pop(0), day.day_number, placed_today
                 )
+                if block.period in used_periods:
+                    block.period = next(
+                        (p for p in _PERIOD_ORDER if p not in used_periods), block.period
+                    )
+                used_periods.add(block.period)
                 day.blocks.append(block)
                 used_hours += t_hours
                 placed_today += 1
@@ -2816,6 +2838,11 @@ class ItineraryBuilder:
             day = days[day_idx]
             exp_count = sum(1 for b in day.blocks if b.activity_type == "activity")
             block = self._experience_tile_to_block(tile, day.day_number, exp_count)
+            existing_periods = {b.period for b in day.blocks if b.period}
+            if block.period in existing_periods:
+                block.period = next(
+                    (p for p in _PERIOD_ORDER if p not in existing_periods), block.period
+                )
             day.blocks.append(block)
             placed_on_specialist += 1
 
