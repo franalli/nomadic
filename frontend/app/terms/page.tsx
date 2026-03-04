@@ -184,9 +184,9 @@ export default function TermsPage() {
           title: 'Governing law and disputes',
           body: (
             <p>
-              These terms are governed by the laws of Switzerland. Any disputes arising from your
-              use of Nomadic shall be subject to the exclusive jurisdiction of the courts of
-              Switzerland. For booking-related disputes, you must contact the supplier (Expedia or
+              These terms are governed by applicable law in the jurisdiction where the operator is
+              established at the time of the dispute. Any disputes arising from your use of Nomadic
+              shall be subject to the jurisdiction of the courts in that jurisdiction. For booking-related disputes, you must contact the supplier (Expedia or
               Booking.com) directly as they are the merchant of record.
             </p>
           ),

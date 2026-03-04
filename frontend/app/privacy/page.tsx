@@ -19,7 +19,7 @@ export default function PrivacyPage() {
           title: 'Who we are and how to contact us',
           body: (
             <>
-              <p>Nomadic is the controller for personal data processed through this site.</p>
+              <p>The operator of this site is the controller for personal data processed through this site.</p>
               <p>
                 Contact: <a href="mailto:privacy@nomadic.travel" className="text-primary underline">privacy@nomadic.travel</a>. You
                 can also use the{' '}
