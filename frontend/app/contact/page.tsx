@@ -21,8 +21,8 @@ export default function ContactPage() {
             <>
               <p>
                 For general questions or help using Nomadic, email us at{' '}
-                <a href="mailto:support@nomadic.travel" className="text-primary underline">
-                  support@nomadic.travel
+                <a href="mailto:support@nomadic-planner.com" className="text-primary underline">
+                  support@nomadic-planner.com
                 </a>
                 . Please include a brief description of the issue and any relevant screenshots.
               </p>
@@ -38,8 +38,8 @@ export default function ContactPage() {
           body: (
             <p>
               To request access, correction, or deletion of your data, email{' '}
-              <a href="mailto:support@nomadic.travel" className="text-primary underline">
-                support@nomadic.travel
+              <a href="mailto:support@nomadic-planner.com" className="text-primary underline">
+                support@nomadic-planner.com
               </a>{' '}
               with the email associated with your account. We will confirm your identity before
               completing the request. See our{' '}

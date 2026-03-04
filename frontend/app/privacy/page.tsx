@@ -21,7 +21,7 @@ export default function PrivacyPage() {
             <>
               <p>The operator of this site is the controller for personal data processed through this site.</p>
               <p>
-                Contact: <a href="mailto:support@nomadic.travel" className="text-primary underline">support@nomadic.travel</a>. You
+                Contact: <a href="mailto:support@nomadic-planner.com" className="text-primary underline">support@nomadic-planner.com</a>. You
                 can also use the{' '}
                 <Link href="/contact" className="text-primary underline">
                   contact page
