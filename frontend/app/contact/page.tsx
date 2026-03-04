@@ -38,8 +38,8 @@ export default function ContactPage() {
           body: (
             <p>
               To request access, correction, or deletion of your data, email{' '}
-              <a href="mailto:privacy@nomadic.travel" className="text-primary underline">
-                privacy@nomadic.travel
+              <a href="mailto:support@nomadic.travel" className="text-primary underline">
+                support@nomadic.travel
               </a>{' '}
               with the email associated with your account. We will confirm your identity before
               completing the request. See our{' '}
