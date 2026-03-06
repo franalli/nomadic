@@ -86,6 +86,15 @@ def _norm_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().lower())
 
 
+def _token_overlap(a: str, b: str) -> float:
+    """Token overlap ratio using minimum denominator."""
+    tokens_a = set(a.split())
+    tokens_b = set(b.split())
+    if not tokens_a or not tokens_b:
+        return 0.0
+    return len(tokens_a & tokens_b) / min(len(tokens_a), len(tokens_b))
+
+
 def _append_constraint(
     out: list[LocalConstraint],
     seen: set[str],
@@ -99,6 +108,9 @@ def _append_constraint(
         return
     key = _norm_text(text)
     if key in seen:
+        return
+    # Fuzzy dedup: skip if >70% token overlap with any existing
+    if any(_token_overlap(key, existing) > 0.7 for existing in seen):
         return
     seen.add(key)
     out.append(LocalConstraint(type=type_, description=text, severity=severity))

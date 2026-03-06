@@ -1,4 +1,3 @@
-import hashlib
 import re
 from datetime import date, datetime
 from typing import List, Optional
@@ -7,6 +6,7 @@ from app.config import settings
 from app.schemas import Geo, Tile
 from app.services.unsplash import get_image_url_sync
 
+from .google_places_provider import dest_hash as _dest_hash
 from .models import SearchContext
 from .provider_base import Provider
 
@@ -26,15 +26,6 @@ def _parse_budget(value) -> Optional[float]:
             except ValueError:
                 return None
     return None
-
-
-def _dest_hash(dest: str) -> str:
-    """Generate a 6-char hash from destination for tile ID namespacing.
-
-    SECURITY: md5 is intentional — used for deterministic cache key generation,
-    not for authentication or integrity. Collision resistance is not required.
-    """
-    return hashlib.md5(dest.lower().strip().encode()).hexdigest()[:6]
 
 
 class MockHotelProvider(Provider):

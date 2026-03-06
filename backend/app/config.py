@@ -181,6 +181,8 @@ class Settings(BaseSettings):
     experience_cache_ttl_hours: int = 72
     # Google Places enrichment of LLM-generated activities (Tier1/Tier2)
     google_places_enrichment_cache_ttl_hours: int = 720  # 30 days — venue data is stable
+    # IATA resolver L2 cache TTL
+    iata_cache_ttl_hours: int = 720  # 30 days
     # Max activities to enrich per call (caps Google Places API spend)
     google_places_enrichment_cap: int = int(os.getenv("GOOGLE_PLACES_ENRICHMENT_CAP", "3"))
     # Wipe L2 (PostgreSQL) on session reset — for local dev/testing only
@@ -263,6 +265,9 @@ class Settings(BaseSettings):
     frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
     # Cookie domain for subdomain sharing (e.g., ".nomadic.com"), or None for same-origin
     cookie_domain: str | None = os.getenv("COOKIE_DOMAIN", None)
+    # Google OAuth (Phase 2 user accounts)
+    google_oauth_client_id: str = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+    google_oauth_client_secret: str = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
 
     # =============================================================================
     # E2E Test Configuration

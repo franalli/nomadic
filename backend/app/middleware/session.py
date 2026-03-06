@@ -36,6 +36,7 @@ from app.config import generate_session_token, settings
 SESSION_COOKIE_NAME = "session_id"
 CSRF_COOKIE_NAME = "csrf"
 SESSION_MAX_AGE = 14 * 24 * 60 * 60  # 14 days in seconds
+SESSION_EXEMPT_PATH_PREFIXES = ("/api/shared/",)
 
 # Session creation throttle (override with MAX_SESSIONS_PER_IP_HOUR for local E2E)
 _session_creation_counter: TTLCache = TTLCache(maxsize=10_000, ttl=3600)
@@ -89,8 +90,10 @@ class SessionMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable,
     ) -> Response:
-        # Skip session management for infrastructure endpoints
-        if request.url.path == "/health":
+        # Skip session management for infrastructure and public read-only endpoints
+        if request.url.path == "/health" or request.url.path.startswith(
+            SESSION_EXEMPT_PATH_PREFIXES
+        ):
             return await call_next(request)
 
         # Read existing cookies
@@ -110,6 +113,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
                     return JSONResponse(
                         status_code=429,
                         content={"detail": "Too many sessions created. Please try again later."},
+                        headers=_get_cors_headers(request),
                     )
                 _session_creation_counter[client_ip] = count
             session_id = generate_session_token()

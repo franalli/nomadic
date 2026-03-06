@@ -3,13 +3,22 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useMapSync } from '@/hooks/useMapSync';
 import { REVEAL_TIMING } from '@/lib/animation-config';
-import { getSpecialistEnrichment } from '@/lib/api';
+import {
+  deleteInflight,
+  getCachedDestinationIntel,
+  getInflight,
+  getSpecialistEnrichment,
+  normalizeDestinationKey,
+  setCachedDestinationIntel,
+  setInflight,
+} from '@/lib/destination-intel-cache';
 import type { MapPOI } from '@/lib/ghost-timeline-adapter';
 import { calculateMapCenter, extractPOIsFromSections } from '@/lib/ghost-timeline-adapter';
 import { buildDestinationIntel } from '@/lib/travelIntel';
@@ -25,16 +34,16 @@ import { BookingSection } from './BookingSection';
 import { BookingSummary } from './BookingSummary';
 import { FullDensityTimeline } from './FullDensityTimeline';
 import { OriginPromptCard } from './OriginPromptCard';
-import type { GenerationState } from './planStateHelpers';
+import { PdfExportButton } from './PdfExportButton';
+import { type GenerationState,isStrategyReady } from './planStateHelpers';
+import { ShareTripButton } from './ShareTripButton';
 import { type TimelineVariant } from './TimelineThread';
 
 const DESKTOP_MAP_CONTENT_STYLE = { minWidth: 480, maxWidth: 800 } as const;
-const DESTINATION_INTEL_CACHE = new Map<string, StrategySection>();
-const DESTINATION_INTEL_INFLIGHT = new Map<string, Promise<void>>();
 
-function normalizeDestinationKey(destination: string | null | undefined): string {
-  return (destination || '').trim().toLowerCase();
-}
+// Extracted animation constants to avoid re-creating objects on every render
+const FADE_INITIAL = { opacity: 0 } as const;
+const FADE_VISIBLE = { opacity: 1 } as const;
 
 function hasTravelIntelligence(section: StrategySection | undefined): boolean {
   return Boolean(section?.travel_intelligence && Object.keys(section.travel_intelligence).length > 0);
@@ -121,6 +130,20 @@ export function PlanFullDensityView({
     [fullModeMapItems, destinationCenter]
   );
   const showDesktopMap = isDesktop && (fullModeMapItems.length > 0 || destinationCenter !== null);
+  const venueLinksActions = useMemo(() => {
+    const dayCards = viewModel.day_cards ?? [];
+    if (dayCards.length === 0) return null;
+    return (
+      <>
+        <ShareTripButton />
+        <PdfExportButton
+          tripInputs={effectiveTripInputs}
+          dayCards={dayCards}
+          tiles={effectiveTiles}
+        />
+      </>
+    );
+  }, [effectiveTiles, effectiveTripInputs, viewModel.day_cards]);
 
   const handleMarkerClick = useCallback((itemId: string) => {
     const item = fullModeMapItems.find((i) => i.id === itemId);
@@ -140,12 +163,23 @@ export function PlanFullDensityView({
     [effectiveTiles]
   );
 
-  const staysExpanded = usePanelToggleStore((s) => s.staysExpanded);
-  const flightsExpanded = usePanelToggleStore((s) => s.flightsExpanded);
-  const intelExpanded = usePanelToggleStore((s) => s.intelExpanded);
-  const onToggleStays = usePanelToggleStore((s) => s.toggleStays);
-  const onToggleFlights = usePanelToggleStore((s) => s.toggleFlights);
-  const onToggleIntel = usePanelToggleStore((s) => s.toggleIntel);
+  const {
+    staysExpanded,
+    flightsExpanded,
+    intelExpanded,
+    onToggleStays,
+    onToggleFlights,
+    onToggleIntel,
+  } = usePanelToggleStore(
+    useShallow((s) => ({
+      staysExpanded: s.staysExpanded,
+      flightsExpanded: s.flightsExpanded,
+      intelExpanded: s.intelExpanded,
+      onToggleStays: s.toggleStays,
+      onToggleFlights: s.toggleFlights,
+      onToggleIntel: s.toggleIntel,
+    }))
+  );
 
   const intelDestinationKey = normalizeDestinationKey(effectiveFullDest);
   const localExpertSection = useMemo(
@@ -211,14 +245,14 @@ export function PlanFullDensityView({
 
     const sourceSection = localExpertSectionRef.current;
     if (localExpertReady && localExpertHasTI && sourceSection) {
-      DESTINATION_INTEL_CACHE.set(intelDestinationKey, sourceSection);
+      setCachedDestinationIntel(intelDestinationKey, sourceSection);
       applySectionUpdate(sourceSection);
       return () => {
         cancelled = true;
       };
     }
 
-    const cached = DESTINATION_INTEL_CACHE.get(intelDestinationKey);
+    const cached = getCachedDestinationIntel(intelDestinationKey);
     if (cached) {
       applySectionUpdate(cached);
       return () => {
@@ -258,7 +292,7 @@ export function PlanFullDensityView({
 
         if (result.status === 'ready' && result.data) {
           const enriched = result.data as unknown as StrategySection;
-          DESTINATION_INTEL_CACHE.set(intelDestinationKey, enriched);
+          setCachedDestinationIntel(intelDestinationKey, enriched);
           applySectionUpdate(enriched);
           return;
         }
@@ -275,24 +309,24 @@ export function PlanFullDensityView({
 
     const startPolling = (): Promise<void> => {
       const inflight = run().finally(() => {
-        DESTINATION_INTEL_INFLIGHT.delete(intelDestinationKey);
+        deleteInflight(intelDestinationKey);
       });
-      DESTINATION_INTEL_INFLIGHT.set(intelDestinationKey, inflight);
+      setInflight(intelDestinationKey, inflight);
       return inflight;
     };
 
-    const existingInflight = DESTINATION_INTEL_INFLIGHT.get(intelDestinationKey);
+    const existingInflight = getInflight(intelDestinationKey);
     if (existingInflight) {
       void existingInflight.finally(() => {
         if (cancelled) return;
-        const fromCache = DESTINATION_INTEL_CACHE.get(intelDestinationKey);
+        const fromCache = getCachedDestinationIntel(intelDestinationKey);
         if (fromCache) {
           applySectionUpdate(fromCache);
           return;
         }
         // If an older in-flight poll completed without populating cache
         // (e.g. cancelled during StrictMode remount), kick off one fresh poll.
-        if (!DESTINATION_INTEL_INFLIGHT.has(intelDestinationKey)) {
+        if (!getInflight(intelDestinationKey)) {
           void startPolling();
         }
       });
@@ -413,7 +447,7 @@ export function PlanFullDensityView({
       )}
 
       {/* OriginPromptCard + BookingSection — full width above timeline+map row */}
-      {state === 'S2_STRATEGY_READY' &&
+      {isStrategyReady(state) &&
         effectiveTripInputs?.destination && effectiveTripInputs?.start_date &&
         effectiveTripInputs?.end_date && !effectiveTripInputs?.origin &&
         (viewModel.executed_strategy_topics?.length ?? 0) >= 2 && (
@@ -427,7 +461,7 @@ export function PlanFullDensityView({
       <AnimatePresence>
         {effectiveTiles && Object.keys(effectiveTiles).length > 0 && (
           <motion.section
-            key="tiles-section" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            key="tiles-section" initial={FADE_INITIAL} animate={FADE_VISIBLE}
             transition={{ duration: REVEAL_TIMING.TILES_FADE / 1000 }}
             id="tiles-section"
             className={cn('mt-1', isExpandingItinerary && 'opacity-60 pointer-events-none')}
@@ -478,12 +512,13 @@ export function PlanFullDensityView({
           tiles={effectiveTiles}
           dayCards={viewModel.day_cards ?? []}
           state={state}
+          headerActions={venueLinksActions}
         />
         </div>
 
         <AnimatePresence>
           {showDesktopMap && (
-            <motion.div key="desktop-map" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            <motion.div key="desktop-map" initial={FADE_INITIAL} animate={FADE_VISIBLE}
               transition={{ duration: REVEAL_TIMING.MAP_FADE / 1000, delay: REVEAL_TIMING.MAP_DELAY / 1000, ease: [0.4, 0, 0.2, 1] }} className="flex-1 min-w-[350px] self-stretch pt-10"
             >
               <div

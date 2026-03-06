@@ -7,7 +7,7 @@
  * refs, suggestion state, and streaming state (isLoading, streamingMessageId).
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { getSendBurstGuardReason } from '@/components/chat/ChatPanel';
 import { useActionLoader } from '@/hooks/useActionLoader';
@@ -546,7 +546,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     await sendMessageCore(trimmed);
   }, [input, isLoading, inputRef, sendMessageCore]);
 
-  return {
+  return useMemo(() => ({
     // State
     isLoading,
     streamingMessageId,
@@ -577,5 +577,12 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     // Input state
     input,
     setInput,
-  };
+  }), [
+    isLoading, streamingMessageId, hasReceivedFirstToken, nodeStatus,
+    suggestedResponses, suggestedResponseMeta, suggestionChips,
+    lastUserMessage, triggerContext, delayedLoader, actionLoader,
+    isSendingRef, autoExpandTimeoutRef, abortStreamRef, focusTimeoutRef,
+    sendMessageCore, addAssistantMessage, handleSubmit, handleStopStreaming,
+    input, setInput,
+  ]);
 }

@@ -69,6 +69,7 @@ backend/
 ├── app/
 │   ├── __init__.py
 │   ├── analytics_routes.py     # Analytics API routes (extracted from main.py)
+│   ├── auth.py                 # Google OAuth exchange + session-to-user linking helpers
 │   ├── config.py               # Application configuration
 │   ├── crud_document.py        # Document CRUD operations
 │   ├── crud_trip.py            # Trip CRUD operations
@@ -160,6 +161,7 @@ backend/
 │   │   ├── itinerary_builder.py     # Itinerary construction service
 │   │   ├── regen_strategy.py        # Selective regeneration strategy computation
 │   │   ├── router_cache.py          # Thread-safe L1 cache for router extraction (context-aware)
+│   │   ├── sharing.py               # Shared-trip snapshot building + metadata helpers
 │   │   ├── specialist_cache.py      # Thread-safe L1+L2 cache for specialist LLM outputs
 │   │   ├── spend_guard.py           # Spend/budget guard logic
 │   │   ├── task_tracker.py          # Shared fire-and-forget background task tracker
@@ -201,6 +203,8 @@ backend/
 │       ├── 5f2c5416d5c3_tile_click_nullable_and_session_token.py
 │       ├── 817b72698e5b_add_unsplash_image_cache_table.py
 │       ├── 8ef3b6a8e5c1_trip_context_parents_and_session_prefs.py
+│       ├── 3c42a4c8a9f1_add_shared_trips.py
+│       ├── 7a1b2c3d4e5f_add_users_and_session_user_fk.py
 │       ├── add_variant_to_unsplash_cache.py
 │       ├── ae0f06f2c384_remove_legacy_tables.py
 │       ├── c1f8e8bf9d21_chat_messages_table.py
@@ -245,6 +249,7 @@ backend/
 │   ├── test_plan_schema.py               # Plan schema tests
 │   ├── test_poi_category_canonicalization.py  # POI category canonicalization tests
 │   ├── test_regen_strategy.py            # Selective regen field hash + strategy tests
+│   ├── test_rate_limit_keying.py         # Route-aware/IP-vs-session rate-limit keying regression tests
 │   ├── test_router_cache.py              # Router cache tests (context-dependency detection)
 │   ├── test_session_middleware.py        # Session middleware behavior tests
 │   ├── test_specialist_cache.py          # Specialist LLM cache tests (thread safety, L1/L2)
@@ -286,7 +291,8 @@ backend/
 │   ├── test_validation_cache.py       # Validation cache behavior tests
 │   └── db/
 │       ├── test_expand_itinerary_api.py
-│       └── test_plan_document_api.py
+│       ├── test_plan_document_api.py
+│       └── test_share_and_auth_api.py    # Shared-trip, auth, and resume API tests
 │
 ├── alembic.ini                 # Alembic migration config
 ├── Dockerfile                  # Backend Docker image
@@ -305,6 +311,8 @@ Next.js 16 / React 19 application with Zustand state management.
 ```
 frontend/
 ├── app/                        # Next.js App Router
+│   ├── auth/callback/error.tsx # Route-level error UI for OAuth callback failures
+│   ├── auth/callback/page.tsx  # OAuth callback completion page (exchanges code, then redirects home)
 │   ├── globals.css             # Global styles
 │   ├── icon.png                # App icon
 │   ├── layout.tsx              # Root layout
@@ -317,13 +325,11 @@ frontend/
 │   ├── sitemap/page.tsx
 │   ├── summary/error.tsx
 │   ├── summary/page.tsx
+│   ├── trip/[slug]/error.tsx   # Route-level error UI for shared-trip load failures
+│   ├── trip/[slug]/page.tsx    # Public shared-trip route with metadata generation
 │   └── terms/page.tsx
 │
 ├── components/
-│   ├── animations/
-│   │   ├── StartupSequence.tsx
-│   │   └── Typewriter.tsx
-│   │
 │   ├── chat/                   # Chat interface components
 │   │   ├── ChatInputBar.tsx          # Desktop input capsule (extracted from ChatPanel)
 │   │   ├── ChatInputHandler.tsx      # Thin wrapper around ChatInputBar for ChatPanel integration
@@ -337,7 +343,6 @@ frontend/
 │   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
 │   │   ├── MobileChatInput.tsx
 │   │   ├── SmartLoader.tsx
-│   │   ├── TripStatusBar.tsx
 │   │   └── suggestion-actions.ts     # Shared trigger_action handler (avoids circular import)
 │   │
 │   ├── layout/                 # Layout components
@@ -371,6 +376,10 @@ frontend/
 │   │   ├── consent-manager.tsx
 │   │   └── legal-page.tsx
 │   │
+│   ├── shared/                 # Public shared-trip surfaces
+│   │   ├── ReadOnlyTimeline.tsx    # Non-editable itinerary renderer for shared trips
+│   │   └── SharedTripView.tsx      # Shared-trip page shell, map, fork CTA, and metadata surface
+│   │
 │   ├── plan/                   # Plan view components
 │   │   ├── BookingPlanningView.tsx           # Booking controls rendered in full-density planning context
 │   │   ├── BookingSummary.tsx                # Quick links summary for bookable stays/activities
@@ -379,9 +388,6 @@ frontend/
 │   │   ├── BrowseActivitiesSheet.tsx  # Bottom sheet for browsing categorized activity tiles (Tier 1 free days)
 │   │   ├── ChipGroup.tsx
 │   │   ├── ChipScrollContainer.tsx        # Shared horizontal chip wrapper (carousel-safe)
-│   │   ├── CoreChip.tsx
-│   │   ├── DestinationIntelCard.tsx   # Destination intelligence card
-│   │   ├── DestinationMapPlaceholder.tsx
 │   │   ├── FullDensityTimeline.tsx       # Activity timeline container used by full-density view
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── NextStepBar.tsx
@@ -393,11 +399,11 @@ frontend/
 │   │   ├── pdf/                            # PDF export rendering subtree
 │   │   │   └── TripPdfDocument.tsx          # @react-pdf renderer for itinerary output
 │   │   ├── planStateHelpers.ts
+│   │   ├── ShareTripButton.tsx             # Share-link CTA for itinerary surfaces
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
 │   │   ├── TimelineBlockList.tsx
 │   │   ├── TimelineDayCard.tsx
 │   │   ├── TimelineThread.tsx
-│   │   ├── TripChromeBar.tsx            # Horizontal trip-config and module toggle bar
 │   │   ├── TripHealthBar.tsx
 │   │   ├── TripSummaryPills.tsx
 │   │   ├── UnifiedChipRow.tsx
@@ -431,8 +437,6 @@ frontend/
 │   │   │   ├── S2AgentCard.tsx           # Single agent card (collapsed strategy section card)
 │   │   │   ├── S2AgentCardExpanded.tsx   # Expanded agent card with travel intelligence
 │   │   │   ├── S2LocalIntelSection.tsx   # Local intel section within expanded agent card
-│   │   │   ├── S2StrategyStack.tsx       # Strategy card stack layout for S2 view
-│   │   │   ├── S2StrategyView.tsx
 │   │   │   ├── S2TopicConfig.tsx         # Topic configuration panel for S2 specialists
 │   │   │   ├── StrategyHero.tsx
 │   │   │   ├── StrategyHeroContent.tsx
@@ -486,6 +490,7 @@ frontend/
 │   └── ui/                     # Base UI components
 │       ├── ErrorBoundary.tsx       # Generic error boundary wrapper
 │       ├── ModalErrorBoundary.tsx  # Error boundary for modals/sheets (crash isolation)
+│       ├── UserAvatar.tsx          # Shared avatar primitive for account chrome
 │       ├── bottom-sheet.tsx
 │       ├── button.tsx
 │       ├── calendar.tsx
@@ -518,13 +523,15 @@ frontend/
 ├── lib/                        # Utility functions
 │   ├── animation-config.ts     # Progressive disclosure timing constants
 │   ├── api.ts                  # API client
+│   ├── config.ts               # Shared backend URL constant for RSC + client fetches
 │   ├── contentPolicyGuard.ts   # Content policy validation
+│   ├── country-flags.ts        # Algorithmic ISO country-code -> flag rendering helper
 │   ├── date-utils.ts           # Date formatting/parsing utilities
 │   ├── dayIntensity.ts         # Day intensity scoring (relaxed/balanced/packed) from DayBlock hours
 │   ├── debug.ts                # Debug/logging utilities
 │   ├── pdfData.ts              # Transform day cards + tiles to PDF-ready shape
 │   ├── design-system.ts        # Design system tokens
-│   ├── enrichment-cache.ts     # Destination-intel enrichment cache + in-flight dedupe
+│   ├── destination-intel-cache.ts # Shared destination-intel cache + inflight dedupe for Local Expert enrichment
 │   ├── specialist-colors.ts    # Specialist-to-color text class mappings (SSoT for specialist badge text colors)
 │   ├── fillDayGuards.ts        # Fill-day client cooldown guard helpers
 │   ├── format-utils.ts         # Formatting utilities
@@ -560,7 +567,8 @@ frontend/
 │   ├── chatStore.ts            # Chat state
 │   ├── documentStore.ts        # Document/plan state
 │   ├── mobileNavStore.ts       # Mobile navigation state
-│   └── uiStore.ts              # UI state
+│   ├── uiStore.ts              # UI state
+│   └── userStore.ts            # Auth user + recent-trip resume state
 │
 ├── types/                      # TypeScript types
 │   ├── chat.ts

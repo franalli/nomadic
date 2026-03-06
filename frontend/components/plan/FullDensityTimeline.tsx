@@ -76,7 +76,8 @@ export function FullDensityTimeline({
       )}
 
       <PlanTimelineSection
-        dayCards={viewModel.day_cards ?? []} timelineVariant={timelineVariant}
+        dayCards={viewModel.day_cards ?? []}
+        timelineVariant={timelineVariant}
         isStreaming={isStreaming} isRegenUpdating={isRegenUpdating}
         isExpandingItinerary={isExpandingItinerary} hasItineraryContent={hasItineraryContent}
         preferenceCount={preferenceCount} savedTileIds={savedTileIds}

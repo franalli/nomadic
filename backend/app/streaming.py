@@ -45,6 +45,8 @@ from app.schemas import (
     ExpandItineraryRequest,
     ExpandItineraryStreamEvent,
     GraphPlanRequest,
+    ItineraryAssumptions,
+    ItineraryOverview,
     PlanDocumentData,
     PlanViewState,
     ReadinessItem,
@@ -622,11 +624,13 @@ async def generate_sse(
             from app.planner.services.state_serde import restore_agent_state
 
             coordinator_state = restore_agent_state(session_state)
+            cancel_event = asyncio.Event()
             event_source = execute_turn(
                 user_message=req.message,
                 state=coordinator_state,
                 session_id=session_id,
                 doc_settings=doc_settings,
+                cancel_event=cancel_event,
             )
 
             with spend_guard_scope(session_id):
@@ -634,6 +638,7 @@ async def generate_sse(
                     # Check for client disconnect
                     if await request.is_disconnected():
                         logger.info(f"[{request_id}] Client disconnected, cancelling stream")
+                        cancel_event.set()
                         break
 
                     # Check if we've exceeded total stream timeout
@@ -1296,7 +1301,30 @@ async def generate_sse(
                         graph_day_cards,
                         graph_document.get("constraint_violations", []),
                     )
-            elif graph_strategy_sections and response_document.day_cards:
+            # Sync itinerary_overview and itinerary_assumptions from graph envelope
+            graph_overview = graph_document.get("itinerary_overview")
+            if graph_overview is not None:
+                response_document.itinerary_overview = (
+                    ItineraryOverview(**graph_overview)
+                    if isinstance(graph_overview, dict)
+                    else graph_overview
+                )
+            graph_assumptions = graph_document.get("itinerary_assumptions")
+            if graph_assumptions is not None:
+                response_document.itinerary_assumptions = (
+                    ItineraryAssumptions(**graph_assumptions)
+                    if isinstance(graph_assumptions, dict)
+                    else graph_assumptions
+                )
+
+            # Stale day_cards check: strategy changed but no new itinerary built.
+            # Independent of overview/assumptions sync above — guarded by
+            # "itinerary_day_cards" NOT being in graph_document (builder didn't run).
+            if (
+                "itinerary_day_cards" not in graph_document
+                and graph_strategy_sections
+                and response_document.day_cards
+            ):
                 # Strategy changed but no new itinerary built — check specialist coverage mismatch.
                 # Covers both additive (cycling added) and subtractive (cycling removed) changes.
                 # Clearing stale cards forces the frontend expand gate to fire expand-itinerary.
@@ -1373,6 +1401,12 @@ async def generate_sse(
                 response_document.constraint_violations = []
             elif "constraint_violations" in graph_document:
                 response_document.constraint_violations = graph_violations or []
+
+            # Sync reconciled trip_inputs (with booking_types upgrades) to response_document
+            if isinstance(trip_inputs, dict) and trip_inputs:
+                from app.schemas import DocumentTripInputs
+
+                response_document.trip_inputs = DocumentTripInputs.model_validate(trip_inputs)
 
             _debug(
                 f"[MAIN.PY] Graph output: plan_view_state={response_document.plan_view_state}, "
@@ -1994,6 +2028,11 @@ async def generate_ndjson(
                 "day_cards": [dc.model_dump() for dc in itinerary_result.day_cards],
                 "itinerary_overview": (
                     itinerary_result.overview.model_dump() if itinerary_result.overview else None
+                ),
+                "itinerary_assumptions": (
+                    itinerary_result.assumptions.model_dump()
+                    if itinerary_result.assumptions
+                    else None
                 ),
                 "strategy_sections": strategy_sections_data,
             }

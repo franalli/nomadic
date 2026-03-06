@@ -42,6 +42,10 @@ const nextConfig = {
         protocol: 'https',
         hostname: 'places.googleapis.com',  // Google Places photos
       },
+      {
+        protocol: 'https',
+        hostname: 'lh3.googleusercontent.com',  // Google user avatars
+      },
     ],
     // Cache optimized images for 1 year (browser + CDN)
     minimumCacheTTL: 31536000,
@@ -60,7 +64,7 @@ const nextConfig = {
       "default-src 'self'",
       `script-src 'self' ${isDev ? "'unsafe-eval'" : ""} 'unsafe-inline'`,
       "style-src 'self' 'unsafe-inline'",
-      `img-src 'self' ${apiOrigin} https://*.unsplash.com https://images.unsplash.com https://plus.unsplash.com https://pics.avs.io https://places.googleapis.com https://api.mapbox.com https://*.mapbox.com data: blob:`,
+      `img-src 'self' ${apiOrigin} https://*.unsplash.com https://images.unsplash.com https://plus.unsplash.com https://pics.avs.io https://places.googleapis.com https://lh3.googleusercontent.com https://*.googleusercontent.com https://api.mapbox.com https://*.mapbox.com data: blob:`,
       "font-src 'self'",
       `connect-src 'self' https://*.mapbox.com ${apiOrigin}`,
       "worker-src 'self' blob:",

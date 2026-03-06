@@ -38,7 +38,7 @@ _IATA_FLAT_SCHEMA: dict = gemini_safe_schema(
 
 L1_TTL_SECONDS = 24 * 60 * 60  # 24h
 L1_MAX_SIZE = 512
-L2_TTL_HOURS = 24 * 30  # 30d
+L2_TTL_HOURS = settings.iata_cache_ttl_hours
 
 _shared_mem = MemoryCache(maxsize=L1_MAX_SIZE, ttl=L1_TTL_SECONDS)
 

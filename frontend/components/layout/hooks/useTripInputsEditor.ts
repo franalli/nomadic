@@ -1,7 +1,7 @@
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { validateTripInput } from '@/lib/api';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
@@ -549,7 +549,7 @@ export function useTripInputsEditor(
     setValidationError(null);
   }, []);
 
-  return {
+  return useMemo(() => ({
     // State
     tripInputsDraft,
     editingField,
@@ -589,5 +589,16 @@ export function useTripInputsEditor(
     handleAddDestination,
     handleRemoveDestination,
     resetDraft,
-  };
+  }), [
+    tripInputsDraft, editingField, selectedLocationBadge,
+    destinationInput, destinationInputExpanded, originInput, originInputExpanded,
+    validationLoading, pendingOrigin, pendingDestination, validationError,
+    clearValidationError, setTripInputsDraft, setEditingField, setSelectedLocationBadge,
+    setDestinationInput, setDestinationInputExpanded, setOriginInput, setOriginInputExpanded,
+    handleStartEditingField, handleFieldChange, handleCommitField,
+    handleSetOrigin, handleRemoveOrigin, handleRemoveTravelers,
+    handleUpdateAdults, handleUpdateChildren, handleToggleRequiresAssistance,
+    handleRemoveBudget, handleUpdateCurrency, handleAddDestination, handleRemoveDestination,
+    resetDraft,
+  ]);
 }

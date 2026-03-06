@@ -9,8 +9,8 @@ import re
 import secrets
 import time
 import warnings
-from datetime import datetime
-from typing import Any, Dict, List
+from datetime import UTC, datetime, timedelta
+from typing import Any, Dict, List, cast
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -43,11 +43,12 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 from slowapi.errors import RateLimitExceeded  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 import app.db_models as db_models  # noqa: E402
 from app.analytics_routes import router as analytics_router  # noqa: E402
-from app.config import settings  # noqa: E402
+from app.config import generate_session_token, settings  # noqa: E402
 from app.crud_document import (  # noqa: E402
     add_tiles_to_branch,
     apply_user_patch,
@@ -94,11 +95,19 @@ from app.planner import (  # noqa: E402
     response_cache_stats,
 )
 from app.planner.specialist_registry import has_explicit_category_intent  # noqa: E402
-from app.rate_limit import limiter as _shared_limiter  # noqa: E402
+from app.rate_limit import (  # noqa: E402
+    forget_trusted_session_id,
+    mark_trusted_session_id,
+)
+from app.rate_limit import (  # noqa: E402
+    limiter as _shared_limiter,
+)
 from app.schemas import (  # noqa: E402
     ArrangementApplyRequest,
     ArrangementResult,
     ArrangementValidateRequest,
+    AuthMeResponse,
+    AuthUser,
     BlockViolation,
     BrowseActivitiesRequest,
     ChatHistoryResponse,
@@ -106,8 +115,12 @@ from app.schemas import (  # noqa: E402
     DayBlock,
     DayCard,
     DeleteLastMessageResponse,
+    DocumentTripInputs,
     ExpandItineraryRequest,
     ExpandItineraryStreamEvent,
+    ForkSharedTripResponse,
+    GoogleAuthCallbackRequest,
+    GoogleAuthUrlResponse,
     GraphPlanRequest,
     InsertActivityBlockRequest,
     InsertActivityBlockResponse,
@@ -119,13 +132,19 @@ from app.schemas import (  # noqa: E402
     RemoveBlockResponse,
     RestoreSnapshotRequest,
     RestoreSnapshotResponse,
+    ResumeTripResponse,
+    SharedTripPublicResponse,
+    ShareTripResponse,
     SpecialistEnrichmentResponse,
+    StrategySection,
     Tile,
     TileRefreshRequest,
     TileRefreshResponse,
     TilesSearchRequest,
     TripInputValidationRequest,
     TripInputValidationResponse,
+    UserTripsResponse,
+    UserTripSummary,
 )
 from app.services.cache_core import MemoryCache  # noqa: E402
 from app.services.itinerary_builder import POI_TYPE_ALIASES as _POI_TYPE_ALIASES  # noqa: E402
@@ -173,6 +192,10 @@ logger = logging.getLogger(__name__)
 _GOOGLE_PLACES_PHOTO_NAME_RE = re.compile(r"^places/[A-Za-z0-9_-]+/photos/[A-Za-z0-9_-]+$")
 
 _GOOGLE_PLACES_PHOTO_MAX_SIGNED_TTL_SECONDS = settings.google_places_photo_signed_ttl_max
+_OAUTH_STATE_COOKIE = "oauth_state"
+_OAUTH_STATE_MAX_AGE_SECONDS = 10 * 60
+_SESSION_COOKIE_NAME = "session_id"
+_SESSION_COOKIE_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
 
 
 def _media_proxy_signing_secret() -> str:
@@ -595,10 +618,21 @@ limiter = _shared_limiter  # local alias used by route decorators in this file
 app.state.limiter = limiter
 
 
+def _cors_error_headers(request: Request) -> dict[str, str]:
+    """Return CORS headers for middleware error responses that bypass CORSMiddleware."""
+    origin = request.headers.get("origin", "")
+    allowed = _get_allowed_origins()
+    if origin in allowed:
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+        }
+    return {}
+
+
 def _rate_limit_exceeded_handler(  # noqa: ARG001
     request: Request, exc: RateLimitExceeded
 ) -> JSONResponse:
-    _ = request
     # slowapi exc.detail is like "60 per 1 minute" — not a valid Retry-After
     # value per RFC 7231.  Parse the window into numeric seconds so the
     # frontend can respect the header.
@@ -613,10 +647,11 @@ def _rate_limit_exceeded_handler(  # noqa: ARG001
             retry_after = amount * multipliers.get(unit, 60)
         except (ValueError, IndexError):
             pass
+    headers = {"Retry-After": str(retry_after), **_cors_error_headers(request)}
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Please slow down."},
-        headers={"Retry-After": str(retry_after)},
+        headers=headers,
     )
 
 
@@ -710,6 +745,50 @@ def _get_allowed_origins() -> List[str]:
     return list(set(origins))  # Deduplicate
 
 
+def _oauth_cookie_kwargs() -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "path": "/",
+        "max_age": _OAUTH_STATE_MAX_AGE_SECONDS,
+        "samesite": "none" if settings.is_prod else "lax",
+    }
+    if settings.is_prod:
+        kwargs["secure"] = True
+    if settings.cookie_domain:
+        kwargs["domain"] = settings.cookie_domain
+    return kwargs
+
+
+def _session_cookie_kwargs() -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "path": "/",
+        "max_age": _SESSION_COOKIE_MAX_AGE_SECONDS,
+        "samesite": "none" if settings.is_prod else "lax",
+    }
+    if settings.is_prod:
+        kwargs["secure"] = True
+    if settings.cookie_domain:
+        kwargs["domain"] = settings.cookie_domain
+    return kwargs
+
+
+def _is_shared_trip_slug_conflict(exc: IntegrityError) -> bool:
+    payload = str(getattr(exc, "orig", exc)).lower()
+    return "shared_trips.slug" in payload or "ix_shared_trips_slug" in payload
+
+
+async def _generate_unique_session_token(db: AsyncSession, max_attempts: int = 5) -> str:
+    from sqlalchemy import select
+
+    for _ in range(max_attempts):
+        token = generate_session_token()
+        result = await db.execute(
+            select(db_models.Session.id).where(db_models.Session.session_token == token)
+        )
+        if result.scalar_one_or_none() is None:
+            return token
+    raise HTTPException(status_code=503, detail="Could not rotate session")
+
+
 # Add CORS middleware first (must be before other middleware)
 app.add_middleware(
     CORSMiddleware,
@@ -722,7 +801,7 @@ app.add_middleware(
         "X-Client-Request-Id",
         "X-Client-Attempt",
     ],
-    expose_headers=["Vary"],
+    expose_headers=["Vary", "Retry-After"],
 )
 
 # Add session middleware (issues session_id and csrf cookies)
@@ -772,13 +851,25 @@ async def limit_body_size(request: Request, call_next):
         try:
             cl_int = int(cl)
         except (ValueError, TypeError):
-            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Invalid Content-Length"},
+                headers=_cors_error_headers(request),
+            )
         if cl_int > MAX_BODY_BYTES:
-            return JSONResponse(status_code=413, content={"detail": "Payload too large"})
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Payload too large"},
+                headers=_cors_error_headers(request),
+            )
     if not cl and request.method in {"POST", "PUT", "PATCH"}:
         body = await request.body()
         if len(body) > MAX_BODY_BYTES:
-            return JSONResponse(status_code=413, content={"detail": "Payload too large"})
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Payload too large"},
+                headers=_cors_error_headers(request),
+            )
     return await call_next(request)
 
 
@@ -810,6 +901,20 @@ def health():
 
 # Photo proxy server-side cache: 500 photos × ~50KB = ~25MB peak memory
 _photo_bytes_cache: MemoryCache = MemoryCache(maxsize=500, ttl=86400)
+
+# Shared httpx client for photo proxy (connection pooling across requests)
+_photo_proxy_client: httpx.AsyncClient | None = None
+_photo_proxy_lock = asyncio.Lock()
+
+
+async def _get_photo_proxy_client() -> httpx.AsyncClient:
+    global _photo_proxy_client
+    if _photo_proxy_client is not None and not _photo_proxy_client.is_closed:
+        return _photo_proxy_client
+    async with _photo_proxy_lock:
+        if _photo_proxy_client is None or _photo_proxy_client.is_closed:
+            _photo_proxy_client = httpx.AsyncClient(timeout=10.0, follow_redirects=True)
+    return _photo_proxy_client
 
 
 @app.get("/api/media/google-places-photo")
@@ -913,8 +1018,8 @@ async def proxy_google_places_photo(
     record_google_places_usage("photo_proxy", "request")
 
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            upstream = await client.get(upstream_url, params=params, headers={"Accept": "image/*"})
+        client = await _get_photo_proxy_client()
+        upstream = await client.get(upstream_url, params=params, headers={"Accept": "image/*"})
     except httpx.HTTPError as exc:
         record_google_places_usage("photo_proxy", "error", reason="httpx_error")
         _record_places_circuit_failure("photo_proxy")
@@ -1656,6 +1761,48 @@ async def admin_all_cache_stats(  # noqa: ARG001
 
 
 # =============================================================================
+# Spend Guard Admin Endpoints
+# =============================================================================
+
+
+@app.get("/api/admin/spend-guard-stats", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_spend_guard_stats(request: Request):  # noqa: ARG001
+    """Return current spend guard counter snapshot."""
+    _ = request
+    from app.services.spend_guard import get_spend_guard_snapshot
+
+    return get_spend_guard_snapshot()
+
+
+@app.post("/api/admin/clear-spend-guard", dependencies=[Depends(require_admin)])
+@limiter.limit("5/minute")
+async def admin_clear_spend_guard(request: Request):  # noqa: ARG001
+    """Reset all in-memory spend counters."""
+    _ = request
+    from app.services.spend_guard import clear_spend_guard_counters
+
+    clear_spend_guard_counters()
+    return {"status": "ok", "detail": "Spend guard counters cleared"}
+
+
+@app.get("/api/admin/places-telemetry", dependencies=[Depends(require_admin)])
+@limiter.limit("10/minute")
+async def admin_places_telemetry(request: Request):  # noqa: ARG001
+    """Return Google Places API usage counters and circuit breaker state."""
+    _ = request
+    from app.tile_service.google_places_provider import (
+        get_google_places_circuit_breaker_state,
+        get_google_places_usage_counters,
+    )
+
+    return {
+        "usage_counters": get_google_places_usage_counters(),
+        "circuit_breaker": get_google_places_circuit_breaker_state(),
+    }
+
+
+# =============================================================================
 # SSE Streaming Graph Plan Endpoint
 # =============================================================================
 
@@ -1755,6 +1902,105 @@ async def graph_plan_stream_endpoint(
     )
 
 
+@app.post("/api/session/new", status_code=204)
+@limiter.limit("20/minute")
+async def new_session(
+    request: Request,
+    db: AsyncSession = async_db_dependency,
+):
+    """
+    Start a new planning session, preserving auth.
+
+    The current session (and its trip data) stays in the DB so it appears in
+    the user's "My Trips" list.  A fresh session row is created and linked to
+    the same user_id.  The browser receives the new session cookie.
+    """
+    old_token = get_session_from_request(request)
+    old_session = await get_session_by_token(db, old_token) if old_token else None
+    user_id = old_session.user_id if old_session else None
+
+    from sqlalchemy import delete, select, update
+    from sqlalchemy.sql import desc
+
+    # Create a fresh session linked to the same user
+    new_token = await _generate_unique_session_token(db)
+    new_sess = db_models.Session(session_token=new_token, user_id=user_id)
+    db.add(new_sess)
+    await db.flush()
+
+    # Keep at most 3 recent trips per user (evict oldest beyond limit).
+    # Only count sessions that have a PlanDocument (actual trips).
+    MAX_TRIPS_PER_USER = 3
+    if user_id:
+        trip_sessions = (
+            (
+                await db.execute(
+                    select(db_models.Session)
+                    .join(
+                        db_models.PlanDocument,
+                        db_models.PlanDocument.session_id == db_models.Session.id,
+                    )
+                    .where(db_models.Session.user_id == user_id)
+                    .where(db_models.Session.id != new_sess.id)
+                    .order_by(desc(db_models.PlanDocument.updated_at))
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if len(trip_sessions) > MAX_TRIPS_PER_USER:
+            stale = trip_sessions[MAX_TRIPS_PER_USER:]
+            stale_ids = [s.id for s in stale]
+            stale_tokens = [s.session_token for s in stale]
+
+            await db.execute(
+                delete(db_models.PlanDocument).where(
+                    db_models.PlanDocument.session_id.in_(stale_ids)
+                )
+            )
+            await db.execute(
+                delete(db_models.ChatMessage).where(db_models.ChatMessage.session_id.in_(stale_ids))
+            )
+            await db.execute(
+                delete(db_models.TripContext).where(db_models.TripContext.session_id.in_(stale_ids))
+            )
+            await db.execute(
+                delete(db_models.TileClick).where(db_models.TileClick.session_id.in_(stale_tokens))
+            )
+            # Preserve shared links by unlinking before deletion
+            await db.execute(
+                update(db_models.SharedTrip)
+                .where(db_models.SharedTrip.session_id.in_(stale_ids))
+                .values(session_id=None)
+            )
+            await db.execute(delete(db_models.Session).where(db_models.Session.id.in_(stale_ids)))
+            for token in stale_tokens:
+                forget_trusted_session_id(token)
+
+    await db.commit()
+    mark_trusted_session_id(new_token)
+
+    # Set the new session cookie (replaces the old one)
+    response = Response(status_code=204)
+    cookie_kw = _session_cookie_kwargs()
+    response.set_cookie(
+        key=_SESSION_COOKIE_NAME,
+        value=new_token,
+        httponly=True,
+        **cookie_kw,
+    )
+    # Fresh CSRF token for the new session
+    csrf_token = secrets.token_urlsafe(32)
+    response.set_cookie(
+        key="csrf",
+        value=csrf_token,
+        httponly=False,
+        **cookie_kw,
+    )
+    return response
+
+
 @app.delete("/api/session", status_code=204)
 @limiter.limit("60/minute")
 async def reset_session(
@@ -1767,9 +2013,10 @@ async def reset_session(
     Uses row-level locking to prevent deadlocks with concurrent plan operations.
     Also clears session cookies from the browser and LangGraph checkpoint state.
     """
-    from sqlalchemy import delete
+    from sqlalchemy import delete, update
 
     session_id = get_session_from_request(request)
+    forget_trusted_session_id(session_id)
 
     # Clear LangGraph checkpoint for this session (even if session not in DB)
     if session_id:
@@ -1788,38 +2035,64 @@ async def reset_session(
 
     # Lock the session row first to prevent deadlocks with concurrent operations
     session = await get_session_by_token(db, session_id, lock_for_update=True)
-    if not session:
-        # Clear cookies even if session not found in DB
-        response = Response(status_code=204)
-        return clear_session_cookies(response)
+    user_id = session.user_id if session else None
 
-    # Delete PlanDocument for this session
-    await db.execute(
-        delete(db_models.PlanDocument).where(db_models.PlanDocument.session_id == session.id)
-    )
+    if session:
+        # Delete PlanDocument for this session
+        await db.execute(
+            delete(db_models.PlanDocument).where(db_models.PlanDocument.session_id == session.id)
+        )
 
-    # Delete ChatMessages for this session
-    await db.execute(
-        delete(db_models.ChatMessage).where(db_models.ChatMessage.session_id == session.id)
-    )
+        # Delete ChatMessages for this session
+        await db.execute(
+            delete(db_models.ChatMessage).where(db_models.ChatMessage.session_id == session.id)
+        )
 
-    # Delete TripContexts for this session
-    await db.execute(
-        delete(db_models.TripContext).where(db_models.TripContext.session_id == session.id)
-    )
+        # Delete TripContexts for this session
+        await db.execute(
+            delete(db_models.TripContext).where(db_models.TripContext.session_id == session.id)
+        )
 
-    # Delete TileClicks for this session
-    await db.execute(
-        delete(db_models.TileClick).where(db_models.TileClick.session_id == session_id)
-    )
+        # Delete TileClicks for this session
+        await db.execute(
+            delete(db_models.TileClick).where(db_models.TileClick.session_id == session_id)
+        )
 
-    # Delete the session itself
-    await db.delete(session)
+        # Preserve shared links by unlinking before session deletion
+        await db.execute(
+            update(db_models.SharedTrip)
+            .where(db_models.SharedTrip.session_id == session.id)
+            .values(session_id=None)
+        )
+
+        # Delete the old session
+        forget_trusted_session_id(session.session_token)
+        await db.delete(session)
+
+    # Create a fresh session linked to the same user (preserves auth)
+    new_token = await _generate_unique_session_token(db)
+    new_sess = db_models.Session(session_token=new_token, user_id=user_id)
+    db.add(new_sess)
     await db.commit()
+    mark_trusted_session_id(new_token)
 
-    # Clear cookies from browser
+    # Set the new session cookie
     response = Response(status_code=204)
-    return clear_session_cookies(response)
+    cookie_kw = _session_cookie_kwargs()
+    response.set_cookie(
+        key=_SESSION_COOKIE_NAME,
+        value=new_token,
+        httponly=True,
+        **cookie_kw,
+    )
+    csrf_token = secrets.token_urlsafe(32)
+    response.set_cookie(
+        key="csrf",
+        value=csrf_token,
+        httponly=False,
+        **cookie_kw,
+    )
+    return response
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1929,6 +2202,543 @@ async def delete_last_message(
         restored_trip_inputs=restored_trip_inputs,
         messages=response_messages,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Share + Auth Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.post("/api/share", response_model=ShareTripResponse)
+@limiter.limit("5/minute")
+async def create_shared_trip(
+    request: Request,
+    db: AsyncSession = async_db_dependency,
+):
+    """Snapshot current session plan into a shareable public URL."""
+    from app.services.sharing import build_share_snapshot, derive_share_metadata, generate_slug
+    from app.services.unsplash import get_image_url_sync
+
+    session_token = get_session_from_request(request)
+    session = await get_session_by_token(db, session_token)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = await get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan to share")
+
+    doc_data = get_document_data(doc)
+    if not doc_data.day_cards:
+        raise HTTPException(status_code=400, detail="Build your itinerary before sharing")
+
+    snapshot = build_share_snapshot(doc_data)
+    metadata = derive_share_metadata(doc_data)
+    session_db_id = session.id
+    session_user_id = session.user_id
+    destination = metadata.get("destination")
+    import asyncio
+
+    hero_image_url = (
+        await asyncio.to_thread(
+            get_image_url_sync, str(destination), variant=0, width=1200, height=630
+        )
+        if destination
+        else None
+    )
+
+    expires_at = None if session_user_id else datetime.now(UTC) + timedelta(days=90)
+    shared_trip: db_models.SharedTrip | None = None
+    for _ in range(5):
+        shared_trip = db_models.SharedTrip(
+            slug=generate_slug(),
+            session_id=session_db_id,
+            user_id=session_user_id,
+            snapshot=snapshot,
+            title=metadata.get("title"),
+            destination=metadata.get("destination"),
+            hero_image_url=hero_image_url,
+            day_count=metadata.get("day_count"),
+            expires_at=expires_at,
+        )
+        db.add(shared_trip)
+        try:
+            await db.commit()
+            break
+        except IntegrityError as exc:
+            await db.rollback()
+            if _is_shared_trip_slug_conflict(exc):
+                continue
+            raise
+    else:
+        raise HTTPException(status_code=503, detail="Could not generate unique link")
+
+    base_url = settings.frontend_origin.rstrip("/")
+    share_url = f"{base_url}/trip/{shared_trip.slug}"
+    return ShareTripResponse(
+        slug=shared_trip.slug,
+        url=share_url,
+        title=shared_trip.title or "Shared Trip",
+        expires_at=shared_trip.expires_at.isoformat() if shared_trip.expires_at else None,
+    )
+
+
+@app.get("/api/shared/{slug}", response_model=SharedTripPublicResponse)
+@limiter.limit("30/minute")
+async def get_shared_trip(
+    request: Request,
+    slug: str,
+    db: AsyncSession = async_db_dependency,
+):
+    """Public read-only shared trip endpoint (no session/auth required)."""
+    _ = request
+    from sqlalchemy import select
+
+    result = await db.execute(select(db_models.SharedTrip).where(db_models.SharedTrip.slug == slug))
+    shared_trip = result.scalar_one_or_none()
+    if not shared_trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    if shared_trip.expires_at:
+        expires_at = shared_trip.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if datetime.now(UTC) > expires_at:
+            raise HTTPException(status_code=410, detail="This shared trip has expired")
+
+    # Atomic SQL increment to avoid race conditions on concurrent views
+    from sqlalchemy import update as sa_update
+
+    await db.execute(
+        sa_update(db_models.SharedTrip)
+        .where(db_models.SharedTrip.id == shared_trip.id)
+        .values(view_count=db_models.SharedTrip.view_count + 1)
+    )
+    await db.commit()
+
+    created_at = shared_trip.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+
+    return SharedTripPublicResponse(
+        slug=shared_trip.slug,
+        title=shared_trip.title or "Shared Trip",
+        destination=shared_trip.destination,
+        hero_image_url=shared_trip.hero_image_url,
+        day_count=shared_trip.day_count,
+        snapshot=shared_trip.snapshot or {},
+        created_at=created_at.isoformat(),
+    )
+
+
+@app.post("/api/share/fork/{slug}", response_model=ForkSharedTripResponse)
+@limiter.limit("10/minute")
+async def fork_shared_trip(
+    request: Request,
+    slug: str,
+    db: AsyncSession = async_db_dependency,
+):
+    """Copy a shared snapshot into the caller's own session document."""
+    from sqlalchemy import select
+
+    from app.crud_document import get_or_create_document, save_document_data
+
+    session_token = get_session_from_request(request)
+    current_session = await get_or_create_session(db, session_token)
+    fork_session_token = await _generate_unique_session_token(db)
+    fork_session = await get_or_create_session(db, fork_session_token)
+    fork_session.user_id = current_session.user_id
+
+    result = await db.execute(select(db_models.SharedTrip).where(db_models.SharedTrip.slug == slug))
+    shared_trip = result.scalar_one_or_none()
+    if not shared_trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    if shared_trip.expires_at:
+        expires_at = shared_trip.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if datetime.now(UTC) > expires_at:
+            raise HTTPException(status_code=410, detail="This shared trip has expired")
+
+    snapshot = shared_trip.snapshot if isinstance(shared_trip.snapshot, dict) else {}
+    trip_inputs = snapshot.get("trip_inputs")
+    tiles = snapshot.get("tiles")
+    strategy_sections = snapshot.get("strategy_sections")
+    day_cards = snapshot.get("day_cards")
+
+    shared_plan_view_state = snapshot.get("plan_view_state")
+    if not isinstance(shared_plan_view_state, str):
+        shared_plan_view_state = (
+            "P3_FINALIZED" if isinstance(day_cards, list) and day_cards else "P1_ENRICHED"
+        )
+
+    shared_executed_topics = snapshot.get("executed_strategy_topics")
+    if not isinstance(shared_executed_topics, list):
+        shared_executed_topics = []
+    shared_executed_topics = [
+        str(topic) for topic in shared_executed_topics if isinstance(topic, str)
+    ]
+
+    shared_violations = snapshot.get("constraint_violations")
+    if not isinstance(shared_violations, list):
+        shared_violations = []
+
+    shared_preferred_tile_ids = snapshot.get("preferred_tile_ids")
+    if not isinstance(shared_preferred_tile_ids, list):
+        shared_preferred_tile_ids = []
+    shared_preferred_tile_ids = [
+        str(tile_id) for tile_id in shared_preferred_tile_ids if isinstance(tile_id, str)
+    ]
+
+    doc = await get_or_create_document(db, session=fork_session, updated_by="user")
+    doc_data = get_document_data(doc)
+
+    doc_data.trip_inputs = DocumentTripInputs()
+    if isinstance(trip_inputs, dict):
+        try:
+            doc_data.trip_inputs = DocumentTripInputs.model_validate(trip_inputs)
+        except Exception:
+            # Keep defaults if snapshot contains invalid trip input shape.
+            pass
+
+    parsed_tiles: dict[str, Tile] = {}
+    if isinstance(tiles, dict):
+        for tile_id, tile_payload in tiles.items():
+            if not isinstance(tile_id, str) or not isinstance(tile_payload, dict):
+                continue
+            try:
+                parsed_tiles[tile_id] = Tile.model_validate(tile_payload)
+            except Exception:
+                continue
+    doc_data.tiles = parsed_tiles
+
+    parsed_sections: list[StrategySection] = []
+    if isinstance(strategy_sections, list):
+        for section in strategy_sections:
+            if not isinstance(section, dict):
+                continue
+            try:
+                parsed_sections.append(StrategySection.model_validate(section))
+            except Exception:
+                continue
+    doc_data.strategy_sections = parsed_sections
+
+    parsed_day_cards: list[DayCard] = []
+    if isinstance(day_cards, list):
+        for day_card in day_cards:
+            if not isinstance(day_card, dict):
+                continue
+            try:
+                parsed_day_cards.append(DayCard.model_validate(day_card))
+            except Exception:
+                continue
+    doc_data.day_cards = parsed_day_cards
+
+    valid_plan_view_states = {
+        "P0_MINIMAL",
+        "P1_ENRICHED",
+        "P2_LOGISTICS",
+        "P3_FINALIZED",
+        "P3_EDITING",
+        "P3_BLOCKED",
+        "S0_BOOTSTRAP",
+        "S1_FRAMING",
+        "S2_STRATEGY_READY",
+        "S2_BLOCKED",
+        "S3_ITINERARY_READY",
+        "S3_EDITING",
+        "S3_BLOCKED",
+        "S3_PARTIAL_CONFLICT",
+    }
+    if shared_plan_view_state not in valid_plan_view_states:
+        shared_plan_view_state = "P3_FINALIZED" if parsed_day_cards else "P1_ENRICHED"
+
+    doc_data.plan_view_state = cast(PlanViewState, shared_plan_view_state)
+    doc_data.executed_strategy_topics = shared_executed_topics
+    doc_data.constraint_violations = [v for v in shared_violations if isinstance(v, dict)]
+    doc_data.preferred_tile_ids = shared_preferred_tile_ids
+
+    # Clear transient/live-session fields so the fork stays stable and user-owned.
+    doc_data.plan_state = "STABLE" if doc_data.day_cards else "INCOMPLETE"
+    doc_data.ui_phase = "expanded"
+    doc_data.branches = []
+    doc_data.pending_strategy_topics = []
+    doc_data.open_decisions = []
+    doc_data.itinerary_overview = None
+    doc_data.itinerary_assumptions = None
+    doc_data.needs_refresh = False
+    doc_data.can_expand_to_itinerary = bool(doc_data.day_cards)
+    doc_data.assistant_message = None
+    doc_data.assistant_message_id = None
+    doc_data.ready_to_generate = False
+    doc_data.suggested_responses = []
+    doc_data.suggested_response_meta = []
+    doc_data.suggestion_chips = []
+    doc_data.applied_updates = []
+    doc_data.conflicts = []
+    doc_data.undo_snapshot = None
+    doc_data.update_provenance = None
+    doc_data.ack_status = "applied"
+    doc_data.ack_updates = []
+    doc_data.origin_just_set = False
+    doc_data.tiles_replaced = True
+    doc_data.user_pinned_tiles = {}
+    doc_data.constraints_validated = []
+    doc_data.browseable_activities = []
+
+    await save_document_data(db, doc=doc, data=doc_data, updated_by="user")
+    await db.commit()
+
+    payload = ForkSharedTripResponse(
+        ok=True,
+        destination=doc_data.trip_inputs.destination,
+        day_count=len(doc_data.day_cards),
+        plan_view_state=doc_data.plan_view_state,
+    )
+    response = JSONResponse(content=payload.model_dump())
+    response.set_cookie(
+        key=_SESSION_COOKIE_NAME,
+        value=fork_session_token,
+        httponly=True,
+        **_session_cookie_kwargs(),
+    )
+    return response
+
+
+def _serialize_auth_user(user: db_models.User) -> AuthUser:
+    return AuthUser(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        avatar_url=user.avatar_url,
+    )
+
+
+@app.get("/api/auth/google/url", response_model=GoogleAuthUrlResponse)
+@limiter.limit("10/minute")
+async def google_auth_url(request: Request) -> GoogleAuthUrlResponse:
+    """Return Google OAuth consent URL and set short-lived anti-CSRF state cookie."""
+    _ = request
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
+        raise HTTPException(status_code=503, detail="Google OAuth is not configured")
+
+    state = secrets.token_urlsafe(32)
+    redirect_uri = f"{settings.frontend_origin.rstrip('/')}/auth/callback"
+    params = urlencode(
+        {
+            "client_id": settings.google_oauth_client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            "access_type": "offline",
+            "prompt": "consent",
+        }
+    )
+    url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
+    response = JSONResponse(content=GoogleAuthUrlResponse(url=url).model_dump())
+    response.set_cookie(
+        key=_OAUTH_STATE_COOKIE,
+        value=state,
+        httponly=True,
+        **_oauth_cookie_kwargs(),
+    )
+    return response
+
+
+@app.post("/api/auth/google/callback", response_model=AuthMeResponse)
+@limiter.limit("10/minute")
+async def google_auth_callback(
+    request: Request,
+    body: GoogleAuthCallbackRequest,
+    db: AsyncSession = async_db_dependency,
+):
+    """Exchange Google code and link current cookie session to the resolved user."""
+    from sqlalchemy import select
+
+    from app.auth import exchange_google_code, get_or_create_user, link_session_to_user
+
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
+        raise HTTPException(status_code=503, detail="Google OAuth is not configured")
+
+    expected_state = request.cookies.get(_OAUTH_STATE_COOKIE)
+    if not expected_state or not secrets.compare_digest(expected_state, body.state):
+        raise HTTPException(status_code=403, detail="Invalid OAuth state")
+
+    redirect_uri = f"{settings.frontend_origin.rstrip('/')}/auth/callback"
+    try:
+        google_profile = await exchange_google_code(body.code, redirect_uri)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=401, detail="Google authentication failed") from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Google authentication unavailable") from exc
+
+    user = await get_or_create_user(db, google_profile)
+    session_token = get_session_from_request(request)
+    session = await get_or_create_session(db, session_token)
+
+    # Never relink a session already owned by another user account.
+    # This prevents cross-account data exposure on shared browsers/tabs.
+    if session.user_id is not None and session.user_id != user.id:
+        replacement_token = await _generate_unique_session_token(db)
+        session = await get_or_create_session(db, replacement_token)
+
+    await link_session_to_user(db, session, user)
+    previous_session_token = session.session_token
+    session.session_token = await _generate_unique_session_token(db)
+    await db.commit()
+    forget_trusted_session_id(previous_session_token)
+    mark_trusted_session_id(session.session_token)
+
+    result = await db.execute(select(db_models.User).where(db_models.User.id == user.id))
+    persisted_user = result.scalar_one_or_none()
+    if not persisted_user:
+        raise HTTPException(status_code=500, detail="Could not load authenticated user")
+
+    response = JSONResponse(
+        content=AuthMeResponse(user=_serialize_auth_user(persisted_user)).model_dump()
+    )
+    response.set_cookie(
+        key=_SESSION_COOKIE_NAME,
+        value=session.session_token,
+        httponly=True,
+        **_session_cookie_kwargs(),
+    )
+    response.delete_cookie(key=_OAUTH_STATE_COOKIE, path="/", domain=settings.cookie_domain)
+    return response
+
+
+@app.get("/api/auth/me", response_model=AuthMeResponse)
+@limiter.limit("30/minute")
+async def get_current_user(
+    request: Request,
+    db: AsyncSession = async_db_dependency,
+):
+    """Return current authenticated user for the active session, or null."""
+    from sqlalchemy import select
+
+    session_token = get_session_from_request(request)
+    session = await get_session_by_token(db, session_token)
+    if not session or not session.user_id:
+        return AuthMeResponse(user=None)
+
+    result = await db.execute(select(db_models.User).where(db_models.User.id == session.user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        return AuthMeResponse(user=None)
+    return AuthMeResponse(user=_serialize_auth_user(user))
+
+
+@app.post("/api/auth/logout")
+@limiter.limit("10/minute")
+async def logout(
+    request: Request,
+    db: AsyncSession = async_db_dependency,
+):
+    """Terminate authenticated browser session and clear auth/session cookies."""
+    session_token = get_session_from_request(request)
+    forget_trusted_session_id(session_token)
+    session = await get_session_by_token(db, session_token)
+    if session and session.user_id is not None:
+        # Invalidate the current token so stale/replayed cookies cannot reattach this row.
+        previous_session_token = session.session_token
+        session.session_token = await _generate_unique_session_token(db)
+        await db.commit()
+        forget_trusted_session_id(previous_session_token)
+        mark_trusted_session_id(session.session_token)
+    response = JSONResponse(content={"ok": True})
+    return clear_session_cookies(response)
+
+
+@app.get("/api/trips", response_model=UserTripsResponse)
+@limiter.limit("15/minute")
+async def list_user_trips(
+    request: Request,
+    db: AsyncSession = async_db_dependency,
+):
+    """List plan documents across all sessions linked to the authenticated user."""
+    from sqlalchemy import desc, select
+
+    session_token = get_session_from_request(request)
+    session = await get_session_by_token(db, session_token)
+    if not session or not session.user_id:
+        raise HTTPException(status_code=401, detail="Login required")
+
+    result = await db.execute(
+        select(db_models.PlanDocument, db_models.Session)
+        .join(db_models.Session, db_models.PlanDocument.session_id == db_models.Session.id)
+        .where(db_models.Session.user_id == session.user_id)
+        .order_by(desc(db_models.PlanDocument.updated_at))
+        .limit(50)
+    )
+
+    trips: list[UserTripSummary] = []
+    for doc, _doc_session in result.all():
+        payload = doc.document if isinstance(doc.document, dict) else {}
+        trip_inputs = (
+            payload.get("trip_inputs") if isinstance(payload.get("trip_inputs"), dict) else {}
+        )
+        day_cards = payload.get("day_cards") if isinstance(payload.get("day_cards"), list) else []
+        updated_at = doc.updated_at
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+        trips.append(
+            UserTripSummary(
+                trip_id=doc.id,
+                destination=trip_inputs.get("destination"),
+                start_date=trip_inputs.get("start_date"),
+                end_date=trip_inputs.get("end_date"),
+                day_count=len(day_cards),
+                updated_at=updated_at.isoformat(),
+                plan_view_state=payload.get("plan_view_state"),
+            )
+        )
+
+    return UserTripsResponse(trips=trips)
+
+
+@app.post("/api/trips/{trip_id}/resume", response_model=ResumeTripResponse)
+@limiter.limit("15/minute")
+async def resume_user_trip(
+    trip_id: int,
+    request: Request,
+    db: AsyncSession = async_db_dependency,
+):
+    """Switch active browser session to a user-owned trip session."""
+    from sqlalchemy import select
+
+    session_token = get_session_from_request(request)
+    session = await get_session_by_token(db, session_token)
+    if not session or not session.user_id:
+        raise HTTPException(status_code=401, detail="Login required")
+
+    result = await db.execute(
+        select(db_models.Session)
+        .join(db_models.PlanDocument, db_models.PlanDocument.session_id == db_models.Session.id)
+        .where(db_models.PlanDocument.id == trip_id)
+        .where(db_models.Session.user_id == session.user_id)
+        .limit(1)
+    )
+    target_session = result.scalar_one_or_none()
+    if not target_session:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    previous_session_token = target_session.session_token
+    target_session.session_token = await _generate_unique_session_token(db)
+    await db.commit()
+    forget_trusted_session_id(previous_session_token)
+    mark_trusted_session_id(target_session.session_token)
+
+    payload = ResumeTripResponse(ok=True, trip_id=trip_id)
+    response = JSONResponse(content=payload.model_dump())
+    response.set_cookie(
+        key=_SESSION_COOKIE_NAME,
+        value=target_session.session_token,
+        httponly=True,
+        **_session_cookie_kwargs(),
+    )
+    return response
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2958,6 +3768,7 @@ async def fill_day_endpoint(
                 price_level=(
                     tile.get("price_level") or _price_estimate_to_level(tile.get("price_estimate"))
                 ),
+                price_estimate=tile.get("price_estimate"),
                 google_place_id=tile.get("google_place_id")
                 or (tile.get("meta") or {}).get("place_id"),
                 deeplink=tile.get("deeplink") or tile.get("deeplink_url") or tile.get("maps_uri"),
@@ -3381,6 +4192,7 @@ async def insert_activity_block(
         rating=None,
         review_count=None,
         price_level=tile.get("price_level") or (tile.get("meta") or {}).get("price_level"),
+        price_estimate=tile.get("price_estimate"),
         coordinates=coordinates,
         intensity=None,
         is_buffer=False,

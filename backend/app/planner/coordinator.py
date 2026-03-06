@@ -2945,6 +2945,15 @@ def _build_envelope(
     if not isinstance(suggestion_chip_meta, list):
         suggestion_chip_meta = []
 
+    # Inject country_code from geocode cache into trip_plan (if available)
+    _dest = trip_plan.get("destination")
+    if _dest and not trip_plan.get("country_code"):
+        from app.tile_service.google_places_provider import get_country_code
+
+        _cc = get_country_code(_dest)
+        if _cc:
+            trip_plan["country_code"] = _cc
+
     # Build trip_inputs from trip_plan + trip_settings
     trip_inputs: Dict[str, Any] = {}
     for field in (
@@ -2962,6 +2971,7 @@ def _build_envelope(
         "children",
         "budget",
         "currency",
+        "country_code",
     ):
         val = trip_plan.get(field)
         if val is not None:
@@ -3007,6 +3017,7 @@ def _build_envelope(
         updated_ts = dict(trip_settings)
         updated_ts["booking_types"] = bt
         state["trip_settings"] = updated_ts
+        trip_settings = state["trip_settings"]
 
     is_flex_dates = bool(trip_plan.get("date_flex"))
 
@@ -3563,6 +3574,7 @@ async def execute_turn(
     state: Dict[str, Any],
     session_id: str,
     doc_settings: Optional[Dict[str, Any]] = None,
+    cancel_event: Optional[asyncio.Event] = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """Main coordinator entry point. Yields SSE events.
 
@@ -3585,6 +3597,9 @@ async def execute_turn(
         Session identifier for logging.
     doc_settings : dict | None
         User-owned settings from the document.
+    cancel_event : asyncio.Event | None
+        When set, the coordinator will stop executing at the next step boundary.
+        Used by the SSE generator to signal client disconnection.
 
     Yields
     ------
@@ -3789,6 +3804,10 @@ async def execute_turn(
             sequential_groups.append(current_group)
 
         for group in sequential_groups:
+            if cancel_event and cancel_event.is_set():
+                logger.info("[coordinator] Cancel event set — stopping step execution")
+                break
+
             if len(group) == 1:
                 step = group[0]
                 label, icon, duration = _step_status_info(step, state, classifier)

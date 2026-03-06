@@ -362,17 +362,21 @@ class TestComputeTilesPerCategory:
 
     def test_7_day_trip_no_specialist_days_3_categories(self):
         # trip_days = 7, specialist_days = 0, free_days = 5, placeable = 5
-        # apd=2: base=max(2,(5*2)//3)=3, cap=4, coverage floor lifts to 4
+        # apd=2: base=max(2,(5*2)//3)=3, cap=4
+        # Coverage floor (1.5x): needed=ceil(5*2*1.5)=15, planned=3*3=9<15
+        # min_needed=ceil(15/3)=5, tiles=max(4,min(5,12))=5
         state = _make_state()
         result = _compute_tiles_per_category(state, {"yoga", "cooking", "nightlife"})
-        assert result == 4
+        assert result == 5
 
     def test_7_day_trip_no_specialist_days_1_category(self):
         # trip_days = 7, specialist_days = 0, free_days = 5
         # apd=2: base=max(2,10)=10, cap lifted to 10, tiles=10
+        # Coverage floor (1.5x): needed=ceil(5*2*1.5)=15, planned=10<15
+        # min_needed=15, tiles=max(10,min(15,12))=12
         state = _make_state()
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 10
+        assert result == 12
 
     def test_long_trip_capped_at_ceiling(self):
         # 21-day trip, no specialists, 1 category
@@ -407,10 +411,12 @@ class TestComputeTilesPerCategory:
     def test_with_specialist_days(self):
         # 10-day trip, 3 specialist days (from strategy_sections), 2 categories
         # trip_days = 10, specialist_days = 3, free = max(0,10-3-2) = 5
-        # total_placeable = 5+3 = 8
+        # total_placeable = min(5+3, 10) = 8
         # apd=2: base=max(2,(8*2)//2)=8, cap=4 (specialist_days>0)
         # APD>1: needed=ceil(5*2/2)=5, cap=min(max(4,5),12)=5
         # tiles=min(8,5)=5
+        # Coverage floor (1.5x): needed=ceil(5*2*1.5)=15, planned=5*2=10<15
+        # min_needed=ceil(15/2)=8, tiles=max(5,min(8,12))=8
         tp = TripPlan(
             destination="Bali",
             start_date="2026-03-01",
@@ -431,7 +437,7 @@ class TestComputeTilesPerCategory:
             },
         )
         result = _compute_tiles_per_category(state, {"yoga", "nightlife"})
-        assert result == 5
+        assert result == 8
 
     def test_local_expert_sections_not_counted_as_specialist_days(self):
         # local_expert and general sections are excluded from specialist_days
@@ -453,8 +459,10 @@ class TestComputeTilesPerCategory:
         )
         # specialist_days = 0 (local_expert excluded)
         # apd=2: base=max(2,(5*2)//1)=10, cap=4→lifted to 10, tiles=10
+        # Coverage floor (1.5x): needed=ceil(5*2*1.5)=15, planned=10<15
+        # min_needed=15, tiles=max(10,min(15,12))=12
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 10
+        assert result == 12
 
     def test_invalid_date_format_returns_2(self):
         tp = TripPlan(

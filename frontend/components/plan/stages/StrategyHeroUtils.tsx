@@ -46,7 +46,7 @@ export function getTopicLabel(specialistType: string): string {
   if (config) return config.displayName;
   if (specialistType === 'local_expert') return 'Local Expert';
   if (specialistType === 'general') return 'General';
-  return specialistType;
+  return specialistType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
 // Generic fallback image (specialist-specific hero images come from backend hero_image field)

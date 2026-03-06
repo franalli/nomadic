@@ -9,7 +9,11 @@
  */
 
 
-import { addDays, differenceInDays, format, isBefore, startOfDay } from 'date-fns';
+import { addDays } from 'date-fns/addDays';
+import { differenceInDays } from 'date-fns/differenceInDays';
+import { format } from 'date-fns/format';
+import { isBefore } from 'date-fns/isBefore';
+import { startOfDay } from 'date-fns/startOfDay';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';

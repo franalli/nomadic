@@ -3,6 +3,8 @@
 import { Check, Download, Loader2 } from 'lucide-react';
 import { useCallback, useState } from 'react';
 
+import { useToast } from '@/components/ui/toast';
+import { DS } from '@/lib/design-system';
 import { extractTripPdfData } from '@/lib/pdfData';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
@@ -19,6 +21,7 @@ interface PdfExportButtonProps {
 
 export function PdfExportButton({ tripInputs, dayCards, tiles }: PdfExportButtonProps) {
   const [state, setState] = useState<ExportState>('idle');
+  const { toast } = useToast();
 
   const handleExport = useCallback(async () => {
     if (state === 'loading') return;
@@ -50,40 +53,42 @@ export function PdfExportButton({ tripInputs, dayCards, tiles }: PdfExportButton
       setTimeout(() => setState('idle'), 2000);
     } catch (err) {
       console.error('PDF export failed:', err);
+      const message = err instanceof Error ? err.message : 'PDF export failed';
+      toast(message, { type: 'error' });
       setState('idle');
     }
-  }, [state, tripInputs, dayCards, tiles]);
+  }, [state, tripInputs, dayCards, tiles, toast]);
 
   if (dayCards.length === 0) return null;
 
   return (
     <button
+      type="button"
       onClick={handleExport}
       disabled={state === 'loading'}
       className={cn(
-        'inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-sm whitespace-nowrap transition-colors',
-        'border-emerald-500/25 hover:border-emerald-500/40',
-        'bg-emerald-500/[0.06] hover:bg-emerald-500/[0.10]',
-        'text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 dark:hover:text-emerald-300',
-        'font-medium',
-        state === 'loading' && 'opacity-60 cursor-wait',
+        DS.textSize.micro,
+        'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-bold uppercase tracking-widest',
+        'text-muted-foreground hover:bg-accent hover:text-foreground',
+        'disabled:pointer-events-none disabled:opacity-60',
+        state === 'loading' && 'cursor-wait',
       )}
     >
       {state === 'idle' && (
         <>
-          <Download className="w-3.5 h-3.5" />
+          <Download className="h-3.5 w-3.5" />
           <span>PDF</span>
         </>
       )}
       {state === 'loading' && (
         <>
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          <span>PDF</span>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span>Exporting</span>
         </>
       )}
       {state === 'success' && (
         <>
-          <Check className="w-3.5 h-3.5" />
+          <Check className="h-3.5 w-3.5 text-emerald-500" />
           <span>Done</span>
         </>
       )}

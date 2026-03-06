@@ -55,7 +55,9 @@ CATEGORY_TO_PLACES_TYPES: Dict[str, List[str]] = {
     "wellness": ["gym", "spa"],
 }
 
-# Max results per browse request (Places API cost control)
+# Max results per browse request (Places API cost control).
+# Google Places textSearch returns up to maxResultCount=20 per call;
+# values above 20 trigger a secondary diversified query automatically.
 MAX_BROWSE_RESULTS = 20
 
 # Cache tuning
@@ -414,32 +416,11 @@ def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
     lng = location.get("longitude")
     address = place.get("formattedAddress", "")
     primary_type = place.get("primaryType", category)
-    rating = place.get("rating")
-    review_count = place.get("userRatingCount")
-    price_level_raw = place.get("priceLevel")
-    price_level_map = {
-        "PRICE_LEVEL_FREE": 0,
-        "PRICE_LEVEL_INEXPENSIVE": 1,
-        "PRICE_LEVEL_MODERATE": 2,
-        "PRICE_LEVEL_EXPENSIVE": 3,
-        "PRICE_LEVEL_VERY_EXPENSIVE": 4,
-    }
-    price_level = price_level_map.get(price_level_raw) if isinstance(price_level_raw, str) else None
-
-    # Map GP price_level (0-4) to rough per-person estimate
-    price_estimate = None
-    if price_level is not None:
-        price_estimate = {0: 0, 1: 15, 2: 35, 3: 65, 4: 120}.get(price_level)
-
-    # Fallback: GP returned the place but no priceLevel — default moderate
-    if price_estimate is None and rating is not None:
-        price_estimate = 35.0
-        price_level = 2
-
-    # Final fallback: no price_level AND no rating — assign moderate default
-    if price_estimate is None:
-        price_estimate = 35.0
-        price_level = 2
+    # NOTE: rating, userRatingCount, priceLevel, and editorialSummary are
+    # Pro-tier fields not included in our field mask — always None/missing.
+    # Price estimation is handled by LLM enrichment (_enrich_tiles_with_llm).
+    price_estimate = 35.0  # moderate default; refined by LLM enrichment
+    price_level = 2
 
     photos = place.get("photos", [])
     image_url = None
@@ -453,18 +434,17 @@ def _place_to_tile(place: Dict[str, Any], category: str) -> Dict[str, Any]:
             seed=(place_id or name),
         )
 
-    editorial = place.get("editorialSummary", {}).get("text", "")
     maps_uri = place.get("googleMapsUri")
     return {
         "id": tile_id,
         "type": "activity",
         "title": name,
         "subtitle": _humanize_type(primary_type),
-        "description": editorial,
+        "description": "",
         "image_url": image_url,
-        "rating": rating,
-        "review_count": review_count,
-        "user_ratings_count": review_count,
+        "rating": None,
+        "review_count": None,
+        "user_ratings_count": None,
         "google_place_id": place_id,
         "deeplink": maps_uri,
         "location_label": address,

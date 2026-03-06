@@ -7,8 +7,8 @@ description: >
   pill chips, timeline blocks, tile cards, Framer Motion, Mapbox, mobile layout,
   ghost timeline, content policy guard, loader states, fill-day flow,
   preference auto-regen, stream parser, browse activities, booking drawer,
-  undo stack, drag-and-drop, travel intelligence, consent/legal, trip chrome bar,
-  booking summary, enrichment cache, theme mode constants,
+  undo stack, drag-and-drop, travel intelligence, consent/legal, booking summary,
+  shared trip, auth callback, oauth, user menu, user store, avatar, theme mode constants,
   or any file under frontend/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
@@ -43,11 +43,12 @@ Before ANY code change, read the relevant SSoT doc:
 
 ```
 frontend/
-  app/             → App Router pages, layout.tsx, route-level error boundaries
+  app/             → App Router pages, layout.tsx, route-level error boundaries,
+                     auth/callback/page.tsx, trip/[slug]/page.tsx
   components/
-    animations/    → StartupSequence, Typewriter
+    animations/    → Typewriter
     chat/          → ChatPanel, ChatSkeleton, SmartLoader,
-                     TripStatusBar, MobileChatInput,
+                     MobileChatInput,
                      ChatInputBar, ChatInputHandler, ChatMessageList,
                      ChatMessageRenderer, ChatModuleSheets,
                      ChatStatusHeader,
@@ -55,10 +56,10 @@ frontend/
                      suggestion-actions.ts
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
                      PlanHeader, NextStepBar, planStateHelpers,
-                     CoreChip, UnifiedChipRow, TripHealthBar, TripSummaryPills,
-                     BookingPlanningView, BookingSummary, TripChromeBar,
+                     UnifiedChipRow, TripHealthBar, TripSummaryPills,
+                     BookingPlanningView, BookingSummary,
                      ChipGroup, ChipScrollContainer,
-                     FullDensityTimeline, PdfExportButton,
+                     FullDensityTimeline, PdfExportButton, ShareTripButton,
                      TimelineBlockList,
                      TimelineDayCard, useTimelineBufferLogic,
                      ItineraryProgressIndicator, OriginPromptCard,
@@ -68,8 +69,7 @@ frontend/
       pdf/        → TripPdfDocument
       booking/     → BookingDrawer, CategorySection, CheckoutSidebar
       modals/      → AlternativesModal
-      stages/      → S2StrategyView, StrategyHero,
-                     S2AgentCard, S2AgentCardExpanded, S2LocalIntelSection,
+      stages/      → StrategyHero, S2AgentCard, S2AgentCardExpanded, S2LocalIntelSection,
                      S2StrategyStack, S2TopicConfig,
                      StrategyHeroAccordion, StrategyHeroCompactSheet, StrategyHeroHeroSheet,
                      StrategyHeroContent, StrategyHeroTISectionsA, StrategyHeroTISectionsB,
@@ -86,7 +86,8 @@ frontend/
       tiles/       → SuggestionCard, SuggestionCardContent
     tiles/         → TileCard, MiniCard, TileDetailsModal, TaxesFeesTooltip
                      MiniCardContent, TileCardContent, TileDetailsInfo
-    ui/            → Shared UI primitives
+    shared/        → SharedTripView, ReadOnlyTimeline
+    ui/            → Shared UI primitives, UserAvatar
     layout/        → SplitLayoutView, NomadicLanding, LandingHelpers, LandingSheets,
                      FloatingBuildButton, MobileSwipeLayout, MobileModeHeader,
                      hooks/ (useSessionHydration, useBranchManager, useBranchState,
@@ -97,7 +98,7 @@ frontend/
                      mapbox-error-handler.ts
     nomadic/       → consent-manager, legal-page (legal/consent UI)
     providers/     → Providers (context wrappers) via `components/providers/Providers.tsx`
-  state/           → documentStore.ts, chatStore.ts, uiStore.ts, mobileNavStore.ts
+  state/           → documentStore.ts, chatStore.ts, uiStore.ts, mobileNavStore.ts, userStore.ts
   hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
                      usePreferenceAutoRegen, useScrollCollapse, useSheetManager,
                      useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation,
@@ -112,7 +113,7 @@ frontend/
                      date-utils.ts, format-utils.ts, placeholders.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      pdfData.ts, summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
-                     enrichment-cache.ts, theme.ts,
+                     theme.ts,
                      categoryNormalization.ts, popular-places.ts, showMutationToast.ts,
                      googlePlacesPhoto.ts, travelIntel.ts,
                      use-sync-external-store-shim.js
@@ -127,7 +128,7 @@ frontend/
 
 - `backend/` — anything
 - `frontend/lib/design-system.ts` structure (use tokens, don't restructure the DS object)
-- `StrategyStageRenderer` → `S2StrategyView` delegation (never bypass)
+- `StrategyStageRenderer` density-driven rendering flow (never bypass with ad-hoc alternate stage views)
 - Mobile-specific components unless explicitly asked
 
 ## Halt Conditions — STOP and report, don't improvise

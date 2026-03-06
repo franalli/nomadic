@@ -285,7 +285,203 @@ def serialize_agent_state(
         if key in state:
             result[key] = state[key]
 
-    return result
+    return _trim_for_session_state(result)
+
+
+# ---------------------------------------------------------------------------
+# Session-state trimming (keeps serialized size under 64KB)
+# ---------------------------------------------------------------------------
+
+_SESSION_TILE_KEYS = {
+    "id",
+    "type",
+    "title",
+    "category",
+    "price_estimate",
+    "currency",
+    "price_basis",
+    "image_url",
+    "geo",
+    "tags",
+    "rating",
+    "review_count",
+    "deeplink_url",
+    "availability_status",
+    "location_label",
+    "meta",
+    "subtitle",
+}
+
+_SESSION_BOOKED_TILE_KEYS = {
+    "id",
+    "type",
+    "title",
+    "category",
+    "price_estimate",
+    "currency",
+    "image_url",
+    "geo",
+    "deeplink_url",
+}
+
+_SESSION_BROWSEABLE_KEYS = {
+    "id",
+    "title",
+    "category",
+    "image_url",
+    "price_estimate",
+    "geo",
+    "deeplink_url",
+    "browse_category",
+}
+
+_TRAVEL_INTEL_KEEP = {
+    "summary",
+    "weather",
+    "safety_level",
+    "visa_info",
+    "currency_info",
+    "language_info",
+    "best_time",
+    "health_notes",
+}
+
+
+def _trim_for_session_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Reduce session_state size by stripping verbose fields.
+
+    IMPORTANT: This function builds *new* dicts/lists rather than mutating
+    in place, because ``serialize_agent_state`` shares references with the
+    live agent state that ``_build_envelope`` reads for the SSE document.
+    """
+    # 1. Trim persistent_meta (browseable_activities + travel_intelligence)
+    pm = state.get("persistent_meta")
+    if isinstance(pm, dict):
+        trimmed_pm: Dict[str, Any] = {}
+        for key, val in pm.items():
+            if key == "browseable_activities" and isinstance(val, list):
+                trimmed_pm[key] = [
+                    {k: v for k, v in item.items() if k in _SESSION_BROWSEABLE_KEYS}
+                    for item in val
+                    if isinstance(item, dict)
+                ]
+            elif key.startswith("travel_intelligence_") and isinstance(val, dict):
+                trimmed_pm[key] = {k: v for k, v in val.items() if k in _TRAVEL_INTEL_KEEP}
+            else:
+                trimmed_pm[key] = val
+        state["persistent_meta"] = trimmed_pm
+
+    # 2. Slim day_cards to structural skeleton (full cards rehydrated from
+    #    document on next turn via streaming.py lines 461-468)
+    day_cards = state.get("day_cards")
+    if isinstance(day_cards, list):
+        _BLOCK_KEEP = {
+            "id",
+            "period",
+            "activity_type",
+            "summary",
+            "specialist_type",
+            "booked_tile",
+            "is_buffer",
+            "buffer_type",
+        }
+        trimmed_cards = []
+        for dc in day_cards:
+            if not isinstance(dc, dict):
+                trimmed_cards.append(dc)
+                continue
+            slim_dc = {
+                "day_number": dc.get("day_number"),
+                "date": dc.get("date"),
+                "label": dc.get("label"),
+            }
+            blocks = dc.get("blocks")
+            if isinstance(blocks, list):
+                slim_dc["blocks"] = [
+                    {
+                        **{k: v for k, v in block.items() if k in _BLOCK_KEEP},
+                        **(
+                            {
+                                "booked_tile": {
+                                    k: v
+                                    for k, v in block["booked_tile"].items()
+                                    if k in _SESSION_BOOKED_TILE_KEYS
+                                }
+                            }
+                            if isinstance(block.get("booked_tile"), dict)
+                            else {}
+                        ),
+                    }
+                    if isinstance(block, dict)
+                    else block
+                    for block in blocks
+                ]
+            trimmed_cards.append(slim_dc)
+        state["day_cards"] = trimmed_cards
+
+    # 3. Trim tile objects in category dict
+    tiles = state.get("tiles")
+    if isinstance(tiles, dict):
+        state["tiles"] = {
+            cat_key: [
+                {k: v for k, v in t.items() if k in _SESSION_TILE_KEYS}
+                for t in tile_list
+                if isinstance(t, dict)
+            ]
+            if isinstance(tile_list, list)
+            else tile_list
+            for cat_key, tile_list in tiles.items()
+        }
+
+    # 4. Trim strategy_sections: strip travel_intelligence and verbose content
+    sections = state.get("strategy_sections")
+    if isinstance(sections, list):
+        _SECTION_DROP = {
+            "travel_intelligence",
+            "content_blocks",
+            "content_added",
+            "gallery_images",
+            "hero_image",
+        }
+        state["strategy_sections"] = [
+            {k: v for k, v in sec.items() if k not in _SECTION_DROP}
+            if isinstance(sec, dict)
+            else sec
+            for sec in sections
+        ]
+
+    # 5. Trim specialist_plans: keep routing fields + slim day_plans
+    sp = state.get("specialist_plans")
+    if isinstance(sp, dict):
+        _SP_KEEP = {
+            "feasibility_status",
+            "feasibility_reason",
+            "alternative_suggestion",
+            "destination",
+            "start_date",
+            "end_date",
+            "topic",
+            "day_plans",
+            "constraints",
+        }
+        _DP_KEEP = {"day_number", "location", "activities"}
+        trimmed_sp: Dict[str, Any] = {}
+        for topic, plan in sp.items():
+            if not isinstance(plan, dict):
+                trimmed_sp[topic] = plan
+                continue
+            slim = {k: v for k, v in plan.items() if k in _SP_KEEP}
+            # Trim individual day_plan entries
+            dps = slim.get("day_plans")
+            if isinstance(dps, list):
+                slim["day_plans"] = [
+                    {k: v for k, v in dp.items() if k in _DP_KEEP} if isinstance(dp, dict) else dp
+                    for dp in dps
+                ]
+            trimmed_sp[topic] = slim
+        state["specialist_plans"] = trimmed_sp
+
+    return state
 
 
 def restore_agent_state(session_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:

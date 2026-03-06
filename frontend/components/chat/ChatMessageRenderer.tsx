@@ -146,10 +146,12 @@ const MARKDOWN_COMPONENTS = {
       }
 
       return (
-        <span
-          className="activity-mention font-medium cursor-pointer hover:underline"
+        <button
+          type="button"
+          className="activity-mention inline bg-transparent border-0 p-0 text-inherit font-medium cursor-pointer hover:underline"
           style={{ '--topic-color': getSpecialistColorRgb(specialistType) } as React.CSSProperties}
           data-specialist={specialistType}
+          aria-label="Scroll to activity"
           onClick={() => {
             const el = document.querySelector(`[data-block-id="${matchingBlockId}"]`);
             if (!el) return;
@@ -161,7 +163,7 @@ const MARKDOWN_COMPONENTS = {
           }}
         >
           {children}
-        </span>
+        </button>
       );
     }
     // Handle specialist: protocol links (deep links to specialist cards)

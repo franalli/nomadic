@@ -46,7 +46,7 @@ import type { PartnerPrice,Tile  } from '@/types/tile';
 import { CategorySection } from './booking/CategorySection';
 import { CheckoutSidebar } from './booking/CheckoutSidebar';
 import { BookingPlanningView } from './BookingPlanningView';
-import { isGenerating } from './planStateHelpers';
+import { isEditing, isGenerating, isItineraryReady } from './planStateHelpers';
 
 /** Check if an activity tile matches active specialist types (with experience pass-through) */
 function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boolean {
@@ -143,7 +143,7 @@ export function BookingSection({
   const tiles = propTiles;
 
   // Auto-collapse in S3 — hotels are already visible as check-in/check-out blocks in the timeline
-  const hasItinerary = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
+  const hasItinerary = isItineraryReady(state) || isEditing(state);
   const [internalExpanded] = useState(!hasItinerary);
   const isExpanded = controlledExpanded ?? internalExpanded;
   const [selectedTile, setSelectedTile] = useState<Tile | null>(null);

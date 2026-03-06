@@ -16,6 +16,7 @@ Provides:
 
 import asyncio
 import logging
+import os
 from typing import Optional
 
 from cachetools import TTLCache
@@ -62,6 +63,14 @@ _rate_counter_cache: TTLCache = TTLCache(
 # Async lock for all validation caches
 # All callers are async (endpoints, lifespan) — asyncio.Lock avoids blocking the event loop
 _validation_cache_lock = asyncio.Lock()
+
+# Top destinations for cache prewarm — optimization hints only.
+# Override via VALIDATION_PREWARM_DESTINATIONS env var (comma-separated).
+# The system works without this list (just slower on first request).
+_env_prewarm = os.getenv("VALIDATION_PREWARM_DESTINATIONS", "")
+_PREWARM_DESTINATIONS: list[str] = (
+    [d.strip() for d in _env_prewarm.split(",") if d.strip()] if _env_prewarm else []
+)
 
 
 # =============================================================================
@@ -183,30 +192,7 @@ async def prewarm_cache() -> int:
     Any destination works; these just avoid cold-start latency for common ones.
     Remove entries freely; add sparingly (each adds ~100ms to startup).
     """
-    # Top 20 destinations by search volume — optimization hints only.
-    # The system works without this list (just slower on first request).
-    common_destinations = [
-        "Paris",
-        "London",
-        "New York City",
-        "Tokyo",
-        "Rome",
-        "Barcelona",
-        "Amsterdam",
-        "Dubai",
-        "Singapore",
-        "Bangkok",
-        "Bali",
-        "Sydney",
-        "Los Angeles",
-        "Istanbul",
-        "Miami",
-        "Berlin",
-        "Toronto",
-        "Seoul",
-        "Lisbon",
-        "Prague",
-    ]
+    common_destinations = _PREWARM_DESTINATIONS
 
     count = 0
 

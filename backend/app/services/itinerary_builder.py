@@ -135,6 +135,7 @@ class DayBlockOutput(BaseModel):
     rating: Optional[float] = None  # Google Places star rating
     review_count: Optional[int] = None  # Google Places review count
     price_level: Optional[int] = None  # Google Places price level (0-4)
+    price_estimate: Optional[float] = None  # USD estimate from tile
     coordinates: Optional[Dict[str, float]] = None  # {lat, lng}
     google_place_id: Optional[str] = None  # Google Places ID
     deeplink: Optional[str] = None  # Google Maps URL
@@ -1805,6 +1806,7 @@ class ItineraryBuilder:
                         rating=None,  # No real rating sources — GP Pro excludes rating field
                         review_count=None,
                         price_level=activity.price_level,
+                        price_estimate=(matched_tile or {}).get("price_estimate"),
                         google_place_id=activity.google_place_id,
                         deeplink=activity.deeplink,
                         booked_tile=matched_tile,
@@ -1879,6 +1881,7 @@ class ItineraryBuilder:
                         rating=None,  # No real rating sources — GP Pro excludes rating field
                         review_count=None,
                         price_level=activity.price_level,
+                        price_estimate=(matched_tile or {}).get("price_estimate"),
                         google_place_id=activity.google_place_id,
                         deeplink=activity.deeplink,
                         booked_tile=matched_tile,
@@ -1991,6 +1994,7 @@ class ItineraryBuilder:
                             rating=None,  # No real rating sources — GP Pro excludes rating field
                             review_count=None,
                             price_level=activity.price_level,
+                            price_estimate=(matched_tile or {}).get("price_estimate"),
                             google_place_id=activity.google_place_id,
                             deeplink=activity.deeplink,
                             booked_tile=matched_tile,
@@ -2113,6 +2117,7 @@ class ItineraryBuilder:
                     rating=None,  # No real rating sources — GP Pro excludes rating field
                     review_count=None,
                     price_level=activity.price_level,
+                    price_estimate=(matched_tile or {}).get("price_estimate"),
                     google_place_id=activity.google_place_id,
                     deeplink=activity.deeplink,
                     booked_tile=matched_tile,
@@ -2480,6 +2485,7 @@ class ItineraryBuilder:
             rating=None,
             review_count=None,
             price_level=block_price_level,
+            price_estimate=tile.get("price_estimate"),
             google_place_id=tile.get("google_place_id") or tile.get("place_id"),
             deeplink=tile.get("deeplink") or tile.get("deeplink_url") or tile.get("maps_uri"),
             coordinates=coords,
@@ -3086,6 +3092,7 @@ class ItineraryBuilder:
                 rating=None,
                 review_count=None,
                 price_level=tile.get("price_level"),
+                price_estimate=tile.get("price_estimate"),
                 coordinates=_coords,
                 specialist_type=tile.get("specialist_type") or tile.get("category") or None,
                 preference_status="user_preferred",
@@ -3243,6 +3250,7 @@ class ItineraryBuilder:
                         rating=None,
                         review_count=None,
                         price_level=tile.get("price_level"),
+                        price_estimate=tile.get("price_estimate"),
                         coordinates=(
                             (
                                 {"lng": tile["coordinates"][0], "lat": tile["coordinates"][1]}

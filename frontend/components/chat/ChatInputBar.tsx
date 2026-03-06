@@ -49,7 +49,7 @@ export function ChatInputBar({
       {/* During AI processing: the input BECOMES the status indicator (emerald glow + pulse) */}
       <div
         className={cn(
-          'relative flex items-center w-full min-h-14 rounded-[28px] transition-all duration-300',
+          'relative flex items-center w-full min-h-14 rounded-full transition-all duration-300',
           'bg-zinc-50 dark:bg-black/40',
           // Priority 1: "Living Void" - AI Processing state
           isLoading && nodeStatus?.node
@@ -112,7 +112,7 @@ export function ChatInputBar({
               type="button"
               onClick={onStopStreaming}
               className={cn(
-                'h-11 w-11 flex items-center justify-center rounded-[22px] transition-all hover:scale-105 active:scale-95',
+                'h-11 w-11 flex items-center justify-center rounded-full transition-all hover:scale-105 active:scale-95',
                 'bg-zinc-200 dark:bg-white/10',
                 'hover:bg-zinc-300 dark:hover:bg-white/20',
                 'border border-zinc-300 dark:border-white/10'
@@ -130,7 +130,7 @@ export function ChatInputBar({
               onClick={(e) => input.trim() && onSubmit(e as unknown as React.FormEvent)}
               disabled={isLoading || !input.trim()}
               className={cn(
-                'flex items-center justify-center h-11 w-11 rounded-[22px] transition-all duration-300',
+                'flex items-center justify-center h-11 w-11 rounded-full transition-all duration-300',
                 input.trim() && !isLoading
                   ? `bg-zinc-900 text-white shadow-sm shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:${DS.glowClass.sm} dark:hover:bg-emerald-500 hover:scale-105 active:scale-95`
                   : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600',

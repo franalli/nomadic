@@ -1,4 +1,4 @@
-import { format } from 'date-fns';
+import { format } from 'date-fns/format';
 
 type ClassValue = string | false | null | undefined | (string | false | null | undefined)[];
 

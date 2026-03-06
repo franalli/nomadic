@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import db_models as models
+from app.rate_limit import forget_trusted_session_id, mark_trusted_session_id
 
 
 async def get_session_by_token(
@@ -27,7 +28,12 @@ async def get_session_by_token(
     if lock_for_update:
         stmt = stmt.with_for_update()
     result = await db.execute(stmt)
-    return result.scalar_one_or_none()
+    session = result.scalar_one_or_none()
+    if session and not session.is_expired():
+        mark_trusted_session_id(session_token)
+    else:
+        forget_trusted_session_id(session_token)
+    return session
 
 
 async def get_or_create_session(
@@ -64,6 +70,7 @@ async def get_or_create_session(
         # Check if session has expired
         if db_session.is_expired():
             # Delete expired session and create a new one
+            forget_trusted_session_id(session_token)
             await db.delete(db_session)
             await db.flush()
             db_session = None
@@ -71,12 +78,14 @@ async def get_or_create_session(
             # Refresh activity timestamp
             db_session.refresh_activity()
             await db.flush()
+            mark_trusted_session_id(session_token)
             return db_session
 
     # Create new session
     db_session = models.Session(session_token=session_token)
     db.add(db_session)
     await db.flush()
+    mark_trusted_session_id(session_token)
     return db_session
 
 

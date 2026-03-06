@@ -52,6 +52,23 @@ if not settings.spend_guard_enabled:
         "Set SPEND_GUARD_ENABLED=true in production.",
     )
 
+if settings.spend_guard_enabled:
+    import os as _os
+
+    _worker_count = int(_os.getenv("WEB_CONCURRENCY", "1"))
+    if _worker_count > 1:
+        logger.critical(
+            "SPEND GUARD: %d workers detected with in-memory spend tracking. "
+            "Effective cap is %dx nominal. Set SPEND_GUARD_ENABLED=false "
+            "or WEB_CONCURRENCY=1 or migrate to Redis.",
+            _worker_count,
+            _worker_count,
+        )
+        raise RuntimeError(
+            f"Spend guard cannot safely run with {_worker_count} workers. "
+            "Set WEB_CONCURRENCY=1 or disable spend guard."
+        )
+
 
 class SpendLimitExceeded(RuntimeError):
     """Raised when a pre-call spend reservation exceeds configured limits."""

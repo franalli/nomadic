@@ -107,7 +107,7 @@ function Segment({
       className={cn(
         'inline-flex items-center gap-1.5 h-8 rounded-full',
         compact ? 'px-2' : 'px-3',
-        compact ? 'text-[12px]' : 'text-[13px]',
+        compact ? 'text-xs' : 'text-[13px]',
         'whitespace-nowrap transition-all duration-150',
         'hover:bg-white/[0.08]',
         interactive ? 'cursor-pointer' : 'cursor-default opacity-70',

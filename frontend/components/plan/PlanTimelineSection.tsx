@@ -25,6 +25,12 @@ import { FreeDayDropSlot } from './timeline/FreeDayDropSlot';
 import { ItineraryDndWrapper } from './timeline/ItineraryDndWrapper';
 import { TimelineThread, type TimelineVariant } from './TimelineThread';
 
+// Extracted animation constants to avoid re-creating objects on every render
+const FADE_INITIAL = { opacity: 0 } as const;
+const FADE_VISIBLE = { opacity: 1 } as const;
+const FADE_EXIT = { opacity: 0 } as const;
+const SKELETON_TRANSITION = { duration: 0.2 } as const;
+
 interface PlanTimelineSectionProps {
   dayCards: DayCard[];
   timelineVariant: TimelineVariant;
@@ -98,9 +104,9 @@ export function PlanTimelineSection({
         <motion.section
           key="timeline-real"
           ref={timelineSectionRef}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          initial={FADE_INITIAL}
+          animate={FADE_VISIBLE}
+          exit={FADE_EXIT}
           transition={{ duration: REVEAL_TIMING.TIMELINE_FADE / 1000, delay: REVEAL_TIMING.TIMELINE_DELAY / 1000, ease: [0.4, 0, 0.2, 1] }}
           id="timeline-section"
           className="px-4 py-4"
@@ -146,10 +152,10 @@ export function PlanTimelineSection({
         <motion.section
           key="timeline-skeleton"
           ref={timelineSectionRef}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
+          initial={FADE_INITIAL}
+          animate={FADE_VISIBLE}
+          exit={FADE_EXIT}
+          transition={SKELETON_TRANSITION}
           className="px-4 py-6 space-y-4 animate-pulse"
         >
           {[1, 2].map((i) => (

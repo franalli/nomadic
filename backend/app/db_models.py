@@ -54,6 +54,9 @@ class Session(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     session_token: Mapped[str] = mapped_column(String, index=True, unique=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
 
     # Session expiration tracking
     last_activity_at: Mapped[datetime] = mapped_column(
@@ -63,9 +66,11 @@ class Session(Base, TimestampMixin):
         DateTime(timezone=True), default=_session_expires_at, nullable=False
     )
 
+    user: Mapped[Optional["User"]] = relationship("User", back_populates="sessions")
     trip_contexts: Mapped[List["TripContext"]] = relationship(
         "TripContext", back_populates="session"
     )
+    shared_trips: Mapped[List["SharedTrip"]] = relationship("SharedTrip", back_populates="session")
 
     def is_expired(self) -> bool:
         """Check if session has expired (either idle or absolute).
@@ -181,6 +186,45 @@ class PlanDocument(Base, TimestampMixin):
     document: Mapped[Dict] = mapped_column(JSON, default=dict)
 
     session: Mapped[Session] = relationship("Session")
+
+
+class User(Base, TimestampMixin):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    google_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    sessions: Mapped[List["Session"]] = relationship("Session", back_populates="user")
+    shared_trips: Mapped[List["SharedTrip"]] = relationship("SharedTrip", back_populates="user")
+
+
+class SharedTrip(Base, TimestampMixin):
+    __tablename__ = "shared_trips"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    slug: Mapped[str] = mapped_column(String(12), unique=True, index=True, nullable=False)
+    session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    snapshot: Mapped[Dict] = mapped_column(JSON, nullable=False)
+    title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    destination: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    hero_image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    day_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    view_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    session: Mapped[Optional[Session]] = relationship("Session", back_populates="shared_trips")
+    user: Mapped[Optional[User]] = relationship("User", back_populates="shared_trips")
 
 
 class UnsplashImageCache(Base):

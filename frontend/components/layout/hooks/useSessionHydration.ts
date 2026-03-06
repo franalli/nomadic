@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { fetchWithRetry } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
+import { useUserStore } from '@/state/userStore';
 import type { DocumentBranch, PlanDocumentResponse } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
 
@@ -238,6 +239,7 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
       debugLog('[useSessionHydration] 🚀 Starting hydration...');
       try {
         setIsHydratingSnapshot(true);
+        void useUserStore.getState().fetchUser();
 
         // Debug: Log session state
         debugLog('[useSessionHydration] Session timestamp:', getSessionTimestamp());

@@ -45,6 +45,39 @@
 | GET    | `/api/document` | Get current plan document | --                  | `PlanDocumentResponse` | 204 if no doc                                                               |
 | PATCH  | `/api/document` | CRDT-style partial update | `PlanDocumentPatch` | `PlanDocumentResponse` | Last-writer-wins: reloads doc on version drift, includes universal no-op dedupe for pure `trip_inputs` patches (returns `changes_made=false`) |
 
+### Sharing
+
+| Method | Path                 | Purpose                              | Request | Response                   | Auth |
+| ------ | -------------------- | ------------------------------------ | ------- | -------------------------- | ---- |
+| POST   | `/api/share`         | Create frozen shareable trip snapshot | --      | `ShareTripResponse`        | Session + CSRF required |
+| POST   | `/api/share/fork/{slug}` | Copy shared snapshot into caller-owned session document | -- | `ForkSharedTripResponse` | Session + CSRF required |
+| GET    | `/api/shared/{slug}` | Public read-only shared trip payload | --      | `SharedTripPublicResponse` | Public |
+
+`POST /api/share` persists a frozen snapshot of `trip_inputs`, `tiles`, `strategy_sections`, `day_cards`, `plan_view_state`, `executed_strategy_topics`, `constraint_violations`, and `preferred_tile_ids`. Signed `/api/media/*` proxy URLs are stripped before storage so public share pages never depend on session-bound media signatures. Anonymous shares expire after 90 days; authenticated shares are promoted to durable user-owned rows with `expires_at = null`.
+
+### Authentication
+
+| Method | Path                        | Purpose                                   | Request                     | Response                | Auth |
+| ------ | --------------------------- | ----------------------------------------- | --------------------------- | ----------------------- | ---- |
+| GET    | `/api/auth/google/url`      | Build Google OAuth consent URL + set state cookie | --                    | `GoogleAuthUrlResponse` | Public |
+| POST   | `/api/auth/google/callback` | Exchange OAuth code and attach session to user | `GoogleAuthCallbackRequest` | `AuthMeResponse` | Session + CSRF required |
+| GET    | `/api/auth/me`              | Get current user for active session       | --                          | `AuthMeResponse`        | Session optional (returns `user: null`) |
+| POST   | `/api/auth/logout`          | Invalidate current auth session token and clear cookies | --              | `{ok: true}`            | Session + CSRF required |
+
+Auth flow contract:
+- `GET /api/auth/google/url` sets a short-lived HttpOnly `oauth_state` cookie (10 minutes) and returns the Google consent URL targeting `FRONTEND_ORIGIN/auth/callback`.
+- `POST /api/auth/google/callback` validates `state`, exchanges the code with Google, links the current browser session to a `users` row, rotates the `session_id` cookie, and clears `oauth_state`.
+- If a browser session is already linked to another user, callback flow creates a replacement session before linking to prevent cross-account reuse on shared browsers or tabs.
+
+### Trips (User Scoped)
+
+| Method | Path         | Purpose                                      | Request | Response            | Auth |
+| ------ | ------------ | -------------------------------------------- | ------- | ------------------- | ---- |
+| GET    | `/api/trips` | List plan documents across sessions for current authenticated user | -- | `UserTripsResponse` | Authenticated user required |
+| POST   | `/api/trips/{trip_id}/resume` | Resume a specific owned trip by switching session cookie to that trip session | -- | `ResumeTripResponse` | Authenticated user + CSRF required |
+
+`GET /api/trips` returns up to 50 most recently updated plan documents across all sessions linked to the authenticated user. `POST /api/trips/{trip_id}/resume` replaces the browser `session_id` cookie with the owning trip session; frontend then reloads and rehydrates from that session's `/api/document`.
+
 ### Chat & Session
 
 | Method | Path             | Purpose                     | Response                    |
@@ -54,11 +87,11 @@
 | DELETE | `/api/session`   | Reset session & clear state | 204 No Content              |
 | GET    | `/health`        | Health check                | JSON                        |
 
-### Admin (14 endpoints, gated by `X-Admin-Key` header)
+### Admin (17 endpoints, gated by `X-Admin-Key` header)
 
 All admin routes require `X-Admin-Key` header matching `ADMIN_API_KEY` env var. Rate limited: 10/min.
 
-Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified). Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache` (L1+L2), `clear-router-cache`, `clear-l1-l2-caches` (force-wipes L1 memory caches + L2 response cache/unsplash cache only), `clear-all-caches` (clears planner/experience/router/browse/places-enrichment/iata caches + validation + unsplash; includes specialist and tile L1/L2 and response-cache types), `clear-all-checkpoints`, `clear-validation-cache`, `fresh-start`. Config (GET): `planner`, `graph-stats`.
+Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified), `spend-guard-stats`. Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache` (L1+L2), `clear-router-cache`, `clear-l1-l2-caches` (force-wipes L1 memory caches + L2 response cache/unsplash cache only), `clear-all-caches` (clears planner/experience/router/browse/places-enrichment/iata caches + validation + unsplash; includes specialist and tile L1/L2 and response-cache types), `clear-all-checkpoints`, `clear-validation-cache`, `clear-spend-guard`, `fresh-start`. Config (GET): `planner`, `graph-stats`. Telemetry (GET): `places-telemetry`.
 
 ---
 
@@ -106,7 +139,7 @@ Media type: `application/x-ndjson`. Events:
 
 ### Rate Limiting (`slowapi`)
 
-Keyed by session cookie -> IP fallback. CORS preflight (`OPTIONS`) requests are exempt via `exempt_options_from_rate_limit` middleware (sets `_rate_limiting_complete` flag before the route handler runs, so slowapi skips the check entirely). Rate-limit exceeded responses return a numeric `Retry-After` header (seconds, parsed from slowapi's human-readable detail). Tiered:
+Keying is route-aware: public/auth routes are IP-keyed; other routes use a trusted-session bucket only after the cookie/session token has been validated against the DB (`mark_trusted_session_id()`), with IP fallback for untrusted cookies. `request.state.validated_session_id` is also accepted when explicitly marked trusted. CORS preflight (`OPTIONS`) requests are exempt via `exempt_options_from_rate_limit` middleware (sets `_rate_limiting_complete` flag before the route handler runs, so slowapi skips the check entirely). Rate-limit exceeded responses return a numeric `Retry-After` header (seconds, parsed from slowapi's human-readable detail). Tiered:
 
 | Tier                     | Endpoints                                                                                                                | Limit                                           |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
@@ -117,6 +150,12 @@ Keyed by session cookie -> IP fallback. CORS preflight (`OPTIONS`) requests are 
 | **Medium-Low**           | `validate-trip-input`, `tiles/refresh`                                                                                   | 6/min                                           |
 | **Fill-day**             | `document/fill-day`                                                                                                      | 8/min                                           |
 | **Browse**               | `activities/browse`                                                                                                      | 5/min                                           |
+| **Share write**          | `share`                                                                                                                  | 5/min                                           |
+| **Share fork**           | `share/fork/{slug}`                                                                                                      | 10/min                                          |
+| **Shared public read**   | `shared/{slug}`                                                                                                          | 30/min (IP-only key)                            |
+| **Auth init/callback**   | `auth/google/url`, `auth/google/callback`                                                                               | 10/min (IP-only key)                            |
+| **Auth me/logout**       | `auth/me`, `auth/logout`                                                                                                 | 30/min / 10/min (IP-only key)                   |
+| **Trips**                | `trips`, `trips/{trip_id}/resume`                                                                                        | 15/min                                          |
 | **Light-read**           | `document` (GET+PATCH), `chat`, `chat/last`, `session`, `tiles/click`, `document/validate-arrangement`                   | 60/min                                          |
 | **Light-fetch**          | `document/tiles/{branch_id}`                                                                                             | 12/min                                          |
 | **Low-write**            | `document/apply-arrangement`, `document/remove-block`, `document/insert-activity-block`                                  | 30/min                                          |
@@ -128,11 +167,13 @@ Keyed by session cookie -> IP fallback. CORS preflight (`OPTIONS`) requests are 
 
 ### Security Middleware
 
-- **Body size limit:** 512KB max. Middleware validates `Content-Length` first; non-numeric `Content-Length` returns `400 Invalid Content-Length`. If the header is missing on `POST`/`PUT`/`PATCH`, middleware reads the body once and returns `413 Payload too large` when size exceeds 512KB.
+- **Body size limit:** 512KB max. Middleware validates `Content-Length` first; non-numeric `Content-Length` returns `400 Invalid Content-Length`. If the header is missing on `POST`/`PUT`/`PATCH`, middleware reads the body once and returns `413 Payload too large` when size exceeds 512KB. Early `400`/`413` middleware responses include CORS headers for allowed origins so cross-origin frontend callers can read the error body.
 - **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security: max-age=63072000; includeSubDomains`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
 - **Backend CSP:** `Content-Security-Policy` header set on every response -- `default-src 'self'`, `script-src 'self' 'unsafe-inline'` (+ `'unsafe-eval'` in dev/local/test only for Next.js HMR), `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: https://images.unsplash.com https://*.mapbox.com blob:`, `connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:`, `font-src 'self' data:`, `frame-ancestors 'none'`
 - **Environment normalization:** `Settings.env` defaults to `"dev"`. Two computed properties: `is_dev` (True for `dev`, `local`, `development`, `test`) and `is_prod` (True for `prod`, `production`). All environment checks in `main.py` and `middleware/session.py` use these properties instead of hardcoded string comparisons.
-- **Session middleware:** Skips `/health` (no session cookie overhead on health checks). Max 10 new sessions per IP per hour
+- **Session middleware:** Skips `/health` and `/api/shared/*` (public shared reads stay cookie/session-free). Max 10 new sessions per IP per hour
+- **Rate-limit keying:** Public/auth routes (`/api/shared/*`, `/api/auth/*`) are IP-keyed. Other routes use trusted session ids (validated cookie or `request.state.validated_session_id`) with IP fallback for untrusted values.
+- **Rate-limit error contract:** 429 responses include numeric `Retry-After` and matching CORS headers for allowed origins; frontend `fetchWithRetry()` honours that header before retrying.
 - **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP (thread-safe slot reserve/release). SSE state extracted to `backend/app/sse_state.py` to break circular import between `main.py` and `lifespan.py`
 - **Fill-day/session ordering:** `/api/document/fill-day` waits until no active graph SSE stream exists for that session
 - **Places photo spend/circuit guard:** `/api/media/google-places-photo` requires a valid session, signed URL parameters, and circuit-state checks. It reserves Google Places spend via `spend_guard_scope`; if budget is exceeded it returns HTTP 429 with `Retry-After: 60`. If the photo circuit is open, endpoint returns HTTP 503 with `Service temporarily unavailable`.
@@ -149,6 +190,7 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `specialist_cache_ttl_hours`     | 168                  | `SPECIALIST_CACHE_TTL_HOURS`   | L2 specialist cache TTL                                     |
 | `experience_cache_ttl_hours`     | 72                   | `EXPERIENCE_CACHE_TTL_HOURS`   | L2 experience cache TTL                                     |
 | `google_places_enrichment_cache_ttl_hours` | 720        | `GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS` | L2 cache TTL for Google Places activity enrichment payloads |
+| `iata_cache_ttl_hours`           | 720                  | `IATA_CACHE_TTL_HOURS`         | L2 IATA resolver cache TTL                                  |
 | `clear_l2_on_session_reset`      | false                | `CLEAR_L2_ON_RESET`            | Wipe L2 caches on session reset (dev only)                  |
 | `google_maps_api_key`            | --                   | `GOOGLE_MAPS_API_KEY`          | Google Places API key                                       |
 | `google_maps_api_secret`         | --                   | `GOOGLE_MAPS_API_SECRET`       | Google Places API secret                                    |
@@ -170,6 +212,10 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `google_places_photo_signed_ttl_max` | 3600            | --                             | Max allowed signed Google Places photo URL TTL (seconds) |
 | `langsmith_dev_sample_rate`      | 1.0                  | `LANGSMITH_DEV_SAMPLE_RATE`    | Fraction of dev sessions to trace (0.0=none, 1.0=all)       |
 | `langsmith_prod_sample_rate`     | 0.15                 | `LANGSMITH_PROD_SAMPLE_RATE`   | Fraction of prod sessions to trace (recommended 0.15 steady-state) |
+| `frontend_origin`                | `http://localhost:3000` | `FRONTEND_ORIGIN`           | Canonical frontend base URL for OAuth redirect and share URL generation |
+| `cookie_domain`                  | --                   | `COOKIE_DOMAIN`                | Optional shared cookie domain for cross-subdomain auth/session cookies |
+| `google_oauth_client_id`         | `""`                 | `GOOGLE_OAUTH_CLIENT_ID`       | Google OAuth client id for login flow                       |
+| `google_oauth_client_secret`     | `""`                 | `GOOGLE_OAUTH_CLIENT_SECRET`   | Google OAuth client secret used in token exchange           |
 
 ---
 
@@ -199,12 +245,20 @@ NomadicAgentState (extends AgentState)
 
 Legacy 7-node graph state -- still exists as import target for shared types (`TripPlan`, `SpecialistConstraint`, `ConstraintSeverity`, etc.). The active planner uses `NomadicAgentState` above.
 
+### Session / User / Shared Trip Persistence (`backend/app/db_models.py`)
+
+- `Session.user_id` is now an optional FK to `users.id`, allowing multiple browser sessions to roll up under one account without changing `PlanDocument` ownership semantics.
+- `User` stores Google identity fields: `google_id`, `email`, `name`, `avatar_url`, `last_login_at`.
+- `SharedTrip` stores a public `slug`, optional `session_id`, optional `user_id`, immutable `snapshot`, denormalized metadata (`title`, `destination`, `hero_image_url`, `day_count`), `view_count`, and optional `expires_at`.
+- Session reset unlinks `SharedTrip.session_id` before deleting the session row so existing public share URLs survive anonymous session clears.
+- Linking a session to a user promotes anonymous shared rows for that session by filling `user_id` and clearing `expires_at`.
+
 ### PlanDocumentData (Master Document)
 
 ```
 PlanDocumentData
   |-- trip_inputs: DocumentTripInputs
-  |     |-- destination?, destination_iata?, origin?, origin_iata?
+  |     |-- destination?, destination_iata?, origin?, origin_iata?, country_code?
   |     |-- start_date?, end_date?
   |     |-- adults?, children?, budget?, currency
   |     |-- requires_assistance?, missing_fields[]
@@ -266,6 +320,7 @@ PlanDocumentData
   |           |-- rating?: number (Google Places star rating -- browse-added activities)
   |           |-- review_count?: number (Google Places review count)
   |           |-- price_level?: number (Google Places price level: 0=free, 1=$, 2=$$, 3=$$$, 4=$$$$)
+  |           |-- price_estimate?: number (numeric price from tile data)
   |           |-- google_place_id?: string (Google Places ID)
   |           |-- deeplink?: string (Google Maps URL)
   |           '-- preference_status?, preference_override_reason?, alternative_tile_id?
@@ -310,8 +365,8 @@ PlanDocumentData
 
 | Model                         | Purpose                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GraphPlanRequest`            | Plan generation: message, trip_inputs, session_state, document_id, ui_phase, expected_version, thread_id, reset, suggestion_clicked. `trip_inputs` is capped at 100 keys, `session_state` is capped at 200 keys, and `message` is capped at 2000 chars. Session state bootstrap/merge handled by shared `_prepare_graph_plan_session_state()` (used by `/graph_plan/stream`). User-owned settings (`activity_settings`, `hotel_settings`, `flight_settings`, `transport_settings`, `booking_types`) use deep merge via `_merge_user_owned_trip_settings()` to avoid clobbering omitted keys. |
-| `ExpandItineraryRequest`      | Stage 2->3: `idempotency_key` (max length 200), strategy_sections, tiles, preferences, trip_inputs, force_full_rebuild, refresh_activity_categories?. **`refresh_activity_categories`:** When set, re-searches activity tiles for these categories before building (used by activity pill changes at S3 to swap stale tiles without an agent turn). **Tile source selection:** `force_full_rebuild=true` (auto-expand after chat) uses DB tiles (authoritative -- written by `apply_planner_update`); `force_full_rebuild=false` (preference regen / manual) uses frontend tiles (includes hearted tiles, filters); empty frontend tiles falls back to DB tiles. **Idempotency:** `idempotency_key` checked via `check_idempotency()` in `backend/app/request_dedup.py` (TTLCache, 30s TTL, 1000 max entries). |
+| `GraphPlanRequest`            | Plan generation: message, trip_inputs, session_state, document_id, ui_phase, expected_version, thread_id, reset, suggestion_clicked. `trip_inputs` is capped at 100 keys, 32KB serialized size, and nesting depth 10; `session_state` is capped at 200 top-level keys, 64KB serialized size, and nesting depth 10; `message` is capped at 2000 chars. Session state bootstrap/merge handled by shared `_prepare_graph_plan_session_state()` (used by `/graph_plan/stream`), and backend `serialize_agent_state()` trims verbose runtime fields before persistence to stay under the 64KB session envelope. User-owned settings (`activity_settings`, `hotel_settings`, `flight_settings`, `transport_settings`, `booking_types`) use deep merge via `_merge_user_owned_trip_settings()` to avoid clobbering omitted keys. |
+| `ExpandItineraryRequest`      | Stage 2->3: `idempotency_key` (max length 200), strategy_sections, tiles, preferences, trip_inputs, force_full_rebuild, refresh_activity_categories?. `strategy_sections` is capped at 30 entries; each section payload is capped at ~50KB nested size; `tiles` is capped at 200 keys; `trip_inputs` is capped at 32KB serialized size and nesting depth 10. **`refresh_activity_categories`:** When set, re-searches activity tiles for these categories before building (used by activity pill changes at S3 to swap stale tiles without an agent turn). **Tile source selection:** `force_full_rebuild=true` (auto-expand after chat) uses DB tiles (authoritative -- written by `apply_planner_update`); `force_full_rebuild=false` (preference regen / manual) uses frontend tiles (includes hearted tiles, filters); empty frontend tiles falls back to DB tiles. **Idempotency:** `idempotency_key` checked via `check_idempotency()` in `backend/app/request_dedup.py` (TTLCache, 30s TTL, 1000 max entries). |
 | `PlanDocumentPatch`           | CRDT update: version, branches?, tiles?, selections?, trip_inputs?, remove_branch_ids?, remove_tile_ids?, preferred_tile_ids? The nested `DocumentTripInputsPatch` (used for `trip_inputs?`) supports partial updates for all user-owned settings: `booking_types`, `flight_settings`, `hotel_settings`, `activity_settings`, `transport_settings`, `date_flex`, `trip_duration`, `date_window_start`, `date_window_end`. Explicit `null` clears are supported; non-nullable fields reset to defaults (`currency -> "USD"`, `date_flex -> false`). |
 | `PlanDocumentResponse`        | Document fetch: version, updated_by, document, updated_at, changes_made: bool                                                                                                                                                                                                                                                                                                                                    |
 | `TileRefreshRequest/Response` | Refresh tiles for branch with new settings                                                                                                                                                                                                                                                                                                                                                                       |
@@ -330,6 +385,13 @@ PlanDocumentData
 | `InsertActivityBlockRequest`    | Insert browse tile: day_number, tile (max 50 keys) (BrowseTile dict), expected_version? (deprecated -- no longer enforced) |
 | `InsertActivityBlockResponse`   | Insert result: day_number, day_card, version, inserted_block_id |
 | `SpecialistEnrichmentResponse`  | Phase B enrichment: section_id, status ('ready'\|'pending'\|'failed'), data?: Dict, error_code?: str, retry_after_ms?: int |
+| `ShareTripResponse`             | Share creation result: `slug`, absolute `url`, derived `title`, optional `expires_at` (null for authenticated durable shares) |
+| `SharedTripPublicResponse`      | Public shared-trip payload: metadata plus immutable `snapshot` used by `/trip/[slug]` server/client rendering |
+| `ForkSharedTripResponse`        | Shared-trip fork result: `ok`, copied `destination`, `day_count`, and resulting `plan_view_state`; response also rotates the `session_id` cookie to the forked session |
+| `GoogleAuthCallbackRequest` / `GoogleAuthUrlResponse` | OAuth bootstrap models for Google login (`code` + `state` callback, consent URL init) |
+| `AuthUser` / `AuthMeResponse`   | Authenticated user summary returned by `/api/auth/me` and callback completion |
+| `UserTripSummary` / `UserTripsResponse` | Lightweight owned-trip list for desktop/mobile account menus and trip resume flows |
+| `ResumeTripResponse`            | `ok` + `trip_id` acknowledgement for session resume requests |
 
 ---
 
@@ -397,7 +459,7 @@ Hydration guards:
 
 ## 5. Frontend State Store
 
-Source: `frontend/state/documentStore.ts` (Zustand)
+Source: `frontend/state/documentStore.ts`, `frontend/state/userStore.ts` (Zustand)
 
 ### Store Shape
 
@@ -485,6 +547,27 @@ Module-level `_userDirtySettings: Set<string>` (not Zustand state -- avoids re-r
 - **Image URL hygiene:** document/envelope merge paths sanitize Picsum hosts (`picsum.photos`, `fastly.picsum.photos`) out of destination cards, tiles, day blocks, and strategy assets; required gallery/vibe images fall back to a deterministic Unsplash URL
 - **Bookable activity filter:** `isBookableActivityTile()` in `tileSelectors.ts` filters fill-day generated tiles (`source_agent` in `experience_generator` or `vertical_specialist`) from the booking surface (`BookingSection`). Non-activity tiles always pass through.
 
+### Auth/User Store (`frontend/state/userStore.ts`)
+
+Separate lightweight Zustand store for account state; it does not duplicate `TripPlan` or document data.
+
+| Field / Action | Purpose |
+| -------------- | ------- |
+| `user`         | Current authenticated user (`AuthUser \| null`) from `/api/auth/me` |
+| `trips`        | Cached `UserTripSummary[]` for desktop/mobile recent-trip menus |
+| `loading`      | Auth bootstrap state; starts true until `fetchUser()` resolves |
+| `resumingTripId` | UI guard for at-most-one active resume request at a time |
+| `fetchUser()`  | GET `/api/auth/me`; clears to anonymous on failure |
+| `fetchTrips({force?})` | GET `/api/trips`; 30s stale-window cache with in-flight request dedupe; `401` collapses to `[]` |
+| `login()`      | GET `/api/auth/google/url`, then redirects the browser to the returned Google consent URL |
+| `logout()`     | POST `/api/auth/logout`, then clears local auth/trip cache regardless of response |
+| `resumeTrip(tripId)` | POST `/api/trips/{tripId}/resume`; rotates the browser back onto the selected trip session, then hard-reloads for clean document hydration |
+
+Hydration contract:
+- `useSessionHydration()` primes `useUserStore.fetchUser()` alongside document hydration so auth state is available immediately after reload.
+- Desktop/mobile account menus call `fetchTrips()` lazily after `user` becomes non-null.
+- Shared public pages do not depend on `userStore`; `/trip/[slug]` uses public fetches with `credentials: "omit"` and only creates a session when the user chooses to fork the trip.
+
 ---
 
 ## 6. Frontend API Client
@@ -506,6 +589,7 @@ Source: `frontend/lib/api.ts`
 | `removeBlock()`              | POST `/api/document/remove-block` | Remove a single block. Throws `'VERSION_CONFLICT'` on 409. Returns `{day_number, day_card, version, removed_block_id}`. |
 | `browseActivities()`           | POST `/api/activities/browse`   | Browse Google Places activities for a destination. Params: `{destination, dayNumber?, date?, hotelLocation?, categories?}`. Returns `{tiles: BrowseTile[], total: number}` (`api.ts` client typing; backend may include additional fields). |
 | `getSpecialistEnrichment()`    | GET `/api/specialist/{sectionId}/enrichment` | Fetch Phase B enrichment status for a specialist section. Returns `{status: 'ready'\|'pending'\|'failed', section_id, data?, error_code?, retry_after_ms?}` or `null` (404). 202 -> `{status: 'pending'}`. |
+| `fetchSharedTrip()`            | GET `/api/shared/{slug}` | Public shared-trip fetch used by `/trip/[slug]` client fallback. Uses `credentials: 'omit'`; throws user-facing `404`/`410` errors for missing or expired shares. |
 | `resetSession()`             | DELETE `/api/session`           | Clear session                                                                                                                                                                                                                 |
 | `fetchWithRetry()`           | (wraps apiFetch)                | Exponential backoff retry on transient errors                                                                                                                                                                                 |
 | `clearSessionLocalStorage()` | --                              | Clear session-related localStorage (preserves GDPR consent)                                                                                                                                                                   |
@@ -516,6 +600,7 @@ Source: `frontend/lib/api.ts`
 **`BrowseTile` interface** (exported from `api.ts`): `{id, type, title, subtitle?, description?, image_url?, photo_name?, duration?, rating?, review_count?, location_label?, geo?: {lat, lng}, price_estimate?, source, provider, category, tags?, place_id?, maps_uri?}`
 
 - `price_estimate` and `live_price` are accepted as numeric strings in some upstream providers; frontend schema validation normalizes these to numbers in `documentStore` before rendering tile totals.
+- Auth, share, fork, and trip-resume flows currently call `apiFetch()` directly from UI/store modules rather than dedicated helpers in `api.ts`.
 
 ### Retry Logic
 

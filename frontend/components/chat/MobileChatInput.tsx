@@ -9,7 +9,7 @@
  * visible on both Chat and Plan pages. Relays messages via onSend
  * callback (wired to ChatPanelHandle.sendMessage in NomadicLanding).
  *
- * Design: matches ChatPanel's capsule shape (rounded-[28px]).
+ * Design: matches ChatPanel's capsule shape (rounded-full).
  * Processing state: disabled + subtle pulse. No full Living Void.
  */
 
@@ -86,7 +86,7 @@ function MobileChatInputInner({
     >
       <div
         className={cn(
-          'relative flex items-center w-full h-12 rounded-[24px] transition-all duration-300',
+          'relative flex items-center w-full h-12 rounded-full transition-all duration-300',
           'bg-zinc-50 dark:bg-black/40',
           'shadow-[0_4px_16px_-4px_rgba(0,0,0,0.06)] dark:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.3)]',
           'border border-zinc-200 dark:border-white/10',
@@ -117,7 +117,7 @@ function MobileChatInputInner({
               type="button"
               onClick={onStop}
               className={cn(
-                'h-10 w-10 flex items-center justify-center rounded-[20px] transition-all hover:scale-105 active:scale-95',
+                'h-10 w-10 flex items-center justify-center rounded-full transition-all hover:scale-105 active:scale-95',
                 'bg-zinc-200 dark:bg-white/10',
                 'hover:bg-zinc-300 dark:hover:bg-white/20',
                 'border border-zinc-300 dark:border-white/10'
@@ -133,7 +133,7 @@ function MobileChatInputInner({
               onClick={(e) => canSend && handleSubmit(e as unknown as React.FormEvent)}
               disabled={!canSend}
               className={cn(
-                'flex items-center justify-center h-10 w-10 rounded-[20px] transition-all duration-300',
+                'flex items-center justify-center h-10 w-10 rounded-full transition-all duration-300',
                 canSend
                   ? `bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:${DS.glowClass.lg} dark:hover:bg-emerald-500 hover:scale-105 active:scale-95`
                   : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600',

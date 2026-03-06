@@ -54,11 +54,18 @@ export function isStrategyReady(state: PlanViewState | undefined | null): boolea
   return normalizePlanViewState(state) === 'P1_ENRICHED' && state !== 'S2_BLOCKED';
 }
 
-/** Does the plan have strategy content (S2+ or P1+, including editing/blocked states)? */
-export function hasStrategy(state: PlanViewState | undefined | null): boolean {
+/** Is the plan in itinerary-ready/finalized state? */
+export function isItineraryReady(state: PlanViewState | undefined | null): boolean {
   if (!state) return false;
   const norm = normalizePlanViewState(state);
-  return norm === 'P1_ENRICHED' || norm.startsWith('P3');
+  return norm === 'P3_FINALIZED';
+}
+
+/** Is the plan in an editing state? */
+export function isEditing(state: PlanViewState | undefined | null): boolean {
+  if (!state) return false;
+  const norm = normalizePlanViewState(state);
+  return norm === 'P3_EDITING';
 }
 
 /** Is generation in progress? Data-driven, not state-inferred. */

@@ -60,7 +60,8 @@
             "dependsOn": [
                 "Docker: Compose DB",
                 "Backend: Uvicorn",
-                "Frontend: Next Dev"
+                "Frontend: Next Dev",
+                "Agentic: Update"
             ],
             "problemMatcher": []
         },
@@ -82,7 +83,9 @@
             "label": "Restart Dev Servers",
             "dependsOn": [
                 "Kill Dev Processes",
-                "Start All"
+                "Docker: Compose DB",
+                "Backend: Uvicorn",
+                "Frontend: Next Dev"
             ],
             "dependsOrder": "sequence",
             "problemMatcher": []
@@ -105,6 +108,21 @@
                 "reveal": "silent",
                 "panel": "shared"
             },
+            "problemMatcher": []
+        },
+        {
+            "label": "Agentic: Update",
+            "type": "shell",
+            "command": "brew upgrade claude-code; npm install -g @openai/codex@latest",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            },
+            "isBackground": true,
             "problemMatcher": []
         }
     ]

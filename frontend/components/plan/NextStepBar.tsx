@@ -20,6 +20,8 @@ import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { PlanViewState } from '@/types/plan-envelope';
 
+import { isStrategyReady } from './planStateHelpers';
+
 interface NextStepBarProps {
   state: PlanViewState;
   /** Pre-computed next action from getNextAction() - avoids flicker */
@@ -115,7 +117,7 @@ export function NextStepBar({
   }, [isFinalizing]);
 
   // Don't render if no action or if action is expand_itinerary (handled by auto-expand)
-  if (state === 'S2_STRATEGY_READY' && !nextAction) {
+  if (isStrategyReady(state) && !nextAction) {
     return null;
   }
 

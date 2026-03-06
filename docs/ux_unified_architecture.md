@@ -265,17 +265,17 @@ Mobile skips heavy animations for performance:
 
 #### Loading States
 
-Initial page bootstrap uses a startup motion overlay in `frontend/components/animations/StartupSequence.tsx`:
+Initial page bootstrap now enters directly into the route shell without a separate startup overlay:
 
 ```
 First load:
-├─ `StartupSequence` shown with typing/grid/verify/beacon phases
-├─ App shell remains hidden while overlay plays
-└─ Transition completes via `onComplete` when phase reaches `done` (or sessionStorage short-circuit)
+├─ App shell mounts immediately
+├─ Chat + plan surfaces render in-place
+└─ Loading feedback comes from route-local skeletons/loaders (`PlanMirrorLoader`, chat loaders, generation state)
 ```
 
 Subsequent navigations in same tab:
-- Skip overlay when `sessionStorage.nomadic_has_booted` is present
+- Reuse the same direct-entry path
 - Keep shell visible immediately (single-render entry path)
 
 ```
@@ -320,7 +320,7 @@ All animations use Framer Motion with `AnimatePresence` for enter/exit:
 - Mode prop threads through TimelineThread → ActivityMiniCard for Book button visibility
 - Preference attribution uses `preferredTileIds` to show "You preferred this" badge
 - Legacy stage views (S3ItineraryView, S1FramingView, etc.) removed from unified flow
-- Only S2StrategyView used for specialist cards in all phases
+- Strategy cards stay inside the density-driven renderer path (`StrategyStageRenderer` -> `PlanFullDensityView` -> `StrategyHero*`)
 
 ### Defensive Rendering (Image Guards)
 
@@ -704,7 +704,7 @@ if has_niche_specialist:
 
 **Solution:** Filter specialist cards on **output** (content_added), not **input** (specialist requested). This is destination-agnostic and handles every case.
 
-**Location:** `S2StrategyView.tsx`
+**Location:** density-driven strategy rendering path (`StrategyStageRenderer` / `PlanFullDensityView` / `StrategyHero*`)
 
 ```typescript
 // Filter out domain specialists with no content (e.g., skiing in tropical destinations)
@@ -1640,6 +1640,9 @@ useSessionHydration() runs
     ├── Check session expiration (24hr max)
     │   └── If expired → Clear state, start fresh
     │
+    ├── Fire-and-forget `useUserStore.fetchUser()`
+    │   └── Auth chrome can render current user/recent trips without waiting for document hydration
+    │
     ├── GET /api/document
     │   └── Returns full PlanDocumentData from DB
     │
@@ -1692,7 +1695,12 @@ useSessionHydration() runs
 
 5. 24hr Expiration
    └── useSessionHydration detects age → Clear + fresh start
+
+6. Shared Public Page
+   └── `/trip/[slug]` server-prefetches the public snapshot via `BACKEND_URL`; `SharedTripView` reuses that payload client-side and only creates a session when the user chooses "Copy This Trip"
 ```
+
+**Authenticated refresh path:** when `/api/auth/me` resolves with a user, desktop/mobile headers may then issue `GET /api/trips` to populate recent-trip resume menus. This account bootstrap is additive; it never mutates the hydrated `PlanDocumentData`.
 
 ---
 
@@ -1702,7 +1710,7 @@ useSessionHydration() runs
 | --- | --- |
 | `StrategyStageRenderer` | Data density computation, conditional rendering, single renderer for all modes. Heavy computation and effects are delegated to `useStrategyStageOrchestration`. |
 | `useStrategyStageOrchestration` | Hook centralising all heavy computation, state, and effects for `StrategyStageRenderer` (keeps renderer under ~300 lines). Owns `DataDensity` computation, map POI extraction, infeasibility toast notifications, scroll-position freeze/restore on itinerary arrival, and booking drawer state. |
-| `PlanFullDensityView` | Full-density view (map + timeline + booking/intel controls). Receives all props from `StrategyStageRenderer`, renders the flex desktop map layout (content: flex-1 min 480px max 800px; map: flex-1 min 350px), owns `TripSummaryPills` command bar for Flights/Stays/Travel Advice toggles, and fetches/polls Local Expert enrichment for the destination intel panel. |
+| `PlanFullDensityView` | Full-density view (map + timeline + booking/intel controls). Receives all props from `StrategyStageRenderer`, renders the flex desktop map layout (content: flex-1 min 480px max 800px; map: flex-1 min 350px), owns `TripSummaryPills` command bar for Flights/Stays/Travel Advice toggles, injects share/PDF actions into `BookingSummary`, and uses the shared module-scope `destination-intel-cache.ts` (30m TTL + inflight dedupe) when fetching/polling Local Expert enrichment for the destination intel panel. |
 | `BookingSummary` | Supplemental booking-links panel rendered by `PlanFullDensityView` under the timeline. Shows deep links for bookable stays (`tiles`) and mapped itinerary activities (`day_cards`) in Stage 3 states. |
 | `PlanDensityViews` | Density loading view (`PlanMirrorLoader`) only. |
 | `PlanTimelineSection` | Timeline section for full-density view — handles DnD wrapping (`ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`), skeleton loading, regeneration overlay, and wraps `TimelineThread` in `ErrorBoundary` for crash isolation. |
@@ -1712,7 +1720,8 @@ useSessionHydration() runs
 | `useBookingDrawerState` | Hook managing booking drawer open/close state and the fill-day API call triggered when a tile is added to a specific day via the drawer. Extracted from `StrategyStageRenderer`. |
 | `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
 | `TripSummaryPills` | Unified command bar for trip inputs plus module actions: destination/origin/dates/travelers/budget/activities plus inline command segments for Flights, Stays, and Destination Travel Advice (with pending/badge state). |
-| `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack/StrategyHero) |
+| `NomadicLanding` | Desktop shell for the main planning route. Owns reset CTA, account popover wiring (`useUserStore` login/logout/fetchTrips), and recent-trip resume actions while still delegating plan rendering to `StrategyStageRenderer`. |
+| `MobileModeHeader` | Mobile top bar for the planning route. Hosts overflow actions for reset, share, PDF export, sign in/out, and recent-trip resume without changing the core swipe-layout topology. |
 | `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts`. Accepts three optional render props for DnD injection: `blockWrapper?: (block: DayBlock, dayNumber: number, children: ReactNode) => ReactNode` (wraps each block — only applied when `useRichBlocks=true`); `dayWrapper?: (dayNumber: number, children: ReactNode) => ReactNode` (wraps the block-list container for activity days only — **not** applied to free/empty days); `freeDayDropSlot?: (dayNumber: number) => ReactNode` (renders a drop zone inside `FreeDayCard` between the subtitle and chips — preferred for free days to avoid highlighting the entire card). All three default to identity no-ops. **Map sync:** `IntersectionObserver` on `scrollContainerRef` tracks visible day headers → `useMapSync.setVisibleDayNumber()`. Listens to `scrollTargetDayNumber` → `scrollIntoView()` + 2s highlight ring. **Constraint dedup:** `getConstraintDisplayModes(block)` deduplicates constraint badges per render pass — passes `constraintDisplayModes` Map to `ActivityMiniCard`. **Compact days:** `getDayVariant(card)` returns `'compact'` for single-block non-logistics days. |
 | `ItineraryDndWrapper` | `@dnd-kit/core` `DndContext` wrapper (`closestCorners`, `PointerSensor` with 8px activation distance). Orchestrates drag state, calls `validateArrangement()` then `applyArrangement()` on drop, applies store update via `mergeEnvelope` + `setState({version})`. Uses `claimMutation`/`releaseMutation` for the store mutation gate. Shows `DragOverlay` with `DragPreviewCard`. **Undo on drag:** Before applying arrangement, captures `previousDayCards` + `previousVersion` snapshot, sets `documentStore.setUndoEntry({ type: 'drag_move', label, previousDayCards, previousVersion })`, and calls `showMutationToast(label, toast)` to display an Undo CTA. Mounts `useUndoStack` for auto-expire side effect (clears `undoEntry` after 8s). |
 | `DraggableBlock` | Wraps each block with `useDraggable`. Locked blocks (`arrival`/`departure`/`check-in`/`check-out`/`is_buffer`) show a `Lock` icon and disable drag. When `block.id` is absent, renders a plain passthrough (no drag handle). Applies `opacity-30 scale-95` while dragging. |
@@ -1740,11 +1749,14 @@ useSessionHydration() runs
 | `ItineraryProgressIndicator` | Progress indicator for multi-specialist auto-trigger itinerary generation |
 | `BookingDrawer` | Side sheet for tile browsing, triggered by FreeDayCard "Browse" or GhostSlot clicks. Supports `pinnedDayNumber` for per-day tile placement via fill-day API |
 | `TripSettingsSheet` | Relay sheet for destination/origin/dates/travelers/budget editors. Uses an unmount-safe delayed sheet open (`setTimeout` + `mountedRef`) to avoid opening a child sheet after parent unmount. |
-| `TripHealthBar` | Compact inventory bar showing tile counts (hotels, flights, activities) for General/Local Expert sections in `S2StrategyView` |
+| `TripHealthBar` | Compact inventory bar showing tile counts (hotels, flights, activities) for General/Local Expert strategy surfaces in the density-driven plan renderer. |
 | `useItineraryGeneration` | Hook extracted from `NomadicLanding` encapsulating the full expand-itinerary flow: `proceedWithItineraryGeneration` (NDJSON streaming), auto-trigger logic for multi-specialist trips (Path A), `handleExpandToItinerary` (validation-gated expand), and `handleSelectNights`. Before POSTing `/api/expand-itinerary`, it normalizes `trip_inputs`: empty activity categories are sent as `categories=[] + booking_types.activities='off'` so builder semantics match sheet intent. Returns `{proceedWithItineraryGeneration, handleExpandToItinerary, handleSelectNights, hasItineraryContent}`. |
 | `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. **Hard gate:** `planViewState` is forced to `S0_BOOTSTRAP` when `hasPlanPrerequisites` is false (destination + dates required). When prerequisites are met, backend `plan_view_state` is authoritative. `planTabEnabled` also requires `hasPlanPrerequisites`. Pure computation — no side effects. |
 | `useLandingEffects` | Hook extracted from `NomadicLanding` grouping side effects unrelated to itinerary generation: destination image fetching, `hasEverHadPlan` detection, topic tracking for mobile badges, specialist deep link handling. State is owned by the parent and passed in as params + setters. |
 | `useLandingHandlers` | Hook extracted from `NomadicLanding` for action wiring: reset/finalize/build callbacks, plan result receipt handling, mobile send/stop forwarding, gear-sheet state, and topic-diff detection for plan-related user input. |
+| `useSessionHydration` | Planning-route hydration hook. Restores `/api/document`, enforces session-age reset behavior, and primes `useUserStore.fetchUser()` so auth chrome hydrates alongside plan state. |
+| `SharedTripView` | Public read-only trip surface for `/trip/[slug]`. Renders immutable shared metadata, strategy summary, non-interactive map, and a fork CTA that first primes a session and then POSTs `/api/share/fork/{slug}`. |
+| `ReadOnlyTimeline` | Shared-trip-only itinerary renderer. Displays persisted `day_cards` without DnD, mutation controls, or booking actions. |
 | `specialist-colors.ts` | SSoT for specialist-to-color text class mappings (`SPECIALIST_TEXT_COLOR: Record<string, string>`). Used by `DragPreviewCard` and `ActivityMiniCard` for specialist label badges. Hue assignments match the DS constraint-priority palette. |
 | `useMapSync` | Zustand store (`frontend/hooks/useMapSync.ts`) for map↔timeline two-way sync. State: `visibleDayNumber` (set by TimelineThread scroll observer), `scrollTargetDayNumber` (set by InteractiveMap pin click), `highlightedCardId`. Actions: `setVisibleDayNumber()`, `requestScrollTo(dayNumber, itemId)`. Not persisted — resets on mount. |
 | `useUndoStack` | Hook (`frontend/hooks/useUndoStack.ts`) mounted in `ItineraryDndWrapper`. Returns `{ undoEntry, executeUndo }` and auto-expires `undoEntry` after 8s via `useEffect` + `setTimeout`. |
@@ -1754,7 +1766,7 @@ useSessionHydration() runs
 
 **Deleted Components (no longer in codebase):**
 - `ConflictResolutionBanner` -- conflict resolution now chat-driven via suggestion chips
-- `TripHealthDashboard` -- replaced by `TripHealthBar.tsx` (compact bar variant, still active in `S2StrategyView`)
+- `TripHealthDashboard` -- replaced by `TripHealthBar.tsx` (compact bar variant in the current density-driven strategy surface)
 - `ReadyToPlanBanner` -- removed
 - `ExplorationProgress` -- removed
 - `SelectionsBar` -- hearted tile preferences now feed auto-regen directly (no separate UI bar)
@@ -1764,6 +1776,11 @@ useSessionHydration() runs
 - `OnboardingChips`, `PlanningProgress`, `OptionalRefinementsSection` -- legacy plan widgets
 - `S1FramingView`, `S2BlockedView`, `S3BlockedView`, `S3EditingView` -- legacy stage views (deleted)
 - `S3ItineraryView` -- deleted (was unused in unified `StrategyStageRenderer` flow)
+- `StartupSequence` -- deleted; startup animation layer removed from current route tree
+- `TripStatusBar` -- deleted; status chrome consolidated into `ChatStatusHeader` / route headers
+- `CoreChip` -- deleted; chip rendering is consolidated under `ChipGroup` and related helpers
+- `TripChromeBar` -- deleted; route/header controls now own reset/share/account actions directly
+- `S2StrategyView` -- deleted; strategy rendering now stays in the main density-driven surface instead of a separate stage view file
 - `CollapsedSetupSummary` -- deleted (setup collapse feature removed; `collapseSetupMessages` removed from chatStore)
 - `LocationBadge`, `TruncatedDestinationList` -- legacy pill components
 - `TileSectionHeader` -- tile section header
@@ -1780,8 +1797,8 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 
 | PlanViewState | TimelineVariant | Badge |
 | --- | --- | --- |
-| `S3_ITINERARY_READY`, `P3_FINALIZED` | `real` | None (finalized itinerary) |
-| `S3_EDITING`, `S2_STRATEGY_READY`, `P3_EDITING`, `P1_ENRICHED` | `draft` | "Draft Itinerary" (amber) |
+| Itinerary-ready states (`P3_FINALIZED`, legacy `S3_ITINERARY_READY`) | `real` | None (finalized itinerary) |
+| Editing or strategy-ready states (`P3_EDITING`, legacy `S3_EDITING`, `P1_ENRICHED`, legacy `S2_STRATEGY_READY`) | `draft` | "Draft Itinerary" (amber) |
 | All others (`S0_*`, `S1_*`, `S2_BLOCKED`, `S3_BLOCKED`, `S3_PARTIAL_CONFLICT`) | `ghost` | "Specialist Preview" (emerald) |
 
 **Invariant:** Regeneration is triggered via chat auto-regen, preference auto-regen, or the Build Itinerary CTA. The "Draft Itinerary" badge should NOT appear when itinerary is finalized (`S3_ITINERARY_READY`).
@@ -1793,7 +1810,8 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 | `isBootstrap(state)` | Normalizes state to `P0_MINIMAL` and returns true when matched. Matches `S0_EMPTY`, `S0_BOOTSTRAP`, `S1_FRAMING`, `P0_MINIMAL`. Returns true when state is null/undefined. | Active |
 | `isFraming(state)` | Returns true only for `S1_FRAMING`. | Active |
 | `isStrategyReady(state)` | Normalizes state to `P1_ENRICHED` and returns true when matched, excluding `S2_BLOCKED`. Used by `getNextAction()` and `shouldAutoTriggerItinerary()`. | Active |
-| `hasStrategy(state)` | Normalizes state and returns true when `P1_ENRICHED` (matches `S2_STRATEGY_READY`, `S2_BLOCKED`) or any `P3*` variant (matches `S3_ITINERARY_READY`, `S3_EDITING`, `S3_BLOCKED`, `S3_PARTIAL_CONFLICT`, `P3_*`). | Active |
+| `isItineraryReady(state)` | Normalizes state and returns true only when the plan is finalized (`P3_FINALIZED`, legacy `S3_ITINERARY_READY`). Used by timeline and booking renderers to suppress draft-mode UI. | Active |
+| `isEditing(state)` | Normalizes state and returns true only for itinerary-edit states (`P3_EDITING`, legacy `S3_EDITING`). Used alongside `isItineraryReady()` so S3 editing stays draft-like without widening strategy-ready checks. | Active |
 | `isGenerating(generation)` | Checks if any generation is in progress (`generation?.active === true`) | Active |
 | `shouldAutoTriggerItinerary(state, topics, hasDates, generation, hasItinerary)` | Path A: auto-trigger for multi-specialist trips (2+ topics, S2, has dates, no existing itinerary) | Active |
 | `isMultiSpecialistTrip(executedTopics)` | Returns true when 2+ topics executed | Active |
@@ -1801,6 +1819,7 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 
 **Deleted functions (no longer in codebase):**
 - `isReady()` -- removed (was: checks if plan is in ready state)
+- `hasStrategy()` -- replaced by narrower `isStrategyReady()`, `isItineraryReady()`, and `isEditing()` helpers
 - `shouldShowLeftPanelGenerateCTA()` -- removed (was: returns true for S0/S1)
 - `canShowTilesPreview()` -- removed, mode is the SSoT for tile rendering
 - `canShowBookingTiles()` -- removed, mode is the SSoT for tile rendering
@@ -1847,7 +1866,7 @@ The "Split Screen" desktop architecture translates to a **horizontal swipe layou
 | --- | --- | --- |
 | `MobileSwipeLayout` | `components/layout/MobileSwipeLayout.tsx` | CSS scroll-snap horizontal container with tab bar |
 | `MobileChatInput` | `components/chat/MobileChatInput.tsx` | Detached chat input below swipe container (visible on both pages) |
-| `TripStatusBar` | `components/chat/TripStatusBar.tsx` | Two-tier expand/collapse trip summary above swipe container |
+| `MobileModeHeader` | `components/layout/MobileModeHeader.tsx` | Mobile top chrome for reset/share/pdf/account actions and compact trip status |
 | `mobileNavStore` | `state/mobileNavStore.ts` | Zustand store: `activePage`, `hasNewPlanContent` badge |
 | `useIsDesktop` | `hooks/useIsDesktop.ts` | Viewport detection hook (`useSyncExternalStore` + `matchMedia`) |
 
@@ -1856,7 +1875,6 @@ The "Split Screen" desktop architecture translates to a **horizontal swipe layou
 ```
 ┌──────────────────────────┐
 │  MobileModeHeader     48px│
-│  TripStatusBar      ~40px│  ← two-tier: plain text (tap to expand detail rows)
 │  [Chat]  [Plan ●]   ~36px│  ← tab bar inside MobileSwipeLayout
 ├──────────────────────────┤
 │                          │
@@ -1899,7 +1917,7 @@ The mobile flex chain MUST be fully constrained to prevent input clipping:
 ```
 ROOT div         h-[100dvh] overflow-hidden
   └─ <main>      flex-1 flex-col overflow-hidden min-h-0
-       ├─ TripStatusBar      (intrinsic)
+       ├─ MobileModeHeader   (intrinsic)
        ├─ MobileSwipeLayout  (flex-1 min-h-0)
        │    ├─ Tab bar            (~36px)
        │    └─ Snap container     (flex-1 min-h-0 overflow-y-hidden)
@@ -1933,7 +1951,7 @@ Plan tab is **locked** until first real plan content arrives:
 5. **Chat Input Always Visible:** Users can type commands from either page without swiping back.
 6. **Height Constraint:** Root div MUST use fixed `h-[100dvh]` (NOT `min-h-[100dvh]`) to prevent input clipping below viewport.
 7. **Status Pill:** `MobileModeHeader` STABLE state has empty text (pill hidden). Only RESOLVING ("Planning...") shows a visible pill.
-8. **TripStatusBar:** Two-tier expand/collapse. Tier 1: plain text summary (`Bali · Rome · Feb 14-22 · 1 adult`). Tier 2: tap to reveal labeled rows with per-row edit buttons via `onOpenSheet`.
+8. **Mobile Header Chrome:** `MobileModeHeader` owns the compact status pill plus overflow actions for reset, share, PDF export, sign in/out, and recent-trip resume without adding extra vertical chrome above the swipe layout.
 
 ### Deleted Components (replaced by swipe layout)
 
@@ -2135,7 +2153,7 @@ Used when destination image is available. Clean separation of image and text.
 * **No title/subtitle:** Pills below serve as the sole trip summary
 * **Pills:** `TripSummaryPills variant="default"` using CSS custom property theming
 * **No specialist pills:** Trip DNA bar below already shows specialist info
-* **Mobile:** Hero hidden entirely — `TripStatusBar` provides trip context
+* **Mobile:** Hero hidden entirely — `MobileModeHeader` and `TripSummaryPills` carry the compact trip context
 
 **Rationale:** Moving text below the image eliminates readability issues across varying photo backgrounds while keeping the layout clean and scannable.
 
@@ -2155,14 +2173,9 @@ Used in Full Mode when tiles exist, and **always in S3 (itinerary ready)**. The 
 // StrategyStageRenderer.tsx - Section 1: Specialists
 {fullModeSections.length > 0 && (
   <>
-    {/* Specialist cards: always visible pre-itinerary, togglable post-itinerary */}
-    {!hasItineraryContent ? (
-      <S2StrategyView ... />
-    ) : (
-      <>
-        {showConstraints && <S2StrategyView ... />}
-      </>
-    )}
+    {/* Specialist cards stay in the density-driven plan surface pre-itinerary
+        and can remain visible post-itinerary behind the same renderer path */}
+    {!hasItineraryContent ? <StrategyHeroSurface ... /> : <>{showConstraints && <StrategyHeroSurface ... />}</>}
     {/* Trip DNA bar - constraint pills from niche specialists */}
     {engineConstraints.length > 0 && <TripDNABar ... />}
   </>
@@ -2193,7 +2206,7 @@ Used in Full Mode when tiles exist, and **always in S3 (itinerary ready)**. The 
 4. Key Principles (checkmark list)
 5. Recommendations (with thumbnails)
 
-**Rationale:** Self-contained state management avoids prop-drilling and ensures the expand behavior works regardless of where `StrategyHero` is rendered. The parent (`S2StrategyView`) no longer needs to manage modal state.
+**Rationale:** Self-contained state management avoids prop-drilling and ensures the expand behavior works regardless of where `StrategyHero` is rendered inside the density-driven renderer path.
 
 **Invariant:** Constraint details must remain accessible in Plan Mode. The DNA Bar acts as a summary with drill-down capability.
 
@@ -2236,7 +2249,7 @@ return <SearchingSkeleton />;
 | Component | File | Responsibility |
 | --- | --- | --- |
 | `StrategyHero` | `components/plan/stages/StrategyHero.tsx` | Renders both Hero and Compact variants; **self-contained** expansion via internal `BottomSheet` |
-| `S2StrategyView` | `components/plan/stages/S2StrategyView.tsx` | Computes variant from density, maps sections to StrategyHero |
+| `PlanFullDensityView` | `components/plan/PlanFullDensityView.tsx` | Hosts the current full-density strategy surface and maps strategy sections into `StrategyHero`-based layouts |
 | `BookingSection` | `components/plan/BookingSection.tsx` | Tiles-first rendering logic |
 | `BottomSheet` | `components/ui/bottom-sheet.tsx` | Reusable slide-up sheet with drag-to-dismiss |
 

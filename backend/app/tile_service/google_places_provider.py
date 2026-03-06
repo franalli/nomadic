@@ -71,13 +71,17 @@ async def close_places_http_client() -> None:
 
 # ── Shared sync httpx client (connection reuse for sync methods) ──────────
 _sync_client: httpx.Client | None = None
+_sync_client_lock = Lock()
 
 
 def _get_sync_client() -> httpx.Client:
     """Return a shared sync httpx client, creating lazily if needed."""
     global _sync_client
-    if _sync_client is None or _sync_client.is_closed:
-        _sync_client = httpx.Client(timeout=5.0)
+    if _sync_client is not None and not _sync_client.is_closed:
+        return _sync_client
+    with _sync_client_lock:
+        if _sync_client is None or _sync_client.is_closed:
+            _sync_client = httpx.Client(timeout=5.0)
     return _sync_client
 
 
@@ -283,9 +287,17 @@ _BASE_NIGHTLY_RATE_USD = 120.0
 _DEFAULT_DEST_MULTIPLIER = 1.0  # default for unknown destinations
 
 
-def _dest_hash(dest: str) -> str:
-    """Generate a 6-char hash from destination for tile ID namespacing."""
+def dest_hash(dest: str) -> str:
+    """Generate a 6-char hash from destination for tile ID namespacing.
+
+    SECURITY: md5 is intentional -- used for deterministic cache key generation,
+    not for authentication or integrity. Collision resistance is not required.
+    """
     return hashlib.md5(dest.lower().strip().encode()).hexdigest()[:6]  # noqa: S324
+
+
+# Backward-compatible alias for internal usage
+_dest_hash = dest_hash
 
 
 def _rating_multiplier(rating: Optional[float]) -> float:
@@ -489,11 +501,49 @@ _geocode_cache: TTLCache = TTLCache(maxsize=1000, ttl=86400)
 _geocode_thread_lock = Lock()
 
 
+def _parse_geocode_response(data: dict) -> tuple[float, float] | None:
+    """Extract (lat, lng) from a Geocoding API response JSON.
+
+    Shared parsing logic used by both async and sync geocode paths.
+    Returns None if no results are present.
+    """
+    results = data.get("results", [])
+    if not results:
+        return None
+    loc = results[0].get("geometry", {}).get("location", {})
+    lat = loc.get("lat")
+    lng = loc.get("lng")
+    if lat is not None and lng is not None:
+        return (lat, lng)
+    return None
+
+
+def _extract_country_code(data: dict) -> str | None:
+    """Extract ISO country code from a Geocoding API response JSON."""
+    results = data.get("results", [])
+    if not results:
+        return None
+    for component in results[0].get("address_components", []):
+        if "country" in component.get("types", []):
+            return component.get("short_name")
+    return None
+
+
+# Module-level country code cache (populated by geocode calls)
+_country_code_cache: dict[str, str] = {}
+
+
+def get_country_code(destination: str) -> str | None:
+    """Return the cached ISO country code for a destination, or None."""
+    key = destination.lower().strip()
+    return _country_code_cache.get(key)
+
+
 async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
     """Return (lat, lng) for a destination string using the Geocoding API, or None on failure.
 
     Cache key is normalized (lowercased, stripped) to avoid duplicate lookups for the
-    same destination under different casing. Only successful results are cached — transient
+    same destination under different casing. Only successful results are cached -- transient
     failures (network errors, quota) are NOT cached so the next request can retry.
 
     Lock-protected read then release before network I/O to prevent TOCTOU races
@@ -527,7 +577,6 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
             timeout=3.0,
         )
         data = resp.json() if resp.status_code == 200 else {}
-        results = data.get("results", [])
         if resp.status_code == 429 or resp.status_code >= 500:
             _record_places_circuit_failure(path, status_code=resp.status_code)
             if resp.status_code == 429:
@@ -541,11 +590,14 @@ async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
                 )
             return None
         _record_places_circuit_success(path)
-        if results:
-            loc = results[0]["geometry"]["location"]
-            coords: tuple[float, float] = (loc["lat"], loc["lng"])
+        coords = _parse_geocode_response(data)
+        if coords is not None:
             with _geocode_thread_lock:
                 _geocode_cache[key] = coords
+                # Cache country code from same response
+                cc = _extract_country_code(data)
+                if cc:
+                    _country_code_cache[key] = cc
             record_google_places_usage(path, "success", mode="geocode")
             logger.debug("[GOOGLE_PLACES] Geocoded '%s' → %s", dest, coords)
             return coords
@@ -592,7 +644,6 @@ def _geocode_destination(dest: str) -> tuple[float, float] | None:
         client = _get_sync_client()
         resp = client.get(_GEOCODE_URL, params={"address": dest, "key": api_key}, timeout=3.0)
         data = resp.json() if resp.status_code == 200 else {}
-        results = data.get("results", [])
         if resp.status_code == 429 or resp.status_code >= 500:
             _record_places_circuit_failure(path, status_code=resp.status_code)
             if resp.status_code == 429:
@@ -606,11 +657,14 @@ def _geocode_destination(dest: str) -> tuple[float, float] | None:
                 )
             return None
         _record_places_circuit_success(path)
-        if results:
-            loc = results[0]["geometry"]["location"]
-            coords: tuple[float, float] = (loc["lat"], loc["lng"])
+        coords = _parse_geocode_response(data)
+        if coords is not None:
             with _geocode_thread_lock:
                 _geocode_cache[key] = coords
+                # Cache country code from same response
+                cc = _extract_country_code(data)
+                if cc:
+                    _country_code_cache[key] = cc
             record_google_places_usage(path, "success", mode="geocode")
             return coords
         with _geocode_thread_lock:
@@ -813,7 +867,7 @@ def _call_places_api(
     try:
         reserve_places_spend_or_raise(source=f"google_places:{path}")
         client = _get_sync_client()
-        response = client.post(_PLACES_SEARCH_URL, json=payload, headers=headers)
+        response = client.post(_PLACES_SEARCH_URL, json=payload, headers=headers, timeout=5.0)
         body = response.json() if response.status_code == 200 else {}
         places = _parse_places_response(response.status_code, response.text, body)
         elapsed = int((time.time() - t0) * 1000)

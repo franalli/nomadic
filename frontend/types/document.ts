@@ -137,7 +137,9 @@ export type TransportSettings = {
 
 export type DocumentTripInputs = {
   destination?: string | null;
+  destination_iata?: string | null;
   origin?: string | null;
+  origin_iata?: string | null;
   start_date?: string | null;
   end_date?: string | null;
   adults?: number | null;
@@ -156,6 +158,7 @@ export type DocumentTripInputs = {
   trip_duration?: number | null;
   date_window_start?: string | null;
   date_window_end?: string | null;
+  country_code?: string | null;
 };
 
 export type DocumentTripInputsPatch = Partial<DocumentTripInputs>;

@@ -313,13 +313,6 @@ LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
                 "severity": "info",
             },
         ],
-        "must_dos": [
-            "Burj Khalifa visit",
-            "Dubai Mall exploration",
-            "Desert safari",
-            "Old Souk visit",
-            "Dhow cruise",
-        ],
     },
     "paris": {
         "constraints": [
@@ -338,13 +331,6 @@ LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
                 "desc": "Eiffel Tower requires booking 2-3 weeks ahead for summit access",
                 "severity": "warning",
             },
-        ],
-        "must_dos": [
-            "Eiffel Tower",
-            "Louvre Museum",
-            "Seine River walk",
-            "Montmartre exploration",
-            "Local bistro dinner",
         ],
     },
     "rome": {
@@ -365,13 +351,6 @@ LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
                 "severity": "info",
             },
         ],
-        "must_dos": [
-            "Colosseum",
-            "Vatican Museums",
-            "Trevi Fountain",
-            "Trastevere neighborhood",
-            "Campo de' Fiori market",
-        ],
     },
     "london": {
         "constraints": [
@@ -390,13 +369,6 @@ LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
                 "desc": "Rain likely year-round - pack layers and waterproof jacket",
                 "severity": "info",
             },
-        ],
-        "must_dos": [
-            "British Museum",
-            "Borough Market",
-            "Tower Bridge walk",
-            "Notting Hill",
-            "West End show",
         ],
     },
     "amsterdam": {
@@ -417,13 +389,6 @@ LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
                 "severity": "info",
             },
         ],
-        "must_dos": [
-            "Canal boat tour",
-            "Rijksmuseum",
-            "Jordaan neighborhood walk",
-            "Van Gogh Museum",
-            "Vondelpark",
-        ],
     },
     "tokyo": {
         "constraints": [
@@ -443,13 +408,6 @@ LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
                 "severity": "warning",
             },
         ],
-        "must_dos": [
-            "Tsukiji outer market",
-            "Shibuya crossing",
-            "Senso-ji Temple",
-            "teamLab",
-            "Izakaya dinner",
-        ],
     },
     "new york": {
         "constraints": [
@@ -468,13 +426,6 @@ LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
                 "desc": "Tipping expected: 18-20% at restaurants",
                 "severity": "info",
             },
-        ],
-        "must_dos": [
-            "Central Park",
-            "High Line walk",
-            "Brooklyn Bridge",
-            "Museum of Natural History",
-            "Broadway show",
         ],
     },
     "bali": {
@@ -514,13 +465,6 @@ LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
                 "desc": "International Driving Permit required for scooter - police checkpoints",
                 "severity": "warning",
             },
-        ],
-        "must_dos": [
-            "Temple visit (Tanah Lot or Uluwatu)",
-            "Rice terrace walk (Tegalalang)",
-            "Local market exploration",
-            "Traditional Balinese massage",
-            "Sunset at Seminyak beach",
         ],
     },
 }
@@ -570,10 +514,7 @@ def _get_constraints_as_list(destination: str) -> list[dict]:
 def _get_static_must_dos(destination: str) -> list[str]:
     """Return top must-do activities from static destination data.
 
-    Falls back to empty list for unknown destinations (Phase B LLM will fill these).
+    DEPRECATED: must_dos have been removed from LOCAL_EXPERT_CONSTRAINTS.
+    Always returns an empty list. Kept for backward compatibility with callers.
     """
-    dest_lower = destination.lower().strip()
-    for key in LOCAL_EXPERT_CONSTRAINTS:
-        if key in dest_lower or dest_lower in key:
-            return LOCAL_EXPERT_CONSTRAINTS[key].get("must_dos", [])[:5]
     return []

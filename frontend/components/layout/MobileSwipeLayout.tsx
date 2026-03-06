@@ -93,12 +93,12 @@ function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = fal
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Tab bar */}
-      <div className="mx-4 my-2 flex items-center rounded-full border-2 border-zinc-200 bg-zinc-100/80 p-1 dark:border-white/15 dark:bg-white/[0.06]">
+      <div className="mx-3 my-1.5 flex items-center rounded-full border border-zinc-200 bg-zinc-100/80 p-0.5 dark:border-white/[0.08] dark:bg-white/[0.06]">
         <button
           type="button"
           onClick={() => goToPage(0)}
           className={cn(
-            'min-h-11 flex-1 rounded-full px-3 py-2 text-xs font-semibold transition-all duration-150',
+            'min-h-10 flex-1 rounded-full px-3 py-1.5 text-xs font-semibold leading-none transition-all duration-150',
             activePage === 0
               ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-950'
               : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
@@ -111,7 +111,7 @@ function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = fal
           onClick={() => planTabEnabled && goToPage(1)}
           disabled={!planTabEnabled}
           className={cn(
-            'relative min-h-11 flex-1 rounded-full px-3 py-2 text-xs font-semibold transition-all duration-150',
+            'relative min-h-10 flex-1 rounded-full px-3 py-1.5 text-xs font-semibold leading-none transition-all duration-150',
             !planTabEnabled
               ? 'text-zinc-500 dark:text-zinc-400 opacity-40 cursor-not-allowed pointer-events-none'
               : activePage === 1
@@ -121,7 +121,7 @@ function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = fal
         >
           Plan
           {planTabEnabled && hasNewPlanContent && activePage !== 1 && (
-            <span className="absolute top-1.5 right-3 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950 animate-pulse" />
+            <span className="absolute right-3 top-1.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950 animate-pulse" />
           )}
         </button>
       </div>

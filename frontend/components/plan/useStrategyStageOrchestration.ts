@@ -25,7 +25,7 @@ import { normalizePlanViewState, type PlanViewModel, type PlanViewState, type Vi
 import type { Tile } from '@/types/tile';
 
 import { type ProgressStage } from './ItineraryProgressIndicator';
-import { type GenerationState, getNextAction, isGenerating, isMultiSpecialistTrip } from './planStateHelpers';
+import { type GenerationState, getNextAction, isEditing, isGenerating, isItineraryReady, isMultiSpecialistTrip, isStrategyReady } from './planStateHelpers';
 import { getTopicLabel } from './stages/StrategyHeroUtils';
 import { useBookingDrawerState } from './useBookingDrawerState';
 
@@ -116,7 +116,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
 
   useEffect(() => { guardedEnforcePolicy(state, viewModel); }, [state, viewModel]);
 
-  const hasItineraryContent: boolean = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING' ||
+  const hasItineraryContent: boolean = isItineraryReady(state) || isEditing(state) ||
     Boolean(viewModel.day_cards && viewModel.day_cards.length > 0);
 
   const [showConstraints, setShowConstraints] = useState(false);
@@ -164,8 +164,8 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   const nextAction = getNextAction(state, generation, canGeneratePlan);
   const generating = isGenerating(generation);
   const isMultiSpecialist = isMultiSpecialistTrip(viewModel.executed_strategy_topics);
-  const shouldShowAutoProgress = isMultiSpecialist && state === 'S2_STRATEGY_READY' && hasDates && generating;
-  const hideNextStepBar = isMultiSpecialist && state === 'S2_STRATEGY_READY' && hasDates;
+  const shouldShowAutoProgress = isMultiSpecialist && isStrategyReady(state) && hasDates && generating;
+  const hideNextStepBar = isMultiSpecialist && isStrategyReady(state) && hasDates;
   const progressStage: ProgressStage = useMemo(() => {
     if (!generating) return 'success';
     const stage = generation?.stage;

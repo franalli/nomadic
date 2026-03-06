@@ -5,7 +5,7 @@ Tests:
 - LOCAL_EXPERT_CONSTRAINTS data integrity (all entries well-formed)
 - _get_constraint_context() prompt formatting
 - _get_constraints_as_list() raw constraint retrieval
-- _get_static_must_dos() must-do retrieval
+- _get_static_must_dos() deprecated (always returns [])
 - Pydantic schema validation for LocalExpertOutput and sub-models
 """
 
@@ -62,11 +62,10 @@ class TestConstraintDataIntegrity:
             assert isinstance(entry["constraints"], list)
             assert len(entry["constraints"]) > 0, f"{key} has empty constraints"
 
-    def test_all_entries_have_must_dos(self) -> None:
+    def test_no_entries_have_must_dos(self) -> None:
+        """must_dos have been removed from all entries."""
         for key, entry in LOCAL_EXPERT_CONSTRAINTS.items():
-            assert "must_dos" in entry, f"{key} missing 'must_dos'"
-            assert isinstance(entry["must_dos"], list)
-            assert len(entry["must_dos"]) > 0, f"{key} has empty must_dos"
+            assert "must_dos" not in entry, f"{key} should not have 'must_dos'"
 
     def test_constraint_fields_valid(self) -> None:
         for key, entry in LOCAL_EXPERT_CONSTRAINTS.items():
@@ -83,11 +82,12 @@ class TestConstraintDataIntegrity:
                 )
                 assert len(c["desc"]) > 10, f"{key} constraint[{i}] desc too short: {c['desc']!r}"
 
-    def test_must_dos_are_non_empty_strings(self) -> None:
+    def test_entries_only_have_constraints_key(self) -> None:
+        """After must_dos removal, entries should only contain 'constraints'."""
         for key, entry in LOCAL_EXPERT_CONSTRAINTS.items():
-            for i, must_do in enumerate(entry["must_dos"]):
-                assert isinstance(must_do, str), f"{key} must_dos[{i}] not a string"
-                assert len(must_do) > 2, f"{key} must_dos[{i}] too short: {must_do!r}"
+            assert set(entry.keys()) == {"constraints"}, (
+                f"{key} has unexpected keys: {set(entry.keys())}"
+            )
 
     def test_known_destinations_present(self) -> None:
         expected = {"paris", "tokyo", "bali", "london", "rome", "dubai"}
@@ -163,18 +163,19 @@ class TestGetConstraintsAsList:
 
 
 class TestGetStaticMustDos:
-    def test_returns_up_to_5(self) -> None:
+    """_get_static_must_dos is deprecated and always returns []."""
+
+    def test_always_returns_empty(self) -> None:
         result = _get_static_must_dos("Bali")
-        assert isinstance(result, list)
-        assert 0 < len(result) <= 5
+        assert result == []
 
     def test_unknown_returns_empty(self) -> None:
         result = _get_static_must_dos("Mordor")
         assert result == []
 
-    def test_known_destination_content(self) -> None:
+    def test_known_destination_returns_empty(self) -> None:
         result = _get_static_must_dos("Tokyo")
-        assert any("Senso-ji" in item or "Tsukiji" in item for item in result)
+        assert result == []
 
 
 # =============================================================================

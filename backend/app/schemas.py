@@ -1,8 +1,28 @@
+import json as _json
+import logging
+import sys as _sys
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+
+def _nested_size(obj: Any) -> int:
+    """Approximate byte size of a JSON-serialisable object."""
+    return _sys.getsizeof(_json.dumps(obj, default=str))
+
+
 TileType = Literal["flight", "hotel", "activity"]
+
+
+def _max_depth(obj: Any, current: int = 0) -> int:
+    """Compute max nesting depth of a JSON-like object."""
+    if current > 15:
+        return current
+    if isinstance(obj, dict):
+        return max((_max_depth(v, current + 1) for v in obj.values()), default=current)
+    if isinstance(obj, list):
+        return max((_max_depth(v, current + 1) for v in obj), default=current)
+    return current
 
 
 # =============================================================================
@@ -70,6 +90,73 @@ class DeleteLastMessageResponse(BaseModel):
     deleted_count: int
     restored_trip_inputs: Optional[dict] = None
     messages: List[ChatMessageResponse]  # Remaining messages after deletion
+
+
+class ShareTripRequest(BaseModel):
+    """Create a share link for the current session document."""
+
+
+class ShareTripResponse(BaseModel):
+    slug: str
+    url: str
+    title: str
+    expires_at: Optional[str] = None
+
+
+class SharedTripPublicResponse(BaseModel):
+    slug: str
+    title: str
+    destination: Optional[str] = None
+    hero_image_url: Optional[str] = None
+    day_count: Optional[int] = None
+    snapshot: Dict[str, Any]
+    created_at: str
+
+
+class ForkSharedTripResponse(BaseModel):
+    ok: bool
+    destination: Optional[str] = None
+    day_count: Optional[int] = None
+    plan_view_state: Optional[str] = None
+
+
+class AuthUser(BaseModel):
+    id: int
+    email: str
+    name: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+class GoogleAuthUrlResponse(BaseModel):
+    url: str
+
+
+class GoogleAuthCallbackRequest(BaseModel):
+    code: str
+    state: str
+
+
+class AuthMeResponse(BaseModel):
+    user: Optional[AuthUser] = None
+
+
+class UserTripSummary(BaseModel):
+    trip_id: int
+    destination: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    day_count: int = 0
+    updated_at: str
+    plan_view_state: Optional[str] = None
+
+
+class UserTripsResponse(BaseModel):
+    trips: List[UserTripSummary] = Field(default_factory=list)
+
+
+class ResumeTripResponse(BaseModel):
+    ok: bool
+    trip_id: int
 
 
 TileProvider = Literal["expedia", "booking", "google_places", "curated", "mock", "unknown"]
@@ -227,11 +314,28 @@ class ExpandItineraryRequest(BaseModel):
         default=None, description="Trip inputs from frontend document"
     )
     strategy_sections: Optional[List[Dict[str, Any]]] = Field(
-        default=None, description="Strategy sections from frontend document"
+        default=None, max_length=30, description="Strategy sections from frontend document"
     )
     tiles: Optional[Dict[str, Any]] = Field(
         default=None, description="Tiles from frontend document"
     )
+
+    @field_validator("tiles")
+    @classmethod
+    def _limit_tiles(cls, v: Any) -> Any:
+        if v and len(v) > 200:
+            raise ValueError("tiles dict exceeds 200 keys")
+        return v
+
+    @field_validator("strategy_sections")
+    @classmethod
+    def _limit_sections(cls, v: Any) -> Any:
+        if v:
+            for s in v:
+                if _nested_size(s) > 50_000:
+                    raise ValueError("strategy_section too large")
+        return v
+
     # User heart preferences - used to weight tile scoring
     preferences: Optional[PreferenceOverride] = Field(
         default=None,
@@ -248,6 +352,18 @@ class ExpandItineraryRequest(BaseModel):
         default=None,
         description="Re-search activity tiles for these categories before building itinerary",
     )
+
+    @field_validator("trip_inputs", mode="before")
+    @classmethod
+    def _limit_trip_inputs(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        raw = _json.dumps(v, default=str)
+        if len(raw) > 32768:
+            raise ValueError("trip_inputs exceeds 32KB limit")
+        if _max_depth(v) > 10:
+            raise ValueError("trip_inputs nesting depth exceeds limit of 10")
+        return v
 
 
 class ExpandItineraryStreamEvent(BaseModel):
@@ -302,18 +418,34 @@ class GraphPlanRequest(BaseModel):
     trip_inputs: dict = Field(default_factory=dict)
     session_state: dict | None = None
 
-    @field_validator("trip_inputs")
+    @field_validator("trip_inputs", mode="before")
     @classmethod
     def _cap_trip_inputs_keys(cls, v: dict) -> dict:
         if len(v) > 100:
             raise ValueError("trip_inputs dict exceeds 100 keys")
+        raw = _json.dumps(v, default=str)
+        if len(raw) > 32768:
+            raise ValueError("trip_inputs exceeds 32KB limit")
+        if _max_depth(v) > 10:
+            raise ValueError("trip_inputs nesting depth exceeds limit of 10")
         return v
 
-    @field_validator("session_state")
+    @field_validator("session_state", mode="before")
     @classmethod
-    def _cap_session_state_keys(cls, v: dict | None) -> dict | None:
-        if v and len(v) > 200:
+    def _limit_session_state(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        if isinstance(v, dict) and len(v) > 200:
             raise ValueError("session_state dict exceeds 200 keys")
+        raw = _json.dumps(v, default=str)
+        if len(raw) > 65536:
+            raise ValueError("session_state exceeds 64KB limit")
+        if len(raw) > 51200:
+            logging.getLogger(__name__).warning(
+                f"session_state approaching 64KB limit: {len(raw)} bytes"
+            )
+        if _max_depth(v) > 10:
+            raise ValueError("session_state nesting depth exceeds limit of 10")
         return v
 
     document_id: str | None = Field(
@@ -695,6 +827,9 @@ class DayBlock(BaseModel):
     scheduled_time: Optional[str] = None  # "08:00 AM" for flights/check-in
     logistics_details: Optional[str] = None
     hotel_name: Optional[str] = None
+
+    # Price estimate (numeric, from tile data; price_level is the categorical form)
+    price_estimate: Optional[float] = None
 
     # Booking integration
     booked_tile: Optional[Dict[str, Any]] = None  # Embedded confirmed booking

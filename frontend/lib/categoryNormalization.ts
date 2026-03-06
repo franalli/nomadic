@@ -13,20 +13,6 @@ export const BUFFER_EXCLUSIONS: Record<string, string[]> = {
   diving: ['hiking', 'skiing', 'climbing'],
 };
 
-/**
- * Adjacent-day cross-domain exclusions -- mirrors specialist_registry.py CrossDomainBlock.
- * Key = specialist present on adjacent day -> value = categories blocked on target day.
- * Covers both directions:
- *   - diving on N-1 blocks hiking/skiing/climbing on N (forward: altitude-after-dive)
- *   - hiking/skiing/climbing on N+1 blocks diving on N (reverse: dive-before-altitude)
- */
-export const ADJACENT_EXCLUSIONS: Record<string, string[]> = {
-  diving: ['hiking', 'skiing', 'climbing'],
-  hiking: ['diving'],
-  skiing: ['diving'],
-  climbing: ['diving'],
-};
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Category Normalization (SSoT for CATEGORY_ALIAS, canonicalCategoryKey, etc.)
 //

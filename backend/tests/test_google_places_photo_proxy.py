@@ -19,6 +19,8 @@ async def _override_get_async_db():
 
 
 class _FakePlacesPhotoClient:
+    is_closed = False
+
     def __init__(self, *args, **kwargs):
         _ = (args, kwargs)
 
@@ -28,6 +30,9 @@ class _FakePlacesPhotoClient:
     async def __aexit__(self, exc_type, exc, tb):
         _ = (exc_type, exc, tb)
         return False
+
+    async def aclose(self):
+        self.is_closed = True
 
     async def get(self, *args, **kwargs):
         _ = (args, kwargs)

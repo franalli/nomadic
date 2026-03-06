@@ -8,7 +8,8 @@ description: >
   conversationalist, change classifier, specialist dispatch, trip brief,
   FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
-  patterns_registry, activity_browser, spend_guard, telemetry, or any file under backend/app/.
+  patterns_registry, activity_browser, spend_guard, telemetry, auth, oauth,
+  sharing, shared trip, user accounts, or any file under backend/app/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -57,7 +58,7 @@ backend/app/planner/
   *.py               → specialist_registry.py, hashing.py,
                        llm_factory.py, patterns_registry.py, test_mode.py
 backend/app/
-  main.py, schemas.py, config.py, db.py, db_models.py,
+  main.py, schemas.py, config.py, db.py, db_models.py, auth.py,
   debug_utils.py, graph_plan_utils.py, placeholders.py,
   lifespan.py, analytics_routes.py
   data/              → demo_curation.py (curated hero-destination content)
@@ -66,7 +67,7 @@ backend/app/
   services/          → cache_core.py, specialist_cache.py, router_cache.py, tile_cache.py,
                        experience_generator.py, regen_strategy.py, itinerary_builder.py,
                        unsplash.py, unsplash_queries.py, task_tracker.py, activity_browser.py,
-                       spend_guard.py
+                       spend_guard.py, sharing.py
   tile_service/      → curated_provider.py, mock_provider.py,
                        google_places_provider.py, provider_base.py, service.py, models.py
   tools/             → constraint_engine.py, tile_service.py
@@ -108,7 +109,7 @@ All keywords, constraints, cross-domain blocks, aliases, feasibility flags come 
 
 ### State Serialization
 
-`state_serde.py`: `state_to_session_state()` and `trip_plan_to_trip_inputs()`. `typed_meta.py`: `get_trip_settings(state)` → typed `TripSettings`. `TurnMeta` / `PersistentMeta` for per-turn vs cross-turn metadata.
+`state_serde.py`: `serialize_agent_state()` now trims persisted runtime state under a 64KB ceiling via `_trim_for_session_state()` without mutating live planner structures. If you change session-state shape, keep the trim path, restore path, and envelope/document hydration consistent. `typed_meta.py`: `get_trip_settings(state)` → typed `TripSettings`. `TurnMeta` / `PersistentMeta` for per-turn vs cross-turn metadata.
 
 ### LLM Factory
 

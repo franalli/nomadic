@@ -140,6 +140,7 @@ function DestinationSheetInner({
             onChange={(e) => setSearchValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search for a city or country..."
+            aria-label="Search for destination"
             className={cn(
               'w-full h-14 pl-12 pr-4 rounded-xl',
               // Light: Hollow grey field

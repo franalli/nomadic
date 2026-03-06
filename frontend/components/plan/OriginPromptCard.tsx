@@ -56,6 +56,7 @@ export function OriginPromptCard({ onSetOrigin }: OriginPromptCardProps) {
         <input
           type="text"
           placeholder="San Francisco"
+          aria-label="Departure city"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {

@@ -1,16 +1,18 @@
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 
 import { apiFetch, clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
+import { clearDestinationIntelCache } from '@/lib/destination-intel-cache';
 import { saveTripSummary } from '@/lib/summary';
 import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import { clearPersistedUIState } from '@/state/uiStore';
+import { useUserStore } from '@/state/userStore';
 import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse, PlanStatus } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { TripSummaryPayload } from '@/types/summary';
@@ -435,8 +437,14 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       debugLog('[branchManager.startNewSession] CSRF re-establishment failed, deferring:', csrfError);
     }
 
+    // Refresh trip list so deleted trip disappears from Recent Trips
+    if (didResetServerState) {
+      void useUserStore.getState().fetchTrips({ force: true });
+    }
+
     // Step 3: Always clear local state (never fails)
     clearSessionLocalStorage();
+    clearDestinationIntelCache();
     clearSessionTimestamp();
     clearPersistedUIState();
     handleClearContext();
@@ -943,7 +951,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   // Return
   // ─────────────────────────────────────────────────────────────────────────
 
-  return {
+  return useMemo(() => ({
     // State (from branchState)
     branches: branchState.branches,
     selectedBranchId: branchState.selectedBranchId,
@@ -980,5 +988,12 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     handlePlanResult,
     handleBookTrip,
     handleGeneratePlanStart,
-  };
+  }), [
+    branchState.branches, branchState.selectedBranchId, branchState.tilesBranchId,
+    branchState.branchSelections, branchState.selectedBranch, branchState.tiles,
+    branchState.hasBranchesReady, branchState.setBranches, branchState.setSelectedBranchId,
+    branchState.handleBranchSelect, isGenerating, isHydratingSnapshot, planStatus,
+    isRegenerating, activeBranchSelection, readyToGenerate, handleTileSelection,
+    handleStartNewSession, handlePlanResult, handleBookTrip, handleGeneratePlanStart,
+  ]);
 }

@@ -2088,9 +2088,7 @@ async def _merge_specialist_into_state(
             "coordinates": block.coordinates,
             "intensity": intensity,
             "duration_hours": block.duration_hours,
-            "price_estimate": block.price_estimate
-            if block.price_estimate is not None
-            else _default_price,
+            "price_estimate": block.price_estimate if block.price_estimate else _default_price,
             "category": topic,
             "source_agent": topic,
         }

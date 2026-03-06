@@ -247,6 +247,11 @@ class RouterOutput(BaseModel):
     date_auto_adjustments: List[Dict[str, str]] = []
 ```
 
+Recent extraction contract changes:
+- `origin_iata` and `destination_iata` remain on `RouterOutput`, but the extraction prompt now instructs the LLM to leave them `null`; downstream `iata_resolver.py` owns airport resolution.
+- Destination normalization guidance is now generic and structural only. Country-only requests are no longer mapped to hard-coded demo cities in the prompt.
+- On full destination replacement, heuristic change classification clears `affects` and treats prior topics as preserved context only, so stale `specialist_hints` do not survive into the next planner run.
+
 ### VerticalSpecialist (`vertical_specialist.py`)
 
 Domain specialist with LLM-first architecture. 8 specialists (diving, hiking, skiing, cycling, surfing, climbing, sailing, wildlife_safari).
@@ -283,6 +288,7 @@ City logistics concierge with Phase A/B architecture.
 
 Recent behavior:
 - Cache reuse path seeds legacy list reconstruction from prior-turn `constraints_applied`/`content_added` so repeated turns keep stable high-signal Travel Intel density while avoiding duplicate entries.
+- `_append_constraint()` applies fuzzy token-overlap dedupe (>70% overlap) before appending, reducing near-duplicate principles/notes from mixed cache + LLM reuse paths.
 - `local_expert.txt` now explicitly requests travel advisory reasoning (`advisory_level` + `advisory_reason`) so advisory context can be surfaced in plan summaries.
 
 ### LogisticsNode (`logistics_node.py`)
@@ -783,6 +789,7 @@ Two parallel serialization paths:
 - `serialize_agent_state(state)` -- Agent state dict -> serializable dict (uses `messages_to_dict` for full-fidelity message serde)
 - `restore_agent_state(session_state)` -- Serialized dict -> agent state dict (uses `messages_from_dict` + legacy migration for `trip_inputs`/`metadata.tiles`/`metadata.strategy_sections` and flat `trip_settings` normalization)
 - `_trim_messages(messages, max_messages=20)` -- Keeps first 2 + last N messages for context window management (default 20 = 10 turns)
+- `_trim_for_session_state(state)` -- Non-mutating post-processing pass that keeps persisted `session_state` under 64KB by slimming `persistent_meta`, `day_cards`, `tiles`, `strategy_sections`, and `specialist_plans`. The full document still remains authoritative in the DB/envelope; this trim only protects session-backed runtime state.
 
 ---
 
@@ -791,6 +798,8 @@ Two parallel serialization paths:
 > **SSoT:** All specialist configuration (keywords, constraints, enhancements, flags, backfill affinity) lives in `backend/app/planner/specialist_registry.py`. Top destinations and activities are LLM-generated per prompt file -- no hardcoded destination lists. Tier 2 is open-ended (no fixed validation set). `display_name(category)` provides canonical display names. `backfill_affinity_tags` drives complementary category selection for free-day backfill. Adding a specialist requires: 1) add entry to `SPECIALIST_REGISTRY`, 2) update `_EXPECTED_SPECIALISTS`, 3) create `prompts/specialists/{topic}.txt`.
 
 **Fill-Day Validation:** `validate_fill_day_placement(target_day, specialist_type, day_cards, total_days, has_departure_flight)` checks placement against registry constraints: no-fly buffer proximity to departure, cross-domain forward adjacency, and cross-domain reverse adjacency. Returns `FillDayRejection(code, reason, suggestion)` or `None` if valid.
+
+Local-expert destination scaffolding no longer carries static destination `must_dos` lists. `expert_constraints.py` keeps only reusable constraint knowledge; `section_builder.py` derives `principles` from the first constraint rules and `must_dos` from the first generated `content_added` titles so Local Expert cards stay destination-agnostic.
 
 ### Diving
 
@@ -927,6 +936,7 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 | Browse | `activity_browser.py` | 256 | 6h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
 | Places Enrichment | `google_places_provider.py` | 2048 | 24h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v3::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups. Title normalized via `_normalize_title_for_cache` (strips specialist qualifiers for higher hit rate). |
 | Geocode | `google_places_provider.py` | 1000 (TTLCache) | 24h | 8760h (1yr) | `geocode::v1::{normalized_dest}` | Geocoding API lat/lng results. L2 uses `cache_type='geocode'`. |
+| IATA | `iata_resolver.py` | 512 | 24h | `settings.iata_cache_ttl_hours` (default 720h) | `iata::{origin_or_destination}::{normalized_place}` | Airport-code resolution after router extraction. |
 | Photo Proxy | `main.py` | 500 | 24h | N/A | `photo::{photo_name}::{width}x{height}` | Server-side photo bytes cache. Skips upstream fetch + spend guard on hit. |
 | Router | `router_cache.py` | 500 | 1h | N/A | `router::v3::SHA256({normalized_text}:{today_date}:{context_fingerprint})[:32]` | NL extraction |
 
@@ -967,6 +977,8 @@ Cache infrastructure in `backend/app/validation_cache.py`, validation logic in `
 | `_validation_cache` | Positive validation results | 7 days     |
 | `_negative_cache`   | Invalid locations           | 15 minutes |
 | `_split_cache`      | Multi-destination splits    | 7 days     |
+
+Prewarm behavior is now env-driven only: `VALIDATION_PREWARM_DESTINATIONS` supplies the optional comma-separated destination seed list. No fallback hard-coded destination roster is baked into `validation_cache.py`.
 
 ### Image Cache (Unsplash)
 
@@ -1020,7 +1032,7 @@ L1-only cache for NL extraction results. Only caches self-contained queries to p
 **Service:** `backend/app/services/router_cache.py`
 
 Key format: `router::v3::{sha256({normalized_text}:{today_date}:{context_fingerprint})[:32]}`.
-Stats keys are exposed as `l1_hits`, `l1_misses`, and `skipped_context_dependent` (context-dependent inputs are explicitly skipped).
+Stats keys are exposed as `l1_hits`, `l1_misses`, `l1_size`, `l1_maxsize`, `l1_ttl_seconds`, and `skipped_context_dependent` (context-dependent inputs are explicitly skipped).
 `make_cache_key()` now serializes `None` inputs as `__NONE__` to avoid accidental key collisions.
 
 **CRITICAL: Context-Dependency Detection** -- Queries that reference conversation context are NOT cached:
@@ -1146,6 +1158,8 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
+`generate_sse()` now passes an `asyncio.Event` cancel token into `coordinator.execute_turn()`. When the client disconnects, the streaming layer sets that event and the coordinator stops at the next step boundary instead of continuing background planner work.
+
 ### Streaming Events
 
 | Event Type | Data | Description |
@@ -1170,6 +1184,7 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 Coordinator complete payload includes `plan_view_state`, `tiles`, `strategy_sections`, `itinerary_day_cards`, `constraints_validated`, `constraint_violations`, `ack_status`, `ack_updates`, and `applied_updates`. `ack_status` now supports `partial` when only partial-failure updates were generated.
 
 `coordinator._build_envelope()` also emits envelope-level `trip_settings` (fresh booking/hotel/activity settings), plus `itinerary_overview`, `itinerary_assumptions`, and `hotel_filter_cascaded` when present in turn/persistent metadata.
+When destination geocoding has already cached an ISO country code, `_build_envelope()` injects `trip_plan.country_code` into the returned document payload so frontend country-aware UI can render without a second lookup.
 It now serializes `itinerary_day_cards=[]` when builder runs but returns no cards.
 
 ### DB Session Ownership
@@ -1212,7 +1227,11 @@ The `search_tiles` tool (via logistics_node) and `tile_service/service.py` both 
 | 2        | `USE_GOOGLE_PLACES_PROVIDER=true`    | GooglePlacesHotelProvider | GooglePlacesActivityProvider  |
 | 3        | Fallback (offline/dev)               | MockHotelProvider         | MockActivityProvider          |
 
-`google_places_provider.py` runs on a Pro-tier field mask (Enterprise fields like rating/userRatingCount/editorialSummary are excluded). Activity/hotel tile ratings and review counts are normalized deterministically by rank for UI consistency. Hotel price estimates are derived from baseline nightly rate plus preference multipliers (`min_stars`, `style`) when raw provider price/rating fields are unavailable.
+`google_places_provider.py` runs on a Pro-tier field mask (Enterprise fields like rating, `userRatingCount`, `priceLevel`, and `editorialSummary` are excluded). Browse/activity tiles therefore default to `rating=None`, `review_count=None`, empty descriptions, and a moderate placeholder `price_estimate=35.0` / `price_level=2` until later enrichment fills in better detail.
+
+`google_places_provider.py` also keeps a module-level country-code cache populated from successful geocode responses. Coordinator envelope assembly reads that cache to backfill `trip_inputs.country_code` for downstream UI.
+
+`spend_guard.py` is explicitly single-worker only. If `SPEND_GUARD_ENABLED=true` and `WEB_CONCURRENCY>1`, startup aborts because in-memory spend counters would otherwise multiply the effective cap by worker count.
 
 ### Settings-Aware Tile Filtering
 

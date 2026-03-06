@@ -19,8 +19,13 @@ import Image from 'next/image';
 import React, { useEffect, useId, useMemo, useState } from 'react';
 
 import { BottomSheet } from '@/components/ui/bottom-sheet';
-import { getSpecialistEnrichment } from '@/lib/api';
 import { DS } from '@/lib/design-system';
+import {
+  getCachedDestinationIntel,
+  getSpecialistEnrichment,
+  normalizeDestinationKey,
+  setCachedDestinationIntel,
+} from '@/lib/destination-intel-cache';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { StrategySection } from '@/types/plan-envelope';
@@ -96,6 +101,7 @@ export function StrategyHero({
   // Track document existence — becomes false on session reset, cancelling the poller
   const documentExists = useDocumentStore((s) => s.document !== null);
   const messageSendNonce = useDocumentStore((s) => s.messageSendNonce);
+  const storeDestination = useDocumentStore((s) => s.document?.trip_inputs?.destination ?? null);
 
   const displaySection = enrichedSection ?? section;
   const hasTravelIntelligence = Boolean(
@@ -118,6 +124,17 @@ export function StrategyHero({
     if (hasTravelIntelligence) {
       setEnrichmentUiState('ready');
       return;
+    }
+
+    // Check shared destination-intel cache before starting a network poll
+    const destKey = normalizeDestinationKey(storeDestination);
+    if (destKey) {
+      const cached = getCachedDestinationIntel(destKey);
+      if (cached) {
+        setEnrichedSection(cached);
+        setEnrichmentUiState('ready');
+        return;
+      }
     }
 
     let cancelled = false;
@@ -158,8 +175,11 @@ export function StrategyHero({
         }
 
         if (result.status === 'ready' && result.data) {
-          setEnrichedSection(result.data as unknown as StrategySection);
+          const enriched = result.data as unknown as StrategySection;
+          setEnrichedSection(enriched);
           setEnrichmentUiState('ready');
+          // Write back to shared cache for other consumers (PlanFullDensityView)
+          if (destKey) setCachedDestinationIntel(destKey, enriched);
           return;
         }
 
@@ -194,7 +214,7 @@ export function StrategyHero({
       cancelled = true;
     };
 
-  }, [hasTravelIntelligence, isSheetOpen, section.id, section.specialist_type, enrichmentRetryNonce, documentExists, messageSendNonce]);
+  }, [hasTravelIntelligence, isSheetOpen, section.id, section.specialist_type, enrichmentRetryNonce, documentExists, messageSendNonce, storeDestination]);
 
   const handleRetryEnrichment = () => {
     setEnrichmentUiState('idle');

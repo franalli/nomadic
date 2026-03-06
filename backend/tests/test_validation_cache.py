@@ -75,23 +75,22 @@ class TestPrewarmCache:
 
     @pytest.mark.asyncio
     async def test_prewarm_populates_cache(self):
-        """prewarm_cache() should add entries and return count > 0."""
+        """prewarm_cache() returns 0 when no VALIDATION_PREWARM_DESTINATIONS env var is set."""
         count = await prewarm_cache()
-        # 20 destinations x 2 field types = 40 entries
-        assert count == 40
+        # No hardcoded defaults — empty list when env var is unset
+        assert count == 0
 
         stats = await cache_stats()
-        assert stats["positive"] == 40
-        # Fallback cache is also populated by prewarm
-        assert stats["fallback"] == 40
+        assert stats["positive"] == 0
+        assert stats["fallback"] == 0
 
     @pytest.mark.asyncio
     async def test_prewarm_idempotent(self):
         """Calling prewarm twice should not double-count existing entries."""
         count1 = await prewarm_cache()
         count2 = await prewarm_cache()
-        assert count1 == 40
-        assert count2 == 0  # Already populated, no new entries
+        assert count1 == 0
+        assert count2 == 0  # Already populated (empty), no new entries
 
 
 # =============================================================================

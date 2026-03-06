@@ -115,7 +115,7 @@ export function ConsentManager() {
 
         <div className="space-y-3">
           <label className="flex items-start gap-3 rounded-lg border border-border bg-muted p-3">
-            <input type="checkbox" checked readOnly className="mt-1 cursor-not-allowed" />
+            <input type="checkbox" checked readOnly className="mt-1 cursor-not-allowed" aria-label="Essential cookies (required)" />
             <div>
               <div className="text-sm font-semibold text-foreground">Essential (required)</div>
               <p className="text-sm text-muted-foreground">
@@ -131,6 +131,7 @@ export function ConsentManager() {
               checked={draft.functional}
               onChange={() => togglePreference('functional')}
               className="mt-1"
+              aria-label="Functional cookies"
             />
             <div>
               <div className="text-sm font-semibold text-foreground">Functional (optional)</div>
@@ -146,6 +147,7 @@ export function ConsentManager() {
               checked={draft.analytics}
               onChange={() => togglePreference('analytics')}
               className="mt-1"
+              aria-label="Analytics cookies"
             />
             <div>
               <div className="text-sm font-semibold text-foreground">Analytics (optional)</div>
@@ -162,6 +164,7 @@ export function ConsentManager() {
               checked={draft.marketing}
               onChange={() => togglePreference('marketing')}
               className="mt-1"
+              aria-label="Marketing cookies"
             />
             <div>
               <div className="text-sm font-semibold text-foreground">Marketing (optional)</div>

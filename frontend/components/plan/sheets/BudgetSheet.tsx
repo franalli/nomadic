@@ -217,6 +217,7 @@ function BudgetSheetInner({
               value={amount}
               onChange={handleInputChange}
               placeholder="0"
+              aria-label="Budget amount"
               className={cn(
                 'bg-transparent',
                 // HUGE and BOLD - this determines the luxury level

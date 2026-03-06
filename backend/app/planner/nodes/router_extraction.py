@@ -139,15 +139,13 @@ class RouterOutput(BaseModel):
     origin_iata: Optional[str] = Field(
         None,
         description=(
-            "IATA airport code for origin city (e.g. SFO, LHR, CDG). "
-            "Use primary international airport."
+            "IATA airport code for origin city. Leave null — resolved downstream by iata_resolver."
         ),
     )
     destination_iata: Optional[str] = Field(
         None,
         description=(
-            "IATA airport code for destination (e.g. DPS, CDG, DXB). "
-            "Use primary international airport."
+            "IATA airport code for destination. Leave null — resolved downstream by iata_resolver."
         ),
     )
     start_date: Optional[str] = Field(
@@ -364,9 +362,8 @@ Respond with valid JSON matching this schema:
 
 
 # Extended prompt for full field extraction (used when we need dates/destination too)
-# Hard Rule 11 exception: Few-shot city normalization examples and IATA hints in the
-# prompt below improve LLM extraction accuracy. These are prompt instructions, not
-# logic branches — the LLM handles any destination without them.
+# Extraction prompt — uses generic structural instructions only (Hard Rule 11).
+# IATA resolution is handled downstream by iata_resolver.py.
 ROUTER_EXTRACTION_PROMPT = (
     """You are an intent classifier AND field extractor \
 for a travel planning assistant.
@@ -384,22 +381,19 @@ Classify the user message into ONE of:
 ## Task 2: Field Extraction (for PLANNING intent)
 
 Extract ANY trip-related fields mentioned:
-- **destination**: Extract PRIMARY CITY NAME ONLY, without country/region qualifiers
-  - Remove country suffixes: "Paris, France" → "Paris", "Bali, Indonesia" → "Bali"
-  - Remove state/province: "New York, NY" → "New York"
-  - Use English names: "Roma" → "Rome", "München" → "Munich"
-  - Expand abbreviations: "NYC" → "New York", "LA" → "Los Angeles"
-  - For country-only queries, use primary city: "Indonesia" → "Bali", "UAE" → "Dubai"
-  - Edge cases to keep as-is: "Mexico City", "Kansas City", "Washington DC"
-  - MULTI-DESTINATION: If user mentions MULTIPLE separate destinations
-    (e.g., "Rome and Switzerland", "Paris, Tokyo, Bali"),
+- **destination**: Extract the PRIMARY CITY NAME ONLY, without country/region qualifiers
+  - Remove country suffixes (keep only the city name)
+  - Remove state/province qualifiers
+  - Normalize to English (translate non-English city names to their common English form)
+  - Expand common city abbreviations to full names
+  - For country-only queries, let downstream resolution handle city selection
+  - Keep compound city names that are official place names (e.g. cities with "City" in the name)
+  - MULTI-DESTINATION: If user mentions MULTIPLE separate destinations,
     extract ONLY the first as destination. Set multi_destination_detected: true.
-    Do NOT flag compound place names like "Trinidad and Tobago" or "St. Kitts and Nevis".
+    Do NOT flag compound sovereign state names (e.g. "Trinidad and Tobago").
 - **origin**: Same normalization rules as destination
-- **origin_iata**: IATA airport code for origin (e.g. "San Francisco" → "SFO", "London" → "LHR")
-  - Use the PRIMARY/closest international airport
-  - Mountain resorts use nearest major airport: "Chamonix" → "GVA", "Whistler" → "YVR"
-- **destination_iata**: Same rules (e.g. "Bali" → "DPS", "Paris" → "CDG")
+- **origin_iata**: Leave null — IATA resolution is handled downstream
+- **destination_iata**: Leave null — IATA resolution is handled downstream
 - **start_date**: Convert to YYYY-MM-DD format. Examples:
   - "March 1" → "{current_year}-03-01"
   - "next Friday" → calculate from today
@@ -1223,6 +1217,10 @@ def _heuristic_change_classification(
         != str(summary.get("destination")).strip().lower()
     ):
         change_type = ChangeType.DESTINATION_CHANGE
+        # Force-reset: stale specialist_hints from prior destination are invalid.
+        # Coordinator re-derives specialists from active categories on next plan.
+        affects = []
+        preserves = list(existing_topics)
     elif router_output.start_date or router_output.end_date:
         change_type = ChangeType.DATE_CHANGE if has_existing_plan else ChangeType.INITIAL_PLAN
     elif (

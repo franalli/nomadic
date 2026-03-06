@@ -1,16 +1,31 @@
 'use client';
 
-import { Check, Compass, Download, Loader2, MoreVertical, RotateCcw } from 'lucide-react';
+import {
+  Check,
+  Compass,
+  Download,
+  Loader2,
+  LogIn,
+  LogOut,
+  MoreVertical,
+  Plus,
+  RotateCcw,
+  Share2,
+} from 'lucide-react';
 import Link from 'next/link';
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useToast } from '@/components/ui/toast';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { apiFetch } from '@/lib/api';
 import { DS } from '@/lib/design-system';
 import { extractTripPdfData } from '@/lib/pdfData';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
+import { useUserStore } from '@/state/userStore';
 import type { PlanState } from '@/types/plan-envelope';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,6 +97,8 @@ function MobileModeHeaderInner({
   const [menuOpen, setMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [pdfState, setPdfState] = useState<'idle' | 'loading'>('idle');
+  const [shareState, setShareState] = useState<'idle' | 'loading' | 'copied'>('idle');
+  const { toast } = useToast();
   useEffect(() => setMounted(true), []);
 
   const { tripInputs, dayCards, tiles } = useDocumentStore(
@@ -92,6 +109,32 @@ function MobileModeHeaderInner({
     }))
   );
   const hasDayCards = (dayCards?.length ?? 0) > 0;
+  const tripContextId = useDocumentStore((s) => s.document?.trip_context_id);
+  const { user, trips, userLoading, login, logout, resumeTrip, resumingTripId } = useUserStore(
+    useShallow((s) => ({
+      user: s.user,
+      trips: s.trips,
+      userLoading: s.loading,
+      login: s.login,
+      logout: s.logout,
+      resumeTrip: s.resumeTrip,
+      resumingTripId: s.resumingTripId,
+    }))
+  );
+
+  const otherTrips = useMemo(
+    () => (tripContextId ? trips.filter((t) => t.trip_id !== tripContextId) : trips),
+    [trips, tripContextId]
+  );
+
+  const handleNewTrip = useCallback(async () => {
+    try {
+      await apiFetch('/api/session/new', { method: 'POST' });
+      window.location.reload();
+    } catch {
+      toast('Could not start new trip', { type: 'error' });
+    }
+  }, [toast]);
 
   const handlePdfExport = useCallback(async () => {
     if (pdfState === 'loading' || !dayCards?.length) return;
@@ -108,11 +151,58 @@ function MobileModeHeaderInner({
       saveAs(blob, `${dest}.pdf`);
     } catch (err) {
       console.error('PDF export failed:', err);
+      toast(err instanceof Error ? err.message : 'PDF export failed', { type: 'error' });
     } finally {
       setPdfState('idle');
       setMenuOpen(false);
     }
   }, [pdfState, tripInputs, dayCards, tiles]);
+
+  const handleShareTrip = useCallback(async () => {
+    if (shareState === 'loading' || !hasDayCards) return;
+    setShareState('loading');
+    try {
+      const res = await apiFetch('/api/share', { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to create share link');
+      const data = await res.json();
+      const shareUrl = typeof data?.url === 'string' ? data.url : null;
+      const title = typeof data?.title === 'string' ? data.title : 'Shared Trip';
+      if (!shareUrl) throw new Error('Share URL missing');
+
+      if (navigator.share) {
+        try {
+          await navigator.share({ title, url: shareUrl });
+          setShareState('idle');
+          setMenuOpen(false);
+          return;
+        } catch {
+          // User canceled native share; continue with clipboard fallback.
+        }
+      }
+
+      await navigator.clipboard.writeText(shareUrl);
+      setShareState('copied');
+      window.setTimeout(() => setShareState('idle'), 2000);
+      setMenuOpen(false);
+    } catch (err) {
+      console.error('Share failed:', err);
+      toast(err instanceof Error ? err.message : 'Failed to share trip', { type: 'error' });
+      setShareState('idle');
+    }
+  }, [hasDayCards, shareState]);
+
+  const handleLogin = useCallback(async () => {
+    try {
+      await login();
+    } catch (err) {
+      console.error('Login failed:', err);
+    }
+  }, [login]);
+
+  const handleLogout = useCallback(async () => {
+    await logout();
+    setMenuOpen(false);
+  }, [logout]);
 
   // Don't render on desktop - split view shows both panels
   if (isDesktop) {
@@ -157,8 +247,96 @@ function MobileModeHeaderInner({
                 <MoreVertical className="h-5 w-5" />
               </button>
             </PopoverTrigger>
-            <PopoverContent align="end" className="w-[200px] p-2">
+            <PopoverContent
+              align="end"
+              className={cn('w-[200px] p-2', DS.materials.glass)}
+            >
               <nav className="flex flex-col">
+                {user ? (
+                  <>
+                    <div className="px-2 py-2 border-b border-border mb-1">
+                      <div className="flex items-center gap-2">
+                        <UserAvatar
+                          src={user.avatar_url}
+                          alt={user.name || user.email}
+                          imageClassName="h-6 w-6 rounded-full object-cover"
+                          iconClassName="h-5 w-5"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate">{user.name || user.email}</p>
+                          <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                        </div>
+                      </div>
+                    </div>
+                    {otherTrips.length > 0 && (
+                      <div className="px-2 pb-2">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Recent Trips</p>
+                        <div className="space-y-1">
+                          {otherTrips.slice(0, 3).map((trip) => {
+                            const isPast = trip.end_date && new Date(trip.end_date) < new Date();
+                            return (
+                              <button
+                                key={`${trip.trip_id}-${trip.updated_at}`}
+                                type="button"
+                                disabled={resumingTripId !== null}
+                                onClick={async () => {
+                                  const ok = await resumeTrip(trip.trip_id);
+                                  if (!ok) toast('Could not open saved trip', { type: 'error' });
+                                }}
+                                className={cn(
+                                  'w-full rounded-lg px-2 py-1 text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-60',
+                                  isPast && 'opacity-60'
+                                )}
+                              >
+                                <p className="text-xs text-foreground truncate">
+                                  {trip.destination || 'Untitled Trip'}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  {resumingTripId === trip.trip_id
+                                    ? 'Opening...'
+                                    : trip.day_count > 0
+                                    ? `${trip.day_count} days${isPast ? ' (Past)' : ''}`
+                                    : 'No itinerary yet'}
+                                </p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleNewTrip}
+                      className="flex items-center gap-2 px-2 py-2.5 rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] transition-colors text-left text-foreground"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span className={DS.textSize.micro}>New Trip</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="flex items-center gap-2 px-2 py-2.5 rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] transition-colors text-left text-foreground"
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                      <span className={DS.textSize.micro}>Sign out</span>
+                    </button>
+                    <div className="h-px bg-border my-1" />
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleLogin}
+                      disabled={userLoading}
+                      className="flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-50"
+                    >
+                      {userLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogIn className="h-3.5 w-3.5" />}
+                      <span className={DS.textSize.micro}>Sign in</span>
+                    </button>
+                    <div className="h-px bg-border my-1" />
+                  </>
+                )}
+
                 {/* Reset - moved inside menu to prevent accidental taps */}
                 {onReset && (
                   <>
@@ -185,6 +363,25 @@ function MobileModeHeaderInner({
 
                 {hasDayCards && (
                   <>
+                    <button
+                      type="button"
+                      disabled={shareState === 'loading'}
+                      onClick={handleShareTrip}
+                      className={cn('flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-50', DS.textSize.micro)}
+                    >
+                      {shareState === 'loading' ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : shareState === 'copied' ? (
+                        <Check className="h-3.5 w-3.5 text-emerald-500" />
+                      ) : (
+                        <Share2 className="h-3.5 w-3.5" />
+                      )}
+                      <span>
+                        {shareState === 'copied' ? 'Copied Link' : 'Share Trip'}
+                      </span>
+                    </button>
+                    <div className="h-px bg-border my-1" />
+
                     <button
                       type="button"
                       disabled={pdfState === 'loading'}

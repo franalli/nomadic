@@ -361,8 +361,10 @@ export async function fetchWithRetry(
 }
 
 /**
- * Reset the current session by calling DELETE /api/session.
- * The backend will clear the session cookies.
+ * Reset the current session — destroys trip data but preserves auth.
+ *
+ * The backend deletes the old session's data, creates a fresh session
+ * linked to the same user_id, and sets new session + CSRF cookies.
  */
 export async function resetSession(): Promise<Response> {
   const url = `${API_BASE}/api/session`;
@@ -975,6 +977,25 @@ export async function getSpecialistEnrichment(sectionId: string): Promise<{
   }
   if (!res.ok) return null;
   return res.json();
+}
+
+/**
+ * Fetch a shared trip snapshot by slug.
+ * Used by SharedTripView for client-side fallback loading.
+ * Credentials are omitted — shared trips are public.
+ */
+export async function fetchSharedTrip(
+  slug: string,
+  signal?: AbortSignal,
+): Promise<import('@/components/shared/SharedTripView').SharedTripData> {
+  const res = await fetch(`${API_BASE}/api/shared/${slug}`, {
+    credentials: 'omit',
+    signal,
+  });
+  if (res.status === 404) throw new Error('Trip not found');
+  if (res.status === 410) throw new Error('This shared trip has expired');
+  if (!res.ok) throw new Error('Failed to load trip');
+  return (await res.json()) as import('@/components/shared/SharedTripView').SharedTripData;
 }
 
 /**

@@ -126,24 +126,6 @@ export function getHotelChipSummary(settings?: HotelSettings): string | null {
   return `${tokens.slice(0, 2).join(' · ')} +${tokens.length - 2}`;
 }
 
-export function getActivitySelectedCount(
-  settings?: ActivitySettings,
-  fallbackCategories: string[] = []
-): number {
-  const categoriesRaw = settings?.categories && settings.categories.length > 0
-    ? settings.categories
-    : fallbackCategories;
-  if (categoriesRaw.length === 0) {
-    return 0;
-  }
-
-  const normalized = categoriesRaw
-    .map((category) => canonicalCategoryKey(category) ?? category.trim().toLowerCase())
-    .filter((category): category is string => !!category);
-
-  return Array.from(new Set(normalized)).length;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Category Inference from Day Cards
 // ─────────────────────────────────────────────────────────────────────────────

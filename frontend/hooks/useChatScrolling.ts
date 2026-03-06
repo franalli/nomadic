@@ -8,7 +8,7 @@
  * setup header on scroll.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 export interface ChatScrollingResult {
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
@@ -125,7 +125,7 @@ export function useChatScrolling({
 
   const isUserScrolledUp = useCallback(() => isUserScrolledUpRef.current, []);
 
-  return {
+  return useMemo(() => ({
     scrollContainerRef,
     bottomSentinelRef,
     scrollToBottom,
@@ -133,5 +133,5 @@ export function useChatScrolling({
     scrollPanelIntoView,
     isUserScrolledUp,
     scrollTimeoutRef,
-  };
+  }), [scrollToBottom, handleScroll, scrollPanelIntoView, isUserScrolledUp]);
 }

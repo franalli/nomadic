@@ -111,7 +111,7 @@ class TestComputeTilesPerCategory:
         assert result == 12
 
     def test_single_category_short_trip_minimum_2(self):
-        """4-day yoga trip, no specialist sections: result clamped to minimum 2."""
+        """4-day yoga trip, no specialist sections: coverage floor lifts count."""
         state = _make_state(
             start_date="2026-03-01",
             end_date="2026-03-04",
@@ -119,15 +119,17 @@ class TestComputeTilesPerCategory:
         )
 
         # apd=2 (default): base=max(2,(2*2)//1)=4, cap=4, tiles=4
+        # Coverage floor (1.5x): needed=ceil(2*2*1.5)=6, planned=4<6
+        # min_needed=6, tiles=max(4,min(6,12))=6
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 4
+        assert result == 6
 
     # -----------------------------------------------------------------
     # APD > 1: Tile scaling must honour activities_per_day
     # -----------------------------------------------------------------
 
     def test_apd2_7day_pure_tier2_generates_enough_tiles(self):
-        """7-day trip, APD=2, 1 category: need 10 tiles (5 free × 2)."""
+        """7-day trip, APD=2, 1 category: 1.5x overprovision lifts to 12."""
         state = _make_state(
             start_date="2026-03-01",
             end_date="2026-03-07",
@@ -142,9 +144,11 @@ class TestComputeTilesPerCategory:
         # base = max(2, (5 * 2) // 1) = 10
         # cap = 4 (no strategy context, free_days <= 7)
         # APD>1: needed_per_cat = ceil(5 * 2 / 1) = 10 → cap = min(max(4, 10), 12) = 10
-        # result = min(10, 10) = 10
+        # tiles = min(10, 10) = 10
+        # Coverage floor (1.5x): needed=ceil(5*2*1.5)=15, planned=10<15
+        # min_needed=15, tiles=max(10,min(15,12))=12
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 10, f"Expected 10 tiles for 7-day APD=2 trip, got {result}"
+        assert result == 12, f"Expected 12 tiles for 7-day APD=2 trip, got {result}"
 
     def test_apd2_mixed_tier1_tier2_scales_cap(self):
         """10-day mixed trip, APD=2: cap must scale beyond base 4."""
@@ -190,10 +194,10 @@ class TestComputeTilesPerCategory:
         # specialist_days=2, free=6, total_placeable=8
         # base = max(2, (8*1)//1) = 8, cap = 4 (specialist_days > 0)
         # APD=1: no needed lift. tiles = min(8, 4) = 4
-        # Coverage floor: 4*1=4 < 6*1=6, min_needed = ceil(6/1) = 6
-        # tiles_per_cat = max(4, min(6, 12)) = 6
+        # Coverage floor (1.5x): needed=ceil(6*1*1.5)=9, planned=4<9
+        # min_needed=ceil(9/1)=9, tiles=max(4,min(9,12))=9
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 6, f"APD=1 mixed trip with coverage floor should be 6, got {result}"
+        assert result == 9, f"APD=1 mixed trip with coverage floor should be 9, got {result}"
 
     def test_apd2_multiple_tier2_categories(self):
         """APD=2, 3 Tier2 categories: cap must scale per-category for density."""

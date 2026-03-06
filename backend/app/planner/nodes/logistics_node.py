@@ -2221,7 +2221,7 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     free_days = max(0, trip_days - specialist_days - min(2, trip_days - 1))
     tile_cap_ceiling = min(40, max(12, free_days * 2))
     # Specialist days can hold ~1 co-scheduled experience tile each
-    total_placeable = free_days + specialist_days
+    total_placeable = min(free_days + specialist_days, trip_days)
     # Scale by user's per-day density preference (default 1)
     target_apd = (
         state.metadata.get("trip_settings", {})
@@ -2252,7 +2252,7 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     # under-provision Tier 2 tiles for the remaining free days.
     # Lift tiles_per_cat to fill free days, capped at 12.
     total_tiles_planned = tiles_per_cat * max(len(tier2_cats), 1)
-    total_tiles_needed = free_days * target_apd
+    total_tiles_needed = int(math.ceil(free_days * target_apd * 1.5))
     if total_tiles_planned < total_tiles_needed:
         min_needed = math.ceil(total_tiles_needed / max(len(tier2_cats), 1))
         tiles_per_cat = max(tiles_per_cat, min(min_needed, tile_cap_ceiling))

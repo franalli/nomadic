@@ -142,8 +142,9 @@ class TestBrowseActivitiesHappyPath:
         assert tile["title"] == "Cool Museum"
         assert tile["google_place_id"] == "gp_abc123"
         assert tile["deeplink"] == "https://maps.google.com/?q=place_id:gp_abc123"
-        assert tile["rating"] == 4.5
-        assert tile["review_count"] == 200
+        # rating/review_count are Pro-tier fields not in our field mask — always None
+        assert tile["rating"] is None
+        assert tile["review_count"] is None
         assert tile["location_label"] == "Jl. Raya, Ubud, Bali"
         assert tile["category"] == "cultural"
 
@@ -257,7 +258,7 @@ class TestBrowseActivitiesHappyPath:
 
     @pytest.mark.asyncio
     async def test_price_level_mapped_correctly(self):
-        """PRICE_LEVEL_MODERATE maps to price_level=2 and price_estimate=35."""
+        """Default moderate price_level=2 and price_estimate=35 (GP priceLevel not in field mask)."""
         with (
             patch(_PLACES_API, new_callable=AsyncMock) as mock_places,
             patch(_GEOCODE_API, new_callable=AsyncMock) as mock_geocode,

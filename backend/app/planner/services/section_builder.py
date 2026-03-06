@@ -118,8 +118,14 @@ def build_specialist_section(
         "hero_image": hero_image,  # Hero banner for niche specialist layout
         "impact_areas": [topic.title(), "Safety", "Activities"],
         # Required fields for StrategySection
-        "principles": [],
-        "must_dos": [],
+        "principles": [
+            c["rule"] for c in (constraints or [])[:4] if isinstance(c, dict) and c.get("rule")
+        ],
+        "must_dos": [
+            item.get("title") or item.get("name", "")
+            for item in (content_added or [])[:3]
+            if isinstance(item, dict) and (item.get("title") or item.get("name"))
+        ],
         "optional_upgrades": enhancements[:3] if enhancements else [],
         "logistics_notes": [],
         "bullets": [],

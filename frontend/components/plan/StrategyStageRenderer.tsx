@@ -27,7 +27,7 @@ import { NextStepBar } from './NextStepBar';
 import { PlanMirrorLoader } from './PlanDensityViews';
 import { PlanFullDensityView } from './PlanFullDensityView';
 import { PlanHeader } from './PlanHeader';
-import { type GenerationState } from './planStateHelpers';
+import { type GenerationState, isEditing, isItineraryReady, isStrategyReady } from './planStateHelpers';
 import { type TimelineVariant } from './TimelineThread';
 import {
   computeDataDensity,
@@ -39,8 +39,8 @@ export type { DataDensity };
 export { computeDataDensity };
 
 export function computeTimelineVariant(state: PlanViewState): TimelineVariant {
-  if (state === 'S3_ITINERARY_READY' || state === 'P3_FINALIZED') return 'real';
-  if (state === 'S3_EDITING' || state === 'S2_STRATEGY_READY' || state === 'P3_EDITING' || state === 'P1_ENRICHED') return 'draft';
+  if (isItineraryReady(state)) return 'real';
+  if (isEditing(state) || isStrategyReady(state)) return 'draft';
   return 'ghost';
 }
 
@@ -72,6 +72,12 @@ interface StrategyStageRendererProps {
   onOpenStaysSettings?: () => void;
   onOpenFlightsSettings?: () => void;
 }
+
+// Extracted animation constants to avoid re-creating objects on every render
+const FADE_INITIAL = { opacity: 0 } as const;
+const FADE_VISIBLE = { opacity: 1 } as const;
+const FADE_EXIT = { opacity: 0 } as const;
+const FADE_TRANSITION = { duration: 0.3, ease: [0.4, 0, 0.2, 1] } as const;
 
 const EMPTY_SAVED_TILE_IDS = new Set<string>();
 
@@ -191,8 +197,8 @@ export function StrategyStageRenderer({
       <AnimatePresence mode="wait">
         {o.shouldShowAutoProgress && o.effectiveMode === 'planning' && (
           <motion.div key="progress-indicator"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+            initial={FADE_INITIAL} animate={FADE_VISIBLE} exit={FADE_EXIT}
+            transition={FADE_TRANSITION}
             className="sticky bottom-6 z-40 w-full justify-center pointer-events-none mt-8 hidden lg:flex"
           >
             <div className="pointer-events-auto w-fit mx-auto max-w-md">
@@ -205,8 +211,8 @@ export function StrategyStageRenderer({
         )}
         {o.nextAction && o.effectiveMode === 'planning' && !o.hideNextStepBar && (
           <motion.div key="next-step-bar"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+            initial={FADE_INITIAL} animate={FADE_VISIBLE} exit={FADE_EXIT}
+            transition={FADE_TRANSITION}
             className="hidden lg:block"
           >
             <NextStepBar state={state} nextAction={o.nextAction} />

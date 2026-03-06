@@ -262,6 +262,10 @@ async def _get_cached(
 
     except Exception as e:
         logger.warning(f"[EXPERIENCE_CACHE] L2 lookup failed: {e}")
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         return None
 
 
