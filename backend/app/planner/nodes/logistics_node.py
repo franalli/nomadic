@@ -48,23 +48,36 @@ logger = logging.getLogger(__name__)
 
 
 def _sanitize_tile_geo(tile: dict[str, Any]) -> dict[str, Any]:
-    """Normalize malformed geo payloads so Tile validation sees None, not {}."""
+    """Normalize malformed geo payloads so Tile validation sees None, not {}.
+
+    Also normalizes legacy ``lon`` → ``lng`` to match the Geo schema validator,
+    preventing valid coordinates from being discarded.
+    """
     cleaned = False
     geo = tile.get("geo")
-    if isinstance(geo, dict) and (geo.get("lat") is None or geo.get("lng") is None):
-        tile["geo"] = None
-        cleaned = True
+    if isinstance(geo, dict):
+        # Normalize legacy "lon" → "lng" before checking completeness
+        if "lon" in geo and "lng" not in geo:
+            geo["lng"] = geo.pop("lon")
+        if geo.get("lat") is None or geo.get("lng") is None:
+            tile["geo"] = None
+            cleaned = True
 
     meta = tile.get("meta")
     if isinstance(meta, dict):
         meta_geo = meta.get("geo")
-        if isinstance(meta_geo, dict) and (
-            meta_geo.get("lat") is None or meta_geo.get("lng") is None
-        ):
-            meta = dict(meta)
-            meta["geo"] = None
-            tile["meta"] = meta
-            cleaned = True
+        if isinstance(meta_geo, dict):
+            if "lon" in meta_geo and "lng" not in meta_geo:
+                meta_geo = dict(meta_geo)
+                meta_geo["lng"] = meta_geo.pop("lon")
+                meta = dict(meta)
+                meta["geo"] = meta_geo
+                tile["meta"] = meta
+            if meta_geo.get("lat") is None or meta_geo.get("lng") is None:
+                meta = dict(meta)
+                meta["geo"] = None
+                tile["meta"] = meta
+                cleaned = True
 
     if cleaned:
         logger.debug("[SANITIZE_GEO] Cleaned invalid geo on tile %s", tile.get("id"))
