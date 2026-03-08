@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 VIATOR_BASE = settings.viator_api_url
 VIATOR_ACCEPT = "application/json;version=2.0"
 VIATOR_TIMEOUT = 8.0  # seconds
+MAX_SINGLE_ACTIVITY_MINUTES = 480  # 8 hours — filter multi-day tours
 
 # -- Singleton httpx client ---------------------------------------------------
 _viator_client: httpx.AsyncClient | None = None
@@ -433,6 +434,14 @@ async def match_activity_to_viator(
             short_query = f"{' '.join(words[:4])} {destination}"
             products = await search_freetext(short_query, dest_id, currency, count=3)
 
+    # Drop multi-day tours (raw duration > 8h)
+    products = [
+        p
+        for p in products
+        if (p.get("duration", {}).get("fixedDurationInMinutes") or MAX_SINGLE_ACTIVITY_MINUTES)
+        <= MAX_SINGLE_ACTIVITY_MINUTES
+    ]
+
     if not products:
         _match_cache.set(cache_key, _NO_MATCH)
         return None
@@ -478,6 +487,14 @@ async def search_viator_for_destination(
         # Fallback to freetext if no dest_id
         query = f"tours and activities in {destination}"
         products = await search_freetext(query, None, currency, count)
+
+    # Drop multi-day tours (raw duration > 8h)
+    products = [
+        p
+        for p in products
+        if (p.get("duration", {}).get("fixedDurationInMinutes") or MAX_SINGLE_ACTIVITY_MINUTES)
+        <= MAX_SINGLE_ACTIVITY_MINUTES
+    ]
 
     if not products:
         return []

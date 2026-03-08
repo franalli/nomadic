@@ -1064,7 +1064,11 @@ class ItineraryBuilder:
                 if activity.tile_id and activity.tile_id == tile.get("id"):
                     if activity.image_url is None and tile.get("image_url"):
                         activity.image_url = tile["image_url"]
-                    # Viator override: affiliate deeplinks/images always win
+                    if activity.rating is None and tile.get("rating") is not None:
+                        activity.rating = tile["rating"]
+                    if activity.user_ratings_count is None and tile.get("review_count") is not None:
+                        activity.user_ratings_count = tile["review_count"]
+                    # Viator override: affiliate deeplinks/images/ratings always win
                     if tile.get("provider") == "viator":
                         vt_dl = tile.get("deeplink") or tile.get("deeplink_url")
                         if vt_dl:
@@ -1072,6 +1076,10 @@ class ItineraryBuilder:
                         vt_img = tile.get("image_url")
                         if vt_img:
                             activity.image_url = vt_img
+                        if tile.get("rating") is not None:
+                            activity.rating = tile["rating"]
+                        if tile.get("review_count") is not None:
+                            activity.user_ratings_count = tile["review_count"]
                     enriched_count += 1
                     continue
 
@@ -1233,12 +1241,8 @@ class ItineraryBuilder:
                 # Buffer days derived from diving's cross-domain constraint in registry
                 altitude_buffer = get_cross_domain_buffer_days("diving")
 
-                # Arrival + departure days are partial (scheduling convention)
-                # Short trips: arrival/departure are partially usable
-                if total_days <= 3:
-                    usable_days = max(1, total_days)
-                else:
-                    usable_days = total_days - 2
+                # Arrival + departure are partially usable (0.4 day each)
+                usable_days = max(0, total_days - 2) + 0.8
 
                 # Calculate required days for diving + buffer + altitude activities
                 required_for_combo = diving_days + altitude_buffer + altitude_days
@@ -1264,8 +1268,8 @@ class ItineraryBuilder:
                         )
                     else:
                         # Trim activities to fit — split evenly, diving gets remainder
-                        dive_slots = (available_after_buffer + 1) // 2
-                        altitude_slots = available_after_buffer - dive_slots
+                        dive_slots = int((available_after_buffer + 1) // 2)
+                        altitude_slots = int(available_after_buffer - dive_slots)
 
                         if diving_days > dive_slots:
                             logger.info(
@@ -1291,17 +1295,13 @@ class ItineraryBuilder:
                             f"with the 24h safety buffer."
                         )
 
-        # Account for arrival/departure days
-        # Short trips: arrival/departure are partially usable
-        if total_days <= 3:
-            usable_days = max(1, total_days)
-        else:
-            usable_days = total_days - 2  # First and last day are partial
+        # Arrival + departure are partially usable (0.4 day each)
+        usable_days = max(0, total_days - 2) + 0.8
 
         # FIX: No-fly buffer only affects DIVING placement, not total capacity
         # Day 7 can still have hiking even though diving is blocked
         diving_activities = activities_by_specialist.get("diving", [])
-        diving_slots = usable_days - buffer_days if nofly_constraint else usable_days
+        diving_slots = int(usable_days - buffer_days) if nofly_constraint else int(usable_days)
 
         # Auto-truncate diving activities to fit available slots (no conflict)
         if len(diving_activities) > diving_slots:
@@ -1312,7 +1312,7 @@ class ItineraryBuilder:
                 f"(no-fly buffer requires finishing by day {total_days - 1})"
             )
             # Track warning for user display
-            if diving_slots == 0:
+            if diving_slots <= 0:
                 self._warnings.append(
                     f"Diving isn't possible on a {total_days}-day trip "
                     f"due to the 24h no-fly buffer. Consider extending to 4+ days."
@@ -1326,7 +1326,7 @@ class ItineraryBuilder:
         # Auto-truncate if total activities exceed capacity
         # Recalculate total after diving truncation
         total_activity_days = sum(len(acts) for acts in activities_by_specialist.values())
-        max_capacity = usable_days * min(MAX_BLOCKS_PER_DAY, self._activities_per_day)
+        max_capacity = int(usable_days * min(MAX_BLOCKS_PER_DAY, self._activities_per_day))
         if total_activity_days > max_capacity:
             excess = total_activity_days - max_capacity
             logger.info(
@@ -1735,16 +1735,9 @@ class ItineraryBuilder:
         available_day_indices = []
 
         for i, day in enumerate(days):
-            # For longer trips (>3 days), skip arrival/departure for major activities
-            if len(days) > 3:
-                if i == 0:
-                    continue
-                if i == len(days) - 1:
-                    continue
-            else:
-                # Short trips: skip only if day is BOTH arrival AND departure (1-day trip)
-                if i == 0 and i == len(days) - 1:
-                    continue
+            # Skip only 1-day trips where arrival AND departure are the same day
+            if i == 0 and i == len(days) - 1:
+                continue
             # Skip days with blocking buffers
             has_blocking_buffer = any(b.is_buffer and b.buffer_type == "no_fly" for b in day.blocks)
             if not has_blocking_buffer:
@@ -2238,12 +2231,9 @@ class ItineraryBuilder:
         )
         tier2_label = " & ".join(c.title() for c in (tier2_categories or [])) or None
 
-        for i, day in enumerate(days):
-            # Skip arrival/departure ONLY on long trips (>3 days).
-            # Short trips: these days ARE the trip — they must be fillable.
-            is_bookend = i == 0 or i == len(days) - 1
-            if is_bookend and len(days) > 3:
-                continue
+        for _i, day in enumerate(days):
+            # Arrival/departure days are partially usable — don't skip them.
+            # _day_remaining_capacity returns reduced capacity (4h, 1 slot) for anchor days.
 
             # Check if day has any real activity blocks (not buffers, logistics, or placeholders)
             has_activity = any(
@@ -2401,7 +2391,7 @@ class ItineraryBuilder:
     def _day_remaining_capacity(self, day: DayCardOutput) -> tuple[float, int]:
         """
         Remaining (hours, block_slots) for a day.
-        Returns (0, 0) for arrival/departure anchor days.
+        Returns (4.0, 1) for arrival/departure anchor days.
         """
         if not day.blocks:
             return (DAY_CAPACITY_HOURS, min(MAX_BLOCKS_PER_DAY, self._activities_per_day))
@@ -2420,10 +2410,8 @@ class ItineraryBuilder:
             (b.activity_type in anchor_types) or ((b.buffer_type or "") in buffer_types)
             for b in day.blocks
         ):
-            # Short trips (≤3 days): allow partial-day activities on anchor days
-            if self._num_days <= 3:
-                return (4.0, 1)  # ~4 hours, 1 activity slot
-            return (0.0, 0)
+            # Arrival/departure days get reduced capacity (1 activity, ~4h)
+            return (4.0, 1)
 
         activity_hours = 0.0
         total_blocks = 0
@@ -2740,10 +2728,6 @@ class ItineraryBuilder:
         # ─────────────────────────────────────────────────────────
         free_day_indices = []
         for i, day in enumerate(days):
-            # Long trips: skip arrival/departure for free-day placement
-            is_bookend = i == 0 or i == len(days) - 1
-            if is_bookend and len(days) > 3:
-                continue
             if any(b.activity_type == "free_day" for b in day.blocks):
                 free_day_indices.append(i)
 
@@ -2755,13 +2739,18 @@ class ItineraryBuilder:
             day = days[day_idx]
             day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
 
+            # Respect reduced capacity on arrival/departure days
+            rem_hours, rem_slots = self._day_remaining_capacity(day)
+            day_target = min(target_per_day, rem_slots)
+            day_hour_budget = min(DAY_CAPACITY_HOURS, rem_hours)
+
             used_periods: set[str] = {b.period for b in day.blocks if b.period}
             placed_today = 0
             used_hours = 0.0
-            while unplaced and placed_today < target_per_day:
+            while unplaced and placed_today < day_target:
                 tile = unplaced[0]
                 t_hours = (tile.get("meta") or {}).get("duration_hours", DEFAULT_EXPERIENCE_HOURS)
-                if used_hours + t_hours > DAY_CAPACITY_HOURS:
+                if used_hours + t_hours > day_hour_budget:
                     break
                 t_cat = (tile.get("meta") or {}).get("category", "experience")
                 if (
@@ -3017,26 +3006,14 @@ class ItineraryBuilder:
         day_slots: dict[int, set[str]] = {}
 
         for idx, day in enumerate(days):
-            is_short_trip = len(days) <= 3
-
-            # Arrival day
+            # Arrival day: lock morning (flight/transfer), afternoon+evening free
             if idx == 0:
-                if is_short_trip:
-                    # Short trips: only lock morning (flight), afternoon+evening free
-                    day_slots[idx] = {"morning"}
-                else:
-                    # Long trips: morning+afternoon locked (travel), evening FREE
-                    day_slots[idx] = {"morning", "afternoon"}
+                day_slots[idx] = {"morning"}
                 continue
 
-            # Departure day
+            # Departure day: lock evening (flight/transfer), morning+afternoon free
             if idx == len(days) - 1:
-                if is_short_trip:
-                    # Short trips: only lock evening (flight), morning+afternoon free
-                    day_slots[idx] = {"evening"}
-                else:
-                    # Long trips: morning FREE, afternoon+evening locked (travel)
-                    day_slots[idx] = {"afternoon", "evening"}
+                day_slots[idx] = {"evening"}
                 continue
 
             # Regular days: check which periods are occupied by existing blocks
@@ -3964,7 +3941,7 @@ class ItineraryBuilder:
             base_structure = "Single base + day excursions"
 
         # Density
-        usable_days = max(1, total_days - 2)
+        usable_days = max(0, total_days - 2) + 0.8
         density = activity_count / usable_days if usable_days > 0 else 0
 
         if density <= 1:
@@ -3994,7 +3971,7 @@ class ItineraryBuilder:
         flexible_elements: List[str] = []
 
         total_days = len(days)
-        usable_days = max(1, total_days - 2)
+        usable_days = max(0, total_days - 2) + 0.8
 
         # Activities-per-day assumption
         activity_count = sum(

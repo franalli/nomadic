@@ -1746,8 +1746,8 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                         _bf_trip_days = max(1, (_bf_ed - _bf_sd).days + 1)
                 except (ValueError, TypeError):
                     pass
-                _bf_free_days = max(0, _bf_trip_days - 2)  # exclude arrival/departure
-                max_backfill = max(8, _bf_free_days * _bf_apd)
+                _bf_free_days = max(0, _bf_trip_days - 2) + 0.8  # partial arrival/departure
+                max_backfill = max(8, int(_bf_free_days * _bf_apd))
                 # Group by browse_category for diversity (avoid monoculture)
                 from collections import defaultdict as _defaultdict
 
@@ -2172,7 +2172,7 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     _trip_days = max(0, (_ed - _sd).days + 1)
                 except (ValueError, TypeError):
                     pass
-            _free_days = max(0, _trip_days - 2)  # exclude arrival/departure
+            _free_days = max(0, _trip_days - 2) + 0.8  # partial arrival/departure
             _apd = get_trip_settings(state).activity_settings.activities_per_day
             # 1.5x buffer for variety/filtering, floor of 8 to avoid empty browse
             _browse_max = min(40, max(8, int(_free_days * _apd * 1.5)))

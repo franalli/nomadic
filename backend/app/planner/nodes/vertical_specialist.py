@@ -663,30 +663,62 @@ async def generate_specialist_output_llm(
 
             # =================================================================
             # FIX C: Pad with repeat sessions if LLM returned fewer than target
+            # Only duplicate core-domain activities where repeat sessions are
+            # realistic (e.g. multiple dives at the same site, repeated hikes).
+            # Tangential activities (snorkeling from a diving specialist) are
+            # one-off experiences and should NOT be duplicated.
             # =================================================================
             if (
                 target_activities is not None
                 and output.feasibility_status == "feasible"
                 and len(output.activities) < min(target_activities, available_days * 5)
             ):
-                deficit = min(target_activities, available_days * 5) - len(output.activities)
-                original_count = len(output.activities)
-                # Cap repeats to 1x the original set (W5)
-                deficit = min(deficit, original_count)
-                if output.activities:
+                # Core keywords per specialist where repeat sessions make sense
+                _SESSION_REPEATABLE_KEYWORDS: dict[str, list[str]] = {
+                    "diving": ["dive", "diving", "scuba", "freedive", "wreck"],
+                    "hiking": ["hike", "hiking", "trek", "trekking", "trail"],
+                    "skiing": ["ski", "skiing", "snowboard"],
+                    "cycling": ["cycle", "cycling", "ride", "biking", "bike"],
+                    "surfing": ["surf", "surfing"],
+                    "climbing": ["climb", "climbing", "boulder", "bouldering"],
+                    "sailing": ["sail", "sailing"],
+                    "wildlife_safari": ["safari", "game drive"],
+                }
+                repeatable_keywords = _SESSION_REPEATABLE_KEYWORDS.get(topic, [])
+                if repeatable_keywords:
+                    repeatable_activities = [
+                        a
+                        for a in output.activities
+                        if any(kw in a.title.lower() for kw in repeatable_keywords)
+                    ]
+                else:
+                    # Unknown specialist — allow all activities to repeat
+                    repeatable_activities = list(output.activities)
+
+                if repeatable_activities:
+                    deficit = min(target_activities, available_days * 5) - len(output.activities)
+                    repeatable_count = len(repeatable_activities)
+                    # Cap repeats to 1x the repeatable set
+                    deficit = min(deficit, repeatable_count)
                     for i in range(deficit):
-                        source_activity = output.activities[i % original_count]
+                        source_activity = repeatable_activities[i % repeatable_count]
                         repeat = source_activity.model_copy(
                             update={
                                 "title": (
-                                    f"{source_activity.title} (Session {2 + i // original_count})"
+                                    f"{source_activity.title} (Session {2 + i // repeatable_count})"
                                 )
                             }
                         )
                         output.activities.append(repeat)
                     _debug_log(
-                        f"[LLM_SPECIALIST] Padded {topic}: {original_count} → "
-                        f"{len(output.activities)} activities (target={target_activities})"
+                        f"[LLM_SPECIALIST] Padded {topic}: {len(output.activities) - deficit} → "
+                        f"{len(output.activities)} activities (target={target_activities}, "
+                        f"repeatable={repeatable_count}/{len(output.activities) - deficit})"
+                    )
+                else:
+                    _debug_log(
+                        f"[LLM_SPECIALIST] Skipped padding {topic}: no repeatable activities "
+                        f"({len(output.activities)} total, target={target_activities})"
                     )
 
             # =================================================================

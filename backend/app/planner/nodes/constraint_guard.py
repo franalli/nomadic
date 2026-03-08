@@ -775,11 +775,8 @@ async def constraint_guard(state: GraphState) -> GraphState:
             start = datetime.fromisoformat(state.trip_plan.start_date)
             end = datetime.fromisoformat(state.trip_plan.end_date)
             total_days = (end - start).days + 1
-            # Short trips: arrival/departure are partially usable
-            if total_days <= 3:
-                usable_days = max(1, total_days)
-            else:
-                usable_days = max(0, total_days - 2)  # arrival + departure
+            # Arrival + departure are partially usable (0.4 day each)
+            usable_days = max(0, total_days - 2) + 0.8
 
             for section in persistent.strategy_sections:
                 topic = section.get("specialist_type")
@@ -853,11 +850,8 @@ async def constraint_guard(state: GraphState) -> GraphState:
             start = datetime.fromisoformat(state.trip_plan.start_date)
             end = datetime.fromisoformat(state.trip_plan.end_date)
             total_days = (end - start).days + 1
-            # Short trips: arrival/departure are partially usable
-            if total_days <= 3:
-                usable_days = max(1, total_days)
-            else:
-                usable_days = max(0, total_days - 2)
+            # Arrival + departure are partially usable (0.4 day each)
+            usable_days = max(0, total_days - 2) + 0.8
 
             total_activities = 0
             active_specialist_names: list[str] = []
