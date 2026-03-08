@@ -35,6 +35,7 @@ from app.graph_plan_utils import (
     truncate_assistant_message,
     validate_suggested_responses,
 )
+from app.planner.nodes.logistics_node import _sanitize_tile_geo
 from app.planner.services.admin_utils import condense_long_message
 from app.schemas import (
     AckUpdate,
@@ -855,6 +856,7 @@ async def generate_sse(
                     if isinstance(tiles_from_graph, dict):
                         for tile_id, tile_data in tiles_from_graph.items():
                             if isinstance(tile_data, dict):
+                                _sanitize_tile_geo(tile_data)
                                 tiles_dict[tile_id] = TileSchema.model_validate(tile_data)
                             elif isinstance(tile_data, TileSchema):
                                 tiles_dict[tile_id] = tile_data

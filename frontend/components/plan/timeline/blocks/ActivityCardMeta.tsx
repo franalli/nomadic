@@ -132,6 +132,38 @@ export function resolveDurationLabel(block: DayBlock): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// Rating / review helpers
+// ---------------------------------------------------------------------------
+
+export function resolveRating(block: DayBlock): number | null {
+  if (typeof block.rating === 'number' && Number.isFinite(block.rating)) return block.rating;
+
+  const bookedTile = block.booked_tile as Record<string, unknown> | undefined;
+  if (typeof bookedTile?.rating === 'number' && Number.isFinite(bookedTile.rating)) return bookedTile.rating as number;
+
+  const meta = bookedTile?.meta && typeof bookedTile.meta === 'object'
+    ? bookedTile.meta as Record<string, unknown>
+    : null;
+  if (typeof meta?.rating === 'number' && Number.isFinite(meta.rating)) return meta.rating as number;
+
+  return null;
+}
+
+export function resolveReviewCount(block: DayBlock): number | null {
+  if (typeof block.review_count === 'number' && Number.isFinite(block.review_count)) return block.review_count;
+
+  const bookedTile = block.booked_tile as Record<string, unknown> | undefined;
+  if (typeof bookedTile?.review_count === 'number' && Number.isFinite(bookedTile.review_count)) return bookedTile.review_count as number;
+
+  const meta = bookedTile?.meta && typeof bookedTile.meta === 'object'
+    ? bookedTile.meta as Record<string, unknown>
+    : null;
+  if (typeof meta?.review_count === 'number' && Number.isFinite(meta.review_count)) return meta.review_count as number;
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Category resolution
 // ---------------------------------------------------------------------------
 
@@ -251,6 +283,8 @@ export function ActivityCardMeta({
   const priceLevelLabel = resolvePriceLevelLabel(block);
   const resolvedPriceEstimate = resolvePriceEstimate(block);
   const resolvedDuration = resolveDurationLabel(block);
+  const resolvedRating = resolveRating(block);
+  const resolvedReviewCount = resolveReviewCount(block);
   const bookedTile = block.booked_tile as Record<string, unknown> | undefined;
   const isEstimateOnly = bookedTile?.is_estimate_only !== false;
   // Prefer numeric estimate over price level ($$) when both exist
@@ -278,17 +312,17 @@ export function ActivityCardMeta({
         {resolvedTitle}
       </h4>
 
-      {(block.rating != null || showPriceLevel || showEstimatedPrice || resolvedDuration) && (
+      {(resolvedRating != null || showPriceLevel || showEstimatedPrice || resolvedDuration) && (
         <div className="mt-1 flex items-center gap-2 flex-wrap">
-          {block.rating != null && (
+          {resolvedRating != null && (
             <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
               <Star className="w-3 h-3 fill-current text-amber-500" />
-              {block.rating.toFixed(1)}
-              {block.review_count != null && (
+              {resolvedRating.toFixed(1)}
+              {resolvedReviewCount != null && (
                 <span className="text-zinc-500 dark:text-zinc-400 ml-0.5">
-                  ({block.review_count >= 1000
-                    ? `${Math.round(block.review_count / 1000)}K`
-                    : block.review_count.toLocaleString()})
+                  ({resolvedReviewCount >= 1000
+                    ? `${Math.round(resolvedReviewCount / 1000)}K`
+                    : resolvedReviewCount.toLocaleString()})
                 </span>
               )}
             </span>

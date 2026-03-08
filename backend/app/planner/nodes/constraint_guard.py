@@ -491,11 +491,8 @@ def check_day_preference_capacity(
         start = datetime.fromisoformat(start_date)
         end = datetime.fromisoformat(end_date)
         total_days = (end - start).days + 1
-        # Short trips: arrival/departure are partially usable
-        if total_days <= 3:
-            usable = max(1, total_days)
-        else:
-            usable = max(0, total_days - 2)  # arrival + departure
+        # Arrival + departure are partially usable (0.4 day each)
+        usable = max(0, total_days - 2) + 0.8
 
         # Compute max buffer from active specialists
         max_buffer = 0
