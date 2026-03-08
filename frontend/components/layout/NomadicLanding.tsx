@@ -302,7 +302,17 @@ export function NomadicLanding() {
     toggleStays: headerToggleStays,
     toggleFlights: headerToggleFlights,
     toggleIntel: headerToggleIntel,
-  } = usePanelToggleStore();
+  } = usePanelToggleStore(useShallow((s) => ({
+    staysExpanded: s.staysExpanded,
+    flightsExpanded: s.flightsExpanded,
+    intelExpanded: s.intelExpanded,
+    travelAdviceCount: s.travelAdviceCount,
+    showTravelAdvice: s.showTravelAdvice,
+    isTravelAdvicePending: s.isTravelAdvicePending,
+    toggleStays: s.toggleStays,
+    toggleFlights: s.toggleFlights,
+    toggleIntel: s.toggleIntel,
+  })));
 
   // Compute flight/stay counts for header pills (same logic as PlanFullDensityView)
   const headerFlightCount = useMemo(
@@ -425,7 +435,7 @@ export function NomadicLanding() {
 
   // ─── JSX ─────────────────────────────────────────────────────────────────
 
-  const plannerContent = (
+  const plannerContent = useMemo(() => (
     <ErrorBoundary label="Chat">
       <ChatPanel
         ref={chatPanelRef}
@@ -468,11 +478,20 @@ export function NomadicLanding() {
         onConfirmReset={handleStartNewSession}
       />
     </ErrorBoundary>
-  );
+  ), [
+    chatPanelRef, chatKey, selectedBranchId, handlePlanResultWithReceipt,
+    handleGeneratePlanStartWithSnapshot, requestAutoExpandItinerary,
+    hasBranchesReady, readyToGenerate, isGenerating, planState,
+    handleUserMessageSubmit, tripInputs, hasStartDate, hasEndDate,
+    hasDestination, hasDates, bookingTypes, flightSettings, hotelSettings,
+    activitySettings, handleUpdateBookingTypes, handleUpdateFlightSettings,
+    handleUpdateHotelSettings, handleUpdateActivitySettings, planViewState,
+    isFraming, openSheet, destinationCard, destinationImageUrl, handleStartNewSession,
+  ]);
 
   const isExpandingItinerary = generation?.stage === 'itinerary';
 
-  const planViewContent = (
+  const planViewContent = useMemo(() => (
     <ErrorBoundary label="Plan View">
       <StrategyStageRenderer
         state={planViewState ?? 'P0_MINIMAL'}
@@ -501,7 +520,14 @@ export function NomadicLanding() {
         onOpenFlightsSettings={handleOpenGearFlights}
       />
     </ErrorBoundary>
-  );
+  ), [
+    planViewState, planViewModel, destinationCard, tiles, generation,
+    canGeneratePlan, fallbackTitle, hasDates, isExpandingItinerary,
+    handleBuildPlan, handleExpandToItinerary, handleFinalizePlan,
+    isFinalizing, preferredTileIds, handleSaveTilePreference, tripInputs,
+    isCommitting, openSheet, hasEverHadPlan, isRegenerating, handleSelectNights,
+    handleOpenGearActivities, handleOpenGearStays, handleOpenGearFlights,
+  ]);
 
   return (
     <>

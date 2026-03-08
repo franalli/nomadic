@@ -32,6 +32,7 @@ let abortRef: AbortController | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let lastPrefsRef: Set<string> = new Set();
 let pendingRegen = false;
+let trailingRegenTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Track whether startPreferenceAutoRegen is already running
 let cleanupFn: (() => void) | null = null;
@@ -266,7 +267,7 @@ export function startPreferenceAutoRegen(): () => void {
     if (!isStreamingResponse && pendingRegen) {
       pendingRegen = false;
       // Debounce: let dust settle before firing queued regen
-      setTimeout(() => {
+      trailingRegenTimer = setTimeout(() => {
         // Dedup: skip if the expand that just finished already used current preferences
         const currentPrefs = useDocumentStore.getState().preferredTileIds;
         const lastGenerated = useDocumentStore.getState().lastGeneratedPreferences;
@@ -282,6 +283,7 @@ export function startPreferenceAutoRegen(): () => void {
     unsubExpand();
     abortRef?.abort();
     if (debounceTimer) clearTimeout(debounceTimer);
+    if (trailingRegenTimer) { clearTimeout(trailingRegenTimer); trailingRegenTimer = null; }
     cleanupFn = null;
     lastPrefsRef = new Set();
     pendingRegen = false;

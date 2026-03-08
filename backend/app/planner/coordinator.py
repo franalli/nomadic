@@ -504,6 +504,34 @@ def _clear_planning_artifacts(state: Dict[str, Any]) -> None:
         persistent_meta.pop("browseable_activities", None)
 
 
+def _should_clear_planning_artifacts(
+    classifier: ClassifierOutput,
+    state: Dict[str, Any],
+) -> bool:
+    """Return True when full-invalidation turns should wipe derived artifacts.
+
+    No-op turns must preserve existing strategy/itinerary long enough for the
+    `plan_turn()` reuse guards to short-circuit before any rebuild work starts.
+    """
+    if classifier.change_type not in _FULL_INVALIDATION_CHANGES:
+        return False
+
+    turn_meta = state.get("turn_meta", {})
+    raw_fields_changed = turn_meta.get("fields_changed", []) if isinstance(turn_meta, dict) else []
+    fields_changed = raw_fields_changed if isinstance(raw_fields_changed, list) else []
+    if not fields_changed:
+        return False
+
+    categories_changed = "activity_categories" in fields_changed
+    is_gpn = bool(classifier.reasoning and "GENERATE_PLAN_NOW" in classifier.reasoning)
+    return not is_gpn or categories_changed
+
+
+def _is_response_only_plan(plan: ExecutionPlan) -> bool:
+    """Return True when a planning turn can skip all rebuild work."""
+    return [step.step_type for step in plan.steps] == [StepType.GENERATE_RESPONSE]
+
+
 # ---------------------------------------------------------------------------
 # Turn planning (pure Python -- no LLM)
 # ---------------------------------------------------------------------------
@@ -3506,10 +3534,16 @@ async def _execute_step(
             session_id=session_id,
         )
         state["tiles"] = tiles
-        return {
-            "type": "partial",
-            "data": {"kind": "tiles", "payload": _flatten_tiles_payload(tiles)},
+        partial_data: dict[str, Any] = {
+            "kind": "tiles",
+            "payload": _flatten_tiles_payload(tiles),
         }
+        # Propagate tiles_replaced flag so frontend replaces immediately
+        # (don't wait for complete envelope).
+        turn_meta = state.get("turn_meta") or {}
+        if turn_meta.get("tiles_replaced"):
+            partial_data["tiles_replaced"] = True
+        return {"type": "partial", "data": partial_data}
 
     if step_type == StepType.BUILD_ITINERARY:
         # Snapshot tile IDs before build to detect new specialist-injected tiles
@@ -3713,15 +3747,8 @@ async def execute_turn(
         state["_pre_change_hashes"] = {k: stable_hash(state.get(k)) for k in _CHANGE_DETECTION_KEYS}
         if classifier.intent == "PLANNING":
             _apply_classifier_to_state(state, classifier)
-            if classifier.change_type in _FULL_INVALIDATION_CHANGES:
-                # GENERATE_PLAN_NOW reuses existing strategy/tiles — skip clear
-                # UNLESS categories changed (stale specialist sections must go).
-                is_gpn = classifier.reasoning and "GENERATE_PLAN_NOW" in classifier.reasoning
-                cats_changed = "activity_categories" in state.get("turn_meta", {}).get(
-                    "fields_changed", []
-                )
-                if not is_gpn or cats_changed:
-                    _clear_planning_artifacts(state)
+            if _should_clear_planning_artifacts(classifier, state):
+                _clear_planning_artifacts(state)
             yield {
                 "type": "partial",
                 "data": {
@@ -3732,15 +3759,23 @@ async def execute_turn(
         elif classifier.intent == "RESET":
             pass
 
-        # Step 4a: Pre-check feasibility for geographic-constrained specialists.
-        # Runs BEFORE plan_turn() so _compute_dispatch_list() can filter out
+        # Step 4a: Preview the plan before feasibility work so response-only
+        # reuse can skip all precheck I/O on true no-op turns.
+        plan = plan_turn(classifier, state)
+
+        # Step 4b: Pre-check feasibility for geographic-constrained specialists.
+        # Runs before the final plan so _compute_dispatch_list() can filter out
         # infeasible topics — preventing phantom DISPATCH_SPECIALISTS steps.
         # Skip on GPN triggers — plan already exists, feasibility was checked earlier.
         is_gpn_trigger = user_message.strip().upper() in (
             "GENERATE_PLAN_NOW",
             "GENERATE_PLAN_TRIGGER",
         ) or (classifier.reasoning and "GENERATE_PLAN_NOW" in classifier.reasoning)
-        if classifier.intent == "PLANNING" and not is_gpn_trigger:
+        if (
+            classifier.intent == "PLANNING"
+            and not is_gpn_trigger
+            and not _is_response_only_plan(plan)
+        ):
             dest = state.get("trip_plan", {}).get("destination") or classifier.destination
             # Determine candidate topics from activity settings (same source as _compute_dispatch_list)
             activity_settings_fc = state.get("trip_settings", {}).get("activity_settings", {})
@@ -3777,8 +3812,9 @@ async def execute_turn(
                                 },
                             }
 
-        # Step 4b: Plan the turn (feasibility prechecks are now available for _compute_dispatch_list)
-        plan = plan_turn(classifier, state)
+            plan = plan_turn(classifier, state)
+
+        # Step 4c: Finalize the execution plan after any feasibility prechecks.
         logger.info(
             "[coordinator] Execution plan: %s (steps=%d, est_llm=%d)",
             plan.reason,

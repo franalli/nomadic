@@ -207,7 +207,26 @@ FLOW_EXPECTED_TOOLS: dict[int, dict[str, Any]] = {
         "forbidden_tools": [],
         "max_llm_calls": 14,  # 2 turns
     },
+    28: {
+        "name": "Pill Category Change — PATCH + GENERATE_PLAN_NOW",
+        "required_tools": ["extract_trip_fields", "get_specialist_advice", "build_itinerary"],
+        "forbidden_tools": [],
+        "max_llm_calls": 18,  # 3 turns with post-refresh rebuild
+        "expected_turns": 3,
+    },
 }
+
+
+def _expected_turns(flow_num: int) -> int:
+    """Return the expected number of turns for a flow."""
+    spec = FLOW_EXPECTED_TOOLS.get(flow_num, {})
+    if "expected_turns" in spec:
+        return int(spec["expected_turns"])
+
+    multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 25}
+    four_turn_flows = {19, 20, 21}
+    return 4 if flow_num in four_turn_flows else (2 if flow_num in multi_turn_flows else 1)
+
 
 # ── Coordinator step ordering contract ───────────────────────────────────────
 # From plan_graph_analysis.md: classify → dispatch_specialists || search_tiles → local_intel → build_itinerary → generate_response
@@ -384,9 +403,7 @@ def check_llm_calls(backend_log: str, flow_num: int, report: FlowReport) -> int:
 
     # Check for duplicate classifier calls (should be exactly 1 per turn)
     classifier_count = call_counts.get("classifier", 0)
-    multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 25}
-    four_turn_flows = {19, 20, 21}
-    max_classify = 4 if flow_num in four_turn_flows else (2 if flow_num in multi_turn_flows else 1)
+    max_classify = _expected_turns(flow_num)
     if classifier_count > max_classify:
         report.warn(f"Excessive classifier calls: {classifier_count} (expected ≤{max_classify})")
 
@@ -485,7 +502,7 @@ def check_tool_contract(backend_log: str, sse_data: str, flow_num: int, report: 
             continue
         if obj.get("type") == "complete":
             num_turns += 1
-    num_turns = max(num_turns, 1)
+    num_turns = max(num_turns, _expected_turns(flow_num))
 
     # Check for duplicate tool calls in same turn
     tool_counts = Counter(tools_called)
@@ -495,8 +512,7 @@ def check_tool_contract(backend_log: str, sse_data: str, flow_num: int, report: 
             if tool == "response":
                 max_expected = num_turns
             else:
-                multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 25}
-                max_expected = 2 if flow_num in multi_turn_flows else 1
+                max_expected = 1 if num_turns == 1 else 2
             if count > max_expected:
                 report.warn(
                     f"Tool '{tool}' called {count}× (expected ≤{max_expected}) — possible waste"

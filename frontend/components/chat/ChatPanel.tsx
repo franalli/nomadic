@@ -323,9 +323,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     // ── Visible messages ──
     const streamingMessageId = chatSend.streamingMessageId;
+    // Build a fingerprint of non-streaming message IDs so the filtered
+    // array keeps stable identity when only streaming tokens change —
+    // prevents downstream visibleStable recomputation on each token.
+    const stableFingerprint = useMemo(() => {
+      const ids: string[] = [];
+      for (const m of messages) {
+        if (m.id !== streamingMessageId) ids.push(m.id);
+      }
+      return ids.join(',');
+    }, [messages, streamingMessageId]);
+
     const stableMessages = useMemo(
-      () => messages.filter((m) => m.id !== streamingMessageId),
-      [messages, streamingMessageId],
+      () => useChatStore.getState().messages.filter((m) => m.id !== chatSend.streamingMessageId),
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- fingerprint is the semantic dep; store.getState() reads live data
+      [stableFingerprint],
     );
     const visibleStable = useMemo(() => {
       const visible: VisibleMessage[] = [];

@@ -19,7 +19,6 @@ from rapidfuzz import fuzz
 from app.config import settings
 from app.services.cache_core import MemoryCache
 from app.services.circuit_breaker import CircuitBreaker
-from app.services.spend_guard import SpendLimitExceeded, reserve_partner_api_spend_or_raise
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +85,6 @@ async def search_tours(
         return []
 
     try:
-        reserve_partner_api_spend_or_raise("gyg")
         async with _sem:
             client = await _get_gyg_client()
             resp = await client.get(
@@ -105,9 +103,6 @@ async def search_tours(
             tours = data.get("data", {}).get("tours", [])
             _gyg_cb.record_success()
             return tours
-    except SpendLimitExceeded as exc:
-        logger.warning("[GYG] Spend guard blocked tour search: %s", exc)
-        return []
     except Exception as e:
         _gyg_cb.record_failure()
         logger.debug("[GYG] Tour search failed: %s", e)

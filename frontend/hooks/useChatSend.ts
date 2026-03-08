@@ -165,6 +165,9 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+  // Keep ref in sync for use in callbacks without dep-array churn
+  const streamingMessageIdRef = useRef(streamingMessageId);
+  streamingMessageIdRef.current = streamingMessageId;
   const [hasReceivedFirstToken, setHasReceivedFirstToken] = useState(false);
   const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
   const [suggestedResponseMeta, setSuggestedResponseMeta] = useState<SuggestionChipMeta[]>([]);
@@ -247,10 +250,11 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     activeStreamRequestIdRef.current = null;
 
     // Mark message as interrupted with a user-friendly message
-    if (streamingMessageId) {
-      const currentMsg = useChatStore.getState().messages.find((m) => m.id === streamingMessageId);
+    const currentStreamingId = streamingMessageIdRef.current;
+    if (currentStreamingId) {
+      const currentMsg = useChatStore.getState().messages.find((m) => m.id === currentStreamingId);
       const currentContent = (currentMsg?.content || '').trim();
-      updateMessage(streamingMessageId, {
+      updateMessage(currentStreamingId, {
         content: currentContent + '\n\n*[Response stopped. You can continue the conversation or ask me to elaborate.]*',
       });
     }
@@ -270,7 +274,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     if (useDocumentStore.getState().isRegenerating) {
       useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
     }
-  }, [streamingMessageId, updateMessage, delayedLoader, actionLoader]);
+  }, [updateMessage, delayedLoader, actionLoader]);
 
   const sendMessageCore = useCallback(
     async (messageText: string, options?: { suggestionClicked?: string }) => {
@@ -292,8 +296,8 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         abortStreamRef.current();
         abortStreamRef.current = null;
         // Clean up orphaned partial assistant message from the aborted stream
-        if (streamingMessageId) {
-          filterMessages((m) => m.id !== streamingMessageId);
+        if (streamingMessageIdRef.current) {
+          filterMessages((m) => m.id !== streamingMessageIdRef.current);
           setStreamingMessageId(null);
         }
       }
@@ -310,8 +314,8 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
             resolve();
           };
           const timeout = setTimeout(settle, 5_000);
-          const unsub = useDocumentStore.subscribe((state) => {
-            if (!state.hasPendingMutations()) settle();
+          const unsub = useDocumentStore.subscribe((state, prev) => {
+            if (state._pendingMutations !== prev._pendingMutations && !state.hasPendingMutations()) settle();
           });
           // Close race window between outer check and subscribe
           if (!useDocumentStore.getState().hasPendingMutations()) settle();
@@ -523,7 +527,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       setActiveStatus,
       setGenerateTriggered,
       updateMessage,
-      streamingMessageId,
+      // streamingMessageId REMOVED — using ref instead
     ]
   );
 

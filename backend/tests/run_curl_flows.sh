@@ -132,11 +132,16 @@ _start_server() {
   # Rate limits disabled: RATE_LIMIT_ENABLED=false disables slowapi per-route
   # limits, MAX_SESSIONS_PER_IP_HOUR=9999 effectively disables session creation
   # throttle, preventing 429s during rapid test runs.
+  # Spend guard caps are raised for the managed curl-suite server so Flow 27's
+  # browse step does not exhaust the partner budget before planner enrichment runs.
   (cd "$BACKEND_DIR" && \
     PYTHONUNBUFFERED=1 \
     DEBUG=full \
     RATE_LIMIT_ENABLED=false \
     MAX_SESSIONS_PER_IP_HOUR=9999 \
+    SPEND_GUARD_SESSION_DAILY_CAP_USD=100 \
+    SPEND_GUARD_GLOBAL_DAILY_CAP_USD=100 \
+    SPEND_GUARD_PARTNER_DAILY_CAP_USD=100 \
     "$py" start.py --prod) > "$BACKEND_LOG" 2>&1 &
   SERVER_PID=$!
   MANAGED_SERVER=true
@@ -2568,21 +2573,28 @@ except: print('false')
 " 2>/dev/null || echo "false")
 check "Viator browse tiles have images" "$BROWSE_IMG_OK" "true" || F=false
 
-# Check image domain is media-cdn.tripadvisor.com (not unsplash fallback)
+# Check image domain is an approved Tripadvisor CDN host (not unsplash fallback)
 BROWSE_IMG_DOMAIN=$(python3 -c "
 import sys,json
 try:
     with open('$RESP') as f: data=json.load(f)
     tiles=data if isinstance(data,list) else data.get('tiles',data.get('results',[]))
     viator=[t for t in tiles if isinstance(t,dict) and t.get('provider')=='viator']
+    allowed=(
+        'media.tacdn.com',
+        'media-cdn.tripadvisor.com',
+        'hare-media-cdn.tripadvisor.com',
+    )
+    found=False
     for t in viator:
         img=t.get('image_url','')
-        if 'media-cdn.tripadvisor.com' in img:
-            print('valid'); sys.exit()
-    print('no_tripadvisor_images')
+        if any(host in img for host in allowed):
+            found=True
+            break
+    print('valid' if found else 'no_tripadvisor_images')
 except: print('error')
 " 2>/dev/null || echo "error")
-check "Viator images from media-cdn.tripadvisor.com" "$BROWSE_IMG_DOMAIN" "valid" || F=false
+check "Viator images from approved Tripadvisor CDN" "$BROWSE_IMG_DOMAIN" "valid" || F=false
 
 # Check deeplink URL format (should be activity-level /tours/ links)
 BROWSE_DL_FMT=$(python3 -c "
@@ -2618,17 +2630,19 @@ VIATOR_TILE_CT=$(echo "$TILES_RAW" | python3 -c "
 import sys,json
 try:
     raw=sys.stdin.read().strip()
-    if not raw: print(0); sys.exit()
-    tiles=json.loads(raw)
-    all_tiles=[]
-    if isinstance(tiles,dict):
-        for v in tiles.values():
-            if isinstance(v,list): all_tiles.extend(v)
-            elif isinstance(v,dict): all_tiles.append(v)
-    elif isinstance(tiles,list): all_tiles=tiles
-    ct=sum(1 for t in all_tiles if isinstance(t,dict)
-           and t.get('type')=='activity' and t.get('provider')=='viator')
-    print(ct)
+    if not raw:
+        print(0)
+    else:
+        tiles=json.loads(raw)
+        all_tiles=[]
+        if isinstance(tiles,dict):
+            for v in tiles.values():
+                if isinstance(v,list): all_tiles.extend(v)
+                elif isinstance(v,dict): all_tiles.append(v)
+        elif isinstance(tiles,list): all_tiles=tiles
+        ct=sum(1 for t in all_tiles if isinstance(t,dict)
+               and t.get('type')=='activity' and t.get('provider')=='viator')
+        print(ct)
 except: print(0)
 " 2>/dev/null || echo "0")
 echo "  ℹ  Viator-enriched activity tiles: $VIATOR_TILE_CT"
@@ -2639,22 +2653,26 @@ VIATOR_LIVE_PRICE=$(echo "$TILES_RAW" | python3 -c "
 import sys,json
 try:
     raw=sys.stdin.read().strip()
-    if not raw: print('false'); sys.exit()
-    tiles=json.loads(raw)
-    all_tiles=[]
-    if isinstance(tiles,dict):
-        for v in tiles.values():
-            if isinstance(v,list): all_tiles.extend(v)
-            elif isinstance(v,dict): all_tiles.append(v)
-    elif isinstance(tiles,list): all_tiles=tiles
-    for t in all_tiles:
-        if not isinstance(t,dict): continue
-        if t.get('type')=='activity' and t.get('provider')=='viator':
-            has_price=t.get('price_estimate') is not None or t.get('live_price') is not None
-            not_estimate=t.get('is_estimate_only') is not True
-            if has_price and not_estimate:
-                print('true'); sys.exit()
-    print('false')
+    if not raw:
+        print('false')
+    else:
+        tiles=json.loads(raw)
+        all_tiles=[]
+        if isinstance(tiles,dict):
+            for v in tiles.values():
+                if isinstance(v,list): all_tiles.extend(v)
+                elif isinstance(v,dict): all_tiles.append(v)
+        elif isinstance(tiles,list): all_tiles=tiles
+        found=False
+        for t in all_tiles:
+            if not isinstance(t,dict): continue
+            if t.get('type')=='activity' and t.get('provider')=='viator':
+                has_price=t.get('price_estimate') is not None or t.get('live_price') is not None
+                not_estimate=t.get('is_estimate_only') is not True
+                if has_price and not_estimate:
+                    found=True
+                    break
+        print('true' if found else 'false')
 except: print('false')
 " 2>/dev/null || echo "false")
 check "Viator tile has live price (not estimate)" "$VIATOR_LIVE_PRICE" "true" || F=false
@@ -2664,21 +2682,25 @@ VIATOR_DL=$(echo "$TILES_RAW" | python3 -c "
 import sys,json
 try:
     raw=sys.stdin.read().strip()
-    if not raw: print('false'); sys.exit()
-    tiles=json.loads(raw)
-    all_tiles=[]
-    if isinstance(tiles,dict):
-        for v in tiles.values():
-            if isinstance(v,list): all_tiles.extend(v)
-            elif isinstance(v,dict): all_tiles.append(v)
-    elif isinstance(tiles,list): all_tiles=tiles
-    for t in all_tiles:
-        if not isinstance(t,dict): continue
-        if t.get('type')=='activity' and t.get('provider')=='viator':
-            dl=t.get('deeplink_url') or t.get('deeplink') or ''
-            if dl.startswith('http'):
-                print('true'); sys.exit()
-    print('false')
+    if not raw:
+        print('false')
+    else:
+        tiles=json.loads(raw)
+        all_tiles=[]
+        if isinstance(tiles,dict):
+            for v in tiles.values():
+                if isinstance(v,list): all_tiles.extend(v)
+                elif isinstance(v,dict): all_tiles.append(v)
+        elif isinstance(tiles,list): all_tiles=tiles
+        found=False
+        for t in all_tiles:
+            if not isinstance(t,dict): continue
+            if t.get('type')=='activity' and t.get('provider')=='viator':
+                dl=t.get('deeplink_url') or t.get('deeplink') or ''
+                if dl.startswith('http'):
+                    found=True
+                    break
+        print('true' if found else 'false')
 except: print('false')
 " 2>/dev/null || echo "false")
 check "Viator tile has deeplink URL" "$VIATOR_DL" "true" || F=false
@@ -2688,21 +2710,25 @@ VIATOR_CODE_META=$(echo "$TILES_RAW" | python3 -c "
 import sys,json
 try:
     raw=sys.stdin.read().strip()
-    if not raw: print('false'); sys.exit()
-    tiles=json.loads(raw)
-    all_tiles=[]
-    if isinstance(tiles,dict):
-        for v in tiles.values():
-            if isinstance(v,list): all_tiles.extend(v)
-            elif isinstance(v,dict): all_tiles.append(v)
-    elif isinstance(tiles,list): all_tiles=tiles
-    for t in all_tiles:
-        if not isinstance(t,dict): continue
-        if t.get('type')=='activity' and t.get('provider')=='viator':
-            meta=t.get('meta',{}) or {}
-            if meta.get('viator_product_code'):
-                print('true'); sys.exit()
-    print('false')
+    if not raw:
+        print('false')
+    else:
+        tiles=json.loads(raw)
+        all_tiles=[]
+        if isinstance(tiles,dict):
+            for v in tiles.values():
+                if isinstance(v,list): all_tiles.extend(v)
+                elif isinstance(v,dict): all_tiles.append(v)
+        elif isinstance(tiles,list): all_tiles=tiles
+        found=False
+        for t in all_tiles:
+            if not isinstance(t,dict): continue
+            if t.get('type')=='activity' and t.get('provider')=='viator':
+                meta=t.get('meta',{}) or {}
+                if meta.get('viator_product_code'):
+                    found=True
+                    break
+        print('true' if found else 'false')
 except: print('false')
 " 2>/dev/null || echo "false")
 check "Viator tile has meta.viator_product_code" "$VIATOR_CODE_META" "true" || F=false
@@ -2713,16 +2739,18 @@ BLOCK_DL=$(echo "$DAY_CARDS" | python3 -c "
 import sys,json
 try:
     raw=sys.stdin.read().strip()
-    if not raw: print(0); sys.exit()
-    cards=json.loads(raw)
-    ct=0
-    for c in cards:
-        for b in c.get('blocks',[]):
-            if b.get('booking_category')=='activity':
-                dl=b.get('deeplink_url') or b.get('deeplink') or ''
-                if 'viator' in dl.lower() or '/tours/' in dl:
-                    ct+=1
-    print(ct)
+    if not raw:
+        print(0)
+    else:
+        cards=json.loads(raw)
+        ct=0
+        for c in cards:
+            for b in c.get('blocks',[]):
+                if b.get('booking_category')=='activity':
+                    dl=b.get('deeplink_url') or b.get('deeplink') or ''
+                    if 'viator' in dl.lower() or '/tours/' in dl:
+                        ct+=1
+        print(ct)
 except: print(0)
 " 2>/dev/null || echo "0")
 echo "  ℹ  Day card activity blocks with Viator deeplink: $BLOCK_DL"

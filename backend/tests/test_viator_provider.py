@@ -15,7 +15,7 @@ from app.services.viator_provider import (
 
 
 @pytest.fixture(autouse=True)
-def _reset_viator_state():
+def _reset_viator_state(monkeypatch: pytest.MonkeyPatch):
     """Reset module-level caches and circuit breaker between tests."""
     import app.services.viator_provider as vp
 
@@ -43,6 +43,42 @@ SAMPLE_PRODUCT = {
     "reviews": {"combinedAverageRating": 4.7, "totalReviews": 234},
     "duration": {"fixedDurationInMinutes": 180},
     "productUrl": "https://www.viator.com/tours/test/12345P1",
+}
+
+SPECIALIST_MATCH_PRODUCT = {
+    "productCode": "98765P2",
+    "title": "Tulamben Shore Dive at USAT Liberty Shipwreck",
+    "pricing": {
+        "summary": {"fromPrice": 74.0},
+        "currency": "USD",
+    },
+    "images": [
+        {
+            "isCover": True,
+            "variants": [{"width": 720, "height": 480, "url": "https://example.com/usat.jpg"}],
+        }
+    ],
+    "reviews": {"combinedAverageRating": 4.8, "totalReviews": 120},
+    "duration": {"fixedDurationInMinutes": 240},
+    "productUrl": "https://www.viator.com/tours/test/98765P2",
+}
+
+LOW_QUALITY_MATCH_PRODUCT = {
+    "productCode": "55555P9",
+    "title": "Bali Scuba Diving Experience for Certified Divers",
+    "pricing": {
+        "summary": {"fromPrice": 68.0},
+        "currency": "USD",
+    },
+    "images": [
+        {
+            "isCover": True,
+            "variants": [{"width": 720, "height": 480, "url": "https://example.com/bali.jpg"}],
+        }
+    ],
+    "reviews": {"combinedAverageRating": 4.3, "totalReviews": 87},
+    "duration": {"fixedDurationInMinutes": 240},
+    "productUrl": "https://www.viator.com/tours/test/55555P9",
 }
 
 
@@ -204,6 +240,148 @@ class TestMatchActivityToViator:
             assert tile2["id"] == tile1["id"]
             # No new API calls should have been made
             client.post.assert_not_called()
+
+    async def test_specialist_title_falls_back_to_simplified_query(self):
+        """Specialist-generated diving titles should retry with a cleaner site-based query."""
+        seen_queries: list[str] = []
+
+        async def _fake_search(
+            query: str,
+            dest_id: int | None,
+            currency: str = "USD",
+            count: int = 3,
+        ) -> tuple[list[dict], bool]:
+            seen_queries.append(query)
+            if "Session" in query or "Shore Dive" in query:
+                return [], True
+            if "USAT Liberty Shipwreck" in query:
+                return [SPECIALIST_MATCH_PRODUCT], True
+            return [], True
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(99, True)),
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=AsyncMock(side_effect=_fake_search),
+            ),
+        ):
+            tile = await match_activity_to_viator(
+                "Tulamben: USAT Liberty Shipwreck Shore Dive (Session 2)",
+                "Bali",
+            )
+
+        assert tile is not None
+        assert tile["id"] == "viator_98765P2"
+        assert any(
+            "USAT Liberty Shipwreck" in query and "Session" not in query for query in seen_queries
+        )
+
+    async def test_non_empty_low_quality_first_query_does_not_block_better_variant(self):
+        """Later site-specific variants should still win over an earlier weak match set."""
+        seen_queries: list[str] = []
+
+        async def _fake_search(
+            query: str,
+            dest_id: int | None,
+            currency: str = "USD",
+            count: int = 3,
+        ) -> tuple[list[dict], bool]:
+            seen_queries.append(query)
+            if "Shore Dive" in query:
+                return [LOW_QUALITY_MATCH_PRODUCT], True
+            if "USAT Liberty Shipwreck" in query:
+                return [SPECIALIST_MATCH_PRODUCT], True
+            return [], True
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(99, True)),
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=AsyncMock(side_effect=_fake_search),
+            ),
+        ):
+            tile = await match_activity_to_viator(
+                "Tulamben: USAT Liberty Shipwreck Shore Dive (Session 2)",
+                "Bali",
+            )
+
+        assert tile is not None
+        assert tile["id"] == "viator_98765P2"
+        assert len(seen_queries) >= 2
+        assert any("Shore Dive" in query for query in seen_queries)
+        assert any(
+            "USAT Liberty Shipwreck" in query and "Shore Dive" not in query
+            for query in seen_queries
+        )
+
+    async def test_transient_empty_searches_do_not_negative_cache(self):
+        """Transient empty responses should not poison the long-lived no-match cache."""
+        import app.services.viator_provider as vp
+
+        cache_key = "viator_match:bali:usat liberty shipwreck shore dive"
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(99, True)),
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=AsyncMock(return_value=([], False)),
+            ),
+        ):
+            tile = await match_activity_to_viator("USAT Liberty Shipwreck Shore Dive", "Bali")
+
+        assert tile is None
+        assert vp._match_cache.get(cache_key) is None
+
+    async def test_definitive_empty_searches_still_negative_cache(self):
+        """Confirmed empty provider responses should still cache the no-match sentinel."""
+        import app.services.viator_provider as vp
+
+        cache_key = "viator_match:bali:usat liberty shipwreck shore dive"
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(99, True)),
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=AsyncMock(return_value=([], True)),
+            ),
+        ):
+            tile = await match_activity_to_viator("USAT Liberty Shipwreck Shore Dive", "Bali")
+
+        assert tile is None
+        assert vp._match_cache.get(cache_key) is vp._NO_MATCH
+
+    async def test_transient_destination_resolution_does_not_negative_cache(self):
+        """Transient destination taxonomy failures should not poison the match cache."""
+        import app.services.viator_provider as vp
+
+        cache_key = "viator_match:bali:usat liberty shipwreck shore dive"
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(None, False)),
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=AsyncMock(return_value=([], True)),
+            ),
+        ):
+            tile = await match_activity_to_viator("USAT Liberty Shipwreck Shore Dive", "Bali")
+
+        assert tile is None
+        assert vp._match_cache.get(cache_key) is None
 
 
 @pytest.mark.asyncio

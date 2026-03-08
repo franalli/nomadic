@@ -727,6 +727,7 @@ export interface SSEPartialEvent {
   data: {
     kind: 'strategy_sections' | 'tiles' | 'trip_inputs';
     payload: unknown;
+    tiles_replaced?: boolean;
   };
 }
 

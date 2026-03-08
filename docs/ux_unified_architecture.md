@@ -151,7 +151,7 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (1.5s debounce to batch rapid toggles, AbortController cancels stale regens, deferred during active streaming) |
+| usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (1.5s debounce to batch rapid toggles, AbortController cancels stale regens, deferred during active streaming). `expandInProgress` remains the only hard mutex; `isRegenerating` is display-only and must not suppress queued regen work. |
 | useMapSync | `hooks/useMapSync.ts` | Zustand store for two-way map↔timeline sync (visibleDayNumber, scrollTargetDayNumber, highlightedCardId) |
 | useUndoStack | `hooks/useUndoStack.ts` | Exposes undo entry from documentStore with 8s auto-expire timer |
 | useLandingHandlers | `frontend/components/layout/hooks/useLandingHandlers.ts` | Bundles landing lifecycle handlers for `NomadicLanding`: reset/session restart, plan receipt tracking, generate/finalize actions, gear-sheet controls, user message topic detection, and mobile send/stop plumbing. |
@@ -1137,6 +1137,9 @@ There is no route-geometry utility module in the current frontend. `InteractiveM
 - Mapbox-specific message patterns are suppressed directly (`errorCb`, `sku_token`, `mapbox-gl`).
 - Generic null-reference errors are suppressed only when the `Error.stack` includes Mapbox sources, so non-Mapbox app bugs still surface.
 
+**Telemetry opt-out (`InteractiveMap.tsx`):**
+- Mapbox telemetry is disabled at module scope before any `Map` instance is created, preventing the initial telemetry request rather than turning it off after mount.
+
 **ResizeObserver (`InteractiveMap.tsx`):**
 - A `ResizeObserver` on the map container calls `map.resize()` to tell Mapbox to remeasure when the container size changes (e.g., panel open/close transitions).
 
@@ -1738,10 +1741,10 @@ useSessionHydration() runs
 | `ChatPanel` | Chat orchestration — thin shell delegating to four extracted hooks: `useChatSend` (send + SSE lifecycle), `useChatEffects` (side effects), `useChatScrolling` (scroll + collapse). Module sheets (flights/stays/activities) are rendered by `ChatModuleSheets`. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown) and forwards `onConfirmReset` so suggestion chips can trigger confirmed session reset. |
 | `ChatStatusHeader` | Renders the desktop trip status hero/mini bar above chat content using `getChatStatusConfig(planViewState, planState, ...)` to keep chrome visible and consistent across planning states. |
 | `ChatModuleSheets` | Renders the three module sheets (FlightsSheet, StaysSheet, ActivitiesSheet) that live inside ChatPanel. Extracted to keep ChatPanel under 200 lines. Tracks `activityUserSaved` session state so ActivitiesSheet inference does not override an explicit user clear (`[]`). In active itinerary states it now sets the regeneration overlay immediately on save, before `commitTripInputs()` returns. Category changes in active plan states trigger the full graph pipeline (`GENERATE_PLAN_TRIGGER`) so specialists re-dispatch instead of relying on expand-itinerary tile refresh alone. **D3 preferred-tile prune:** When ActivitiesSheet saves with fewer categories, `onSaveSettings` computes `removedCats`, filters `planDocument.preferred_tile_ids` to drop tiles from removed categories (matched via `tile.meta.specialist_type`, `tile.meta.category`, or `tile.tags`), and calls `patchDocument({ preferred_tile_ids: pruned })` as a best-effort fire-and-forget. Backend Phase 5.25 provides a second authoritative filter. |
-| `useChatSend` | Hook orchestrating message send, SSE streaming lifecycle (`useChatSse` internally), node status, suggestion state, and active-status updates. Extracted from ChatPanel. Returns `sendMessageCore`, `addAssistantMessage`, `handleStopStreaming`, plus state (`isLoading`, `nodeStatus`, etc.). |
+| `useChatSend` | Hook orchestrating message send, SSE streaming lifecycle (`useChatSse` internally), node status, suggestion state, and active-status updates. Extracted from ChatPanel. Returns `sendMessageCore`, `addAssistantMessage`, `handleStopStreaming`, plus state (`isLoading`, `nodeStatus`, etc.). Stop/abort cleanup reads the active assistant message through a ref so stream interruption remains correct across callback re-renders. |
 | `useChatEffects` | Hook centralising ChatPanel side effects: scroll-on-load, ready-to-generate detection, input focus, node-status → activeStatus mapping, history loading. Extracted from ChatPanel. |
 | `useChatScrolling` | Hook managing scroll container ref, auto-scroll-to-bottom, user-scrolled-up detection, and mobile setup header collapse. Extracted from ChatPanel. |
-| `useChatSse` | Hook owning the `streamGraphPlan` call and all SSE callbacks (`onToken`, `onNodeStatus`, `onPartial`, `onComplete`, `onError`). Extracted from ChatPanel. Returns `executeStream` function. No JSX. |
+| `useChatSse` | Hook owning the `streamGraphPlan` call and all SSE callbacks (`onToken`, `onNodeStatus`, `onPartial`, `onComplete`, `onError`). Extracted from ChatPanel. Returns `executeStream` function. No JSX. Tile partials honor `tiles_replaced` immediately, and complete-envelope reconciliation now tolerates response-only no-op turns that return tiles without fresh strategy payload while bootstrap is already complete. |
 | `ChatMessageList` | Scrollable message list renderer — owns scroll container div and all message rendering. |
 | `ChatInputHandler` | Thin wrapper around `ChatInputBar` converting ChatPanel-level callbacks to form-submit signatures. Extracted from ChatPanel. |
 | `ChatSuggestionBar` | Thin wrapper around `ChatSuggestionChips` for ChatPanel integration. Extracted from ChatPanel. Forwards trigger-action callbacks including `onConfirmReset` (`confirm_reset` target). |
@@ -1754,7 +1757,7 @@ useSessionHydration() runs
 | `ItineraryProgressIndicator` | Progress indicator for multi-specialist auto-trigger itinerary generation |
 | `BookingDrawer` | Side sheet for tile browsing, triggered by FreeDayCard "Browse" or GhostSlot clicks. Supports `pinnedDayNumber` for per-day tile placement via fill-day API |
 | `TripSettingsSheet` | Relay sheet for destination/origin/dates/travelers/budget editors. Uses an unmount-safe delayed sheet open (`setTimeout` + `mountedRef`) to avoid opening a child sheet after parent unmount. |
-| `useItineraryGeneration` | Hook extracted from `NomadicLanding` encapsulating the full expand-itinerary flow: `proceedWithItineraryGeneration` (NDJSON streaming), auto-trigger logic for multi-specialist trips (Path A), `handleExpandToItinerary` (validation-gated expand), and `handleSelectNights`. Before POSTing `/api/expand-itinerary`, it normalizes `trip_inputs`: empty activity categories are sent as `categories=[] + booking_types.activities='off'` so builder semantics match sheet intent. Returns `{proceedWithItineraryGeneration, handleExpandToItinerary, handleSelectNights, hasItineraryContent}`. |
+| `useItineraryGeneration` | Hook extracted from `NomadicLanding` encapsulating the full expand-itinerary flow: `proceedWithItineraryGeneration` (NDJSON streaming), auto-trigger logic for multi-specialist trips (Path A), `handleExpandToItinerary` (validation-gated expand), and `handleSelectNights`. Before POSTing `/api/expand-itinerary`, it normalizes `trip_inputs`: empty activity categories are sent as `categories=[] + booking_types.activities='off'` so builder semantics match sheet intent. Manual "Build itinerary" clicks still surface `isRegenerating` as a user-facing wait gate, but the scheduler/auto-trigger path relies on `currentRunId` and `expandInProgress` as the actual mutexes so visual overlay state does not block queued expands. Returns `{proceedWithItineraryGeneration, handleExpandToItinerary, handleSelectNights, hasItineraryContent}`. |
 | `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. **Hard gate:** `planViewState` is forced to `S0_BOOTSTRAP` when `hasPlanPrerequisites` is false (destination + dates required). When prerequisites are met, backend `plan_view_state` is authoritative. `planTabEnabled` also requires `hasPlanPrerequisites`. Pure computation — no side effects. |
 | `useLandingEffects` | Hook extracted from `NomadicLanding` grouping side effects unrelated to itinerary generation: destination image fetching, `hasEverHadPlan` detection, topic tracking for mobile badges, specialist deep link handling. State is owned by the parent and passed in as params + setters. |
 | `useLandingHandlers` | Hook extracted from `NomadicLanding` for action wiring: reset/finalize/build callbacks, plan result receipt handling, mobile send/stop forwarding, gear-sheet state, and topic-diff detection for plan-related user input. |
@@ -3071,6 +3074,8 @@ try { await expandItinerary(); }
 finally { setExpandInProgress(false); }
 ```
 This prevents the cascade: expand-itinerary → markPreferencesAsApplied → preference PATCH → preference auto-regen → expand-itinerary loop.
+
+Manual CTA clicks may still show an informational "Plan is updating" toast when `isRegenerating=true`, but that flag is explicitly UI-only. Auto-triggered expands and queued preference regen continue to key off `currentRunId` / `expandInProgress`, not the overlay state.
 
 **Debug Logs (expected sequence):**
 ```

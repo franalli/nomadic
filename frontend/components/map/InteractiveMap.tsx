@@ -74,6 +74,9 @@ type MapboxTelemetryApi = typeof mapboxgl & {
   setTelemetryEnabled?: (enabled: boolean) => void;
 };
 
+// Disable telemetry at module scope — before any Map instance fires requests.
+(mapboxgl as MapboxTelemetryApi).setTelemetryEnabled?.(false);
+
 // =============================================================================
 // Component
 // =============================================================================
@@ -98,10 +101,6 @@ export function InteractiveMap({
   const [isMapReady, setIsMapReady] = useState(false);
 
   const isDark = isDarkTheme();
-
-  useEffect(() => {
-    (mapboxgl as MapboxTelemetryApi).setTelemetryEnabled?.(false);
-  }, []);
 
   const safeDefaultCenter = useMemo(() => {
     const normalized = normalizeMapCoordinates({

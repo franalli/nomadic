@@ -8,7 +8,7 @@ description: >
   conversationalist, change classifier, specialist dispatch, trip brief,
   FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
-  activity_browser, partner_enrichment, circuit_breaker, spend_guard, telemetry,
+  activity_browser, partner_enrichment, circuit_breaker, spend_guard,
   auth, oauth, sharing, shared trip, user accounts, or any file under backend/app/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
@@ -28,7 +28,8 @@ Before ANY code change, read the relevant SSoT doc:
 
 - `docs/plan_graph_analysis.md` — Coordinator architecture, caching, builder phases, constraint validation
 - `docs/data-contracts.md` — API routes, streaming protocols, core schemas, rate limiting, enums
-- `CLAUDE.md` — Current sprint, hard rules
+- `AGENTS.md` — Current sprint, hard rules, delegation policy (authoritative)
+- `CLAUDE.md` — Supplemental legacy notes only when explicitly needed
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 
@@ -109,11 +110,18 @@ All keywords, constraints, cross-domain blocks, aliases, feasibility flags come 
 
 `regen_strategy.py` maps field changes to minimum regen tier: `FULL` (destination) → `SPECIALISTS` (dates/categories) → `LOGISTICS` (budget/travelers) → `BUILDER` (origin/preferences).
 `GENERATE_PLAN_NOW` reuses existing strategy/tiles only when full-invalidating fields are unchanged. If `activity_categories` changed, coordinator must still clear planning artifacts and re-dispatch specialists before rebuild.
+`execute_turn()` now previews `plan_turn()` before geographic feasibility prechecks. True response-only no-op turns skip feasibility I/O entirely, and `_should_clear_planning_artifacts()` prevents full-invalidation turns from wiping derived planning data unless the turn actually changed relevant fields.
 
 ### State Serialization
 
 `state_serde.py`: `serialize_agent_state()` now trims persisted runtime state under a 64KB ceiling via `_trim_for_session_state()` without mutating live planner structures. If you change session-state shape, keep the trim path, restore path, and envelope/document hydration consistent. `typed_meta.py`: `get_trip_settings(state)` → typed `TripSettings`. `TurnMeta` / `PersistentMeta` for per-turn vs cross-turn metadata.
 `_migrate_legacy_agent_fields()` intentionally excludes `activity_settings` from the legacy trip-settings backfill. Re-copying merged `trip_inputs.activity_settings` into `metadata["trip_settings"]` breaks post-refresh category diff detection and causes stale specialist reuse on the next `GENERATE_PLAN_NOW`.
+Trimmed session payloads must preserve reload-safe partner fields on activity and browse tiles (`partner`, `partner_product_id`, `source`, `source_agent`, `provider`, `live_price`, `price_basis`, `is_estimate_only`, plus browse `rating`/`review_count`). Do not “optimize” those fields away without checking reload and booking-card hydration paths.
+
+### Partner Providers
+
+`viator_provider.py` and `gyg_provider.py` are live affiliate integrations with client reuse, in-memory caches, and circuit breakers. Viator matching now uses normalized title variants plus anchor-token overlap scoring, and `_NO_MATCH` is only negative-cached when destination resolution and all freetext queries were definitive. Do not reintroduce transient-failure negative caching.
+Partner provider modules no longer reserve spend guard budget inline before every request. If cost-control behavior changes, treat it as an explicit architecture change and verify the replacement path rather than re-adding ad-hoc provider-local guards.
 
 ### LLM Factory
 

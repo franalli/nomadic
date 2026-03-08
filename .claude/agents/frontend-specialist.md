@@ -29,7 +29,8 @@ Before ANY code change, read the relevant SSoT doc:
 - `docs/design-system.md` — ALL styling tokens, materials, actions, pills, text, colors, component mapping
 - `docs/ux_unified_architecture.md` — View states, rendering logic, planning phases, timeline variants, streaming
 - `docs/data-contracts.md` — API routes, streaming protocols, schema shapes, enums, Zustand store shape
-- `CLAUDE.md` — Current sprint, hard rules
+- `AGENTS.md` — Current sprint, hard rules, delegation policy (authoritative)
+- `CLAUDE.md` — Supplemental legacy notes only when explicitly needed
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 
@@ -44,7 +45,9 @@ Before ANY code change, read the relevant SSoT doc:
 ```
 frontend/
   app/             → App Router pages, layout.tsx, route-level error boundaries,
-                     auth/callback/page.tsx, trip/[slug]/page.tsx
+                     auth/callback/page.tsx, trip/[slug]/page.tsx,
+                     summary/page.tsx, sitemap/page.tsx, cookies/page.tsx,
+                     credits/page.tsx, terms/page.tsx
   components/
     animations/    → Typewriter
     chat/          → ChatPanel, ChatSkeleton, SmartLoader,
@@ -110,7 +113,7 @@ frontend/
                      tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
                      specialist-colors.ts, specialists.ts, utils.ts,
                      contentPolicyGuard.ts, ghost-timeline-adapter.ts, fillDayGuards.ts,
-                     destination-intel-cache.ts,
+                     destination-intel-cache.ts, config.ts, country-flags.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts, renderStarRating.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      pdfData.ts, summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
@@ -213,6 +216,7 @@ After first user interaction, always show something: hero, cards, or full plan.
 - NDJSON (`/api/expand-itinerary`): `progress` → `envelope` → `done`
 - Always add `X-CSRF-Token` header on unsafe methods
 - Retry: 3 max, exponential backoff 1s→10s + random jitter
+- Graph no-op reuse is real: response-only turns can now arrive without any feasibility-triggered intermediate work. Do not build frontend assumptions that every planning turn emits specialist or tile partials before `complete`.
 
 ### documentStore Key Guards
 
@@ -223,6 +227,7 @@ After first user interaction, always show something: hero, cards, or full plan.
 - `_fillingDays` per-day mutex prevents concurrent fill-day on same day
 - `graphBuiltItinerary` check in `useChatSse.ts` skips expand when graph response already includes day_cards
 - Reset/session-rotation flows must finish with the browser adopting the new cookie set; `useBranchManager` uses a hard reload after successful reset instead of toast-only confirmation
+- Session rehydration must preserve partner activity metadata carried through backend-trimmed session state. Browse/booking UI should treat `partner`, `partner_product_id`, `provider`, `live_price`, `price_basis`, `is_estimate_only`, `rating`, and `review_count` as reload-stable fields rather than assuming they only exist on fresh network responses.
 
 ### Heart Preferences
 

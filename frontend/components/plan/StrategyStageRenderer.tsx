@@ -174,7 +174,7 @@ export function StrategyStageRenderer({
       />
       <div className="flex-1 min-h-0 relative overflow-hidden">
         {o.effectiveMode === 'planning' && (
-          <div key={`plan-${destinationCard?.title ?? 'default'}-${state}`}
+          <div key={`plan-${destinationCard?.title ?? 'default'}`}
             className="absolute inset-0 z-10 flex flex-col animate-in fade-in slide-in-from-left-4 duration-200"
           >
             <div ref={o.scrollContainerRef} className={cn(

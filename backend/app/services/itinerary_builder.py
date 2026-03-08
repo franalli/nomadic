@@ -2068,6 +2068,20 @@ class ItineraryBuilder:
         # Even distribution: spread activities across all available days
         # Strategy: cycle through days, placing 1 activity per day per round
         # This ensures Days 6-7 get activities before Days 2-3 get their 2nd
+
+        # Reserve minimum free days so Phase 5.6 backfill has room.
+        # Without this, a 7-day hiking trip fills all 7 days with hikes
+        # and backfill (restaurants, temples, spa) has nowhere to go.
+        min_free_days = 2 if len(days) >= 5 else (1 if len(days) >= 3 else 0)
+        if min_free_days > 0 and len(available_day_indices) > min_free_days:
+            round_robin_day_indices = available_day_indices[:-min_free_days]
+            _debug(
+                f"[ItineraryBuilder] Reserved {min_free_days} free days for backfill "
+                f"(specialist days: {len(round_robin_day_indices)}/{len(available_day_indices)})"
+            )
+        else:
+            round_robin_day_indices = available_day_indices
+
         day_ptr = 0
         specialist_ptr = 0
         periods = ["morning", "afternoon", "evening"]
@@ -2086,7 +2100,7 @@ class ItineraryBuilder:
             iteration += 1
 
             # Get current day and specialist
-            day_idx = available_day_indices[day_ptr % len(available_day_indices)]
+            day_idx = round_robin_day_indices[day_ptr % len(round_robin_day_indices)]
             current_day = days[day_idx]
             current_specialist = specialists[specialist_ptr % len(specialists)]
 
@@ -2096,10 +2110,10 @@ class ItineraryBuilder:
                 latest_dive_idx = departure_idx - 1 - self._nofly_buffer_days
                 if day_idx > latest_dive_idx:
                     # Wrap to earlier day — retry same dive, don't skip it
-                    day_ptr = (day_ptr + 1) % len(available_day_indices)
+                    day_ptr = (day_ptr + 1) % len(round_robin_day_indices)
                     dive_wrap_attempts = getattr(self, "_dive_wrap_attempts", 0) + 1
                     self._dive_wrap_attempts = dive_wrap_attempts
-                    if dive_wrap_attempts >= len(available_day_indices):
+                    if dive_wrap_attempts >= len(round_robin_day_indices):
                         # All valid days exhausted for diving — skip this activity
                         specialist_ptr += 1
                         self._dive_wrap_attempts = 0
@@ -2110,7 +2124,7 @@ class ItineraryBuilder:
             max_for_day = min(MAX_BLOCKS_PER_DAY, self._activities_per_day)
             if len(non_buffer_blocks) >= max_for_day:
                 day_ptr += 1
-                if day_ptr >= len(available_day_indices):
+                if day_ptr >= len(round_robin_day_indices):
                     day_ptr = 0
                     # If we've cycled through all days and all are full, break
                     if not any(remaining.values()):
@@ -2176,6 +2190,91 @@ class ItineraryBuilder:
 
             # Rotate specialist for variety
             specialist_ptr += 1
+
+        # Overflow: place remaining specialist activities onto reserved days.
+        # This prevents silent activity loss when the reduced round-robin set
+        # can't fit all specialist content (e.g., 5-day trip with 5 hikes but
+        # only 3 round-robin days).  Reserved days still get backfill via
+        # Phase 5.6 if capacity remains.
+        leftover = sum(len(v) for v in remaining.values())
+        if leftover and min_free_days > 0:
+            reserved_indices = available_day_indices[-min_free_days:]
+            overflow_placed = 0
+            for spec in list(remaining.keys()):
+                acts = remaining.get(spec, [])
+                while acts:
+                    placed = False
+                    for res_idx in reserved_indices:
+                        res_day = days[res_idx]
+                        non_buffer = [b for b in res_day.blocks if not b.is_buffer]
+                        if len(non_buffer) >= min(MAX_BLOCKS_PER_DAY, self._activities_per_day):
+                            continue
+                        spec_on_day = sum(
+                            1
+                            for b in res_day.blocks
+                            if b.specialist_type == spec and not b.is_buffer
+                        )
+                        if spec_on_day >= 1:
+                            continue
+                        activity = acts.pop(0)
+                        is_user_preferred = getattr(activity, "is_user_preferred", False)
+                        matched_tile = getattr(activity, "_matched_tile", None)
+                        existing_periods = {b.period for b in res_day.blocks if b.period}
+                        chosen_period = next(
+                            (p for p in periods if p not in existing_periods), "afternoon"
+                        )
+                        block = DayBlockOutput(
+                            id=activity.tile_id or f"act_{spec}_{res_idx}_{len(res_day.blocks)}",
+                            period=chosen_period,
+                            activity_type=spec,
+                            intensity=activity.intensity,
+                            summary=activity.title,
+                            specialist_type=spec,
+                            image_url=activity.image_url,
+                            duration=f"{activity.duration_hours}h"
+                            if activity.duration_hours
+                            else None,
+                            constraints=activity.constraints,
+                            preference_status="user_preferred" if is_user_preferred else None,
+                            rating=activity.rating,
+                            review_count=activity.user_ratings_count,
+                            price_level=activity.price_level,
+                            price_estimate=(matched_tile or {}).get("price_estimate"),
+                            google_place_id=activity.google_place_id,
+                            deeplink=activity.deeplink,
+                            booked_tile=matched_tile,
+                            requires_booking=bool(matched_tile),
+                            booking_category="activity" if matched_tile else None,
+                        )
+                        if activity.coordinates:
+                            block.coordinates = {
+                                "lat": activity.coordinates[1],
+                                "lng": activity.coordinates[0],
+                            }
+                        res_day.blocks.append(block)
+                        overflow_placed += 1
+                        placed = True
+                        _debug(
+                            f"[ItineraryBuilder] Overflow: placed '{activity.title}' "
+                            f"({spec}) on reserved Day {res_idx + 1}"
+                        )
+                        break
+                    if not placed:
+                        break
+                if not acts:
+                    remaining.pop(spec, None)
+            if overflow_placed:
+                _debug(
+                    f"[ItineraryBuilder] Overflow: placed {overflow_placed} activities "
+                    f"on reserved days"
+                )
+
+        leftover_final = sum(len(v) for v in remaining.values())
+        if leftover_final:
+            _debug(
+                f"[ItineraryBuilder] Round-robin: {leftover_final} activities unplaced "
+                f"(iteration={iteration}, days={len(round_robin_day_indices)})"
+            )
 
         # =================================================================
         # GAP 6 FIX: Sort blocks within each day by time-of-day
@@ -2812,16 +2911,28 @@ class ItineraryBuilder:
             f"scanning specialist days for capacity"
         )
 
-        # Build candidate list with capacity
+        # Build candidate list with capacity — skip days where Tier 1
+        # specialist blocks have saturated the activities_per_day cap.
+        # Days with specialist blocks AND remaining capacity still accept
+        # backfill (e.g., 1 hike + 1 temple visit on a 2-apd day).
         candidates: list[list] = []  # [[day_idx, remaining_hours, remaining_blocks]]
         for i, day in enumerate(days):
+            specialist_count = sum(
+                1
+                for b in day.blocks
+                if not b.is_buffer
+                and getattr(b, "specialist_type", None) in _TIER1_SPECIALIST_NAMES
+            )
+            if specialist_count >= self._activities_per_day:
+                continue
             remaining_hours, remaining_blocks = self._day_remaining_capacity(day)
             if remaining_hours >= 1.0 and remaining_blocks >= 1:
                 candidates.append([i, remaining_hours, remaining_blocks])
 
         if not candidates:
             _debug_itinerary(
-                f"📅 Phase 5.6 Pass 2: No days have capacity. Dropping {len(unplaced)} tiles."
+                f"📅 Phase 5.6 Pass 2: No days have capacity for backfill. "
+                f"Dropping {len(unplaced)} tiles."
             )
             return days
 

@@ -1,4 +1,4 @@
-Run both curl test suites against the local backend and produce a backend issue report.
+Run the full 28-flow curl suite against the local backend and produce a detailed failure report.
 
 The test suite captures backend uvicorn trace logs, test console output, and SSE response data per flow. A regex analyzer runs first for deterministic checks, then LLM agents review the raw traces for semantic issues the regex can't catch.
 
@@ -9,35 +9,72 @@ The test suite captures backend uvicorn trace logs, test console output, and SSE
 3. **LLM agent review** — backend-specialist reviews backend traces, frontend-specialist reviews console + SSE
 4. **Combined report** — merge regex + LLM findings into a single structured report
 
-## Run Both Suites Sequentially
+## Run Full Suite
 
 Rate limits are auto-disabled. The script kills any existing server on :8000 and starts its own with `DEBUG=full`.
 
 ```bash
-echo "=== BASIC SUITE ===" && bash backend/tests/run_curl_flows.sh 2>&1; echo ""
-echo "=== EXTENDED SUITE ===" && bash backend/tests/run_curl_flows_extended.sh 2>&1
+bash backend/tests/run_curl_flows.sh 2>&1
 ```
 
 ## Parse Results and Produce Report
 
-After both suites complete:
+After the suite completes:
 
 ### Step 1: Read regex analyzer results
 
-Read `backend/tests/results/summary_report.txt` for the per-flow breakdown.
+Read `backend/tests/results/summary_report.txt` for the per-flow breakdown across flows `1..28`.
 
-### Step 2: Delegate LLM agent review (run in parallel)
+### Step 2: Build the per-flow result table
+
+For each flow `N` in `1..28`, read:
+
+- `backend/tests/results/flow_N_console.log`
+- `backend/tests/results/flow_N_backend.log`
+- `backend/tests/results/flow_N_sse.log`
+
+Use `flow_N_console.log` as the source of truth for the suite result:
+
+- `══ Flow N PASS ══` → `pass`
+- `══ Flow N FAIL ══` → `fail`
+
+Use `⏭ ... SKIPPED (...)` lines as per-check skip notes, not as the overall flow result.
+If a conditional flow logs both `SKIPPED (...)` and `══ Flow N PASS ══`, record the flow as `pass`
+and include the skip reason in the `Failures` or notes column.
+
+Use `summary_report.txt` as the source of truth for regex analyzer issues and warnings.
+
+### Step 3: Identify flows that need detailed review
+
+Treat a flow as requiring detailed review if any of the following are true:
+
+- The per-flow console log marked the flow as `FAIL`
+- The regex analyzer marked the flow with `RESULT: ISSUES FOUND`
+- The regex analyzer marked the flow with `RESULT: WARNINGS`
+- The flow was conditionally skipped and the skip reason matters for the current audit
+- Any raw log is missing, empty, or obviously truncated
+
+If the summary report is missing or malformed, fall back to reviewing all flows `1..28`.
+
+### Step 4: Delegate LLM agent review (run in parallel)
 
 Launch both agents concurrently. Each agent is read-only — no file modifications.
 
-**Backend agent** — reviews ALL per-flow backend traces:
+**Backend agent** — reviews the backend traces for every flagged flow:
 
 ```
 Read backend/tests/results/summary_report.txt for context on what the regex analyzer found.
+Read each flagged flow's `flow_N_console.log` first so you know the exact failing assertion or skip reason.
 
-Then read EVERY flow's backend trace: backend/tests/results/flow_N_backend.log (N=1..13).
+First, identify the flagged flows from the per-flow console logs plus the summary report.
 
-For each flow, analyze the FULL trace for issues the regex can't catch. You understand
+Then read each flagged flow's backend trace:
+  backend/tests/results/flow_N_backend.log
+for every flagged N in 1..28.
+
+If the summary report is incomplete, review all backend traces for N=1..28.
+
+For each reviewed flow, analyze the FULL trace for issues the regex can't catch. You understand
 the coordinator architecture (classify → plan_turn → execute steps → build_envelope).
 Look for:
 
@@ -57,21 +94,30 @@ Look for:
 - Local expert truncation: Phase B parse errors from Gemini output exceeding token limits
 - Specialist dispatch correctness: Right specialists for the categories? Tier 1 vs Tier 2?
 - State consistency: Did the TripPlan state stay consistent across turns?
+- Failure mechanics: what exact step, turn, or contract broke and whether the failure
+  started in extraction, specialist dispatch, tile search, local intel, build, or response
 
 Output a structured list of findings per flow:
-  Flow N: [issue title] — [what happened, quoting relevant log lines] — [likely root cause file]
+  Flow N: [issue title] — [what happened, quoting relevant log lines] — [likely root cause file/function] — [recommended next test]
 Skip flows with no issues. Group by severity (errors first, then warnings).
 ```
 
-**Frontend agent** — reviews ALL per-flow console + SSE logs:
+**Frontend agent** — reviews the console + SSE logs for every flagged flow:
 
 ```
 Read backend/tests/results/summary_report.txt for context on what the regex analyzer found.
+Read each flagged flow's `flow_N_console.log` first so you know the exact failing assertion or skip reason.
 
-Then read EVERY flow's console log (backend/tests/results/flow_N_console.log) and SSE log
-(backend/tests/results/flow_N_sse.log) for N=1..13.
+First, identify the flagged flows from the per-flow console logs plus the summary report.
 
-For each flow, analyze the test assertions AND the SSE payloads for frontend-relevant issues.
+Then read each flagged flow's console log and SSE log:
+  backend/tests/results/flow_N_console.log
+  backend/tests/results/flow_N_sse.log
+for every flagged N in 1..28.
+
+If the summary report is incomplete, review all console + SSE logs for N=1..28.
+
+For each reviewed flow, analyze the test assertions AND the SSE payloads for frontend-relevant issues.
 You understand the UX architecture (plan_view_state transitions, strategy sections, tile
 rendering, day cards, suggestion chips).
 Look for:
@@ -93,13 +139,15 @@ Look for:
   treat this as additive or structural? Is that correct for the change type?
 - Missing data: Any null/empty fields that should have values?
 - Duplicate events: Same data sent multiple times in the SSE stream?
+- Failure mechanics: which payload, event type, or assertion mismatch would actually break
+  the frontend, and whether the bad state appears in `partial`, `complete`, or test output
 
 Output a structured list of findings per flow:
-  Flow N: [issue title] — [what happened, quoting relevant data] — [likely root cause]
+  Flow N: [issue title] — [what happened, quoting relevant data] — [likely root cause file/function] — [recommended next test]
 Skip flows with no issues. Group by severity (errors first, then warnings).
 ```
 
-### Step 3: Combine into final report
+### Step 5: Combine into final report
 
 Merge regex analyzer results + backend agent findings + frontend agent findings:
 
@@ -112,8 +160,10 @@ Merge regex analyzer results + backend agent findings + frontend agent findings:
 | 1    | Greeting (zero tools) | pass/fail | ... |
 | ...  | ... | ... | ... |
 
+Build this table from the per-flow console logs, not from the totals block in `summary_report.txt`.
+
 ### Regex Analyzer
-- Total flows: N passed / N total
+- Total flows: N passed / 28 total
 - Checks: N passed, N failed, N skipped
 - Analysis: N errors, N warnings
 - [List any regex-detected issues]
@@ -124,25 +174,28 @@ Merge regex analyzer results + backend agent findings + frontend agent findings:
 ### Frontend SSE/Console Review (LLM)
 [Frontend agent findings — grouped by severity, with file references]
 
-### Combined Issue List
+### Detailed Failure Report
 
 Priority-ordered list merging all three sources. For each issue:
 1. **[Flow N — Issue Title]** (source: regex/backend-agent/frontend-agent)
    - What happened: [description with quoted log lines]
    - Root cause: [specific file and function]
    - Severity: error/warning/info
+   - Fix direction: [most likely corrective action]
+   - Next test: [specific follow-up test or rerun target]
 
 If all clean: "No issues found — all checks green."
 ```
 
 ## Rules
 
-- Run both suites regardless of failures — do not abort on first failure.
+- Run the single full suite even if individual flows fail — do not abort on first failure.
 - Flow 12 skips are expected when `USE_GOOGLE_PLACES_PROVIDER` is not set — mark as skip not fail.
+- Flow 27 skips are expected when `VIATOR_ENABLED` is not `true` or `VIATOR_API_KEY` is not set — mark as skip not fail.
 - Do NOT modify any source files. This command is read-only.
 - Do NOT retry failed checks — report them as-is.
 - The backend and frontend agents MUST be launched in parallel (single message, two Agent tool calls).
 - Agent findings supplement the regex analyzer — don't duplicate what regex already found.
-- The "Combined Issue List" must reference specific files/functions, not vague descriptions.
+- The detailed failure report must reference specific files/functions, not vague descriptions.
 - The summary report at `backend/tests/results/summary_report.txt` contains the regex analysis.
 - Per-flow raw logs in `backend/tests/results/`: `flow_N_backend.log`, `flow_N_console.log`, `flow_N_sse.log`.

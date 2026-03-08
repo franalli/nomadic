@@ -4,9 +4,9 @@
 
 - **Focus:** [describe focus]
 - **Secondary:** [secondary priority or "none"]
-- **Active work:** [update per session]
-- **Known broken:** [update per session]
-- **DO NOT touch this sprint:** [frozen files/features]
+- **Active work:** coordinator no-op/reuse behavior, itinerary builder backfill/capacity rules, partner activity provider matching, and frontend stream/regeneration polish across chat, store, renderer, and map surfaces
+- **Known broken:** none explicitly tracked in current diff
+- **DO NOT touch this sprint:** `llm_factory.py` provider/model-routing contract; API/schema compatibility surfaces
 
 ---
 

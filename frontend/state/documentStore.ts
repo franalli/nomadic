@@ -1966,7 +1966,33 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         mergedTiles = response.document.tiles;
       }
     } else {
-      mergedTiles = { ...currentDoc?.tiles, ...response.document.tiles };
+      // Detect category change: if all incoming activity IDs are new (no overlap
+      // with existing), replace activities instead of accumulating stale tiles.
+      const prevActivityIds = new Set(
+        Object.entries(currentDoc?.tiles ?? {})
+          .filter(([, t]) => t.type === 'activity')
+          .map(([id]) => id)
+      );
+      const incomingActivityIds = new Set(
+        Object.entries(response.document.tiles ?? {})
+          .filter(([, t]) => t.type === 'activity')
+          .map(([id]) => id)
+      );
+      const hasNewActivities = incomingActivityIds.size > 0;
+      const noOverlap = hasNewActivities && [...incomingActivityIds].every(id => !prevActivityIds.has(id));
+      if (noOverlap && prevActivityIds.size > 0) {
+        // Category change: keep non-activity tiles, replace activities
+        const currentNonActivity: Record<string, Tile> = {};
+        for (const [id, tile] of Object.entries(currentDoc?.tiles ?? {})) {
+          if (tile.type !== 'activity') {
+            currentNonActivity[id] = tile;
+          }
+        }
+        mergedTiles = { ...currentNonActivity, ...response.document.tiles };
+        debugLog('[documentStore.setFromPlanResponse] 🔄 Tiles: REPLACED activities (category change detected)');
+      } else {
+        mergedTiles = { ...currentDoc?.tiles, ...response.document.tiles };
+      }
     }
 
     if (tilesReplaced) {

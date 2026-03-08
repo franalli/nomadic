@@ -143,9 +143,16 @@ class TestSerializeAgentState:
         assert result["trip_settings"] == state["trip_settings"]
         assert result["tiles"] == state["tiles"]
         assert result["strategy_sections"] == state["strategy_sections"]
-        assert result["day_cards"] == state["day_cards"]
+        assert result["day_cards"] == [{"day_number": None, "date": None, "label": None}]
         assert result["constraints"] == state["constraints"]
-        assert result["specialist_plans"] == state["specialist_plans"]
+        assert result["specialist_plans"] == {
+            "diving": {
+                "topic": "diving",
+                "feasibility_status": "feasible",
+                "day_plans": [{"day_number": 2}],
+                "constraints": [{"constraint_id": "no_fly_24h"}],
+            }
+        }
         # turn_meta is per-turn state — intentionally NOT serialized
         assert "turn_meta" not in result
         assert result["persistent_meta"] == state["persistent_meta"]
@@ -227,6 +234,137 @@ class TestRestoreAgentState:
         assert re_serialized["trip_plan"] == serialized["trip_plan"]
         assert len(re_serialized["messages"]) == len(serialized["messages"])
 
+    def test_partner_enriched_tile_fields_survive_roundtrip(self):
+        """Viator/GYG enrichment fields must survive session_state reuse on the next turn."""
+        original = {
+            "messages": [],
+            "tiles": {
+                "activities": [
+                    {
+                        "id": "spec_bali_diving_1",
+                        "type": "activity",
+                        "title": "USAT Liberty Shipwreck Shore Dive",
+                        "provider": "viator",
+                        "partner": "viator",
+                        "partner_product_id": "98765P2",
+                        "source": "live",
+                        "source_agent": "vertical_specialist",
+                        "price_estimate": 74.0,
+                        "live_price": 74.0,
+                        "currency": "USD",
+                        "price_basis": "per_person",
+                        "is_estimate_only": False,
+                        "deeplink": "https://www.viator.com/tours/test/98765P2",
+                        "image_url": "https://example.com/usat.jpg",
+                        "meta": {
+                            "duration_hours": 4.0,
+                            "viator_product_code": "98765P2",
+                        },
+                    }
+                ]
+            },
+            "day_cards": [
+                {
+                    "day_number": 1,
+                    "label": "Day 1",
+                    "blocks": [
+                        {
+                            "id": "block_1",
+                            "period": "morning",
+                            "activity_type": "experience",
+                            "specialist_type": "diving",
+                            "is_buffer": False,
+                            "booked_tile": {
+                                "id": "spec_bali_diving_1",
+                                "type": "activity",
+                                "title": "USAT Liberty Shipwreck Shore Dive",
+                                "provider": "viator",
+                                "partner": "viator",
+                                "partner_product_id": "98765P2",
+                                "source": "live",
+                                "source_agent": "vertical_specialist",
+                                "price_estimate": 74.0,
+                                "live_price": 74.0,
+                                "currency": "USD",
+                                "price_basis": "per_person",
+                                "is_estimate_only": False,
+                                "deeplink": "https://www.viator.com/tours/test/98765P2",
+                                "image_url": "https://example.com/usat.jpg",
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        restored = restore_agent_state(serialize_agent_state(original))
+
+        tile = restored["tiles"]["activities"][0]
+        assert tile["provider"] == "viator"
+        assert tile["partner"] == "viator"
+        assert tile["source"] == "live"
+        assert tile["source_agent"] == "vertical_specialist"
+        assert tile["live_price"] == 74.0
+        assert tile["is_estimate_only"] is False
+        assert tile["meta"]["viator_product_code"] == "98765P2"
+
+        booked_tile = restored["day_cards"][0]["blocks"][0]["booked_tile"]
+        assert booked_tile["provider"] == "viator"
+        assert booked_tile["partner"] == "viator"
+        assert booked_tile["source"] == "live"
+        assert booked_tile["source_agent"] == "vertical_specialist"
+        assert booked_tile["live_price"] == 74.0
+        assert booked_tile["is_estimate_only"] is False
+
+    def test_browseable_activities_contract_fields_survive_roundtrip(self):
+        """Persistent browse tiles must keep the core frontend contract fields."""
+        original = {
+            "messages": [],
+            "persistent_meta": {
+                "browseable_activities": [
+                    {
+                        "id": "browse_viator_1",
+                        "type": "activity",
+                        "partner": "viator",
+                        "provider": "viator",
+                        "partner_product_id": "98765P2",
+                        "source": "live",
+                        "source_agent": "logistics_node",
+                        "title": "USAT Liberty Shipwreck Shore Dive",
+                        "category": "diving",
+                        "price_estimate": 74.0,
+                        "live_price": 74.0,
+                        "currency": "USD",
+                        "price_basis": "per_person",
+                        "rating": 4.8,
+                        "review_count": 120,
+                        "image_url": "https://example.com/usat.jpg",
+                        "geo": {"lat": -8.28, "lng": 115.59},
+                        "deeplink": "https://www.viator.com/tours/test/98765P2",
+                        "browse_category": "activities",
+                        "is_estimate_only": False,
+                        "discard_me": "trimmed",
+                    }
+                ]
+            },
+        }
+
+        restored = restore_agent_state(serialize_agent_state(original))
+        browse_tile = restored["persistent_meta"]["browseable_activities"][0]
+
+        assert browse_tile["type"] == "activity"
+        assert browse_tile["partner_product_id"] == "98765P2"
+        assert browse_tile["currency"] == "USD"
+        assert browse_tile["price_basis"] == "per_person"
+        assert browse_tile["rating"] == 4.8
+        assert browse_tile["review_count"] == 120
+        assert browse_tile["partner"] == "viator"
+        assert browse_tile["provider"] == "viator"
+        assert browse_tile["source"] == "live"
+        assert browse_tile["source_agent"] == "logistics_node"
+        assert browse_tile["is_estimate_only"] is False
+        assert "discard_me" not in browse_tile
+
     def test_specialist_plans_roundtrip(self):
         """specialist_plans round-trips through serialize -> restore."""
         diving_plan = {
@@ -263,17 +401,32 @@ class TestRestoreAgentState:
         }
 
         serialized = serialize_agent_state(original)
-        assert serialized["specialist_plans"] == original["specialist_plans"]
+        assert serialized["specialist_plans"] == {
+            "diving": {
+                "topic": "diving",
+                "feasibility_status": "feasible",
+                "day_plans": [
+                    {"day_number": 2, "location": "Tulamben"},
+                    {"day_number": 3, "location": "Nusa Penida"},
+                ],
+                "constraints": [
+                    {"constraint_id": "no_fly_24h", "reason": "24h no-fly buffer after diving"},
+                ],
+            },
+            "hiking": {
+                "topic": "hiking",
+                "feasibility_status": "feasible",
+                "day_plans": [{"day_number": 5, "location": "Kintamani"}],
+                "constraints": [],
+            },
+        }
 
         restored = restore_agent_state(serialized)
         assert restored["specialist_plans"]["diving"]["topic"] == "diving"
-        assert (
-            restored["specialist_plans"]["diving"]["editorial"]
-            == "March is perfect for Tulamben visibility"
-        )
         assert len(restored["specialist_plans"]["diving"]["day_plans"]) == 2
         assert restored["specialist_plans"]["hiking"]["topic"] == "hiking"
-        assert restored["specialist_plans"]["hiking"]["confidence"] == 0.9
+        assert "editorial" not in restored["specialist_plans"]["diving"]
+        assert "confidence" not in restored["specialist_plans"]["hiking"]
 
         # Re-serialize should be identical
         re_serialized = serialize_agent_state(restored)

@@ -86,14 +86,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   const dayCardsFingerprint = useMemo(() => {
     const cards = storeDayCardsRaw;
     if (!cards || cards.length === 0) return null;
-    const blockFingerprint = cards
-      .flatMap((card, cardIdx) => (card.blocks ?? []).map((block) => (
-        `${cardIdx}:${block.id ?? ''}:${block.summary ?? ''}:${block.period ?? ''}:` +
-        `${block.activity_type ?? ''}:${block.scheduled_time ?? ''}:` +
-        `${block.coordinates?.lat ?? ''}:${block.coordinates?.lng ?? ''}`
-      )))
-      .join('|');
-    return `${cards.length}:${blockFingerprint}`;
+    return `${cards.length}:${cards.map(c => `${c.day_number}:${(c.blocks ?? []).length}:${(c.blocks ?? []).map(b => b.id ?? '').join(',')}`).join('|')}`;
   }, [storeDayCardsRaw]);
   const effectiveTiles = storeTiles ?? tiles;
 

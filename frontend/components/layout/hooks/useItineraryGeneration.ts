@@ -420,7 +420,7 @@ export function useItineraryGeneration({
       queuedExpandTimerRef.current = setTimeout(() => {
         queuedExpandTimerRef.current = null;
         const state = useDocumentStore.getState();
-        if (state.currentRunId || state.expandInProgress || state.isRegenerating) {
+        if (state.currentRunId || state.expandInProgress) {
           debugLog('[itinerary scheduler] skipped - generation already running');
           return;
         }
@@ -444,9 +444,6 @@ export function useItineraryGeneration({
   // Track if we've already auto-triggered to prevent infinite loops
   const hasAutoTriggeredRef = useRef(false);
 
-  // Track isRegenerating via ref to prevent callback cascade
-  const isRegeneratingRef = useRef(false);
-
   // Check if itinerary content exists
   const hasItineraryContent = (docDayCards?.length ?? 0) > 0;
 
@@ -457,18 +454,10 @@ export function useItineraryGeneration({
     }
   }, [hasItineraryContent, planViewState]);
 
-  // Sync isRegenerating state to ref
-  useEffect(() => {
-    isRegeneratingRef.current = isRegenerating;
-  }, [isRegenerating]);
-
   // Auto-trigger effect
   useEffect(() => {
     // Skip if already triggered
     if (hasAutoTriggeredRef.current) return;
-
-    // RACE GUARD: Skip if regeneration is in progress
-    if (isRegeneratingRef.current) return;
 
     // RACE GUARD: Skip if itinerary generation is already active
     if (uiGeneration?.active) return;
@@ -515,8 +504,8 @@ export function useItineraryGeneration({
   // ─────────────────────────────────────────────────────────────────────────
 
   const handleExpandToItinerary = useCallback(async () => {
-    // GATE 0: Don't expand if plan is currently regenerating
-    if (isRegeneratingRef.current) {
+    // UI-only gate: show toast when user clicks expand during regen (not a mutex)
+    if (isRegenerating) {
       addToast('Plan is updating, please wait...', 'info');
       return;
     }
@@ -538,7 +527,7 @@ export function useItineraryGeneration({
 
     // All gates passed - proceed with itinerary generation
     await proceedWithItineraryGeneration();
-  }, [addToast, proceedWithItineraryGeneration]);
+  }, [isRegenerating, addToast, proceedWithItineraryGeneration]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Quick pick handler (InlineDatePrompt)

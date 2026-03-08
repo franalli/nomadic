@@ -12,7 +12,7 @@ deps are mocked. Covers:
 from __future__ import annotations
 
 from typing import Any, Dict
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -30,6 +30,7 @@ from app.planner.coordinator import (
     _tile_refresh_types,
     build_brief,
     build_trip_state_summary,
+    execute_turn,
     plan_turn,
 )
 from app.planner.schemas.coordinator_schemas import (
@@ -200,6 +201,31 @@ class TestPlanTurnPlanning:
 
         step_types = [s.step_type for s in plan.steps]
         assert StepType.LOCAL_INTEL in step_types
+
+    def test_initial_plan_with_existing_itinerary_and_no_field_changes_is_response_only(
+        self,
+    ) -> None:
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+            start_date="2026-03-01",
+            end_date="2026-03-07",
+            reasoning="Repeat build request with no new trip inputs",
+        )
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+            day_cards=[{"day_number": 1, "label": "Arrival"}],
+            turn_meta={"fields_changed": []},
+        )
+
+        plan = plan_turn(classifier, state)
+
+        assert [step.step_type for step in plan.steps] == [StepType.GENERATE_RESPONSE]
 
 
 # =============================================================================
@@ -538,6 +564,98 @@ class TestLocalIntel:
         assert captured["children"] == 0
 
 
+class TestExecuteTurn:
+    @pytest.mark.asyncio
+    async def test_noop_initial_plan_preserves_existing_itinerary(self, monkeypatch: Any) -> None:
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            reasoning="Repeat build request with no new trip inputs",
+            destination="Bali",
+            start_date="2026-04-01",
+            end_date="2026-04-07",
+        )
+        day_cards = [{"day_number": 1, "label": "Arrival Day", "blocks": []}]
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            tiles={"activities": [{"id": "viator_1", "type": "activity", "provider": "viator"}]},
+            strategy_sections=[{"specialist_type": "diving", "content_added": [{"title": "Dive"}]}],
+            day_cards=list(day_cards),
+            messages=[],
+        )
+
+        async def _fake_generate_response_streaming(*args: Any, **kwargs: Any):
+            yield "Reused itinerary."
+
+        def _fake_build_envelope(
+            state: Dict[str, Any],
+            user_message: str,
+            session_id: str,
+            assistant_message: str,
+        ) -> Dict[str, Any]:
+            return {
+                "document": {"day_cards": list(state.get("day_cards", []))},
+                "session_state": {
+                    "trip_plan": dict(state.get("trip_plan", {})),
+                    "trip_settings": dict(state.get("trip_settings", {})),
+                },
+                "assistant_message": assistant_message,
+            }
+
+        import app.planner.coordinator as coordinator_module
+        import app.planner.nodes.router_extraction as router_module
+        import app.planner.services.feasibility_service as feasibility_module
+        import app.services.unsplash as unsplash_module
+
+        feasibility_precheck = AsyncMock(
+            return_value={"diving": ("infeasible", "No reefs", "Try sailing")}
+        )
+        monkeypatch.setattr(router_module, "classify_change", AsyncMock(return_value=classifier))
+        monkeypatch.setattr(
+            coordinator_module,
+            "_generate_response_streaming",
+            _fake_generate_response_streaming,
+        )
+        monkeypatch.setattr(coordinator_module, "_refresh_enrichment_states", AsyncMock())
+        monkeypatch.setattr(coordinator_module, "_build_envelope", _fake_build_envelope)
+        monkeypatch.setattr(
+            feasibility_module,
+            "batch_feasibility_precheck",
+            feasibility_precheck,
+        )
+        monkeypatch.setattr(
+            unsplash_module,
+            "prefetch_destination_images",
+            AsyncMock(return_value=None),
+        )
+
+        events = [
+            event
+            async for event in execute_turn(
+                "build my itinerary",
+                state,
+                session_id="session-123",
+            )
+        ]
+
+        node_names = [
+            event["data"]["node"] for event in events if event.get("type") == "node_status"
+        ]
+        assert "get_specialist_advice" not in node_names
+        assert "search_tiles" not in node_names
+        assert "build_itinerary" not in node_names
+        assert not any(event.get("type") == "feasibility_warning" for event in events)
+        feasibility_precheck.assert_not_awaited()
+        assert state["day_cards"] == day_cards
+        assert events[-1]["type"] == "complete"
+        assert events[-1]["data"]["document"]["day_cards"] == day_cards
+
+
 class TestNormalizeSpecialistPlanKeys:
     def test_lowercases_keys(self) -> None:
         state: Dict[str, Any] = {
@@ -702,10 +820,10 @@ class TestSpecialistContentToTiles:
         assert tiles == []
 
     def test_no_coordinates_empty_geo(self) -> None:
-        """Missing coordinates result in empty geo dict."""
+        """Missing coordinates serialize as absent geo coordinates."""
         section = {"content_added": [{"title": "Reef Dive"}]}
         tiles = _specialist_content_to_tiles("diving", section, "Bali")
-        assert tiles[0]["geo"] == {}
+        assert tiles[0]["geo"] is None
 
     def test_destination_slug_normalization(self) -> None:
         """Destination with spaces/commas gets slugified in tile ID."""

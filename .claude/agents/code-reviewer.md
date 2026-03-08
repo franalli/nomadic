@@ -25,7 +25,8 @@ You review against the project's documented invariants. You NEVER modify files â
 - `docs/design-system.md` â€” Frontend styling tokens, component mapping, restricted colors, interaction patterns
 - `docs/ux_unified_architecture.md` â€” View states, single renderer pattern, timeline variants, streaming protocols
 - `docs/data-contracts.md` â€” API routes, schemas, enums, streaming protocols, rate limiting
-- `CLAUDE.md` â€” Hard rules (all 12), parallel work zones, current sprint scope
+- `AGENTS.md` â€” Hard rules, current sprint scope, delegation policy (authoritative)
+- `CLAUDE.md` â€” Supplemental legacy notes only when explicitly needed
 
 ## Review Checklist
 
@@ -35,6 +36,7 @@ You review against the project's documented invariants. You NEVER modify files â
 - [ ] **ItineraryBuilder remains a service**, not an agent tool with its own LLM calls.
 - [ ] **TripPlan is the only state SSoT.** No parallel state objects created.
 - [ ] **Coordinator step planning is deterministic.** `plan_turn()` and `_execute_step()` map classifier output to the expected step sequence.
+- [ ] **Response-only no-op turns stay cheap.** `execute_turn()` may preview `plan_turn()` before feasibility work and should skip geographic feasibility I/O when the provisional plan is `[GENERATE_RESPONSE]`.
 - [ ] **ConstraintGuard is mostly deterministic.** One known LLM exception: `check_route_constraint()` â†’ `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL). All other guard checks are pure Python.
 - [ ] **ItineraryBuilder has zero LLM calls.** Pure Python scheduling only.
 - [ ] **Coordinator uses canonical modules and LLM factory.** No standalone graph nodes. `conversationalist.py` uses `get_llm_by_model()`.
@@ -70,6 +72,7 @@ You review against the project's documented invariants. You NEVER modify files â
 - [ ] Budget check: `BUDGET_ALLOCATIONS` (30/40/30 flights/hotels/activities) respected
 - [ ] No-fly buffer: diving enforcement is two-layered in `ItineraryBuilder` â€” dive count may be auto-truncated to fit the departure buffer, and late-day dive placement is blocked near departure
 - [ ] Cross-domain: `ALTITUDE_AFTER_DIVE` blocks hiking/skiing/climbing within 24h of diving
+- [ ] Full-invalidation turns do not clear planning artifacts unless `_should_clear_planning_artifacts()` says the turn actually changed relevant fields; `GENERATE_PLAN_NOW` still forces specialist rebuild when `activity_categories` changed
 - [ ] Fill-day adjacent-day checks only treat `specialist_type='diving'` as authoritative when block content/constraints indicate real diving context
 - [ ] Constraint guard violations returned to caller (coordinator or endpoint); no agent loop
 - [ ] `validate_block_arrangement` called directly by `main.py` endpoints for DnD validation
@@ -125,6 +128,8 @@ You review against the project's documented invariants. You NEVER modify files â
 - [ ] L2 cache writes use correct `cache_type` column value (specialist, experience, experience_single, tiles)
 - [ ] Router cache: `router::v3::SHA256({normalized_text}:{today_date}:{context_fingerprint})[:32]` format preserved
 - [ ] Cache invalidation on constraint-relevant field changes
+- [ ] Viator `_NO_MATCH` negative caching only happens after definitive destination resolution and definitive freetext-search results; transient taxonomy/search failures must not be cached as misses
+- [ ] Session-state trimming preserves reload-safe partner tile metadata (`partner`, `partner_product_id`, `source`, `source_agent`, `provider`, `live_price`, `price_basis`, `is_estimate_only`, `rating`, `review_count`) needed by booking/browse UI after restore
 
 ### 11. Common Anti-Patterns to Flag
 
@@ -135,6 +140,8 @@ You review against the project's documented invariants. You NEVER modify files â
 - Provider-specific params (`thinking_budget`, `max_output_tokens`) outside `llm_factory.py`
 - Direct `response_metadata["token_usage"]` or `usage_metadata` access instead of `extract_token_usage()`
 - `with_structured_output(Schema)` without `include_raw=True` or without `parsed is None` guard
+- Negative-caching partner lookup misses after transient provider failures or non-definitive destination resolution
+- Reintroducing provider-local spend-guard reservations inside `viator_provider.py` or `gyg_provider.py` without a deliberate architecture decision
 - `import *` from any module
 - `# type: ignore` without explanation
 - `await` missing on async calls (especially `clear_session_checkpoint`)

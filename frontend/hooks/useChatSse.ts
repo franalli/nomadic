@@ -162,14 +162,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
     requestAnimationFrame(() => {
       scrollPanelIntoView();
       scrollToBottom(true);
-      requestAnimationFrame(() => {
-        scrollPanelIntoView();
-        scrollToBottom(true);
-      });
-      setTimeout(() => {
-        scrollPanelIntoView();
-        scrollToBottom(true);
-      }, 150);
+      setTimeout(() => scrollToBottom(true), 150);
     });
   }, [scrollToBottom, scrollPanelIntoView]);
 
@@ -295,7 +288,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               if (data.kind === 'strategy_sections') {
                 store.mergeEnvelope({ strategy_sections: p }, envelopeGeneration);
               } else if (data.kind === 'tiles') {
-                store.mergeEnvelope({ tiles: p }, envelopeGeneration);
+                store.mergeEnvelope({ tiles: p, ...(data.tiles_replaced ? { tiles_replaced: true } : {}) }, envelopeGeneration);
               } else if (data.kind === 'trip_inputs') {
                 store.mergeEnvelope({ trip_inputs: p }, envelopeGeneration);
               }
@@ -559,7 +552,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             );
             const needsReconcile =
               !planResultApplied ||
-              !responseHasStrategy ||
+              (!responseHasStrategy && !isBootstrap(doc.plan_view_state) && hasTiles) ||
               (expectsDayCards && !responseHasDayCards);
 
             if (needsReconcile) {

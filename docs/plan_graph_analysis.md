@@ -142,13 +142,14 @@ backend/app/planner/
 
 - `DISPATCH_SPECIALISTS` and `SEARCH_TILES` may run in parallel via `_execute_parallel_group()`.
 - `LOCAL_INTEL` remains sequential to avoid concurrent writes to `strategy_sections`.
+- `execute_turn()` now previews `plan_turn()` before geographic feasibility prechecks. If the provisional plan is response-only (`[GENERATE_RESPONSE]`), coordinator skips feasibility I/O entirely and preserves the existing itinerary/strategy for true no-op turns.
 - Partial failures in parallel groups are recorded in `turn_meta["partial_failures"]` and surfaced via `ack_updates`.
 
 ### Idempotent / Short-Circuit Routing
 
 - Repeated messages with no effective `fields_changed` and an existing itinerary now route to `GENERATE_RESPONSE` only, skipping specialist + logistics + builder.
 - A dedicated `INITIAL_PLAN` guard also skips full recomputation when an itinerary already exists and no fields changed; otherwise it continues with selective tile/build steps when strategy is already present.
-- `GENERATE_PLAN_NOW` keeps its reuse fast-path only when full-invalidating fields are unchanged. If `activity_categories` changed (including a post-refresh `PATCH /api/document` flow with rebuilt `trip_settings` from the document), coordinator clears stale planning artifacts and re-dispatches specialists before rebuilding.
+- Full-invalidation artifact clearing is now gated by `_should_clear_planning_artifacts()`: no-op turns do not wipe derived planning data unless the turn actually carries changed fields, while `GENERATE_PLAN_NOW` still keeps its reuse fast-path except when `activity_categories` changed (including a post-refresh `PATCH /api/document` flow with rebuilt `trip_settings` from the document).
 
 ---
 
@@ -440,6 +441,8 @@ If a block already carries partner deeplink/image data (Viator or GYG), Google P
 
 - `activity_browser.py` now tries `search_viator_for_destination()` first for Browse Activities, supplements with `search_gyg_for_destination()` when partner inventory is thin, dedupes partner results by title, then uses Google Places to backfill remaining slots.
 - `viator_provider.py` and `gyg_provider.py` own the live affiliate integrations: each keeps a shared async `httpx` client, an in-memory browse/match cache, and a 5-failure/120-second circuit breaker. `gyg_provider.py` also normalizes GYG `long` coordinates to `{lat, lng}` and filters out multi-day tours (>8h).
+- Viator title matching now normalizes specialist titles more aggressively before search: it strips short location prefixes, removes parenthetical/session suffixes, builds up to three ordered freetext query variants, and scores candidate products with fuzzy title similarity plus non-generic anchor-token overlap. `_NO_MATCH` is only negative-cached when destination lookup and all freetext queries were definitive, so transient taxonomy/search failures do not poison later retries.
+- Partner provider calls no longer short-circuit on spend-guard exceptions inside `viator_provider.py` or `gyg_provider.py`; availability is governed by the provider feature flags, caches, and circuit breakers described here.
 - `partner_enrichment.py` replaces the old Viator-only pre-build pass. It queries enabled partners in parallel, picks the best match per tile by rating, then lower price, with Viator as the final tiebreaker, and mutates the activity tile in place with provider/deeplink/image/price metadata.
 - `lifespan.py` closes both the Viator and GYG async clients on shutdown alongside the Google Places clients.
 
@@ -804,7 +807,7 @@ Two parallel serialization paths:
 - `serialize_agent_state(state)` -- Agent state dict -> serializable dict (uses `messages_to_dict` for full-fidelity message serde)
 - `restore_agent_state(session_state)` -- Serialized dict -> agent state dict (uses `messages_from_dict` + legacy migration for `trip_inputs`/`metadata.tiles`/`metadata.strategy_sections` and flat `trip_settings` normalization)
 - `_trim_messages(messages, max_messages=20)` -- Keeps first 2 + last N messages for context window management (default 20 = 10 turns)
-- `_trim_for_session_state(state)` -- Non-mutating post-processing pass that keeps persisted `session_state` under 64KB by slimming `persistent_meta`, `day_cards`, `tiles`, `strategy_sections`, and `specialist_plans`. The full document still remains authoritative in the DB/envelope; this trim only protects session-backed runtime state.
+- `_trim_for_session_state(state)` -- Non-mutating post-processing pass that keeps persisted `session_state` under 64KB by slimming `persistent_meta`, `day_cards`, `tiles`, `strategy_sections`, and `specialist_plans`. The trimmed tile/browse payload now preserves affiliate booking fields needed for round-trips (`partner`, `partner_product_id`, `source`, `source_agent`, `provider`, `live_price`, `price_basis`, `is_estimate_only`, plus browse `rating`/`review_count`). The full document still remains authoritative in the DB/envelope; this trim only protects session-backed runtime state.
 
 ---
 

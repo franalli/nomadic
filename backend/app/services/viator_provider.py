@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from threading import Lock
 from typing import Any
 
@@ -19,7 +20,6 @@ import httpx
 from app.config import settings
 from app.services.cache_core import MemoryCache
 from app.services.circuit_breaker import CircuitBreaker
-from app.services.spend_guard import SpendLimitExceeded, reserve_partner_api_spend_or_raise
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,57 @@ _viator_cache_ttl = settings.viator_cache_ttl_hours * 3600
 _match_cache = MemoryCache(maxsize=512, ttl=_viator_cache_ttl)  # title->product matches
 _browse_viator_cache = MemoryCache(maxsize=256, ttl=_viator_cache_ttl)  # browse results
 
+_GENERIC_ACTIVITY_TOKENS = frozenset(
+    {
+        "activity",
+        "activities",
+        "adventure",
+        "advanced",
+        "afternoon",
+        "beginner",
+        "boat",
+        "class",
+        "course",
+        "cruise",
+        "day",
+        "dive",
+        "diver",
+        "divers",
+        "dives",
+        "diving",
+        "drift",
+        "encounter",
+        "evening",
+        "excursion",
+        "experience",
+        "for",
+        "from",
+        "full",
+        "group",
+        "guided",
+        "half",
+        "in",
+        "intermediate",
+        "lesson",
+        "morning",
+        "optional",
+        "private",
+        "ray",
+        "session",
+        "sessions",
+        "shore",
+        "snorkel",
+        "snorkeling",
+        "tour",
+        "trip",
+        "wall",
+        "with",
+    }
+)
+_PAREN_SUFFIX_RE = re.compile(r"\([^)]*\)")
+_SESSION_SUFFIX_RE = re.compile(r"\bsession\s+\d+\b", re.IGNORECASE)
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+
 # -- Telemetry ----------------------------------------------------------------
 _VIATOR_COUNTER_FIELDS = ("requests", "successes", "errors", "cache_hits")
 _viator_usage_lock = Lock()
@@ -100,8 +151,162 @@ def _viator_headers() -> dict[str, str]:
     }
 
 
-async def resolve_destination_id(destination: str) -> int | None:
+def _strip_location_prefix(activity_title: str) -> str:
+    """Remove short leading location prefixes from specialist-generated titles."""
+    clean_title = activity_title
+    for sep in (":", " — ", " - "):
+        if sep not in clean_title:
+            continue
+        parts = clean_title.split(sep, 1)
+        if len(parts[0].split()) <= 4:
+            return parts[1].strip()
+    return clean_title
+
+
+def _clean_activity_title(activity_title: str) -> str:
+    """Normalize specialist titles for partner search without losing site names."""
+    clean_title = _strip_location_prefix(activity_title or "")
+    clean_title = _PAREN_SUFFIX_RE.sub(" ", clean_title)
+    clean_title = _SESSION_SUFFIX_RE.sub(" ", clean_title)
+    clean_title = re.sub(r"\s+", " ", clean_title).strip(" -")
+    return clean_title or activity_title
+
+
+def _simplify_activity_title(activity_title: str) -> str:
+    """Drop generic activity qualifiers while keeping distinctive place/site tokens."""
+    clean_title = _clean_activity_title(activity_title)
+    simplified_words = [
+        word
+        for word in clean_title.split()
+        if word and word.lower() not in _GENERIC_ACTIVITY_TOKENS
+    ]
+    simplified = " ".join(simplified_words).strip()
+    return simplified or clean_title
+
+
+def _activity_keyword(activity_title: str) -> str | None:
+    """Return a normalized activity keyword for broader fallback search."""
+    title_lower = activity_title.lower()
+    keyword_map = {
+        "div": "scuba diving",
+        "snorkel": "snorkeling",
+        "surf": "surfing",
+        "hik": "hiking",
+        "trek": "trekking",
+        "climb": "climbing",
+        "sail": "sailing",
+        "kayak": "kayaking",
+        "raft": "rafting",
+        "bike": "biking",
+        "cycl": "cycling",
+        "ski": "skiing",
+        "yoga": "yoga",
+        "cook": "cooking class",
+        "safari": "safari",
+        "whale": "whale watching",
+    }
+    for stem, keyword in keyword_map.items():
+        if stem in title_lower:
+            return keyword
+    return None
+
+
+def _search_query_variants(activity_title: str, destination: str, dest_id: int | None) -> list[str]:
+    """Build a small ordered set of freetext queries for specialist titles."""
+    clean_title = _clean_activity_title(activity_title)
+    simplified_title = _simplify_activity_title(clean_title)
+    keyword = _activity_keyword(clean_title)
+
+    bases: list[str] = []
+    for candidate in (clean_title, simplified_title):
+        candidate = candidate.strip()
+        if candidate and candidate not in bases:
+            bases.append(candidate)
+    if keyword and simplified_title:
+        keyword_query = f"{simplified_title} {keyword}".strip()
+        if keyword_query not in bases:
+            bases.append(keyword_query)
+    if len(simplified_title.split()) > 4:
+        short_title = " ".join(simplified_title.split()[:4]).strip()
+        if short_title and short_title not in bases:
+            bases.append(short_title)
+
+    queries: list[str] = []
+    for base in bases:
+        query = base if dest_id is not None else f"{base} {destination}".strip()
+        if query and query not in queries:
+            queries.append(query)
+        if len(queries) >= 3:
+            break
+    return queries
+
+
+def _match_anchor_tokens(activity_title: str) -> set[str]:
+    """Return non-generic tokens that should overlap for a defensible match."""
+    tokens = {
+        token
+        for token in _NON_ALNUM_RE.sub(
+            " ", _simplify_activity_title(activity_title).lower()
+        ).split()
+        if len(token) >= 3 and token not in _GENERIC_ACTIVITY_TOKENS
+    }
+    return tokens
+
+
+def _score_product_title(activity_title: str, product_title: str) -> tuple[int, int]:
+    """Return (score, anchor_overlap) for a specialist title vs Viator product."""
+    from rapidfuzz import fuzz
+
+    clean_title = _clean_activity_title(activity_title).lower()
+    simplified_title = _simplify_activity_title(activity_title).lower()
+    score_variants = [clean_title]
+    if simplified_title and simplified_title != clean_title:
+        score_variants.append(simplified_title)
+
+    normalized_product = product_title.lower()
+    best_score = 0
+    for candidate in score_variants:
+        best_score = max(
+            best_score,
+            fuzz.token_set_ratio(candidate, normalized_product),
+            fuzz.partial_ratio(candidate, normalized_product),
+        )
+
+    product_tokens = set(_NON_ALNUM_RE.sub(" ", normalized_product).split())
+    anchor_overlap = len(_match_anchor_tokens(activity_title) & product_tokens)
+    if anchor_overlap:
+        best_score += min(anchor_overlap * 6, 18)
+    return best_score, anchor_overlap
+
+
+def _best_scored_product(activity_title: str, products: list[dict]) -> tuple[dict | None, int, int]:
+    """Return the highest-scoring product candidate for an activity title."""
+    best_product: dict | None = None
+    best_score = 0
+    best_anchor_overlap = 0
+    for product in products:
+        product_title = product.get("title", "")
+        score, anchor_overlap = _score_product_title(activity_title, product_title)
+        if (
+            best_product is None
+            or score > best_score
+            or (score == best_score and anchor_overlap > best_anchor_overlap)
+        ):
+            best_product = product
+            best_score = score
+            best_anchor_overlap = anchor_overlap
+    return best_product, best_score, best_anchor_overlap
+
+
+async def resolve_destination_id(
+    destination: str,
+    *,
+    return_status: bool = False,
+) -> int | None | tuple[int | None, bool]:
     """Resolve a destination name to a Viator destination ID.
+
+    Returns a tuple of ``(destination_id, is_definitive)`` when ``return_status``
+    is true so callers can avoid negative-caching transient taxonomy failures.
 
     Caches the full taxonomy for 30 days (it's static).
     """
@@ -110,9 +315,9 @@ async def resolve_destination_id(destination: str) -> int | None:
 
     if taxonomy is None:
         if _viator_cb.is_open():
-            return None
+            result: tuple[int | None, bool] = (None, False)
+            return result if return_status else result[0]
         try:
-            reserve_partner_api_spend_or_raise("viator")
             record_viator_usage("request")
             client = await _get_viator_client()
             resp = await client.get(
@@ -132,25 +337,25 @@ async def resolve_destination_id(destination: str) -> int | None:
             _viator_cb.record_success()
             record_viator_usage("success")
             logger.debug("[VIATOR] Cached %d destinations in taxonomy", len(taxonomy))
-        except SpendLimitExceeded as exc:
-            logger.warning("[VIATOR] Spend guard blocked destinations call: %s", exc)
-            return None
         except Exception as e:
             _viator_cb.record_failure()
             record_viator_usage("error")
             logger.debug("[VIATOR] Failed to fetch destinations: %s", e)
-            return None
+            result = (None, False)
+            return result if return_status else result[0]
 
     dest_lower = destination.strip().lower()
 
     # Exact match
     if dest_lower in taxonomy:
-        return taxonomy[dest_lower]
+        result = (taxonomy[dest_lower], True)
+        return result if return_status else result[0]
 
     # Substring match (e.g. "Bali" in "Bali, Indonesia")
     for name, dest_id in taxonomy.items():
         if dest_lower in name or name in dest_lower:
-            return dest_id
+            result = (dest_id, True)
+            return result if return_status else result[0]
 
     # Fuzzy match via rapidfuzz
     from rapidfuzz import fuzz
@@ -163,10 +368,12 @@ async def resolve_destination_id(destination: str) -> int | None:
             best_score = score
             best_id = dest_id
     if best_score >= 70 and best_id is not None:
-        return best_id
+        result = (best_id, True)
+        return result if return_status else result[0]
 
     logger.debug("[VIATOR] No destination match for '%s'", destination)
-    return None
+    result = (None, True)
+    return result if return_status else result[0]
 
 
 async def search_freetext(
@@ -176,11 +383,21 @@ async def search_freetext(
     count: int = 3,
 ) -> list[dict]:
     """Freetext search for Viator products."""
+    products, _ = await _search_freetext_with_status(query, dest_id, currency=currency, count=count)
+    return products
+
+
+async def _search_freetext_with_status(
+    query: str,
+    dest_id: int | None,
+    currency: str = "USD",
+    count: int = 3,
+) -> tuple[list[dict], bool]:
+    """Return freetext products plus whether the provider answered definitively."""
     if _viator_cb.is_open():
-        return []
+        return [], False
 
     try:
-        reserve_partner_api_spend_or_raise("viator")
         record_viator_usage("request")
         client = await _get_viator_client()
         payload: dict[str, Any] = {
@@ -204,15 +421,12 @@ async def search_freetext(
         products = data.get("products", {}).get("results", [])
         _viator_cb.record_success()
         record_viator_usage("success")
-        return products
-    except SpendLimitExceeded as exc:
-        logger.warning("[VIATOR] Spend guard blocked freetext search: %s", exc)
-        return []
+        return products, True
     except Exception as e:
         _viator_cb.record_failure()
         record_viator_usage("error")
         logger.debug("[VIATOR] Freetext search failed: %s", e)
-        return []
+        return [], False
 
 
 async def search_products_by_destination(
@@ -225,7 +439,6 @@ async def search_products_by_destination(
         return []
 
     try:
-        reserve_partner_api_spend_or_raise("viator")
         record_viator_usage("request")
         client = await _get_viator_client()
         payload: dict[str, Any] = {
@@ -247,9 +460,6 @@ async def search_products_by_destination(
         _viator_cb.record_success()
         record_viator_usage("success")
         return products
-    except SpendLimitExceeded as exc:
-        logger.warning("[VIATOR] Spend guard blocked product search: %s", exc)
-        return []
     except Exception as e:
         _viator_cb.record_failure()
         record_viator_usage("error")
@@ -396,89 +606,49 @@ async def match_activity_to_viator(
         record_viator_usage("cache_hit")
         return cached if cached is not _NO_MATCH else None
 
-    dest_id = await resolve_destination_id(destination)
+    dest_id, destination_is_definitive = await resolve_destination_id(
+        destination,
+        return_status=True,
+    )
 
-    # Strip location prefix from specialist-generated names
-    # e.g. "Nusa Penida: North Coast Drift Dive" → "North Coast Drift Dive"
-    clean_title = activity_title
-    for sep in (":", " — ", " - "):
-        if sep in clean_title:
-            parts = clean_title.split(sep, 1)
-            # Only strip if prefix is short (likely a location, not the activity)
-            if len(parts[0].split()) <= 4:
-                clean_title = parts[1].strip()
-                break
-    if not clean_title:
-        clean_title = activity_title
+    clean_title = _clean_activity_title(activity_title)
+    query_variants = _search_query_variants(activity_title, destination, dest_id)
+    products: list[dict] = []
+    seen_products: set[str] = set()
+    all_queries_definitive = bool(query_variants) and destination_is_definitive
+    for query in query_variants:
+        query_products, is_definitive = await _search_freetext_with_status(
+            query,
+            dest_id,
+            currency,
+            count=3,
+        )
+        all_queries_definitive = all_queries_definitive and is_definitive
+        for product in query_products:
+            if (
+                product.get("duration", {}).get("fixedDurationInMinutes")
+                or MAX_SINGLE_ACTIVITY_MINUTES
+            ) > MAX_SINGLE_ACTIVITY_MINUTES:
+                continue
 
-    # Freetext search with cleaned title + destination
-    query = f"{clean_title} {destination}"
-    products = await search_freetext(query, dest_id, currency, count=3)
-
-    # Retry with shortened title if empty
-    if not products:
-        words = clean_title.split()
-        if len(words) > 4:
-            short_query = f"{' '.join(words[:4])} {destination}"
-            products = await search_freetext(short_query, dest_id, currency, count=3)
-
-    # Last resort: extract core activity keyword and search broadly
-    if not products:
-        _KW_MAP = {
-            "div": "scuba diving",
-            "snorkel": "snorkeling",
-            "surf": "surfing",
-            "hik": "hiking",
-            "trek": "trekking",
-            "climb": "climbing",
-            "sail": "sailing",
-            "kayak": "kayaking",
-            "raft": "rafting",
-            "bike": "biking",
-            "cycl": "cycling",
-            "ski": "skiing",
-            "yoga": "yoga",
-            "cook": "cooking class",
-            "safari": "safari",
-            "whale": "whale watching",
-        }
-        title_lower = clean_title.lower()
-        for stem, kw in _KW_MAP.items():
-            if stem in title_lower:
-                products = await search_freetext(
-                    f"{kw} {destination}",
-                    dest_id,
-                    currency,
-                    count=3,
-                )
-                break
-
-    # Drop multi-day tours (raw duration > 8h)
-    products = [
-        p
-        for p in products
-        if (p.get("duration", {}).get("fixedDurationInMinutes") or MAX_SINGLE_ACTIVITY_MINUTES)
-        <= MAX_SINGLE_ACTIVITY_MINUTES
-    ]
+            product_code = str(product.get("productCode") or "").strip()
+            product_title = str(product.get("title") or "").strip().lower()
+            dedupe_key = product_code or product_title
+            if dedupe_key and dedupe_key in seen_products:
+                continue
+            if dedupe_key:
+                seen_products.add(dedupe_key)
+            products.append(product)
 
     if not products:
-        _match_cache.set(cache_key, _NO_MATCH)
+        if all_queries_definitive:
+            _match_cache.set(cache_key, _NO_MATCH)
         return None
 
-    # Score by title similarity
-    from rapidfuzz import fuzz
-
-    best_score = 0
-    best_product = None
-    for p in products:
-        p_title = p.get("title", "")
-        score = fuzz.token_set_ratio(clean_title.lower(), p_title.lower())
-        if score > best_score:
-            best_score = score
-            best_product = p
+    best_product, best_score, best_anchor_overlap = _best_scored_product(clean_title, products)
     if best_score < 55 or best_product is None:
         # Loose fallback: accept best product if it shares an activity keyword
-        # with the query (e.g., "drift dive" and "scuba diving" both contain "div")
+        # and retains at least one non-generic site token when available.
         _ACTIVITY_STEMS = {
             "div",
             "snorkel",
@@ -501,15 +671,19 @@ async def match_activity_to_viator(
         query_lower = clean_title.lower()
         product_title = (best_product.get("title", "") if best_product else "").lower()
         shared = any(stem in query_lower and stem in product_title for stem in _ACTIVITY_STEMS)
-        if shared and best_product:
+        anchor_tokens = _match_anchor_tokens(clean_title)
+        has_anchor_support = not anchor_tokens or best_anchor_overlap > 0
+        if shared and has_anchor_support and best_product:
             logger.info(
-                "[VIATOR] Loose match (score=%d, shared stem): '%s' → '%s'",
+                "[VIATOR] Loose match (score=%d, anchors=%d): '%s' → '%s'",
                 best_score,
+                best_anchor_overlap,
                 clean_title,
                 best_product.get("title", ""),
             )
         else:
-            _match_cache.set(cache_key, _NO_MATCH)
+            if all_queries_definitive:
+                _match_cache.set(cache_key, _NO_MATCH)
             return None
     tile = viator_product_to_tile(best_product, destination)
 
