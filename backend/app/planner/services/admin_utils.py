@@ -13,7 +13,6 @@ Extracted from plan_graph.py (Stage 7, Phase 3).
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -132,12 +131,9 @@ async def clear_response_caches() -> int:
     total += clear_iata_cache()
 
     # L2: only when explicitly enabled at runtime.
-    truthy = {"1", "true", "yes", "on"}
-    clear_l2_raw = os.getenv("CLEAR_L2_ON_RESET", "").strip().lower()
-    pytest_running_raw = os.getenv("PYTEST_RUNNING", "").strip().lower()
-    clear_l2 = clear_l2_raw in truthy
-    pytest_running = pytest_running_raw in truthy
-    if clear_l2 and not pytest_running:
+    from app.config import settings
+
+    if settings.clear_l2_on_session_reset and not settings.pytest_running:
         try:
             from sqlalchemy import text
 

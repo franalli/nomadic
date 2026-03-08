@@ -1540,42 +1540,72 @@ Endpoints with zero frontend callers AND not in admin routes → include in repo
 
 Check that env vars defined in `.env` / `.env.local` are actually used, and that env vars read in code are actually defined.
 
-```bash
-# 1. Backend: all env vars accessed in code (extract var names)
-grep -rn "os\.environ\|os\.getenv\|environ\.get\|environ\[" backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
+#### 3C-1: Config Centralisation Invariant
 
-# 2. Frontend: all env vars accessed in code (extract var names)
+**All env vars MUST be read exclusively in `config.py` via `Settings` fields.** No `os.getenv`, `os.environ`, or `environ.get` calls are allowed outside `config.py`. The flow is: `.env` → `config.py` (Settings) → `settings.*` everywhere else.
+
+```bash
+# INVARIANT: zero os.getenv / os.environ calls outside config.py
+# (config.py is the ONLY file allowed to read from env; everything else uses settings.*)
+grep -rn "os\.getenv\|os\.environ\|environ\.get\|environ\[" backend/app/ backend/start.py --include="*.py" | grep -v __pycache__ | grep -v test_ | grep -v "config\.py"
+
+# Also check migrations/ (should use settings.database_url, not os.getenv)
+grep -rn "os\.getenv\|os\.environ\[" backend/migrations/ --include="*.py" | grep -v __pycache__
+```
+
+Report:
+- **Any `os.getenv` / `os.environ` outside `config.py`** → **Critical** (breaks config centralisation; must read via `settings.*` instead)
+- Exception: `migrations/env.py` may use `os.path` for path manipulation — that's fine, but env VAR reads must go through settings
+- Exception: `start.py` may call `load_dotenv()` before importing config — that's fine, but must not read env vars directly after that
+
+#### 3C-2: Config Defaults Completeness
+
+Every env var in `.env` must have a corresponding `Settings` field in `config.py` with a default value, so the app starts without a `.env` file.
+
+```bash
+# 1. List all env var names defined in .env
+grep -E "^[A-Z_]+=" backend/.env 2>/dev/null | sed 's/=.*//' | sort > /tmp/env_vars.txt
+
+# 2. List all Settings fields in config.py (these auto-map to env vars via pydantic-settings)
+grep -n "^\s\+[a-z_]\+\s*:" backend/app/config.py | grep -v "model_config" | awk -F: '{print $2}' | sed 's/^\s*//;s/\s*:.*//' | tr '[:lower:]' '[:upper:]' | sort > /tmp/config_fields.txt
+
+# 3. Env vars in .env with no matching Settings field (missing from config)
+comm -23 /tmp/env_vars.txt /tmp/config_fields.txt
+
+# 4. Settings fields with no default value (will crash if env var is missing)
+# Look for fields that are just `field_name: type` with no `=` default
+grep -n "^\s\+[a-z_]\+\s*:\s*[A-Za-z]" backend/app/config.py | grep -v "=" | grep -v "model_config\|@property"
+
+# 5. Cleanup
+rm -f /tmp/env_vars.txt /tmp/config_fields.txt
+```
+
+Report:
+- **Env var in `.env` with no matching `Settings` field in `config.py`** → **High** (not centralised; unreachable via `settings.*`)
+- **Settings field with no default value and no `os.getenv()` fallback** → **Critical** (app crashes without `.env`)
+- Infrastructure-only vars (`POSTGRES_DB`, `POSTGRES_PASSWORD`, `POSTGRES_USER`) consumed by Docker Compose only → **Skip** (not app-level config)
+
+#### 3C-3: Frontend & Cross-Stack Drift
+
+```bash
+# 1. Frontend: all env vars accessed in code (extract var names)
 grep -rn "process\.env\." frontend/ --include="*.ts" --include="*.tsx" | grep -v node_modules | grep -v __tests__ | grep -v ".next/"
 
-# 3. Read actual .env files to get defined vars
+# 2. Read actual .env files to get defined vars
 cat backend/.env 2>/dev/null | grep -v "^#\|^$" | awk -F= '{print $1}' | sort
 cat frontend/.env.local 2>/dev/null | grep -v "^#\|^$" | awk -F= '{print $1}' | sort
 
-# 4. Also check .env.example files for documented expectations
+# 3. Also check .env.example files for documented expectations
 cat backend/.env.example 2>/dev/null || echo "No backend .env.example found"
 cat frontend/.env.example 2>/dev/null || cat frontend/.env.local.example 2>/dev/null || echo "No frontend .env.example found"
-
-# 5. Check for env vars used without fallback defaults (will crash if missing)
-grep -rn 'os\.environ\[' backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_
-grep -rn 'os\.getenv(' backend/app/ --include="*.py" | grep -v __pycache__ | grep -v test_ | grep -v ", "
-# (os.getenv without a second arg returns None — may cause downstream TypeError)
-
-# 6. Pydantic settings fields in config.py — each field maps to an env var that must be defined
-# Extract all field names from the Settings class (these are read automatically by pydantic-settings)
-grep -n "^\s\+[a-z_]\+\s*:" backend/app/config.py | grep -v __pycache__
-# Cross-reference: for each field, check if the corresponding env var (uppercased field name) is in .env
 ```
 
 Cross-reference and report:
 
-- **Defined in .env but never read in code** → **Medium** (dead config, cleanup candidate)
-- **Read in code but not defined in .env/.env.local** → **High** (will be `None`/`undefined` at runtime; new devs will hit errors)
-- **Read with `os.environ[]` (hard crash if missing) but not in .env** → **Critical** (KeyError on startup)
-- **Read with `os.getenv()` without a default AND used without None-check** → **High** (silent `None` propagation)
+- **Defined in .env but never read in code (via settings or frontend)** → **Medium** (dead config, cleanup candidate)
 - **Frontend `process.env.NEXT_PUBLIC_*` used but not in `.env.local`** → **High** (will be `undefined`, may cause hydration mismatch or runtime error)
 - **Env vars in `.env.example` but not in actual `.env`/`.env.local`** → **Medium** (setup docs are stale)
-- **Pydantic `Settings` field in `config.py` with no default AND no matching entry in `.env`** → **Critical** (pydantic-settings raises `ValidationError` on startup if a required field has no env var and no default)
-- **Pydantic `Settings` field referencing a model name (e.g., `*_model`) with no `.env` entry** → **High** (LLM factory will receive `None` or the Pydantic default, silently using wrong model)
+- **Pydantic `Settings` field referencing a model name (e.g., `*_model`) with no `.env` entry** → **High** (LLM factory will receive the Pydantic default, silently using wrong model)
 - Do NOT read or report the actual VALUES of any env vars — only report variable names. Never print secrets.
 
 ### 3D: Alembic Migration Health

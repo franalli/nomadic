@@ -56,9 +56,7 @@ if not settings.spend_guard_enabled:
 # spend tracking would allow N× the configured cap (one counter per worker).
 # This is a safety net, not a bug — remove only when Redis migration is complete.
 if settings.spend_guard_enabled:
-    import os as _os
-
-    _worker_count = int(_os.getenv("WEB_CONCURRENCY", "1"))
+    _worker_count = settings.web_concurrency
     if _worker_count > 1:
         logger.critical(
             "SPEND GUARD: %d workers detected with in-memory spend tracking. "

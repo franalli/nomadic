@@ -16,7 +16,6 @@ Provides:
 
 import asyncio
 import logging
-import os
 from typing import Optional
 
 from cachetools import TTLCache
@@ -67,7 +66,7 @@ _validation_cache_lock = asyncio.Lock()
 # Top destinations for cache prewarm — optimization hints only.
 # Override via VALIDATION_PREWARM_DESTINATIONS env var (comma-separated).
 # The system works without this list (just slower on first request).
-_env_prewarm = os.getenv("VALIDATION_PREWARM_DESTINATIONS", "")
+_env_prewarm = settings.validation_prewarm_destinations
 _PREWARM_DESTINATIONS: list[str] = (
     [d.strip() for d in _env_prewarm.split(",") if d.strip()] if _env_prewarm else []
 )

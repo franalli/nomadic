@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import os
-
-_TRUTHY = {"1", "true", "yes", "on"}
+from app.config import settings
 
 
 def is_test_mode() -> bool:
@@ -15,5 +13,4 @@ def is_test_mode() -> bool:
     Returns True if PYTEST_RUNNING env var is set to a truthy value.
     This is set by conftest.py before any test imports.
     """
-    value = os.getenv("PYTEST_RUNNING", "").strip().lower()
-    return value in _TRUTHY
+    return settings.pytest_running

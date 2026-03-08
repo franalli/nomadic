@@ -13,7 +13,6 @@ Usage:
 """
 
 import logging
-import os
 import sys
 
 # Load .env before importing anything else
@@ -25,22 +24,13 @@ env_path = Path(__file__).parent / ".env"
 load_dotenv(env_path)
 
 
-def get_log_level() -> str:
-    """Get uvicorn log level based on DEBUG mode."""
-    debug_mode = os.getenv("DEBUG", "off").lower().strip()
-    if debug_mode == "full":
-        return "debug"
-    # For compact and off modes, suppress uvicorn's warnings (including WatchFiles)
-    return "error"
-
-
 def main():
     import uvicorn
 
     from app.config import settings
 
     is_prod = "--prod" in sys.argv
-    log_level = get_log_level()
+    log_level = "debug" if settings.debug_mode == "full" else "error"
 
     # Configure root logger so application loggers (app.*) output INFO/DEBUG
     # to stderr. Without this, uvicorn only adds handlers for its own loggers
@@ -53,7 +43,7 @@ def main():
             stream=sys.stderr,
         )
 
-    print(f"Starting Nomadic Backend (DEBUG={os.getenv('DEBUG', 'off')}, log_level={log_level})")
+    print(f"Starting Nomadic Backend (DEBUG={settings.debug_mode}, log_level={log_level})")
 
     uvicorn.run(
         "app.main:app",

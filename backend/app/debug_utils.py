@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -55,12 +54,11 @@ _console = Console(theme=_THEME)
 
 
 def get_debug_mode() -> str:
-    """Get current debug mode from environment.
+    """Get current debug mode from settings.
 
     Returns: 'full', 'compact', or 'off'
     """
-    # Read DEBUG dynamically so tests/runtime env changes are reflected immediately.
-    mode = os.getenv("DEBUG", "off").lower().strip()
+    mode = settings.debug_mode.lower().strip()
     if mode in ("full", "compact"):
         return mode
     return "off"

@@ -4,7 +4,6 @@ import hmac
 import json
 import logging
 import math
-import os
 import re
 import secrets
 import time
@@ -15,15 +14,13 @@ from urllib.parse import quote, urlencode
 
 import httpx
 
+from app.config import settings  # noqa: E402 — safe: config.py imports only stdlib+pydantic
+
 # =============================================================================
 # EARLY WARNING SUPPRESSION (before any imports that might trigger warnings)
 # =============================================================================
-# Must happen before OpenAI/Pydantic imports to catch schema validation warnings.
-# Bootstrap exception: importing `settings` here would instantiate pydantic_settings,
-# triggering the very warnings we're suppressing. Reads same DEBUG env var as
-# settings.debug_mode (Field alias="DEBUG") — single source of truth in config.py.
-_debug_mode = os.getenv("DEBUG", "off").lower().strip()
-if _debug_mode != "full":
+# Must happen before OpenAI/Pydantic/LangChain imports to catch schema validation warnings.
+if settings.debug_mode != "full":
     warnings.filterwarnings("ignore")
     logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
 
@@ -48,7 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 import app.db_models as db_models  # noqa: E402
 from app.analytics_routes import router as analytics_router  # noqa: E402
-from app.config import generate_session_token, settings  # noqa: E402
+from app.config import generate_session_token  # noqa: E402
 from app.crud_document import (  # noqa: E402
     add_tiles_to_branch,
     apply_user_patch,
@@ -4463,7 +4460,7 @@ if __name__ == "__main__":
     import uvicorn
 
     # Respect DEBUG mode for uvicorn logging (suppresses WatchFiles warnings in demo/off)
-    log_level = "debug" if _debug_mode == "full" else "error"
+    log_level = "debug" if settings.debug_mode == "full" else "error"
     uvicorn.run(
         app,
         host=settings.backend_host,

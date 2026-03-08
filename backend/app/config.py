@@ -137,6 +137,9 @@ class Settings(BaseSettings):
         os.getenv("COST_THRESHOLD_CRITICAL", "1.00")
     )  # LLM cost critical threshold (USD)
 
+    # Infrastructure
+    web_concurrency: int = int(os.getenv("WEB_CONCURRENCY", "1"))
+
     # backend — 0.0.0.0 required for container environments (Render, Docker)
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
@@ -144,6 +147,10 @@ class Settings(BaseSettings):
 
     # database
     database_url: str = os.getenv("DATABASE_URL", "")
+
+    # LLM provider API keys (consumed by LangChain from env; centralised here for defaults)
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
 
     # external APIs
     unsplash_access_key: str | None = os.getenv("UNSPLASH_ACCESS_KEY")
@@ -164,6 +171,10 @@ class Settings(BaseSettings):
     unsplash_prefetch_streak_threshold: int = int(
         os.getenv("UNSPLASH_PREFETCH_STREAK_THRESHOLD", "2")
     )
+
+    # GetYourGuide API (reserved, not yet active)
+    get_your_guide_api_key: str = os.getenv("GET_YOUR_GUIDE_API_KEY", "")
+    get_your_guide_api_url: str = os.getenv("GET_YOUR_GUIDE_API_URL", "")
 
     # Viator Affiliate API (Basic Access)
     viator_api_key: str = os.getenv("VIATOR_API_KEY", "")
@@ -251,6 +262,9 @@ class Settings(BaseSettings):
     spend_guard_places_daily_cap_usd: float = float(
         os.getenv("SPEND_GUARD_PLACES_DAILY_CAP_USD", "2.00")
     )
+
+    # Validation prewarm destinations (comma-separated, e.g. "Paris,Tokyo")
+    validation_prewarm_destinations: str = os.getenv("VALIDATION_PREWARM_DESTINATIONS", "")
 
     # Validation cache settings
     validation_cache_size: int = 5000  # Increased for progressive learning of unknown places

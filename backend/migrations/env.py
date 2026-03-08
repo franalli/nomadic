@@ -24,7 +24,9 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    url = os.getenv("DATABASE_URL")
+    from app.config import settings as _settings
+
+    url = _settings.database_url
     if not url:
         # fallback to the value in alembic.ini if you want
         url = config.get_main_option("sqlalchemy.url")
