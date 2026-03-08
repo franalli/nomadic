@@ -491,7 +491,11 @@ def check_day_preference_capacity(
         start = datetime.fromisoformat(start_date)
         end = datetime.fromisoformat(end_date)
         total_days = (end - start).days + 1
-        usable = max(0, total_days - 2)  # arrival + departure
+        # Short trips: arrival/departure are partially usable
+        if total_days <= 3:
+            usable = max(1, total_days)
+        else:
+            usable = max(0, total_days - 2)  # arrival + departure
 
         # Compute max buffer from active specialists
         max_buffer = 0
@@ -771,7 +775,11 @@ async def constraint_guard(state: GraphState) -> GraphState:
             start = datetime.fromisoformat(state.trip_plan.start_date)
             end = datetime.fromisoformat(state.trip_plan.end_date)
             total_days = (end - start).days + 1
-            usable_days = max(0, total_days - 2)  # arrival + departure
+            # Short trips: arrival/departure are partially usable
+            if total_days <= 3:
+                usable_days = max(1, total_days)
+            else:
+                usable_days = max(0, total_days - 2)  # arrival + departure
 
             for section in persistent.strategy_sections:
                 topic = section.get("specialist_type")
@@ -845,7 +853,11 @@ async def constraint_guard(state: GraphState) -> GraphState:
             start = datetime.fromisoformat(state.trip_plan.start_date)
             end = datetime.fromisoformat(state.trip_plan.end_date)
             total_days = (end - start).days + 1
-            usable_days = max(0, total_days - 2)
+            # Short trips: arrival/departure are partially usable
+            if total_days <= 3:
+                usable_days = max(1, total_days)
+            else:
+                usable_days = max(0, total_days - 2)
 
             total_activities = 0
             active_specialist_names: list[str] = []

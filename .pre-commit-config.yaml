@@ -26,3 +26,13 @@ repos:
         files: ^backend/
       - id: ruff-format
         files: ^backend/
+
+  # ----- Planner SSoT enforcement -----
+  - repo: local
+    hooks:
+      - id: ssot-check
+        name: ssot-check
+        entry: backend/.venv/bin/python backend/scripts/check_ssot_violations.py backend/app/planner/coordinator.py
+        language: system
+        pass_filenames: false
+        files: ^backend/app/planner/coordinator\.py$

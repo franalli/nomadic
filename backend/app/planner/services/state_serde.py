@@ -297,6 +297,7 @@ _SESSION_TILE_KEYS = {
     "type",
     "title",
     "category",
+    "provider",  # enrichment status survives session round-trips
     "price_estimate",
     "currency",
     "price_basis",
@@ -305,7 +306,7 @@ _SESSION_TILE_KEYS = {
     "tags",
     "rating",
     "review_count",
-    "deeplink_url",
+    "deeplink",
     "availability_status",
     "location_label",
     "meta",
@@ -321,7 +322,7 @@ _SESSION_BOOKED_TILE_KEYS = {
     "currency",
     "image_url",
     "geo",
-    "deeplink_url",
+    "deeplink",
 }
 
 _SESSION_BROWSEABLE_KEYS = {
@@ -331,8 +332,15 @@ _SESSION_BROWSEABLE_KEYS = {
     "image_url",
     "price_estimate",
     "geo",
-    "deeplink_url",
+    "deeplink",
     "browse_category",
+}
+
+_SESSION_TILE_META_KEYS = {
+    "duration_hours",
+    "viator_product_code",
+    "category",
+    "is_backfill",
 }
 
 _TRAVEL_INTEL_KEEP = {
@@ -422,16 +430,24 @@ def _trim_for_session_state(state: Dict[str, Any]) -> Dict[str, Any]:
     # 3. Trim tile objects in category dict
     tiles = state.get("tiles")
     if isinstance(tiles, dict):
-        state["tiles"] = {
-            cat_key: [
-                {k: v for k, v in t.items() if k in _SESSION_TILE_KEYS}
-                for t in tile_list
-                if isinstance(t, dict)
-            ]
-            if isinstance(tile_list, list)
-            else tile_list
-            for cat_key, tile_list in tiles.items()
-        }
+        trimmed_tiles: Dict[str, Any] = {}
+        for cat_key, tile_list in tiles.items():
+            if not isinstance(tile_list, list):
+                trimmed_tiles[cat_key] = tile_list
+                continue
+            slim_list = []
+            for t in tile_list:
+                if not isinstance(t, dict):
+                    continue
+                slim_t = {k: v for k, v in t.items() if k in _SESSION_TILE_KEYS}
+                # Strip verbose meta sub-fields to reduce session state size
+                if "meta" in slim_t and isinstance(slim_t["meta"], dict):
+                    slim_t["meta"] = {
+                        k: v for k, v in slim_t["meta"].items() if k in _SESSION_TILE_META_KEYS
+                    }
+                slim_list.append(slim_t)
+            trimmed_tiles[cat_key] = slim_list
+        state["tiles"] = trimmed_tiles
 
     # 4. Trim strategy_sections: strip travel_intelligence and verbose content
     sections = state.get("strategy_sections")
@@ -681,7 +697,12 @@ def _migrate_legacy_agent_fields(session_state: Dict[str, Any], result: Dict[str
                 "booking_types",
                 "flight_settings",
                 "hotel_settings",
-                "activity_settings",
+                # NOTE: activity_settings intentionally excluded here.
+                # trip_inputs may already contain post-merge categories from
+                # the document (e.g. after a page refresh). Copying them into
+                # trip_settings would prevent _merge_doc_settings from detecting
+                # the category change (old vs new).  activity_settings flows
+                # exclusively through doc_settings → _merge_doc_settings.
                 "transport_settings",
                 "date_flex",
                 "trip_duration",

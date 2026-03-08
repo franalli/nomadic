@@ -52,12 +52,14 @@ export async function triggerRegeneration(
   );
   // === END DIAGNOSTIC ===
 
-  // Race condition guards — single getState() for atomicity
-  const { isRegenerating: alreadyRegenerating, expandInProgress: alreadyExpanding } =
+  // Race condition guard — expandInProgress is the sole mutex.
+  // isRegenerating may already be true as early visual feedback (e.g. activity
+  // sheet save sets it before the PATCH completes) — that's intentional.
+  const { expandInProgress: alreadyExpanding } =
     useDocumentStore.getState();
-  if (alreadyRegenerating || alreadyExpanding) {
+  if (alreadyExpanding) {
     // === DIAGNOSTIC ===
-    debugLog('[DIAG:REGEN_BLOCKED] already running — skipping');
+    debugLog('[DIAG:REGEN_BLOCKED] expand already in progress — skipping');
     // === END DIAGNOSTIC ===
     return;
   }

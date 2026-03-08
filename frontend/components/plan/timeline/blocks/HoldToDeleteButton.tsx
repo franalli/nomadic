@@ -68,8 +68,8 @@ export function HoldToDeleteButton({
       disabled={disabled}
       className={cn(
         'relative flex items-center justify-center w-8 h-8 rounded-full transition-colors',
-        'hover:bg-red-50 dark:hover:bg-red-950/30',
-        holding && 'bg-red-50 dark:bg-red-950/30',
+        'bg-black/40 hover:bg-emerald-600/80',
+        holding && 'bg-red-500/80',
         disabled && 'opacity-50 cursor-not-allowed pointer-events-none',
         className,
       )}
@@ -99,7 +99,7 @@ export function HoldToDeleteButton({
       <Trash2
         className={cn(
           'w-3.5 h-3.5 transition-colors',
-          holding ? 'text-red-500' : 'text-zinc-400 dark:text-zinc-500',
+          holding ? 'text-white' : 'text-white/90',
         )}
       />
     </button>

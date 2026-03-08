@@ -169,7 +169,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                     "currency": "USD",
                     "price_basis": "per_night",
                     "is_estimate_only": True,
-                    "deeplink_url": "https://example.com/hotel",
+                    "deeplink": "https://example.com/hotel",
                     "rating": 4.5,
                     "review_count": 120,
                     "tags": ["beach"],

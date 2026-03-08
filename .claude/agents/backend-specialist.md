@@ -67,6 +67,7 @@ backend/app/
   services/          → cache_core.py, specialist_cache.py, router_cache.py, tile_cache.py,
                        experience_generator.py, regen_strategy.py, itinerary_builder.py,
                        unsplash.py, unsplash_queries.py, task_tracker.py, activity_browser.py,
+                       viator_provider.py,
                        spend_guard.py, sharing.py
   tile_service/      → curated_provider.py, mock_provider.py,
                        google_places_provider.py, provider_base.py, service.py, models.py
@@ -97,7 +98,7 @@ backend/app/
 
 Mostly deterministic. One LLM exception: `check_route_constraint()` calls `validate_place_exists()` (via `app.validation.validate_input_async`, LLM-backed with TTL caching from `validation_cache.py`). Invoked directly by `main.py` endpoints for block arrangement validation (`validate_block_arrangement`). Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`.
 
-`DAY_PREFERENCE_EXCEEDS_CAPACITY` now comes from `constraint_guard.py` capacity validation. If you update the capacity formula, keep guard checks and builder assumptions aligned.
+`DAY_PREFERENCE_EXCEEDS_CAPACITY` now comes from `constraint_guard.py` capacity validation. Short trips (`total_days <= 3`) count arrival/departure as partial usable capacity in both guard and builder. If you update the capacity formula, keep guard checks and builder assumptions aligned.
 
 ### Specialist Registry
 
@@ -106,10 +107,12 @@ All keywords, constraints, cross-domain blocks, aliases, feasibility flags come 
 ### Selective Regeneration
 
 `regen_strategy.py` maps field changes to minimum regen tier: `FULL` (destination) → `SPECIALISTS` (dates/categories) → `LOGISTICS` (budget/travelers) → `BUILDER` (origin/preferences).
+`GENERATE_PLAN_NOW` reuses existing strategy/tiles only when full-invalidating fields are unchanged. If `activity_categories` changed, coordinator must still clear planning artifacts and re-dispatch specialists before rebuild.
 
 ### State Serialization
 
 `state_serde.py`: `serialize_agent_state()` now trims persisted runtime state under a 64KB ceiling via `_trim_for_session_state()` without mutating live planner structures. If you change session-state shape, keep the trim path, restore path, and envelope/document hydration consistent. `typed_meta.py`: `get_trip_settings(state)` → typed `TripSettings`. `TurnMeta` / `PersistentMeta` for per-turn vs cross-turn metadata.
+`_migrate_legacy_agent_fields()` intentionally excludes `activity_settings` from the legacy trip-settings backfill. Re-copying merged `trip_inputs.activity_settings` into `metadata["trip_settings"]` breaks post-refresh category diff detection and causes stale specialist reuse on the next `GENERATE_PLAN_NOW`.
 
 ### LLM Factory
 

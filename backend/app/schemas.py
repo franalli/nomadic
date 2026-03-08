@@ -3,7 +3,7 @@ import logging
 import sys as _sys
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 
 def _nested_size(obj: Any) -> int:
@@ -159,10 +159,14 @@ class ResumeTripResponse(BaseModel):
     trip_id: int
 
 
-TileProvider = Literal["expedia", "booking", "google_places", "curated", "mock", "unknown"]
+TileProvider = Literal[
+    "expedia", "booking", "google_places", "curated", "mock", "viator", "unknown"
+]
 
 
 class Tile(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     type: TileType
     partner: Optional[str] = None
@@ -193,12 +197,29 @@ class Tile(BaseModel):
                 return None
         return None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_deeplink(cls, values: Any) -> Any:
+        """Accept legacy 'deeplink_url' key from cached/serialized data."""
+        if isinstance(values, dict):
+            dl = values.get("deeplink") or values.get("deeplink_url")
+            if dl:
+                values["deeplink"] = dl
+                values.pop("deeplink_url", None)
+        return values
+
     live_price: Optional[float] = None
     currency: str = "USD"
     price_basis: str = "per_trip"
     is_estimate_only: bool = True
 
-    deeplink_url: str
+    deeplink: str  # Canonical field
+
+    @computed_field
+    @property
+    def deeplink_url(self) -> str:
+        """Backward-compat alias — emits in JSON for old frontends."""
+        return self.deeplink
 
     rating: Optional[float] = None
     review_count: Optional[int] = None

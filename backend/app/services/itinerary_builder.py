@@ -177,6 +177,13 @@ def _ensure_block_display_floor(
     if block.is_buffer:
         return block
 
+    logger.info(
+        "[DISPLAY_FLOOR] block='%s' deeplink=%s image=%s",
+        (block.summary or "")[:40],
+        (block.deeplink or "NONE")[:60],
+        (block.image_url or "NONE")[:60],
+    )
+
     # Deeplink: prefer place_id (exact), then named search (finds listing),
     # then raw coords (generic pin — last resort when no title).
     if not block.deeplink:
@@ -857,7 +864,7 @@ class ItineraryBuilder:
                 1
                 for d in days
                 for b in d.blocks
-                if b.specialist_type and b.activity_type not in _LOGISTICS_TYPES
+                if not b.is_buffer and b.activity_type not in _LOGISTICS_TYPES
             )
             return ItineraryResult(
                 success=True,
@@ -1057,6 +1064,14 @@ class ItineraryBuilder:
                 if activity.tile_id and activity.tile_id == tile.get("id"):
                     if activity.image_url is None and tile.get("image_url"):
                         activity.image_url = tile["image_url"]
+                    # Viator override: affiliate deeplinks/images always win
+                    if tile.get("provider") == "viator":
+                        vt_dl = tile.get("deeplink") or tile.get("deeplink_url")
+                        if vt_dl:
+                            activity.deeplink = vt_dl
+                        vt_img = tile.get("image_url")
+                        if vt_img:
+                            activity.image_url = vt_img
                     enriched_count += 1
                     continue
 
@@ -1089,11 +1104,15 @@ class ItineraryBuilder:
                 if activity.google_place_id is None:
                     activity.google_place_id = meta.get("place_id") or tile.get("google_place_id")
 
-                if activity.deeplink is None:
-                    activity.deeplink = tile.get("deeplink_url") or tile.get("deeplink")
+                tile_deeplink = tile.get("deeplink") or tile.get("deeplink_url")
+                if tile_deeplink and (
+                    activity.deeplink is None or tile.get("provider") == "viator"
+                ):
+                    activity.deeplink = tile_deeplink
 
-                if activity.image_url is None:
-                    activity.image_url = tile.get("image_url")
+                tile_image = tile.get("image_url")
+                if tile_image and (activity.image_url is None or tile.get("provider") == "viator"):
+                    activity.image_url = tile_image
 
                 if activity.tile_id is None:
                     activity.tile_id = tile.get("id")
@@ -1215,7 +1234,11 @@ class ItineraryBuilder:
                 altitude_buffer = get_cross_domain_buffer_days("diving")
 
                 # Arrival + departure days are partial (scheduling convention)
-                usable_days = total_days - 2
+                # Short trips: arrival/departure are partially usable
+                if total_days <= 3:
+                    usable_days = max(1, total_days)
+                else:
+                    usable_days = total_days - 2
 
                 # Calculate required days for diving + buffer + altitude activities
                 required_for_combo = diving_days + altitude_buffer + altitude_days
@@ -1269,7 +1292,11 @@ class ItineraryBuilder:
                         )
 
         # Account for arrival/departure days
-        usable_days = total_days - 2  # First and last day are partial
+        # Short trips: arrival/departure are partially usable
+        if total_days <= 3:
+            usable_days = max(1, total_days)
+        else:
+            usable_days = total_days - 2  # First and last day are partial
 
         # FIX: No-fly buffer only affects DIVING placement, not total capacity
         # Day 7 can still have hiking even though diving is blocked
@@ -1400,8 +1427,8 @@ class ItineraryBuilder:
                     is_buffer=False,
                     intensity=activity.intensity,
                     image_url=activity.image_url,
-                    rating=None,  # No real rating sources — GP Pro excludes rating field
-                    review_count=None,
+                    rating=activity.rating,
+                    review_count=activity.user_ratings_count,
                     price_level=activity.price_level,
                     google_place_id=activity.google_place_id,
                     deeplink=activity.deeplink,
@@ -1708,12 +1735,16 @@ class ItineraryBuilder:
         available_day_indices = []
 
         for i, day in enumerate(days):
-            # Skip arrival day for major activities
-            if i == 0:
-                continue
-            # Skip departure day for major activities
-            if i == len(days) - 1:
-                continue
+            # For longer trips (>3 days), skip arrival/departure for major activities
+            if len(days) > 3:
+                if i == 0:
+                    continue
+                if i == len(days) - 1:
+                    continue
+            else:
+                # Short trips: skip only if day is BOTH arrival AND departure (1-day trip)
+                if i == 0 and i == len(days) - 1:
+                    continue
             # Skip days with blocking buffers
             has_blocking_buffer = any(b.is_buffer and b.buffer_type == "no_fly" for b in day.blocks)
             if not has_blocking_buffer:
@@ -1803,8 +1834,8 @@ class ItineraryBuilder:
                         duration=f"{activity.duration_hours}h" if activity.duration_hours else None,
                         constraints=activity.constraints,
                         preference_status=preference_status,
-                        rating=None,  # No real rating sources — GP Pro excludes rating field
-                        review_count=None,
+                        rating=activity.rating,
+                        review_count=activity.user_ratings_count,
                         price_level=activity.price_level,
                         price_estimate=(matched_tile or {}).get("price_estimate"),
                         google_place_id=activity.google_place_id,
@@ -1878,8 +1909,8 @@ class ItineraryBuilder:
                         duration=f"{activity.duration_hours}h" if activity.duration_hours else None,
                         constraints=activity.constraints,
                         preference_status=preference_status,
-                        rating=None,  # No real rating sources — GP Pro excludes rating field
-                        review_count=None,
+                        rating=activity.rating,
+                        review_count=activity.user_ratings_count,
                         price_level=activity.price_level,
                         price_estimate=(matched_tile or {}).get("price_estimate"),
                         google_place_id=activity.google_place_id,
@@ -1991,8 +2022,8 @@ class ItineraryBuilder:
                             duration=(f"{activity_hours}h"),
                             constraints=activity.constraints,
                             preference_status=("user_preferred" if is_user_preferred else None),
-                            rating=None,  # No real rating sources — GP Pro excludes rating field
-                            review_count=None,
+                            rating=activity.rating,
+                            review_count=activity.user_ratings_count,
                             price_level=activity.price_level,
                             price_estimate=(matched_tile or {}).get("price_estimate"),
                             google_place_id=activity.google_place_id,
@@ -2114,8 +2145,8 @@ class ItineraryBuilder:
                     constraints=activity.constraints,
                     # Preference attribution for frontend badge
                     preference_status=preference_status,
-                    rating=None,  # No real rating sources — GP Pro excludes rating field
-                    review_count=None,
+                    rating=activity.rating,
+                    review_count=activity.user_ratings_count,
                     price_level=activity.price_level,
                     price_estimate=(matched_tile or {}).get("price_estimate"),
                     google_place_id=activity.google_place_id,
@@ -2208,8 +2239,10 @@ class ItineraryBuilder:
         tier2_label = " & ".join(c.title() for c in (tier2_categories or [])) or None
 
         for i, day in enumerate(days):
-            # Skip arrival day (first) and departure day (last)
-            if i == 0 or i == len(days) - 1:
+            # Skip arrival/departure ONLY on long trips (>3 days).
+            # Short trips: these days ARE the trip — they must be fillable.
+            is_bookend = i == 0 or i == len(days) - 1
+            if is_bookend and len(days) > 3:
                 continue
 
             # Check if day has any real activity blocks (not buffers, logistics, or placeholders)
@@ -2387,6 +2420,9 @@ class ItineraryBuilder:
             (b.activity_type in anchor_types) or ((b.buffer_type or "") in buffer_types)
             for b in day.blocks
         ):
+            # Short trips (≤3 days): allow partial-day activities on anchor days
+            if self._num_days <= 3:
+                return (4.0, 1)  # ~4 hours, 1 activity slot
             return (0.0, 0)
 
         activity_hours = 0.0
@@ -2482,8 +2518,8 @@ class ItineraryBuilder:
             booked_tile=tile,
             requires_booking=True,
             booking_category="activity",
-            rating=None,
-            review_count=None,
+            rating=tile.get("rating"),
+            review_count=tile.get("review_count"),
             price_level=block_price_level,
             price_estimate=tile.get("price_estimate"),
             google_place_id=tile.get("google_place_id") or tile.get("place_id"),
@@ -2704,7 +2740,9 @@ class ItineraryBuilder:
         # ─────────────────────────────────────────────────────────
         free_day_indices = []
         for i, day in enumerate(days):
-            if i == 0 or i == len(days) - 1:
+            # Long trips: skip arrival/departure for free-day placement
+            is_bookend = i == 0 or i == len(days) - 1
+            if is_bookend and len(days) > 3:
                 continue
             if any(b.activity_type == "free_day" for b in day.blocks):
                 free_day_indices.append(i)
@@ -2979,14 +3017,26 @@ class ItineraryBuilder:
         day_slots: dict[int, set[str]] = {}
 
         for idx, day in enumerate(days):
-            # Arrival day: morning+afternoon locked (travel), evening FREE
+            is_short_trip = len(days) <= 3
+
+            # Arrival day
             if idx == 0:
-                day_slots[idx] = {"morning", "afternoon"}
+                if is_short_trip:
+                    # Short trips: only lock morning (flight), afternoon+evening free
+                    day_slots[idx] = {"morning"}
+                else:
+                    # Long trips: morning+afternoon locked (travel), evening FREE
+                    day_slots[idx] = {"morning", "afternoon"}
                 continue
 
-            # Departure day: morning FREE, afternoon+evening locked (travel)
+            # Departure day
             if idx == len(days) - 1:
-                day_slots[idx] = {"afternoon", "evening"}
+                if is_short_trip:
+                    # Short trips: only lock evening (flight), morning+afternoon free
+                    day_slots[idx] = {"evening"}
+                else:
+                    # Long trips: morning FREE, afternoon+evening locked (travel)
+                    day_slots[idx] = {"afternoon", "evening"}
                 continue
 
             # Regular days: check which periods are occupied by existing blocks
@@ -3089,8 +3139,8 @@ class ItineraryBuilder:
                 summary=tile.get("title", "Activity"),
                 image_url=tile.get("image_url"),
                 duration=tile.get("duration"),
-                rating=None,
-                review_count=None,
+                rating=tile.get("rating"),
+                review_count=tile.get("review_count"),
                 price_level=tile.get("price_level"),
                 price_estimate=tile.get("price_estimate"),
                 coordinates=_coords,
@@ -3247,8 +3297,8 @@ class ItineraryBuilder:
                         summary=tile.get("title", "Activity"),
                         image_url=tile.get("image_url"),
                         duration=tile.get("duration"),
-                        rating=None,
-                        review_count=None,
+                        rating=tile.get("rating"),
+                        review_count=tile.get("review_count"),
                         price_level=tile.get("price_level"),
                         price_estimate=tile.get("price_estimate"),
                         coordinates=(

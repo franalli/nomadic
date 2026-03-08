@@ -196,7 +196,7 @@ export function ActivityMiniCard({
     <div className="flex flex-col gap-1.5" data-block-id={block.id}>
       <div
         className={cn(
-          'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-l-4 transition-colors duration-150',
+          'group relative flex flex-col gap-3 p-3 rounded-xl border border-l-4 transition-colors duration-150',
           isUnschedulable
             ? 'bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/40'
             : isHighlighted
@@ -214,29 +214,33 @@ export function ActivityMiniCard({
           resolvedTitle={resolvedTitle}
         />
 
-        {/* Content: rating, price, duration, badges, description */}
-        <ActivityCardMeta
-          block={block}
-          resolvedTitle={resolvedTitle}
-          isUnschedulable={isUnschedulable}
-          displayTime={displayTime}
-          categoryKey={st}
-          categoryLabel={categoryLabel}
-          preferenceStatus={preferenceStatus}
-          alternativeTileId={alternativeTileId}
-          onSwitchToAlternative={onSwitchToAlternative}
-        />
+        {/* Content + Actions row */}
+        <div className="flex items-start gap-3">
+          {/* Content: rating, price, duration, badges, description */}
+          <ActivityCardMeta
+            block={block}
+            resolvedTitle={resolvedTitle}
+            isUnschedulable={isUnschedulable}
+            displayTime={displayTime}
+            categoryKey={st}
+            categoryLabel={categoryLabel}
+            preferenceStatus={preferenceStatus}
+            alternativeTileId={alternativeTileId}
+            onSwitchToAlternative={onSwitchToAlternative}
+          />
 
-        {/* Actions: book, booked indicator, context menu, hold-to-delete */}
-        <ActivityCardInlineActions
-          mode={mode}
-          isBooked={isBooked}
-          onBook={onBook}
-          onUnassign={onUnassign}
-          onRemove={onRemove}
-          isRemovable={isRemovable}
-          deeplink={block.deeplink}
-        />
+          {/* Actions: book, booked indicator, context menu, hold-to-delete */}
+          <ActivityCardInlineActions
+            mode={mode}
+            isBooked={isBooked}
+            onBook={onBook}
+            onUnassign={onUnassign}
+            onRemove={onRemove}
+            isRemovable={isRemovable}
+            deeplink={block.deeplink}
+            tileId={block.booked_tile?.id}
+          />
+        </div>
       </div>
 
       {/* Constraint sub-cards -- always below the activity card */}

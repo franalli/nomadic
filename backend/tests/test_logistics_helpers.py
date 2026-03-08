@@ -58,7 +58,7 @@ def _make_tile_obj(**overrides):
         "currency": "USD",
         "price_basis": "per_night",
         "is_estimate_only": False,
-        "deeplink_url": "https://booking.com/hotel/12345",
+        "deeplink": "https://booking.com/hotel/12345",
         "rating": 4.5,
         "location_label": "Seminyak, Bali",
         "tags": ["beach", "luxury"],
@@ -92,7 +92,7 @@ class TestTileToDict:
         assert result["currency"] == "USD"
         assert result["price_basis"] == "per_night"
         assert result["is_estimate_only"] is False
-        assert result["deeplink_url"] == "https://booking.com/hotel/12345"
+        assert result["deeplink"] == "https://booking.com/hotel/12345"
         assert result["rating"] == 4.5
         assert result["location_label"] == "Seminyak, Bali"
         assert result["tags"] == ["beach", "luxury"]
@@ -124,7 +124,7 @@ class TestTileToDict:
         tile.currency = "EUR"
         tile.price_basis = "per_person"
         tile.is_estimate_only = True
-        tile.deeplink_url = None
+        tile.deeplink = None
         tile.rating = 3.9
         tile.location_label = "Nusa Penida"
         tile.tags = ["water"]

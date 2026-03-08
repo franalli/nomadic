@@ -45,7 +45,8 @@ function isAllowedImageUrl(url: string | undefined): boolean {
       || host === 'plus.unsplash.com'
       || host.endsWith('.unsplash.com')
       || host === 'pics.avs.io'
-      || host === 'places.googleapis.com';
+      || host === 'places.googleapis.com'
+      || host === 'media-cdn.tripadvisor.com';
   } catch {
     return false;
   }
@@ -126,7 +127,7 @@ export function ActivityCardPhoto({
       isMounted = false;
     };
 
-    getSignedGooglePlacesPhotoProxyUrl(photoName, { maxWidth: 320, maxHeight: 240 })
+    getSignedGooglePlacesPhotoProxyUrl(photoName, { maxWidth: 720, maxHeight: 288 })
       .then((url) => {
         if (!isMounted) return;
         setSignedGooglePhotoUrl(url);
@@ -146,16 +147,16 @@ export function ActivityCardPhoto({
   }, [primaryImageUrl, block.id, block.booked_tile?.id]);
 
   return (
-    <div className="w-full lg:w-20 shrink-0">
-      {/* Thumbnail -- full-width banner on mobile, inline 80x80 on desktop */}
+    <div className="w-full shrink-0">
+      {/* Thumbnail -- full-width landscape banner */}
       {cardImageUrl ? (
-        <div className="relative w-full h-32 lg:w-20 lg:h-20 rounded-lg overflow-hidden">
+        <div className="relative w-full h-36 rounded-xl overflow-hidden">
           <Image
             src={cardImageUrl}
             alt={block.summary}
             fill
-            className="object-cover"
-            sizes="(min-width: 1024px) 80px, 100vw"
+            className="object-cover object-[center_30%]"
+            sizes="(min-width: 1024px) 480px, 100vw"
             unoptimized={cardImageUrl.startsWith('/') || isGooglePlacesPhotoProxyUrl(cardImageUrl)}
             onError={() => {
               if (!imageErrored) {
@@ -165,7 +166,7 @@ export function ActivityCardPhoto({
           />
         </div>
       ) : (
-        <div className={cn('w-full h-32 lg:w-20 lg:h-20 rounded-lg flex items-center justify-center', bgClass)}>
+        <div className={cn('w-full h-36 rounded-xl flex items-center justify-center', bgClass)}>
           <Sparkles className={cn('w-8 h-8', iconColorClass)} />
         </div>
       )}

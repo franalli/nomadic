@@ -58,6 +58,9 @@ CARRIER_MAP: Dict[str, Dict[str, str]] = {
 # DEMO MANIFEST - Curated Content for Hero Destinations
 # =============================================================================
 
+# DEMO_MANIFEST is intentionally static, curated editorial content for hero
+# destinations used in the landing page showcase. This is NOT dynamic world data
+# (Hard Rule #11 does not apply — it's a finite set of hand-picked demo content).
 DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
     # =========================================================================
     # DUBAI - Primary Demo Destination (Diving Focus)

@@ -184,7 +184,7 @@ function BudgetSheetInner({
                     'transition-all duration-150',
                     isSelected
                       // Selected: Solid Black (Light) / Solid White (Dark)
-                      ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                      ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
                       // Inactive: Glass Fill (Dark) - substance, not just outline
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-600',
@@ -281,7 +281,7 @@ function BudgetSheetInner({
                     'transition-all duration-150',
                     isSelected
                       // Selected: Solid Black (Light) / Solid White (Dark) - maximum contrast per DS.pills.active
-                      ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                      ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
                       // Inactive: Glass Fill - Tactile Rule
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-600',

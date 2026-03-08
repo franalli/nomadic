@@ -467,13 +467,9 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       }
     }, 100);
 
-    onToast(
-      didResetServerState
-        ? 'Started a fresh planning session.'
-        : 'Cleared your local planner, but the previous session may reappear if you refresh.',
-      'success'
-    );
-  }, [branchState, handleClearContext, chatPanelContainerRef, onToast, resetChat]);
+    // Hard reload to pick up new session cookies and clear all stale state
+    window.location.reload();
+  }, [branchState, handleClearContext, chatPanelContainerRef, resetChat]);
 
   /**
    * Finalizes the generating state and displays results.

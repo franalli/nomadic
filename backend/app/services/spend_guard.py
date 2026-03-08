@@ -52,6 +52,9 @@ if not settings.spend_guard_enabled:
         "Set SPEND_GUARD_ENABLED=true in production.",
     )
 
+# Intentional fail-fast: refuse to start with multiple workers since in-memory
+# spend tracking would allow N× the configured cap (one counter per worker).
+# This is a safety net, not a bug — remove only when Redis migration is complete.
 if settings.spend_guard_enabled:
     import os as _os
 
@@ -68,6 +71,13 @@ if settings.spend_guard_enabled:
             f"Spend guard cannot safely run with {_worker_count} workers. "
             "Set WEB_CONCURRENCY=1 or disable spend guard."
         )
+
+# Log startup warning about in-memory-only state (only when guard is active)
+if settings.spend_guard_enabled:
+    logger.warning(
+        "Spend guard is in-memory only; daily caps reset on server restart. "
+        "For multi-worker/persistent caps, migrate to Redis (see TODO above)."
+    )
 
 
 class SpendLimitExceeded(RuntimeError):

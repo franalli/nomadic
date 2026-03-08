@@ -95,7 +95,8 @@ backend/app/planner/
 │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed with state caching)
 │   ├── itinerary_adapter.py # Thin bridge: GraphState -> ItineraryBuilder
 │   ├── section_builder.py   # Strategy section CRUD (upsert, anchor sort, builders)
-│   └── state_serde.py       # State serialization: GraphState <-> session_state + NomadicAgentState <-> agent state
+│   ├── state_serde.py       # State serialization: GraphState <-> session_state + NomadicAgentState <-> agent state
+│   └── viator_provider.py   # Viator affiliate browse/match provider (client, cache, circuit breaker, tile conversion)
 ├── state/
 │   ├── __init__.py          # State exports
 │   ├── agent_state.py       # NomadicAgentState (extends AgentState with trip planning context)
@@ -146,6 +147,7 @@ backend/app/planner/
 
 - Repeated messages with no effective `fields_changed` and an existing itinerary now route to `GENERATE_RESPONSE` only, skipping specialist + logistics + builder.
 - A dedicated `INITIAL_PLAN` guard also skips full recomputation when an itinerary already exists and no fields changed; otherwise it continues with selective tile/build steps when strategy is already present.
+- `GENERATE_PLAN_NOW` keeps its reuse fast-path only when full-invalidating fields are unchanged. If `activity_categories` changed (including a post-refresh `PATCH /api/document` flow with rebuilt `trip_settings` from the document), coordinator clears stale planning artifacts and re-dispatches specialists before rebuilding.
 
 ---
 
@@ -187,6 +189,7 @@ LLM-based intent classification + field extraction. Single LLM call produces `Ro
   3. Merge into `ClassifierOutput`.
 - `_validate_extraction()` -- Post-extraction validation, including past-date normalization
   - Dates within the last 7 days are now treated as intentional and left untouched; older past dates are bumped to next occurrence.
+  - Weekend language is normalized into duration hints: `"weekend trip"` / `"weekend getaway"` -> `duration_days=3`; `"long weekend"` -> `duration_days=4`.
 
 **RouterOutput Schema:**
 
@@ -308,6 +311,7 @@ Flight/hotel/activity fetching with safety logic.
 - General-only trips (no specialist/categories) call `browse_activities()` across default categories to seed larger activity pools for long itineraries.
 - Experience tiles are stashed into `metadata["browseable_activities"]`, and Google Places backfill now propagates rating/review_count/deeplink when available.
 - When generated Tier 2 tiles are below expected density (`free_days * activities_per_day`), logistics executes a browse fallback using mapped alternative categories, appends successful backfill tiles, and preserves them in browseable activity metadata.
+- `_enrich_tiles_with_viator()` is an optional pre-build enrichment pass for activity tiles. When `VIATOR_ENABLED=true` and a key is configured, it matches generated activity titles against Viator, throttles requests with `asyncio.Semaphore(5)`, and mutates tiles in place with live pricing, ratings, images, affiliate deeplinks, `partner="viator"`, `provider="viator"`, and Viator metadata.
 
 ### ConstraintGuard (`constraint_guard.py`)
 
@@ -355,7 +359,7 @@ Coordinator/build path usage -- called from `coordinator._build_itinerary()` and
 │                                                                  │
 │  1.    Day Skeleton - DayCard[] from dates                      │
 │  2.    Extract Specialist Content - Activities + constraints    │
-│  2.5   Enrich Activities from Tiles - Google Places data merge  │
+│  2.5   Enrich Activities from Tiles - Provider tile data merge  │
 │  2a.   Constraint Merge - Priority resolution (BLOCKING>STRONG) │
 │  2b.   Early Conflict Detection - Irreconcilable check         │
 │  3.    Anchor Placement - Arrival/departure from flights       │
@@ -364,7 +368,7 @@ Coordinator/build path usage -- called from `coordinator._build_itinerary()` and
 │        (includes day preference capping internally; periods      │
 │        avoid duplicate morning/afternoon/evening collisions)   │
 │  5.5   Free Day Placeholders - Empty day handling              │
-│  5.55  Restore Browse-Pinned Tiles - User-added Google Places  │
+│  5.55  Restore Browse-Pinned Tiles - User-added browse tiles   │
 │  5.6   Experience Tile Placement - Tier 2 on free/spare days   │
 │  5.25  Preferred Activity Placement - Hearted tiles (2-pass)   │
 │  6.    Tile Matching - Hotels span all days, preferences weighted│
@@ -383,7 +387,8 @@ Before running phases, the builder validates capacity to detect irreconcilable c
 
 ```python
 # Per-specialist capacity check (NOT global buffer subtraction)
-usable_days = total_days - 2  # Arrival/departure days
+# Short trips (<=3 days) treat arrival/departure as partial scheduling windows.
+usable_days = total_days if total_days <= 3 else total_days - 2
 
 # Diving: must finish 24h before departure if no-fly constraint
 diving_slots = usable_days - buffer_days if nofly_constraint else usable_days
@@ -401,7 +406,8 @@ if available_after_buffer >= 2:
 else:
     conflict("Cannot fit diving + buffer + altitude in trip")
 
-# Total capacity: activities can share days via interleaving
+# Total capacity: activities can share days via interleaving.
+# On short trips, anchor days contribute partial capacity instead of being dropped entirely.
 max_capacity = usable_days * MAX_BLOCKS_PER_DAY  # 3 blocks/day
 if total_activity_days > max_capacity:
     auto_truncate_proportionally()  # Silent trim, no conflict
@@ -427,17 +433,25 @@ blocks that were actually placed in the itinerary and lack a `google_place_id`, 
 `path_label="post_build_enrich"`. This defers expensive Google Places API calls to after placement, so only placed blocks
 (typically 3-5) incur API cost instead of all candidate tiles (10+). Enriched fields (coordinates, google_place_id, deeplink,
 signed photo URL) are written back directly to the day_card blocks.
+If a block already carries Viator deeplink/image data, Google Places enrichment is limited to coordinate/place-id style backfill and does not overwrite the affiliate booking surface.
 
-**Key Insight:** The no-fly buffer only restricts DIVING placement, not total capacity. Day 7 of an 8-day trip can have hiking activities even though diving is blocked (24h before flight). The buffer doesn't reduce total trip capacity -- it restricts which activities can go where.
+**Viator browse/enrichment path**
+
+- `activity_browser.py` now tries `search_viator_for_destination()` first for Browse Activities when Viator is enabled, then falls back to Google Places on empty/error.
+- `viator_provider.py` owns the partner integration: shared async `httpx` client, 5-failure/120-second circuit breaker, destination taxonomy cache, browse cache, title-match cache, and tile conversion to Nomadic activity tiles.
+- `lifespan.py` closes the Viator HTTP client on shutdown alongside the Google Places clients.
+
+**Key Insight:** The no-fly buffer is enforced in two layers. `ItineraryBuilder` may auto-truncate the number of diving activities to the available pre-departure dive slots, and later placement logic blocks diving too close to departure. It does not, however, consume total trip capacity for unrelated specialists: later trip days can still host hiking or other non-diving activities even when diving is no longer placeable.
 
 **Cross-Domain Trim Math:** For a trip with diving + altitude activities and a 24h buffer:
 
 | Trip | Usable | After buffer | Dive slots | Altitude slots | Result        |
 | ---- | ------ | ------------ | ---------- | -------------- | ------------- |
+| 3d   | 3      | 2            | 1          | 1              | Trimmed via partial-day bookends |
+| 4d   | 2      | 1            | --         | --             | Real conflict |
 | 5d   | 3      | 2            | 1          | 1              | Trimmed       |
 | 7d   | 5      | 4            | 2          | 2              | Trimmed       |
 | 9d   | 7      | 6            | 3          | 3              | Trimmed       |
-| 3-4d | 1-2    | 0-1          | --         | --             | Real conflict |
 
 **Two-Layer No-Fly Enforcement:**
 
@@ -530,6 +544,7 @@ Each specialist type has its own constraint generator:
 - `activities_placed`: alias used in coordinator `builder_result` payload for placed count
 - `activities_dropped`: dropped-count in coordinator `builder_result` (`total_activities_input - activities_placed`)
 - Drop ratio (`1 - activities_placed/total_activities_input`) is captured in `turn_meta['builder_result']` (via `success`, `activities_placed`, and `activities_dropped`) for guard suppression and suggestion-chip telemetry
+- When `activities_placed == 0` but day cards still exist, coordinator appends a warning to `builder_result["warnings"]`; conversationalist receives a matching do-not-hallucinate guard and should suggest extending the trip or adjusting preferences instead of inventing activities.
 
 **Preference Weighting:**
 
@@ -1090,6 +1105,8 @@ User-configurable settings (`activity_settings`, `hotel_settings`, `flight_setti
 | Restoration    | `state_serde.py` + `streaming.py` complete envelope assembly | Reads typed `TripSettings` via `get_trip_settings(state)` and serializes sub-models into output `trip_inputs` and `trip_settings`                                                                                 |
 | Input merge    | `streaming.py` (SSE endpoint)                        | `_USER_OWNED_SETTINGS` guard -- document baseline wins for settings fields                                                                                                                   |
 | Output persist | `crud_document.py` `apply_planner_update()`          | Strips settings from graph output before `merge_trip_inputs()`                                                                                                                               |
+
+**Legacy migration guard:** `_migrate_legacy_agent_fields()` intentionally does **not** copy merged `trip_inputs.activity_settings` back into `metadata["trip_settings"]`. `activity_settings` must continue to flow from document settings into `_merge_doc_settings()` so post-refresh category diffs (for example diving -> hiking/surfing followed by `GENERATE_PLAN_NOW`) still register as real specialist-invalidating changes.
 
 ---
 

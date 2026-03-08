@@ -115,7 +115,7 @@ def test_tile_has_frontend_fields():
         "id",
         "type",
         "title",
-        "deeplink_url",
+        "deeplink",
         "price_estimate",
         "rating",
         "geo",

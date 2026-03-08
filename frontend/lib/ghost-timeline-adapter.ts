@@ -423,7 +423,6 @@ export function extractPOIsFromDayCards(
   const fingerprint = _buildPoiFingerprint(dayCards, destination, fingerprintHint, destinationCoords);
   const cached = _poiMemoCache.get(fingerprint);
   if (cached) {
-    debugLog(`[VERIFY][POI_MEMO] fingerprint=${fingerprint} cache_hit=true`);
     return cached;
   }
   debugLog(`[VERIFY][POI_MEMO] fingerprint=${fingerprint} cache_hit=false`);

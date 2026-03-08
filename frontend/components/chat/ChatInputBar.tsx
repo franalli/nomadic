@@ -17,6 +17,7 @@ interface ChatInputBarProps {
   isInputDisabledByPlanState: boolean;
   hasReceivedFirstToken: boolean;
   nodeStatus: { node: string } | null;
+  isRegenerating?: boolean;
   readyToGenerate?: boolean;
   isGenerating?: boolean;
   hasBranches?: boolean;
@@ -34,6 +35,7 @@ export function ChatInputBar({
   isInputDisabledByPlanState,
   hasReceivedFirstToken,
   nodeStatus,
+  isRegenerating,
   readyToGenerate,
   isGenerating,
   hasBranches,
@@ -51,8 +53,8 @@ export function ChatInputBar({
         className={cn(
           'relative flex items-center w-full min-h-14 rounded-full transition-all duration-300',
           'bg-zinc-50 dark:bg-black/40',
-          // Priority 1: "Living Void" - AI Processing state
-          isLoading && nodeStatus?.node
+          // Priority 1: "Living Void" - AI Processing state (also during regen)
+          (isLoading && nodeStatus?.node) || isRegenerating
             ? [
                 'border border-emerald-500/50 dark:border-emerald-500/40',
                 `${DS.glowClass.sm} dark:${DS.glowClass.md}`,

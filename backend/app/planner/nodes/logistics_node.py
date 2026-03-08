@@ -47,6 +47,34 @@ from app.tile_service.title_utils import simplify_specialist_title as _simplify_
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_tile_geo(tile: dict[str, Any]) -> dict[str, Any]:
+    """Normalize malformed geo payloads so Tile validation sees None, not {}."""
+    cleaned = False
+    geo = tile.get("geo")
+    if isinstance(geo, dict) and (geo.get("lat") is None or geo.get("lng") is None):
+        tile["geo"] = None
+        cleaned = True
+
+    meta = tile.get("meta")
+    if isinstance(meta, dict):
+        meta_geo = meta.get("geo")
+        if isinstance(meta_geo, dict) and (
+            meta_geo.get("lat") is None or meta_geo.get("lng") is None
+        ):
+            meta = dict(meta)
+            meta["geo"] = None
+            tile["meta"] = meta
+            cleaned = True
+
+    if cleaned:
+        logger.debug("[SANITIZE_GEO] Cleaned invalid geo on tile %s", tile.get("id"))
+    return tile
+
+
+def _sanitize_tile_geo_list(tiles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_sanitize_tile_geo(tile) if isinstance(tile, dict) else tile for tile in tiles]
+
+
 # =============================================================================
 # Cache Key Helpers — separate hotel/activity hashes to prevent cross-busting
 # =============================================================================
@@ -403,6 +431,74 @@ def _backfill_experience_tiles_from_gp(
         )
 
 
+async def _enrich_tiles_with_viator(
+    experience_tiles: list[dict],
+    destination: str,
+    currency: str = "USD",
+) -> None:
+    """Enrich experience tiles with Viator data. Mutates in-place.
+
+    Only runs when settings.viator_enabled and settings.viator_api_key.
+    """
+    if not settings.viator_enabled or not settings.viator_api_key:
+        return
+    if not experience_tiles:
+        return
+
+    from app.services.viator_provider import match_activity_to_viator
+
+    sem = asyncio.Semaphore(5)
+
+    async def _throttled_match(title: str) -> dict | None:
+        async with sem:
+            return await match_activity_to_viator(title, destination, currency)
+
+    filtered = [
+        (i, t)
+        for i, t in enumerate(experience_tiles)
+        if t.get("title")
+        and t.get("provider") != "viator"
+        and not (t.get("meta") or {}).get("viator_product_code")  # already enriched
+    ]
+    tasks = [_throttled_match(t.get("title", "")) for _, t in filtered]
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    matched = 0
+    for (_, tile), result in zip(filtered, results, strict=False):
+        if isinstance(result, Exception) or result is None:
+            continue
+        matched += 1
+        # Merge Viator data onto existing tile
+        if result.get("price_estimate") is not None:
+            tile["price_estimate"] = result["price_estimate"]
+            tile["live_price"] = result.get("live_price")
+            tile["is_estimate_only"] = False
+            tile["currency"] = result.get("currency", currency)
+            tile["price_basis"] = result.get("price_basis", "per_person")
+        if result.get("image_url"):
+            tile["image_url"] = result["image_url"]
+        if result.get("rating") is not None:
+            tile["rating"] = result["rating"]
+        if result.get("review_count") is not None:
+            tile["review_count"] = result["review_count"]
+        if result.get("deeplink") or result.get("deeplink_url"):
+            tile["deeplink"] = result.get("deeplink") or result["deeplink_url"]
+        tile["partner"] = "viator"
+        tile["partner_product_id"] = result.get("partner_product_id", "")
+        tile["provider"] = "viator"
+        meta = tile.get("meta", {})
+        result_meta = result.get("meta", {})
+        if result_meta.get("viator_product_code"):
+            meta["viator_product_code"] = result_meta["viator_product_code"]
+        if result_meta.get("duration_hours"):
+            meta["duration_hours"] = result_meta["duration_hours"]
+        tile["meta"] = meta
+
+    if matched:
+        logger.info("[VIATOR] Enriched %d/%d tiles for %s", matched, len(filtered), destination)
+
+
 # =============================================================================
 # Main Node
 # =============================================================================
@@ -733,7 +829,7 @@ async def logistics_node(state: GraphState) -> GraphState:
                 "currency": plan.currency or "USD",
                 "price_basis": "per_person",
                 "is_estimate_only": True,
-                "deeplink_url": f"https://www.google.com/travel/flights?q=flights+from+{quote(origin_code)}+to+{quote(dest_code)}",
+                "deeplink": f"https://www.google.com/travel/flights?q=flights+from+{quote(origin_code)}+to+{quote(dest_code)}",
                 "tags": [carrier_info["name"], stops_label.lower()],
                 "availability_status": "available",
                 "meta": {
@@ -934,7 +1030,7 @@ async def _fetch_hotels(
                 f"Provider cache HIT (L2): hotels for {plan.destination}",
                 data=f"{len(cached_hotels)} hotels",
             )
-            hotel_dicts = _normalize_google_places_hotels(cached_hotels)
+            hotel_dicts = _sanitize_tile_geo_list(_normalize_google_places_hotels(cached_hotels))
         else:
             _debug_log(f"[TILE_CACHE] Hotels MISS - fetching from {provider}")
 
@@ -991,7 +1087,7 @@ async def _fetch_hotels(
 
             # Convert to dicts and cache
             hotel_dicts = [_tile_to_dict(tile) for tile in hotel_tiles]
-            hotel_dicts = _normalize_google_places_hotels(hotel_dicts)
+            hotel_dicts = _sanitize_tile_geo_list(_normalize_google_places_hotels(hotel_dicts))
 
             if hotel_dicts:
                 await set_cached_tiles(
@@ -1005,7 +1101,7 @@ async def _fetch_hotels(
                     hotel_cache_variant,
                 )
 
-    hotel_dicts = _normalize_google_places_hotels(hotel_dicts)
+    hotel_dicts = _sanitize_tile_geo_list(_normalize_google_places_hotels(hotel_dicts))
     return hotel_dicts
 
 
@@ -1059,7 +1155,7 @@ async def _fetch_activities(
                 f"Provider cache HIT (L2): activities for {plan.destination}",
                 data=f"{len(cached_activities)} activities",
             )
-            activity_dicts = cached_activities
+            activity_dicts = _sanitize_tile_geo_list(cached_activities)
         else:
             _debug_log(f"[TILE_CACHE] Activities MISS - fetching from {provider}")
 
@@ -1093,8 +1189,6 @@ async def _fetch_activities(
 
             activity_tiles = []
 
-            from app.config import settings
-
             if settings.use_google_places_provider:
                 from app.tile_service.google_places_provider import GooglePlacesActivityProvider
 
@@ -1104,12 +1198,13 @@ async def _fetch_activities(
                     log("LOGISTICS", "GooglePlaces returned 0 activities — using mock fallback")
                     activity_tiles = await asyncio.to_thread(MockActivityProvider().search, ctx)
             else:
-                # Activities always use Mock (no live API)
+                # Mock fallback
                 activity_provider = MockActivityProvider()
                 activity_tiles = await asyncio.to_thread(activity_provider.search, ctx)
 
-            # Convert to dicts and cache
-            activity_dicts = [_tile_to_dict(tile) for tile in activity_tiles]
+            activity_dicts = _sanitize_tile_geo_list(
+                [_tile_to_dict(tile) for tile in activity_tiles]
+            )
 
             if activity_dicts:
                 await set_cached_tiles(
@@ -1770,9 +1865,10 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     f"Generated {len(experience_tiles)} Tier 2 experience tiles",
                     data=f"specialists={active_niche}, tier2={tier2_cats}, source={source}",
                 )
+                experience_tiles = _sanitize_tile_geo_list(experience_tiles)
                 state.tiles["activities"] = experience_tiles
                 _backfill_experience_tiles_from_gp(experience_tiles, activity_dicts)
-                activity_dicts = experience_tiles
+                activity_dicts = _sanitize_tile_geo_list(experience_tiles)
                 # Geo fallback: fill missing geo from destination center
                 if dest_lat is not None and dest_lng is not None:
                     for _tile in experience_tiles:
@@ -1808,9 +1904,30 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                         _trip_days_bf = max(0, (_ed_bf - _sd_bf).days + 1)
                     except (ValueError, TypeError):
                         pass
-                _free_bf = max(1, _trip_days_bf - 2)  # exclude arrival/departure
+                # Subtract specialist days from free days to avoid wasted backfill
+                # Use same titled/untitled dedup as _compute_tiles_per_category
+                _spec_days_bf = 0
+                for _s_bf in state.metadata.get("strategy_sections", []):
+                    if _s_bf.get("specialist_type", "") in ("local_expert", "general"):
+                        continue
+                    _content_bf = _s_bf.get("content_added", [])
+                    _titled_bf = [
+                        (c.get("title") or "").lower()
+                        for c in _content_bf
+                        if isinstance(c, dict) and c.get("title")
+                    ]
+                    _untitled_bf = sum(
+                        1 for c in _content_bf if isinstance(c, dict) and not c.get("title")
+                    )
+                    _spec_days_bf += len(set(_titled_bf)) + _untitled_bf
+                _free_bf = max(0, _trip_days_bf - _spec_days_bf - 2)
                 _needed_bf = _free_bf * _apd_bf
-                if len(experience_tiles) < _needed_bf:
+                if _free_bf == 0 and _spec_days_bf >= _trip_days_bf - 2:
+                    log(
+                        "LOGISTICS",
+                        "Specialist saturation — skipping Tier 2 backfill",
+                    )
+                elif len(experience_tiles) < _needed_bf:
                     _shortfall_bf = _needed_bf - len(experience_tiles)
                     logger.info(
                         "[logistics_node] Tier 2 backfill: have %d tiles, need %d "
@@ -1936,9 +2053,10 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     f"Pure Tier 2: generated {len(experience_tiles)} experience tiles",
                     data=f"categories={tier2_only}, source={source}",
                 )
+                experience_tiles = _sanitize_tile_geo_list(experience_tiles)
                 state.tiles["activities"] = experience_tiles
                 _backfill_experience_tiles_from_gp(experience_tiles, activity_dicts)
-                activity_dicts = experience_tiles
+                activity_dicts = _sanitize_tile_geo_list(experience_tiles)
                 # Geo fallback: fill missing geo from destination center
                 if dest_lat is not None and dest_lng is not None:
                     for _tile in experience_tiles:
@@ -1974,7 +2092,8 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                         _trip_days_bf2 = max(0, (_ed_bf2 - _sd_bf2).days + 1)
                     except (ValueError, TypeError):
                         pass
-                _free_bf2 = max(1, _trip_days_bf2 - 2)  # exclude arrival/departure
+                # Pure Tier 2: no specialist days to subtract
+                _free_bf2 = max(0, _trip_days_bf2 - 2)  # exclude arrival/departure
                 _needed_bf2 = _free_bf2 * _apd_bf2
                 if len(experience_tiles) < _needed_bf2:
                     _shortfall_bf2 = _needed_bf2 - len(experience_tiles)
@@ -2179,12 +2298,20 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     except ValueError:
         return 2
 
-    # Count items from niche specialist sections as proxy for specialist days
+    # Count unique items from niche specialist sections as proxy for specialist days
+    # (padding may duplicate titled entries, so deduplicate those by title)
     specialist_days = 0
     for section in state.metadata.get("strategy_sections", []):
         if section.get("specialist_type", "") in ("local_expert", "general"):
             continue
-        specialist_days += len(section.get("content_added", []))
+        content = section.get("content_added", [])
+        titled = [
+            (c.get("title") or "").lower()
+            for c in content
+            if isinstance(c, dict) and c.get("title")
+        ]
+        untitled_count = sum(1 for c in content if isinstance(c, dict) and not c.get("title"))
+        specialist_days += len(set(titled)) + untitled_count
     # If specialists are planned but sections not yet written (parallel execution),
     # use planned count as estimate (~2 activities per specialist)
     planned = state.metadata.get("planned_specialist_count", 0)

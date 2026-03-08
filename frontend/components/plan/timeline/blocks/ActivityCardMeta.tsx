@@ -251,7 +251,9 @@ export function ActivityCardMeta({
   const priceLevelLabel = resolvePriceLevelLabel(block);
   const resolvedPriceEstimate = resolvePriceEstimate(block);
   const resolvedDuration = resolveDurationLabel(block);
-  // Prefer numeric estimate (~$45) over price level ($$) when both exist
+  const bookedTile = block.booked_tile as Record<string, unknown> | undefined;
+  const isEstimateOnly = bookedTile?.is_estimate_only !== false;
+  // Prefer numeric estimate over price level ($$) when both exist
   const showEstimatedPrice = resolvedPriceEstimate != null;
   const showPriceLevel = priceLevelLabel && !showEstimatedPrice;
   const badgeBg = BADGE_BG_CLASS[categoryKey] || 'bg-zinc-100 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-400';
@@ -279,11 +281,11 @@ export function ActivityCardMeta({
       {(block.rating != null || showPriceLevel || showEstimatedPrice || resolvedDuration) && (
         <div className="mt-1 flex items-center gap-2 flex-wrap">
           {block.rating != null && (
-            <span className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-0.5">
-              <Star className="w-3 h-3 fill-current text-amber-400 dark:text-amber-300" />
+            <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
+              <Star className="w-3 h-3 fill-current text-amber-500" />
               {block.rating.toFixed(1)}
               {block.review_count != null && (
-                <span className="ml-0.5">
+                <span className="text-zinc-500 dark:text-zinc-400 ml-0.5">
                   ({block.review_count >= 1000
                     ? `${Math.round(block.review_count / 1000)}K`
                     : block.review_count.toLocaleString()})
@@ -300,7 +302,7 @@ export function ActivityCardMeta({
 
           {showEstimatedPrice && (
             <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              ~${Math.round(resolvedPriceEstimate).toLocaleString()}
+              {isEstimateOnly ? '~' : 'from '}${Math.round(resolvedPriceEstimate).toLocaleString()}
             </span>
           )}
 

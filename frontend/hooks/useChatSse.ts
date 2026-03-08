@@ -210,6 +210,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           return;
         }
 
+        // Track whether this SSE stream set the regeneration overlay
+        // so we can clear it on complete/error.
+        let sseSetRegenFlag = false;
+
         abortStreamRef.current = streamGraphPlan(body, {
           onToken: (token: string) => {
             if (isStaleRequest()) return;
@@ -227,7 +231,8 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               const classification = classifyNodeAction(status.node, triggerContext ?? undefined);
 
               if (classification) {
-                const tiles = useDocumentStore.getState().document?.tiles;
+                const store = useDocumentStore.getState();
+                const tiles = store.document?.tiles;
                 const hasTiles = tiles && Object.keys(tiles).length > 0;
 
                 actionLoader.startLoading(
@@ -238,6 +243,21 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                     hasTiles,
                   }
                 );
+
+                // Show regeneration overlay when rebuild nodes fire
+                // during SSE and an itinerary already exists.
+                if (
+                  !sseSetRegenFlag &&
+                  (classification.actionType === 'generate_plan' ||
+                    classification.actionType === 'update_plan' ||
+                    classification.actionType === 'create_itinerary')
+                ) {
+                  const existingDayCards = store.document?.day_cards;
+                  if (existingDayCards && existingDayCards.length > 0) {
+                    store.setRegenerationState({ isRegenerating: true });
+                    sseSetRegenFlag = true;
+                  }
+                }
               }
 
               const shouldShow = shouldShowLoaderForNode(
@@ -292,6 +312,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           onComplete: (response) => {
             if (isStaleRequest()) {
               debugLog('[SSE] Ignoring stale stream complete event');
+              if (sseSetRegenFlag) {
+                useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+                sseSetRegenFlag = false;
+              }
               resolve();
               return;
             }
@@ -302,6 +326,11 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             delayedLoader.reset();
             actionLoader.reset();
             setTriggerContext(null);
+
+            if (sseSetRegenFlag) {
+              useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+              sseSetRegenFlag = false;
+            }
 
             if (!isSilentPlanGeneration) {
               const msgs = useChatStore.getState().messages;
@@ -558,6 +587,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           onError: (error: Error) => {
             if (isStaleRequest()) {
               debugLog('[SSE] Ignoring stale stream error event');
+              if (sseSetRegenFlag) {
+                useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+                sseSetRegenFlag = false;
+              }
               resolve();
               return;
             }
@@ -568,6 +601,12 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             delayedLoader.reset();
             actionLoader.reset();
             setTriggerContext(null);
+
+            if (sseSetRegenFlag) {
+              useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+              sseSetRegenFlag = false;
+            }
+
             if (reconcileTimerRef.current) {
               clearTimeout(reconcileTimerRef.current);
               reconcileTimerRef.current = null;

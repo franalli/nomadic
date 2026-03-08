@@ -835,7 +835,7 @@ async def security_headers(request: Request, call_next):
         "default-src 'self'; "
         f"script-src {script_src}; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: https://images.unsplash.com https://*.mapbox.com blob:; "
+        "img-src 'self' data: https://images.unsplash.com https://*.mapbox.com https://media.tacdn.com https://media-cdn.tripadvisor.com https://hare-media-cdn.tripadvisor.com blob:; "
         "connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:; "
         "font-src 'self' data:; "
         "frame-ancestors 'none'"
@@ -1405,7 +1405,14 @@ async def admin_clear_all_caches(  # noqa: ARG001
     router_count = clear_router_cache()
     results["caches_cleared"]["router_memory"] = router_count
 
-    # 9. Summary
+    # 9. Clear Google Places geocode/country_code caches
+    from app.tile_service.google_places_provider import _country_code_cache
+
+    country_code_before = len(_country_code_cache)
+    _country_code_cache.clear()
+    results["caches_cleared"]["country_code_cache"] = country_code_before
+
+    # 10. Summary
     total = (
         planner_cleared
         + unsplash_memory_count
@@ -1417,6 +1424,7 @@ async def admin_clear_all_caches(  # noqa: ARG001
         + experience_memory_count
         + experience_db_count
         + router_count
+        + country_code_before
     )
     results["total_entries_cleared"] = total
     results["before"] = {
@@ -1792,6 +1800,7 @@ async def admin_places_telemetry(request: Request):  # noqa: ARG001
     """Return Google Places API usage counters and circuit breaker state."""
     _ = request
     from app.tile_service.google_places_provider import (
+        get_geocache_stats,
         get_google_places_circuit_breaker_state,
         get_google_places_usage_counters,
     )
@@ -1799,6 +1808,7 @@ async def admin_places_telemetry(request: Request):  # noqa: ARG001
     return {
         "usage_counters": get_google_places_usage_counters(),
         "circuit_breaker": get_google_places_circuit_breaker_state(),
+        "geocache": get_geocache_stats(),
     }
 
 
@@ -2015,8 +2025,9 @@ async def reset_session(
     """
     from sqlalchemy import delete, update
 
-    session_id = get_session_from_request(request)
-    forget_trusted_session_id(session_id)
+    session_id = getattr(request.state, "session_id", None)
+    if session_id:
+        forget_trusted_session_id(session_id)
 
     # Clear LangGraph checkpoint for this session (even if session not in DB)
     if session_id:
@@ -2660,8 +2671,8 @@ async def list_user_trips(
     """List plan documents across all sessions linked to the authenticated user."""
     from sqlalchemy import desc, select
 
-    session_token = get_session_from_request(request)
-    session = await get_session_by_token(db, session_token)
+    session_id = getattr(request.state, "session_id", None)
+    session = await get_session_by_token(db, session_id) if session_id else None
     if not session or not session.user_id:
         raise HTTPException(status_code=401, detail="Login required")
 
@@ -3564,7 +3575,7 @@ async def fill_day_endpoint(
                             "type": "activity",
                             "partner": "specialist",
                             "partner_product_id": f"specialist_{s_type}_{body.day_number}",
-                            "deeplink_url": item.get("deeplink")
+                            "deeplink": item.get("deeplink")
                             or f"https://www.google.com/maps/search/{quote(f'{title} {destination}')}",
                             "title": title,
                             "subtitle": item.get("subtitle", ""),
@@ -3574,7 +3585,6 @@ async def fill_day_endpoint(
                             "price_level": item.get("price_level"),
                             "google_place_id": item.get("google_place_id"),
                             "location_label": item.get("location_label"),
-                            "deeplink": item.get("deeplink"),
                             "tags": [s_type],
                             "specialist_type": s_type,
                             "meta": {
@@ -3778,7 +3788,7 @@ async def fill_day_endpoint(
     # Add generated tiles to document tile map (enables hearting/referencing)
     for tile in tiles[:3]:
         tile_id = tile["id"]
-        doc_data.tiles[tile_id] = Tile(**{k: v for k, v in tile.items() if k in Tile.model_fields})
+        doc_data.tiles[tile_id] = Tile.model_validate(tile)
 
     # Persist tiles for rebuild survival — tagged by source and priority
     for tile in tiles[:3]:
@@ -4320,20 +4330,19 @@ async def browse_activities_endpoint(
 
     session_id = get_session_from_request(request)
     session = await get_session_by_token(db, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
 
     # Check document for stashed browseable_activities first (no API cost)
-    doc = await get_document(db, session=session)
-    if doc:
-        doc_data = get_document_data(doc)
-        stashed = doc_data.browseable_activities or []
-        if stashed:
-            signed_stashed = _attach_signed_photo_urls_to_browse_tiles(
-                list(stashed),
-                session_id=session_id,
-            )
-            return {"tiles": signed_stashed, "total": len(signed_stashed), "source": "stashed"}
+    if session:
+        doc = await get_document(db, session=session)
+        if doc:
+            doc_data = get_document_data(doc)
+            stashed = doc_data.browseable_activities or []
+            if stashed:
+                signed_stashed = _attach_signed_photo_urls_to_browse_tiles(
+                    list(stashed),
+                    session_id=session_id,
+                )
+                return {"tiles": signed_stashed, "total": len(signed_stashed), "source": "stashed"}
 
     # Resolve center from hotel_location if provided
     center = None

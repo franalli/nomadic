@@ -204,7 +204,7 @@ def _make_tile(
         type=tile_type,
         title=title,
         price_estimate=price,
-        deeplink_url="https://example.com",
+        deeplink="https://example.com",
     )
 
 

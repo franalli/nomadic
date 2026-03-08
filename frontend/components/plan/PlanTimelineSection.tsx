@@ -16,6 +16,7 @@ import { useToast } from '@/components/ui/toast';
 import { REVEAL_TIMING } from '@/lib/animation-config';
 import { debugLog } from '@/lib/debug';
 import { showMutationToast } from '@/lib/showMutationToast';
+import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
@@ -53,7 +54,7 @@ export function PlanTimelineSection({
   isRegenUpdating,
   isExpandingItinerary,
   hasItineraryContent,
-  preferenceCount,
+  preferenceCount: _preferenceCount,
   savedTileIds,
   timelineSectionRef,
   handleOpenBookingDrawer,
@@ -111,7 +112,10 @@ export function PlanTimelineSection({
           id="timeline-section"
           className="px-4 py-4"
         >
-          <div className="relative">
+          <div className={cn(
+            "transition-opacity duration-300",
+            isRegenUpdating && "opacity-40 pointer-events-none"
+          )}>
             <LayoutGroup id="droppable-days">
               <ItineraryDndWrapper>
                 <ErrorBoundary label="Timeline">
@@ -132,20 +136,6 @@ export function PlanTimelineSection({
                 </ErrorBoundary>
               </ItineraryDndWrapper>
             </LayoutGroup>
-
-            {/* Regeneration overlay — dims timeline during update */}
-            {isRegenUpdating && (
-              <div className="absolute inset-0 bg-white/60 dark:bg-black/50 z-10 flex items-center justify-center rounded-lg">
-                <div className="flex items-center gap-2 text-zinc-900 dark:text-white bg-white/90 dark:bg-zinc-900/80 border border-zinc-200 dark:border-white/10 px-4 py-2 rounded-full">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span className="text-sm">
-                    {preferenceCount > 0
-                      ? `Updating with ${preferenceCount} preferences...`
-                      : 'Rebuilding itinerary...'}
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
         </motion.section>
       ) : isExpandingItinerary ? (

@@ -52,7 +52,7 @@ PLANNING mode evolves naturally based on what the user has provided. No artifici
 * **Trigger:** User clicks "Proceed to Booking" (HARD gate - explicit action required)
 * **UI Shows:**
   * Read-only itinerary summary
-  * Tile-level external booking actions (single `tile.deeplink_url` path)
+  * Tile-level external booking actions (single `tile.deeplink` path)
   * Placeholder copy for future comparison/checkout flow
 * **Tiles:** BOOKABLE via per-tile deeplinks (no partner comparison table yet)
 
@@ -554,6 +554,8 @@ When the user saves activity or hotel preferences via the Activities/Stays sheet
 
 **Activities sheet explicit-clear behavior:** `LandingSheets` and `ChatModuleSheets` track a local `activityUserSaved` flag and pass it as `hasExplicitSettings` into `ActivitiesSheet`. This prevents day-card inference from re-populating categories after the user explicitly saved an empty category list.
 
+**S3 early regeneration overlay:** when Activities sheets save into an active itinerary state (`S3_ITINERARY_READY` / `S3_EDITING`), both desktop and chat surfaces set `documentStore.isRegenerating=true` immediately before the `commitTripInputs()` round-trip. This is visual feedback only; the actual hard mutex remains `expandInProgress`.
+
 **State tracking:**
 - `documentStore.updateTripInputs()` - Sync local state write (before validation)
 - `documentStore.commitTripInputs()` - Async API persist (after validation)
@@ -588,13 +590,13 @@ const handleAddDestination = async (destination: string) => {
 
 **Cascade Prevention Guards:**
 ```typescript
-// Guard 1: Skip if regeneration already running (in triggerRegeneration)
-if (useDocumentStore.getState().isRegenerating) return;
-
-// Guard 2: Skip if expand-itinerary already running (in triggerRegeneration)
+// Guard 1: expandInProgress is the hard mutex (in triggerRegeneration)
 if (useDocumentStore.getState().expandInProgress) return;
 
-// Guard 3: Skip in useEffect if expand or streaming in progress (queued, not dropped)
+// isRegenerating may already be true as early visual feedback from sheet-save/SSE.
+// Do NOT use it as a blocker for triggerRegeneration.
+
+// Guard 2: Skip in useEffect if expand or streaming in progress (queued, not dropped)
 if (expandInProgress || isStreamingResponse) {
   pendingRegenRef.current = true;
   lastPrefsRef.current = new Set(preferredTileIds);
@@ -605,10 +607,13 @@ if (expandInProgress || isStreamingResponse) {
 **State tracking:**
 - `documentStore.preferredTileIds` - Current preferences (Set)
 - `documentStore.lastGeneratedPreferences` - Preferences at last generation
-- `documentStore.expandInProgress` - Mutex flag for expand-itinerary calls
+- `documentStore.expandInProgress` - Hard mutex flag for expand-itinerary calls
+- `documentStore.isRegenerating` - Shared overlay/display flag; may be set early by sheet saves or SSE node-status callbacks before rebuild work actually starts
 - `markPreferencesAsApplied()` - Snapshots current preferences after regeneration (compares `preferredTileIds` vs `lastGeneratedPreferences` inline to detect changes)
 
 **Visual feedback:**
+- Activities-sheet saves in S3 show the regeneration overlay immediately, before the preference PATCH resolves, so the timeline never appears frozen during commit latency.
+- SSE rebuild nodes (`generate_plan`, `update_plan`, `create_itinerary`) can also set the overlay when day cards already exist; `useChatSse` and `useChatSend` clear it on complete, error, stale stream, or abort.
 - Specialist section shows "Updating itinerary..." overlay during regeneration (`isRegenUpdating`)
 - Timeline dims with black overlay + "Updating with N preferences..." spinner
 - Attribution badges show preference vs AI selection
@@ -938,13 +943,13 @@ Backend rendering is single-source-of-truth via `plan_view_state` and a small co
 |---|---|---|---|
 | `S0_BOOTSTRAP` | Core fields incomplete (destination + dates not both set) | Hero image, empty timeline | "Your trip is taking shape" · REFINE PLAN |
 | `S2_STRATEGY_READY` | Strategy exists, no itinerary yet | Strategy cards, bridge timeline | "Your trip is taking shape" · REFINE PLAN |
-| `S2_BLOCKED` | Strategy exists but build path blocked | Bridge view with blocker messaging | "Your trip is taking shape" · REFINE PLAN |
+| `S2_BLOCKED` | Legacy/frontend-compatible alias for a blocked strategy-ready bridge state | Bridge view with blocker messaging when manually normalized | "Your trip is taking shape" · REFINE PLAN |
 | `S3_ITINERARY_READY` | Builder success, no conflicts | Full schedule + tile-rich plan | "Itinerary complete" · READY |
 | `S3_EDITING` | Builder success with constraints | Draft schedule + constraint banner | "Your trip is taking shape" · REFINE PLAN |
 | `S3_PARTIAL_CONFLICT` | Partial schedule from failed build | Partial draft schedule + conflict notes | "Your trip is taking shape" · REFINE PLAN |
 | `S3_BLOCKED` | Builder failed, no valid day cards | Strategy preview + actionable suggestions | "Your trip is taking shape" · REFINE PLAN |
 
-> **Note:** `S0_EMPTY` and `S1_DESTINATION_SET` are frontend-only guard states (`S0_EMPTY` for reset intent; `S1_DESTINATION_SET` for fallback ordering). The API never emits them.
+> **Note:** `S0_EMPTY` and `S1_DESTINATION_SET` are frontend-only guard states (`S0_EMPTY` for reset intent; `S1_DESTINATION_SET` for fallback ordering). `S1_FRAMING` and `S2_BLOCKED` remain in shared type unions for compatibility, but the current coordinator path emits `S0_BOOTSTRAP`, `S2_STRATEGY_READY`, and `S3_*` states.
 
 ---
 
@@ -1720,19 +1725,19 @@ useSessionHydration() runs
 | `useBookingDrawerState` | Hook managing booking drawer open/close state and the fill-day API call triggered when a tile is added to a specific day via the drawer. Extracted from `StrategyStageRenderer`. |
 | `PlanHeader` | Sticky header: topo background (no destination), hero image + TripSummaryPills (with destination), collapsed bar (mobile scroll) |
 | `TripSummaryPills` | Unified command bar for trip inputs plus module actions: destination/origin/dates/travelers/budget/activities plus inline command segments for Flights, Stays, and Destination Travel Advice (with pending/badge state). |
-| `NomadicLanding` | Desktop shell for the main planning route. Owns reset CTA, account popover wiring (`useUserStore` login/logout/fetchTrips), and recent-trip resume actions while still delegating plan rendering to `StrategyStageRenderer`. |
-| `MobileModeHeader` | Mobile top bar for the planning route. Hosts overflow actions for reset, share, PDF export, sign in/out, and recent-trip resume without changing the core swipe-layout topology. |
+| `NomadicLanding` | Desktop shell for the main planning route. Owns reset CTA, account popover wiring (`useUserStore` login/logout/fetchTrips), and recent-trip resume actions while still delegating plan rendering to `StrategyStageRenderer`. The reset action is now always visible in the right-side control zone, even when signed out. |
+| `MobileModeHeader` | Mobile top bar for the planning route. Hosts overflow actions for reset, share, PDF export, sign in/out, and recent-trip resume without changing the core swipe-layout topology. Signed-out users now get a reset action inside the overflow menu; signed-in users retain the dedicated reset affordance. |
 | `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`). Day headers show intensity badge (Relaxed/Balanced/Packed) via `getDayIntensity()` from `lib/dayIntensity.ts`. Accepts three optional render props for DnD injection: `blockWrapper?: (block: DayBlock, dayNumber: number, children: ReactNode) => ReactNode` (wraps each block — only applied when `useRichBlocks=true`); `dayWrapper?: (dayNumber: number, children: ReactNode) => ReactNode` (wraps the block-list container for activity days only — **not** applied to free/empty days); `freeDayDropSlot?: (dayNumber: number) => ReactNode` (renders a drop zone inside `FreeDayCard` between the subtitle and chips — preferred for free days to avoid highlighting the entire card). All three default to identity no-ops. **Map sync:** `IntersectionObserver` on `scrollContainerRef` tracks visible day headers → `useMapSync.setVisibleDayNumber()`. Listens to `scrollTargetDayNumber` → `scrollIntoView()` + 2s highlight ring. **Constraint dedup:** `getConstraintDisplayModes(block)` deduplicates constraint badges per render pass — passes `constraintDisplayModes` Map to `ActivityMiniCard`. **Compact days:** `getDayVariant(card)` returns `'compact'` for single-block non-logistics days. |
 | `ItineraryDndWrapper` | `@dnd-kit/core` `DndContext` wrapper (`closestCorners`, `PointerSensor` with 8px activation distance). Orchestrates drag state, calls `validateArrangement()` then `applyArrangement()` on drop, applies store update via `mergeEnvelope` + `setState({version})`. Uses `claimMutation`/`releaseMutation` for the store mutation gate. Shows `DragOverlay` with `DragPreviewCard`. **Undo on drag:** Before applying arrangement, captures `previousDayCards` + `previousVersion` snapshot, sets `documentStore.setUndoEntry({ type: 'drag_move', label, previousDayCards, previousVersion })`, and calls `showMutationToast(label, toast)` to display an Undo CTA. Mounts `useUndoStack` for auto-expire side effect (clears `undoEntry` after 8s). |
 | `DraggableBlock` | Wraps each block with `useDraggable`. Locked blocks (`arrival`/`departure`/`check-in`/`check-out`/`is_buffer`) show a `Lock` icon and disable drag. When `block.id` is absent, renders a plain passthrough (no drag handle). Applies `opacity-30 scale-95` while dragging. |
 | `DroppableDay` | Wraps activity-day block lists with `useDroppable` (`id: "day-{dayNumber}"`). Two-div structure: outer div (`ref={setNodeRef}`, `min-h-[80px]`) owns the hit area; inner div owns ring + highlight styles. Highlights with `ring-1 ring-emerald-500/25 bg-emerald-500/[0.04]` when dragging over. Not used for free/empty days — those use `FreeDayDropSlot` instead. |
 | `FreeDayDropSlot` | Dedicated drop zone rendered inside `FreeDayCard` via the `freeDayDropSlot` render prop. Avoids highlighting the entire free-day card. Uses `useDroppable` with the same `day-{dayNumber}` id. |
 | `PdfExportButton` | Plan surface CTA that appears when itinerary day cards exist and triggers client-side export. Lazily imports `@react-pdf/renderer` and `file-saver`, calls `extractTripPdfData()`, and saves `TripPdfDocument` output with a destination/date filename. |
-| `BrowseActivitiesSheet` | Bottom sheet displayed on free/buffer days. Fetches categorized activity tiles from `POST /api/activities/browse` (Google Places). Shows category filter chips (cultural/food/nature/spa/tours/shopping). Calls `POST /api/document/insert-activity-block` to add selected tiles directly into the day. Reads pre-stashed tiles from `documentStore.browseableActivities` if available (avoids repeat API call). Located in `frontend/components/plan/BrowseActivitiesSheet.tsx`. |
+| `BrowseActivitiesSheet` | Bottom sheet displayed on free/buffer days. Fetches categorized activity tiles from `POST /api/activities/browse` (Viator-first, Google Places fallback/supplement). Shows category filter chips (cultural/food/nature/spa/tours/shopping). Calls `POST /api/document/insert-activity-block` to add selected tiles directly into the day. Reads pre-stashed tiles from `documentStore.browseableActivities` if available (avoids repeat API call). Located in `frontend/components/plan/BrowseActivitiesSheet.tsx`. |
 | `DragPreviewCard` | Ghost card shown in `DragOverlay` during drag. Renders `block.summary || block.activity_type`, specialist label via `getTopicLabel(block.specialist_type)`, and price from `block.booked_tile?.price_estimate`. |
 | `ChatPanel` | Chat orchestration — thin shell delegating to four extracted hooks: `useChatSend` (send + SSE lifecycle), `useChatEffects` (side effects), `useChatScrolling` (scroll + collapse). Module sheets (flights/stays/activities) are rendered by `ChatModuleSheets`. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown) and forwards `onConfirmReset` so suggestion chips can trigger confirmed session reset. |
 | `ChatStatusHeader` | Renders the desktop trip status hero/mini bar above chat content using `getChatStatusConfig(planViewState, planState, ...)` to keep chrome visible and consistent across planning states. |
-| `ChatModuleSheets` | Renders the three module sheets (FlightsSheet, StaysSheet, ActivitiesSheet) that live inside ChatPanel. Extracted to keep ChatPanel under 200 lines. Tracks `activityUserSaved` session state so ActivitiesSheet inference does not override an explicit user clear (`[]`). Enabling flights from the module sheet sends `GENERATE_PLAN_TRIGGER` when `plan_view_state` is active so tiles regenerate immediately. **D3 preferred-tile prune:** When ActivitiesSheet saves with fewer categories, `onSaveSettings` computes `removedCats`, filters `planDocument.preferred_tile_ids` to drop tiles from removed categories (matched via `tile.meta.specialist_type`, `tile.meta.category`, or `tile.tags`), and calls `patchDocument({ preferred_tile_ids: pruned })` as a best-effort fire-and-forget. Backend Phase 5.25 provides a second authoritative filter. |
+| `ChatModuleSheets` | Renders the three module sheets (FlightsSheet, StaysSheet, ActivitiesSheet) that live inside ChatPanel. Extracted to keep ChatPanel under 200 lines. Tracks `activityUserSaved` session state so ActivitiesSheet inference does not override an explicit user clear (`[]`). In active itinerary states it now sets the regeneration overlay immediately on save, before `commitTripInputs()` returns. Category changes in active plan states trigger the full graph pipeline (`GENERATE_PLAN_TRIGGER`) so specialists re-dispatch instead of relying on expand-itinerary tile refresh alone. **D3 preferred-tile prune:** When ActivitiesSheet saves with fewer categories, `onSaveSettings` computes `removedCats`, filters `planDocument.preferred_tile_ids` to drop tiles from removed categories (matched via `tile.meta.specialist_type`, `tile.meta.category`, or `tile.tags`), and calls `patchDocument({ preferred_tile_ids: pruned })` as a best-effort fire-and-forget. Backend Phase 5.25 provides a second authoritative filter. |
 | `useChatSend` | Hook orchestrating message send, SSE streaming lifecycle (`useChatSse` internally), node status, suggestion state, and active-status updates. Extracted from ChatPanel. Returns `sendMessageCore`, `addAssistantMessage`, `handleStopStreaming`, plus state (`isLoading`, `nodeStatus`, etc.). |
 | `useChatEffects` | Hook centralising ChatPanel side effects: scroll-on-load, ready-to-generate detection, input focus, node-status → activeStatus mapping, history loading. Extracted from ChatPanel. |
 | `useChatScrolling` | Hook managing scroll container ref, auto-scroll-to-bottom, user-scrolled-up detection, and mobile setup header collapse. Extracted from ChatPanel. |
@@ -1749,11 +1754,11 @@ useSessionHydration() runs
 | `ItineraryProgressIndicator` | Progress indicator for multi-specialist auto-trigger itinerary generation |
 | `BookingDrawer` | Side sheet for tile browsing, triggered by FreeDayCard "Browse" or GhostSlot clicks. Supports `pinnedDayNumber` for per-day tile placement via fill-day API |
 | `TripSettingsSheet` | Relay sheet for destination/origin/dates/travelers/budget editors. Uses an unmount-safe delayed sheet open (`setTimeout` + `mountedRef`) to avoid opening a child sheet after parent unmount. |
-| `TripHealthBar` | Compact inventory bar showing tile counts (hotels, flights, activities) for General/Local Expert strategy surfaces in the density-driven plan renderer. |
 | `useItineraryGeneration` | Hook extracted from `NomadicLanding` encapsulating the full expand-itinerary flow: `proceedWithItineraryGeneration` (NDJSON streaming), auto-trigger logic for multi-specialist trips (Path A), `handleExpandToItinerary` (validation-gated expand), and `handleSelectNights`. Before POSTing `/api/expand-itinerary`, it normalizes `trip_inputs`: empty activity categories are sent as `categories=[] + booking_types.activities='off'` so builder semantics match sheet intent. Returns `{proceedWithItineraryGeneration, handleExpandToItinerary, handleSelectNights, hasItineraryContent}`. |
 | `useLandingDerived` | Hook extracted from `NomadicLanding` computing all derived values (`viewModel`, `uiGeneration`, `hasDates`, `isRegenerating`, etc.) from store data and local state using `useMemo`. **Hard gate:** `planViewState` is forced to `S0_BOOTSTRAP` when `hasPlanPrerequisites` is false (destination + dates required). When prerequisites are met, backend `plan_view_state` is authoritative. `planTabEnabled` also requires `hasPlanPrerequisites`. Pure computation — no side effects. |
 | `useLandingEffects` | Hook extracted from `NomadicLanding` grouping side effects unrelated to itinerary generation: destination image fetching, `hasEverHadPlan` detection, topic tracking for mobile badges, specialist deep link handling. State is owned by the parent and passed in as params + setters. |
 | `useLandingHandlers` | Hook extracted from `NomadicLanding` for action wiring: reset/finalize/build callbacks, plan result receipt handling, mobile send/stop forwarding, gear-sheet state, and topic-diff detection for plan-related user input. |
+| `useBranchManager` | Session/branch management hook for reset flows, local context clearing, and post-reset session handoff. After a successful reset it now performs a hard reload so the browser picks up the newly issued session cookie before hydration resumes. |
 | `useSessionHydration` | Planning-route hydration hook. Restores `/api/document`, enforces session-age reset behavior, and primes `useUserStore.fetchUser()` so auth chrome hydrates alongside plan state. |
 | `SharedTripView` | Public read-only trip surface for `/trip/[slug]`. Renders immutable shared metadata, strategy summary, non-interactive map, and a fork CTA that first primes a session and then POSTs `/api/share/fork/{slug}`. |
 | `ReadOnlyTimeline` | Shared-trip-only itinerary renderer. Displays persisted `day_cards` without DnD, mutation controls, or booking actions. |
@@ -1766,7 +1771,8 @@ useSessionHydration() runs
 
 **Deleted Components (no longer in codebase):**
 - `ConflictResolutionBanner` -- conflict resolution now chat-driven via suggestion chips
-- `TripHealthDashboard` -- replaced by `TripHealthBar.tsx` (compact bar variant in the current density-driven strategy surface)
+- `TripHealthDashboard` -- deleted; no dedicated inventory-health dashboard remains in the current density-driven strategy surface
+- `TripHealthBar` -- deleted; compact inventory counts are no longer rendered as a dedicated S2 strategy bar
 - `ReadyToPlanBanner` -- removed
 - `ExplorationProgress` -- removed
 - `SelectionsBar` -- hearted tile preferences now feed auto-regen directly (no separate UI bar)
@@ -1952,6 +1958,7 @@ Plan tab is **locked** until first real plan content arrives:
 6. **Height Constraint:** Root div MUST use fixed `h-[100dvh]` (NOT `min-h-[100dvh]`) to prevent input clipping below viewport.
 7. **Status Pill:** `MobileModeHeader` STABLE state has empty text (pill hidden). Only RESOLVING ("Planning...") shows a visible pill.
 8. **Mobile Header Chrome:** `MobileModeHeader` owns the compact status pill plus overflow actions for reset, share, PDF export, sign in/out, and recent-trip resume without adding extra vertical chrome above the swipe layout.
+9. **Reset must rotate the session cleanly:** reset UX is only complete after the browser has adopted the new session cookie. `useBranchManager` therefore reloads the page after clearing local state instead of relying on toast-only confirmation.
 
 ### Deleted Components (replaced by swipe layout)
 
@@ -2720,9 +2727,9 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 | Arrival/Departure | `LogisticsBlock` | Border-l-4, icon/time + resolved thumbnail (booked tile → tile map/preferred tiles → placeholder fallback) | Hard times (flights) |
 | Check-in/out | `LogisticsBlock` | Key icon, hotel name, inline constraints + resilient image fallback on load error | Accommodation logistics |
 | Safety Buffer | `SafetyBlock` | Red zone, "No Flights until". **Excludes** arrival/departure anchors (those are `LogisticsBlock`, not `SafetyBlock`) | Constraint visualization |
-| Activity | `ActivityMiniCard` | Thumbnail, category badge, duration, time of day, description, constraints, price badge (`block.booked_tile?.price_estimate`), book button, hold-to-delete. Accepts `constraintDisplayModes?: Map<string, 'full' \| 'icon'>` — renders icon-only pill with Tooltip for repeated constraints. Accepts `variant?: 'default' \| 'compact'` — compact renders a horizontal thumbnail+content row (~56px height) for single-activity days. | Rich activity display with metadata |
+| Activity | `ActivityMiniCard` | Full-width landscape photo banner, category badge, duration, time of day, description, compact inline-constraint summary row, price badge (`block.booked_tile?.price_estimate`), provider-aware book/map CTA, hold-to-delete. Accepts `constraintDisplayModes?: Map<string, 'full' \| 'icon'>` — renders icon-only pill with Tooltip for repeated constraints. Accepts `variant?: 'default' \| 'compact'` — compact renders a horizontal thumbnail+content row (~56px height) for single-activity days. | Rich activity display with metadata |
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
-| Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker. Buffer blocks (SafetyBlock) render above FreeDayCard when present. **Suppressed on arrival and departure days** (no activity placement on travel days) | Quick-fill with generated activities or browse |
+| Empty Day | `FreeDayCard` | "Free Day" with fill CTA + category picker. Buffer blocks (SafetyBlock) render above FreeDayCard when present. **Suppressed on bookend days only for trips longer than 3 days**; short trips may still place/fill activities on arrival/departure bookends because those count as partial scheduling windows. | Quick-fill with generated activities or browse |
 
 **Fill-Day Flow:** FreeDayCard → `fillDay()` API call → backend generates 1 tile via `generate_experience_tiles_for_day(tiles_per_day=1)` → response includes `day_card` + `tiles` map → frontend calls `replaceDayCard()` for surgical day card update + merges tiles into document store (enables hearting/referencing). Generated tiles are tagged with `meta.pinned_day` so the builder won't redistribute them on rebuild. Backend applies adjacent-day constraint filtering (e.g., no altitude activities next to diving days). Categories are optional — when omitted, the generator picks destination-appropriate activities. **Concurrency:** Per-day mutex (`claimFillDay`/`releaseFillDay` in documentStore) prevents concurrent fill-day calls on the same day, frontend stream/regeneration gates (`currentRunId`/generation flags) block fill-day while itinerary updates are in flight, and burst guards throttle repeat calls (1.5s cooldown via `fillDayGuards.ts`) in both timeline and browse-to-pin paths. `fillDay()` in api.ts syncs the document version from the response (`useDocumentStore.setState({ version })`) to prevent 409 cascades and preserves backend `detail` text for surfaced 429/rejection toasts.
 
@@ -2734,29 +2741,18 @@ Plan content renders on Page 1 of the `MobileSwipeLayout` scroll-snap container.
 
 Timeline blocks display contextual constraint badges directly within the card. This makes constraint-first optimization **visible** to users.
 
-**Visual Example:**
+**Visual Example (current ActivityMiniCard treatment):**
 ```
 ┌─────────────────────────────────────┐
+│ [landscape photo banner]            │
 │ 🌊 MORNING  diving  ⏱ 3.0h          │
 │ Crystal Bay                         │
-│                                     │
-│ ┌─────────────────────────────────┐ │
-│ │ ⚠️ 24h No-Fly Buffer            │ │
-│ │    Day 8 departure requires     │ │
-│ │    finishing diving by 2pm      │ │
-│ └─────────────────────────────────┘ │
-│                                     │
-│ ❤️ You preferred this               │
+│ ⚠️ 24h No-Fly Buffer · Finish by 2pm│
+│ ❤️ You preferred this      Book     │
 └─────────────────────────────────────┘
 ```
 
-**Constraint Severities:**
-
-| Severity | Background | Border | Title Color | Use Case |
-|----------|------------|--------|-------------|----------|
-| `warning` | `bg-amber-50` | `border-amber-200` | `text-amber-700` | Safety constraints (no-fly buffer) |
-| `info` | `bg-blue-50` | `border-blue-200` | `text-blue-700` | Informational (surface interval) |
-| `success` | `bg-emerald-50` | `border-emerald-200` | `text-emerald-700` | Positive confirmations |
+**Rendering rule:** Activity cards no longer render boxed severity cards for inline constraints. `ActivityCardConstraints` merges icons/titles/descriptions into a slim neutral-zinc summary row (`text-zinc-500 dark:text-zinc-400`, middot separator, truncated description). Severity remains in `active_constraints[]` for logic and other dedicated warning surfaces, but the per-card treatment is intentionally compact.
 
 **Constraint Data Structure (from backend):**
 ```typescript
@@ -3064,7 +3060,10 @@ expandInProgress: boolean;
 setExpandInProgress: (inProgress: boolean) => void;
 
 // Guards in usePreferenceAutoRegen
-if (expandInProgress) return;  // Skip preference regen during expand
+if (expandInProgress) return;  // Sole hard mutex for preference regen
+
+// isRegenerating is display state only; it may already be true before commit/expand starts
+// and must not be used as a blocker here.
 
 // proceedWithItineraryGeneration wraps expand call
 setExpandInProgress(true);
@@ -3262,6 +3261,7 @@ interface TileDetailsModalProps {
 **Behavior:**
 - PLANNING mode: Shows "Why this suggestion?" section with AI reasoning and "AI Pick" badge
 - BOOKING mode: Uses single external booking action (no partner comparison matrix yet)
+- Deeplink CTA copy is provider-aware: Google/Maps links keep map-oriented labels, while Viator links switch to booking-oriented labels (`Book`, `Book on Viator`) and `ExternalLink` iconography.
 
 ### 4. StrategyStageRenderer (Mode Prop)
 

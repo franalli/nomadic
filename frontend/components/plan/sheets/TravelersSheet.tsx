@@ -209,7 +209,7 @@ function TravelersSheetInner({
                     'transition-all duration-150',
                     isSelected
                       // Selected: Solid Black / White (maximum contrast)
-                      ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                      ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
                       // Inactive: Glass Fill - visible buttons
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-600',

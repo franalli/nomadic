@@ -491,6 +491,38 @@ async def _browse_activities_impl(
 
     record_google_places_usage("browse", "cache_miss", layer="l2")
 
+    # Try Viator first (real pricing, images, deeplinks)
+    viator_tiles: List[Dict[str, Any]] = []
+    if settings.viator_enabled and settings.viator_api_key:
+        try:
+            from app.services.viator_provider import search_viator_for_destination
+
+            viator_tiles = await search_viator_for_destination(
+                destination=destination,
+                currency="USD",
+                count=max_results,
+            )
+            if viator_tiles:
+                viator_tiles = await _enrich_tiles_with_llm(
+                    destination, valid_categories, viator_tiles
+                )
+                if len(viator_tiles) >= max_results:
+                    _browse_cache.set(cache_key, viator_tiles)
+                    await _set_cached_browse(cache_key, viator_tiles)
+                    logger.debug(
+                        "[BROWSE] Viator returned %d tiles for %s", len(viator_tiles), destination
+                    )
+                    return viator_tiles
+                # Fewer than requested — fall through to supplement with GP tiles
+                logger.debug(
+                    "[BROWSE] Viator returned %d/%d tiles for %s, supplementing with GP",
+                    len(viator_tiles),
+                    max_results,
+                    destination,
+                )
+        except Exception as e:
+            logger.debug("[BROWSE] Viator browse failed, falling back to GP: %s", e)
+
     # Resolve geo center
     geo = center
     if not geo:
@@ -498,6 +530,11 @@ async def _browse_activities_impl(
 
     if not settings.google_maps_api_key:
         record_google_places_usage("browse", "error", reason="missing_api_key")
+        if viator_tiles:
+            logger.warning("[BROWSE] No Google Maps API key — returning Viator-only results")
+            _browse_cache.set(cache_key, viator_tiles)
+            await _set_cached_browse(cache_key, viator_tiles)
+            return viator_tiles
         logger.warning("[BROWSE] No Google Maps API key — returning empty results")
         return []
 
@@ -553,6 +590,13 @@ async def _browse_activities_impl(
             break
 
     tiles = await _enrich_tiles_with_llm(destination, valid_categories, tiles)
+
+    # Merge Viator tiles (real pricing) with GP supplement tiles
+    if viator_tiles:
+        viator_titles = {t.get("title", "").lower().strip() for t in viator_tiles}
+        gp_deduped = [t for t in tiles if t.get("title", "").lower().strip() not in viator_titles]
+        tiles = viator_tiles + gp_deduped
+    tiles = tiles[:max_results]
 
     usage_after = get_google_places_usage_counters().get("browse", {})
     had_places_failures = (

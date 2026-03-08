@@ -464,7 +464,7 @@ export function PlanFullDensityView({
             key="tiles-section" initial={FADE_INITIAL} animate={FADE_VISIBLE}
             transition={{ duration: REVEAL_TIMING.TILES_FADE / 1000 }}
             id="tiles-section"
-            className={cn('mt-1', isExpandingItinerary && 'opacity-60 pointer-events-none')}
+            className={cn('mt-1', isExpandingItinerary && 'opacity-50 pointer-events-none')}
           >
             <BookingSection
               state={state} tiles={effectiveTiles} generation={generation}

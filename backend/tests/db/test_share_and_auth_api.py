@@ -199,7 +199,7 @@ def seed_session_with_document(
                         "id": "tile-1",
                         "type": "activity",
                         "title": "Shore dive",
-                        "deeplink_url": "https://example.com/activity",
+                        "deeplink": "https://example.com/activity",
                         "image_url": "/api/media/google-places-photo?name=tile",
                     }
                 },

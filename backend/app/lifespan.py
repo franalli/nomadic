@@ -173,6 +173,12 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     await close_places_http_client()
     logger.info("[Shutdown] Closed Google Places HTTP client")
 
+    # 5b2. Close Viator HTTP client
+    from app.services.viator_provider import close_viator_http_client
+
+    await close_viator_http_client()
+    logger.info("[Shutdown] Closed Viator HTTP client")
+
     # 5c. Close Google Places sync HTTP client
     from app.tile_service.google_places_provider import close_sync_client
 

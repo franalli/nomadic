@@ -5,7 +5,7 @@
  * This manual definition uses a looser `type: string` for flexibility in tile classification.
  */
 
-type TileProvider = 'expedia' | 'booking' | 'google_places' | 'curated' | 'mock' | 'unknown';
+type TileProvider = 'expedia' | 'booking' | 'google_places' | 'curated' | 'mock' | 'viator' | 'unknown';
 
 export type Tile = {
   id: string;

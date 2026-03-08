@@ -34,7 +34,7 @@
 | POST   | `/api/document/apply-arrangement` | Validate + persist block moves with optimistic concurrency | `ArrangementApplyRequest{moves: BlockMove[], expected_version: int}` | `ArrangementResult{valid, violations, day_cards?, version?}` |
 | POST   | `/api/document/remove-block` | Remove a single block from the itinerary (pure Python, <10ms, no LLM) | `RemoveBlockRequest{block_id, day_number, expected_version}` | `RemoveBlockResponse{day_number, day_card, version, removed_block_id}` |
 | POST   | `/api/document/restore-snapshot` | Restore day_cards to a previous snapshot (undo stack; pure Python, <10ms, no LLM) | `RestoreSnapshotRequest{day_cards, expected_version}` | `RestoreSnapshotResponse{day_cards, version}` |
-| POST   | `/api/activities/browse`               | Browse Google Places activities for a free/buffer day | `BrowseActivitiesRequest{destination, day_number?, date?, hotel_location?, categories?}` | `{tiles: BrowseTile[], total: int, source: "stashed"\|"places"}` |
+| POST   | `/api/activities/browse`               | Browse activities for a free/buffer day (Viator-first, Google Places fallback) | `BrowseActivitiesRequest{destination, day_number?, date?, hotel_location?, categories?}` | `{tiles: BrowseTile[], total: int, source: "stashed"\|"places"}` |
 | POST   | `/api/document/insert-activity-block`  | Insert a browse tile as a block into a day (pure Python, no LLM) | `InsertActivityBlockRequest{day_number, tile, expected_version?}` | `InsertActivityBlockResponse{day_number, day_card, version, inserted_block_id}` |
 | GET    | `/api/specialist/{section_id}/enrichment` | Fetch Phase B enrichment status for a specialist section | -- | `SpecialistEnrichmentResponse{section_id, status: 'ready'\|'pending'\|'failed', data?, error_code?, retry_after_ms?}` |
 
@@ -84,14 +84,17 @@ Auth flow contract:
 | ------ | ---------------- | --------------------------- | --------------------------- |
 | GET    | `/api/chat`      | Chat history (last 50)      | `ChatHistoryResponse`       |
 | DELETE | `/api/chat/last` | Delete last user msg + undo | `DeleteLastMessageResponse` |
+| POST   | `/api/session/new` | Start a fresh planning session while preserving auth linkage | 204 No Content |
 | DELETE | `/api/session`   | Reset session & clear state | 204 No Content              |
 | GET    | `/health`        | Health check                | JSON                        |
 
+`POST /api/session/new` creates a new session row, carries forward the current `user_id`, rotates both `session_id` and `csrf` cookies, and keeps at most three recent trip-backed sessions per user by evicting older trip data. Unlike `DELETE /api/session`, it does not destroy the caller's prior trip by default.
+
 ### Admin (17 endpoints, gated by `X-Admin-Key` header)
 
-All admin routes require `X-Admin-Key` header matching `ADMIN_API_KEY` env var. Rate limited: 10/min.
+All admin routes require `X-Admin-Key` header matching `ADMIN_API_KEY` env var. Most admin routes are limited to `10/min`; `POST /api/admin/clear-spend-guard` is limited to `5/min`.
 
-Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified), `spend-guard-stats`. Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache` (L1+L2), `clear-router-cache`, `clear-l1-l2-caches` (force-wipes L1 memory caches + L2 response cache/unsplash cache only), `clear-all-caches` (clears planner/experience/router/browse/places-enrichment/iata caches + validation + unsplash; includes specialist and tile L1/L2 and response-cache types), `clear-all-checkpoints`, `clear-validation-cache`, `clear-spend-guard`, `fresh-start`. Config (GET): `planner`, `graph-stats`. Telemetry (GET): `places-telemetry`.
+Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified), `spend-guard-stats`. Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache` (L1+L2), `clear-router-cache`, `clear-l1-l2-caches` (force-wipes L1 memory caches + L2 response cache/unsplash cache only), `clear-all-caches` (clears planner/experience/router/browse/places-enrichment/iata caches + validation + unsplash; includes specialist and tile L1/L2 and response-cache types, plus the in-memory Google Places country-code cache), `clear-all-checkpoints`, `clear-validation-cache`, `clear-spend-guard`, `fresh-start`. Config (GET): `planner`, `graph-stats`. Telemetry (GET): `places-telemetry` (usage counters, circuit-breaker state, and geocode/country-code cache stats).
 
 ---
 
@@ -135,7 +138,7 @@ Media type: `application/x-ndjson`. Events:
 
 - Reads `csrf` cookie (JS-readable, not HttpOnly)
 - Adds `X-CSRF-Token` header on unsafe methods (POST, PUT, PATCH, DELETE)
-- Exempt paths: `/health`, `/docs`, `/redoc`, `/openapi.json` only
+- Exempt paths: `/health`, `/api/session` (DELETE reset only), `/docs`, `/redoc`, `/openapi.json`
 
 ### Rate Limiting (`slowapi`)
 
@@ -156,12 +159,13 @@ Keying is route-aware: public/auth routes are IP-keyed; other routes use a trust
 | **Auth init/callback**   | `auth/google/url`, `auth/google/callback`                                                                               | 10/min (IP-only key)                            |
 | **Auth me/logout**       | `auth/me`, `auth/logout`                                                                                                 | 30/min / 10/min (IP-only key)                   |
 | **Trips**                | `trips`, `trips/{trip_id}/resume`                                                                                        | 15/min                                          |
+| **Session create**       | `session/new`                                                                                                            | 20/min                                          |
 | **Light-read**           | `document` (GET+PATCH), `chat`, `chat/last`, `session`, `tiles/click`, `document/validate-arrangement`                   | 60/min                                          |
 | **Light-fetch**          | `document/tiles/{branch_id}`                                                                                             | 12/min                                          |
 | **Low-write**            | `document/apply-arrangement`, `document/remove-block`, `document/insert-activity-block`                                  | 30/min                                          |
 | **Low-write (snapshot)** | `document/restore-snapshot`                                                                                              | 20/min                                          |
 | **Enrichment**           | `specialist/{section_id}/enrichment`                                                                                     | 30/min                                          |
-| **Admin**                | `/api/admin/*`                                                                                                           | 10/min (+ `X-Admin-Key` required)               |
+| **Admin**                | `/api/admin/*`                                                                                                           | 10/min by default; `clear-spend-guard` is 5/min (+ `X-Admin-Key` required) |
 
 **Message-length fast 422:** `/api/graph_plan/stream` performs a message-length check before any DB work. Messages exceeding `GATE_THRESHOLDS["max_user_message_chars"]` (2000 chars) receive an immediate HTTP 422 with a descriptive error. This short-circuits expensive downstream processing for oversized inputs.
 
@@ -169,7 +173,7 @@ Keying is route-aware: public/auth routes are IP-keyed; other routes use a trust
 
 - **Body size limit:** 512KB max. Middleware validates `Content-Length` first; non-numeric `Content-Length` returns `400 Invalid Content-Length`. If the header is missing on `POST`/`PUT`/`PATCH`, middleware reads the body once and returns `413 Payload too large` when size exceeds 512KB. Early `400`/`413` middleware responses include CORS headers for allowed origins so cross-origin frontend callers can read the error body.
 - **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security: max-age=63072000; includeSubDomains`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
-- **Backend CSP:** `Content-Security-Policy` header set on every response -- `default-src 'self'`, `script-src 'self' 'unsafe-inline'` (+ `'unsafe-eval'` in dev/local/test only for Next.js HMR), `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: https://images.unsplash.com https://*.mapbox.com blob:`, `connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:`, `font-src 'self' data:`, `frame-ancestors 'none'`
+- **Backend CSP:** `Content-Security-Policy` header set on every response -- `default-src 'self'`, `script-src 'self' 'unsafe-inline'` (+ `'unsafe-eval'` in dev/local/test only for Next.js HMR), `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: https://images.unsplash.com https://*.mapbox.com https://media.tacdn.com https://media-cdn.tripadvisor.com https://hare-media-cdn.tripadvisor.com blob:`, `connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:`, `font-src 'self' data:`, `frame-ancestors 'none'`
 - **Environment normalization:** `Settings.env` defaults to `"dev"`. Two computed properties: `is_dev` (True for `dev`, `local`, `development`, `test`) and `is_prod` (True for `prod`, `production`). All environment checks in `main.py` and `middleware/session.py` use these properties instead of hardcoded string comparisons.
 - **Session middleware:** Skips `/health` and `/api/shared/*` (public shared reads stay cookie/session-free). Max 10 new sessions per IP per hour
 - **Rate-limit keying:** Public/auth routes (`/api/shared/*`, `/api/auth/*`) are IP-keyed. Other routes use trusted session ids (validated cookie or `request.state.validated_session_id`) with IP fallback for untrusted values.
@@ -179,6 +183,7 @@ Keying is route-aware: public/auth routes are IP-keyed; other routes use a trust
 - **Places photo spend/circuit guard:** `/api/media/google-places-photo` requires a valid session, signed URL parameters, and circuit-state checks. It reserves Google Places spend via `spend_guard_scope`; if budget is exceeded it returns HTTP 429 with `Retry-After: 60`. If the photo circuit is open, endpoint returns HTTP 503 with `Service temporarily unavailable`.
 - **Places photo feature flag:** when `GOOGLE_PLACES_PHOTOS_ENABLED=false`, both `/api/media/google-places-photo` and `/api/media/google-places-photo-url` return HTTP 503 and backend tile signing helpers skip signed photo URL generation.
 - **Frontend CSP:** Configured in `next.config.mjs` -- `unsafe-eval` allowed in dev only
+- **Frontend remote images:** `next.config.mjs` allows Unsplash, Google/Mapbox, and Viator/Tripadvisor CDN hosts (`media.tacdn.com`, `media-cdn.tripadvisor.com`, `hare-media-cdn.tripadvisor.com`) so affiliate activity images render through Next Image.
 
 ### Config Settings (`backend/app/config.py`)
 
@@ -208,6 +213,10 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `use_google_places_provider`     | false                | `USE_GOOGLE_PLACES_PROVIDER`   | Feature flag: enable Google Places for hotels and activities |
 | `google_places_photos_enabled`   | true                 | `GOOGLE_PLACES_PHOTOS_ENABLED` | Feature flag: enable Google Places photo signing/proxy endpoints |
 | `google_places_enrichment_enabled` | true               | `GOOGLE_PLACES_ENRICHMENT_ENABLED` | Kill switch: disable all Google Places enrichment calls |
+| `viator_api_key`                | `""`                 | `VIATOR_API_KEY`               | Viator Affiliate API key for live activity pricing/images/deeplinks |
+| `viator_enabled`                | false                | `VIATOR_ENABLED`               | Feature flag for Viator browse + enrichment flows |
+| `viator_cache_ttl_hours`        | 24                   | `VIATOR_CACHE_TTL_HOURS`       | L1 TTL for Viator browse/match cache entries |
+| `viator_api_url`                | `https://api.viator.com/partner` | `VIATOR_API_URL`    | Base URL for the Viator partner API client |
 | `spend_guard_places_daily_cap_usd` | 2.00               | `SPEND_GUARD_PLACES_DAILY_CAP_USD` | Provider-level daily spend cap for Google Places API |
 | `google_places_photo_signed_ttl_max` | 3600            | --                             | Max allowed signed Google Places photo URL TTL (seconds) |
 | `langsmith_dev_sample_rate`      | 1.0                  | `LANGSMITH_DEV_SAMPLE_RATE`    | Fraction of dev sessions to trace (0.0=none, 1.0=all)       |
@@ -279,12 +288,12 @@ PlanDocumentData
   |
   |-- tiles: {tile_id -> Tile}
   |     |-- id, type (flight|hotel|activity), title, subtitle?, image_url?
-  |     |-- partner, partner_product_id, deeplink_url
+  |     |-- partner, partner_product_id, deeplink (deeplink_url is deprecated alias)
   |     |-- price_estimate?, live_price?, currency, price_basis?, is_estimate_only?
   |     |-- price_display? (NOT on Pydantic model -- injected at response time by complete envelope assembly)
   |     |-- rating?, review_count?, location_label?, geo: {lat, lng}?
   |     |-- tags[], availability_status? (available|low|unknown|not_available), meta?, score?, source?, source_agent?
-  |     |-- provider (expedia|booking|google_places|curated|mock|unknown), cancel_policy_summary?
+  |     |-- provider (expedia|booking|google_places|curated|mock|viator|unknown), cancel_policy_summary?
   |     '-- total_inclusive?, tax_and_service_fee?, property_fee?, is_refundable?
   |
   |-- strategy_sections: StrategySection[]
@@ -317,12 +326,12 @@ PlanDocumentData
   |           |-- image_url?, duration?, coordinates: {lat, lng}?
   |           |-- scheduled_time?, logistics_details?, hotel_name?
   |           |-- booked_tile?, requires_booking, booking_category?
-  |           |-- rating?: number (Google Places star rating -- browse-added activities)
-  |           |-- review_count?: number (Google Places review count)
+  |           |-- rating?: number (provider-supplied traveler rating; often Viator for live activity tiles)
+  |           |-- review_count?: number (provider-supplied review volume when available)
   |           |-- price_level?: number (Google Places price level: 0=free, 1=$, 2=$$, 3=$$$, 4=$$$$)
   |           |-- price_estimate?: number (numeric price from tile data)
   |           |-- google_place_id?: string (Google Places ID)
-  |           |-- deeplink?: string (Google Maps URL)
+  |           |-- deeplink?: string (Google Maps URL or partner booking URL such as Viator)
   |           '-- preference_status?, preference_override_reason?, alternative_tile_id?
   |           NOTE: activity_type carries the display title for the card
   |           (e.g. "Potato Head Beach Club"). specialist_type carries the
@@ -345,7 +354,7 @@ PlanDocumentData
   |-- open_decisions[]
   |-- itinerary_overview, itinerary_assumptions, hotel_filter_cascaded
   |-- applied_updates[], undo_snapshot, update_provenance
-  |-- browseable_activities: Dict[] (Tier-1-suppressed Google Places tile dicts for Browse Activities sheet; stashed by logistics_node)
+  |-- browseable_activities: Dict[] (provider-backed browse/fallback activity tile dicts for Browse Activities sheet; stashed by logistics_node)
   |-- ack_status, ack_updates[]  # AckStatus enum (see Section 4)
   |-- origin_just_set
   |-- tiles_replaced (bool: frontend should REPLACE tiles, not merge additively)
@@ -381,7 +390,7 @@ PlanDocumentData
 | `RemoveBlockResponse`         | Response from remove-block: `day_number`, `day_card` (updated day card dict), `version` (new version), `removed_block_id`                                                                                                                                                                                                                                                                                       |
 | `RestoreSnapshotRequest`      | Restore day_cards to a previous snapshot (undo stack): `day_cards: List[Dict]` (max 60), `expected_version: int` (optimistic concurrency). 409 on version conflict. No constraint validation -- snapshot was captured immediately before the mutation. Rate limited to 20/min. |
 | `RestoreSnapshotResponse`     | Response from restore-snapshot: `day_cards: List[Dict]`, `version: int`                                                                                                                                                                                               |
-| `BrowseActivitiesRequest`       | Browse activities: destination, day_number?, date?, hotel_location?: {lat, lng}, categories?: string[] (backend schema default: `["cultural","food","nature","tours"]`; frontend client default: `["cultural"]`; service fallback when categories resolve empty: `["cultural","food","nature"]`) |
+| `BrowseActivitiesRequest`       | Browse activities: destination, day_number?, date?, hotel_location?: {lat, lng}, categories?: string[] (backend schema default: `["cultural","food","nature","tours"]`; frontend client default: `["cultural"]`; service fallback when categories resolve empty: `["cultural","food","nature"]`). Service path is Viator-first when enabled, with Google Places fallback on empty/error. |
 | `InsertActivityBlockRequest`    | Insert browse tile: day_number, tile (max 50 keys) (BrowseTile dict), expected_version? (deprecated -- no longer enforced) |
 | `InsertActivityBlockResponse`   | Insert result: day_number, day_card, version, inserted_block_id |
 | `SpecialistEnrichmentResponse`  | Phase B enrichment: section_id, status ('ready'\|'pending'\|'failed'), data?: Dict, error_code?: str, retry_after_ms?: int |
@@ -451,7 +460,7 @@ Hydration guards:
 | `ReadinessKey`     | origin, destination, start_date, end_date, travelers, budget       | Constraint completeness                                                                                                                                                                                                         |
 | `BookingState`     | idle, loading, ready, error                                        | Per-tab booking status                                                                                                                                                                                                          |
 | `TileType`         | flight, hotel, activity                                            | Tile category                                                                                                                                                                                                                   |
-| `TileProvider`     | expedia, booking, google_places, curated, mock, unknown   | Booking/data partner (expanded to track all tile data sources)                                                                                                                                                                  |
+| `TileProvider`     | expedia, booking, google_places, curated, mock, viator, unknown | Booking/data partner (expanded to track all tile data sources)                                                                                                                                                                  |
 | `PartnerPrice`     | `{partner, price, currency, url?, logo?, isBestPrice?}`            | Frontend-only (`frontend/types/tile.ts`): partner pricing entry for multi-partner price comparison on TileCard / TileDetailsModal. Not on Pydantic model. |
 | `AckStatus`        | applied, partial, no_change, needs_clarification, failed, rejected | Update acknowledgement status. `rejected` used for route violations (e.g., same-city error). Backend Literal does NOT include `pending`; frontend types (`chat.ts`, `plan-envelope.ts`) add `pending` as a frontend-only value. |
 
@@ -470,7 +479,7 @@ Source: `frontend/state/documentStore.ts`, `frontend/state/userStore.ts` (Zustan
 | Selection      | `selectedBranchId`                                                                                |
 | View           | `activeView` ('planning' \| 'booking'), `isPlanFinalized`                                         |
 | Preferences    | `preferredTileIds` (Set), `pendingPreferencePatch`                                                |
-| Regeneration   | `lastGeneratedPreferences`, `isRegenerating`, `isPending`, `expandInProgress`, `remainingSeconds` |
+| Regeneration   | `lastGeneratedPreferences`, `isRegenerating`, `isPending`, `expandInProgress`, `remainingSeconds` (`isRegenerating` = shared UI overlay state; `expandInProgress` = hard execution mutex) |
 | Fill-day mutex | `_fillingDays` (Set\<number\>) -- per-day concurrency guard                                       |
 | Mutation mutex | `_pendingMutations` (number) -- general mutation counter (fill-day, drag-drop)                    |
 | Undo stack     | `undoEntry: UndoEntry \| null` -- depth-1 ephemeral undo (drag_move, remove_block, fill_day types) |
@@ -479,7 +488,7 @@ Source: `frontend/state/documentStore.ts`, `frontend/state/userStore.ts` (Zustan
 | Generation     | `generation` (`GenerationState \| null`) -- envelope-driven generation status stored at root store level (not persisted in `document`) |
 | Cart           | `cartTileIds` (Set)                                                                               |
 | LLM Updates    | `llmUpdatedFields` (Set of field names LLM recently modified)                                     |
-| Browse Activities | `browseableActivities` (Array<Record<string, unknown>>) -- Tier-1-suppressed activity tiles stashed by logistics_node; hydrated from `document.browseable_activities` and SSE envelope |
+| Browse Activities | `browseableActivities` (Array<Record<string, unknown>>) -- provider-backed browse/fallback activity tiles stashed by `logistics_node`; hydrated from `document.browseable_activities` and SSE envelope |
 
 ### Key Actions
 
@@ -501,7 +510,7 @@ Source: `frontend/state/documentStore.ts`, `frontend/state/userStore.ts` (Zustan
 | `acknowledgeLLMUpdate()`                                           | Clear sparkle animation for a field                                                                                                     |
 | `mergeSpeculativeContent()` / `clearSpeculativeContent()`          | Preload specialist sections during Setup phase                                                                                          |
 | `replaceDayCard()`                                                 | Surgical single day card replacement (fill-day)                                                                                         |
-| `setRegenerationState()`                                           | Shared regeneration UI state (isRegenerating, isPending, remainingSeconds)                                                              |
+| `setRegenerationState()`                                           | Shared regeneration UI state (isRegenerating, isPending, remainingSeconds). Display-only flag; not a hard concurrency guard by itself. |
 | `setExpandInProgress()`                                            | Expand-itinerary mutex flag                                                                                                             |
 | `claimFillDay(day)`                                                | Per-day fill mutex: returns `false` if day already in flight (prevents concurrent fill-day on same day from different call sites)       |
 | `releaseFillDay(day)`                                              | Release per-day fill mutex after fill-day completes or fails                                                                            |
@@ -520,7 +529,7 @@ Source: `frontend/state/documentStore.ts`, `frontend/state/userStore.ts` (Zustan
 
 **Per-session expand mutex (backend):** `request_dedup.py` exports `acquire_expand_slot(session_id)` / `release_expand_slot(session_id)`. If `acquire_expand_slot` returns `False` (expand already in-flight for this session), the `/api/expand-itinerary` endpoint returns HTTP 429 with `Retry-After: 5`. The mutex is backed by `TTLCache(maxsize=200, ttl=120)` -- auto-expires after 120s to prevent permanent lock from crashed generators. Released via `finally` in the streaming response wrapper.
 
-**`usePreferenceAutoRegen` hook** (`frontend/hooks/usePreferenceAutoRegen.ts`): Watches `preferredTileIds` changes and triggers `expand-itinerary` regen. Debounced 1.5s to batch rapid heart toggles into a single expand call. Also gates on `isStreamingResponse` (defers during active plan generation). When `expandInProgress` or streaming mutex blocks, the hook queues the pending regen via `pendingRegenRef` and flushes it when both mutexes clear (500ms debounce, dedup check against `lastGeneratedPreferences`). Avoids silently dropping preference changes made during an active expand.
+**`usePreferenceAutoRegen` hook** (`frontend/hooks/usePreferenceAutoRegen.ts`): Watches `preferredTileIds` changes and triggers `expand-itinerary` regen. Debounced 1.5s to batch rapid heart toggles into a single expand call. Also gates on `isStreamingResponse` (defers during active plan generation). `expandInProgress` is the sole hard mutex inside `triggerRegeneration()`; `isRegenerating` may already be true as early visual feedback from sheet saves or SSE rebuild nodes and must not block the expand request. When `expandInProgress` or the streaming mutex blocks, the hook queues the pending regen via `pendingRegenRef` and flushes it when both mutexes clear (500ms debounce, dedup check against `lastGeneratedPreferences`). `useChatSse` / `useChatSend` also clear stale overlay state on complete, error, stale-stream, or abort paths so the display flag cannot get stuck high.
 
 ### User-Dirty Settings Tracker
 
@@ -546,6 +555,7 @@ Module-level `_userDirtySettings: Set<string>` (not Zustand state -- avoids re-r
 - **RAF merge guard:** `mergeEnvelope()` disables RAF buffering when `requestAnimationFrame` is unavailable or test env flags are set; merges run inline for deterministic tests
 - **Image URL hygiene:** document/envelope merge paths sanitize Picsum hosts (`picsum.photos`, `fastly.picsum.photos`) out of destination cards, tiles, day blocks, and strategy assets; required gallery/vibe images fall back to a deterministic Unsplash URL
 - **Bookable activity filter:** `isBookableActivityTile()` in `tileSelectors.ts` filters fill-day generated tiles (`source_agent` in `experience_generator` or `vertical_specialist`) from the booking surface (`BookingSection`). Non-activity tiles always pass through.
+- **Session reset hard reload:** `useBranchManager` now forces `window.location.reload()` after a successful session reset so fresh cookies/session identity are picked up before the planner rehydrates.
 
 ### Auth/User Store (`frontend/state/userStore.ts`)
 
@@ -587,7 +597,7 @@ Source: `frontend/lib/api.ts`
 | `validateArrangement()`      | POST `/api/document/validate-arrangement` | Check proposed block moves against constraints. Returns `{valid, violations[]}`. No LLM, target <50ms. |
 | `applyArrangement()`         | POST `/api/document/apply-arrangement` | Validate + persist block moves. Throws `'VERSION_CONFLICT'` on 409. On success, returns `{valid, violations, day_cards, version}` -- caller must `mergeEnvelope({day_cards})` and `setState({version})` separately. |
 | `removeBlock()`              | POST `/api/document/remove-block` | Remove a single block. Throws `'VERSION_CONFLICT'` on 409. Returns `{day_number, day_card, version, removed_block_id}`. |
-| `browseActivities()`           | POST `/api/activities/browse`   | Browse Google Places activities for a destination. Params: `{destination, dayNumber?, date?, hotelLocation?, categories?}`. Returns `{tiles: BrowseTile[], total: number}` (`api.ts` client typing; backend may include additional fields). |
+| `browseActivities()`           | POST `/api/activities/browse`   | Browse destination activities for a destination. Params: `{destination, dayNumber?, date?, hotelLocation?, categories?}`. Backend fetch is Viator-first with Google Places fallback/supplement, and can return Viator-only live results when Maps is unavailable. Returns `{tiles: BrowseTile[], total: number}` (`api.ts` client typing; backend may also include `source: "stashed" \| "places"` and keeps `"places"` as the live-provider label). |
 | `getSpecialistEnrichment()`    | GET `/api/specialist/{sectionId}/enrichment` | Fetch Phase B enrichment status for a specialist section. Returns `{status: 'ready'\|'pending'\|'failed', section_id, data?, error_code?, retry_after_ms?}` or `null` (404). 202 -> `{status: 'pending'}`. |
 | `fetchSharedTrip()`            | GET `/api/shared/{slug}` | Public shared-trip fetch used by `/trip/[slug]` client fallback. Uses `credentials: 'omit'`; throws user-facing `404`/`410` errors for missing or expired shares. |
 | `resetSession()`             | DELETE `/api/session`           | Clear session                                                                                                                                                                                                                 |

@@ -561,26 +561,8 @@ export function NomadicLanding() {
                 </div>
               )}
 
-              {/* Right zone: Reset + user menu */}
+              {/* Right zone: auth + reset */}
               <div className="flex items-center gap-2 shrink-0 ml-auto">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleStartNewSession}
-                  disabled={isResettingSession}
-                  className={cn(
-                    DS.textSize.micro,
-                    'font-bold uppercase tracking-widest text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-60'
-                  )}
-                >
-                  {isResettingSession ? (
-                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                  ) : (
-                    <RotateCcw className="mr-1.5 h-3 w-3" />
-                  )}
-                  {isResettingSession ? 'Resetting' : 'Reset'}
-                </Button>
                 {user ? (
                   <Popover>
                     <PopoverTrigger asChild>
@@ -625,7 +607,7 @@ export function NomadicLanding() {
                                     if (!ok) addToast('Could not open saved trip', 'error');
                                   }}
                                   className={cn(
-                                    'w-full rounded-lg px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-60',
+                                    'w-full rounded-lg px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-50',
                                     isPast && 'opacity-60'
                                   )}
                                 >
@@ -672,7 +654,7 @@ export function NomadicLanding() {
                     disabled={userLoading}
                     className={cn(
                       DS.textSize.micro,
-                      'font-bold uppercase tracking-widest text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-60'
+                      'font-bold uppercase tracking-widest text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50'
                     )}
                   >
                     {userLoading ? (
@@ -683,6 +665,24 @@ export function NomadicLanding() {
                     Sign in
                   </Button>
                 )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleStartNewSession}
+                  disabled={isResettingSession}
+                  className={cn(
+                    DS.textSize.micro,
+                    'font-bold uppercase tracking-widest text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50'
+                  )}
+                >
+                  {isResettingSession ? (
+                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                  ) : (
+                    <RotateCcw className="mr-1.5 h-3 w-3" />
+                  )}
+                  {isResettingSession ? 'Resetting' : 'Reset'}
+                </Button>
               </div>
             </div>
           }

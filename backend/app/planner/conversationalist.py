@@ -609,6 +609,40 @@ def _build_itinerary_status_block(state: Dict[str, Any]) -> str:
     if free_count:
         lines.append(f"  ({free_count} free days available to fill)")
 
+    # Count actual activity blocks across all days
+    total_activity_blocks = 0
+    for dc2 in day_cards:
+        if not isinstance(dc2, dict):
+            if hasattr(dc2, "model_dump"):
+                dc2 = dc2.model_dump()
+            else:
+                continue
+        for b2 in dc2.get("blocks", []):
+            if not isinstance(b2, dict):
+                if hasattr(b2, "model_dump"):
+                    b2 = b2.model_dump()
+                else:
+                    continue
+            atype = (b2.get("activity_type") or "").lower()
+            if not b2.get("is_buffer") and atype not in (
+                "arrival",
+                "departure",
+                "free_day",
+                "check_in",
+                "check_out",
+                "check-in",
+                "check-out",
+            ):
+                total_activity_blocks += 1
+
+    if total_activity_blocks == 0 and day_cards:
+        lines.append(
+            "WARNING: No activities were placed in the itinerary. "
+            "DO NOT mention or describe specific activities unless they appear "
+            "in the day cards above. "
+            "Instead, suggest the user extend their trip or adjust preferences."
+        )
+
     return "\n".join(lines)
 
 

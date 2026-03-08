@@ -194,6 +194,19 @@ FLOW_EXPECTED_TOOLS: dict[int, dict[str, Any]] = {
         "forbidden_tools": [],
         "max_llm_calls": 14,  # 2 turns
     },
+    26: {
+        "name": "Trip List + Resume + New Trip Lifecycle",
+        "required_tools": [],
+        "forbidden_tools": [],
+        "max_llm_calls": 0,
+        "skip_sse": True,  # Flow 26 is auth-only REST, no SSE streams
+    },
+    27: {
+        "name": "Viator Activity Enrichment",
+        "required_tools": [],
+        "forbidden_tools": [],
+        "max_llm_calls": 14,  # 2 turns
+    },
 }
 
 # ── Coordinator step ordering contract ───────────────────────────────────────

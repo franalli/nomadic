@@ -4,6 +4,7 @@
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 import { MapPin } from 'lucide-react';
+import mapboxgl from 'mapbox-gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MapboxMap, { type ErrorEvent, Layer, type MapRef, Marker, Source } from 'react-map-gl/mapbox';
 
@@ -69,6 +70,9 @@ const routeLayerStyle: Omit<mapboxgl.LineLayer, 'source'> = {
 };
 
 const MAP_CONTAINER_STYLE = { width: '100%', height: '100%' } as const;
+type MapboxTelemetryApi = typeof mapboxgl & {
+  setTelemetryEnabled?: (enabled: boolean) => void;
+};
 
 // =============================================================================
 // Component
@@ -94,6 +98,10 @@ export function InteractiveMap({
   const [isMapReady, setIsMapReady] = useState(false);
 
   const isDark = isDarkTheme();
+
+  useEffect(() => {
+    (mapboxgl as MapboxTelemetryApi).setTelemetryEnabled?.(false);
+  }, []);
 
   const safeDefaultCenter = useMemo(() => {
     const normalized = normalizeMapCoordinates({

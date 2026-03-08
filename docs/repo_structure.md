@@ -21,6 +21,7 @@ nomadic/
 │   │   ├── update-docs.md
 │   │   └── verify-build.md
 │   ├── plans/                  # Persisted planning artifacts and run notes
+│   │   ├── kind-pondering-seahorse.md
 │   │   ├── parsed-discovering-liskov.md
 │   │   ├── unified-dreaming-oasis.md
 │   ├── settings.json           # Claude Code settings
@@ -46,7 +47,8 @@ nomadic/
 ├── frontend/                   # Next.js frontend
 ├── scripts/                    # Root-level utility scripts
 │   ├── cleanup-claude-history.sh   # Unix history cleanup
-│   └── copy-key-files.sh           # Copy key backend files to docs/
+│   ├── copy-key-files.sh           # Copy key backend files to docs/
+│   └── restart-dev.sh              # Restart local backend/frontend/db dev stack from VS Code
 ├── .claudeignore               # Claude Code ignore patterns
 ├── .gitignore                  # Git ignore patterns
 ├── .pre-commit-config.yaml     # Pre-commit hooks
@@ -155,7 +157,7 @@ backend/
 │   │
 │   ├── services/
 │   │   ├── __init__.py
-│   │   ├── activity_browser.py      # On-demand Google Places search for Browse Activities sheet
+│   │   ├── activity_browser.py      # On-demand activity search for Browse Activities sheet (Viator-first, Google Places fallback)
 │   │   ├── cache_core.py            # Shared MemoryCache primitive (TTLCache + RLock + stats) + l2_upsert()
 │   │   ├── experience_generator.py  # Tier 2 experience tile generation via settings.experience_model (L1+L2 cache)
 │   │   ├── itinerary_builder.py     # Itinerary construction service
@@ -167,7 +169,8 @@ backend/
 │   │   ├── task_tracker.py          # Shared fire-and-forget background task tracker
 │   │   ├── tile_cache.py            # Thread-safe L1+L2 cache for tile provider data (24h TTL)
 │   │   ├── unsplash.py              # Unsplash image service (cooldown pruning on prefetch)
-│   │   └── unsplash_queries.py      # Unsplash query helpers (includes Tier 2 activity queries)
+│   │   ├── unsplash_queries.py      # Unsplash query helpers (includes Tier 2 activity queries)
+│   │   └── viator_provider.py       # Viator affiliate browse/match provider with cache + circuit breaker
 │   │
 │   ├── utils/                 # Shared utility modules
 │   │   ├── __init__.py
@@ -289,6 +292,7 @@ backend/
 │   ├── test_task_tracker.py           # Background task tracker lifecycle tests
 │   ├── test_unsplash_queries.py       # Unsplash query helper tests
 │   ├── test_validation_cache.py       # Validation cache behavior tests
+│   ├── test_viator_provider.py        # Viator provider tile conversion, matching, and circuit-breaker tests
 │   └── db/
 │       ├── test_expand_itinerary_api.py
 │       ├── test_plan_document_api.py
@@ -392,7 +396,7 @@ frontend/
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── NextStepBar.tsx
 │   │   ├── OriginPromptCard.tsx
-│   │   ├── PlanDensityViews.tsx            # Ghost, bridge, and mirror-loader density views
+│   │   ├── PlanDensityViews.tsx            # Mirror-loader density view (`PlanMirrorLoader`)
 │   │   ├── PlanFullDensityView.tsx         # Full-density view (map + specialists + timeline)
 │   │   ├── PlanHeader.tsx
 │   │   ├── PlanTimelineSection.tsx         # Timeline section with DnD wiring for full-density view
@@ -404,7 +408,6 @@ frontend/
 │   │   ├── TimelineBlockList.tsx
 │   │   ├── TimelineDayCard.tsx
 │   │   ├── TimelineThread.tsx
-│   │   ├── TripHealthBar.tsx
 │   │   ├── TripSummaryPills.tsx
 │   │   ├── UnifiedChipRow.tsx
 │   │   ├── useBookingDrawerState.ts        # Booking drawer open/close + fill-day API hook
@@ -542,6 +545,7 @@ frontend/
 │   ├── loaderConfig.ts         # Loader configuration
 │   ├── loaderCopyConfig.ts     # Loader copy text
 │   ├── placeholders.ts         # Placeholder data
+│   ├── renderStarRating.ts     # Shared numeric-rating -> star-string helper for tile surfaces
 │   ├── specialist-utils.ts     # Specialist topic utilities
 │   ├── specialistLinkParser.ts
 │   ├── specialists.ts          # Specialist registry SSoT (colors, icons, keywords, IDs)
@@ -567,6 +571,7 @@ frontend/
 │   ├── chatStore.ts            # Chat state
 │   ├── documentStore.ts        # Document/plan state
 │   ├── mobileNavStore.ts       # Mobile navigation state
+│   ├── panelToggleStore.ts     # Zustand toggle state for stays/flights/intel panels
 │   ├── uiStore.ts              # UI state
 │   └── userStore.ts            # Auth user + recent-trip resume state
 │
@@ -663,7 +668,7 @@ docs/
 ## Key Architectural Notes
 
 1. **TripPlan is SSoT** - All trip state flows through `TripPlan` schema
-2. **Coordinator Architecture** - `coordinator.execute_turn()` plans deterministic step execution (`classify` → `dispatch_specialists` → `local_intel` → `search_tiles` → `build_itinerary` → `generate_response`) and coordinates all planning state transitions. See `plan_graph_analysis.md`.
+2. **Coordinator Architecture** - `coordinator.execute_turn()` plans deterministic step execution around `classify`, optional parallel `dispatch_specialists` + `search_tiles`, then `local_intel` / `build_itinerary`, and final response generation. See `plan_graph_analysis.md`.
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
 5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. Dependency: `@dnd-kit/core`.

@@ -66,6 +66,15 @@ const initialUIState = {
 
 const UI_STORAGE_KEY = 'nomadic-ui-state';
 
+const noopStorage = {
+  getItem: () => null,
+  setItem: () => {},
+  removeItem: () => {},
+};
+
+const getUIStorage = () =>
+  createJSONStorage(() => (typeof window === 'undefined' ? noopStorage : localStorage));
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Store
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,7 +164,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: UI_STORAGE_KEY,
-      storage: createJSONStorage(() => localStorage),
+      storage: getUIStorage(),
       // Only persist these specific fields - exclude actions
       partialize: (state) => ({
         selectedBranchId: state.selectedBranchId,
@@ -173,6 +182,10 @@ export const useUIStore = create<UIState>()(
  * Call this on logout or when switching sessions.
  */
 export function clearPersistedUIState(): void {
+  if (typeof window === 'undefined') {
+    useUIStore.getState().resetUI();
+    return;
+  }
   localStorage.removeItem(UI_STORAGE_KEY);
   useUIStore.getState().resetUI();
 }

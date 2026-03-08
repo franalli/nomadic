@@ -30,6 +30,8 @@
 #   24  Mixed feasible + infeasible — diving (feasible) + skiing (infeasible) in Bali
 #   25  Activity switch — diving → hiking (swap), validates removal + addition
 #   26  Trip List + Resume + New Trip lifecycle — guard rails (401/403) + session delete
+#   27  Viator activity enrichment — API key check, browse tiles, planner tile enrichment (conditional)
+#   28  Pill category change — PATCH + GENERATE_PLAN_NOW with empty session_state (page refresh)
 #
 # Architecture contract (from plan_graph_analysis.md + data-contracts.md):
 #   - SSE event types: token, node_status, partial, complete, error, feasibility_warning
@@ -2473,6 +2475,411 @@ if fresh_session; then
 else F=false; fi
 $F && _flow pass 26 || _flow fail 26
 _flow_end 26
+echo ""
+fi
+
+
+# =============================================================================
+#  FLOW 27: Viator Activity Enrichment (Conditional)
+# =============================================================================
+# Requires VIATOR_ENABLED=true and VIATOR_API_KEY set. Skipped if not.
+#
+# Tests:
+#   27a: Viator API connectivity — direct hit to /partner/destinations
+#   27b: Browse endpoint returns Viator tiles (provider, pricing, deeplinks)
+#   27c: Planner enrichment — 2-turn plan, activity tiles carry Viator data
+#
+if should_run 27; then
+_flow_begin 27
+echo ""
+echo "═══ Flow 27: Viator Activity Enrichment ═══"
+
+if [ "${VIATOR_ENABLED:-false}" != "true" ] || [ -z "${VIATOR_API_KEY:-}" ]; then
+  skip_test "Viator enrichment" "VIATOR_ENABLED not true or VIATOR_API_KEY not set"
+  _flow pass 27  # conditional skip = pass
+else
+F=true
+
+# ── 27a: Viator API connectivity ──────────────────────────────────────────
+echo "  → 27a: Viator API key works (GET /partner/destinations)"
+VIATOR_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X GET "https://api.viator.com/partner/destinations" \
+  -H "exp-api-key: $VIATOR_API_KEY" \
+  -H "Accept: application/json;version=2.0" \
+  -H "Accept-Language: en-US" 2>/dev/null)
+check "Viator destinations -> 200" "$VIATOR_CODE" "200" || F=false
+
+# ── 27b: Browse endpoint returns Viator tiles ─────────────────────────────
+echo "  → 27b: POST /api/activities/browse with Viator enabled"
+if fresh_session; then
+
+BROWSE_CODE=$(curl -s -o "$RESP" -w "%{http_code}" \
+  -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+  -X POST -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: $CSRF" \
+  -d '{"destination":"Bali","categories":["cultural","tours"],"date":"2026-04-01"}' \
+  "$BASE/api/activities/browse")
+check "Browse -> 200" "$BROWSE_CODE" "200" || F=false
+
+# Parse response — it's a JSON array of tiles (not SSE)
+BROWSE_VIATOR_CT=$(python3 -c "
+import sys,json
+try:
+    with open('$RESP') as f: data=json.load(f)
+    tiles=data if isinstance(data,list) else data.get('tiles',data.get('results',[]))
+    ct=sum(1 for t in tiles if isinstance(t,dict) and t.get('provider')=='viator')
+    print(ct)
+except: print(0)
+" 2>/dev/null || echo "0")
+echo "  ℹ  Browse Viator tiles: $BROWSE_VIATOR_CT"
+check_gte "Browse returns ≥1 Viator tile" "$BROWSE_VIATOR_CT" 1 || F=false
+
+# Check Viator tile fields (pricing, deeplink, partner)
+BROWSE_FIELDS_OK=$(python3 -c "
+import sys,json
+try:
+    with open('$RESP') as f: data=json.load(f)
+    tiles=data if isinstance(data,list) else data.get('tiles',data.get('results',[]))
+    viator=[t for t in tiles if isinstance(t,dict) and t.get('provider')=='viator']
+    if not viator: print('no_tiles'); sys.exit()
+    t=viator[0]
+    errs=[]
+    if t.get('partner')!='viator': errs.append('partner!=viator')
+    if t.get('price_estimate') is None and t.get('live_price') is None: errs.append('no_price')
+    dl=t.get('deeplink_url') or t.get('deeplink') or ''
+    if not dl.startswith('http'): errs.append('bad_deeplink')
+    meta=t.get('meta',{}) or {}
+    if not meta.get('viator_product_code'): errs.append('no_product_code')
+    print('ok' if not errs else ','.join(errs))
+except Exception as e: print(f'error:{e}')
+" 2>/dev/null || echo "error")
+check "Viator tile fields valid" "$BROWSE_FIELDS_OK" "ok" || F=false
+
+# Check image URLs are present
+BROWSE_IMG_OK=$(python3 -c "
+import sys,json
+try:
+    with open('$RESP') as f: data=json.load(f)
+    tiles=data if isinstance(data,list) else data.get('tiles',data.get('results',[]))
+    viator=[t for t in tiles if isinstance(t,dict) and t.get('provider')=='viator']
+    with_img=sum(1 for t in viator if (t.get('image_url') or '').startswith('http'))
+    print('true' if with_img>=1 else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Viator browse tiles have images" "$BROWSE_IMG_OK" "true" || F=false
+
+# Check image domain is media-cdn.tripadvisor.com (not unsplash fallback)
+BROWSE_IMG_DOMAIN=$(python3 -c "
+import sys,json
+try:
+    with open('$RESP') as f: data=json.load(f)
+    tiles=data if isinstance(data,list) else data.get('tiles',data.get('results',[]))
+    viator=[t for t in tiles if isinstance(t,dict) and t.get('provider')=='viator']
+    for t in viator:
+        img=t.get('image_url','')
+        if 'media-cdn.tripadvisor.com' in img:
+            print('valid'); sys.exit()
+    print('no_tripadvisor_images')
+except: print('error')
+" 2>/dev/null || echo "error")
+check "Viator images from media-cdn.tripadvisor.com" "$BROWSE_IMG_DOMAIN" "valid" || F=false
+
+# Check deeplink URL format (should be activity-level /tours/ links)
+BROWSE_DL_FMT=$(python3 -c "
+import sys,json
+try:
+    with open('$RESP') as f: data=json.load(f)
+    tiles=data if isinstance(data,list) else data.get('tiles',data.get('results',[]))
+    viator=[t for t in tiles if isinstance(t,dict) and t.get('provider')=='viator']
+    for t in viator:
+        dl=t.get('deeplink_url') or t.get('deeplink') or ''
+        if dl and '/tours/' not in dl:
+            print('bad_url:'+dl[:80]); sys.exit()
+    print('valid')
+except Exception as e: print(f'error:{e}')
+" 2>/dev/null || echo "error")
+check_contains "Browse deeplinks are activity-level URLs" "$BROWSE_DL_FMT" "valid" || F=false
+
+else F=false; fi
+
+# ── 27c: Planner tile enrichment ──────────────────────────────────────────
+echo "  → 27c: 2-turn plan — activity tiles enriched by Viator"
+if fresh_session; then
+
+echo "  → Turn 1: diving in Bali April 1-7"
+if send_message "diving in Bali April 1-7"; then
+
+echo "  → Turn 2: build itinerary"
+if send_message "build my itinerary"; then
+
+# Check activity tiles for Viator enrichment
+TILES_RAW=$(extract_doc "tiles")
+VIATOR_TILE_CT=$(echo "$TILES_RAW" | python3 -c "
+import sys,json
+try:
+    raw=sys.stdin.read().strip()
+    if not raw: print(0); sys.exit()
+    tiles=json.loads(raw)
+    all_tiles=[]
+    if isinstance(tiles,dict):
+        for v in tiles.values():
+            if isinstance(v,list): all_tiles.extend(v)
+            elif isinstance(v,dict): all_tiles.append(v)
+    elif isinstance(tiles,list): all_tiles=tiles
+    ct=sum(1 for t in all_tiles if isinstance(t,dict)
+           and t.get('type')=='activity' and t.get('provider')=='viator')
+    print(ct)
+except: print(0)
+" 2>/dev/null || echo "0")
+echo "  ℹ  Viator-enriched activity tiles: $VIATOR_TILE_CT"
+check_gte "Planner ≥1 Viator activity tile" "$VIATOR_TILE_CT" 1 || F=false
+
+# Check enriched tile has live pricing (is_estimate_only=false)
+VIATOR_LIVE_PRICE=$(echo "$TILES_RAW" | python3 -c "
+import sys,json
+try:
+    raw=sys.stdin.read().strip()
+    if not raw: print('false'); sys.exit()
+    tiles=json.loads(raw)
+    all_tiles=[]
+    if isinstance(tiles,dict):
+        for v in tiles.values():
+            if isinstance(v,list): all_tiles.extend(v)
+            elif isinstance(v,dict): all_tiles.append(v)
+    elif isinstance(tiles,list): all_tiles=tiles
+    for t in all_tiles:
+        if not isinstance(t,dict): continue
+        if t.get('type')=='activity' and t.get('provider')=='viator':
+            has_price=t.get('price_estimate') is not None or t.get('live_price') is not None
+            not_estimate=t.get('is_estimate_only') is not True
+            if has_price and not_estimate:
+                print('true'); sys.exit()
+    print('false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Viator tile has live price (not estimate)" "$VIATOR_LIVE_PRICE" "true" || F=false
+
+# Check enriched tile has Viator deeplink
+VIATOR_DL=$(echo "$TILES_RAW" | python3 -c "
+import sys,json
+try:
+    raw=sys.stdin.read().strip()
+    if not raw: print('false'); sys.exit()
+    tiles=json.loads(raw)
+    all_tiles=[]
+    if isinstance(tiles,dict):
+        for v in tiles.values():
+            if isinstance(v,list): all_tiles.extend(v)
+            elif isinstance(v,dict): all_tiles.append(v)
+    elif isinstance(tiles,list): all_tiles=tiles
+    for t in all_tiles:
+        if not isinstance(t,dict): continue
+        if t.get('type')=='activity' and t.get('provider')=='viator':
+            dl=t.get('deeplink_url') or t.get('deeplink') or ''
+            if dl.startswith('http'):
+                print('true'); sys.exit()
+    print('false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Viator tile has deeplink URL" "$VIATOR_DL" "true" || F=false
+
+# Check meta.viator_product_code propagated
+VIATOR_CODE_META=$(echo "$TILES_RAW" | python3 -c "
+import sys,json
+try:
+    raw=sys.stdin.read().strip()
+    if not raw: print('false'); sys.exit()
+    tiles=json.loads(raw)
+    all_tiles=[]
+    if isinstance(tiles,dict):
+        for v in tiles.values():
+            if isinstance(v,list): all_tiles.extend(v)
+            elif isinstance(v,dict): all_tiles.append(v)
+    elif isinstance(tiles,list): all_tiles=tiles
+    for t in all_tiles:
+        if not isinstance(t,dict): continue
+        if t.get('type')=='activity' and t.get('provider')=='viator':
+            meta=t.get('meta',{}) or {}
+            if meta.get('viator_product_code'):
+                print('true'); sys.exit()
+    print('false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Viator tile has meta.viator_product_code" "$VIATOR_CODE_META" "true" || F=false
+
+# Check day_cards activity blocks carry Viator deeplinks
+DAY_CARDS=$(extract_doc "day_cards")
+BLOCK_DL=$(echo "$DAY_CARDS" | python3 -c "
+import sys,json
+try:
+    raw=sys.stdin.read().strip()
+    if not raw: print(0); sys.exit()
+    cards=json.loads(raw)
+    ct=0
+    for c in cards:
+        for b in c.get('blocks',[]):
+            if b.get('booking_category')=='activity':
+                dl=b.get('deeplink_url') or b.get('deeplink') or ''
+                if 'viator' in dl.lower() or '/tours/' in dl:
+                    ct+=1
+    print(ct)
+except: print(0)
+" 2>/dev/null || echo "0")
+echo "  ℹ  Day card activity blocks with Viator deeplink: $BLOCK_DL"
+check_gte "Day card blocks ≥1 Viator deeplink" "$BLOCK_DL" 1 || F=false
+
+# Verify day card deeplinks are /tours/ format (not /d{id}-ttd/ location-level)
+BLOCK_DL_FMT=$(echo "$DAY_CARDS" | python3 -c "
+import sys,json
+try:
+    raw=sys.stdin.read().strip()
+    if not raw: print('no_data'); sys.exit()
+    cards=json.loads(raw)
+    for c in cards:
+        for b in c.get('blocks',[]):
+            dl=b.get('deeplink') or ''
+            if 'viator.com' in dl and '/tours/' not in dl:
+                print('location_level:'+dl[:60]); sys.exit()
+    print('valid')
+except Exception as e: print(f'error:{e}')
+" 2>/dev/null || echo "error")
+check "Day card Viator deeplinks are activity-level" "$BLOCK_DL_FMT" "valid" || F=false
+
+else F=false; fi; else F=false; fi; else F=false; fi
+
+fi
+$F && _flow pass 27 || _flow fail 27
+_flow_end 27
+echo ""
+fi
+
+
+# =============================================================================
+#  FLOW 28: Pill Category Change — PATCH + GENERATE_PLAN_NOW (no session_state)
+# =============================================================================
+# Simulates the frontend pill UI flow:
+#   Turn 1: Diving in Bali via chat → builds specialist plan + day_cards.
+#   Turn 2: GENERATE_PLAN_NOW → builds itinerary.
+#   [Simulate page refresh: drop session_state]
+#   PATCH /api/document: change activity_settings.categories to hiking+surfing.
+#   Turn 3: GENERATE_PLAN_NOW (empty session_state) → must rebuild for new categories.
+#
+# This is the exact flow that was broken: _migrate_legacy_agent_fields
+# pre-populated trip_settings from already-merged trip_inputs, making
+# _merge_doc_settings unable to detect the category change.
+#
+# Validates:
+#   1. Specialist dispatched for new categories (hiking/surfing)
+#   2. Strategy sections include hiking or surfing, NOT diving
+#   3. Day cards rebuilt (not stale diving itinerary)
+#   4. Categories in session_state reflect new selection
+
+if should_run 28; then
+_flow_begin 28
+echo ""
+echo "═══ Flow 28: Pill Category Change — PATCH + GPN (page refresh) ═══"
+F=true
+
+if fresh_session; then
+
+echo "  → Turn 1: Diving in Bali, March 15-22"
+if send_message "Diving in Bali, March 15-22, 2 adults"; then
+
+DEST=$(extract_top "session_state.trip_plan.destination")
+check_not_empty "Turn 1: destination" "$DEST" || F=false
+
+CATS_T1=$(extract_top "session_state.trip_settings.activity_settings.categories")
+check_contains "Turn 1: categories include diving" "$CATS_T1" "diving" || F=false
+
+echo "  → Turn 2: GENERATE_PLAN_NOW"
+if send_message "GENERATE_PLAN_NOW"; then
+
+DC_T2=$(extract_doc "day_cards")
+DC_CT_T2=$(jlen "$DC_T2")
+check_gte "Turn 2: day_cards ≥ 5" "$DC_CT_T2" 5 || F=false
+
+PVS_T2=$(extract_doc "plan_view_state")
+check_contains "Turn 2: plan_view_state is S3" "$PVS_T2" "S3" || F=false
+
+# ── Simulate page refresh: drop session_state ──
+echo "  → Simulate page refresh (drop session_state)"
+reset_state
+
+# ── PATCH document: change categories from diving to hiking+surfing ──
+echo "  → PATCH /api/document: categories → hiking, surfing"
+DOC_VERSION=$(extract_top "version")
+[ -z "$DOC_VERSION" ] && DOC_VERSION=1
+
+PATCH_CODE=$(curl -s -o "$RESP" -w "%{http_code}" \
+  -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+  -X PATCH -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: $CSRF" \
+  -d "{\"version\": $DOC_VERSION, \"trip_inputs\": {\"activity_settings\": {\"categories\": [\"hiking\", \"surfing\"], \"activities_per_day\": 2}}}" \
+  "$BASE/api/document")
+check "PATCH /api/document → 200" "$PATCH_CODE" "200" || F=false
+
+# ── Turn 3: GENERATE_PLAN_NOW with empty session_state ──
+# This is the crux of the test: with no session_state, the coordinator
+# must detect that categories changed (diving → hiking+surfing) and
+# rebuild the plan instead of short-circuiting to "response only".
+echo "  → Turn 3: GENERATE_PLAN_NOW (empty session_state, post-PATCH)"
+if send_message "GENERATE_PLAN_NOW"; then
+
+# Categories should reflect the new selection
+CATS_T3=$(extract_top "session_state.trip_settings.activity_settings.categories")
+echo "  ℹ  Turn 3 categories: $CATS_T3"
+check_not_contains "Turn 3: categories do NOT include diving" "$CATS_T3" "diving" || F=false
+
+# Check that hiking or surfing is in categories
+HAS_NEW_CAT=$(echo "$CATS_T3" | python3 -c "
+import sys
+raw=sys.stdin.read().strip()
+has_hiking='hiking' in raw.lower()
+has_surfing='surfing' in raw.lower()
+print('true' if (has_hiking or has_surfing) else 'false')
+" 2>/dev/null || echo "false")
+check "Turn 3: categories include hiking or surfing" "$HAS_NEW_CAT" "true" || F=false
+
+# Specialist dispatch should have run for new categories
+TOOLS=$(extract_tools)
+echo "  ℹ  Turn 3 tools: $TOOLS"
+check_contains "Turn 3: get_specialist_advice called" "$TOOLS" "get_specialist_advice" || F=false
+
+# Strategy sections should NOT have diving
+SECS=$(extract_doc "strategy_sections")
+HAS_DIVING_SEC=$(echo "$SECS" | python3 -c "
+import sys,json
+try:
+    secs=json.load(sys.stdin)
+    found=any(s.get('specialist_type','').lower()=='diving' for s in secs if isinstance(s,dict))
+    print('true' if found else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Turn 3: no diving section" "$HAS_DIVING_SEC" "false" || F=false
+
+# Strategy sections SHOULD have hiking or surfing
+HAS_NEW_SEC=$(echo "$SECS" | python3 -c "
+import sys,json
+try:
+    secs=json.load(sys.stdin)
+    found=any(s.get('specialist_type','').lower() in ('hiking','surfing') for s in secs if isinstance(s,dict))
+    print('true' if found else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Turn 3: hiking/surfing section present" "$HAS_NEW_SEC" "true" || F=false
+
+# Day cards should be rebuilt (not empty, not stale)
+DC_T3=$(extract_doc "day_cards")
+DC_CT_T3=$(jlen "$DC_T3")
+check_gte "Turn 3: day_cards ≥ 5" "$DC_CT_T3" 5 || F=false
+
+# Tokens should have been streamed (conversationalist ran)
+TOKEN_CT=$(count_sse "token")
+check_gt "Turn 3: tokens streamed" "$TOKEN_CT" 0 || F=false
+
+else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi
+$F && _flow pass 28 || _flow fail 28
+_flow_end 28
 echo ""
 fi
 

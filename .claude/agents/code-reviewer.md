@@ -68,7 +68,7 @@ You review against the project's documented invariants. You NEVER modify files â
 ### 5. Constraint Logic Correctness
 
 - [ ] Budget check: `BUDGET_ALLOCATIONS` (30/40/30 flights/hotels/activities) respected
-- [ ] No-fly buffer: only restricts DIVING placement, not total trip capacity
+- [ ] No-fly buffer: diving enforcement is two-layered in `ItineraryBuilder` â€” dive count may be auto-truncated to fit the departure buffer, and late-day dive placement is blocked near departure
 - [ ] Cross-domain: `ALTITUDE_AFTER_DIVE` blocks hiking/skiing/climbing within 24h of diving
 - [ ] Fill-day adjacent-day checks only treat `specialist_type='diving'` as authoritative when block content/constraints indicate real diving context
 - [ ] Constraint guard violations returned to caller (coordinator or endpoint); no agent loop
@@ -76,7 +76,7 @@ You review against the project's documented invariants. You NEVER modify files â
 - [ ] Severity hierarchy: blocking > warning > info
 - [ ] `GuardViolation` carries: code, message, severity, category, suggested_action, conflicting_specialists, suggested_specialist
 - [ ] Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`
-- [ ] Past date auto-correction in `router_extraction.py`: dates before today auto-bump +1yr
+- [ ] Past date auto-correction in `router_extraction.py`: dates more than 7 days in the past auto-bump to the next occurrence; recent past dates are left unchanged as likely intentional
 - [ ] `constraints_applied.severity` filtering: frontend shows blocking+strong only (specialist system), separate from GuardViolation severity (guard system)
 
 ### 6. Frontend Design System Compliance
@@ -84,7 +84,7 @@ You review against the project's documented invariants. You NEVER modify files â
 - [ ] All styling uses `DS.*` tokens from `frontend/lib/design-system.ts`
 - [ ] No raw Tailwind classes that duplicate existing DS tokens
 - [ ] Pills: active = `DS.pills.active`, inactive = `DS.pills.inactive`
-- [ ] Amber/orange ONLY in: semantic warnings, constraint violation banners, "REJECTED" receipt
+- [ ] Amber/orange ONLY in: semantic warnings, constraint violation banners, "REJECTED" receipt, and traveler-rating stars/counts on activity cards
 - [ ] No teal colored selections or decorative amber
 - [ ] `cn()` used for all className merging, never string concatenation
 - [ ] `rounded-lg` = 12px (overridden in tailwind.config.mts)
@@ -105,7 +105,7 @@ You review against the project's documented invariants. You NEVER modify files â
 
 ### 8. API Contract Compliance
 
-- [ ] New/modified endpoints follow rate limiting tiers (Heavy: 6/min;30/hr for graph_plan/stream, 20/min for expand-itinerary, 8/min for fill-day; Medium: 10-15/min; Light: 60/min)
+- [ ] New/modified endpoints follow current rate limiting tiers (for example: `graph_plan/stream` 6/min + 30/hr, `expand-itinerary` 20/min, `session/new` 20/min, `fill-day` 8/min, browse/share writes 5/min, light reads 60/min, `clear-spend-guard` 5/min)
 - [ ] Streaming: SSE for graph_plan, NDJSON for expand-itinerary
 - [ ] CSRF token required on unsafe methods (POST/PUT/PATCH/DELETE)
 - [ ] Body size limit: 512KB max
@@ -139,6 +139,8 @@ You review against the project's documented invariants. You NEVER modify files â
 - `# type: ignore` without explanation
 - `await` missing on async calls (especially `clear_session_checkpoint`)
 - Fill-day calls without `claimFillDay`/`releaseFillDay` mutex
+- Treating `isRegenerating` as a hard concurrency guard in frontend regen flows; `expandInProgress` is the real mutex
+- Copying merged `trip_inputs.activity_settings` back into `metadata["trip_settings"]` during session-state migration (breaks post-refresh category diff detection)
 - `any` type in TypeScript without justification
 - Inline styles (`style={}`) instead of DS tokens
 - `!important` in Tailwind classes

@@ -7,7 +7,7 @@ description: >
   pill chips, timeline blocks, tile cards, Framer Motion, Mapbox, mobile layout,
   ghost timeline, content policy guard, loader states, fill-day flow,
   preference auto-regen, stream parser, browse activities, booking drawer,
-  undo stack, drag-and-drop, travel intelligence, consent/legal, booking summary,
+  undo stack, drag-and-drop, travel intelligence, panel toggles, consent/legal, booking summary,
   shared trip, auth callback, oauth, user menu, user store, avatar, theme mode constants,
   or any file under frontend/.
 tools: Read, Write, Edit, Bash, Glob, Grep
@@ -56,7 +56,7 @@ frontend/
                      suggestion-actions.ts
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
                      PlanHeader, NextStepBar, planStateHelpers,
-                     UnifiedChipRow, TripHealthBar, TripSummaryPills,
+                     UnifiedChipRow, TripSummaryPills,
                      BookingPlanningView, BookingSummary,
                      ChipGroup, ChipScrollContainer,
                      FullDensityTimeline, PdfExportButton, ShareTripButton,
@@ -98,7 +98,8 @@ frontend/
                      mapbox-error-handler.ts
     nomadic/       → consent-manager, legal-page (legal/consent UI)
     providers/     → Providers (context wrappers) via `components/providers/Providers.tsx`
-  state/           → documentStore.ts, chatStore.ts, uiStore.ts, mobileNavStore.ts, userStore.ts
+  state/           → documentStore.ts, chatStore.ts, panelToggleStore.ts, uiStore.ts,
+                     mobileNavStore.ts, userStore.ts
   hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
                      usePreferenceAutoRegen, useScrollCollapse, useSheetManager,
                      useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation,
@@ -110,7 +111,7 @@ frontend/
                      tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
                      specialist-colors.ts, specialists.ts, utils.ts,
                      contentPolicyGuard.ts, ghost-timeline-adapter.ts, fillDayGuards.ts,
-                     date-utils.ts, format-utils.ts, placeholders.ts,
+                     date-utils.ts, format-utils.ts, placeholders.ts, renderStarRating.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      pdfData.ts, summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
                      theme.ts,
@@ -183,7 +184,7 @@ DS.brand.emerald;        // SVG stroke, map lines (#10b981)
 ### Restricted Colors
 
 - **Emerald:** Primary actions (dark mode), success, calendar endpoints, toggle active
-- **Amber/Orange:** ONLY semantic warnings, constraint violations, "REJECTED" receipt. Never decorative.
+- **Amber/Orange:** ONLY semantic warnings, constraint violations, "REJECTED" receipt, and traveler-rating stars/counts on activity cards. Never decorative beyond those cases.
 - **Red:** Error states, blocking violations only
 
 ## Key Gotchas (traps that cause silent breakage)
@@ -216,9 +217,10 @@ After first user interaction, always show something: hero, cards, or full plan.
 - S3→S2 downgrade blocked when day_cards exist
 - Destination change clears: chat, tiles, strategy, day_cards
 - Frontend-only guard states: `S0_EMPTY` (reset intent) and `S1_DESTINATION_SET` (ordering guard)
-- `expandInProgress` mutex prevents preference-regen loops during expand
+- `expandInProgress` is the hard preference-regen mutex; `isRegenerating` is display state only and may be set early for overlay feedback
 - `_fillingDays` per-day mutex prevents concurrent fill-day on same day
 - `graphBuiltItinerary` check in `useChatSse.ts` skips expand when graph response already includes day_cards
+- Reset/session-rotation flows must finish with the browser adopting the new cookie set; `useBranchManager` uses a hard reload after successful reset instead of toast-only confirmation
 
 ### Heart Preferences
 

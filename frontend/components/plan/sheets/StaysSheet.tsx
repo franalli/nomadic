@@ -216,7 +216,7 @@ function StaysSheetInner({
                       'transition-all duration-150',
                       isSelected
                         // Selected: Solid Black (maximum contrast)
-                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
                         // Tactile: Crisp border, snap-to-black hover
                         // Inactive: Glass Fill - visible buttons
                       : cn(
@@ -253,7 +253,7 @@ function StaysSheetInner({
                       'transition-all duration-150',
                       isSelected
                         // Selected: Solid Black (maximum contrast)
-                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
                         // Tactile: Crisp border, snap-to-black hover
                         // Inactive: Glass Fill - visible buttons
                       : cn(

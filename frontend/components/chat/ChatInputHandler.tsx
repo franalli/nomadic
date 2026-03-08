@@ -21,6 +21,7 @@ interface ChatInputHandlerProps {
   isInputDisabledByPlanState: boolean;
   hasReceivedFirstToken: boolean;
   nodeStatus: { node: string } | null;
+  isRegenerating?: boolean;
   readyToGenerate?: boolean;
   isGenerating?: boolean;
   hasBranches?: boolean;
@@ -38,6 +39,7 @@ export function ChatInputHandler({
   isInputDisabledByPlanState,
   hasReceivedFirstToken,
   nodeStatus,
+  isRegenerating,
   readyToGenerate,
   isGenerating,
   hasBranches,
@@ -54,6 +56,7 @@ export function ChatInputHandler({
       isInputDisabledByPlanState={isInputDisabledByPlanState}
       hasReceivedFirstToken={hasReceivedFirstToken}
       nodeStatus={nodeStatus}
+      isRegenerating={isRegenerating}
       readyToGenerate={readyToGenerate}
       isGenerating={isGenerating}
       hasBranches={hasBranches}

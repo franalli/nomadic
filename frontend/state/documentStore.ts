@@ -8,7 +8,7 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import { apiFetch, parseRetryAfter } from '@/lib/api';
-import { debugLog } from '@/lib/debug';
+import { debugLog, explicitDebugLog } from '@/lib/debug';
 import type {
   ActivitySettings,
   BookingTypes,
@@ -1187,7 +1187,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const effectiveUpdates = filterNoopTripInputPatch(lastPatched, updates);
     if (Object.keys(effectiveUpdates).length === 0) {
       debugLog('[documentStore] ⏭️ commitTripInputs SKIP (no-op patch)', updates);
-      debugLog('[VERIFY][PATCH_DEDUPE] no-op commit skipped', {
+      explicitDebugLog('[VERIFY][PATCH_DEDUPE] no-op commit skipped', {
         attemptedFields: Object.keys(updates),
         version,
       });
@@ -1277,7 +1277,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         };
 
         // === FULL DIAGNOSTIC — REMOVE AFTER FIX ===
-        debugLog(
+        explicitDebugLog(
           '[DIAG:PATCH_MERGE]',
           `response.plan_view_state: ${response.document.plan_view_state}`,
           `currentDoc.plan_view_state: ${currentDoc?.plan_view_state}`,
@@ -1409,13 +1409,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   ensureSettingsFlushed: async (options?: EnsureSettingsFlushOptions) => {
     const requestId = options?.requestId ?? null;
     const sendCycleId = options?.sendCycleId;
-    debugLog('[ensureSettingsFlushed] START', {
+    explicitDebugLog('[ensureSettingsFlushed] START', {
       request_id: requestId,
       send_cycle_id: sendCycleId,
     });
     // Wait for any in-flight commit to complete
     if (_commitLock) {
-      debugLog('[ensureSettingsFlushed] waiting for _commitLock...', {
+      explicitDebugLog('[ensureSettingsFlushed] waiting for _commitLock...', {
         request_id: requestId,
         send_cycle_id: sendCycleId,
       });
@@ -1424,7 +1424,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     const doc = get().document;
     if (!doc?.trip_inputs) {
-      debugLog('[ensureSettingsFlushed] BAIL — no document or trip_inputs in zustand', {
+      explicitDebugLog('[ensureSettingsFlushed] BAIL — no document or trip_inputs in zustand', {
         request_id: requestId,
         send_cycle_id: sendCycleId,
       });
@@ -1453,7 +1453,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     if (dirty.size === 0) {
-      debugLog('[ensureSettingsFlushed] SKIP — no dirty settings', {
+      explicitDebugLog('[ensureSettingsFlushed] SKIP — no dirty settings', {
         request_id: requestId,
         send_cycle_id: sendCycleId,
       });
@@ -1470,12 +1470,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     const payloadKeys = Object.keys(payload);
     if (payloadKeys.length === 0) {
-      debugLog('[ensureSettingsFlushed] SKIP — empty flush payload', {
+      explicitDebugLog('[ensureSettingsFlushed] SKIP — empty flush payload', {
         request_id: requestId,
         send_cycle_id: sendCycleId,
         dirty: [...dirty],
       });
-      debugLog('[VERIFY][PATCH_DEDUPE] hash=empty skipped', {
+      explicitDebugLog('[VERIFY][PATCH_DEDUPE] hash=empty skipped', {
         request_id: requestId,
         send_cycle_id: sendCycleId,
       });
@@ -1484,16 +1484,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     const payloadHash = _flushPayloadHash(payload);
     if (sendCycleId && !_rememberFlushHash(sendCycleId, payloadHash)) {
-      debugLog('[ensureSettingsFlushed] SKIP — duplicate payload in send cycle', {
+      explicitDebugLog('[ensureSettingsFlushed] SKIP — duplicate payload in send cycle', {
         request_id: requestId,
         send_cycle_id: sendCycleId,
         hash: payloadHash,
       });
-      debugLog(`[VERIFY][PATCH_DEDUPE] hash=${payloadHash} skipped request_id=${requestId}`);
+      explicitDebugLog(`[VERIFY][PATCH_DEDUPE] hash=${payloadHash} skipped request_id=${requestId}`);
       return;
     }
 
-    debugLog('[ensureSettingsFlushed] FLUSHING dirty settings:', {
+    explicitDebugLog('[ensureSettingsFlushed] FLUSHING dirty settings:', {
       request_id: requestId,
       send_cycle_id: sendCycleId,
       dirty: [...dirty],
@@ -1503,19 +1503,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const committed = await get().commitTripInputs(payload);
     if (committed) {
       clearDirtySettingsForUpdates(payload);
-      debugLog('[ensureSettingsFlushed] DONE — settings synced before graph', {
+      explicitDebugLog('[ensureSettingsFlushed] DONE — settings synced before graph', {
         request_id: requestId,
         send_cycle_id: sendCycleId,
       });
-      debugLog(`[VERIFY][PATCH_DEDUPE] hash=${payloadHash} committed request_id=${requestId}`);
+      explicitDebugLog(`[VERIFY][PATCH_DEDUPE] hash=${payloadHash} committed request_id=${requestId}`);
       return;
     }
     _clearFlushHash(sendCycleId);
-    debugLog('[ensureSettingsFlushed] RETAIN — commit failed, dirty settings kept', {
+    explicitDebugLog('[ensureSettingsFlushed] RETAIN — commit failed, dirty settings kept', {
       request_id: requestId,
       send_cycle_id: sendCycleId,
     });
-    debugLog(`[VERIFY][PATCH_DEDUPE] hash=${payloadHash} retained request_id=${requestId}`);
+    explicitDebugLog(`[VERIFY][PATCH_DEDUPE] hash=${payloadHash} retained request_id=${requestId}`);
   },
 
   fetchDocument: async () => {
@@ -2193,7 +2193,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       envelope.constraints_validated !== undefined ||
       envelope.browseable_activities !== undefined;
     if (!hasPayload && !envelope.trip_inputs) {
-      debugLog('[documentStore.mergeEnvelope] ⏭️ SKIPPED (empty envelope)');
+      explicitDebugLog('[documentStore.mergeEnvelope] ⏭️ SKIPPED (empty envelope)');
       return;
     }
 
@@ -2208,7 +2208,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     if (currentDestination && incomingDestination &&
         currentDestination.toLowerCase().trim() !== incomingDestination.toLowerCase().trim()) {
-      debugLog(
+      explicitDebugLog(
         `[documentStore.mergeEnvelope] 🔒 BLOCKED destination change: "${currentDestination}" → "${incomingDestination}" (destination locked once set)`
       );
       // Strip destination from incoming trip_inputs to preserve current value
@@ -2220,7 +2220,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // DEBUG: Log envelope structure for diagnostics
-    debugLog('[DEBUG mergeEnvelope] Envelope structure:', {
+    explicitDebugLog('[DEBUG mergeEnvelope] Envelope structure:', {
       has_trip_inputs: !!envelope.trip_inputs,
       trip_inputs_destination: envelope.trip_inputs?.destination,
       has_tiles: !!envelope.tiles,
@@ -2230,7 +2230,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     // DEBUG: Log constraint validation data from envelope
     if (envelope.constraints_validated !== undefined || envelope.constraint_violations !== undefined) {
-      debugLog('[DEBUG mergeEnvelope] Constraint data:', {
+      explicitDebugLog('[DEBUG mergeEnvelope] Constraint data:', {
         constraints_validated: envelope.constraints_validated,
         constraint_violations: envelope.constraint_violations,
       });
@@ -2242,14 +2242,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const destinationChanged = prevDestination && newDestination && prevDestination !== newDestination;
 
     if (destinationChanged) {
-      debugLog(
+      explicitDebugLog(
         `[documentStore.mergeEnvelope] 🌍 Destination changed: "${prevDestination}" → "${newDestination}"`
       );
       // Clear chat messages on destination change (import chatStore at top of file)
 
       const { useChatStore } = require('./chatStore');
       useChatStore.getState().resetChat();
-      debugLog('[documentStore.mergeEnvelope] 💬 Chat: CLEARED (destination changed)');
+      explicitDebugLog('[documentStore.mergeEnvelope] 💬 Chat: CLEARED (destination changed)');
     }
 
     // Detect date changes (for logging/debugging)
@@ -2261,7 +2261,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
                          (prevEndDate && newEndDate && prevEndDate !== newEndDate);
 
     if (datesChanged) {
-      debugLog(
+      explicitDebugLog(
         `[documentStore.mergeEnvelope] 📅 Dates changed: ${prevStartDate}→${prevEndDate} to ${newStartDate}→${newEndDate}`
       );
     }
@@ -2281,11 +2281,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const finalViewState = wouldDowngrade ? prevViewState : (newViewState ?? prevViewState);
 
     if (wouldDowngrade) {
-      debugLog(`[documentStore.mergeEnvelope] 🛡️ Blocked view state downgrade: ${prevViewState} → ${newViewState} (day_cards exist: ${currentDayCards.length})`);
+      explicitDebugLog(`[documentStore.mergeEnvelope] 🛡️ Blocked view state downgrade: ${prevViewState} → ${newViewState} (day_cards exist: ${currentDayCards.length})`);
     }
 
     // DEBUG: Log what's in the envelope (including plan_view_state transition)
-    debugLog('[documentStore.mergeEnvelope] 📥 Received envelope:', {
+    explicitDebugLog('[documentStore.mergeEnvelope] 📥 Received envelope:', {
       hasTiles: envelope.tiles !== undefined,
       tilesCount: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
       hasDayCards,
@@ -2305,7 +2305,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (destinationChanged || datesChanged || tilesReplaced) {
         // Full replace: destination changed, dates changed, or backend tiles_replaced flag
         tilesToMerge = envelope.tiles;
-        debugLog(`[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (${destinationChanged ? 'destination changed' : datesChanged ? 'dates changed' : 'tiles_replaced flag'})`);
+        explicitDebugLog(`[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (${destinationChanged ? 'destination changed' : datesChanged ? 'dates changed' : 'tiles_replaced flag'})`);
       } else if (Object.keys(envelope.tiles).length > 0) {
         // Same destination + non-empty: check if activity tile IDs changed
         // (category change produces tiles with different ID hash)
@@ -2332,16 +2332,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             }
           }
           tilesToMerge = { ...currentNonActivity, ...envelope.tiles };
-          debugLog('[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED activities (category change detected)');
+          explicitDebugLog('[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED activities (category change detected)');
         } else {
           // Normal additive merge
           tilesToMerge = { ...currentDoc.tiles, ...envelope.tiles };
-          debugLog('[documentStore.mergeEnvelope] 🔄 Tiles: MERGED (same destination)');
+          explicitDebugLog('[documentStore.mergeEnvelope] 🔄 Tiles: MERGED (same destination)');
         }
       } else {
         // Same destination + empty: SKIP (preserve existing)
         tilesToMerge = undefined;
-        debugLog('[documentStore.mergeEnvelope] ⏭️ Tiles: SKIPPED (empty envelope)');
+        explicitDebugLog('[documentStore.mergeEnvelope] ⏭️ Tiles: SKIPPED (empty envelope)');
       }
     }
 
@@ -2352,11 +2352,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (destinationChanged) {
         // Destination changed: REPLACE strategy sections (even if empty)
         sectionsToMerge = envelope.strategy_sections;
-        debugLog('[documentStore.mergeEnvelope] 📝 Strategy: REPLACED (destination changed)');
+        explicitDebugLog('[documentStore.mergeEnvelope] 📝 Strategy: REPLACED (destination changed)');
       } else {
         // Same destination: merge/update
         sectionsToMerge = envelope.strategy_sections;
-        debugLog('[documentStore.mergeEnvelope] 📝 Strategy: MERGED (same destination)');
+        explicitDebugLog('[documentStore.mergeEnvelope] 📝 Strategy: MERGED (same destination)');
       }
     }
 
@@ -2373,20 +2373,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (envelope.day_cards.length > 0 && nextIsRegenerating) {
         nextIsRegenerating = false;
       }
-      debugLog(`[documentStore.mergeEnvelope] 📅 Day Cards: ${envelope.day_cards.length} cards provided`);
+      explicitDebugLog(`[documentStore.mergeEnvelope] 📅 Day Cards: ${envelope.day_cards.length} cards provided`);
     } else if (destinationChanged) {
       // Destination changed: CLEAR day_cards (old destination cards are wrong)
       dayCardsToMerge = [];
-      debugLog('[documentStore.mergeEnvelope] Day Cards: CLEARED (destination changed)');
+      explicitDebugLog('[documentStore.mergeEnvelope] Day Cards: CLEARED (destination changed)');
     } else if (datesChanged) {
       // Date changed: PRESERVE stale cards to avoid flash, overlay handles UX
       dayCardsToMerge = currentDayCards;
       nextIsRegenerating = true;
-      debugLog('[documentStore.mergeEnvelope] Day Cards: PRESERVED (dates changed, awaiting rebuild)');
+      explicitDebugLog('[documentStore.mergeEnvelope] Day Cards: PRESERVED (dates changed, awaiting rebuild)');
     } else if (hasDayCards) {
       // Preserve existing day_cards when itinerary exists
       dayCardsToMerge = currentDayCards;
-      debugLog(`[documentStore.mergeEnvelope] 📅 Day Cards: PRESERVED (itinerary exists: ${currentDayCards.length} cards)`);
+      explicitDebugLog(`[documentStore.mergeEnvelope] 📅 Day Cards: PRESERVED (itinerary exists: ${currentDayCards.length} cards)`);
     }
 
     // Merge envelope fields into current document
@@ -2401,7 +2401,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const suppressActivitiesInMerge = shouldSuppressActivitiesFromTripInputs(effectiveTripInputs);
     if (dayCardsToMerge && suppressActivitiesInMerge) {
       dayCardsToMerge = stripActivitiesFromDayCards(dayCardsToMerge) ?? dayCardsToMerge;
-      debugLog('[documentStore.mergeEnvelope] 🚫 Activities suppressed in day_cards (activities off or no categories)');
+      explicitDebugLog('[documentStore.mergeEnvelope] 🚫 Activities suppressed in day_cards (activities off or no categories)');
     }
 
     const updatedDoc: PlanDocumentData = {
@@ -2431,7 +2431,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     };
 
     // DEBUG: Log final tile state
-    debugLog('[documentStore.mergeEnvelope] Final tiles:', {
+    explicitDebugLog('[documentStore.mergeEnvelope] Final tiles:', {
       previousCount: Object.keys(currentDoc.tiles ?? {}).length,
       envelopeCount: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
       finalCount: Object.keys(updatedDoc.tiles ?? {}).length,

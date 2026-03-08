@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, Clock, MapPin, Moon, Sun, Sunset } from 'lucide-react';
+import { Check, Clock, ExternalLink, MapPin, Moon, Sun, Sunset } from 'lucide-react';
 import type { MouseEvent } from 'react';
 
 import { TaxesFeesTooltip } from '@/components/tiles/TaxesFeesTooltip';
@@ -13,17 +13,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { DS } from '@/lib/design-system';
+import { renderStarRating } from '@/lib/renderStarRating';
 import { getDeepLinkParams } from '@/lib/tileUtils';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
-
-/**
- * Render star rating as repeated stars for hotels
- */
-const renderStarRating = (rating: number): string => {
-  const stars = Math.round(rating);
-  return '\u2605'.repeat(Math.min(stars, 5));
-};
 
 export interface TileCardContentProps {
   tile: Tile;
@@ -201,27 +194,30 @@ export function TileCardContent({
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            {tile.deeplink_url && tile.deeplink_url !== '#' && (
-              <a
-                href={tile.deeplink_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e: MouseEvent) => e.stopPropagation()}
-                className={cn(
-                  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full',
-                  'text-xs font-bold uppercase tracking-wide',
-                  'transition-all duration-150 active:scale-95',
-                  'bg-emerald-50 border border-emerald-500/30 text-emerald-700',
-                  'hover:bg-emerald-100 hover:border-emerald-500/60',
-                  'dark:bg-emerald-950/40 dark:border-emerald-500/25 dark:text-emerald-400',
-                  'dark:hover:bg-emerald-900/50 dark:hover:border-emerald-400/50',
-                  'dark:hover:shadow-[0_0_16px_-3px_rgba(16,185,129,0.35)]',
-                )}
-              >
-                <MapPin className="w-3.5 h-3.5" />
-                View on Google
-              </a>
-            )}
+            {tile.deeplink_url && tile.deeplink_url !== '#' && (() => {
+              const isViator = tile.deeplink_url.includes('viator.com');
+              return (
+                <a
+                  href={tile.deeplink_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e: MouseEvent) => e.stopPropagation()}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full',
+                    'text-xs font-bold uppercase tracking-wide',
+                    'transition-all duration-150 active:scale-95',
+                    'bg-emerald-50 border border-emerald-500/30 text-emerald-700',
+                    'hover:bg-emerald-100 hover:border-emerald-500/60',
+                    'dark:bg-emerald-950/40 dark:border-emerald-500/25 dark:text-emerald-400',
+                    'dark:hover:bg-emerald-900/50 dark:hover:border-emerald-400/50',
+                    'dark:hover:shadow-[0_0_16px_-3px_rgba(16,185,129,0.35)]',
+                  )}
+                >
+                  {isViator ? <ExternalLink className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
+                  {isViator ? 'Book' : 'Map'}
+                </a>
+              );
+            })()}
           </div>
         </div>
       </div>

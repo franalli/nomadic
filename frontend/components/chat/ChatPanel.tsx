@@ -21,7 +21,7 @@ import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import { useChatStore } from '@/state/chatStore';
-import { DEFAULT_BOOKING_TYPES } from '@/state/documentStore';
+import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
 import type {
   ActivitySettings,
   BookingTypes,
@@ -210,6 +210,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const isInputDisabledByPlanState = planState === 'RESOLVING';
     const isDesktop = useIsDesktop();
     const { toast } = useToast();
+    const isRegenerating = useDocumentStore((s) => s.isRegenerating);
 
     // Chat store — messages + history
     const messages = useChatStore((s) => s.messages);
@@ -484,9 +485,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         {/* Input area with suggestions — pinned below scroll container */}
         <div className="shrink-0 space-y-4 pb-0 relative z-20">
           {/* Smart Loader: Status line above input - DS Section 19.C */}
-          {chatSend.isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
+          {isRegenerating ? (
+            /* Regeneration loader — settings change triggers rebuild (single step, no multi-step sequence) */
+            <SmartLoader status={{ label: 'REBUILDING ITINERARY', icon_key: 'calendar' }} />
+          ) : chatSend.isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' ? (
             <SmartLoader status={activeStatus} />
-          )}
+          ) : null}
           <ChatSuggestionBar
             effectiveSuggestions={effectiveSuggestions}
             suggestionChips={chatSend.suggestionChips}
@@ -515,6 +519,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               isInputDisabledByPlanState={isInputDisabledByPlanState}
               hasReceivedFirstToken={chatSend.hasReceivedFirstToken}
               nodeStatus={chatSend.nodeStatus}
+              isRegenerating={isRegenerating}
               readyToGenerate={readyToGenerate}
               isGenerating={isGenerating}
               hasBranches={hasBranches}

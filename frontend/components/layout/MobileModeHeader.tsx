@@ -156,7 +156,7 @@ function MobileModeHeaderInner({
       setPdfState('idle');
       setMenuOpen(false);
     }
-  }, [pdfState, tripInputs, dayCards, tiles]);
+  }, [pdfState, tripInputs, dayCards, tiles, toast]);
 
   const handleShareTrip = useCallback(async () => {
     if (shareState === 'loading' || !hasDayCards) return;
@@ -189,7 +189,7 @@ function MobileModeHeaderInner({
       toast(err instanceof Error ? err.message : 'Failed to share trip', { type: 'error' });
       setShareState('idle');
     }
-  }, [hasDayCards, shareState]);
+  }, [hasDayCards, shareState, toast]);
 
   const handleLogin = useCallback(async () => {
     try {
@@ -284,7 +284,7 @@ function MobileModeHeaderInner({
                                   if (!ok) toast('Could not open saved trip', { type: 'error' });
                                 }}
                                 className={cn(
-                                  'w-full rounded-lg px-2 py-1 text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-60',
+                                  'w-full rounded-lg px-2 py-1 text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-50',
                                   isPast && 'opacity-60'
                                 )}
                               >
@@ -324,6 +324,28 @@ function MobileModeHeaderInner({
                   </>
                 ) : (
                   <>
+                    {onReset && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={isResetting}
+                          onClick={() => {
+                            if (isResetting) return;
+                            setMenuOpen(false);
+                            onReset();
+                          }}
+                          className={cn('flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-50', DS.textSize.micro)}
+                        >
+                          {isResetting ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          )}
+                          <span>{isResetting ? 'Resetting...' : 'Reset Trip'}</span>
+                        </button>
+                        <div className="h-px bg-border my-1" />
+                      </>
+                    )}
                     <button
                       type="button"
                       onClick={handleLogin}
@@ -338,7 +360,7 @@ function MobileModeHeaderInner({
                 )}
 
                 {/* Reset - moved inside menu to prevent accidental taps */}
-                {onReset && (
+                {user && onReset && (
                   <>
                     <button
                       type="button"

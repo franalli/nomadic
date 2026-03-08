@@ -203,7 +203,7 @@ function FlightsSheetInner({
                   'transition-all duration-150',
                   localSettings.round_trip
                     // Selected: Solid Black (maximum contrast)
-                    ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                    ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
                     // Tactile: Crisp border, snap-to-black hover
                     // Inactive: Glass Fill - visible buttons
                       : cn(
@@ -224,7 +224,7 @@ function FlightsSheetInner({
                   'flex-1 px-3 py-2.5 rounded-lg text-sm font-medium',
                   'transition-all duration-150',
                   !localSettings.round_trip
-                    ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                    ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
                     // Inactive: Glass Fill - visible buttons
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-600',
@@ -258,7 +258,7 @@ function FlightsSheetInner({
                       'transition-all duration-150',
                       isSelected
                         // Selected: Solid Black (maximum contrast)
-                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
                         // Tactile: Crisp border, snap-to-black hover
                         // Inactive: Glass Fill - visible buttons
                       : cn(
@@ -295,7 +295,7 @@ function FlightsSheetInner({
                       'transition-all duration-150',
                       isSelected
                         // Selected: Solid Black (maximum contrast)
-                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
                         // Tactile: Crisp border, snap-to-black hover
                         // Inactive: Glass Fill - visible buttons
                       : cn(

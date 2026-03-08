@@ -348,18 +348,21 @@ export const TileDetailsModal = memo(function TileDetailsModal({
           </div>
 
           {/* Deeplink — always visible when available */}
-          {tile?.deeplink_url && tile.deeplink_url !== '#' && (
-            <button
-              type="button"
-              onClick={() => window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer')}
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2.5 font-medium text-white transition-colors hover:bg-emerald-600"
-            >
-              {tile.type === 'hotel' || tile.type === 'accommodation' || tile.type === 'stay'
-                ? 'View on Google Travel'
-                : 'View on Google Maps'}
-              <ExternalLink className="h-3.5 w-3.5" />
-            </button>
-          )}
+          {tile?.deeplink_url && tile.deeplink_url !== '#' && (() => {
+            const isViator = tile.deeplink_url.includes('viator.com');
+            const isHotelType = tile.type === 'hotel' || tile.type === 'accommodation' || tile.type === 'stay';
+            const label = isViator ? 'Book on Viator' : isHotelType ? 'View on Google Travel' : 'View on Google Maps';
+            return (
+              <button
+                type="button"
+                onClick={() => window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer')}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2.5 font-medium text-white transition-colors hover:bg-emerald-600"
+              >
+                {label}
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+            );
+          })()}
 
           {/* Set trip dates CTA — only when booking not unlocked */}
           {!isBookingUnlocked && (

@@ -160,7 +160,7 @@ export function SharedTripView({
               type="button"
               onClick={handleForkTrip}
               disabled={isForking}
-              className="rounded-full border border-white/15 px-3 py-2 text-xs font-semibold text-zinc-200 hover:bg-white/10 transition-colors disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap inline-flex items-center gap-1.5"
+              className="rounded-full border border-white/15 px-3 py-2 text-xs font-semibold text-zinc-200 hover:bg-white/10 transition-colors disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap inline-flex items-center gap-1.5"
             >
               <Copy className="h-3.5 w-3.5" />
               {isForking ? 'Copying...' : 'Copy This Trip'}

@@ -100,7 +100,7 @@ export function ActivitiesSheetContent({
         {/* Pace -- activities per day (generation target) */}
         <div>
           <h3 className={cn(DS.text.label, 'mb-3')}>Pace</h3>
-          <div className="grid grid-cols-3 rounded-xl border border-zinc-200 dark:border-white/10 overflow-hidden">
+          <div className="grid grid-cols-3 rounded-xl border-2 border-zinc-200 dark:border-white/15 overflow-hidden">
             {PACE_OPTIONS.map((option) => {
               const isSelected = localPace === option.value;
               const Icon = option.icon;
@@ -113,16 +113,16 @@ export function ActivitiesSheetContent({
                     'group flex flex-col items-center py-3 text-sm transition-colors',
                     'border-l border-zinc-200 dark:border-white/10 first:border-l-0',
                     isSelected
-                      ? 'bg-emerald-50 text-emerald-700 font-semibold dark:bg-emerald-500/15 dark:text-emerald-400'
-                      : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-white'
+                      ? 'bg-emerald-500/15 text-emerald-400 font-semibold'
+                      : 'text-zinc-400 hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 dark:hover:border-white/40 dark:hover:bg-white/10 dark:hover:text-white'
                   )}
                 >
                   <Icon
                     className={cn(
                       'mb-0.5 h-4 w-4 shrink-0 transition-colors',
                       isSelected
-                        ? 'text-emerald-700 dark:text-emerald-400'
-                        : 'text-zinc-600 group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-white'
+                        ? 'text-emerald-400'
+                        : 'text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-white'
                     )}
                     strokeWidth={2.25}
                   />
@@ -148,7 +148,7 @@ export function ActivitiesSheetContent({
                     'flex items-center gap-2 px-3 py-3 rounded-lg text-sm font-medium',
                     'transition-all duration-150 text-left',
                     isSelected
-                      ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                      ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
                     : cn(
                         'bg-white border-2 border-zinc-200 text-zinc-600',
                         'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',

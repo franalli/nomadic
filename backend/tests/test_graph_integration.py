@@ -254,7 +254,7 @@ class TestHotelTilePropagation:
                 "id": "hotel_1",
                 "type": "hotel",
                 "title": "Beach Resort Bali",
-                "deeplink_url": "https://www.google.com/travel/hotels/Bali",
+                "deeplink": "https://www.google.com/travel/hotels/Bali",
                 "price_estimate": 120.0,
                 "currency": "USD",
             }
@@ -310,7 +310,7 @@ class TestDeeplinkPropagation:
                 "id": "act_1",
                 "type": "activity",
                 "title": "Tulamben Wall Dive",
-                "deeplink_url": "https://www.google.com/maps/search/Tulamben+Wall+Bali",
+                "deeplink": "https://www.google.com/maps/search/Tulamben+Wall+Bali",
                 "price_estimate": 50.0,
                 "currency": "USD",
                 "tags": ["diving"],

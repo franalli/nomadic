@@ -113,7 +113,7 @@ function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = fal
           className={cn(
             'relative min-h-10 flex-1 rounded-full px-3 py-1.5 text-xs font-semibold leading-none transition-all duration-150',
             !planTabEnabled
-              ? 'text-zinc-500 dark:text-zinc-400 opacity-40 cursor-not-allowed pointer-events-none'
+              ? 'text-zinc-500 dark:text-zinc-400 opacity-50 cursor-not-allowed pointer-events-none'
               : activePage === 1
                 ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-950'
                 : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'

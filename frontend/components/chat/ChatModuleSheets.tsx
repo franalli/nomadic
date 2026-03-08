@@ -201,6 +201,16 @@ export function ChatModuleSheets({
         }}
         onSaveSettings={async (settings) => {
           setActivityUserSaved(true);
+
+          // Early visual feedback: show rebuild overlay immediately if we'll
+          // need a regeneration (S3).  Without this, the timeline stays static
+          // during the commitTripInputs PATCH round-trip.
+          const earlyPVS = useDocumentStore.getState().document?.plan_view_state;
+          const willRebuild = ['S3_ITINERARY_READY', 'S3_EDITING'].includes(earlyPVS ?? '');
+          if (willRebuild) {
+            useDocumentStore.getState().setRegenerationState({ isRegenerating: true });
+          }
+
           const prevCats = new Set(activitySettings?.categories || []);
           const newCats = new Set(settings.categories || []);
 
@@ -264,8 +274,14 @@ export function ChatModuleSheets({
             // No agent, no LLM, ~2-3s instead of ~15s.
             const cats = settings.categories?.length ? settings.categories : undefined;
             triggerRegeneration(true, cats);
-          } else if (isS2Activities) {
-            sendMessageCore(GENERATE_PLAN_TRIGGER);
+          } else {
+            // Not S3 — reset the early visual flag if we set it
+            if (willRebuild) {
+              useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+            }
+            if (isS2Activities) {
+              sendMessageCore(GENERATE_PLAN_TRIGGER);
+            }
           }
         }}
         onOpenDestination={() => {

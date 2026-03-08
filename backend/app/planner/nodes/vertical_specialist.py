@@ -1848,7 +1848,7 @@ async def _merge_specialist_into_state(
             )
             state.metadata["last_executed_specialist"] = topic
 
-            _debug_node_timer_end(
+            await _debug_node_timer_end(
                 "specialist",
                 "🤿",
                 topic=topic,
@@ -1970,7 +1970,7 @@ async def _merge_specialist_into_state(
             f"{output.alternative_suggestion or 'Consider a different destination.'}"
         )
 
-        _debug_node_timer_end(
+        await _debug_node_timer_end(
             "specialist",
             "🤿",
             topic=topic,
@@ -2177,7 +2177,7 @@ async def _merge_specialist_into_state(
             f"I've also noted {len(output.constraints)} safety considerations.{caveat_note}"
         )
 
-    _debug_node_timer_end(
+    await _debug_node_timer_end(
         "specialist",
         "🤿",
         topic=topic,
@@ -2284,7 +2284,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     state.metadata["_last_specialist_key"] = current_key
 
     # Start timing this node execution
-    _debug_node_timer_start("specialist")
+    await _debug_node_timer_start("specialist")
 
     # MULTI-SPECIALIST SUPPORT: Pop from pending if active_specialist is not set
     # On first run, router sets active_specialist. On loop iterations, we pop from pending.

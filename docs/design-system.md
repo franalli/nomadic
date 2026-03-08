@@ -465,11 +465,12 @@ export function Stepper({ value, min, max, onChange }) {
 
 | Color | Hex | Rule |
 |-------|-----|------|
-| amber/orange | `#E86A1F` (accent) | Used ONLY as brand accent (`--accent`), specialist highlight pulse, and semantic warning/rejection states (Logic Guards, constraint badges, NextStepBar validation). Do not introduce new amber/orange usage outside these patterns. |
+| amber/orange | `#E86A1F` (accent) | Used ONLY as brand accent (`--accent`), specialist highlight pulse, semantic warning/rejection states (Logic Guards, constraint badges, NextStepBar validation), and traveler-rating stars/counts on activity cards. Do not introduce new amber/orange usage outside these patterns. |
 | teal-500 | `#14B8A6` | BANNED — replaced by emerald |
 
 **Enforcement notes:**
-- Rating stars and numeric rating text must use neutral zinc classes (`text-zinc-*`, optional `dark:text-zinc-*`), not amber.
+- Hotel/tile-card rating stars and numeric rating text stay on neutral zinc classes (`text-zinc-*`, optional `dark:text-zinc-*`).
+- Activity-card traveler ratings may use amber star/icon treatment (`text-amber-*`) when rendering review metadata from live activity providers.
 - Booking/cart states that are not warnings should use neutral zinc or success emerald, not amber.
 
 ### Specialist Color Palette
@@ -628,37 +629,27 @@ When backend populates `constraints_validated` and `constraint_violations`:
 
 **Implementation:** `frontend/components/plan/PlanFullDensityView.tsx` (row-two toggle chips for Flights/Stays/Travel Intel)
 
-### Inline Constraint Badge Colors
+### Inline Constraint Summary Row
 
-Activity and logistics blocks display inline constraint badges to show constraint-first optimization. These use a distinct color palette for severity levels.
-
-| Severity | Background | Border | Title | Icon Color |
-|----------|------------|--------|-------|------------|
-| `warning` | `bg-amber-50 dark:bg-amber-900/10` | `border-amber-200 dark:border-amber-800/40` | `text-amber-700 dark:text-amber-400` | Emoji |
-| `info` | `bg-blue-50 dark:bg-blue-900/10` | `border-blue-200 dark:border-blue-800/40` | `text-blue-700 dark:text-blue-400` | Emoji |
-| `success` | `bg-emerald-50 dark:bg-emerald-900/10` | `border-emerald-200 dark:border-emerald-800/40` | `text-emerald-700 dark:text-emerald-400` | Emoji |
-| `blocking` | `bg-red-50 dark:bg-red-900/10` | `border-red-200 dark:border-red-800/40` | `text-red-700 dark:text-red-400` | Emoji |
-
-**Amber here is an approved semantic usage** — constraint severity badges where "caution" connotation is correct (warnings, safety constraints). See Restricted Colors in Section 4.
+`ActivityCardConstraints` in `ActivityMiniCard` now uses a compact neutral summary row instead of a boxed severity card. This keeps the timeline dense while still surfacing the applied rule.
 
 **Visual Treatment:**
 ```tsx
-<div className={cn(
-  'flex items-start gap-2 p-3 rounded-lg text-xs',
-  constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200',
-  constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200',
-  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200',
-  constraint.severity === 'blocking' && 'bg-red-50 dark:bg-red-900/10 border border-red-200'
-)}>
-  <span className="text-base">{constraint.icon}</span>
-  <div>
-    <div className="font-semibold">{constraint.title}</div>
-    <div className="text-zinc-600 dark:text-zinc-400">{constraint.description}</div>
-  </div>
+<div className="flex items-center gap-1.5 px-1 py-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+  <span className="flex-shrink-0 leading-none">{constraint.icon}</span>
+  <span className="font-medium">{constraint.title}</span>
+  {constraint.description && (
+    <>
+      <span className="text-zinc-400 dark:text-zinc-500">&middot;</span>
+      <span className="truncate">{constraint.description}</span>
+    </>
+  )}
 </div>
 ```
 
-**Implementation:** `frontend/components/plan/timeline/blocks/ActivityMiniCard.tsx`, `LogisticsBlock.tsx`
+Severity still lives in the payload (`active_constraints[].severity`) for logic and dedicated warning surfaces such as `SafetyBlock`, but `ActivityMiniCard` no longer tints the inline row by severity.
+
+**Implementation:** `frontend/components/plan/timeline/blocks/ActivityCardActions.tsx`, `frontend/components/plan/timeline/blocks/ActivityMiniCard.tsx`
 
 ---
 
@@ -695,8 +686,6 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | GatingBlocker | `plan/sheets/GatingBlocker.tsx` | Shared prerequisite-gating notice for module sheets (Flights/Stays/Activities). Raw infoBox pattern (`bg-zinc-50 dark:bg-white/[0.02]`), raw smallAction pattern buttons |
 | AlternativesModal | `plan/modals/AlternativesModal.tsx` | Sheet modal with neutral zinc rating stars and diff badges |
 | CategorySection | `plan/booking/CategorySection.tsx` | `DS.textSize.micro`, booking status dots/text with dark-aware zinc/emerald states |
-| TripHealthBar | `plan/TripHealthBar.tsx` | Compact inventory stats bar; `dark:bg-zinc-950/80 dark:border-white/10` glass pattern |
-| TripStatusBar | `chat/TripStatusBar.tsx` | Mobile-only dark status bar; `bg-zinc-900 border-b border-white/10`; no light mode |
 | NextStepBar | `plan/NextStepBar.tsx` | Command Island sticky CTA; `DS.text.label`, `DS.textSize.micro`, `DS.glowClass.action`, glass `dark:bg-zinc-900/95` |
 | GhostSlot | `plan/timeline/blocks/GhostSlot.tsx` | Dashed-border CTA slot; `border-dashed border-zinc-300 dark:border-white/10` pattern |
 | LogisticsBlock | `plan/timeline/blocks/LogisticsBlock.tsx` | Flight/transfer timeline block; glass `dark:bg-zinc-900/50` pattern |
@@ -1914,7 +1903,7 @@ The hero header uses a **vertical stack** layout: compact image above, summary p
 - Image height: `max-h-[15vh] min-h-[120px]` — viewport-relative, never dominates
 - No title or subtitle rendered — pills contain all trip info
 - No specialist pills — Trip DNA bar below already shows specialists
-- Hero hidden on mobile — `TripStatusBar` provides trip context instead
+- Hero hidden on mobile — trip context is handled by `MobileModeHeader` and the route header chrome instead
 
 ### CoreChip Sizing (default variant)
 
@@ -2586,16 +2575,14 @@ Updates to Section 6 — new components discovered in audit:
 |-----------|------|----------------|-------|
 | `MiniCard` | `tiles/MiniCard.tsx` | `DS.textSize.*`, `DS.glowClass.*`, `DS.infoBox` | `shadow-card hover:shadow-soft` for card elevation |
 | `MiniCardSkeleton` | `tiles/MiniCard.tsx` | Custom skeleton colors | `bg-zinc-200/50 dark:bg-zinc-700/50` |
-| `TileDetailsModal` | `tiles/TileDetailsModal.tsx` | `DS.actions.primary`, `DS.text.*` | `shadow-card` for modal container |
-| `SuggestionCard` | `plan/tiles/SuggestionCard.tsx` | `DS.textSize.*` | `shadow-card hover:shadow-soft` |
+| `TileDetailsModal` | `tiles/TileDetailsModal.tsx` | `DS.actions.primary`, `DS.text.*` | `shadow-card` for modal container; primary CTA label adapts by deeplink provider (`Book on Viator` vs Google travel/maps copy) |
+| `SuggestionCard` | `plan/tiles/SuggestionCard.tsx` | `DS.textSize.*` | `shadow-card hover:shadow-soft`; provider-aware deeplink pill (`Map` for map links, `Book` + `ExternalLink` for Viator) |
 | `CategorySection` | `plan/booking/CategorySection.tsx` | `DS.textSize.micro` | `shadow-card hover:shadow-soft` for accordion card |
 | `CheckoutSidebar` | `plan/booking/CheckoutSidebar.tsx` | None | `shadow-card` for summary card |
 | `StrategyHero` | `plan/stages/StrategyHero.tsx` | `DS.text.*`, `DS.infoBox` | Specialist colors from `SPECIALIST_STYLE_CLASSES` map (in `StrategyHeroUtils.tsx`) |
-| `ActivityMiniCard` | `plan/timeline/blocks/ActivityMiniCard.tsx` | `DS.textSize.*` | `hover:shadow-soft` for card hover |
+| `ActivityMiniCard` | `plan/timeline/blocks/ActivityMiniCard.tsx` | `DS.textSize.*` | `hover:shadow-soft` for card hover; default card uses a full-width landscape banner plus metadata/action row |
 | `UnifiedChipRow` | `plan/UnifiedChipRow.tsx` | `DS.textSize.*` | Constraint chips; disabled: `opacity-50 cursor-not-allowed` |
 | `MobileModeHeader` | `layout/MobileModeHeader.tsx` | `DS.textSize.*` | `shadow-card` for status pill |
-| `TripHealthBar` | `plan/TripHealthBar.tsx` | None (raw pattern) | Compact inventory bar; `bg-white dark:bg-zinc-950/80 border-zinc-200 dark:border-white/10` |
-| `TripStatusBar` | `chat/TripStatusBar.tsx` | None (raw pattern) | Mobile-only dark status bar; no light mode; `bg-zinc-900 border-white/10` |
 | `NextStepBar` | `plan/NextStepBar.tsx` | `DS.text.label`, `DS.textSize.micro`, `DS.glowClass.action` | Command Island; `shadow-card` for status pill, `shadow-soft` for island |
 | `GhostSlot` | `plan/timeline/blocks/GhostSlot.tsx` | None (raw pattern) | Dashed CTA slot; `border-dashed border-zinc-300 dark:border-white/10` |
 | `LogisticsBlock` | `plan/timeline/blocks/LogisticsBlock.tsx` | None (raw pattern) | Flight/transfer block; `dark:bg-zinc-900/50 dark:border-white/[0.08]` glass pattern |
@@ -2617,11 +2604,19 @@ Updates to Section 6 — new components discovered in audit:
 | `ChatStatusHeader` | `chat/ChatStatusHeader.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText` | Desktop status chip rendered above chat with transition-safe chrome |
 | `TileDetailsInfo` | `tiles/TileDetailsInfo.tsx` | `DS.textSize.mini` | Metadata strip (distance/ratings/metadata) used by tile cards |
 | `SuggestionCardContent` | `plan/tiles/SuggestionCardContent.tsx` | `DS.textSize.*` | Shared content block for suggestion rendering |
-| `MiniCardContent` | `tiles/MiniCardContent.tsx` | `DS.textSize.*`, `DS.text.accent` | Shared compact tile body renderer |
-| `TileCardContent` | `tiles/TileCardContent.tsx` | `DS.textSize.*`, `DS.actions.smallAction` | Shared booking/tile body renderer |
-| `ActivityCardMeta` | `plan/timeline/blocks/ActivityCardMeta.tsx` | `DS.textSize.micro`, `DS.text.muted` | Activity metadata badges and metadata row formatting |
-| `ActivityCardActions` | `plan/timeline/blocks/ActivityCardActions.tsx` | `DS.actions.primary`, `DS.text.label` | Action row for activity detail/visit links |
-| `ActivityCardPhoto` | `plan/timeline/blocks/ActivityCardPhoto.tsx` | `DS.glowClass.dropText` | Thumbnail section for `ActivityMiniCard` |
+| `MiniCardContent` | `tiles/MiniCardContent.tsx` | `DS.textSize.*`, `DS.text.accent` | Shared compact tile body renderer with provider-aware deeplink CTA copy |
+| `TileCardContent` | `tiles/TileCardContent.tsx` | `DS.textSize.*`, `DS.actions.smallAction` | Shared booking/tile body renderer with provider-aware deeplink CTA copy |
+| `ActivityCardMeta` | `plan/timeline/blocks/ActivityCardMeta.tsx` | `DS.textSize.micro`, `DS.text.muted` | Activity metadata badges and metadata row formatting; traveler ratings use amber star treatment and live prices switch copy from `~123` to `from 123` when the partner price is authoritative |
+| `ActivityCardActions` | `plan/timeline/blocks/ActivityCardActions.tsx` | `DS.actions.primary`, `DS.text.label` | Action row for activity detail/visit links; Viator deeplinks render as booking CTAs instead of map CTAs, and the hold-to-delete affordance is pinned to the top-right overlay zone |
+| `ActivityCardPhoto` | `plan/timeline/blocks/ActivityCardPhoto.tsx` | `DS.glowClass.dropText` | Full-width landscape photo banner for `ActivityMiniCard`; signed Google Places proxies now request up to 720px width and the allowlist accepts TripAdvisor CDN hosts |
+
+### Provider-Aware Deeplink Pills
+
+Booking/link pills keep the same emerald treatment across planning and booking surfaces, but the iconography and copy now adapt to the actual destination:
+
+- Map-style links use `MapPin` with `Map` / `View on Google*` copy.
+- Viator affiliate links use `ExternalLink` with `Book` / `Book on Viator` copy.
+- This applies consistently across suggestion cards, booking cards, timeline activity actions, and the tile details modal.
 
 ---
 
@@ -2629,36 +2624,13 @@ Updates to Section 6 — new components discovered in audit:
 
 Canonical styling for components not covered by the primary token tables (Sections 2–5). Use these as the reference when adding new components of the same type.
 
-### 31.1 Compact Inventory Bar (TripHealthBar)
+### 31.1 Legacy Inventory Bar (TripHealthBar, Removed)
 
-A horizontal stats bar shown at the top of the S2 strategy view.
+`TripHealthBar.tsx` was deleted from the current planning surface. Do not treat its compact inventory-bar styling as an active component pattern when adding new UI.
 
-| Property | Light Mode | Dark Mode |
-|----------|-----------|-----------|
-| Background | `bg-white` | `dark:bg-zinc-950/80` |
-| Border | `border border-zinc-200` | `dark:border-white/10` |
-| Border radius | `rounded-lg` | Same |
-| Padding | `px-4 py-2.5` | Same |
-| Status text | `text-sm font-medium text-zinc-900` | `dark:text-white` |
-| Secondary text | `text-xs text-zinc-500` | `dark:text-zinc-400` |
-| Active status dot | `w-2 h-2 rounded-full bg-emerald-500` | Same |
-| Inactive status dot | `w-2 h-2 rounded-full bg-zinc-400` | `dark:bg-zinc-600` |
-| Count value | `font-medium text-zinc-900` | `dark:text-white` |
+### 31.2 Mobile-Only Dark Status Bar (TripStatusBar, Removed)
 
-**Rule:** This surface uses `bg-zinc-950/80` (not `bg-zinc-900`) in dark mode, matching the glass compact bar spec.
-
-### 31.2 Mobile-Only Dark Status Bar (TripStatusBar)
-
-A fixed-position status bar visible only on mobile. Renders exclusively in dark mode.
-
-| Property | Value |
-|----------|-------|
-| Background | `bg-zinc-900` |
-| Border | `border-b border-white/10` |
-| Backdrop | `backdrop-blur-md` |
-| Text | `text-white`, `text-zinc-400` |
-
-**Rule:** This component has no light mode. It is gated by mobile layout context. Do NOT add a `bg-white` light variant.
+`TripStatusBar.tsx` is no longer part of the active UI surface. Mobile trip/status chrome is now handled by `layout/MobileModeHeader.tsx`, `chat/ChatStatusHeader.tsx`, and the current route headers. Do not treat the old dark-only `TripStatusBar` styling as an active DS primitive.
 
 ### 31.3 Dashed-Border CTA Slot (GhostSlot)
 
@@ -2874,29 +2846,9 @@ Compact gear button overlaid on card content (LogisticsBlock, TileCard). Always 
 
 ---
 
-### 32.3 Status Dot (TripHealthBar)
+### 32.3 Legacy Inventory Status Dot (Removed with TripHealthBar)
 
-Small indicator dot showing inventory/readiness state.
-
-| State | Light Mode | Dark Mode |
-|-------|-----------|-----------|
-| Active (has inventory) | `bg-emerald-500` | Same |
-| Inactive (searching) | `bg-zinc-400` | `dark:bg-zinc-500` |
-
-**Shape:** `w-2 h-2 rounded-full flex-shrink-0`
-
-**Rule:** Dark mode inactive dot must be `dark:bg-zinc-500` (not `dark:bg-zinc-600`) — zinc-600 on zinc-950 fails contrast (~1.5:1). Zinc-500 on zinc-950 = ~3.2:1, meets 3:1 minimum for non-text indicators.
-
-```tsx
-<div
-  className={cn(
-    'w-2 h-2 rounded-full flex-shrink-0',
-    hasInventory ? 'bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-500'
-  )}
-/>
-```
-
-**Implementation:** `frontend/components/plan/TripHealthBar.tsx`
+The dedicated inventory-status dot was removed with `TripHealthBar.tsx`. Do not reintroduce it as an implicit DS primitive; model any future status indicators on the specific surface that needs them.
 
 ---
 
@@ -3004,7 +2956,7 @@ Status key:
 | `ItineraryDndWrapper` | `plan/timeline/ItineraryDndWrapper.tsx` | DnD orchestration container; no direct style surface | Non-Visual |
 | `RichBlockRenderer` | `plan/timeline/RichBlockRenderer.tsx` | Rendering dispatcher; visual styling delegated to mapped block components | Non-Visual |
 | `TimelineSkeleton` | `plan/timeline/TimelineSkeleton.tsx` | Skeleton colors/animation follow Section 26 | Provisional |
-| `HoldToDeleteButton` | `plan/timeline/blocks/HoldToDeleteButton.tsx` | Destructive hold interaction must use semantic warning/error color rules only | Provisional |
+| `HoldToDeleteButton` | `plan/timeline/blocks/HoldToDeleteButton.tsx` | Neutral black/white overlay at rest; switches to red only while hold-confirm is active | Provisional |
 | `SafetyBlock` | `plan/timeline/blocks/SafetyBlock.tsx` | Safety/warning states follow Section 4 inline constraint severity styles | Provisional |
 | `TaxesFeesTooltip` | `tiles/TaxesFeesTooltip.tsx` | Tooltip text sizing (`DS.textSize.mini`/`micro`) and zinc contrast pairings | Provisional |
 

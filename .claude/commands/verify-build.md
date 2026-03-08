@@ -76,7 +76,7 @@ This runs, in order:
 5. `detect-private-key` — fails if SSH/PEM keys found in repo
 6. `detect-secrets` — fails if secrets detected (baseline: `.secrets.baseline`)
 7. `ruff` + `ruff-format` — Python lint/format (already ran in Step 1, should pass)
-8. `ssot-check` — validates `plan_graph.py` against SSoT constraints
+8. `ssot-check` — validates `backend/app/planner/coordinator.py` against SSoT constraints
 
 Pre-commit may auto-fix files (whitespace, EOF, formatting).
 If it does, the run shows "Failed" but files are already fixed.
@@ -88,7 +88,7 @@ pre-commit run --all-files 2>&1
 
 If second run still fails:
 - `detect-secrets`: update baseline with `detect-secrets scan > .secrets.baseline` if the secret is a false positive. If it's a real secret, REMOVE IT and rotate the key.
-- `ssot-check`: read the violation output, fix `plan_graph.py` to match SSoT docs.
+- `ssot-check`: read the violation output, fix `backend/app/planner/coordinator.py` to match SSoT docs.
 - `check-merge-conflict`: resolve the conflict markers in the flagged file.
 
 ## Step 6: Final Verification Pass

@@ -115,7 +115,7 @@ def _specialist_cache_key(
         dpref,
         phash,
     )
-    logger.info(f"[CACHE_KEY] Generated: {key}")
+    logger.debug(f"[CACHE_KEY] Generated: {key}")
     return key
 
 
@@ -164,11 +164,11 @@ async def get_cached_specialist_output(
     cached = _mem.get(cache_key)
     if cached is not None:
         _mem.increment_stat("l1_hits")
-        logger.info(f"[CACHE] key={cache_key} → HIT (L1)")
+        logger.debug(f"[CACHE] key={cache_key} → HIT (L1)")
         return cached
 
     _mem.increment_stat("l1_misses")
-    logger.info(f"[CACHE] key={cache_key} → MISS (L1)")
+    logger.debug(f"[CACHE] key={cache_key} → MISS (L1)")
 
     # L2: Database check
     try:
@@ -182,7 +182,7 @@ async def get_cached_specialist_output(
 
         if row:
             _mem.increment_stat("l2_hits")
-            logger.info(f"[CACHE] key={cache_key} → HIT (L2)")
+            logger.debug(f"[CACHE] key={cache_key} → HIT (L2)")
 
             # Promote to L1
             _mem.set(cache_key, row.response_json)
@@ -202,7 +202,7 @@ async def get_cached_specialist_output(
             return row.response_json
 
         _mem.increment_stat("l2_misses")
-        logger.info(f"[CACHE] key={cache_key} → MISS (L2)")
+        logger.debug(f"[CACHE] key={cache_key} → MISS (L2)")
         return None
 
     except Exception as e:

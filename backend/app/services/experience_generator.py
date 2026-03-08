@@ -166,6 +166,14 @@ def _normalize_month_for_cache(month: str, categories: list[str]) -> str:
     return month
 
 
+def _bucket_tile_count(n: int) -> int:
+    """Round up to cache-friendly tiers so n4 reuses n8's cached set."""
+    for tier in (4, 8, 12, 16, 24, 40):
+        if n <= tier:
+            return tier
+    return 40
+
+
 def _experience_cache_key(
     destination: str, categories: list[str], month: str, tiles_per_category: int = 2
 ) -> str:
@@ -175,6 +183,7 @@ def _experience_cache_key(
 
     Categories are sorted alphabetically for stable keys regardless of input order.
     Month granularity (not full dates) — experiences are seasonal, not date-specific.
+    Tile count is bucketed to cache-friendly tiers so smaller requests reuse larger caches.
 
     Example: "experience::v2::bali::cooking|nightlife|yoga::2026-03::n4"
     """
@@ -187,9 +196,9 @@ def _experience_cache_key(
         dest_normalized,
         cats_normalized,
         month_normalized,
-        f"n{tiles_per_category}",
+        f"n{_bucket_tile_count(tiles_per_category)}",
     )
-    logger.info(f"[EXPERIENCE_CACHE] Key: {key}")
+    logger.debug(f"[EXPERIENCE_CACHE] Key: {key}")
     return key
 
 
@@ -211,9 +220,9 @@ def _single_category_cache_key(
         dest_normalized,
         category_normalized,
         month_normalized,
-        f"n{tiles_per_category}",
+        f"n{_bucket_tile_count(tiles_per_category)}",
     )
-    logger.info(f"[EXPERIENCE_CACHE] Single key: {key}")
+    logger.debug(f"[EXPERIENCE_CACHE] Single key: {key}")
     return key
 
 
@@ -241,7 +250,7 @@ async def _get_cached(
 
         if row:
             _mem.increment_stat("l2_hits")
-            logger.info(f"[EXPERIENCE_CACHE] key={cache_key} → HIT (L2:{cache_type})")
+            logger.debug(f"[EXPERIENCE_CACHE] key={cache_key} → HIT (L2:{cache_type})")
             _mem.set(cache_key, row.response_json)  # Promote to L1
 
             stmt = (
@@ -257,7 +266,7 @@ async def _get_cached(
             return row.response_json
 
         _mem.increment_stat("l2_misses")
-        logger.info(f"[EXPERIENCE_CACHE] key={cache_key} → MISS (L2:{cache_type})")
+        logger.debug(f"[EXPERIENCE_CACHE] key={cache_key} → MISS (L2:{cache_type})")
         return None
 
     except Exception as e:
@@ -470,7 +479,7 @@ def _experience_to_tile_dict(
         "currency": "USD",
         "price_basis": "per_person",
         "is_estimate_only": True,
-        "deeplink_url": f"https://www.google.com/maps/search/{quote(f'{tile.title} {destination}')}",
+        "deeplink": f"https://www.google.com/maps/search/{quote(f'{tile.title} {destination}')}",
         "rating": None,
         "location_label": destination,
         "tags": ["activity", tile.category, "experience"],
@@ -1223,7 +1232,7 @@ async def _generate_experiences_impl(
             f"cached for {destination}"
         )
         _set_tier2_generation_source(state, "llm")
-        return all_tiles
+        return _clamp_tile_durations(all_tiles)
 
     except Exception as e:
         logger.error(

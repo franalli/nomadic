@@ -51,10 +51,10 @@ export function AgentCard({ section, isExpanded, onToggle, status, hasDates = tr
           'active:scale-[0.995]')}>
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-2">
-            <span className={cn('inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium', isInfeasible ? 'bg-red-500/20 text-red-400' : 'topic-badge')}>
+            <span className={cn('inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium', isInfeasible ? 'bg-red-500/20 text-red-600 dark:text-red-400' : 'topic-badge')}>
               <Icon className="w-3 h-3" />{config.label} Specialist
             </span>
-            {isInfeasible && <span className={`${DS.textSize.micro} px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded font-medium uppercase tracking-wider`}>Unavailable</span>}
+            {isInfeasible && <span className={`${DS.textSize.micro} px-1.5 py-0.5 bg-red-500/20 text-red-600 dark:text-red-400 rounded font-medium uppercase tracking-wider`}>Unavailable</span>}
             {hasCaveat && <span className={`${DS.textSize.micro} px-1.5 py-0.5 bg-zinc-500/20 text-zinc-400 rounded font-medium`}>Limited</span>}
             {!isInfeasible && status !== 'ready' && (
               <span className={cn(`${DS.textSize.micro} px-2 py-1 rounded-full font-bold uppercase tracking-wide`,
@@ -82,10 +82,10 @@ export function AgentCard({ section, isExpanded, onToggle, status, hasDates = tr
           )}
         </div>
 
-        {isInfeasible && section.feasibility_reason && <div className="mt-2 text-xs text-red-400"><RichText>{section.feasibility_reason}</RichText></div>}
+        {isInfeasible && section.feasibility_reason && <div className="mt-2 text-xs text-red-600 dark:text-red-400"><RichText>{section.feasibility_reason}</RichText></div>}
         {isInfeasible && section.alternative_suggestion && <div className={`mt-1 ${DS.textSize.micro} text-zinc-500 dark:text-zinc-400`}>💡 <RichText>{section.alternative_suggestion}</RichText></div>}
         {hasCaveat && section.feasibility_reason && (
-          <div className="mt-2 text-xs text-zinc-500 flex items-center gap-1"><span>⚠️</span><RichText>{section.feasibility_reason}</RichText></div>
+          <div className="mt-2 flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400"><span>⚠️</span><RichText>{section.feasibility_reason}</RichText></div>
         )}
 
         {!isInfeasible && status !== 'needs_input' && (
@@ -95,7 +95,7 @@ export function AgentCard({ section, isExpanded, onToggle, status, hasDates = tr
           </div>
         )}
         {!isInfeasible && status === 'ready' && !hasDates && (
-          <div className={`mt-1 flex items-center gap-1.5 ${DS.textSize.micro} text-zinc-500`}><span>📅</span><span>Add dates to unlock day-by-day scheduling</span></div>
+          <div className={`mt-1 flex items-center gap-1.5 ${DS.textSize.micro} text-zinc-500 dark:text-zinc-400`}><span>📅</span><span>Add dates to unlock day-by-day scheduling</span></div>
         )}
         {!isExpanded && !isInfeasible && (
           <p className={`mt-2 ${DS.textSize.micro} font-medium text-emerald-600 dark:text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity`}>

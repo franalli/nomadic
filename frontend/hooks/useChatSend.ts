@@ -264,6 +264,12 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     isSendingRef.current = false;
     delayedLoader.reset();
     actionLoader.reset();
+
+    // Clear SSE-set regeneration overlay (AbortError is swallowed by
+    // streamGraphPlan so onComplete/onError won't fire to clean up).
+    if (useDocumentStore.getState().isRegenerating) {
+      useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+    }
   }, [streamingMessageId, updateMessage, delayedLoader, actionLoader]);
 
   const sendMessageCore = useCallback(

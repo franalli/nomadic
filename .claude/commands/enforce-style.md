@@ -27,7 +27,7 @@ Generate the audit list dynamically — do NOT rely on a hardcoded file list:
 find frontend/components -name "*.tsx" | grep -v __tests__ | grep -v node_modules | sort
 ```
 
-Group results by directory. If total exceeds the 15-file-per-run cap, apply this priority order:
+Group results by directory and use this priority order when sequencing the audit:
 
 1. `plan/sheets/` — user-facing settings, highest visibility
 2. `plan/` (non-sheets) — core rendering (StrategyStageRenderer, stages, NextStepBar, PlanHeader, TimelineThread, TripHealthBar, BookingSection)
@@ -412,6 +412,6 @@ Output a summary:
 - Do NOT refactor component structure. Only modify className strings and style props.
 - Do NOT touch component logic, props, state, or event handlers.
 - PRESERVE existing formatting and code structure.
-- Maximum 15 component files fixed per run. If more need fixing, apply the Phase 0.5 priority order.
-- If a component is too complex to audit in one pass, flag it for a follow-up run.
+- Audit and fix all relevant components discovered in Phase 0.5, using the priority order only to decide sequencing.
+- If a component is too complex to remediate safely in one pass, flag it for a follow-up run with the blocker called out explicitly.
 - For every code fix, verify BOTH light and dark mode are correct after the change.

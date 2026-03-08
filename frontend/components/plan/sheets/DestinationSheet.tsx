@@ -177,7 +177,7 @@ function DestinationSheetInner({
                     // Tactile Rule: border-2 for visibility, snap-to-black on hover
                     'bg-white border-2 border-zinc-200',
                     'text-xs font-semibold text-zinc-600',
-                    'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 hover:shadow-sm',
+                    'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
                     // Dark: Glass Fill with border-2
                     'dark:bg-white/5 dark:border-2 dark:border-white/15',
                     'dark:text-zinc-400',
@@ -209,7 +209,7 @@ function DestinationSheetInner({
                   // Tactile Rule: border-2 for visibility, snap-to-black on hover
                   'bg-white border-2 border-zinc-200',
                   'text-xs font-semibold text-zinc-600',
-                  'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 hover:shadow-sm',
+                  'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
                   // Dark: Glass Fill with border-2
                   'dark:bg-white/5 dark:border-2 dark:border-white/15',
                   'dark:text-zinc-400',

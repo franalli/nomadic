@@ -13,9 +13,6 @@
                 "panel": "dedicated",
                 "clear": true
             },
-            "runOptions": {
-                "runOn": "folderOpen"
-            },
             "isBackground": true,
             "problemMatcher": []
         },
@@ -30,9 +27,6 @@
                 "reveal": "always",
                 "panel": "dedicated",
                 "clear": true
-            },
-            "runOptions": {
-                "runOn": "folderOpen"
             },
             "isBackground": true,
             "problemMatcher": []
@@ -49,9 +43,6 @@
                 "panel": "dedicated",
                 "clear": true
             },
-            "runOptions": {
-                "runOn": "folderOpen"
-            },
             "isBackground": true,
             "problemMatcher": []
         },
@@ -63,6 +54,9 @@
                 "Frontend: Next Dev",
                 "Agentic: Update"
             ],
+            "runOptions": {
+                "runOn": "folderOpen"
+            },
             "problemMatcher": []
         },
         {
@@ -82,12 +76,10 @@
         {
             "label": "Restart Dev Servers",
             "dependsOn": [
-                "Kill Dev Processes",
                 "Docker: Compose DB",
                 "Backend: Uvicorn",
                 "Frontend: Next Dev"
             ],
-            "dependsOrder": "sequence",
             "problemMatcher": []
         },
         {
@@ -118,9 +110,6 @@
                 "reveal": "always",
                 "panel": "dedicated",
                 "clear": true
-            },
-            "runOptions": {
-                "runOn": "folderOpen"
             },
             "isBackground": true,
             "problemMatcher": []

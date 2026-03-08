@@ -450,8 +450,6 @@ def _normalize_tile_fields(tile: Dict[str, Any]) -> Dict[str, Any]:
                 tile["geo"] = {"lat": float(coords[1]), "lng": float(coords[0])}
             except (TypeError, ValueError):
                 pass
-    if not tile.get("deeplink_url") and tile.get("deeplink"):
-        tile["deeplink_url"] = tile["deeplink"]
     if not tile.get("deeplink") and tile.get("deeplink_url"):
         tile["deeplink"] = tile["deeplink_url"]
     if not tile.get("category"):
@@ -1865,7 +1863,7 @@ def _specialist_content_to_tiles(
         tile_id = f"spec_{dest_slug}_{topic}_{stable_hash_short(hash_key)}"
 
         coords = item.get("coordinates")  # [lng, lat] or None
-        geo: Dict[str, Any] = {}
+        geo: Dict[str, Any] | None = None
         if isinstance(coords, (list, tuple)) and len(coords) >= 2:
             geo = {"lng": coords[0], "lat": coords[1]}
 
@@ -1885,7 +1883,7 @@ def _specialist_content_to_tiles(
                 "currency": "USD",
                 "price_basis": "per_person",
                 "is_estimate_only": True,
-                "deeplink_url": f"https://www.google.com/maps/search/{quote(f'{title} {destination}')}",
+                "deeplink": f"https://www.google.com/maps/search/{quote(f'{title} {destination}')}",
                 "rating": None,
                 "location_label": destination,
                 "tags": ["activity", topic, "specialist"],
@@ -2048,6 +2046,7 @@ async def _prepare_activity_tiles_for_build(state: Dict[str, Any]) -> None:
                         activity_tiles[i] = t
 
             # FIX 15: Destination-level geocode fallback for remaining tiles with no geo
+            _dest_geo_resolved = False
             dest_geo = None
             for i, t in enumerate(activity_tiles):
                 if (
@@ -2055,9 +2054,10 @@ async def _prepare_activity_tiles_for_build(state: Dict[str, Any]) -> None:
                     and t.get("source_agent") in _ENRICHABLE_SOURCES
                     and not t.get("geo")
                 ):
-                    if dest_geo is None:
+                    if not _dest_geo_resolved:
                         coords = await _geocode_destination_async(destination)
-                        dest_geo = {"lng": coords[1], "lat": coords[0]} if coords else {}
+                        dest_geo = {"lng": coords[1], "lat": coords[0]} if coords else None
+                        _dest_geo_resolved = True
                     if dest_geo:
                         t["geo"] = dict(dest_geo)
                         activity_tiles[i] = t
@@ -2120,12 +2120,6 @@ async def _post_build_enrich_placed_activities(
     if not destination:
         return
 
-    from app.data.demo_curation import is_hero_destination
-
-    if is_hero_destination(destination):
-        logger.info("[coordinator] Skipping post-build enrichment for curated: %s", destination)
-        return
-
     try:
         from app.tile_service.google_places_provider import (
             _normalize_title_for_cache,
@@ -2153,7 +2147,7 @@ async def _post_build_enrich_placed_activities(
                 block_type = block.get("type", "")
                 if block_type in ("buffer", "travel", "flight", "hotel_checkin", "hotel_checkout"):
                     continue
-                if block.get("google_place_id"):
+                if block.get("google_place_id") and block.get("coordinates"):
                     continue
                 summary = block.get("summary", "")
                 if not summary:
@@ -2161,24 +2155,27 @@ async def _post_build_enrich_placed_activities(
                 # Check if an existing GP tile matches this block
                 existing = _gp_by_title.get(_normalize_title_for_cache(summary))
                 if existing:
+                    block_has_viator = "viator.com" in (block.get("deeplink") or "")
                     block["google_place_id"] = existing.get("google_place_id")
                     ex_coords = existing.get("coordinates")
                     if isinstance(ex_coords, list) and len(ex_coords) >= 2:
                         block["coordinates"] = {"lng": ex_coords[0], "lat": ex_coords[1]}
                     elif isinstance(ex_coords, dict):
                         block["coordinates"] = ex_coords
-                    if existing.get("deeplink"):
-                        block["deeplink"] = existing["deeplink"]
+                    # Deeplink/image — skip if Viator already set
+                    if not block_has_viator:
+                        if existing.get("deeplink"):
+                            block["deeplink"] = existing["deeplink"]
+                        photo_name = existing.get("photo_name") or ""
+                        if photo_name and session_id:
+                            signed_url = build_signed_photo_url(session_id, photo_name)
+                            if signed_url:
+                                block["image_url"] = signed_url
+                        elif existing.get("image_url"):
+                            block["image_url"] = existing["image_url"]
                     # Rating propagation disabled — no real provider sources exist
                     if existing.get("price_level") is not None and block.get("price_level") is None:
                         block["price_level"] = existing["price_level"]
-                    photo_name = existing.get("photo_name") or ""
-                    if photo_name and session_id:
-                        signed_url = build_signed_photo_url(session_id, photo_name)
-                        if signed_url:
-                            block["image_url"] = signed_url
-                    elif existing.get("image_url"):
-                        block["image_url"] = existing["image_url"]
                     _reused_count += 1
                     continue
                 coords = block.get("coordinates")
@@ -2214,32 +2211,42 @@ async def _post_build_enrich_placed_activities(
             if not enriched_tile:
                 continue
             block = day_cards[day_idx]["blocks"][block_idx]
+            logger.info(
+                "[POST_BUILD] block='%s' deeplink=%s image=%s",
+                (block.get("summary") or "")[:40],
+                (block.get("deeplink") or "NONE")[:60],
+                (block.get("image_url") or "NONE")[:60],
+            )
+            # Preserve Viator data — GP backfills coordinates only
+            block_has_viator = "viator.com" in (block.get("deeplink") or "")
             # Coordinates — DayCard schema expects {lat, lng} dict
             coords = enriched_tile.get("coordinates")
             if isinstance(coords, list) and len(coords) >= 2:
                 block["coordinates"] = {"lng": coords[0], "lat": coords[1]}
             elif isinstance(coords, dict):
                 block["coordinates"] = coords
-            # Google Place ID + deeplink
+            # Google Place ID + deeplink (skip if Viator already set)
             gp_id = enriched_tile.get("google_place_id")
             if gp_id:
                 block["google_place_id"] = gp_id
-            deeplink = enriched_tile.get("deeplink")
-            if deeplink:
-                block["deeplink"] = deeplink
+            if not block_has_viator:
+                deeplink = enriched_tile.get("deeplink")
+                if deeplink:
+                    block["deeplink"] = deeplink
             # Rating propagation disabled — no real provider sources exist
             if enriched_tile.get("price_level") is not None and block.get("price_level") is None:
                 block["price_level"] = enriched_tile["price_level"]
-            # Photo: signed URL from photo_name
-            photo_name = (
-                (enriched_tile.get("meta") or {}).get("photo_name")
-                or enriched_tile.get("photo_name")
-                or ""
-            )
-            if photo_name and session_id:
-                signed_url = build_signed_photo_url(session_id, photo_name)
-                if signed_url:
-                    block["image_url"] = signed_url
+            # Photo: signed URL from photo_name (skip if Viator image already set)
+            if not block_has_viator:
+                photo_name = (
+                    (enriched_tile.get("meta") or {}).get("photo_name")
+                    or enriched_tile.get("photo_name")
+                    or ""
+                )
+                if photo_name and session_id:
+                    signed_url = build_signed_photo_url(session_id, photo_name)
+                    if signed_url:
+                        block["image_url"] = signed_url
 
         logger.info(
             "[coordinator] Post-build enriched %d/%d placed blocks via Google Places",
@@ -2677,6 +2684,17 @@ async def _build_itinerary(
     # Inject specialist content_added items as real tiles
     _inject_specialist_tiles_into_state(state)
     await _prepare_activity_tiles_for_build(state)
+
+    # Viator enrichment: real pricing, images, ratings, deeplinks
+    if settings.viator_enabled and settings.viator_api_key:
+        activity_tiles = state.get("tiles", {}).get("activities", [])
+        if isinstance(activity_tiles, list) and activity_tiles:
+            destination = state.get("trip_plan", {}).get("destination", "")
+            currency = state.get("trip_plan", {}).get("currency") or "USD"
+            if destination:
+                from app.planner.nodes.logistics_node import _enrich_tiles_with_viator
+
+                await _enrich_tiles_with_viator(activity_tiles, destination, currency)
 
     tiles: Dict[str, Any] = state.get("tiles", {})
     strategy_sections = state.get("strategy_sections", [])
@@ -3209,10 +3227,10 @@ def _build_envelope(
     browseable_activities = turn_meta.get("browseable_activities", [])
     if not browseable_activities:
         browseable_activities = persistent_meta.get("browseable_activities", [])
-    # Normalize deeplink → deeplink_url for browseable activities
+    # Normalize deeplink_url → deeplink for browseable activities (legacy compat)
     for ba in browseable_activities:
-        if not ba.get("deeplink_url") and ba.get("deeplink"):
-            ba["deeplink_url"] = ba["deeplink"]
+        if not ba.get("deeplink") and ba.get("deeplink_url"):
+            ba["deeplink"] = ba["deeplink_url"]
 
     # Stub fix: resolve stuck "pending" local_expert_enrichment states.
     # Phase B (async enrichment) may not have completed yet on this turn.
@@ -3317,9 +3335,20 @@ def _compute_coordinator_s3_state(
     conflicts = builder_result.get("conflicts", [])
     conflict_count = len(conflicts) if isinstance(conflicts, list) else 0
 
+    activities_placed = builder_result.get("activities_placed", -1)
+
     if builder_success:
         if not day_cards:
             return "S3_BLOCKED"
+        # If builder produced day_cards but placed 0 activities, add warning
+        if activities_placed == 0:
+            warnings = builder_result.get("warnings", [])
+            if not any("no activities" in w.lower() for w in warnings):
+                warnings.append(
+                    "No activities could be placed — trip may be too short. "
+                    "Consider extending by 1-2 days."
+                )
+                builder_result["warnings"] = warnings
         return "S3_EDITING" if conflict_count > 0 else "S3_ITINERARY_READY"
     else:
         return "S3_PARTIAL_CONFLICT" if day_cards else "S3_BLOCKED"
@@ -3677,7 +3706,12 @@ async def execute_turn(
             _apply_classifier_to_state(state, classifier)
             if classifier.change_type in _FULL_INVALIDATION_CHANGES:
                 # GENERATE_PLAN_NOW reuses existing strategy/tiles — skip clear
-                if not (classifier.reasoning and "GENERATE_PLAN_NOW" in classifier.reasoning):
+                # UNLESS categories changed (stale specialist sections must go).
+                is_gpn = classifier.reasoning and "GENERATE_PLAN_NOW" in classifier.reasoning
+                cats_changed = "activity_categories" in state.get("turn_meta", {}).get(
+                    "fields_changed", []
+                )
+                if not is_gpn or cats_changed:
                     _clear_planning_artifacts(state)
             yield {
                 "type": "partial",

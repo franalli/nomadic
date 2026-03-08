@@ -155,7 +155,7 @@ async def get_cached_tiles(
 
         if row:
             _mem.increment_stat("l2_hits")
-            logger.info(f"[TILE_CACHE] L2 HIT: {cache_key}")
+            logger.debug(f"[TILE_CACHE] L2 HIT: {cache_key}")
 
             # Promote to L1
             _mem.set(cache_key, row.response_json)

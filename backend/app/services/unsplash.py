@@ -1040,7 +1040,7 @@ def get_image_url_sync(
     """
     cache_key = _cache_key(destination, variant, activities)
     activity_str = f", activities={activities}" if activities else ""
-    logger.info(
+    logger.debug(
         f"[UNSPLASH-SYNC] get_image_url_sync: dest={destination}, "
         f"variant={variant}{activity_str}, cache_size={len(_memory_cache)}"
     )
@@ -1051,7 +1051,9 @@ def get_image_url_sync(
             image = _memory_cache.get(key)
             if image is not None:
                 url = build_image_url(image.image_id, width, height)
-                logger.info(f"[UNSPLASH-SYNC] Cache HIT for {cache_key} using {key}: {url[:80]}...")
+                logger.debug(
+                    f"[UNSPLASH-SYNC] Cache HIT for {cache_key} using {key}: {url[:80]}..."
+                )
                 return url
 
     # Fall back to activity-aware placeholder if activities specified,
@@ -1063,13 +1065,13 @@ def get_image_url_sync(
         # Use deterministic seed based on destination + variant for variety
         seed_title = f"{destination}-{variant}"
         fallback_url = get_activity_image(activity, destination, seed_title)
-        logger.info(
+        logger.debug(
             f"[UNSPLASH-SYNC] Cache MISS for {cache_key}, "
             f"using activity placeholder: {fallback_url}"
         )
     else:
         fallback_url = _get_unsplash_placeholder_fallback(destination, variant, width, height)
-        logger.info(
+        logger.debug(
             "[UNSPLASH-SYNC] Cache MISS for "
             f"{cache_key}, using destination placeholder: {fallback_url}"
         )

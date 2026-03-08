@@ -8,8 +8,8 @@ Usage:
     python scripts/check_ssot_violations.py [--fix] [files...]
 
 Examples:
-    python scripts/check_ssot_violations.py app/plan_graph.py
-    python scripts/check_ssot_violations.py --fix app/plan_graph.py
+    cd backend && python scripts/check_ssot_violations.py app/planner/coordinator.py
+    python backend/scripts/check_ssot_violations.py backend/app/planner/coordinator.py
 
 Exit codes:
     0 - No violations found
@@ -62,6 +62,25 @@ def is_excluded(filepath: str) -> bool:
         if re.match(pattern, filepath, re.IGNORECASE):
             return True
     return False
+
+
+def resolve_input_path(file_arg: str) -> Path:
+    """Resolve file arguments from either repo root or the backend directory."""
+    filepath = Path(file_arg)
+    if filepath.exists():
+        return filepath
+
+    backend_root = Path(__file__).resolve().parents[1]
+    if file_arg.startswith("backend/"):
+        repo_root_relative = backend_root.parent / file_arg
+        if repo_root_relative.exists():
+            return repo_root_relative
+
+    backend_relative = backend_root / file_arg
+    if backend_relative.exists():
+        return backend_relative
+
+    return filepath
 
 
 def find_enclosing_function(lines: list[str], line_num: int) -> str:
@@ -135,12 +154,14 @@ def check_file(filepath: Path) -> list[Violation]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Check for SSoT violations in plan_graph.py")
+    parser = argparse.ArgumentParser(
+        description="Check planner coordinator files for SSoT violations"
+    )
     parser.add_argument(
         "files",
         nargs="*",
-        default=["app/plan_graph.py"],
-        help="Files to check (default: app/plan_graph.py)",
+        default=["app/planner/coordinator.py"],
+        help="Files to check (default: app/planner/coordinator.py)",
     )
     parser.add_argument(
         "--fix",
@@ -151,12 +172,14 @@ def main():
     args = parser.parse_args()
 
     all_violations = []
+    missing_files = []
 
     for file_arg in args.files:
-        filepath = Path(file_arg)
+        filepath = resolve_input_path(file_arg)
 
         if not filepath.exists():
-            print(f"Warning: File not found: {filepath}", file=sys.stderr)
+            print(f"Error: File not found: {filepath}", file=sys.stderr)
+            missing_files.append(str(filepath))
             continue
 
         if is_excluded(str(filepath)):
@@ -164,6 +187,12 @@ def main():
 
         violations = check_file(filepath)
         all_violations.extend(violations)
+
+    if missing_files:
+        print("\n[ERROR] Missing file(s):")
+        for missing_file in missing_files:
+            print(f"  {missing_file}")
+        return 1
 
     if not all_violations:
         print("[OK] No SSoT violations found")

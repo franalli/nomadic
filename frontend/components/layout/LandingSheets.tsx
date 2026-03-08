@@ -216,6 +216,14 @@ export function LandingSheets({
         onSaveSettings={async (settings) => {
           setActivityUserSaved(true);
           handleUpdateActivitySettings(settings);
+
+          // Early visual feedback: show rebuild overlay immediately for S3.
+          const earlyPVS = useDocumentStore.getState().document?.plan_view_state;
+          const willRebuild = ['S3_ITINERARY_READY', 'S3_EDITING'].includes(earlyPVS ?? '');
+          if (willRebuild) {
+            useDocumentStore.getState().setRegenerationState({ isRegenerating: true });
+          }
+
           try {
             const shouldDisableActivities = (settings.categories?.length ?? 0) === 0;
             const nextBookingTypes = shouldDisableActivities
@@ -236,12 +244,23 @@ export function LandingSheets({
             setGearActivitiesSheetOpen(false);
             closeSheet();
             addToast('Activity preferences saved', 'confirmation');
-            // Trigger plan regeneration if plan is active
-            const isActive = PLAN_ACTIVE_STATES.has(planViewState);
-            if (isActive) {
+            // Trigger full graph pipeline — activity category changes require
+            // specialist re-dispatch (expand-itinerary only refreshes tiles
+            // with existing strategy sections).
+            const currentPVS = useDocumentStore.getState().document?.plan_view_state;
+            if (PLAN_ACTIVE_STATES.has(currentPVS ?? '')) {
               onSendMessage(GENERATE_PLAN_TRIGGER);
+            } else {
+              // Not in an active plan state — clear early visual flag
+              if (willRebuild) {
+                useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+              }
             }
           } catch {
+            // Reset early flag on error
+            if (willRebuild) {
+              useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+            }
             addToast('Failed to save — please try again', 'error');
           }
         }}

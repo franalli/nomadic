@@ -407,6 +407,8 @@ Example: current trip Feb 15–25, "extend by 5 days" → end_date: {current_yea
   - "shorten to 5 days" → end_date = start_date + 4 days
   - "make it 2 weeks" → end_date = start_date + 13 days
 - **duration_days**: If they say "for a week" = 7, "5 days" = 5
+  - "weekend trip" / "weekend getaway" → duration_days = 3 (Fri-Sun or Sat-Mon)
+  - "long weekend" → duration_days = 4
 - **adults/children**: Number of travelers
 - **budget**: Amount in USD (e.g., "$5000" = 5000, "5k" = 5000)
 

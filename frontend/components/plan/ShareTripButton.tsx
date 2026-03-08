@@ -65,7 +65,7 @@ export function ShareTripButton({ className }: ShareTripButtonProps) {
         DS.textSize.micro,
         'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-bold uppercase tracking-widest',
         'text-muted-foreground hover:bg-accent hover:text-foreground',
-        'disabled:pointer-events-none disabled:opacity-60',
+        'disabled:pointer-events-none disabled:opacity-50',
         className
       )}
       aria-label="Share trip"

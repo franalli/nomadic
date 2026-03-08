@@ -216,7 +216,7 @@ export function CategorySection({
                   className={cn(
                     'mt-3 w-full py-2 rounded-lg text-sm font-medium transition-colors',
                     isSaved
-                      ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
+                      ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/25'
                       : 'bg-zinc-100 dark:bg-white/5 hover:bg-zinc-200 dark:hover:bg-white/10 text-zinc-900 dark:text-white'
                   )}
                 >

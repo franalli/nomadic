@@ -529,14 +529,26 @@ def _extract_country_code(data: dict) -> str | None:
     return None
 
 
-# Module-level country code cache (populated by geocode calls)
-_country_code_cache: dict[str, str] = {}
+# Module-level country code cache (populated by geocode calls).
+# TTLCache (24h, max 512) prevents unbounded growth; protected by _geocode_thread_lock.
+_country_code_cache: TTLCache = TTLCache(maxsize=512, ttl=86400)
 
 
 def get_country_code(destination: str) -> str | None:
     """Return the cached ISO country code for a destination, or None."""
     key = destination.lower().strip()
-    return _country_code_cache.get(key)
+    with _geocode_thread_lock:
+        return _country_code_cache.get(key)
+
+
+def get_geocache_stats() -> dict[str, int]:
+    """Return geocode + country_code cache stats for admin observability."""
+    return {
+        "geocode_cache_size": len(_geocode_cache),
+        "geocode_cache_maxsize": _geocode_cache.maxsize,
+        "country_code_cache_size": len(_country_code_cache),
+        "country_code_cache_maxsize": _country_code_cache.maxsize,
+    }
 
 
 async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
@@ -1122,7 +1134,7 @@ class GooglePlacesHotelProvider(Provider):
                     currency=ctx.currency or "USD",
                     price_basis="per_night",
                     is_estimate_only=True,
-                    deeplink_url=deeplink,
+                    deeplink=deeplink,
                     rating=rating,
                     review_count=review_count,
                     location_label=address,
@@ -1291,7 +1303,7 @@ class GooglePlacesActivityProvider(Provider):
                     currency=ctx.currency or "USD",
                     price_basis="per_trip",
                     is_estimate_only=True,
-                    deeplink_url=deeplink,
+                    deeplink=deeplink,
                     rating=rating,
                     review_count=review_count,
                     location_label=address,

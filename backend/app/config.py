@@ -165,6 +165,12 @@ class Settings(BaseSettings):
         os.getenv("UNSPLASH_PREFETCH_STREAK_THRESHOLD", "2")
     )
 
+    # Viator Affiliate API (Basic Access)
+    viator_api_key: str = os.getenv("VIATOR_API_KEY", "")
+    viator_enabled: bool = os.getenv("VIATOR_ENABLED", "false").lower() == "true"
+    viator_cache_ttl_hours: int = int(os.getenv("VIATOR_CACHE_TTL_HOURS", "24"))
+    viator_api_url: str = os.getenv("VIATOR_API_URL", "https://api.viator.com/partner")
+
     # =============================================================================
     # Cache Configuration
     # =============================================================================

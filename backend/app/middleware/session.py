@@ -177,6 +177,7 @@ UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # Paths that are exempt from CSRF protection (health checks, docs only)
 CSRF_EXEMPT_PATHS = {
     "/health",
+    "/api/session",  # DELETE only destroys caller's own session — safe to exempt
     "/docs",
     "/redoc",
     "/openapi.json",

@@ -182,7 +182,7 @@ class CuratedProvider(Provider):
             currency=hotel.get("currency", ctx.currency or "USD"),
             price_basis="per_night",
             is_estimate_only=True,
-            deeplink_url=hotel.get("booking_url")
+            deeplink=hotel.get("booking_url")
             or _search_deeplink(hotel.get("name", "Hotel"), self.destination_key, "hotel"),
             rating=float(hotel["rating"]) if hotel.get("rating") else None,
             location_label=hotel.get("location"),
@@ -236,7 +236,7 @@ class CuratedProvider(Provider):
             currency=activity.get("currency", ctx.currency or "USD"),
             price_basis="per_person",
             is_estimate_only=True,
-            deeplink_url=activity.get("booking_url")
+            deeplink=activity.get("booking_url")
             or _search_deeplink(
                 activity.get("title", "Activity"), self.destination_key, "activity"
             ),
