@@ -172,9 +172,13 @@ class Settings(BaseSettings):
         os.getenv("UNSPLASH_PREFETCH_STREAK_THRESHOLD", "2")
     )
 
-    # GetYourGuide API (reserved, not yet active)
+    # GetYourGuide Partner API
     get_your_guide_api_key: str = os.getenv("GET_YOUR_GUIDE_API_KEY", "")
-    get_your_guide_api_url: str = os.getenv("GET_YOUR_GUIDE_API_URL", "")
+    get_your_guide_enabled: bool = os.getenv("GET_YOUR_GUIDE_ENABLED", "false").lower() == "true"
+    get_your_guide_cache_ttl_hours: int = int(os.getenv("GET_YOUR_GUIDE_CACHE_TTL_HOURS", "24"))
+    get_your_guide_api_url: str = os.getenv(
+        "GET_YOUR_GUIDE_API_URL", "https://api.getyourguide.com/1"
+    )
 
     # Viator Affiliate API (Basic Access)
     viator_api_key: str = os.getenv("VIATOR_API_KEY", "")
@@ -261,6 +265,14 @@ class Settings(BaseSettings):
     # Provider-specific daily cap for Google Places API spend (USD).
     spend_guard_places_daily_cap_usd: float = float(
         os.getenv("SPEND_GUARD_PLACES_DAILY_CAP_USD", "2.00")
+    )
+    # Partner API (Viator, GYG) estimated per-call cost (nominal for free-tier tracking).
+    spend_guard_partner_estimated_call_usd: float = float(
+        os.getenv("SPEND_GUARD_PARTNER_ESTIMATED_CALL_USD", "0.005")
+    )
+    # Provider-specific daily cap for partner API spend (USD).
+    spend_guard_partner_daily_cap_usd: float = float(
+        os.getenv("SPEND_GUARD_PARTNER_DAILY_CAP_USD", "1.0")
     )
 
     # Validation prewarm destinations (comma-separated, e.g. "Paris,Tokyo")

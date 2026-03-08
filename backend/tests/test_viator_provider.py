@@ -19,8 +19,8 @@ def _reset_viator_state():
     """Reset module-level caches and circuit breaker between tests."""
     import app.services.viator_provider as vp
 
-    vp._viator_circuit_failures = 0
-    vp._viator_circuit_open_until = 0.0
+    vp._viator_cb._failures = 0
+    vp._viator_cb._open_until = 0.0
     vp._dest_cache._cache.clear()
     vp._match_cache._cache.clear()
     vp._browse_viator_cache._cache.clear()
@@ -105,10 +105,12 @@ class TestResolveDestinationId:
             assert result == 99
 
     async def test_circuit_open_returns_none(self):
+        import time
+
         import app.services.viator_provider as vp
 
-        vp._viator_circuit_failures = 10
-        vp._viator_circuit_open_until = 9999999999.0
+        vp._viator_cb._failures = 10
+        vp._viator_cb._open_until = time.monotonic() + 9999
         result = await resolve_destination_id("Paris")
         assert result is None
 
@@ -129,10 +131,12 @@ class TestSearchFreetext:
             assert results[0]["productCode"] == "12345P1"
 
     async def test_circuit_open_returns_empty(self):
+        import time
+
         import app.services.viator_provider as vp
 
-        vp._viator_circuit_failures = 10
-        vp._viator_circuit_open_until = 9999999999.0
+        vp._viator_cb._failures = 10
+        vp._viator_cb._open_until = time.monotonic() + 9999
         results = await search_freetext("test", None)
         assert results == []
 
@@ -205,30 +209,33 @@ class TestMatchActivityToViator:
 @pytest.mark.asyncio
 class TestCircuitBreaker:
     async def test_circuit_opens_after_threshold_failures(self):
-        """Circuit breaker should open after _CB_THRESHOLD consecutive failures."""
+        """Circuit breaker should open after failure_threshold consecutive failures."""
         import app.services.viator_provider as vp
 
-        for _ in range(vp._CB_THRESHOLD):
-            vp._record_viator_circuit_failure()
+        cb = vp._viator_cb
+        for _ in range(cb.failure_threshold):
+            cb.record_failure()
 
-        assert vp._is_viator_circuit_open() is True
+        assert cb.is_open() is True
 
     async def test_circuit_closed_before_threshold(self):
         """Circuit should remain closed below threshold."""
         import app.services.viator_provider as vp
 
-        for _ in range(vp._CB_THRESHOLD - 1):
-            vp._record_viator_circuit_failure()
+        cb = vp._viator_cb
+        for _ in range(cb.failure_threshold - 1):
+            cb.record_failure()
 
-        assert vp._is_viator_circuit_open() is False
+        assert cb.is_open() is False
 
     async def test_success_resets_circuit(self):
         """Recording a success should reset the failure counter."""
         import app.services.viator_provider as vp
 
-        for _ in range(vp._CB_THRESHOLD - 1):
-            vp._record_viator_circuit_failure()
+        cb = vp._viator_cb
+        for _ in range(cb.failure_threshold - 1):
+            cb.record_failure()
 
-        vp._record_viator_circuit_success()
-        assert vp._viator_circuit_failures == 0
-        assert vp._is_viator_circuit_open() is False
+        cb.record_success()
+        assert cb._failures == 0
+        assert cb.is_open() is False

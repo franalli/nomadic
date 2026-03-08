@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import Image from 'next/image';
 import React, { useEffect, useId, useMemo, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { DS } from '@/lib/design-system';
@@ -99,9 +100,13 @@ export function StrategyHero({
   const [enrichmentErrorCode, setEnrichmentErrorCode] = useState<string | null>(null);
   const [enrichmentRetryNonce, setEnrichmentRetryNonce] = useState(0);
   // Track document existence — becomes false on session reset, cancelling the poller
-  const documentExists = useDocumentStore((s) => s.document !== null);
-  const messageSendNonce = useDocumentStore((s) => s.messageSendNonce);
-  const storeDestination = useDocumentStore((s) => s.document?.trip_inputs?.destination ?? null);
+  const { documentExists, messageSendNonce, storeDestination } = useDocumentStore(
+    useShallow((s) => ({
+      documentExists: s.document !== null,
+      messageSendNonce: s.messageSendNonce,
+      storeDestination: s.document?.trip_inputs?.destination ?? null,
+    }))
+  );
 
   const displaySection = enrichedSection ?? section;
   const hasTravelIntelligence = Boolean(

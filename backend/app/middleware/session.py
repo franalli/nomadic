@@ -96,6 +96,10 @@ class SessionMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
+        # Short-circuit OPTIONS preflight — no session/CSRF side effects
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         # Read existing cookies
         session_id = request.cookies.get(SESSION_COOKIE_NAME)
         csrf_token = request.cookies.get(CSRF_COOKIE_NAME)

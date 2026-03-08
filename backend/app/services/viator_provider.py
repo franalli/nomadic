@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from threading import Lock
 from typing import Any
 
@@ -19,6 +18,8 @@ import httpx
 
 from app.config import settings
 from app.services.cache_core import MemoryCache
+from app.services.circuit_breaker import CircuitBreaker
+from app.services.spend_guard import SpendLimitExceeded, reserve_partner_api_spend_or_raise
 
 logger = logging.getLogger(__name__)
 
@@ -53,45 +54,7 @@ async def close_viator_http_client() -> None:
 
 
 # -- Circuit breaker ----------------------------------------------------------
-_CB_THRESHOLD = 5
-_CB_OPEN_SECONDS = 120
-
-_viator_circuit_lock = Lock()
-_viator_circuit_failures: int = 0
-_viator_circuit_open_until: float = 0.0
-
-
-def _is_viator_circuit_open() -> bool:
-    global _viator_circuit_failures, _viator_circuit_open_until
-    with _viator_circuit_lock:
-        if _viator_circuit_failures < _CB_THRESHOLD:
-            return False
-        if time.time() >= _viator_circuit_open_until:
-            # Half-open: allow one probe request
-            _viator_circuit_failures = _CB_THRESHOLD - 1
-            _viator_circuit_open_until = 0.0
-            return False
-        return True
-
-
-def _record_viator_circuit_failure() -> None:
-    global _viator_circuit_failures, _viator_circuit_open_until
-    with _viator_circuit_lock:
-        _viator_circuit_failures += 1
-        if _viator_circuit_failures >= _CB_THRESHOLD:
-            _viator_circuit_open_until = time.time() + _CB_OPEN_SECONDS
-            logger.warning(
-                "[VIATOR] Circuit breaker OPEN after %d failures, cooldown %ds",
-                _viator_circuit_failures,
-                _CB_OPEN_SECONDS,
-            )
-
-
-def _record_viator_circuit_success() -> None:
-    global _viator_circuit_failures, _viator_circuit_open_until
-    with _viator_circuit_lock:
-        _viator_circuit_failures = 0
-        _viator_circuit_open_until = 0.0
+_viator_cb = CircuitBreaker("viator", failure_threshold=5, open_seconds=120)
 
 
 # -- Caches -------------------------------------------------------------------
@@ -146,9 +109,10 @@ async def resolve_destination_id(destination: str) -> int | None:
     taxonomy = _dest_cache.get(cache_key)
 
     if taxonomy is None:
-        if _is_viator_circuit_open():
+        if _viator_cb.is_open():
             return None
         try:
+            reserve_partner_api_spend_or_raise("viator")
             record_viator_usage("request")
             client = await _get_viator_client()
             resp = await client.get(
@@ -165,11 +129,14 @@ async def resolve_destination_id(destination: str) -> int | None:
                 if d.get("destinationName") and d.get("destinationId")
             }
             _dest_cache.set(cache_key, taxonomy)
-            _record_viator_circuit_success()
+            _viator_cb.record_success()
             record_viator_usage("success")
             logger.debug("[VIATOR] Cached %d destinations in taxonomy", len(taxonomy))
+        except SpendLimitExceeded as exc:
+            logger.warning("[VIATOR] Spend guard blocked destinations call: %s", exc)
+            return None
         except Exception as e:
-            _record_viator_circuit_failure()
+            _viator_cb.record_failure()
             record_viator_usage("error")
             logger.debug("[VIATOR] Failed to fetch destinations: %s", e)
             return None
@@ -209,10 +176,11 @@ async def search_freetext(
     count: int = 3,
 ) -> list[dict]:
     """Freetext search for Viator products."""
-    if _is_viator_circuit_open():
+    if _viator_cb.is_open():
         return []
 
     try:
+        reserve_partner_api_spend_or_raise("viator")
         record_viator_usage("request")
         client = await _get_viator_client()
         payload: dict[str, Any] = {
@@ -234,11 +202,14 @@ async def search_freetext(
         resp.raise_for_status()
         data = resp.json()
         products = data.get("products", {}).get("results", [])
-        _record_viator_circuit_success()
+        _viator_cb.record_success()
         record_viator_usage("success")
         return products
+    except SpendLimitExceeded as exc:
+        logger.warning("[VIATOR] Spend guard blocked freetext search: %s", exc)
+        return []
     except Exception as e:
-        _record_viator_circuit_failure()
+        _viator_cb.record_failure()
         record_viator_usage("error")
         logger.debug("[VIATOR] Freetext search failed: %s", e)
         return []
@@ -250,10 +221,11 @@ async def search_products_by_destination(
     count: int = 10,
 ) -> list[dict]:
     """Search top-selling products for a destination."""
-    if _is_viator_circuit_open():
+    if _viator_cb.is_open():
         return []
 
     try:
+        reserve_partner_api_spend_or_raise("viator")
         record_viator_usage("request")
         client = await _get_viator_client()
         payload: dict[str, Any] = {
@@ -272,11 +244,14 @@ async def search_products_by_destination(
         resp.raise_for_status()
         data = resp.json()
         products = data.get("products", [])
-        _record_viator_circuit_success()
+        _viator_cb.record_success()
         record_viator_usage("success")
         return products
+    except SpendLimitExceeded as exc:
+        logger.warning("[VIATOR] Spend guard blocked product search: %s", exc)
+        return []
     except Exception as e:
-        _record_viator_circuit_failure()
+        _viator_cb.record_failure()
         record_viator_usage("error")
         logger.debug("[VIATOR] Product search failed: %s", e)
         return []
@@ -423,16 +398,60 @@ async def match_activity_to_viator(
 
     dest_id = await resolve_destination_id(destination)
 
-    # Freetext search with full title + destination
-    query = f"{activity_title} {destination}"
+    # Strip location prefix from specialist-generated names
+    # e.g. "Nusa Penida: North Coast Drift Dive" → "North Coast Drift Dive"
+    clean_title = activity_title
+    for sep in (":", " — ", " - "):
+        if sep in clean_title:
+            parts = clean_title.split(sep, 1)
+            # Only strip if prefix is short (likely a location, not the activity)
+            if len(parts[0].split()) <= 4:
+                clean_title = parts[1].strip()
+                break
+    if not clean_title:
+        clean_title = activity_title
+
+    # Freetext search with cleaned title + destination
+    query = f"{clean_title} {destination}"
     products = await search_freetext(query, dest_id, currency, count=3)
 
     # Retry with shortened title if empty
     if not products:
-        words = activity_title.split()
+        words = clean_title.split()
         if len(words) > 4:
             short_query = f"{' '.join(words[:4])} {destination}"
             products = await search_freetext(short_query, dest_id, currency, count=3)
+
+    # Last resort: extract core activity keyword and search broadly
+    if not products:
+        _KW_MAP = {
+            "div": "scuba diving",
+            "snorkel": "snorkeling",
+            "surf": "surfing",
+            "hik": "hiking",
+            "trek": "trekking",
+            "climb": "climbing",
+            "sail": "sailing",
+            "kayak": "kayaking",
+            "raft": "rafting",
+            "bike": "biking",
+            "cycl": "cycling",
+            "ski": "skiing",
+            "yoga": "yoga",
+            "cook": "cooking class",
+            "safari": "safari",
+            "whale": "whale watching",
+        }
+        title_lower = clean_title.lower()
+        for stem, kw in _KW_MAP.items():
+            if stem in title_lower:
+                products = await search_freetext(
+                    f"{kw} {destination}",
+                    dest_id,
+                    currency,
+                    count=3,
+                )
+                break
 
     # Drop multi-day tours (raw duration > 8h)
     products = [
@@ -453,13 +472,45 @@ async def match_activity_to_viator(
     best_product = None
     for p in products:
         p_title = p.get("title", "")
-        score = fuzz.partial_ratio(activity_title.lower(), p_title.lower())
+        score = fuzz.token_set_ratio(clean_title.lower(), p_title.lower())
         if score > best_score:
             best_score = score
             best_product = p
-    if best_score < 65 or best_product is None:
-        _match_cache.set(cache_key, _NO_MATCH)
-        return None
+    if best_score < 55 or best_product is None:
+        # Loose fallback: accept best product if it shares an activity keyword
+        # with the query (e.g., "drift dive" and "scuba diving" both contain "div")
+        _ACTIVITY_STEMS = {
+            "div",
+            "snorkel",
+            "surf",
+            "hik",
+            "trek",
+            "climb",
+            "sail",
+            "kayak",
+            "raft",
+            "bike",
+            "cycl",
+            "ski",
+            "yoga",
+            "cook",
+            "safari",
+            "whale",
+            "dolphin",
+        }
+        query_lower = clean_title.lower()
+        product_title = (best_product.get("title", "") if best_product else "").lower()
+        shared = any(stem in query_lower and stem in product_title for stem in _ACTIVITY_STEMS)
+        if shared and best_product:
+            logger.info(
+                "[VIATOR] Loose match (score=%d, shared stem): '%s' → '%s'",
+                best_score,
+                clean_title,
+                best_product.get("title", ""),
+            )
+        else:
+            _match_cache.set(cache_key, _NO_MATCH)
+            return None
     tile = viator_product_to_tile(best_product, destination)
 
     _match_cache.set(cache_key, tile)
@@ -500,6 +551,28 @@ async def search_viator_for_destination(
         return []
 
     tiles = [viator_product_to_tile(p, destination) for p in products]
+
+    # Geo fallback: use destination center for tiles missing coordinates
+    geo_null_tiles = [t for t in tiles if not t.get("geo")]
+    if geo_null_tiles:
+        try:
+            from app.tile_service.google_places_provider import (
+                _geocode_destination_async,
+            )
+
+            coords = await _geocode_destination_async(destination)
+            if coords:
+                dest_geo = {"lat": coords[0], "lng": coords[1]}
+                for t in geo_null_tiles:
+                    t["geo"] = dict(dest_geo)
+                logger.debug(
+                    "[VIATOR] Geo fallback: %d tiles got dest coords for %s",
+                    len(geo_null_tiles),
+                    destination,
+                )
+        except Exception as exc:
+            logger.debug("[VIATOR] Geo fallback failed for %s: %s", destination, exc)
+
     _browse_viator_cache.set(cache_key, tiles)
     logger.debug("[VIATOR] Cached %d browse tiles for %s", len(tiles), destination)
     return tiles

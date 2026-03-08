@@ -352,7 +352,7 @@ export const MapMarkerItem = memo(function MapMarkerItem({
               <span className="font-medium">{item.title}</span>
             </div>
             {hasMeta && (
-              <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-zinc-300">
+              <div className={`mt-0.5 flex items-center gap-1.5 ${DS.textSize.micro} text-zinc-300`}>
                 {categoryLabel && <span>{categoryLabel}</span>}
                 {intensityLabel && (
                   <>

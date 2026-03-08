@@ -29,7 +29,7 @@ from sqlalchemy import select, update
 
 from app.config import settings
 from app.placeholders import get_placeholder_image
-from app.planner.hashing import make_cache_key, stable_hash_short
+from app.planner.hashing import make_cache_key, stable_hash
 from app.schemas import Geo, Tile
 from app.services.cache_core import MemoryCache, l2_upsert
 from app.services.spend_guard import SpendLimitExceeded, reserve_places_spend_or_raise
@@ -1438,7 +1438,7 @@ def _retry_after_seconds(header: str | None) -> float | None:
 def _enrich_cache_key(title: str, destination: str) -> str:
     title_norm = _normalize_title_for_cache(title) or "unknown"
     dest_norm = _normalize_for_cache(destination) or "unknown"
-    query_sig = stable_hash_short(
+    query_sig = stable_hash(
         {
             "text_query": f"{title_norm} {dest_norm}".strip(),
             "page_size": 1,

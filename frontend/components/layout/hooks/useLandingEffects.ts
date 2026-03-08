@@ -15,7 +15,9 @@
 import { useEffect, useMemo, useRef } from 'react';
 
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
-import { isFraming } from '@/components/plan/planStateHelpers';
+// Note: isFraming boolean is now passed as a param from useLandingDerived,
+// rather than calling isFraming(planViewState) which would check for the
+// fabricated 'S1_FRAMING' state.
 import { getTopicLabel } from '@/components/plan/stages/StrategyHeroUtils';
 import { useSpecialistDeepLink } from '@/hooks/useSpecialistDeepLink';
 import { fetchDestinationImage } from '@/lib/api';
@@ -30,7 +32,9 @@ import type { PlanViewState } from '@/types/plan-envelope';
 
 export interface UseLandingEffectsParams {
   tripInputs: DocumentTripInputs;
-  planViewState: PlanViewState;
+  planViewState: PlanViewState | null;
+  /** UI loading signal: backend state not yet received but generation is active. */
+  isFraming: boolean;
   docExecutedTopics: string[] | undefined;
   hasBranchesReady: boolean;
   hasStrategyContent: boolean;
@@ -68,7 +72,8 @@ export interface UseLandingEffectsResult {
 
 export function useLandingEffects({
   tripInputs,
-  planViewState,
+  planViewState: _planViewState,
+  isFraming,
   docExecutedTopics,
   hasBranchesReady,
   hasStrategyContent,
@@ -198,13 +203,13 @@ export function useLandingEffects({
   // ─── Auto-switch to Plan view when framing ─────────────────────────────
 
   useEffect(() => {
-    if (isFraming(planViewState)) {
+    if (isFraming) {
       if (!isDesktop) {
         mobileNavigateToPlan();
       }
       setActiveView('planning');
     }
-  }, [isDesktop, planViewState, mobileNavigateToPlan, setActiveView]);
+  }, [isDesktop, isFraming, mobileNavigateToPlan, setActiveView]);
 
   // ─── Mobile badge: plan content updated while user is on chat page ─────
 

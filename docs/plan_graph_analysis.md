@@ -43,7 +43,7 @@ Coordinator-driven trip planning system with deterministic step planning in Pyth
 | --- | --- | --- |
 | Coordinator step types | 7 | `classify`, `dispatch_specialists`, `search_tiles`, `build_itinerary`, `generate_response`, `local_intel`, `short_circuit` |
 | New planner modules | 3 | `coordinator.py`, `conversationalist.py`, `chip_generator.py` |
-| Coordinator schemas | 6 | `ChangeType`, `ClassifierOutput`, `TripBrief`, `SpecialistPlan`, `ReplanRequest`, `ExecutionPlan` |
+| Coordinator protocol types | 11 | `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `TripBrief`, `SpecialistDayPlan`, `SpecialistTransit`, `SpecialistConstraintOutput`, `SpecialistPlan`, `ReplanRequest`, `ExecutionStep`, `ExecutionPlan` |
 
 > **Note:** `ItineraryBuilder` remains pure Python (no LLM) and is called from coordinator `_build_itinerary()` and `/api/expand-itinerary`.
 
@@ -70,7 +70,6 @@ backend/app/planner/
 ├── coordinator.py           # Deterministic turn planner + step executor + envelope builder
 ├── hashing.py               # Stable hashing utilities (make_cache_key, field_hash)
 ├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing) + extract_token_usage(), resolve_schema_refs()
-├── patterns_registry.py     # Shared regex/keyword patterns (BUDGET_PATTERNS, TRAVELER_PATTERNS, SETTINGS_KEYWORDS)
 ├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
 ├── test_mode.py             # Test mode detection
 #   Frontend mirror: frontend/lib/specialists.ts (colors, icons, keywords, display names)
@@ -92,8 +91,10 @@ backend/app/planner/
 │   ├── __init__.py          # Services package
 │   ├── admin_utils.py       # Cache management, debugging, observability, startup validation
 │   ├── feasibility_service.py # Specialist feasibility checks
+│   ├── gyg_provider.py      # GetYourGuide browse/match provider (client, cache, circuit breaker, tile conversion)
 │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed with state caching)
 │   ├── itinerary_adapter.py # Thin bridge: GraphState -> ItineraryBuilder
+│   ├── partner_enrichment.py # Unified Viator + GYG pre-build activity enrichment
 │   ├── section_builder.py   # Strategy section CRUD (upsert, anchor sort, builders)
 │   ├── state_serde.py       # State serialization: GraphState <-> session_state + NomadicAgentState <-> agent state
 │   └── viator_provider.py   # Viator affiliate browse/match provider (client, cache, circuit breaker, tile conversion)
@@ -311,7 +312,7 @@ Flight/hotel/activity fetching with safety logic.
 - General-only trips (no specialist/categories) call `browse_activities()` across default categories to seed larger activity pools for long itineraries.
 - Experience tiles are stashed into `metadata["browseable_activities"]`, and Google Places backfill now propagates rating/review_count/deeplink when available.
 - When generated Tier 2 tiles are below expected density (`free_days * activities_per_day`), logistics executes a browse fallback using mapped alternative categories, appends successful backfill tiles, and preserves them in browseable activity metadata.
-- `_enrich_tiles_with_viator()` is an optional pre-build enrichment pass for activity tiles. When `VIATOR_ENABLED=true` and a key is configured, it matches generated activity titles against Viator, throttles requests with `asyncio.Semaphore(5)`, and mutates tiles in place with live pricing, ratings, images, affiliate deeplinks, `partner="viator"`, `provider="viator"`, and Viator metadata.
+- `enrich_tiles_with_partners()` (in `services/partner_enrichment.py`) is an optional pre-build enrichment pass for activity tiles. When Viator and/or GYG are enabled, it searches both providers in parallel via `asyncio.gather`, picks the best match per tile (highest rating, lowest price tiebreaker), throttles requests with `asyncio.Semaphore(5)`, and mutates tiles in place with live pricing, ratings, images, affiliate deeplinks, partner/provider metadata.
 
 ### ConstraintGuard (`constraint_guard.py`)
 
@@ -433,13 +434,14 @@ blocks that were actually placed in the itinerary and lack a `google_place_id`, 
 `path_label="post_build_enrich"`. This defers expensive Google Places API calls to after placement, so only placed blocks
 (typically 3-5) incur API cost instead of all candidate tiles (10+). Enriched fields (coordinates, google_place_id, deeplink,
 signed photo URL) are written back directly to the day_card blocks.
-If a block already carries Viator deeplink/image data, Google Places enrichment is limited to coordinate/place-id style backfill and does not overwrite the affiliate booking surface.
+If a block already carries partner deeplink/image data (Viator or GYG), Google Places enrichment is limited to coordinate/place-id style backfill and does not overwrite the affiliate booking surface.
 
-**Viator browse/enrichment path**
+**Partner browse/enrichment path**
 
-- `activity_browser.py` now tries `search_viator_for_destination()` first for Browse Activities when Viator is enabled, then falls back to Google Places on empty/error.
-- `viator_provider.py` owns the partner integration: shared async `httpx` client, 5-failure/120-second circuit breaker, destination taxonomy cache, browse cache, title-match cache, and tile conversion to Nomadic activity tiles.
-- `lifespan.py` closes the Viator HTTP client on shutdown alongside the Google Places clients.
+- `activity_browser.py` now tries `search_viator_for_destination()` first for Browse Activities, supplements with `search_gyg_for_destination()` when partner inventory is thin, dedupes partner results by title, then uses Google Places to backfill remaining slots.
+- `viator_provider.py` and `gyg_provider.py` own the live affiliate integrations: each keeps a shared async `httpx` client, an in-memory browse/match cache, and a 5-failure/120-second circuit breaker. `gyg_provider.py` also normalizes GYG `long` coordinates to `{lat, lng}` and filters out multi-day tours (>8h).
+- `partner_enrichment.py` replaces the old Viator-only pre-build pass. It queries enabled partners in parallel, picks the best match per tile by rating, then lower price, with Viator as the final tiebreaker, and mutates the activity tile in place with provider/deeplink/image/price metadata.
+- `lifespan.py` closes both the Viator and GYG async clients on shutdown alongside the Google Places clients.
 
 **Key Insight:** The no-fly buffer is enforced in two layers. `ItineraryBuilder` may auto-truncate the number of diving activities to the available pre-departure dive slots, and later placement logic blocks diving too close to departure. It does not, however, consume total trip capacity for unrelated specialists: later trip days can still host hiking or other non-diving activities even when diving is no longer placeable.
 
@@ -680,8 +682,6 @@ Pydantic structured output is used for LLM calls that need **guaranteed schema e
 3. **`parsed is None` guard** -- Every call site checks `if parsed is None: raise ValueError(...)`. No silent fallback to empty data.
 4. **`extract_token_usage()`** -- Centralized in `llm_factory.py`. Handles `include_raw=True` dict unwrapping, LangChain 0.2+ `usage_metadata`, and `response_metadata["token_usage"]` fallback.
 5. **Gemini schema pipeline** -- Use `gemini_safe_schema(strip_unsupported_schema_keys(resolve_schema_refs(schema)))` for Gemini function-calling compatibility. `resolve_schema_refs(schema)` alone is not sufficient.
-6. **`patterns_registry.py`** -- Shared regex/keyword lists used by multiple planner modules. Centralizes `BUDGET_PATTERNS`, `TRAVELER_PATTERNS`, and `SETTINGS_KEYWORDS`.
-
 ---
 
 ## State Models

@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { PLAN_ACTIVE_STATES } from '@/components/plan/planStateHelpers';
 import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
@@ -95,8 +96,12 @@ export function ChatModuleSheets({
 }: ChatModuleSheetsProps) {
   const [activityUserSaved, setActivityUserSaved] = useState(false);
   const sheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const patchDocument = useDocumentStore((s) => s.patchDocument);
-  const commitTripInputs = useDocumentStore((s) => s.commitTripInputs);
+  const { patchDocument, commitTripInputs } = useDocumentStore(
+    useShallow((s) => ({
+      patchDocument: s.patchDocument,
+      commitTripInputs: s.commitTripInputs,
+    }))
+  );
 
   useEffect(() => {
     return () => {

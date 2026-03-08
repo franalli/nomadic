@@ -106,7 +106,6 @@ backend/
 │   │   ├── coordinator.py      # Deterministic turn planner + step execution + envelope builder
 │   │   ├── hashing.py          # Hash utilities
 │   │   ├── llm_factory.py      # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
-│   │   ├── patterns_registry.py # Shared regex/keyword patterns (budget, travelers, settings)
 │   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
 │   │   ├── test_mode.py        # Test mode utilities
 │   │   │
@@ -157,10 +156,13 @@ backend/
 │   │
 │   ├── services/
 │   │   ├── __init__.py
-│   │   ├── activity_browser.py      # On-demand activity search for Browse Activities sheet (Viator-first, Google Places fallback)
+│   │   ├── activity_browser.py      # On-demand activity search for Browse Activities sheet (Viator first, GYG supplement, Google Places backfill/fallback)
 │   │   ├── cache_core.py            # Shared MemoryCache primitive (TTLCache + RLock + stats) + l2_upsert()
+│   │   ├── circuit_breaker.py       # Shared async circuit breaker used by partner/provider integrations
 │   │   ├── experience_generator.py  # Tier 2 experience tile generation via settings.experience_model (L1+L2 cache)
+│   │   ├── gyg_provider.py          # GetYourGuide affiliate browse/match provider with cache + circuit breaker
 │   │   ├── itinerary_builder.py     # Itinerary construction service
+│   │   ├── partner_enrichment.py    # Unified Viator + GYG pre-build tile enrichment
 │   │   ├── regen_strategy.py        # Selective regeneration strategy computation
 │   │   ├── router_cache.py          # Thread-safe L1 cache for router extraction (context-aware)
 │   │   ├── sharing.py               # Shared-trip snapshot building + metadata helpers
@@ -183,7 +185,8 @@ backend/
 │   │   ├── mock_provider.py          # Mock data for testing
 │   │   ├── models.py                 # Tile models
 │   │   ├── provider_base.py          # Base provider class
-│   │   └── service.py                # Tile service orchestrator (3-tier cascade: Curated → Google Places → Mock)
+│   │   ├── service.py                # Tile service orchestrator (3-tier cascade: Curated → Google Places → Mock)
+│   │   └── title_utils.py            # Title normalization helpers for provider matching/deduping
 │   │
 │   └── tools/                  # LangGraph tools
 │       ├── __init__.py
@@ -233,7 +236,6 @@ backend/
 │   ├── test_cross_domain_constraints.py  # Cross-domain constraint tests
 │   ├── test_expert_constraints.py        # Expert-constraint schema/model alignment
 │   ├── test_demo_dataset.py              # Demo data tests
-│   ├── test_patterns_registry.py         # Specialist pattern registry tests
 │   ├── test_endpoint_contract.py         # Endpoint response contract tests
 │   ├── test_experience_generator.py      # Experience generator tests
 │   ├── test_fill_day_coordinates.py      # Fill-day coordinate + constraint mapping tests
@@ -630,6 +632,7 @@ frontend/
 
 ```
 docs/
+├── data-extraction-matrix.md   # Provider field-priority notes for Viator vs GYG vs Google Places
 ├── data-contracts.md           # API routes, schemas, state store contracts
 ├── design-system.md            # Frontend styling SSoT
 ├── key_files/                  # Reference snapshots of key source files (backend + frontend)

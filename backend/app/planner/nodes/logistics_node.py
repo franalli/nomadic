@@ -67,15 +67,15 @@ def _sanitize_tile_geo(tile: dict[str, Any]) -> dict[str, Any]:
     if isinstance(meta, dict):
         meta_geo = meta.get("geo")
         if isinstance(meta_geo, dict):
+            # Normalize legacy "lon" → "lng"
             if "lon" in meta_geo and "lng" not in meta_geo:
                 meta_geo = dict(meta_geo)
                 meta_geo["lng"] = meta_geo.pop("lon")
+            if meta_geo.get("lat") is None or meta_geo.get("lng") is None:
+                meta_geo = None
+            if meta_geo is not meta.get("geo"):
                 meta = dict(meta)
                 meta["geo"] = meta_geo
-                tile["meta"] = meta
-            if meta_geo.get("lat") is None or meta_geo.get("lng") is None:
-                meta = dict(meta)
-                meta["geo"] = None
                 tile["meta"] = meta
                 cleaned = True
 
@@ -442,74 +442,6 @@ def _backfill_experience_tiles_from_gp(
             "LOGISTICS",
             f"Backfilled {matched}/{len(experience_tiles)} experience tiles with GP data",
         )
-
-
-async def _enrich_tiles_with_viator(
-    experience_tiles: list[dict],
-    destination: str,
-    currency: str = "USD",
-) -> None:
-    """Enrich experience tiles with Viator data. Mutates in-place.
-
-    Only runs when settings.viator_enabled and settings.viator_api_key.
-    """
-    if not settings.viator_enabled or not settings.viator_api_key:
-        return
-    if not experience_tiles:
-        return
-
-    from app.services.viator_provider import match_activity_to_viator
-
-    sem = asyncio.Semaphore(5)
-
-    async def _throttled_match(title: str) -> dict | None:
-        async with sem:
-            return await match_activity_to_viator(title, destination, currency)
-
-    filtered = [
-        (i, t)
-        for i, t in enumerate(experience_tiles)
-        if t.get("title")
-        and t.get("provider") != "viator"
-        and not (t.get("meta") or {}).get("viator_product_code")  # already enriched
-    ]
-    tasks = [_throttled_match(t.get("title", "")) for _, t in filtered]
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    matched = 0
-    for (_, tile), result in zip(filtered, results, strict=False):
-        if isinstance(result, Exception) or result is None:
-            continue
-        matched += 1
-        # Merge Viator data onto existing tile
-        if result.get("price_estimate") is not None:
-            tile["price_estimate"] = result["price_estimate"]
-            tile["live_price"] = result.get("live_price")
-            tile["is_estimate_only"] = False
-            tile["currency"] = result.get("currency", currency)
-            tile["price_basis"] = result.get("price_basis", "per_person")
-        if result.get("image_url"):
-            tile["image_url"] = result["image_url"]
-        if result.get("rating") is not None:
-            tile["rating"] = result["rating"]
-        if result.get("review_count") is not None:
-            tile["review_count"] = result["review_count"]
-        if result.get("deeplink") or result.get("deeplink_url"):
-            tile["deeplink"] = result.get("deeplink") or result["deeplink_url"]
-        tile["partner"] = "viator"
-        tile["partner_product_id"] = result.get("partner_product_id", "")
-        tile["provider"] = "viator"
-        meta = tile.get("meta", {})
-        result_meta = result.get("meta", {})
-        if result_meta.get("viator_product_code"):
-            meta["viator_product_code"] = result_meta["viator_product_code"]
-        if result_meta.get("duration_hours"):
-            meta["duration_hours"] = result_meta["duration_hours"]
-        tile["meta"] = meta
-
-    if matched:
-        logger.info("[VIATOR] Enriched %d/%d tiles for %s", matched, len(filtered), destination)
 
 
 # =============================================================================
@@ -2296,7 +2228,7 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
 
     Cap strategy:
     - Mixed Tier1+Tier2 (specialist_days > 0): cap at 4.
-    - Pure Tier2 with strategy context and long free-day horizon (>7 days):
+    - Pure Tier2 with long free-day horizon (>7 days):
       expand cap up to duration-aware ceiling to avoid under-filling long trips.
     - Otherwise: cap at 4.
     """
@@ -2373,13 +2305,10 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
 
     if specialist_days > 0:
         cap = 4
+    elif free_days > 7:
+        cap = min(tile_cap_ceiling, max(4, math.ceil(free_days / len(tier2_cats))))
     else:
-        strategy_sections = state.metadata.get("strategy_sections", [])
-        has_strategy_context = isinstance(strategy_sections, list) and len(strategy_sections) > 0
-        if has_strategy_context and free_days > 7:
-            cap = min(tile_cap_ceiling, max(4, math.ceil(free_days / len(tier2_cats))))
-        else:
-            cap = 4
+        cap = 4
 
     # For APD>1, ensure cap covers the user's explicit density request.
     # Original caps (4 for mixed, 4-12 for pure Tier2) remain unchanged for APD=1.

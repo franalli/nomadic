@@ -329,6 +329,8 @@ export function MiniCardContent({
             </span>
             {tile.deeplink_url && tile.deeplink_url !== '#' && (() => {
               const isViator = tile.deeplink_url.includes('viator.com');
+              const isGYG = tile.deeplink_url.includes('getyourguide.com');
+              const isPartner = isViator || isGYG;
               return (
                 <a
                   href={tile.deeplink_url}
@@ -337,7 +339,7 @@ export function MiniCardContent({
                   onClick={(e) => e.stopPropagation()}
                   className={cn(
                     'inline-flex items-center gap-1 px-2 py-0.5 rounded-full',
-                    'text-[10px] font-bold uppercase tracking-wider',
+                    `${DS.textSize.micro} font-bold uppercase tracking-wider`,
                     'transition-all duration-150 active:scale-95',
                     'bg-emerald-50 border border-emerald-500/30 text-emerald-700',
                     'hover:bg-emerald-100 hover:border-emerald-500/60',
@@ -346,8 +348,8 @@ export function MiniCardContent({
                     'dark:hover:shadow-[0_0_12px_-3px_rgba(16,185,129,0.3)]',
                   )}
                 >
-                  {isViator ? <ExternalLink className="w-3 h-3" /> : <MapPin className="w-3 h-3" />}
-                  {isViator ? 'Book' : 'Map'}
+                  {isPartner ? <ExternalLink className="w-3 h-3" /> : <MapPin className="w-3 h-3" />}
+                  {isPartner ? 'Book' : 'Map'}
                 </a>
               );
             })()}

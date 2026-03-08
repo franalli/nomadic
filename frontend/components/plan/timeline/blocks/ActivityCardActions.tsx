@@ -51,6 +51,8 @@ export function ActivityCardInlineActions({
       {/* External deeplink — emerald glass pill */}
       {deeplink && deeplink !== '' && (() => {
         const isViator = deeplink.includes('viator.com');
+        const isGYG = deeplink.includes('getyourguide.com');
+        const isPartner = isViator || isGYG;
         return (
           <a
             href={deeplink}
@@ -62,7 +64,7 @@ export function ActivityCardInlineActions({
             }}
             className={cn(
               'inline-flex items-center gap-1 px-2 py-1 rounded-full self-center shrink-0',
-              'text-[10px] font-bold uppercase tracking-wider',
+              `${DS.textSize.micro} font-bold uppercase tracking-wider`,
               'transition-all duration-150 active:scale-95',
               'bg-emerald-50 border border-emerald-500/30 text-emerald-700',
               'hover:bg-emerald-100 hover:border-emerald-500/60',
@@ -71,8 +73,8 @@ export function ActivityCardInlineActions({
               'dark:hover:shadow-[0_0_12px_-3px_rgba(16,185,129,0.3)]',
             )}
           >
-            {isViator ? <ExternalLink className="w-3 h-3" /> : <MapPin className="w-3 h-3" />}
-            {isViator ? 'Book on Viator' : 'Map'}
+            {isPartner ? <ExternalLink className="w-3 h-3" /> : <MapPin className="w-3 h-3" />}
+            {isPartner ? (isViator ? 'Book on Viator' : 'Book on GYG') : 'Map'}
           </a>
         );
       })()}

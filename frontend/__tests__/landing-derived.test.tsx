@@ -26,7 +26,7 @@ function makeParams(
     storeTripInputs: { ...DEFAULT_TRIP_INPUTS },
     docPlanState: undefined,
     docDestinationCard: undefined,
-    docPlanViewState: 'S0_BOOTSTRAP',
+    docPlanViewState: undefined,
     docStrategySections: [],
     docTiles: {},
     docExecutedTopics: [],
@@ -50,7 +50,7 @@ function makeParams(
 }
 
 describe('useLandingDerived plan view gate', () => {
-  it('keeps plan view in bootstrap when destination is set but dates are missing', () => {
+  it('returns null planViewState when destination is set but dates are missing', () => {
     const { result } = renderHook(() =>
       useLandingDerived(
         makeParams({
@@ -66,9 +66,32 @@ describe('useLandingDerived plan view gate', () => {
       )
     );
 
-    expect(result.current.planViewState).toBe('S0_BOOTSTRAP');
+    // planViewState is null when prerequisites not met (backend SSoT invariant)
+    expect(result.current.planViewState).toBeNull();
     expect(result.current.planTabEnabled).toBe(false);
     expect(result.current.canGeneratePlan).toBe(false);
+  });
+
+  it('returns null planViewState and isFraming=true during active generation without backend state', () => {
+    const { result } = renderHook(() =>
+      useLandingDerived(
+        makeParams({
+          storeTripInputs: {
+            ...DEFAULT_TRIP_INPUTS,
+            destination: 'Rome',
+            start_date: '2026-03-01',
+            end_date: '2026-03-07',
+          },
+          isGenerating: true,
+          userRequestedGeneration: true,
+        })
+      )
+    );
+
+    // planViewState is null — backend hasn't responded yet
+    expect(result.current.planViewState).toBeNull();
+    // isFraming is the separate UI loading signal
+    expect(result.current.isFraming).toBe(true);
   });
 
   it('unlocks strategy state once destination and both dates are present', () => {

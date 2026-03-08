@@ -777,7 +777,17 @@ class ItineraryBuilder:
                         dominant = max(set(specialist_types), key=specialist_types.count)
                         day.label = f"{dominant.replace('_', ' ').title()} Day"
                     else:
-                        day.label = f"Day {day.day_number}"
+                        # Restore arrival/departure labels for boundary days
+                        if day.day_number == 1 and any(
+                            b.activity_type in ("arrival", "departure") for b in day.blocks
+                        ):
+                            day.label = "Arrival Day"
+                        elif day.day_number == len(days) and any(
+                            b.activity_type in ("arrival", "departure") for b in day.blocks
+                        ):
+                            day.label = "Departure Day"
+                        else:
+                            day.label = f"Day {day.day_number}"
                     # Also remove the free_day placeholder block if it's still present
                     day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
                     _debug_itinerary(
@@ -2267,8 +2277,9 @@ class ItineraryBuilder:
                 buffer_count = sum(1 for b in day.blocks if b.is_buffer)
                 day.blocks.insert(buffer_count, free_day_block)
 
-                # Empty day labels must reflect actual placed blocks.
-                day.label = day_label
+                # Preserve arrival/departure anchor labels — Phase 5.5 should not overwrite them.
+                if day.label not in ("Arrival Day", "Departure Day"):
+                    day.label = day_label
 
         return days
 

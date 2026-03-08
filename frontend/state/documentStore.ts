@@ -178,6 +178,10 @@ const VIEW_STATE_ORDER: Record<string, number> = {
 
 const isS3ViewState = (state: string | null | undefined): boolean => Boolean(state?.startsWith('S3_'));
 
+/** True when plan_view_state indicates bootstrap / not-yet-set (undefined, null, or S0_BOOTSTRAP). */
+const isBootstrapViewState = (state: string | null | undefined): boolean =>
+  !state || state === 'S0_BOOTSTRAP' || state === 'P0_MINIMAL';
+
 function shouldBlockViewStateDowngrade(
   prevViewState: string | null | undefined,
   nextViewState: string | null | undefined,
@@ -1105,8 +1109,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         trip_inputs: { ...DEFAULT_TRIP_INPUTS },
         branches: [],
         tiles: {},
-        // Bootstrap: initial document creation — no prior state to guard
-        plan_view_state: 'S0_BOOTSTRAP' as const,
+        // No plan_view_state — backend is authoritative; provisional docs start without one.
       };
       set({ document, version: 0 });
     }
@@ -1172,8 +1175,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         trip_inputs: { ...DEFAULT_TRIP_INPUTS },
         branches: [],
         tiles: {},
-        // Bootstrap: initial document creation — no prior state to guard
-        plan_view_state: 'S0_BOOTSTRAP',
+        // No plan_view_state — backend is authoritative; provisional docs start without one.
       };
       version = 0; // New document starts at version 0
       // Initialize the store with the minimal document
@@ -2479,7 +2481,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   mergeSpeculativeContent: (newSections: StrategySection[]) => {
     const { document } = get();
     // Only allow merging in Bootstrap mode (Setup phase)
-    if (!document || document.plan_view_state !== 'S0_BOOTSTRAP') return;
+    if (!document || !isBootstrapViewState(document.plan_view_state)) return;
 
     const existing = document.strategy_sections ?? [];
 
@@ -2504,7 +2506,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   clearSpeculativeContent: () => {
     const { document } = get();
-    if (!document || document.plan_view_state !== 'S0_BOOTSTRAP') return;
+    if (!document || !isBootstrapViewState(document.plan_view_state)) return;
 
     // Keep 'general' (if any), remove all specialists
     const filtered = (document.strategy_sections ?? []).filter(

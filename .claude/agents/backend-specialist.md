@@ -8,8 +8,8 @@ description: >
   conversationalist, change classifier, specialist dispatch, trip brief,
   FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
-  patterns_registry, activity_browser, spend_guard, telemetry, auth, oauth,
-  sharing, shared trip, user accounts, or any file under backend/app/.
+  activity_browser, partner_enrichment, circuit_breaker, spend_guard, telemetry,
+  auth, oauth, sharing, shared trip, user accounts, or any file under backend/app/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -56,7 +56,7 @@ backend/app/planner/
   schemas/           → coordinator_schemas.py (ChangeType, ClassifierOutput, TripBrief,
                        SpecialistPlan, ReplanRequest, ExecutionPlan)
   *.py               → specialist_registry.py, hashing.py,
-                       llm_factory.py, patterns_registry.py, test_mode.py
+                       llm_factory.py, test_mode.py
 backend/app/
   main.py, schemas.py, config.py, db.py, db_models.py, auth.py,
   debug_utils.py, graph_plan_utils.py, placeholders.py,
@@ -67,10 +67,11 @@ backend/app/
   services/          → cache_core.py, specialist_cache.py, router_cache.py, tile_cache.py,
                        experience_generator.py, regen_strategy.py, itinerary_builder.py,
                        unsplash.py, unsplash_queries.py, task_tracker.py, activity_browser.py,
-                       viator_provider.py,
-                       spend_guard.py, sharing.py
+                       viator_provider.py, gyg_provider.py, partner_enrichment.py,
+                       circuit_breaker.py, spend_guard.py, sharing.py
   tile_service/      → curated_provider.py, mock_provider.py,
-                       google_places_provider.py, provider_base.py, service.py, models.py
+                       google_places_provider.py, provider_base.py, service.py,
+                       models.py, title_utils.py
   tools/             → constraint_engine.py, tile_service.py
   utils/             → tile_utils.py (tile-flattening utilities)
   crud_document.py, crud_trip.py, validation.py, validation_cache.py,

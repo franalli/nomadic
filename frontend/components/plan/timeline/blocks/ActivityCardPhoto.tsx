@@ -46,7 +46,10 @@ function isAllowedImageUrl(url: string | undefined): boolean {
       || host.endsWith('.unsplash.com')
       || host === 'pics.avs.io'
       || host === 'places.googleapis.com'
-      || host === 'media-cdn.tripadvisor.com';
+      || host === 'media.tacdn.com'
+      || host === 'media-cdn.tripadvisor.com'
+      || host === 'hare-media-cdn.tripadvisor.com'
+      || host === 'cdn.getyourguide.com';
   } catch {
     return false;
   }

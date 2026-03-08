@@ -13,7 +13,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 
-import { isBootstrap, isFraming, ITINERARY_STATES } from '@/components/plan/planStateHelpers';
+import { isBootstrap, ITINERARY_STATES } from '@/components/plan/planStateHelpers';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { PlanViewState } from '@/types/plan-envelope';
@@ -22,13 +22,15 @@ import type { PlanViewState } from '@/types/plan-envelope';
 // Chat Status Config - maps plan phase to persistent status bar content
 // ─────────────────────────────────────────────────────────────────────────────
 export function getChatStatusConfig(
-  planViewState: PlanViewState | undefined,
+  planViewState: PlanViewState | undefined | null,
   planState: string | undefined,
   isGenerating: boolean,
   destination: string | undefined,
   hasDates: boolean,
+  /** UI loading signal — replaces the old isFraming(planViewState) check */
+  isFramingOverride?: boolean,
 ): { text: string; label: string; indicator: 'blink' | 'spin' | 'pulse' | 'check' } {
-  if (isFraming(planViewState) || isGenerating || planState === 'RESOLVING') {
+  if (isFramingOverride || isGenerating || planState === 'RESOLVING') {
     return { text: 'Building your trip...', label: 'Generating', indicator: 'spin' };
   }
   if (isBootstrap(planViewState)) {
@@ -49,7 +51,9 @@ const FADE_EXIT = { opacity: 0 } as const;
 const FADE_TRANSITION = { duration: 0.3, ease: [0.4, 0, 0.2, 1] } as const;
 
 interface ChatStatusHeaderProps {
-  planViewState: PlanViewState | undefined;
+  planViewState: PlanViewState | undefined | null;
+  /** UI loading signal: backend state not yet received but generation is active. */
+  isFraming?: boolean;
   planState: string | undefined;
   isGenerating: boolean;
   destination: string | undefined;
@@ -60,6 +64,7 @@ interface ChatStatusHeaderProps {
 
 export function ChatStatusHeader({
   planViewState,
+  isFraming: isFramingProp,
   planState,
   isGenerating,
   destination,
@@ -67,9 +72,9 @@ export function ChatStatusHeader({
   hasDestination,
   destinationImageUrl,
 }: ChatStatusHeaderProps) {
-  if (isBootstrap(planViewState)) return null;
+  if (isBootstrap(planViewState) && !isFramingProp) return null;
 
-  const status = getChatStatusConfig(planViewState, planState, isGenerating, destination, hasDates);
+  const status = getChatStatusConfig(planViewState, planState, isGenerating, destination, hasDates, isFramingProp);
   const showHero = !!(destinationImageUrl && hasDestination);
 
   return (

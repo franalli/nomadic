@@ -564,7 +564,7 @@ SPECIALIST_IDS                   // ['diving', 'hiking', 'skiing', 'cycling', 's
 
 **CSS Topic Color System:** `--topic-color` is set inline via `getSpecialistColorRgb()`, consumed by `.topic-badge`, `.topic-border-left`, `.topic-header-tint` classes in `globals.css`.
 
-**Note:** S2StrategyView uses `getSpecialistColorRgb()` with inline `style` props and CSS custom properties (`--topic-color`). ActivityMiniCard timeline blocks use static Tailwind class maps instead (see Timeline Block Styling above).
+**Note:** `ChatMessageRenderer` and `S2TopicConfig` use `getSpecialistColorRgb()` with inline `style` props and CSS custom properties (`--topic-color`). ActivityMiniCard timeline blocks use static Tailwind class maps instead (see Timeline Block Styling above).
 
 #### Trip DNA Bar
 
@@ -2575,8 +2575,8 @@ Updates to Section 6 — new components discovered in audit:
 |-----------|------|----------------|-------|
 | `MiniCard` | `tiles/MiniCard.tsx` | `DS.textSize.*`, `DS.glowClass.*`, `DS.infoBox` | `shadow-card hover:shadow-soft` for card elevation |
 | `MiniCardSkeleton` | `tiles/MiniCard.tsx` | Custom skeleton colors | `bg-zinc-200/50 dark:bg-zinc-700/50` |
-| `TileDetailsModal` | `tiles/TileDetailsModal.tsx` | `DS.actions.primary`, `DS.text.*` | `shadow-card` for modal container; primary CTA label adapts by deeplink provider (`Book on Viator` vs Google travel/maps copy) |
-| `SuggestionCard` | `plan/tiles/SuggestionCard.tsx` | `DS.textSize.*` | `shadow-card hover:shadow-soft`; provider-aware deeplink pill (`Map` for map links, `Book` + `ExternalLink` for Viator) |
+| `TileDetailsModal` | `tiles/TileDetailsModal.tsx` | `DS.actions.primary`, `DS.text.*` | `shadow-card` for modal container; primary CTA label adapts by deeplink provider (`Book on Viator` / `Book on GYG` vs Google travel/maps copy) |
+| `SuggestionCard` | `plan/tiles/SuggestionCard.tsx` | `DS.textSize.*` | `shadow-card hover:shadow-soft`; provider-aware deeplink pill (`Map` for map links, `Book` + `ExternalLink` for Viator/GYG) |
 | `CategorySection` | `plan/booking/CategorySection.tsx` | `DS.textSize.micro` | `shadow-card hover:shadow-soft` for accordion card |
 | `CheckoutSidebar` | `plan/booking/CheckoutSidebar.tsx` | None | `shadow-card` for summary card |
 | `StrategyHero` | `plan/stages/StrategyHero.tsx` | `DS.text.*`, `DS.infoBox` | Specialist colors from `SPECIALIST_STYLE_CLASSES` map (in `StrategyHeroUtils.tsx`) |
@@ -2596,26 +2596,24 @@ Updates to Section 6 — new components discovered in audit:
 | `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Loading shell only (`PlanMirrorLoader`); keeps live indicator dot. |
 | `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (raw pattern) | Full-density itinerary layout; subdued toggle pills for Flights/Stays/Travel Intel and sticky desktop map column |
 | `BookingSummary` | `plan/BookingSummary.tsx` | `DS.materials.glass`, `DS.text.label`, `DS.textSize.micro` | Stage-3-only venue-link summary (stays + activities) rendered below timeline |
-| `TripChromeBar` | `plan/TripChromeBar.tsx` | `DS.segments.container`, `DS.segments.segment`, `DS.segments.segmentActive`, `DS.segments.segmentInactive` | Horizontal segmented trip-status/module bar (destination, dates, travelers, activities, module toggles) |
 | `TimelineThread` | `plan/TimelineThread.tsx` | `DS.textSize.*` | Day-thread renderer; constraint/status chips with light/dark contrast pairs and unschedulable overlays |
 | `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
 | `InlineDatePrompt` | `plan/timeline/InlineDatePrompt.tsx` | `DS.actions.primary` | Inline CTA to set dates within timeline |
-| `DestinationIntelCard` | `plan/DestinationIntelCard.tsx` | `DS` tokens | Collapsible destination overview card built from strategy sections |
 | `ChatStatusHeader` | `chat/ChatStatusHeader.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText` | Desktop status chip rendered above chat with transition-safe chrome |
 | `TileDetailsInfo` | `tiles/TileDetailsInfo.tsx` | `DS.textSize.mini` | Metadata strip (distance/ratings/metadata) used by tile cards |
 | `SuggestionCardContent` | `plan/tiles/SuggestionCardContent.tsx` | `DS.textSize.*` | Shared content block for suggestion rendering |
 | `MiniCardContent` | `tiles/MiniCardContent.tsx` | `DS.textSize.*`, `DS.text.accent` | Shared compact tile body renderer with provider-aware deeplink CTA copy |
 | `TileCardContent` | `tiles/TileCardContent.tsx` | `DS.textSize.*`, `DS.actions.smallAction` | Shared booking/tile body renderer with provider-aware deeplink CTA copy |
 | `ActivityCardMeta` | `plan/timeline/blocks/ActivityCardMeta.tsx` | `DS.textSize.micro`, `DS.text.muted` | Activity metadata badges and metadata row formatting; traveler ratings use amber star treatment and live prices switch copy from `~123` to `from 123` when the partner price is authoritative |
-| `ActivityCardActions` | `plan/timeline/blocks/ActivityCardActions.tsx` | `DS.actions.primary`, `DS.text.label` | Action row for activity detail/visit links; Viator deeplinks render as booking CTAs instead of map CTAs, and the hold-to-delete affordance is pinned to the top-right overlay zone |
-| `ActivityCardPhoto` | `plan/timeline/blocks/ActivityCardPhoto.tsx` | `DS.glowClass.dropText` | Full-width landscape photo banner for `ActivityMiniCard`; signed Google Places proxies now request up to 720px width and the allowlist accepts TripAdvisor CDN hosts |
+| `ActivityCardActions` | `plan/timeline/blocks/ActivityCardActions.tsx` | `DS.actions.primary`, `DS.text.label` | Action row for activity detail/visit links; partner deeplinks render as booking CTAs instead of map CTAs (`Book on Viator` / `Book on GYG`), and the hold-to-delete affordance is pinned to the top-right overlay zone |
+| `ActivityCardPhoto` | `plan/timeline/blocks/ActivityCardPhoto.tsx` | `DS.glowClass.dropText` | Full-width landscape photo banner for `ActivityMiniCard`; signed Google Places proxies now request up to 720px width and the allowlist accepts TripAdvisor plus GetYourGuide CDN hosts |
 
 ### Provider-Aware Deeplink Pills
 
 Booking/link pills keep the same emerald treatment across planning and booking surfaces, but the iconography and copy now adapt to the actual destination:
 
 - Map-style links use `MapPin` with `Map` / `View on Google*` copy.
-- Viator affiliate links use `ExternalLink` with `Book` / `Book on Viator` copy.
+- Viator and GYG affiliate links use `ExternalLink` with `Book` / `Book on Viator` / `Book on GYG` copy.
 - This applies consistently across suggestion cards, booking cards, timeline activity actions, and the tile details modal.
 
 ---
@@ -2927,7 +2925,6 @@ Status key:
 | `BookingPlanningView` | `plan/BookingPlanningView.tsx` | Planning-mode surfaces should use zinc/emerald pairs and DS micro typography (`DS.textSize.*`) | Provisional |
 | `ChipGroup` | `plan/ChipGroup.tsx` | Chip text uses `DS.textSize.micro`; selected/inactive chips follow DS tactile pill rules | Provisional |
 | `ChipScrollContainer` | `plan/ChipScrollContainer.tsx` | Horizontal chip rail rule from Section 11/12 (`no vertical wrap`, edge bleed) | Provisional |
-| `DestinationMapPlaceholder` | `plan/DestinationMapPlaceholder.tsx` | Map fallback should match Section 31.4 zinc fallback palette | Provisional |
 | `FullDensityTimeline` | `plan/FullDensityTimeline.tsx` | Subdued toggle pills must follow Section 32.1 visual contract | Provisional |
 | `ItineraryProgressIndicator` | `plan/ItineraryProgressIndicator.tsx` | State/severity colors align with Section 24 and Section 4 restricted color usage | Provisional |
 | `OriginPromptCard` | `plan/OriginPromptCard.tsx` | CTA hierarchy should use `DS.actions.primary` and DS text label/body patterns | Provisional |
@@ -2943,8 +2940,6 @@ Status key:
 |-----------|------|-------------------------------|--------|
 | `S2AgentCardExpanded` | `plan/stages/S2AgentCardExpanded.tsx` | Card elevations use `shadow-card` with approved dark exceptions; DS text sizing for metadata | Provisional |
 | `S2LocalIntelSection` | `plan/stages/S2LocalIntelSection.tsx` | Constraint/status badges use DS micro labels and Section 4 severity colors | Provisional |
-| `S2StrategyStack` | `plan/stages/S2StrategyStack.tsx` | DS micro labels and spacing-tier compliance for stacked cards | Provisional |
-| `S2StrategyView` | `plan/stages/S2StrategyView.tsx` | Uses DS text-size and chip patterns; follows single-renderer invariants | Provisional |
 | `S2TopicConfig` | `plan/stages/S2TopicConfig.tsx` | Topic config helper; no direct styling contract | Non-Visual |
 | `StrategyHeroCompactSheet` | `plan/stages/StrategyHeroCompactSheet.tsx` | DS text label/body/micro tokens and info-box conventions | Provisional |
 | `StrategyHeroContent` | `plan/stages/StrategyHeroContent.tsx` | Card elevation and hover states use Section 27 shadow tiers | Provisional |

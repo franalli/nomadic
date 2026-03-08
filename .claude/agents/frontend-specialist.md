@@ -7,7 +7,7 @@ description: >
   pill chips, timeline blocks, tile cards, Framer Motion, Mapbox, mobile layout,
   ghost timeline, content policy guard, loader states, fill-day flow,
   preference auto-regen, stream parser, browse activities, booking drawer,
-  undo stack, drag-and-drop, travel intelligence, panel toggles, consent/legal, booking summary,
+  undo stack, drag-and-drop, travel intelligence, destination intel, panel toggles, consent/legal, booking summary,
   shared trip, auth callback, oauth, user menu, user store, avatar, theme mode constants,
   or any file under frontend/.
 tools: Read, Write, Edit, Bash, Glob, Grep
@@ -63,14 +63,13 @@ frontend/
                      TimelineBlockList,
                      TimelineDayCard, useTimelineBufferLogic,
                      ItineraryProgressIndicator, OriginPromptCard,
-                     DestinationIntelCard, DestinationMapPlaceholder,
                      PlanDensityViews, PlanFullDensityView, PlanTimelineSection,
                      BrowseActivitiesSheet, useBookingDrawerState, useStrategyStageOrchestration
       pdf/        → TripPdfDocument
       booking/     → BookingDrawer, CategorySection, CheckoutSidebar
       modals/      → AlternativesModal
       stages/      → StrategyHero, S2AgentCard, S2AgentCardExpanded, S2LocalIntelSection,
-                     S2StrategyStack, S2TopicConfig,
+                     S2TopicConfig,
                      StrategyHeroAccordion, StrategyHeroCompactSheet, StrategyHeroHeroSheet,
                      StrategyHeroContent, StrategyHeroTISectionsA, StrategyHeroTISectionsB,
                      StrategyHeroTravelIntelligence, StrategyHeroUtils
@@ -111,6 +110,7 @@ frontend/
                      tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
                      specialist-colors.ts, specialists.ts, utils.ts,
                      contentPolicyGuard.ts, ghost-timeline-adapter.ts, fillDayGuards.ts,
+                     destination-intel-cache.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts, renderStarRating.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      pdfData.ts, summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
@@ -118,6 +118,8 @@ frontend/
                      categoryNormalization.ts, popular-places.ts, showMutationToast.ts,
                      googlePlacesPhoto.ts, travelIntel.ts,
                      use-sync-external-store-shim.js
+  next.config.mjs, next-env.d.ts
+                  → Next.js runtime config + generated route typing bridge
   e2e/             → Playwright end-to-end tests (`rome-golden-path.spec.ts`)
   playwright.config.ts → Playwright test runner configuration
   __tests__/       → Vitest tests

@@ -38,7 +38,7 @@ export interface UseItineraryGenerationParams {
   uiGeneration: GenerationState | null;
   setUiGeneration: (gen: GenerationState | null) => void;
   addToast: (message: string, type?: ToastType) => void;
-  planViewState: PlanViewState;
+  planViewState: PlanViewState | null | undefined;
   docExecutedTopics: string[] | undefined;
   hasDates: boolean;
   docDayCards: DayCard[] | undefined;
@@ -473,14 +473,16 @@ export function useItineraryGeneration({
     // RACE GUARD: Skip if itinerary generation is already active
     if (uiGeneration?.active) return;
 
-    // Check auto-trigger conditions
-    const shouldAutoTrigger = shouldAutoTriggerItinerary(
-      planViewState,
-      docExecutedTopics,
-      hasDates,
-      uiGeneration,
-      hasItineraryContent
-    );
+    // Check auto-trigger conditions (skip when backend state not yet received)
+    const shouldAutoTrigger = planViewState
+      ? shouldAutoTriggerItinerary(
+          planViewState,
+          docExecutedTopics,
+          hasDates,
+          uiGeneration,
+          hasItineraryContent
+        )
+      : false;
 
     if (shouldAutoTrigger) {
       hasAutoTriggeredRef.current = true;

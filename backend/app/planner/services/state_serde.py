@@ -308,9 +308,7 @@ _SESSION_TILE_KEYS = {
     "review_count",
     "deeplink",
     "availability_status",
-    "location_label",
     "meta",
-    "subtitle",
 }
 
 _SESSION_BOOKED_TILE_KEYS = {
@@ -387,7 +385,6 @@ def _trim_for_session_state(state: Dict[str, Any]) -> Dict[str, Any]:
             "id",
             "period",
             "activity_type",
-            "summary",
             "specialist_type",
             "booked_tile",
             "is_buffer",
@@ -405,25 +402,24 @@ def _trim_for_session_state(state: Dict[str, Any]) -> Dict[str, Any]:
             }
             blocks = dc.get("blocks")
             if isinstance(blocks, list):
-                slim_dc["blocks"] = [
-                    {
-                        **{k: v for k, v in block.items() if k in _BLOCK_KEEP},
-                        **(
-                            {
-                                "booked_tile": {
-                                    k: v
-                                    for k, v in block["booked_tile"].items()
-                                    if k in _SESSION_BOOKED_TILE_KEYS
-                                }
-                            }
-                            if isinstance(block.get("booked_tile"), dict)
-                            else {}
-                        ),
-                    }
-                    if isinstance(block, dict)
-                    else block
-                    for block in blocks
-                ]
+                slim_blocks = []
+                for block in blocks:
+                    if not isinstance(block, dict):
+                        slim_blocks.append(block)
+                        continue
+                    slim_b = {k: v for k, v in block.items() if k in _BLOCK_KEEP}
+                    # Preserve summary for buffers and booked blocks (not regenerated)
+                    if block.get("is_buffer") or block.get("booked_tile"):
+                        if "summary" in block:
+                            slim_b["summary"] = block["summary"]
+                    if isinstance(block.get("booked_tile"), dict):
+                        slim_b["booked_tile"] = {
+                            k: v
+                            for k, v in block["booked_tile"].items()
+                            if k in _SESSION_BOOKED_TILE_KEYS
+                        }
+                    slim_blocks.append(slim_b)
+                slim_dc["blocks"] = slim_blocks
             trimmed_cards.append(slim_dc)
         state["day_cards"] = trimmed_cards
 
@@ -496,6 +492,21 @@ def _trim_for_session_state(state: Dict[str, Any]) -> Dict[str, Any]:
                 ]
             trimmed_sp[topic] = slim
         state["specialist_plans"] = trimmed_sp
+
+    # 6. Progressive trim: drop browseable_activities if state is still large
+    # 6. Progressive trim: drop browseable_activities if state is large
+    import json as _json_sizecheck
+
+    try:
+        _size = len(_json_sizecheck.dumps(state, default=str))
+        if _size > 51200:  # 50KB threshold
+            pm = state.get("persistent_meta")
+            if isinstance(pm, dict) and "browseable_activities" in pm:
+                ba = pm["browseable_activities"]
+                if isinstance(ba, list) and len(ba) > 10:
+                    pm["browseable_activities"] = ba[:10]
+    except Exception as exc:
+        logger.debug("Progressive trim size check failed: %s", exc)
 
     return state
 

@@ -53,13 +53,13 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         f"planner_build_id={PLANNER_BUILD_ID}, cache_schema_version={CACHE_SCHEMA_VERSION}"
     )
 
-    # Log spend guard state (counters start at $0 on every boot)
+    # Log spend guard state (counters restored from disk if same day)
     from app.config import settings
     from app.services.spend_guard import get_spend_guard_snapshot
 
     sg = get_spend_guard_snapshot()
     logger.info(
-        "[Startup] SpendGuard counters reset to $%.2f "
+        "[Startup] SpendGuard counters restored to $%.2f "
         "(enabled=%s, session_cap=$%.2f, global_cap=$%.2f)",
         sg["global_spend_usd"],
         settings.spend_guard_enabled,
@@ -178,6 +178,12 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     await close_viator_http_client()
     logger.info("[Shutdown] Closed Viator HTTP client")
+
+    # 5b3. Close GYG HTTP client
+    from app.services.gyg_provider import close_gyg_http_client
+
+    await close_gyg_http_client()
+    logger.info("[Shutdown] Closed GYG HTTP client")
 
     # 5c. Close Google Places sync HTTP client
     from app.tile_service.google_places_provider import close_sync_client

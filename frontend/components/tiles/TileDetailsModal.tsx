@@ -121,9 +121,10 @@ function getCancellationText(tile: Tile): string | null {
 }
 
 /**
- * Get review count from meta
+ * Get review count from tile or meta
  */
 function getReviewCount(tile: Tile): number | null {
+  if (typeof tile.review_count === 'number') return tile.review_count;
   const meta = tile.meta as Record<string, unknown> | undefined;
   if (typeof meta?.review_count === 'number') return meta.review_count;
   if (typeof meta?.reviews === 'number') return meta.reviews;
@@ -350,8 +351,10 @@ export const TileDetailsModal = memo(function TileDetailsModal({
           {/* Deeplink — always visible when available */}
           {tile?.deeplink_url && tile.deeplink_url !== '#' && (() => {
             const isViator = tile.deeplink_url.includes('viator.com');
+            const isGYG = tile.deeplink_url.includes('getyourguide.com');
+            const isPartner = isViator || isGYG;
             const isHotelType = tile.type === 'hotel' || tile.type === 'accommodation' || tile.type === 'stay';
-            const label = isViator ? 'Book on Viator' : isHotelType ? 'View on Google Travel' : 'View on Google Maps';
+            const label = isPartner ? (isViator ? 'Book on Viator' : 'Book on GYG') : isHotelType ? 'View on Google Travel' : 'View on Google Maps';
             return (
               <button
                 type="button"

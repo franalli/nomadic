@@ -160,7 +160,7 @@ class ResumeTripResponse(BaseModel):
 
 
 TileProvider = Literal[
-    "expedia", "booking", "google_places", "curated", "mock", "viator", "unknown"
+    "expedia", "booking", "google_places", "curated", "mock", "viator", "gyg", "unknown"
 ]
 
 
@@ -649,6 +649,7 @@ class DocumentTripInputs(BaseModel):
     destination_iata: Optional[str] = None
     origin: Optional[str] = None
     origin_iata: Optional[str] = None
+    country_code: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     adults: Optional[int] = None

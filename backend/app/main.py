@@ -832,7 +832,7 @@ async def security_headers(request: Request, call_next):
         "default-src 'self'; "
         f"script-src {script_src}; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: https://images.unsplash.com https://*.mapbox.com https://media.tacdn.com https://media-cdn.tripadvisor.com https://hare-media-cdn.tripadvisor.com blob:; "
+        "img-src 'self' data: https://images.unsplash.com https://*.mapbox.com https://media.tacdn.com https://media-cdn.tripadvisor.com https://hare-media-cdn.tripadvisor.com https://cdn.getyourguide.com blob:; "
         "connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:; "
         "font-src 'self' data:; "
         "frame-ancestors 'none'"
@@ -995,7 +995,11 @@ async def proxy_google_places_photo(
         )
 
     if _is_places_circuit_open("photo_proxy"):
-        return JSONResponse(status_code=503, content={"detail": "Service temporarily unavailable"})
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Service temporarily unavailable"},
+            headers=_cors_error_headers(request),
+        )
 
     try:
         with spend_guard_scope(session_id):

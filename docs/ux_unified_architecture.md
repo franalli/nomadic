@@ -176,8 +176,8 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 
 **Map Content:**
 - Map centered on POIs via `calculateMapCenter()` (zoom derived from POI spread)
-- Falls back to world view (`lat: 0, lng: 0, zoom: 2`) when no valid map center is available
-- Falls back to `DestinationMapPlaceholder` in bridge mode when no POIs found
+- Falls back to the first hotel tile with valid `geo` coordinates when no POIs are available
+- Final fallback is the global default center used by `PlanFullDensityView` (`lat: 20, lng: 0, zoom: 2`)
 - **POI Pins:** Activity markers from `extractPOIsFromDayCards()` with fallback to `extractPOIsFromSections()` in `ghost-timeline-adapter.ts`
   - Prefers day-card coordinates, then falls back to strategy-section activity pins in bridge mode
   - Extracts coordinates from strategy section tiles and activities (`[lng, lat]` transformed to `{ lat, lng }`)
@@ -1733,7 +1733,7 @@ useSessionHydration() runs
 | `DroppableDay` | Wraps activity-day block lists with `useDroppable` (`id: "day-{dayNumber}"`). Two-div structure: outer div (`ref={setNodeRef}`, `min-h-[80px]`) owns the hit area; inner div owns ring + highlight styles. Highlights with `ring-1 ring-emerald-500/25 bg-emerald-500/[0.04]` when dragging over. Not used for free/empty days — those use `FreeDayDropSlot` instead. |
 | `FreeDayDropSlot` | Dedicated drop zone rendered inside `FreeDayCard` via the `freeDayDropSlot` render prop. Avoids highlighting the entire free-day card. Uses `useDroppable` with the same `day-{dayNumber}` id. |
 | `PdfExportButton` | Plan surface CTA that appears when itinerary day cards exist and triggers client-side export. Lazily imports `@react-pdf/renderer` and `file-saver`, calls `extractTripPdfData()`, and saves `TripPdfDocument` output with a destination/date filename. |
-| `BrowseActivitiesSheet` | Bottom sheet displayed on free/buffer days. Fetches categorized activity tiles from `POST /api/activities/browse` (Viator-first, Google Places fallback/supplement). Shows category filter chips (cultural/food/nature/spa/tours/shopping). Calls `POST /api/document/insert-activity-block` to add selected tiles directly into the day. Reads pre-stashed tiles from `documentStore.browseableActivities` if available (avoids repeat API call). Located in `frontend/components/plan/BrowseActivitiesSheet.tsx`. |
+| `BrowseActivitiesSheet` | Bottom sheet displayed on free/buffer days. Fetches categorized activity tiles from `POST /api/activities/browse` using the partner-backed cascade (Viator first, GYG supplement/dedupe, Google Places fallback/supplement). Shows category filter chips (cultural/food/nature/spa/tours/shopping). Calls `POST /api/document/insert-activity-block` to add selected tiles directly into the day. Reads pre-stashed tiles from `documentStore.browseableActivities` if available (avoids repeat API call). Located in `frontend/components/plan/BrowseActivitiesSheet.tsx`. |
 | `DragPreviewCard` | Ghost card shown in `DragOverlay` during drag. Renders `block.summary || block.activity_type`, specialist label via `getTopicLabel(block.specialist_type)`, and price from `block.booked_tile?.price_estimate`. |
 | `ChatPanel` | Chat orchestration — thin shell delegating to four extracted hooks: `useChatSend` (send + SSE lifecycle), `useChatEffects` (side effects), `useChatScrolling` (scroll + collapse). Module sheets (flights/stays/activities) are rendered by `ChatModuleSheets`. Applies send burst guards (1s regular message cooldown, 3s generate-trigger cooldown) and forwards `onConfirmReset` so suggestion chips can trigger confirmed session reset. |
 | `ChatStatusHeader` | Renders the desktop trip status hero/mini bar above chat content using `getChatStatusConfig(planViewState, planState, ...)` to keep chrome visible and consistent across planning states. |
@@ -3261,7 +3261,7 @@ interface TileDetailsModalProps {
 **Behavior:**
 - PLANNING mode: Shows "Why this suggestion?" section with AI reasoning and "AI Pick" badge
 - BOOKING mode: Uses single external booking action (no partner comparison matrix yet)
-- Deeplink CTA copy is provider-aware: Google/Maps links keep map-oriented labels, while Viator links switch to booking-oriented labels (`Book`, `Book on Viator`) and `ExternalLink` iconography.
+- Deeplink CTA copy is provider-aware: Google/Maps links keep map-oriented labels, while partner links switch to booking-oriented labels (`Book`, `Book on Viator`, `Book on GYG`) and `ExternalLink` iconography.
 
 ### 4. StrategyStageRenderer (Mode Prop)
 
@@ -3338,23 +3338,24 @@ def get_providers(destination: str) -> List[Provider]:
 | Aspect | CuratedProvider | GooglePlacesProvider | MockProvider |
 |--------|-----------------|-----------------|--------------|
 | **Hotel Names** | Hand-picked (e.g., "Atlantis The Royal") | Real API data (e.g., "Hilton Dubai Creek") | Generic (e.g., "Mock Hotel 1") |
-| **Images** | Hand-picked Unsplash URLs | Auto-generated Unsplash | Auto-generated Unsplash |
+| **Images** | Hand-picked Unsplash URLs | Signed Places photos with deterministic placeholder fallback | Auto-generated Unsplash |
 | **Prices** | Curated estimates | None (Hotel List API) | Calculated mock prices |
 | **Coordinates** | Hand-picked [lng, lat] | Real API data | Generated |
 | **Availability** | Always "available" | "unknown" (needs separate API) | Always "available" |
 
-### Image Strategy (Always Unsplash)
+### Image Strategy (Provider-First with Safe Fallbacks)
 
-**ALL tile images come from Unsplash** - never null, never broken:
+Tile and activity surfaces are no longer Unsplash-only. Hotels still fall back to deterministic placeholders, but live Google Places and partner activity images are preserved whenever the provider supplies them.
 
 | Provider | Image Source | How |
 |----------|--------------|-----|
 | **Curated** | Hand-picked Unsplash URLs in DEMO_MANIFEST | `hotel.get("image")` |
-| **Google Places** | Place photo URL (with deterministic fallback placeholder) | Google Places provider + `get_placeholder_image(category, seed)` fallback |
+| **Google Places** | Signed Places photo URL (with deterministic fallback placeholder) | Google Places provider + `get_placeholder_image(category, seed)` fallback |
+| **Partner-enriched activities** | Viator/Tripadvisor or GYG CDN URL | Partner browse/enrichment preserves provider `image_url` on tiles and placed day blocks |
 | **Mock** | Auto-generated Unsplash via placeholder | `get_placeholder_image(category, seed)` |
 
 ```python
-# All providers use the same pattern:
+# Placeholder path used when a provider does not supply an image:
 from app.placeholders import get_placeholder_image
 
 # Curated image if provided, otherwise deterministic Unsplash placeholder
@@ -3365,9 +3366,10 @@ image_url = hotel.get("image") or get_placeholder_image(
 ```
 
 **Guarantees:**
-1. **Never null** - Every tile has a valid Unsplash image URL
-2. **Deterministic** - Same tile ID = same placeholder image
-3. **Category-aware** - Hotels get hotel photos, activities get activity photos. Supported categories: `diving`, `hiking`, `skiing`, `cycling`, `surfing`, `sailing`, `climbing`, `hotel`, `yoga`, `nightlife`, `cooking`, `wellness`, `activity` (generic fallback)
+1. **Never null** - Every tile/day block should have either provider media or a deterministic placeholder URL
+2. **Provider-first** - Google Places photos and partner CDN images (Tripadvisor/Viator, GetYourGuide) are preserved when available
+3. **Allowlisted hosts** - Frontend image guards accept signed Places URLs plus `media.tacdn.com`, `media-cdn.tripadvisor.com`, `hare-media-cdn.tripadvisor.com`, and `cdn.getyourguide.com`
+4. **Deterministic fallback** - Same tile ID/category = same placeholder image when live media is missing
 
 ### Hero Destinations (DEMO_MANIFEST)
 

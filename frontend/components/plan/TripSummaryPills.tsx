@@ -13,6 +13,7 @@ import { Activity, Building2, Calendar, Compass, DollarSign, Lightbulb, MapPin, 
 import { Fragment, type ReactNode } from 'react';
 
 import { canonicalCategoryKey, TIER1_CONSTRAINT_HINTS, toCategoryKey } from '@/lib/categoryNormalization';
+import { DS } from '@/lib/design-system';
 import { formatBudgetForPills, formatDateRangeForPills, formatTravelersForPills } from '@/lib/format-utils';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
@@ -107,7 +108,7 @@ function Segment({
       className={cn(
         'inline-flex items-center gap-1.5 h-8 rounded-full',
         compact ? 'px-2' : 'px-3',
-        compact ? 'text-xs' : 'text-[13px]',
+        compact ? 'text-xs' : DS.textSize.badgeLabel,
         'whitespace-nowrap transition-all duration-150',
         'hover:bg-white/[0.08]',
         interactive ? 'cursor-pointer' : 'cursor-default opacity-70',
@@ -160,7 +161,7 @@ function CountBadge({ count }: { count: number }) {
     <span
       className={cn(
         'ml-0.5 min-w-[18px] h-[18px] rounded-full px-1',
-        'inline-flex items-center justify-center text-[10px] font-bold',
+        `inline-flex items-center justify-center ${DS.textSize.micro} font-bold`,
         'bg-white text-zinc-900'
       )}
     >

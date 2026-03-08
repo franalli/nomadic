@@ -10,10 +10,13 @@ Implements:
 
 from __future__ import annotations
 
+import json
 import logging
+import tempfile
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
+from pathlib import Path
 from threading import Lock
 
 from app.config import MODEL_PRICING_PER_1M, settings
@@ -24,9 +27,14 @@ _session_id_ctx: ContextVar[str | None] = ContextVar("spend_guard_session_id", d
 
 # NOTE: In-memory spend tracking is correct for single-worker deployment.
 # For multi-worker, migrate to Redis or shared state.
+#
+# File-based persistence (via _SPEND_STATE_FILE) is implemented as a bridge so
+# daily caps survive process restarts within a single-worker deployment.
+# It does NOT solve multi-worker isolation.
+#
 # TODO: Before scaling to multi-instance, replace module-level dicts with
-# Redis counters (INCRBY + daily-key TTL) so budget isolation survives restarts
-# and is shared across workers.
+# Redis counters (INCRBY + daily-key TTL) so budget isolation is shared
+# across workers.
 #
 # Planned Redis key schema:
 #   spend:{session_id}:{YYYY-MM-DD}  — per-session daily spend (float cents)
@@ -42,7 +50,75 @@ _spend_lock = Lock()
 _spend_day_key = datetime.now(UTC).date().isoformat()
 _session_spend_usd: dict[str, float] = {}
 _global_spend_usd = 0.0
-_provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0}
+_provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0, "partner": 0.0}
+
+_SPEND_STATE_FILE = Path(tempfile.gettempdir()) / "nomadic_spend_guard_state.json"
+
+
+def _persist_state() -> None:
+    """Write global and provider spend to disk so caps survive restarts.
+
+    Must be called while _spend_lock is held. File I/O errors are swallowed
+    so they never block API calls.
+    """
+    try:
+        data = {
+            "day": _spend_day_key,
+            "global_spend_usd": _global_spend_usd,
+            "provider_spend_usd": dict(_provider_spend_usd),
+        }
+        _SPEND_STATE_FILE.write_text(json.dumps(data), encoding="utf-8")
+    except Exception:
+        logger.debug("spend_guard: failed to persist state to %s", _SPEND_STATE_FILE, exc_info=True)
+
+
+def _load_state() -> None:
+    """Restore global and provider spend from disk on startup.
+
+    Only restores if the persisted day key matches today. Stale data from a
+    previous day is silently ignored. File I/O errors are swallowed so startup
+    is never blocked.
+    """
+    global _global_spend_usd
+
+    try:
+        if not _SPEND_STATE_FILE.exists():
+            return
+        raw = _SPEND_STATE_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return
+        if data.get("day") != _spend_day_key:
+            logger.info(
+                "spend_guard: ignoring stale persisted state (file day=%s, today=%s)",
+                data.get("day"),
+                _spend_day_key,
+            )
+            return
+        restored_global = float(data.get("global_spend_usd", 0.0))
+        restored_providers = data.get("provider_spend_usd", {})
+        if not isinstance(restored_providers, dict):
+            restored_providers = {}
+
+        _global_spend_usd = max(0.0, restored_global)
+        for key in ("llm", "places", "partner"):
+            _provider_spend_usd[key] = max(0.0, float(restored_providers.get(key, 0.0)))
+
+        logger.info(
+            "spend_guard: restored persisted state — global=$%.4f, providers=%s",
+            _global_spend_usd,
+            _provider_spend_usd,
+        )
+    except Exception:
+        logger.debug(
+            "spend_guard: failed to load persisted state from %s",
+            _SPEND_STATE_FILE,
+            exc_info=True,
+        )
+
+
+# Restore persisted spend counters on module load (before any requests).
+_load_state()
 
 if not settings.spend_guard_enabled:
     _level = logging.CRITICAL if not settings.is_dev else logging.WARNING
@@ -70,11 +146,13 @@ if settings.spend_guard_enabled:
             "Set WEB_CONCURRENCY=1 or disable spend guard."
         )
 
-# Log startup warning about in-memory-only state (only when guard is active)
+# Log startup info about file-backed persistence (only when guard is active)
 if settings.spend_guard_enabled:
-    logger.warning(
-        "Spend guard is in-memory only; daily caps reset on server restart. "
-        "For multi-worker/persistent caps, migrate to Redis (see TODO above)."
+    logger.info(
+        "Spend guard: in-memory with file-backed persistence (%s). "
+        "Daily caps survive single-worker restarts. "
+        "For multi-worker caps, migrate to Redis (see TODO above).",
+        _SPEND_STATE_FILE,
     )
 
 
@@ -123,7 +201,9 @@ def _rollover_if_needed() -> None:
     _session_spend_usd.clear()
     _provider_spend_usd["llm"] = 0.0
     _provider_spend_usd["places"] = 0.0
+    _provider_spend_usd["partner"] = 0.0
     _global_spend_usd = 0.0
+    _persist_state()
 
 
 @contextmanager
@@ -138,18 +218,24 @@ def spend_guard_scope(session_id: str | None):
 
 def _check_provider_cap(provider: str, estimated_usd: float, source: str) -> None:
     """Provider-specific daily cap. Must be called inside _spend_lock."""
+    cap: float = 0.0
     if provider == "places":
         cap = max(0.0, float(settings.spend_guard_places_daily_cap_usd))
-        current = _provider_spend_usd.get("places", 0.0)
-        if cap > 0 and (current + estimated_usd) > cap:
-            raise SpendLimitExceeded(
-                provider=provider,
-                scope="provider",
-                limit_usd=cap,
-                current_usd=current,
-                requested_usd=estimated_usd,
-                source=source,
-            )
+    elif provider == "partner":
+        cap = max(0.0, float(settings.spend_guard_partner_daily_cap_usd))
+    else:
+        return
+
+    current = _provider_spend_usd.get(provider, 0.0)
+    if cap > 0 and (current + estimated_usd) > cap:
+        raise SpendLimitExceeded(
+            provider=provider,
+            scope="provider",
+            limit_usd=cap,
+            current_usd=current,
+            requested_usd=estimated_usd,
+            source=source,
+        )
 
 
 def _reserve_or_raise(
@@ -188,6 +274,7 @@ def _reserve_or_raise(
             _check_provider_cap(provider, estimated_usd, source)
             _global_spend_usd += estimated_usd
             _provider_spend_usd[provider] = _provider_spend_usd.get(provider, 0.0) + estimated_usd
+            _persist_state()
         return
 
     session_cap = max(0.0, float(settings.spend_guard_session_daily_cap_usd))
@@ -224,6 +311,7 @@ def _reserve_or_raise(
         _session_spend_usd[sid] = session_current + estimated_usd
         _global_spend_usd = global_current + estimated_usd
         _provider_spend_usd[provider] = _provider_spend_usd.get(provider, 0.0) + estimated_usd
+        _persist_state()
 
 
 def _estimate_llm_call_usd(model: str, max_tokens: int | None = None) -> float:
@@ -270,6 +358,17 @@ def reserve_places_spend_or_raise(
     )
 
 
+def reserve_partner_api_spend_or_raise(provider_label: str = "partner") -> None:
+    """Reserve budget for a partner API call (Viator, GYG, etc.)."""
+    if not settings.spend_guard_enabled:
+        return
+    _reserve_or_raise(
+        provider="partner",
+        estimated_usd=max(0.0, float(settings.spend_guard_partner_estimated_call_usd)),
+        source=f"partner-{provider_label}",
+    )
+
+
 def clear_spend_guard_counters() -> None:
     """Reset in-memory spend counters (tests/admin maintenance)."""
     global _spend_day_key
@@ -280,7 +379,9 @@ def clear_spend_guard_counters() -> None:
         _session_spend_usd.clear()
         _provider_spend_usd["llm"] = 0.0
         _provider_spend_usd["places"] = 0.0
+        _provider_spend_usd["partner"] = 0.0
         _global_spend_usd = 0.0
+        _persist_state()
 
 
 def get_spend_guard_snapshot() -> dict[str, object]:

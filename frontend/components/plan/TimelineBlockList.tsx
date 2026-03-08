@@ -231,7 +231,7 @@ export function TimelineBlockList({
           if (block.is_skeleton) {
             return (
               <div
-                key={blockIndex}
+                key={`skeleton-${card.day_number}-${blockIndex}`}
                 className="rounded-xl border border-dashed border-zinc-200/50 dark:border-white/10 bg-zinc-100/10 dark:bg-white/[0.03] p-4 opacity-60"
               >
                 <div className="flex items-start gap-3">
@@ -300,7 +300,7 @@ export function TimelineBlockList({
 
           return (
             <div
-              key={blockIndex}
+              key={blockId}
               onMouseEnter={() => useUIStore.getState().setHoveredActivityId(blockId)}
               onMouseLeave={() => useUIStore.getState().setHoveredActivityId(null)}
               id={`timeline-item-${blockId}`}
@@ -398,9 +398,9 @@ export function TimelineBlockList({
                   {/* Specialist constraint pills */}
                   {block.constraints && block.constraints.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {block.constraints.map((constraint, i) => (
+                      {block.constraints.map((constraint) => (
                         <span
-                          key={i}
+                          key={constraint}
                           className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 font-medium"
                         >
                           {constraint}

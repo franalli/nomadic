@@ -237,6 +237,8 @@ export function SuggestionCardContent({
         {/* Deeplink pill */}
         {tile.deeplink_url && tile.deeplink_url !== '' && tile.deeplink_url !== '#' && (() => {
           const isViator = tile.deeplink_url.includes('viator.com');
+          const isGYG = tile.deeplink_url.includes('getyourguide.com');
+          const isPartner = isViator || isGYG;
           return (
             <a
               href={tile.deeplink_url}
@@ -257,8 +259,8 @@ export function SuggestionCardContent({
                 'dark:hover:shadow-[0_0_16px_-3px_rgba(16,185,129,0.35)]',
               )}
             >
-              {isViator ? <ExternalLink className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
-              {isViator ? 'Book' : 'Map'}
+              {isPartner ? <ExternalLink className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
+              {isPartner ? 'Book' : 'Map'}
             </a>
           );
         })()}

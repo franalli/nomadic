@@ -402,7 +402,7 @@ export const ModuleChip = memo(function ModuleChip({
             'absolute -top-1.5 -right-1.5',
             'min-w-[18px] h-[18px] px-1 rounded-full',
             'bg-emerald-500 text-white',
-            'text-[10px] font-bold',
+            `${DS.textSize.micro} font-bold`,
             'flex items-center justify-center',
             'shadow-sm'
           )}

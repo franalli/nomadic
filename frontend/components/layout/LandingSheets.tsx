@@ -25,7 +25,7 @@ interface LandingSheetsProps {
   hasDestination: boolean;
   hasOrigin: boolean;
   hasDates: boolean;
-  planViewState: PlanViewState;
+  planViewState: PlanViewState | undefined;
   activeSheet: SheetType | null;
   gearActivitiesSheetOpen: boolean;
   gearStaysSheetOpen: boolean;
@@ -113,7 +113,7 @@ export function LandingSheets({
             closeSheet();
             addToast(`Origin: ${value}`, 'confirmation');
             // Trigger flight fetch via graph pipeline when plan is active
-            const isActive = PLAN_ACTIVE_STATES.has(planViewState);
+            const isActive = !!planViewState && PLAN_ACTIVE_STATES.has(planViewState);
             if (isActive) {
               onSendMessage(GENERATE_PLAN_TRIGGER);
             }

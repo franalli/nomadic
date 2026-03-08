@@ -123,7 +123,7 @@ export function ChatInputBar({
               aria-label="Stop streaming"
             >
               {/* Minimal square icon - matches theme */}
-              <div className="w-3 h-3 bg-zinc-900 dark:bg-white rounded-[2px]" />
+              <div className="w-3 h-3 bg-zinc-900 dark:bg-white rounded-sm" />
             </button>
           ) : (
             // SEND STATE: Arrow button inside capsule

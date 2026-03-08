@@ -2486,6 +2486,12 @@ async def _run_local_intel(
             principles=[c["desc"] for c in warning_constraints[:4]],
         )
 
+        # Propagate local-expert constraints to session state so they
+        # are available (e.g. for conversationalist) even without a
+        # Tier 1 specialist dispatch.
+        if constraints_applied and not state.get("constraints"):
+            state["constraints"] = list(constraints_applied)
+
         # Phase B: stash enrichment closure so streaming.py fires it after db.commit()
         from app.config import settings as _settings
 
@@ -2685,16 +2691,19 @@ async def _build_itinerary(
     _inject_specialist_tiles_into_state(state)
     await _prepare_activity_tiles_for_build(state)
 
-    # Viator enrichment: real pricing, images, ratings, deeplinks
-    if settings.viator_enabled and settings.viator_api_key:
+    # Partner enrichment: real pricing, images, ratings, deeplinks (Viator + GYG)
+    # Early check avoids import/call overhead when both providers are disabled
+    has_viator = settings.viator_enabled and settings.viator_api_key
+    has_gyg = settings.get_your_guide_enabled and settings.get_your_guide_api_key
+    if has_viator or has_gyg:
         activity_tiles = state.get("tiles", {}).get("activities", [])
         if isinstance(activity_tiles, list) and activity_tiles:
             destination = state.get("trip_plan", {}).get("destination", "")
             currency = state.get("trip_plan", {}).get("currency") or "USD"
             if destination:
-                from app.planner.nodes.logistics_node import _enrich_tiles_with_viator
+                from app.services.partner_enrichment import enrich_tiles_with_partners
 
-                await _enrich_tiles_with_viator(activity_tiles, destination, currency)
+                await enrich_tiles_with_partners(activity_tiles, destination, currency)
 
     tiles: Dict[str, Any] = state.get("tiles", {})
     strategy_sections = state.get("strategy_sections", [])
@@ -3738,6 +3747,13 @@ async def execute_turn(
             candidate_topics = [
                 c for c in activity_settings_fc.get("categories", []) if c in TIER1_SPECIALIST_NAMES
             ]
+            # Skip feasibility re-check for topics that already have
+            # a specialist plan (plan exists → feasibility was confirmed).
+            existing_plans = state.get("specialist_plans", {})
+            if existing_plans:
+                candidate_topics = [
+                    t for t in candidate_topics if t not in existing_plans or not existing_plans[t]
+                ]
             if dest and candidate_topics:
                 from app.planner.services.feasibility_service import batch_feasibility_precheck
 

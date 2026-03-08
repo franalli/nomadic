@@ -125,7 +125,7 @@ function MobileChatInputInner({
               title="Stop"
               aria-label="Stop streaming"
             >
-              <div className="w-2.5 h-2.5 bg-zinc-900 dark:bg-white rounded-[2px]" />
+              <div className="w-2.5 h-2.5 bg-zinc-900 dark:bg-white rounded-sm" />
             </button>
           ) : (
             <button

@@ -270,7 +270,7 @@ function MobileModeHeaderInner({
                     </div>
                     {otherTrips.length > 0 && (
                       <div className="px-2 pb-2">
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Recent Trips</p>
+                        <p className={`${DS.textSize.micro} font-bold uppercase tracking-widest text-muted-foreground mb-1`}>Recent Trips</p>
                         <div className="space-y-1">
                           {otherTrips.slice(0, 3).map((trip) => {
                             const isPast = trip.end_date && new Date(trip.end_date) < new Date();
@@ -291,7 +291,7 @@ function MobileModeHeaderInner({
                                 <p className="text-xs text-foreground truncate">
                                   {trip.destination || 'Untitled Trip'}
                                 </p>
-                                <p className="text-[10px] text-muted-foreground">
+                                <p className={`${DS.textSize.micro} text-muted-foreground`}>
                                   {resumingTripId === trip.trip_id
                                     ? 'Opening...'
                                     : trip.day_count > 0

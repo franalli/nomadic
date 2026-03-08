@@ -236,6 +236,7 @@ export function NomadicLanding() {
     planState,
     destinationCard,
     planViewState,
+    isFraming,
     planViewModel,
     generation,
     tiles,
@@ -280,7 +281,7 @@ export function NomadicLanding() {
   // Compute data density for adaptive layout
   const dataDensity: DataDensity = hasDestination
     ? computeDataDensity(
-        planViewState ?? 'S0_BOOTSTRAP',
+        planViewState ?? 'P0_MINIMAL',
         planViewModel.strategy_sections,
         tiles,
         hasDates
@@ -327,6 +328,7 @@ export function NomadicLanding() {
   const { tripInputsEditorRef, finalizeTimerRef } = useLandingEffects({
     tripInputs,
     planViewState,
+    isFraming,
     docExecutedTopics,
     hasBranchesReady,
     hasStrategyContent,
@@ -366,7 +368,7 @@ export function NomadicLanding() {
     uiGeneration,
     setUiGeneration,
     addToast,
-    planViewState,
+    planViewState: planViewState ?? undefined,
     docExecutedTopics,
     hasDates,
     docDayCards,
@@ -459,7 +461,8 @@ export function NomadicLanding() {
         onUpdateFlightSettings={handleUpdateFlightSettings}
         onUpdateHotelSettings={handleUpdateHotelSettings}
         onUpdateActivitySettings={handleUpdateActivitySettings}
-        planViewState={planViewState}
+        planViewState={planViewState ?? undefined}
+        isFraming={isFraming}
         onOpenSheet={openSheet}
         destinationImageUrl={destinationCard?.image_url ?? destinationImageUrl}
         onConfirmReset={handleStartNewSession}
@@ -472,7 +475,7 @@ export function NomadicLanding() {
   const planViewContent = (
     <ErrorBoundary label="Plan View">
       <StrategyStageRenderer
-        state={planViewState}
+        state={planViewState ?? 'P0_MINIMAL'}
         viewModel={planViewModel}
         destinationCard={destinationCard ?? undefined}
         tiles={tiles}
@@ -702,7 +705,7 @@ export function NomadicLanding() {
         hasOrigin={hasOrigin}
         hasDates={hasDates}
         hasItinerary={hasItineraryContent}
-        planViewState={planViewState}
+        planViewState={planViewState ?? undefined}
         activeSheet={activeSheet}
         gearActivitiesSheetOpen={gearActivitiesSheetOpen}
         gearStaysSheetOpen={gearStaysSheetOpen}

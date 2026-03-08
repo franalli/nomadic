@@ -47,6 +47,7 @@ from app.planner.services.section_builder import (
     upsert_section,
 )
 from app.planner.specialist_registry import (
+    SPECIALIST_REGISTRY,
     TIER1_SPECIALIST_NAMES,
     load_prompt,
 )
@@ -673,16 +674,13 @@ async def generate_specialist_output_llm(
                 and output.feasibility_status == "feasible"
                 and len(output.activities) < min(target_activities, available_days * 5)
             ):
-                # Core keywords per specialist where repeat sessions make sense
+                # Core keywords per Tier 1 specialist where repeat sessions
+                # make sense.  Derived from specialist_registry (SSoT) — first 5
+                # keywords are the primary activity verbs before niche/equipment terms.
                 _SESSION_REPEATABLE_KEYWORDS: dict[str, list[str]] = {
-                    "diving": ["dive", "diving", "scuba", "freedive", "wreck"],
-                    "hiking": ["hike", "hiking", "trek", "trekking", "trail"],
-                    "skiing": ["ski", "skiing", "snowboard"],
-                    "cycling": ["cycle", "cycling", "ride", "biking", "bike"],
-                    "surfing": ["surf", "surfing"],
-                    "climbing": ["climb", "climbing", "boulder", "bouldering"],
-                    "sailing": ["sail", "sailing"],
-                    "wildlife_safari": ["safari", "game drive"],
+                    spec.topic: [kw.lower() for kw in spec.keywords[:5]]
+                    for spec in SPECIALIST_REGISTRY.values()
+                    if spec.tier == 1 and spec.keywords
                 }
                 repeatable_keywords = _SESSION_REPEATABLE_KEYWORDS.get(topic, [])
                 if repeatable_keywords:

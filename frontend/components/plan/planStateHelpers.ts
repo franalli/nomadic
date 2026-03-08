@@ -43,11 +43,6 @@ export function isBootstrap(state: PlanViewState | undefined | null): boolean {
   return normalizePlanViewState(state) === 'P0_MINIMAL';
 }
 
-/** Is the plan in the framing phase (first user message received)? */
-export function isFraming(state: PlanViewState | undefined | null): boolean {
-  return state === 'S1_FRAMING';
-}
-
 /** Is the plan in the strategy-ready phase? (P1_ENRICHED or legacy S2_STRATEGY_READY) */
 export function isStrategyReady(state: PlanViewState | undefined | null): boolean {
   if (!state) return false;

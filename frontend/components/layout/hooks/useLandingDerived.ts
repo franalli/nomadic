@@ -63,7 +63,10 @@ export interface UseLandingDerivedResult {
   tripInputs: DocumentTripInputs;
   planState: PlanState;
   destinationCard: (DestinationCard & { image_url?: string }) | undefined;
-  planViewState: PlanViewState;
+  /** Backend-authoritative plan view state. null = not yet received / prerequisites not met. */
+  planViewState: PlanViewState | null;
+  /** Separate UI loading signal: backend state not received yet but generation is active. NOT a plan_view_state value. */
+  isFraming: boolean;
   planViewModel: PlanViewModel;
   generation: GenerationState | null;
   tiles: Record<string, Tile>;
@@ -184,10 +187,10 @@ export function useLandingDerived({
   const hasTilesReady = docTileCount > 0;
   const hasDayCardsReady = (docDayCards?.length ?? 0) > 0;
 
-  const planViewState: PlanViewState = useMemo(() => {
+  const planViewState: PlanViewState | null = useMemo(() => {
     // Hard gate: plan view stays closed until destination + full dates are set.
     if (!hasPlanPrerequisites) {
-      return 'S0_BOOTSTRAP';
+      return null;
     }
 
     // Backend is authoritative for plan view state.
@@ -195,11 +198,12 @@ export function useLandingDerived({
       return backendPlanViewState;
     }
 
-    // Backend state not yet received — show loading during active generation.
-    if (isGenerating && userRequestedGeneration) return 'S1_FRAMING';
+    // Backend state not yet received — null signals "loading / not ready".
+    return null;
+  }, [hasPlanPrerequisites, backendPlanViewState]);
 
-    return 'S0_BOOTSTRAP';
-  }, [hasPlanPrerequisites, backendPlanViewState, isGenerating, userRequestedGeneration]);
+  // Separate UI loading signal — NOT a plan_view_state value.
+  const isFraming = !backendPlanViewState && isGenerating && userRequestedGeneration && hasPlanPrerequisites;
 
   // Merge pending topics: backend + local optimistic
   const mergedPendingTopics = useMemo(() => {
@@ -265,6 +269,7 @@ export function useLandingDerived({
     planState,
     destinationCard,
     planViewState,
+    isFraming,
     planViewModel,
     generation,
     tiles,

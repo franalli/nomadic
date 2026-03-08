@@ -11,7 +11,7 @@ import {
   useState,
 } from 'react';
 
-import { isBootstrap, isFraming } from '@/components/plan/planStateHelpers';
+import { isBootstrap } from '@/components/plan/planStateHelpers';
 import { UnifiedChipRow } from '@/components/plan/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
 import { useChatEffects } from '@/hooks/useChatEffects';
@@ -35,6 +35,7 @@ import type { PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
+import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { ChatInputHandler } from './ChatInputHandler';
 import { ChatMessageList } from './ChatMessageList';
 import { type VisibleMessage } from './ChatMessageRenderer';
@@ -153,7 +154,9 @@ interface ChatPanelProps {
   /** Update activity settings callback */
   onUpdateActivitySettings?: (settings: Partial<ActivitySettings>) => void;
   /** Plan view state for CTA gating (hide generate after S2) */
-  planViewState?: PlanViewState;
+  planViewState?: PlanViewState | null;
+  /** UI loading signal: backend state not yet received but generation is active. */
+  isFraming?: boolean;
   /** Shared sheet opener - opens trip input sheets at common parent level */
   onOpenSheet?: (sheet: SheetType) => void;
   /** Destination hero image URL — shown as chat panel header in plan mode */
@@ -201,6 +204,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onUpdateHotelSettings,
       onUpdateActivitySettings,
       planViewState,
+      isFraming: isFramingProp,
       onOpenSheet,
       onUserMessageSubmit,
       destinationImageUrl,
@@ -396,6 +400,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     );
 
     return (
+      <ErrorBoundary label="chat">
       <div
         ref={panelRef}
         className={cn(
@@ -408,6 +413,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         {isDesktop && (
           <ChatStatusHeader
             planViewState={planViewState}
+            isFraming={isFramingProp}
             planState={planState}
             isGenerating={isGenerating ?? false}
             destination={destination}
@@ -430,10 +436,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           lastUserMessage={chatSend.lastUserMessage}
           onRetry={chatSend.sendMessageCore}
           isDesktop={isDesktop}
-          planViewState={planViewState}
-          isLanding={isDesktop && (isBootstrap(planViewState) || isFraming(planViewState))}
+          planViewState={planViewState ?? undefined}
+          isLanding={isDesktop && (isBootstrap(planViewState) || !!isFramingProp)}
           scrollHeaderContent={isDesktop && isBootstrap(planViewState) && !isSetupHeaderCollapsed ? (() => {
-            const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, hasDates);
+            const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, hasDates, isFramingProp);
             return (
               <>
                 {/* Hero banner — scrolls up as messages arrive */}
@@ -524,7 +530,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               isGenerating={isGenerating}
               hasBranches={hasBranches}
               hasDestination={hasDestination}
-              planViewState={planViewState}
+              planViewState={planViewState ?? undefined}
               inputRef={inputRef}
             />
           )}
@@ -536,7 +542,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           flightSettings={flightSettings}
           hotelSettings={hotelSettings}
           activitySettings={activitySettings}
-          planViewState={planViewState}
+          planViewState={planViewState ?? undefined}
           origin={origin}
           hasDestination={hasDestination}
           hasDates={hasDates}
@@ -555,6 +561,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           setActivitiesSheetOpen={setActivitiesSheetOpen}
         />
       </div>
+      </ErrorBoundary>
     );
   }
 );
