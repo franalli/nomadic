@@ -11,6 +11,7 @@ import {
   Plus,
   RotateCcw,
   Share2,
+  SlidersHorizontal,
 } from 'lucide-react';
 import Link from 'next/link';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
@@ -25,6 +26,8 @@ import { DS } from '@/lib/design-system';
 import { extractTripPdfData } from '@/lib/pdfData';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
+import { useMobileNavStore } from '@/state/mobileNavStore';
+import { useUIStore } from '@/state/uiStore';
 import { useUserStore } from '@/state/userStore';
 import type { PlanState } from '@/types/plan-envelope';
 
@@ -70,6 +73,15 @@ const STATUS_CONFIG: Record<
   },
 };
 
+const MOBILE_PLAN_SCROLL_TO_TOP_EVENT = 'nomadic:mobile-plan-scroll-top';
+const MOBILE_MENU_ITEM_CLASS =
+  'flex w-full min-h-11 items-center gap-2 rounded-md px-2 text-left transition-colors';
+const MOBILE_MENU_ACTION_CLASS = cn(
+  MOBILE_MENU_ITEM_CLASS,
+  'hover:bg-zinc-100 dark:hover:bg-white/10 disabled:pointer-events-none disabled:opacity-50'
+);
+const MOBILE_MENU_LINK_CLASS = `${MOBILE_MENU_ITEM_CLASS} hover:bg-muted`;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,6 +112,8 @@ function MobileModeHeaderInner({
   const [shareState, setShareState] = useState<'idle' | 'loading' | 'copied'>('idle');
   const { toast } = useToast();
   useEffect(() => setMounted(true), []);
+  const activePage = useMobileNavStore((s) => s.activePage);
+  const mobileHeaderCondensed = useUIStore((s) => s.mobileHeaderCondensed);
 
   const { tripInputs, dayCards, tiles } = useDocumentStore(
     useShallow((s) => ({
@@ -204,12 +218,43 @@ function MobileModeHeaderInner({
     setMenuOpen(false);
   }, [logout]);
 
+  useEffect(() => {
+    if (activePage !== 1) return;
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLInputElement ||
+      activeElement instanceof HTMLTextAreaElement
+    ) {
+      activeElement.blur();
+    }
+  }, [activePage]);
+
+  const status = STATUS_CONFIG[planState];
+  const destination = tripInputs?.destination?.trim() || '';
+  const dateRangeText = useMemo(() => {
+    if (!tripInputs?.start_date) return '';
+    const start = new Date(tripInputs.start_date);
+    const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    if (tripInputs.end_date) {
+      const end = new Date(tripInputs.end_date);
+      const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return `${startFormatted} - ${endFormatted}`;
+    }
+    return startFormatted;
+  }, [tripInputs?.end_date, tripInputs?.start_date]);
+  const condensedSummary = useMemo(() => {
+    if (destination && dateRangeText) return `${destination} · ${dateRangeText}`;
+    return destination || dateRangeText;
+  }, [dateRangeText, destination]);
+  const showCondensedBar = activePage === 1 && mobileHeaderCondensed && Boolean(condensedSummary);
+  const handleScrollToTop = useCallback(() => {
+    window.dispatchEvent(new Event(MOBILE_PLAN_SCROLL_TO_TOP_EVENT));
+  }, []);
+
   // Don't render on desktop - split view shows both panels
   if (isDesktop) {
     return null;
   }
-
-  const status = STATUS_CONFIG[planState];
 
   return (
     <>
@@ -241,7 +286,7 @@ function MobileModeHeaderInner({
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="p-2 text-muted-foreground hover:text-foreground transition-colors -mr-2"
+                className="flex h-11 w-11 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
                 aria-label="Menu"
               >
                 <MoreVertical className="h-5 w-5" />
@@ -284,7 +329,7 @@ function MobileModeHeaderInner({
                                   if (!ok) toast('Could not open saved trip', { type: 'error' });
                                 }}
                                 className={cn(
-                                  'w-full rounded-lg px-2 py-1 text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-50',
+                                  'w-full min-h-11 rounded-lg px-2 py-2 text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-50',
                                   isPast && 'opacity-60'
                                 )}
                               >
@@ -307,7 +352,10 @@ function MobileModeHeaderInner({
                     <button
                       type="button"
                       onClick={handleNewTrip}
-                      className="flex items-center gap-2 px-2 py-2.5 rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] transition-colors text-left text-foreground"
+                      className={cn(
+                        MOBILE_MENU_ACTION_CLASS,
+                        'rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] text-foreground'
+                      )}
                     >
                       <Plus className="h-3.5 w-3.5" />
                       <span className={DS.textSize.micro}>New Trip</span>
@@ -315,7 +363,10 @@ function MobileModeHeaderInner({
                     <button
                       type="button"
                       onClick={handleLogout}
-                      className="flex items-center gap-2 px-2 py-2.5 rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] transition-colors text-left text-foreground"
+                      className={cn(
+                        MOBILE_MENU_ACTION_CLASS,
+                        'rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] text-foreground'
+                      )}
                     >
                       <LogOut className="h-3.5 w-3.5" />
                       <span className={DS.textSize.micro}>Sign out</span>
@@ -334,7 +385,11 @@ function MobileModeHeaderInner({
                             setMenuOpen(false);
                             onReset();
                           }}
-                          className={cn('flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-50', DS.textSize.micro)}
+                          className={cn(
+                            MOBILE_MENU_ACTION_CLASS,
+                            'font-bold uppercase tracking-widest text-zinc-900 dark:text-white',
+                            DS.textSize.micro
+                          )}
                         >
                           {isResetting ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -350,7 +405,10 @@ function MobileModeHeaderInner({
                       type="button"
                       onClick={handleLogin}
                       disabled={userLoading}
-                      className="flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-50"
+                      className={cn(
+                        MOBILE_MENU_ACTION_CLASS,
+                        'text-zinc-900 dark:text-white'
+                      )}
                     >
                       {userLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogIn className="h-3.5 w-3.5" />}
                       <span className={DS.textSize.micro}>Sign in</span>
@@ -370,7 +428,11 @@ function MobileModeHeaderInner({
                         setMenuOpen(false);
                         onReset();
                       }}
-                      className={cn('flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-50', DS.textSize.micro)}
+                      className={cn(
+                        MOBILE_MENU_ACTION_CLASS,
+                        'font-bold uppercase tracking-widest text-zinc-900 dark:text-white',
+                        DS.textSize.micro
+                      )}
                     >
                       {isResetting ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -389,7 +451,11 @@ function MobileModeHeaderInner({
                       type="button"
                       disabled={shareState === 'loading'}
                       onClick={handleShareTrip}
-                      className={cn('flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-50', DS.textSize.micro)}
+                      className={cn(
+                        MOBILE_MENU_ACTION_CLASS,
+                        'font-bold uppercase tracking-widest text-zinc-900 dark:text-white',
+                        DS.textSize.micro
+                      )}
                     >
                       {shareState === 'loading' ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -408,7 +474,11 @@ function MobileModeHeaderInner({
                       type="button"
                       disabled={pdfState === 'loading'}
                       onClick={handlePdfExport}
-                      className={cn('flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left font-bold uppercase tracking-widest text-zinc-900 dark:text-white disabled:pointer-events-none disabled:opacity-50', DS.textSize.micro)}
+                      className={cn(
+                        MOBILE_MENU_ACTION_CLASS,
+                        'font-bold uppercase tracking-widest text-zinc-900 dark:text-white',
+                        DS.textSize.micro
+                      )}
                     >
                       {pdfState === 'loading' ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -424,28 +494,28 @@ function MobileModeHeaderInner({
                 <span className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Help & Legal</span>
                 <Link
                   href="/privacy"
-                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  className={MOBILE_MENU_LINK_CLASS}
                   onClick={() => setMenuOpen(false)}
                 >
                   Privacy Policy
                 </Link>
                 <Link
                   href="/terms"
-                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  className={MOBILE_MENU_LINK_CLASS}
                   onClick={() => setMenuOpen(false)}
                 >
                   Terms of Service
                 </Link>
                 <Link
                   href="/cookies"
-                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  className={MOBILE_MENU_LINK_CLASS}
                   onClick={() => setMenuOpen(false)}
                 >
                   Cookie Policy
                 </Link>
                 <Link
                   href="/contact"
-                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  className={MOBILE_MENU_LINK_CLASS}
                   onClick={() => setMenuOpen(false)}
                 >
                   Contact Us
@@ -456,7 +526,7 @@ function MobileModeHeaderInner({
         ) : (
           <button
             type="button"
-            className="p-2 text-muted-foreground hover:text-foreground transition-colors -mr-2"
+            className="flex h-11 w-11 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
             aria-label="Menu"
           >
             <MoreVertical className="h-5 w-5" />
@@ -465,8 +535,38 @@ function MobileModeHeaderInner({
       </div>
     </header>
 
+    {showCondensedBar && (
+      <div
+        className={cn(
+          'fixed left-0 right-0 z-[1098]',
+          'top-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]',
+          'h-14 px-4 flex items-center justify-between gap-3',
+          'border-b backdrop-blur-xl',
+          'bg-white/90 border-zinc-200',
+          'dark:bg-zinc-950/80 dark:border-white/5',
+          'lg:hidden'
+        )}
+      >
+        <span className="min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-white">
+          {condensedSummary}
+        </span>
+        <button
+          type="button"
+          onClick={handleScrollToTop}
+          className={cn(
+            'flex h-11 w-11 items-center justify-center rounded-full transition-colors',
+            'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900',
+            'dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-white'
+          )}
+          aria-label="Scroll plan to top"
+        >
+          <SlidersHorizontal className="h-5 w-5" />
+        </button>
+      </div>
+    )}
+
     {/* Floating status pill — centered below header, glass morphism */}
-    {status.text && (
+    {status.text && !showCondensedBar && (
       <div
         className={cn(
           'fixed z-[1099] left-1/2 -translate-x-1/2',

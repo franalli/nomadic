@@ -67,7 +67,7 @@ export function HoldToDeleteButton({
       aria-label="Hold to delete"
       disabled={disabled}
       className={cn(
-        'relative flex items-center justify-center w-8 h-8 rounded-full transition-colors',
+        'relative flex items-center justify-center w-11 h-11 rounded-full transition-colors shadow-sm',
         'bg-black/40 hover:bg-emerald-600/80',
         holding && 'bg-red-500/80',
         disabled && 'opacity-50 cursor-not-allowed pointer-events-none',
@@ -98,7 +98,7 @@ export function HoldToDeleteButton({
       )}
       <Trash2
         className={cn(
-          'w-3.5 h-3.5 transition-colors',
+          'w-4 h-4 transition-colors',
           holding ? 'text-white' : 'text-white/90',
         )}
       />

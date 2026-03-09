@@ -16,13 +16,16 @@ import { useCallback, useEffect, useRef } from 'react';
 import { isBootstrap } from '@/components/plan/planStateHelpers';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
+import { useMapSync } from '@/hooks/useMapSync';
 import { type SSEFeasibilityWarningEvent, type SSENodeStatusEvent, type SSEPartialEvent, streamGraphPlan } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
+import { useMobileNavStore } from '@/state/mobileNavStore';
 import type { GraphPlanResponse } from '@/types/document';
 import type { TriggerContext } from '@/types/loader';
+import type { DayCard } from '@/types/plan-envelope';
 
 // Re-exported helpers kept colocated with their consumer
 const READY_MESSAGE_ID_PREFIX = 'ready_';
@@ -48,6 +51,33 @@ function getErrorMessage(error: Error): string {
     return "Invalid request. Try rephrasing or adjusting trip details.";
   }
   return "An issue occurred. Try again or adjust the message.";
+}
+
+function fingerprintDayCard(card: DayCard): string {
+  return JSON.stringify(card);
+}
+
+function findFirstChangedDay(
+  previousDayCards: DayCard[] | undefined,
+  nextDayCards: DayCard[] | undefined
+): number | null {
+  if (!previousDayCards?.length || !nextDayCards?.length) return null;
+
+  const previousByDay = new Map(
+    previousDayCards.map((card) => [card.day_number, fingerprintDayCard(card)])
+  );
+  const nextByDay = new Map(nextDayCards.map((card) => [card.day_number, fingerprintDayCard(card)]));
+  const orderedDays = Array.from(
+    new Set([...previousByDay.keys(), ...nextByDay.keys()])
+  ).sort((a, b) => a - b);
+
+  for (const dayNumber of orderedDays) {
+    if (previousByDay.get(dayNumber) !== nextByDay.get(dayNumber)) {
+      return nextByDay.has(dayNumber) ? dayNumber : (nextDayCards[0]?.day_number ?? null);
+    }
+  }
+
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,6 +188,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
   } = callbacks;
 
   const reconcileTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingPlanScrollTimeoutRef = useRef<number | null>(null);
   const queueCompletionScroll = useCallback(() => {
     requestAnimationFrame(() => {
       scrollPanelIntoView();
@@ -171,6 +202,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
       if (reconcileTimerRef.current) {
         clearTimeout(reconcileTimerRef.current);
         reconcileTimerRef.current = null;
+      }
+      if (pendingPlanScrollTimeoutRef.current !== null) {
+        window.clearTimeout(pendingPlanScrollTimeoutRef.current);
+        pendingPlanScrollTimeoutRef.current = null;
       }
     };
   }, []);
@@ -195,6 +230,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
         if (reconcileTimerRef.current) {
           clearTimeout(reconcileTimerRef.current);
           reconcileTimerRef.current = null;
+        }
+        if (pendingPlanScrollTimeoutRef.current !== null) {
+          window.clearTimeout(pendingPlanScrollTimeoutRef.current);
+          pendingPlanScrollTimeoutRef.current = null;
         }
 
         if (isStaleRequest()) {
@@ -342,12 +381,18 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             setSessionState(data.session_state ?? null);
 
             const doc = data.document;
+            const previousDayCards = useDocumentStore.getState().document?.day_cards ?? [];
+            const wasChatPage = useMobileNavStore.getState().activePage === 0;
 
             const prevSpecialistTypes = prevSpecialistTypesRef.current;
             const prevTileTypes = prevTileTypesRef.current;
 
             const primaryBranch =
               doc.branches?.find((b) => b.is_primary) ?? doc.branches?.[0];
+            const targetUpdatedDayNumber =
+              wasChatPage && previousDayCards.length > 0
+                ? findFirstChangedDay(previousDayCards, doc.day_cards ?? [])
+                : null;
             let planResultApplied = true;
             try {
               onPlanResult({
@@ -362,6 +407,27 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             } catch (planResultError) {
               planResultApplied = false;
               console.error('[ChatPanel] Failed to apply stream result, reconciling from server:', planResultError);
+            }
+
+            if (planResultApplied && targetUpdatedDayNumber) {
+              pendingPlanScrollTimeoutRef.current = window.setTimeout(() => {
+                pendingPlanScrollTimeoutRef.current = null;
+                if (
+                  activeStreamRequestIdRef.current !== null &&
+                  activeStreamRequestIdRef.current !== requestId
+                ) {
+                  return;
+                }
+                requestAnimationFrame(() => {
+                  if (
+                    activeStreamRequestIdRef.current !== null &&
+                    activeStreamRequestIdRef.current !== requestId
+                  ) {
+                    return;
+                  }
+                  useMapSync.getState().requestScrollTo(targetUpdatedDayNumber);
+                });
+              }, 250);
             }
 
             const hasTiles = doc.tiles && Object.keys(doc.tiles).length > 0;
@@ -603,6 +669,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             if (reconcileTimerRef.current) {
               clearTimeout(reconcileTimerRef.current);
               reconcileTimerRef.current = null;
+            }
+            if (pendingPlanScrollTimeoutRef.current !== null) {
+              window.clearTimeout(pendingPlanScrollTimeoutRef.current);
+              pendingPlanScrollTimeoutRef.current = null;
             }
             console.error('Failed to plan trip', error);
 

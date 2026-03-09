@@ -9,7 +9,7 @@
  */
 
 import { CheckCircle, ExternalLink, MapPin, MoreVertical, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { trackDeeplinkClick } from '@/lib/api';
@@ -45,11 +45,27 @@ export function ActivityCardInlineActions({
   tileId,
 }: ActivityCardInlineActionsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [isHoverCapable, setIsHoverCapable] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const updateHoverCapability = () => setIsHoverCapable(mediaQuery.matches);
+
+    updateHoverCapability();
+    mediaQuery.addEventListener?.('change', updateHoverCapability);
+    return () => {
+      mediaQuery.removeEventListener?.('change', updateHoverCapability);
+    };
+  }, []);
 
   return (
     <>
       {/* External deeplink — emerald glass pill */}
-      {deeplink && deeplink !== '' && (() => {
+      {deeplink && deeplink !== '' && deeplink !== '#' && (() => {
         const isViator = deeplink.includes('viator.com');
         const isGYG = deeplink.includes('getyourguide.com');
         const isPartner = isViator || isGYG;
@@ -58,12 +74,14 @@ export function ActivityCardInlineActions({
             href={deeplink}
             target="_blank"
             rel="noopener noreferrer"
+            aria-label={isPartner ? (isViator ? 'Book on Viator' : 'Book on GetYourGuide') : 'Open map'}
             onClick={(e) => {
               e.stopPropagation();
               if (tileId) trackDeeplinkClick(tileId);
             }}
             className={cn(
-              'inline-flex items-center gap-1 px-2 py-1 rounded-full self-center shrink-0',
+              'inline-flex max-w-full items-center gap-1.5 rounded-full px-3 py-2 self-start sm:self-center',
+              'min-h-11',
               `${DS.textSize.micro} font-bold uppercase tracking-wider`,
               'transition-all duration-150 active:scale-95',
               'bg-emerald-50 border border-emerald-500/30 text-emerald-700',
@@ -74,7 +92,14 @@ export function ActivityCardInlineActions({
             )}
           >
             {isPartner ? <ExternalLink className="w-3 h-3" /> : <MapPin className="w-3 h-3" />}
-            {isPartner ? (isViator ? 'Book on Viator' : 'Book on GYG') : 'Map'}
+            {isPartner ? (
+              <>
+                <span className="sm:hidden">Book</span>
+                <span className="hidden sm:inline">{isViator ? 'Book on Viator' : 'Book on GYG'}</span>
+              </>
+            ) : (
+              'Map'
+            )}
           </a>
         );
       })()}
@@ -83,7 +108,10 @@ export function ActivityCardInlineActions({
       {mode === 'booking' && !isBooked && onBook && (
         <button
           onClick={onBook}
-          className={cn(DS.actions.primary, 'self-center px-3 py-1.5 text-xs font-semibold rounded-lg shrink-0')}
+          className={cn(
+            DS.actions.primary,
+            'self-start sm:self-center min-h-11 px-3 py-2 text-xs font-semibold rounded-lg shrink-0'
+          )}
         >
           Book
         </button>
@@ -96,11 +124,21 @@ export function ActivityCardInlineActions({
         </div>
       )}
 
-      {/* Context Menu (visible on hover when booked) */}
+      {/* Context Menu (always visible on mobile/touch layouts, hover-revealed on large screens) */}
       {isBooked && onUnassign && (
         <Popover open={menuOpen} onOpenChange={setMenuOpen}>
           <PopoverTrigger asChild>
-            <button aria-label="More options" className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-zinc-100 dark:hover:bg-white/10 transition-opacity">
+            <button
+              aria-label="More options"
+              className={cn(
+                'absolute top-2 right-2 z-10 flex h-11 w-11 items-center justify-center rounded-full border shadow-sm transition-opacity',
+                'border-zinc-200/80 bg-white/90 hover:bg-zinc-100',
+                'dark:border-white/10 dark:bg-zinc-950/80 dark:hover:bg-white/10',
+                isHoverCapable
+                  ? 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+                  : 'opacity-100'
+              )}
+            >
               <MoreVertical className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
             </button>
           </PopoverTrigger>
@@ -111,7 +149,7 @@ export function ActivityCardInlineActions({
                   setMenuOpen(false);
                   onBook();
                 }}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
+                className="flex min-h-11 w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
               >
                 <RefreshCw className="w-4 h-4" />
                 Change Selection
@@ -122,7 +160,7 @@ export function ActivityCardInlineActions({
                 setMenuOpen(false);
                 onUnassign();
               }}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+              className="flex min-h-11 w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
             >
               <Trash2 className="w-4 h-4" />
               Remove from Itinerary
@@ -131,9 +169,16 @@ export function ActivityCardInlineActions({
         </Popover>
       )}
 
-      {/* Hold-to-delete -- only for removable, non-booked blocks */}
+      {/* Hold-to-delete -- always visible so touch devices never depend on hover */}
       {isRemovable && onRemove && !(isBooked && onUnassign) && (
-        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+        <div
+          className={cn(
+            'absolute top-2 right-2 z-10 transition-opacity',
+            isHoverCapable
+              ? 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+              : 'opacity-100'
+          )}
+        >
           <HoldToDeleteButton onDelete={onRemove} />
         </div>
       )}

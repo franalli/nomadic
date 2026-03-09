@@ -36,6 +36,10 @@ type UIState = {
   hoveredActivityId: string | null;
   setHoveredActivityId: (id: string | null) => void;
 
+  // Mobile plan header collapse state (ephemeral — not persisted)
+  mobileHeaderCondensed: boolean;
+  setMobileHeaderCondensed: (condensed: boolean) => void;
+
   // Actions
   setSelectedBranchId: (branchId: string | null) => void;
   selectBranchIfNone: (branchId: string) => void;
@@ -58,6 +62,7 @@ const initialUIState = {
   isComparisonMode: false,
   comparisonBranchIds: null as [string, string] | null,
   hoveredActivityId: null as string | null,
+  mobileHeaderCondensed: false,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,6 +90,7 @@ export const useUIStore = create<UIState>()(
       ...initialUIState,
 
       setHoveredActivityId: (id: string | null) => set({ hoveredActivityId: id }),
+      setMobileHeaderCondensed: (condensed: boolean) => set({ mobileHeaderCondensed: condensed }),
 
       setSelectedBranchId: (branchId: string | null) => {
         set({ selectedBranchId: branchId });

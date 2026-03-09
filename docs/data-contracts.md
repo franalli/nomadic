@@ -474,7 +474,7 @@ Hydration guards:
 
 ## 5. Frontend State Store
 
-Source: `frontend/state/documentStore.ts`, `frontend/state/userStore.ts` (Zustand)
+Source: `frontend/state/documentStore.ts`, `frontend/state/uiStore.ts`, `frontend/state/userStore.ts` (Zustand)
 
 ### Store Shape
 
@@ -563,6 +563,26 @@ Module-level `_userDirtySettings: Set<string>` (not Zustand state -- avoids re-r
 - **Image URL hygiene:** document/envelope merge paths sanitize Picsum hosts (`picsum.photos`, `fastly.picsum.photos`) out of destination cards, tiles, day blocks, and strategy assets; required gallery/vibe images fall back to a deterministic Unsplash URL
 - **Bookable activity filter:** `isBookableActivityTile()` in `tileSelectors.ts` filters fill-day generated tiles (`source_agent` in `experience_generator` or `vertical_specialist`) from the booking surface (`BookingSection`). Non-activity tiles always pass through.
 - **Session reset hard reload:** `useBranchManager` now forces `window.location.reload()` after a successful session reset so fresh cookies/session identity are picked up before the planner rehydrates.
+
+### UI Store (`frontend/state/uiStore.ts`)
+
+Separate lightweight Zustand store for ephemeral and session-scoped UI state. It does not duplicate `TripPlan` document data. Some fields exist for persisted UI continuity before all consumers have migrated off older document/local state.
+
+| Field / Action | Purpose |
+| -------------- | ------- |
+| `selectedBranchId` | Persisted branch-selection mirror provisioned in `uiStore`; current timeline/render consumers still read `documentStore.selectedBranchId` / `useBranchState` |
+| `isComparisonMode` | Enables branch comparison UI state |
+| `comparisonBranchIds` | Tuple of active comparison branch IDs |
+| `hoveredActivityId` / `setHoveredActivityId()` | Ephemeral card↔map hover sync |
+| `mobileHeaderCondensed` / `setMobileHeaderCondensed()` | Ephemeral mobile header collapse flag driven by `useStrategyStageOrchestration` scroll state |
+| `setSelectedBranchId()` / `selectBranchIfNone()` | Helpers for the persisted branch-selection mirror in `uiStore` |
+| `setComparisonMode()` / `toggleBranchForComparison()` / `exitComparisonMode()` | Comparison-mode state transitions |
+| `resetUI()` | Resets all UI-only state |
+
+Persistence contract:
+- Persisted: `selectedBranchId`, `isComparisonMode`, `comparisonBranchIds`
+- Ephemeral only: `hoveredActivityId`, `mobileHeaderCondensed`
+- Storage key: `nomadic-ui-state`
 
 ### Auth/User Store (`frontend/state/userStore.ts`)
 

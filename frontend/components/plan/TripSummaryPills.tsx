@@ -10,7 +10,7 @@
 
 import type { LucideIcon } from 'lucide-react';
 import { Activity, Building2, Calendar, Compass, DollarSign, Lightbulb, MapPin, Plane, Users } from 'lucide-react';
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { canonicalCategoryKey, TIER1_CONSTRAINT_HINTS, toCategoryKey } from '@/lib/categoryNormalization';
 import { DS } from '@/lib/design-system';
@@ -106,7 +106,8 @@ function Segment({
       aria-controls={ariaControls}
       aria-expanded={ariaExpanded}
       className={cn(
-        'inline-flex items-center gap-1.5 h-8 rounded-full',
+        'inline-flex items-center gap-1.5 rounded-full',
+        compact ? 'h-8' : 'h-10',
         compact ? 'px-2' : 'px-3',
         compact ? 'text-xs' : DS.textSize.badgeLabel,
         'whitespace-nowrap transition-all duration-150',
@@ -336,6 +337,45 @@ export function TripSummaryPills({
   const showModuleGroup = showFlights || showStays || showAdvice;
   const showOrigin = !!origin;
   const showBudget = !!budget;
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [showRightFade, setShowRightFade] = useState(false);
+
+  const updateFadeState = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element || compact) {
+      setShowRightFade(false);
+      return;
+    }
+
+    const hasOverflow = element.scrollWidth - element.clientWidth > 4;
+    const atEnd = element.scrollLeft + element.clientWidth >= element.scrollWidth - 4;
+    setShowRightFade(hasOverflow && !atEnd);
+  }, [compact]);
+
+  useEffect(() => {
+    updateFadeState();
+    const element = scrollRef.current;
+    if (!element || compact) return;
+
+    const handleScroll = () => updateFadeState();
+    element.addEventListener('scroll', handleScroll, { passive: true });
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => updateFadeState());
+    resizeObserver?.observe(element);
+    if (element.firstElementChild instanceof HTMLElement) {
+      resizeObserver?.observe(element.firstElementChild);
+    }
+
+    window.addEventListener('resize', updateFadeState);
+    return () => {
+      element.removeEventListener('scroll', handleScroll);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateFadeState);
+    };
+  }, [compact, updateFadeState]);
 
   const coreSegments: CoreSegmentItem[] = [
     {
@@ -394,101 +434,109 @@ export function TripSummaryPills({
   ];
 
   return (
-    <div className={cn(
-      compact
-        ? ''
-        : 'overflow-x-auto no-scrollbar flex-nowrap -mx-4 px-4 py-2 lg:overflow-x-visible lg:flex-wrap',
-    )}>
+    <div className="relative">
       <div
+        ref={scrollRef}
         className={cn(
-          'inline-flex items-center',
-          compact ? 'h-9' : 'h-10',
-          'rounded-xl',
-          'px-1.5',
-          'bg-white/[0.05]',
-          'backdrop-blur-xl',
-          'border border-white/[0.08]',
-          'shadow-[0_2px_20px_rgba(0,0,0,0.4),0_4px_24px_rgba(16,185,129,0.06),inset_0_1px_0_rgba(255,255,255,0.06)]',
-          'overflow-visible',
+          compact
+            ? ''
+            : 'overflow-x-auto no-scrollbar flex-nowrap -mx-4 px-4 py-2 lg:overflow-x-visible lg:flex-wrap',
         )}
       >
-        {coreSegments.map((segment, idx) => (
-          <Fragment key={segment.key}>
-            <Segment
-              icon={segment.icon}
-              label={segment.label}
-              badge={segment.badge}
-              isSet={segment.isSet}
-              onClick={segment.onClick}
-              disabled={segment.disabled}
-              compact={compact}
-            />
-            {idx < coreSegments.length - 1 && <SegDot />}
-          </Fragment>
-        ))}
-
-        {showModuleGroup ? (
-          <>
-            <GroupDivider />
-
-            {showFlights ? (
-              <>
-                <Segment
-                  icon={Plane}
-                  label="Flights"
-                  badge={flightCount}
-                  muted
-                  active={flightsActive}
-                  onClick={onToggleFlights}
-                  disabled={disabled}
-                  compact={compact}
-                />
-                {(showStays || showAdvice) && <SegDot />}
-              </>
-            ) : null}
-
-            {showStays ? (
-              <>
-                <Segment
-                  icon={Building2}
-                  label="Stays"
-                  badge={stayCount}
-                  muted
-                  active={staysActive}
-                  onClick={onToggleStays}
-                  disabled={disabled}
-                  compact={compact}
-                />
-                {showAdvice && <SegDot />}
-              </>
-            ) : null}
-
-            {showAdvice ? (
+        <div
+          className={cn(
+            'inline-flex items-center',
+            compact ? 'h-9' : 'h-10',
+            'rounded-xl',
+            'px-1.5',
+            'bg-white/[0.05]',
+            'backdrop-blur-xl',
+            'border border-white/[0.08]',
+            'shadow-[0_2px_20px_rgba(0,0,0,0.4),0_4px_24px_rgba(16,185,129,0.06),inset_0_1px_0_rgba(255,255,255,0.06)]',
+            'overflow-visible',
+          )}
+        >
+          {coreSegments.map((segment, idx) => (
+            <Fragment key={segment.key}>
               <Segment
-                id="destination-intel-trigger"
-                icon={Lightbulb}
-                label="Advice"
-                badge={travelAdviceCount > 0 ? travelAdviceCount : undefined}
-                muted
-                active={travelAdviceActive}
-                onClick={onToggleTravelAdvice}
-                disabled={disabled}
+                icon={segment.icon}
+                label={segment.label}
+                badge={segment.badge}
+                isSet={segment.isSet}
+                onClick={segment.onClick}
+                disabled={segment.disabled}
                 compact={compact}
-                ariaControls="destination-intel-panel"
-                ariaExpanded={travelAdviceActive}
-                trailing={
-                  isTravelAdvicePending ? (
-                    <Compass
-                      className="h-4 w-4 shrink-0 text-emerald-500 compass-spin"
-                      aria-label="Travel advice is loading"
-                    />
-                  ) : undefined
-                }
               />
-            ) : null}
-          </>
-        ) : null}
+              {idx < coreSegments.length - 1 && <SegDot />}
+            </Fragment>
+          ))}
+
+          {showModuleGroup ? (
+            <>
+              <GroupDivider />
+
+              {showFlights ? (
+                <>
+                  <Segment
+                    icon={Plane}
+                    label="Flights"
+                    badge={flightCount}
+                    muted
+                    active={flightsActive}
+                    onClick={onToggleFlights}
+                    disabled={disabled}
+                    compact={compact}
+                  />
+                  {(showStays || showAdvice) && <SegDot />}
+                </>
+              ) : null}
+
+              {showStays ? (
+                <>
+                  <Segment
+                    icon={Building2}
+                    label="Stays"
+                    badge={stayCount}
+                    muted
+                    active={staysActive}
+                    onClick={onToggleStays}
+                    disabled={disabled}
+                    compact={compact}
+                  />
+                  {showAdvice && <SegDot />}
+                </>
+              ) : null}
+
+              {showAdvice ? (
+                <Segment
+                  id="destination-intel-trigger"
+                  icon={Lightbulb}
+                  label="Advice"
+                  badge={travelAdviceCount > 0 ? travelAdviceCount : undefined}
+                  muted
+                  active={travelAdviceActive}
+                  onClick={onToggleTravelAdvice}
+                  disabled={disabled}
+                  compact={compact}
+                  ariaControls="destination-intel-panel"
+                  ariaExpanded={travelAdviceActive}
+                  trailing={
+                    isTravelAdvicePending ? (
+                      <Compass
+                        className="h-4 w-4 shrink-0 text-emerald-500 compass-spin"
+                        aria-label="Travel advice is loading"
+                      />
+                    ) : undefined
+                  }
+                />
+              ) : null}
+            </>
+          ) : null}
+        </div>
       </div>
+      {!compact && showRightFade && (
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-white dark:from-zinc-950 to-transparent lg:hidden" />
+      )}
     </div>
   );
 }

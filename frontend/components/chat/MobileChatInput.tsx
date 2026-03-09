@@ -102,7 +102,7 @@ function MobileChatInputInner({
             ref={inputRef}
             disabled={isProcessing}
             aria-label="Chat message"
-            className="w-full h-10 min-h-10 bg-transparent text-zinc-900 dark:text-white pl-5 pr-2 py-2.5 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+            className="w-full h-10 min-h-10 bg-transparent text-zinc-900 dark:text-white pl-5 pr-2 py-2.5 text-[16px] font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
             placeholder={placeholder}
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -111,13 +111,13 @@ function MobileChatInputInner({
           />
         </form>
 
-        <div className="pr-1 py-1 flex-shrink-0">
+        <div className="pr-0.5 py-0.5 flex-shrink-0">
           {isProcessing && onStop ? (
             <button
               type="button"
               onClick={onStop}
               className={cn(
-                'h-10 w-10 flex items-center justify-center rounded-full transition-all hover:scale-105 active:scale-95',
+                'h-11 w-11 flex items-center justify-center rounded-full transition-all hover:scale-105 active:scale-95',
                 'bg-zinc-200 dark:bg-white/10',
                 'hover:bg-zinc-300 dark:hover:bg-white/20',
                 'border border-zinc-300 dark:border-white/10'
@@ -133,7 +133,7 @@ function MobileChatInputInner({
               onClick={(e) => canSend && handleSubmit(e as unknown as React.FormEvent)}
               disabled={!canSend}
               className={cn(
-                'flex items-center justify-center h-10 w-10 rounded-full transition-all duration-300',
+                'flex items-center justify-center h-11 w-11 rounded-full transition-all duration-300',
                 canSend
                   ? `bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:text-white dark:${DS.glowClass.lg} dark:hover:bg-emerald-500 hover:scale-105 active:scale-95`
                   : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600',

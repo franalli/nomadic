@@ -20,6 +20,7 @@ import {
   hasSpecialistContent,
 } from '@/lib/ghost-timeline-adapter';
 import { useDocumentStore } from '@/state/documentStore';
+import { useUIStore } from '@/state/uiStore';
 import type { DocumentTripInputs } from '@/types/document';
 import { normalizePlanViewState, type PlanViewModel, type PlanViewState, type ViewMode } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
@@ -30,6 +31,8 @@ import { getTopicLabel } from './stages/StrategyHeroUtils';
 import { useBookingDrawerState } from './useBookingDrawerState';
 
 export type DataDensity = 'empty' | 'ghost' | 'bridge' | 'full';
+
+const MOBILE_PLAN_SCROLL_TO_TOP_EVENT = 'nomadic:mobile-plan-scroll-top';
 
 export function computeDataDensity(
   state: PlanViewState,
@@ -77,6 +80,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   const storeDayCardsRaw = useDocumentStore((s) => s.document?.day_cards);
   const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
   const isRegenUpdating = useDocumentStore((s) => s.isRegenerating);
+  const setMobileHeaderCondensed = useUIStore((s) => s.setMobileHeaderCondensed);
   const preferredTileIds = useStoreWithEqualityFn(
     useDocumentStore,
     (s) => s.preferredTileIds,
@@ -106,6 +110,30 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   const timelineSectionRef = useRef<HTMLDivElement>(null);
   const prevHasItineraryRef = useRef(false);
   const frozenScrollRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (isDesktop) {
+      setMobileHeaderCondensed(false);
+      return;
+    }
+    setMobileHeaderCondensed(isCollapsed);
+    return () => {
+      setMobileHeaderCondensed(false);
+    };
+  }, [isCollapsed, isDesktop, setMobileHeaderCondensed]);
+
+  useEffect(() => {
+    if (isDesktop) return;
+
+    const handleScrollToTop = () => {
+      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    window.addEventListener(MOBILE_PLAN_SCROLL_TO_TOP_EVENT, handleScrollToTop);
+    return () => {
+      window.removeEventListener(MOBILE_PLAN_SCROLL_TO_TOP_EVENT, handleScrollToTop);
+    };
+  }, [isDesktop]);
 
   useEffect(() => { guardedEnforcePolicy(state, viewModel); }, [state, viewModel]);
 

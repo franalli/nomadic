@@ -215,7 +215,7 @@ export function ActivityMiniCard({
         />
 
         {/* Content + Actions row */}
-        <div className="flex items-start gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
           {/* Content: rating, price, duration, badges, description */}
           <ActivityCardMeta
             block={block}

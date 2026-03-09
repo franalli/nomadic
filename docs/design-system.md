@@ -672,7 +672,7 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | ChatPanel | `chat/ChatPanel.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (S0 hero terminal text) |
 | ChatMessageList | `chat/ChatMessageList.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (terminal status text) |
 | ChatInputBar | `chat/ChatInputBar.tsx` | `DS.glowClass.sm`, `DS.glowClass.md`, Living Void pattern (emerald glow + pulse), Stop button (monochrome square) |
-| MobileChatInput | `chat/MobileChatInput.tsx` | `DS.glowClass.mobileInputSm`, `DS.glowClass.mobileInputMd`, `DS.glowClass.lg` |
+| MobileChatInput | `chat/MobileChatInput.tsx` | `DS.glowClass.mobileInputSm`, `DS.glowClass.mobileInputMd`, `DS.glowClass.lg`; mobile textarea locks to `text-[16px]` to prevent iOS Safari auto-zoom on focus |
 | SmartLoader | `chat/SmartLoader.tsx` | `DS.textSize.micro` (mutating status line with dynamic Lucide icon) |
 | ChatSuggestionChips | `chat/ChatSuggestionChips.tsx` | Raw Tactile pills (suggestion chips), `Sparkles` icon (planning trigger), `SlidersHorizontal` icon (sheet actions) |
 | BrowseActivitiesSheet | `plan/BrowseActivitiesSheet.tsx` | `DS.pills.shapeFull`, `DS.pills.active`, `DS.pills.inactive`, `DS.infoBox.container` |
@@ -1174,32 +1174,33 @@ Mobile has physics that Desktop does not: Safe Areas, Touch Targets, Slide Gestu
 
 On mobile, screen real estate is critical. We do NOT keep the full pill stack sticky—it eats too much space.
 
-**The Logic:** When the user scrolls past `y > 50`, transform the header into a **Single Slim Bar**.
+**The Logic:** Keep the base `MobileModeHeader` fixed at the top, and when the mobile plan scroll container collapses past the threshold, add a **secondary condensed bar below the header**. The pill reel stays inline with plan content and is never made sticky.
 
 | State | Behavior | Visual |
 |-------|----------|--------|
-| **Top (Idle)** | Full Pill Stack | All parameters visible in horizontal scroll reel |
-| **Scrolled** | Condensed Bar | `h-14`, `bg-zinc-950/80`, `backdrop-blur-xl`, `border-b border-white/5` |
+| **Top (Idle)** | Fixed header only + inline pill reel in content | All parameters visible in horizontal scroll reel |
+| **Scrolled** | Fixed header + condensed summary bar | `h-14`, `bg-zinc-950/80`, `backdrop-blur-xl`, `border-b border-white/5` |
 
 **Condensed Bar Content:**
 - Left: "Dubai • Jan 29 - Feb 4" (White, Font Bold)
-- Right: "Tune" icon (Equalizer style) to expand back to full mode
+- Right: "Tune" icon (Equalizer style) in a `h-11 w-11` touch target; scrolls the mobile plan container back to top
 
 **Code Example:**
 
 ```tsx
-// Condensed Sticky Header
+// Base mobile header stays fixed; condensed bar appears below it
 <div className={cn(
-  'fixed top-0 inset-x-0 z-40',
-  'h-14 px-4 flex items-center justify-between',
+  'fixed left-0 right-0 z-[1098]',
+  'top-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]',
+  'h-14 px-4 flex items-center justify-between gap-3',
   'bg-zinc-950/80 backdrop-blur-xl',
   'border-b border-white/5',
   'transition-all duration-300'
 )}>
-  <span className="text-sm font-bold text-white truncate">
+  <span className="min-w-0 truncate text-sm font-semibold text-white">
     Dubai • Jan 29 - Feb 4
   </span>
-  <button className="p-2 text-zinc-400 hover:text-white">
+  <button className="flex h-11 w-11 items-center justify-center rounded-full text-zinc-400 hover:text-white">
     <SlidersHorizontal className="h-5 w-5" />
   </button>
 </div>
@@ -1248,7 +1249,8 @@ Mobile fingers are imprecise. Every interactive element needs adequate hit area.
 | Element | Minimum Size | Notes |
 |---------|--------------|-------|
 | **Pills/Chips** | `h-10` or `h-11` | Larger than desktop (core: `h-8`, module: `h-9`) |
-| **Buttons** | `h-12` (48px) | Apple's minimum recommendation |
+| **Primary CTAs** | `min-h-[48px]` | Use for full-width actions like `+ Add activity` |
+| **Icon Buttons / Menus** | `h-11 w-11` | Use for header triggers, overflow actions, and timeline delete/menu affordances |
 | **Close X** | `p-4` hit area | Even if icon is small |
 | **Stepper +/-** | `w-12 h-12` | Bigger than desktop (`w-10 h-10`) |
 
@@ -1259,6 +1261,8 @@ Mobile fingers are imprecise. Every interactive element needs adequate hit area.
 **Problem:** Stacking pills vertically eats screen space and looks messy when they wrap.
 
 **Solution:** Use a horizontal scroll carousel. Keep pills on ONE line. Let users swipe left/right.
+
+**Mobile hint:** When the reel overflows, show a right-edge fade until the user reaches scroll end. The fade belongs to the actual scroll container so it can disappear correctly at the end state.
 
 **Code Example:**
 
@@ -2435,7 +2439,7 @@ SPRING_CONFIG = {
 **Rule:** Skip complex animations on mobile for performance.
 
 - Specialists: No auto-expand on mobile
-- Map: Inline on mobile plan page (250px, scrolls with content)
+- Map: Inline on mobile plan page (`h-[clamp(220px,35vh,300px)]`, scrolls with content)
 - Consider `prefers-reduced-motion` for accessibility
 - **Layout:** Horizontal swipe (`MobileSwipeLayout` with CSS `scroll-snap`). See `ux_unified_architecture.md` Section X.
 - **Viewport detection:** Use `useIsDesktop()` hook from `hooks/useIsDesktop.ts`
@@ -2580,9 +2584,9 @@ Updates to Section 6 — new components discovered in audit:
 | `CategorySection` | `plan/booking/CategorySection.tsx` | `DS.textSize.micro` | `shadow-card hover:shadow-soft` for accordion card |
 | `CheckoutSidebar` | `plan/booking/CheckoutSidebar.tsx` | None | `shadow-card` for summary card |
 | `StrategyHero` | `plan/stages/StrategyHero.tsx` | `DS.text.*`, `DS.infoBox` | Specialist colors from `SPECIALIST_STYLE_CLASSES` map (in `StrategyHeroUtils.tsx`) |
-| `ActivityMiniCard` | `plan/timeline/blocks/ActivityMiniCard.tsx` | `DS.textSize.*` | `hover:shadow-soft` for card hover; default card uses a full-width landscape banner plus metadata/action row |
+| `ActivityMiniCard` | `plan/timeline/blocks/ActivityMiniCard.tsx` | `DS.textSize.*` | `hover:shadow-soft` for card hover; default card uses a full-width landscape banner plus metadata/action row, and the row stacks on narrow screens to prevent CTA overflow |
 | `UnifiedChipRow` | `plan/UnifiedChipRow.tsx` | `DS.textSize.*` | Constraint chips; disabled: `opacity-50 cursor-not-allowed` |
-| `MobileModeHeader` | `layout/MobileModeHeader.tsx` | `DS.textSize.*` | `shadow-card` for status pill |
+| `MobileModeHeader` | `layout/MobileModeHeader.tsx` | `DS.textSize.*` | `shadow-card` for status pill; condensed summary bar renders below the fixed header and icon/menu controls use `h-11 w-11` touch targets |
 | `NextStepBar` | `plan/NextStepBar.tsx` | `DS.text.label`, `DS.textSize.micro`, `DS.glowClass.action` | Command Island; `shadow-card` for status pill, `shadow-soft` for island |
 | `GhostSlot` | `plan/timeline/blocks/GhostSlot.tsx` | None (raw pattern) | Dashed CTA slot; `border-dashed border-zinc-300 dark:border-white/10` |
 | `LogisticsBlock` | `plan/timeline/blocks/LogisticsBlock.tsx` | None (raw pattern) | Flight/transfer block; `dark:bg-zinc-900/50 dark:border-white/[0.08]` glass pattern |
@@ -2605,7 +2609,7 @@ Updates to Section 6 — new components discovered in audit:
 | `MiniCardContent` | `tiles/MiniCardContent.tsx` | `DS.textSize.*`, `DS.text.accent` | Shared compact tile body renderer with provider-aware deeplink CTA copy |
 | `TileCardContent` | `tiles/TileCardContent.tsx` | `DS.textSize.*`, `DS.actions.smallAction` | Shared booking/tile body renderer with provider-aware deeplink CTA copy |
 | `ActivityCardMeta` | `plan/timeline/blocks/ActivityCardMeta.tsx` | `DS.textSize.micro`, `DS.text.muted` | Activity metadata badges and metadata row formatting; traveler ratings use amber star treatment and live prices switch copy from `~123` to `from 123` when the partner price is authoritative |
-| `ActivityCardActions` | `plan/timeline/blocks/ActivityCardActions.tsx` | `DS.actions.primary`, `DS.text.label` | Action row for activity detail/visit links; partner deeplinks render as booking CTAs instead of map CTAs (`Book on Viator` / `Book on GYG`), and the hold-to-delete affordance is pinned to the top-right overlay zone |
+| `ActivityCardActions` | `plan/timeline/blocks/ActivityCardActions.tsx` | `DS.actions.primary`, `DS.text.label` | Action row for activity detail/visit links; partner deeplinks render as booking CTAs instead of map CTAs, shorten to `Book` on mobile, and overlay controls stay visible on touch layouts with `h-11` targets |
 | `ActivityCardPhoto` | `plan/timeline/blocks/ActivityCardPhoto.tsx` | `DS.glowClass.dropText` | Full-width landscape photo banner for `ActivityMiniCard`; signed Google Places proxies now request up to 720px width and the allowlist accepts TripAdvisor plus GetYourGuide CDN hosts |
 
 ### Provider-Aware Deeplink Pills
@@ -2951,7 +2955,7 @@ Status key:
 | `ItineraryDndWrapper` | `plan/timeline/ItineraryDndWrapper.tsx` | DnD orchestration container; no direct style surface | Non-Visual |
 | `RichBlockRenderer` | `plan/timeline/RichBlockRenderer.tsx` | Rendering dispatcher; visual styling delegated to mapped block components | Non-Visual |
 | `TimelineSkeleton` | `plan/timeline/TimelineSkeleton.tsx` | Skeleton colors/animation follow Section 26 | Provisional |
-| `HoldToDeleteButton` | `plan/timeline/blocks/HoldToDeleteButton.tsx` | Neutral black/white overlay at rest; switches to red only while hold-confirm is active | Provisional |
+| `HoldToDeleteButton` | `plan/timeline/blocks/HoldToDeleteButton.tsx` | Neutral black/white overlay at rest; switches to red only while hold-confirm is active, using a `w-11 h-11` circular touch target | Provisional |
 | `SafetyBlock` | `plan/timeline/blocks/SafetyBlock.tsx` | Safety/warning states follow Section 4 inline constraint severity styles | Provisional |
 | `TaxesFeesTooltip` | `tiles/TaxesFeesTooltip.tsx` | Tooltip text sizing (`DS.textSize.mini`/`micro`) and zinc contrast pairings | Provisional |
 

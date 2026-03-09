@@ -65,7 +65,7 @@ export function FullDensityTimeline({
     <>
       {!isDesktop && hasItineraryContent && (fullModePOIs.length > 0 || hasDestinationCenter) && (
         <section className="mt-4 px-4">
-          <div className="h-[300px] overflow-hidden rounded-xl border border-zinc-200/50 dark:border-white/10">
+          <div className="h-[clamp(220px,35vh,300px)] overflow-hidden rounded-xl border border-zinc-200/50 dark:border-white/10">
             <MapErrorBoundary className="h-full w-full">
               <InteractiveMap items={fullModeMapItems} activeItemId={null}
                 defaultCenter={mapCenter} className="h-full w-full"

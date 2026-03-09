@@ -435,9 +435,9 @@ export function TimelineBlockList({
           type="button"
           onClick={() => onBrowse(card.day_number, card.date ?? null)}
           className={cn(
-            "w-full py-3 rounded-xl text-sm font-medium border-2 border-dashed transition-all duration-200",
-            "border-white/10 text-zinc-500",
-            "hover:border-emerald-500/30 hover:text-emerald-400",
+            "w-full min-h-[48px] py-3 rounded-xl text-sm font-medium border-2 border-dashed transition-all duration-200",
+            "border-zinc-300 text-zinc-500 dark:border-white/10 dark:text-zinc-500",
+            "hover:border-zinc-900 hover:text-zinc-900 dark:hover:border-emerald-500/30 dark:hover:text-emerald-400",
             "hover:shadow-[0_0_15px_-5px_rgba(16,185,129,0.15)]",
             "active:scale-[0.98]",
             disableFillDayActions
