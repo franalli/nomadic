@@ -75,6 +75,15 @@ export function useToast() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Toast Animation Constants (hoisted to avoid new object refs per render)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TOAST_INITIAL = { opacity: 0, y: -20, scale: 0.95 };
+const TOAST_ANIMATE = { opacity: 1, y: 0, scale: 1 };
+const TOAST_EXIT = { opacity: 0, y: -10, scale: 0.95 };
+const TOAST_TRANSITION = { type: 'spring' as const, stiffness: 400, damping: 30 };
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Toast Item Component
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -98,14 +107,10 @@ const ToastItem = memo(function ToastItem({ toast, onDismiss }: ToastItemProps) 
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: -20, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -10, scale: 0.95 }}
-      transition={{
-        type: 'spring',
-        stiffness: 400,
-        damping: 30,
-      }}
+      initial={TOAST_INITIAL}
+      animate={TOAST_ANIMATE}
+      exit={TOAST_EXIT}
+      transition={TOAST_TRANSITION}
       className={cn(
         // Base shape
         'flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl',

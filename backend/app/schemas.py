@@ -132,8 +132,8 @@ class GoogleAuthUrlResponse(BaseModel):
 
 
 class GoogleAuthCallbackRequest(BaseModel):
-    code: str
-    state: str
+    code: str = Field(max_length=256)
+    state: str = Field(max_length=256)
 
 
 class AuthMeResponse(BaseModel):
@@ -250,15 +250,15 @@ class Tile(BaseModel):
 
 
 class TilesSearchRequest(BaseModel):
-    branch_id: Optional[str] = None  # Now a string since branches are in JSON document
-    session_id: Optional[str] = None
+    branch_id: Optional[str] = Field(default=None, max_length=256)
+    session_id: Optional[str] = Field(default=None, max_length=256)
     trip_context_id: Optional[int] = None
 
-    destination: Optional[str] = None
-    destination_hint: Optional[str] = None
-    origin: Optional[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
+    destination: Optional[str] = Field(default=None, max_length=500)
+    destination_hint: Optional[str] = Field(default=None, max_length=500)
+    origin: Optional[str] = Field(default=None, max_length=500)
+    start_date: Optional[str] = Field(default=None, max_length=50)
+    end_date: Optional[str] = Field(default=None, max_length=50)
     adults: Optional[int] = None
     children: Optional[int] = None
     requires_assistance: Optional[bool] = None
@@ -266,8 +266,8 @@ class TilesSearchRequest(BaseModel):
     verticals: List[TileType] = Field(default_factory=lambda: ["hotel", "flight", "activity"])
     max_results_per_vertical: int = 5
 
-    currency: str = "USD"
-    response_mode: str = "estimate_first"
+    currency: str = Field(default="USD", max_length=10)
+    response_mode: str = Field(default="estimate_first", max_length=50)
 
     # Budget constraints for filtering tiles
     budget: Optional[float] = None  # Total trip budget
@@ -289,7 +289,7 @@ class TilesSearchResponse(BaseModel):
 class TileRefreshRequest(BaseModel):
     """Request to refresh tiles with current settings."""
 
-    branch_id: str
+    branch_id: str = Field(max_length=256)
     verticals: Optional[List[TileType]] = None  # None = refresh all verticals
 
 
@@ -408,9 +408,9 @@ class ExpandItineraryStreamEvent(BaseModel):
 
 
 class TileClickEvent(BaseModel):
-    request_id: Optional[str] = None
-    tile_id: str  # the tile identifier coming from the UI
-    branch_id: Optional[str] = None  # now a string since branches are in JSON document
+    request_id: Optional[str] = Field(default=None, max_length=256)
+    tile_id: str = Field(max_length=256)  # the tile identifier coming from the UI
+    branch_id: Optional[str] = Field(default=None, max_length=256)
 
 
 class SuggestionChipMeta(BaseModel):
@@ -435,7 +435,7 @@ class SuggestionChip(BaseModel):
 class GraphPlanRequest(BaseModel):
     """Request schema for graph-based planning entrypoint."""
 
-    message: str = Field(max_length=2000)
+    message: str = Field(max_length=4000)
     trip_inputs: dict = Field(default_factory=dict)
     session_state: dict | None = None
 
@@ -1114,7 +1114,7 @@ class PlanDocumentPatch(BaseModel):
 class BlockMove(BaseModel):
     """A single block relocation within the itinerary."""
 
-    block_id: str
+    block_id: str = Field(max_length=256)
     from_day: int
     to_day: int
     to_position: int = 0
@@ -1155,7 +1155,7 @@ class ArrangementResult(BaseModel):
 class RemoveBlockRequest(BaseModel):
     """Remove a single block from the itinerary."""
 
-    block_id: str
+    block_id: str = Field(max_length=256)
     day_number: int
     expected_version: int  # optimistic concurrency, same as apply-arrangement
 

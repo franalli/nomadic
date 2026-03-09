@@ -81,7 +81,6 @@ backend/app/planner/
 │   ├── constraint_guard.py  # Mostly deterministic validation (one LLM-backed check: validate_place_exists)
 │   ├── expert_constraints.py # Pydantic models + constraint data for LocalExpert LLM output
 │   ├── input_gate_config.py # Input gate threshold constants (dates, travelers, budget)
-│   ├── input_gates.py       # Pre-routing input validation (6 gates: Date, Duration, Traveler, Budget, Destination, MessageLength)
 │   ├── local_expert.py      # City logistics concierge (Phase A/B architecture)
 │   ├── logistics_node.py    # Flight/hotel/activity fetching + safety logic
 │   ├── router_extraction.py # LLM-based intent classification + field extraction (RouterOutput schema)
@@ -330,19 +329,6 @@ Mostly deterministic validation. One LLM exception: `check_route_constraint()` c
 
 **Arrangement validation** (`validate_block_arrangement()`) for drag-and-drop reordering is also in this file.
 
-### InputGates (`input_gates.py`)
-
-Pre-routing input validation. 6 gates with fail-open exception handling.
-
-| Gate | Severity | Checks |
-|------|----------|--------|
-| DateGate | blocking | Past dates, too far future, invalid format |
-| DurationGate | blocking/warning | Too short (<1d), too long (>max), long warning |
-| TravelerGate | blocking | Children without adult, too many travelers |
-| BudgetGate | blocking/warning | Too low, extreme, high warning |
-| DestinationGate | warning | Multi-destination detection |
-| MessageLengthGate | blocking | Message length (placeholder, defense-in-depth) |
-
 ---
 
 ## Itinerary Builder Service
@@ -439,10 +425,10 @@ If a block already carries partner deeplink/image data (Viator or GYG), Google P
 
 **Partner browse/enrichment path**
 
-- `activity_browser.py` now tries `search_viator_for_destination()` first for Browse Activities, supplements with `search_gyg_for_destination()` when partner inventory is thin, dedupes partner results by title, then uses Google Places to backfill remaining slots.
+- `activity_browser.py` now tries `search_viator_for_destination()` first for Browse Activities, supplements with `search_gyg_for_destination()` when partner inventory is thin, dedupes partner results by title, then uses Google Places to backfill remaining slots. Placeholder category selection is now two-phase: user-selected browse category wins first, then shared `PLACE_TYPE_CATEGORY_TOKENS` from `google_places_provider.py` maps Google `primaryType` tokens to the same fallback image categories used elsewhere.
 - `viator_provider.py` and `gyg_provider.py` own the live affiliate integrations: each keeps a shared async `httpx` client, an in-memory browse/match cache, and a 5-failure/120-second circuit breaker. `gyg_provider.py` also normalizes GYG `long` coordinates to `{lat, lng}` and filters out multi-day tours (>8h).
 - Viator title matching now normalizes specialist titles more aggressively before search: it strips short location prefixes, removes parenthetical/session suffixes, builds up to three ordered freetext query variants, and scores candidate products with fuzzy title similarity plus non-generic anchor-token overlap. `_NO_MATCH` is only negative-cached when destination lookup and all freetext queries were definitive, so transient taxonomy/search failures do not poison later retries.
-- Partner provider calls no longer short-circuit on spend-guard exceptions inside `viator_provider.py` or `gyg_provider.py`; availability is governed by the provider feature flags, caches, and circuit breakers described here.
+- Partner provider calls now reserve partner-budget spend through `reserve_partner_api_spend_or_raise()` in both `viator_provider.py` and `gyg_provider.py`. Spend-cap failures still degrade gracefully to empty results, but partner traffic now counts against the provider-level spend guard documented in `docs/data-contracts.md`.
 - `partner_enrichment.py` replaces the old Viator-only pre-build pass. It queries enabled partners in parallel, picks the best match per tile by rating, then lower price, with Viator as the final tiebreaker, and mutates the activity tile in place with provider/deeplink/image/price metadata.
 - `lifespan.py` closes both the Viator and GYG async clients on shutdown alongside the Google Places clients.
 
@@ -952,7 +938,7 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 | Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month_or_half_year}::n{tiles_per_category}` | Tier 2 tiles. Seasonal categories keep `YYYY-MM`; non-seasonal categories normalize to `YYYY-H1`/`YYYY-H2` for higher cache reuse. |
 | Tile | `tile_cache.py` | 256 | 24h | 72h (env: TILE_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
 | Browse | `activity_browser.py` | 256 | 6h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
-| Places Enrichment | `google_places_provider.py` | 2048 | 24h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v3::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups. Title normalized via `_normalize_title_for_cache` (strips specialist qualifiers for higher hit rate). |
+| Places Enrichment | `google_places_provider.py` | 2048 | 24h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v3::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups. Title normalized via `_normalize_title_for_cache` (strips specialist qualifiers for higher hit rate). Admin cache reset now also drains the in-memory `_enrich_inflight` dedupe map so stale futures cannot survive a manual clear. |
 | Geocode | `google_places_provider.py` | 1000 (TTLCache) | 24h | 8760h (1yr) | `geocode::v1::{normalized_dest}` | Geocoding API lat/lng results. L2 uses `cache_type='geocode'`. |
 | IATA | `iata_resolver.py` | 512 | 24h | `settings.iata_cache_ttl_hours` (default 720h) | `iata::{origin_or_destination}::{normalized_place}` | Airport-code resolution after router extraction. |
 | Photo Proxy | `main.py` | 500 | 24h | N/A | `photo::{photo_name}::{width}x{height}` | Server-side photo bytes cache. Skips upstream fetch + spend guard on hit. |
@@ -1251,7 +1237,7 @@ The `search_tiles` tool (via logistics_node) and `tile_service/service.py` both 
 
 `google_places_provider.py` also keeps a module-level country-code cache populated from successful geocode responses. Coordinator envelope assembly reads that cache to backfill `trip_inputs.country_code` for downstream UI.
 
-`spend_guard.py` is explicitly single-worker only. If `SPEND_GUARD_ENABLED=true` and `WEB_CONCURRENCY>1`, startup aborts because in-memory spend counters would otherwise multiply the effective cap by worker count.
+`spend_guard.py` is explicitly single-worker only. If `SPEND_GUARD_ENABLED=true` and `WEB_CONCURRENCY>1`, startup aborts because in-memory spend counters would otherwise multiply the effective cap by worker count. The guard now persists global, provider, and per-session counters to a temp-file snapshot (debounced to once every 2s, force-flushed on shutdown) so daily caps survive process restarts in the supported single-worker deployment.
 
 ### Settings-Aware Tile Filtering
 
@@ -1327,11 +1313,11 @@ INITIATED -> PENDING_PAYMENT -> HOLD -> CONFIRMED
 | `/api/admin/clear-specialist-cache` | POST   | Clear specialist L1 + L2                                                        |
 | `/api/admin/clear-tile-cache`       | POST   | Clear tile L1 + L2                                                              |
 | `/api/admin/clear-router-cache`     | POST   | Clear router L1 only                                                            |
-| `/api/admin/clear-l1-l2-caches`     | POST   | Force-clear L1 memory caches + L2 response_cache/unsplash cache rows only      |
+| `/api/admin/clear-l1-l2-caches`     | POST   | Force-clear L1 memory caches + L2 response_cache/unsplash cache rows, plus Google Places geocode/country-code memory caches |
 | `/api/admin/clear-validation-cache` | POST   | Clear validation caches                                                         |
 | `/api/admin/fresh-start`            | POST   | Clear validation + response caches                                              |
 | `/api/admin/clear-all-checkpoints`  | POST   | Clear ALL LangGraph checkpoints                                                 |
-| `/api/admin/clear-all-caches`       | POST   | Comprehensive clear of ALL caches                                               |
+| `/api/admin/clear-all-caches`       | POST   | Comprehensive clear of ALL caches, including Google Places geocode/country-code caches and enrichment inflight dedupe state |
 
 ---
 

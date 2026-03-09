@@ -68,6 +68,19 @@ function getWeekFromNow(weeks: number): { from: Date; to: Date } {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Animation Constants (hoisted to avoid new object refs per render)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BACKDROP_INITIAL = { opacity: 0 };
+const BACKDROP_ANIMATE = { opacity: 1 };
+const BACKDROP_EXIT = { opacity: 0 };
+const BACKDROP_TRANSITION = { duration: 0.15 };
+const MODAL_INITIAL = { opacity: 0, scale: 0.95, y: 10 };
+const MODAL_ANIMATE = { opacity: 1, scale: 1, y: 0 };
+const MODAL_EXIT = { opacity: 0, scale: 0.95, y: 10 };
+const MODAL_TRANSITION = { type: 'spring' as const, damping: 30, stiffness: 400 };
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -173,10 +186,10 @@ function DatesSheetInner({
         <>
           {/* Backdrop */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
+            initial={BACKDROP_INITIAL}
+            animate={BACKDROP_ANIMATE}
+            exit={BACKDROP_EXIT}
+            transition={BACKDROP_TRANSITION}
             className="fixed inset-0 z-[1200] bg-black/60 backdrop-blur-sm"
             onClick={() => onOpenChange(false)}
           />
@@ -187,10 +200,10 @@ function DatesSheetInner({
             onClick={(e) => e.target === e.currentTarget && onOpenChange(false)}
           >
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              transition={{ type: 'spring', damping: 30, stiffness: 400 }}
+              initial={MODAL_INITIAL}
+              animate={MODAL_ANIMATE}
+              exit={MODAL_EXIT}
+              transition={MODAL_TRANSITION}
               className={cn(
                 // SIZE & SHAPE
                 'relative max-w-2xl w-full',

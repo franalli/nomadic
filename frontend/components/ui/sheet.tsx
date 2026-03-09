@@ -8,6 +8,13 @@ import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/utils';
 
+// Animation constants (hoisted to avoid new object refs per render)
+const BACKDROP_INITIAL = { opacity: 0 };
+const BACKDROP_ANIMATE = { opacity: 1 };
+const BACKDROP_EXIT = { opacity: 0 };
+const BACKDROP_TRANSITION = { duration: 0.2 };
+const SHEET_TRANSITION = { type: 'spring' as const, damping: 30, stiffness: 300 };
+
 interface SheetContextValue {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -129,10 +136,10 @@ function SheetContent({ side = 'right', className, children }: SheetContentProps
         <>
           {/* Backdrop */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            initial={BACKDROP_INITIAL}
+            animate={BACKDROP_ANIMATE}
+            exit={BACKDROP_EXIT}
+            transition={BACKDROP_TRANSITION}
             className="fixed inset-0 z-[1200] bg-black/40 backdrop-blur-sm"
             onClick={() => onOpenChange(false)}
           />
@@ -142,11 +149,7 @@ function SheetContent({ side = 'right', className, children }: SheetContentProps
             initial={variants.initial}
             animate={variants.animate}
             exit={variants.exit}
-            transition={{
-              type: 'spring',
-              damping: 30,
-              stiffness: 300,
-            }}
+            transition={SHEET_TRANSITION}
             className={cn(
               'fixed z-[1201]',
               positionClasses[side],

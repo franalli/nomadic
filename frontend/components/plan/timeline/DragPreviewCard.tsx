@@ -9,6 +9,11 @@ import { SPECIALIST_TEXT_COLOR } from '@/lib/specialist-colors';
 import { cn } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
 
+// Animation constants (hoisted to avoid new object refs per render)
+const PREVIEW_INITIAL = { scale: 0.95, opacity: 0 };
+const PREVIEW_ANIMATE = { scale: 1.03, opacity: 1 };
+const PREVIEW_TRANSITION = { type: 'spring' as const, ...SPRING_CONFIG.BOUNCE };
+
 interface DragPreviewCardProps {
   block: DayBlock;
 }
@@ -21,9 +26,9 @@ export function DragPreviewCard({ block }: DragPreviewCardProps) {
 
   return (
     <motion.div
-      initial={{ scale: 0.95, opacity: 0 }}
-      animate={{ scale: 1.03, opacity: 1 }}
-      transition={{ type: 'spring', ...SPRING_CONFIG.BOUNCE }}
+      initial={PREVIEW_INITIAL}
+      animate={PREVIEW_ANIMATE}
+      transition={PREVIEW_TRANSITION}
       className={cn(
         'w-64 rounded-xl px-3 py-2.5',
         'pointer-events-none',

@@ -167,6 +167,18 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     if cancelled_browse:
         logger.info("[Shutdown] Cancelled %d inflight browse tasks", cancelled_browse)
 
+    # 5a2. Flush spend guard state to disk before shutdown
+    from app.services.spend_guard import flush_spend_state
+
+    flush_spend_state()
+    logger.info("[Shutdown] Flushed spend guard state to disk")
+
+    # 5a3. Drain Google Places enrichment inflight + geocode caches
+    from app.tile_service.google_places_provider import clear_geocode_caches
+
+    clear_geocode_caches()
+    logger.info("[Shutdown] Cleared Google Places geocode caches and enrichment inflight")
+
     # 5b. Close Google Places HTTP client
     from app.tile_service.google_places_provider import close_places_http_client
 

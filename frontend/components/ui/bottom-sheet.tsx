@@ -8,6 +8,16 @@ import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/utils';
 
+// Animation constants (hoisted to avoid new object refs per render)
+const BACKDROP_INITIAL = { opacity: 0 };
+const BACKDROP_ANIMATE = { opacity: 1 };
+const BACKDROP_EXIT = { opacity: 0 };
+const BACKDROP_TRANSITION = { duration: 0.2 };
+const SHEET_INITIAL = { y: '100%' };
+const SHEET_ANIMATE = { y: 0 };
+const SHEET_EXIT = { y: '100%' };
+const SHEET_TRANSITION = { type: 'spring' as const, damping: 30, stiffness: 300 };
+
 interface BottomSheetProps {
   /** Whether the bottom sheet is open */
   open: boolean;
@@ -78,24 +88,20 @@ function BottomSheetInner({
         <>
           {/* Backdrop */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            initial={BACKDROP_INITIAL}
+            animate={BACKDROP_ANIMATE}
+            exit={BACKDROP_EXIT}
+            transition={BACKDROP_TRANSITION}
             className="fixed inset-0 z-[1200] bg-black/40 backdrop-blur-sm"
             onClick={() => onOpenChange(false)}
           />
 
           {/* Sheet */}
           <motion.div
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{
-              type: 'spring',
-              damping: 30,
-              stiffness: 300,
-            }}
+            initial={SHEET_INITIAL}
+            animate={SHEET_ANIMATE}
+            exit={SHEET_EXIT}
+            transition={SHEET_TRANSITION}
             drag="y"
             dragConstraints={{ top: 0, bottom: 0 }}
             dragElastic={{ top: 0, bottom: 0.5 }}

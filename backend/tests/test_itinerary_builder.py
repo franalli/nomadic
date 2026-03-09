@@ -796,8 +796,8 @@ class TestParseDurationHours:
 class TestDayRemainingCapacity:
     """Test _day_remaining_capacity helper."""
 
-    def test_arrival_day_zero_capacity(self, builder: ItineraryBuilder):
-        """Arrival day returns (0, 0)."""
+    def test_arrival_day_reduced_capacity(self, builder: ItineraryBuilder):
+        """Arrival day returns reduced capacity (4.0, 1)."""
         day = DayCardOutput(
             day_number=1,
             label="Arrival",
@@ -812,11 +812,11 @@ class TestDayRemainingCapacity:
             ],
         )
         hours, blocks = builder._day_remaining_capacity(day)
-        assert hours == 0.0
-        assert blocks == 0
+        assert hours == 4.0
+        assert blocks == 1
 
-    def test_departure_day_zero_capacity(self, builder: ItineraryBuilder):
-        """Departure day returns (0, 0)."""
+    def test_departure_day_reduced_capacity(self, builder: ItineraryBuilder):
+        """Departure day returns reduced capacity (4.0, 1)."""
         day = DayCardOutput(
             day_number=8,
             label="Departure",
@@ -831,8 +831,8 @@ class TestDayRemainingCapacity:
             ],
         )
         hours, blocks = builder._day_remaining_capacity(day)
-        assert hours == 0.0
-        assert blocks == 0
+        assert hours == 4.0
+        assert blocks == 1
 
     def test_specialist_day_remaining(self, builder: ItineraryBuilder):
         """Day with 4h specialist has 7h remaining, 2 block slots (apd=3)."""
@@ -1586,8 +1586,12 @@ class TestHandleEmptyDays:
         free_day_blocks = [b for b in day2.blocks if b.activity_type == "free_day"]
         assert len(free_day_blocks) == 0
 
-    def test_arrival_departure_never_get_free_day(self, builder: ItineraryBuilder):
-        """Day 0 (arrival) and Day N-1 (departure) with no blocks should NOT get free_day."""
+    def test_arrival_departure_get_free_day_placeholder(self, builder: ItineraryBuilder):
+        """Arrival/departure days with no activity blocks get free_day placeholders.
+
+        These days are partially usable (4h, 1 slot) so free_day markers
+        inform the user they can browse/add an activity.
+        """
         days = [
             DayCardOutput(day_number=1, label="Arrival Day", blocks=[]),
             DayCardOutput(
@@ -1607,10 +1611,12 @@ class TestHandleEmptyDays:
 
         result = builder._handle_empty_days(days, {}, tier2_categories=None)
 
-        # Arrival day (index 0) should remain empty
-        assert len(result[0].blocks) == 0
-        # Departure day (last index) should remain empty
-        assert len(result[-1].blocks) == 0
+        # Arrival day gets a free_day placeholder (partially usable)
+        assert len(result[0].blocks) == 1
+        assert result[0].blocks[0].activity_type == "free_day"
+        # Departure day gets a free_day placeholder (partially usable)
+        assert len(result[-1].blocks) == 1
+        assert result[-1].blocks[0].activity_type == "free_day"
 
     def test_genuine_empty_day_gets_free_day(self, builder: ItineraryBuilder):
         """A middle day with zero blocks gets a free_day block."""
@@ -1779,8 +1785,9 @@ class TestPhase25IdBasedMatching:
     def test_id_match_sets_matched_tile(self, builder: ItineraryBuilder):
         """Activity with tile_id gets _matched_tile set via ID lookup.
 
-        Field-by-field enrichment is skipped for pre-linked specialist tiles
-        (tile_id already matches), but _matched_tile is always set for Phase 5.
+        ID-matched specialist tiles still get selective field enrichment
+        (rating, image_url, review_count) when the activity's own fields
+        are None, plus _matched_tile is always set for Phase 5.
         """
         sections = [
             {
@@ -1815,8 +1822,9 @@ class TestPhase25IdBasedMatching:
         assert activity.tile_id == "spec_bali_diving_abc123"
         assert hasattr(activity, "_matched_tile")
         assert activity._matched_tile["id"] == "spec_bali_diving_abc123"
-        # Field-by-field copy is skipped (tile came from same content_added)
-        assert activity.rating is None
+        # ID-matched tiles enrich rating/image when activity fields are None
+        assert activity.rating == 4.8
+        assert activity.image_url == "https://example.com/manta.jpg"
 
     def test_id_match_takes_priority_over_title(self, builder: ItineraryBuilder):
         """When tile_id is present, _matched_tile uses the ID-matched tile, not title."""

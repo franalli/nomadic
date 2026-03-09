@@ -7,6 +7,11 @@ import { useCallback, useMemo, useState } from 'react';
 import { SPRING_CONFIG } from '@/lib/animation-config';
 import { cn } from '@/lib/utils';
 
+// Animation constants (hoisted to avoid new object refs per render)
+const DROP_INDICATOR_INITIAL = { scaleX: 0 };
+const DROP_INDICATOR_ANIMATE = { scaleX: 1 };
+const DROP_INDICATOR_TRANSITION = { type: 'spring' as const, ...SPRING_CONFIG.SLIDE };
+
 interface DroppableDayProps {
   dayNumber: number;
   children: React.ReactNode;
@@ -44,9 +49,9 @@ export function DroppableDay({ dayNumber, children }: DroppableDayProps) {
           <motion.div
             layoutId="drop-indicator"
             className="h-0.5 bg-emerald-500 rounded-full mx-4 my-1"
-            initial={{ scaleX: 0 }}
-            animate={{ scaleX: 1 }}
-            transition={{ type: 'spring', ...SPRING_CONFIG.SLIDE }}
+            initial={DROP_INDICATOR_INITIAL}
+            animate={DROP_INDICATOR_ANIMATE}
+            transition={DROP_INDICATOR_TRANSITION}
           />
         )}
       </div>

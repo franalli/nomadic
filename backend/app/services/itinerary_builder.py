@@ -17,6 +17,7 @@ Algorithm Phases:
 """
 
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -1445,7 +1446,7 @@ class ItineraryBuilder:
                     unschedulable=True,
                     unschedulable_reason=reason,
                     unschedulable_days_needed=(
-                        days_shortfall if days_shortfall > 0 else len(activities)
+                        math.ceil(days_shortfall) if days_shortfall > 0 else len(activities)
                     ),
                 )
                 # Add to second-to-last day (before departure)

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -54,22 +55,38 @@ _provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0, "partner": 0
 
 _SPEND_STATE_FILE = Path(tempfile.gettempdir()) / "nomadic_spend_guard_state.json"
 
+_last_persist_time: float = 0.0
+_PERSIST_INTERVAL: float = 2.0  # seconds between disk writes
 
-def _persist_state() -> None:
-    """Write global and provider spend to disk so caps survive restarts.
+
+def _persist_state(*, force: bool = False) -> None:
+    """Write spend state to disk so caps survive restarts. Debounced to at most
+    every 2 seconds unless *force* is True.
 
     Must be called while _spend_lock is held. File I/O errors are swallowed
     so they never block API calls.
     """
+    global _last_persist_time
+    now = time.monotonic()
+    if not force and (now - _last_persist_time) < _PERSIST_INTERVAL:
+        return
     try:
         data = {
             "day": _spend_day_key,
             "global_spend_usd": _global_spend_usd,
             "provider_spend_usd": dict(_provider_spend_usd),
+            "session_spend_usd": dict(_session_spend_usd),
         }
         _SPEND_STATE_FILE.write_text(json.dumps(data), encoding="utf-8")
+        _last_persist_time = now
     except Exception:
         logger.debug("spend_guard: failed to persist state to %s", _SPEND_STATE_FILE, exc_info=True)
+
+
+def flush_spend_state() -> None:
+    """Force-persist current spend state (call during shutdown)."""
+    with _spend_lock:
+        _persist_state(force=True)
 
 
 def _load_state() -> None:
@@ -104,10 +121,17 @@ def _load_state() -> None:
         for key in ("llm", "places", "partner"):
             _provider_spend_usd[key] = max(0.0, float(restored_providers.get(key, 0.0)))
 
+        restored_sessions = data.get("session_spend_usd", {})
+        if isinstance(restored_sessions, dict):
+            for sid, amount in restored_sessions.items():
+                if isinstance(sid, str) and isinstance(amount, (int, float)):
+                    _session_spend_usd[sid] = max(0.0, float(amount))
+
         logger.info(
-            "spend_guard: restored persisted state — global=$%.4f, providers=%s",
+            "spend_guard: restored persisted state — global=$%.4f, providers=%s, sessions=%d",
             _global_spend_usd,
             _provider_spend_usd,
+            len(_session_spend_usd),
         )
     except Exception:
         logger.debug(
@@ -381,7 +405,7 @@ def clear_spend_guard_counters() -> None:
         _provider_spend_usd["places"] = 0.0
         _provider_spend_usd["partner"] = 0.0
         _global_spend_usd = 0.0
-        _persist_state()
+        _persist_state(force=True)
 
 
 def get_spend_guard_snapshot() -> dict[str, object]:

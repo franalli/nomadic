@@ -257,9 +257,9 @@ class TestBuildSpecialistSection:
         assert section["impact_areas"] == ["Diving", "Safety", "Activities"]
         # Enhancements capped at 3
         assert section["optional_upgrades"] == ["Night dive", "Wreck dive", "Manta dive"]
-        # Required empty fields
-        assert section["principles"] == []
-        assert section["must_dos"] == []
+        # Derived fields populated from constraints and content
+        assert section["principles"] == ["no_fly_24h"]
+        assert section["must_dos"] == ["Reef Dive"]
         assert section["logistics_notes"] == []
         assert section["bullets"] == []
 

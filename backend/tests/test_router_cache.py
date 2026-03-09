@@ -251,7 +251,7 @@ class TestL1MemoryCache:
 
         # Cache should be empty
         stats = get_cache_stats()
-        assert stats["size"] == 0
+        assert stats["l1_size"] == 0
 
 
 class TestCacheDateSensitivity:

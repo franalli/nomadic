@@ -22,6 +22,20 @@ import { cn } from '@/lib/utils';
 /** Fallback width for indeterminate progress bar animation */
 const INDETERMINATE_PROGRESS_STYLE = { width: '30%' } as const;
 
+// Animation constants (hoisted to avoid new object refs per render)
+const WRAPPER_INITIAL = { opacity: 0 };
+const WRAPPER_ANIMATE = { opacity: 1 };
+const WRAPPER_EXIT = { opacity: 0 };
+const WRAPPER_TRANSITION = { duration: 0.3, ease: [0.4, 0, 0.2, 1] };
+const PROGRESS_INITIAL = { width: '0%' };
+const PROGRESS_DETERMINATE_TRANSITION = { duration: 0.3 };
+const PROGRESS_INDETERMINATE_TRANSITION = {
+  repeat: Infinity,
+  repeatType: 'reverse' as const,
+  duration: 1.5,
+  ease: 'easeInOut',
+};
+
 export type ProgressStage = 'analyzing' | 'checking' | 'building' | 'conflict_detected' | 'success' | 'error';
 
 interface ItineraryProgressIndicatorProps {
@@ -72,10 +86,10 @@ export function ItineraryProgressIndicator({
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+      initial={WRAPPER_INITIAL}
+      animate={WRAPPER_ANIMATE}
+      exit={WRAPPER_EXIT}
+      transition={WRAPPER_TRANSITION}
       className={cn(
         'w-full p-4 rounded-xl',
         'bg-zinc-100/80 dark:bg-zinc-900/50 backdrop-blur-sm',
@@ -140,19 +154,14 @@ export function ItineraryProgressIndicator({
         <div className="mt-3 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
           <motion.div
             className="h-full bg-emerald-500 rounded-full"
-            initial={{ width: '0%' }}
+            initial={PROGRESS_INITIAL}
             animate={{
               width: progress != null ? `${progress}%` : '100%',
             }}
             transition={
               progress != null
-                ? { duration: 0.3 }
-                : {
-                    repeat: Infinity,
-                    repeatType: 'reverse',
-                    duration: 1.5,
-                    ease: 'easeInOut',
-                  }
+                ? PROGRESS_DETERMINATE_TRANSITION
+                : PROGRESS_INDETERMINATE_TRANSITION
             }
             style={
               progress == null

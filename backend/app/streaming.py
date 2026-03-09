@@ -1509,6 +1509,10 @@ async def generate_ndjson(
     # Create fresh database session for this generator
     # (Cannot use FastAPI's injected session - it's closed by the time we run)
     session_factory = _get_async_session_factory()
+    # Bind session to spend guard so downstream paid calls enforce daily caps.
+    # Manually enter/exit to avoid re-indenting the entire generator body.
+    _sg_ctx = spend_guard_scope(session_id)
+    _sg_ctx.__enter__()
     async with session_factory() as db:
         try:
             session = await get_session_by_token(db, session_id)
@@ -2160,5 +2164,6 @@ async def generate_ndjson(
             )
             yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
         finally:
+            _sg_ctx.__exit__(None, None, None)
             logger.debug("[NDJSON] Generator exiting for session=%s", session_id)
             await _cleanup_pending_enrichment(session_id, source="NDJSON")

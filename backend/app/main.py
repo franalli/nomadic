@@ -627,6 +627,27 @@ def _cors_error_headers(request: Request) -> dict[str, str]:
     return {}
 
 
+_SECURITY_ERROR_HEADERS: dict[str, str] = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+}
+
+
+def _standard_error_headers(request: Request) -> dict[str, str]:
+    """Return CORS + essential security headers for early middleware error responses.
+
+    Early-return responses from body-limit (and similar) middleware bypass the
+    ``security_headers`` middleware due to LIFO ordering.  This helper merges
+    the CORS headers with the three lightweight security headers so those
+    responses are not sent without basic protections.
+
+    HSTS and CSP are intentionally omitted — they are complex, environment-
+    dependent, and unnecessary for short JSON error bodies.
+    """
+    return {**_cors_error_headers(request), **_SECURITY_ERROR_HEADERS}
+
+
 def _rate_limit_exceeded_handler(  # noqa: ARG001
     request: Request, exc: RateLimitExceeded
 ) -> JSONResponse:
@@ -851,13 +872,13 @@ async def limit_body_size(request: Request, call_next):
             return JSONResponse(
                 status_code=400,
                 content={"detail": "Invalid Content-Length"},
-                headers=_cors_error_headers(request),
+                headers=_standard_error_headers(request),
             )
         if cl_int > MAX_BODY_BYTES:
             return JSONResponse(
                 status_code=413,
                 content={"detail": "Payload too large"},
-                headers=_cors_error_headers(request),
+                headers=_standard_error_headers(request),
             )
     if not cl and request.method in {"POST", "PUT", "PATCH"}:
         body = await request.body()
@@ -865,7 +886,7 @@ async def limit_body_size(request: Request, call_next):
             return JSONResponse(
                 status_code=413,
                 content={"detail": "Payload too large"},
-                headers=_cors_error_headers(request),
+                headers=_standard_error_headers(request),
             )
     return await call_next(request)
 
@@ -1406,14 +1427,15 @@ async def admin_clear_all_caches(  # noqa: ARG001
     router_count = clear_router_cache()
     results["caches_cleared"]["router_memory"] = router_count
 
-    # 9. Clear Google Places geocode/country_code caches
-    from app.tile_service.google_places_provider import _country_code_cache
+    # 9. Clear Google Places geocode/country_code caches + enrichment inflight
+    from app.tile_service.google_places_provider import clear_geocode_caches
 
-    country_code_before = len(_country_code_cache)
-    _country_code_cache.clear()
-    results["caches_cleared"]["country_code_cache"] = country_code_before
+    geocode_cleared = clear_geocode_caches()
+    results["caches_cleared"]["geocode_cache"] = geocode_cleared["geocode_cache"]
+    results["caches_cleared"]["country_code_cache"] = geocode_cleared["country_code_cache"]
 
     # 10. Summary
+    geocode_total = geocode_cleared["geocode_cache"] + geocode_cleared["country_code_cache"]
     total = (
         planner_cleared
         + unsplash_memory_count
@@ -1425,7 +1447,7 @@ async def admin_clear_all_caches(  # noqa: ARG001
         + experience_memory_count
         + experience_db_count
         + router_count
-        + country_code_before
+        + geocode_total
     )
     results["total_entries_cleared"] = total
     results["before"] = {
@@ -1494,6 +1516,9 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
 
     unsplash_memory_before = int(get_unsplash_memory_stats().get("entries", 0))
 
+    from app.tile_service.google_places_provider import clear_geocode_caches
+
+    geocode_cleared = clear_geocode_caches()
     l1_cleared = {
         "specialist_memory": clear_specialist_memory(),
         "tile_memory": clear_tile_memory(),
@@ -1505,6 +1530,8 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
         "iata_memory": clear_iata_cache(),
         "unsplash_memory": unsplash_memory_before,
         "photo_bytes_memory": _photo_bytes_cache.clear(),
+        "geocode_cache": geocode_cleared["geocode_cache"],
+        "country_code_cache": geocode_cleared["country_code_cache"],
     }
 
     await clear_unsplash_memory_cache()

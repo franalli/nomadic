@@ -22,6 +22,24 @@ import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Animation Constants (hoisted to avoid new object refs per render)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BACKDROP_INITIAL = { opacity: 0 };
+const BACKDROP_ANIMATE = { opacity: 1 };
+const BACKDROP_EXIT = { opacity: 0 };
+const BACKDROP_TRANSITION = { duration: 0.15 };
+const MODAL_INITIAL = { opacity: 0, scale: 0.95, y: 10 };
+const MODAL_ANIMATE = { opacity: 1, scale: 1, y: 0 };
+const MODAL_EXIT = { opacity: 0, scale: 0.95, y: 10 };
+const MODAL_TRANSITION = { type: 'spring' as const, damping: 30, stiffness: 400 };
+const MOBILE_BACKDROP_TRANSITION = { duration: 0.2 };
+const MOBILE_SHEET_INITIAL = { y: '100%' };
+const MOBILE_SHEET_ANIMATE = { y: 0 };
+const MOBILE_SHEET_EXIT = { y: '100%' };
+const MOBILE_SHEET_TRANSITION = { type: 'spring' as const, damping: 30, stiffness: 300 };
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -119,10 +137,10 @@ function DesktopDialog({
         <>
           {/* Backdrop */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
+            initial={BACKDROP_INITIAL}
+            animate={BACKDROP_ANIMATE}
+            exit={BACKDROP_EXIT}
+            transition={BACKDROP_TRANSITION}
             className="fixed inset-0 z-[1200] bg-black/40 backdrop-blur-sm"
             onClick={handleBackdropClick}
           />
@@ -134,14 +152,10 @@ function DesktopDialog({
           >
             <motion.div
               ref={dialogRef}
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              transition={{
-                type: 'spring',
-                damping: 30,
-                stiffness: 400,
-              }}
+              initial={MODAL_INITIAL}
+              animate={MODAL_ANIMATE}
+              exit={MODAL_EXIT}
+              transition={MODAL_TRANSITION}
               className={cn(
                 'w-full rounded-2xl',
                 'bg-white/90 dark:bg-zinc-950/95',
@@ -270,24 +284,20 @@ function MobileSheet({
         <>
           {/* Backdrop */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            initial={BACKDROP_INITIAL}
+            animate={BACKDROP_ANIMATE}
+            exit={BACKDROP_EXIT}
+            transition={MOBILE_BACKDROP_TRANSITION}
             className="fixed inset-0 z-[1200] bg-black/40 backdrop-blur-sm"
             onClick={() => onOpenChange(false)}
           />
 
           {/* Sheet */}
           <motion.div
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{
-              type: 'spring',
-              damping: 30,
-              stiffness: 300,
-            }}
+            initial={MOBILE_SHEET_INITIAL}
+            animate={MOBILE_SHEET_ANIMATE}
+            exit={MOBILE_SHEET_EXIT}
+            transition={MOBILE_SHEET_TRANSITION}
             drag="y"
             dragConstraints={{ top: 0, bottom: 0 }}
             dragElastic={{ top: 0, bottom: 0.5 }}

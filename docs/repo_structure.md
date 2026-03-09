@@ -117,7 +117,6 @@ backend/
 │   │   │   ├── __init__.py
 │   │   │   ├── constraint_guard.py         # Constraint validation
 │   │   │   ├── input_gate_config.py        # Input gate threshold constants (dates, travelers, budget)
-│   │   │   ├── input_gates.py              # Pre-routing input validation
 │   │   │   ├── router_extraction.py        # LLM extraction + change classification
 │   │   │   ├── expert_constraints.py        # Local expert schema + grounded constraints
 │   │   │   ├── local_expert.py             # Local knowledge section generation
@@ -245,7 +244,6 @@ backend/
 │   ├── test_hash_ban.py                  # Hash ban tests
 │   ├── test_iata_resolver.py             # IATA resolver tests
 │   ├── test_import_contract.py           # Import contract tests
-│   ├── test_input_gates.py              # Input gate validation tests (5 gates + registry)
 │   ├── test_itinerary_builder.py         # Itinerary builder tests
 │   ├── test_llm_feasibility.py           # LLM geographic feasibility tests
 │   ├── test_logistics_tier2.py           # Logistics Tier-2 generation, backfill pipeline, affinity sorting tests

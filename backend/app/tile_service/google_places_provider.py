@@ -377,48 +377,46 @@ def _estimate_activity_price(price_level: Optional[int], travelers: int) -> floa
     return round(per_person * max(travelers, 1), 2)
 
 
+# Shared mapping: placeholder category → token substrings matched against primaryType.
+# Authoritative superset used by both google_places_provider and activity_browser.
+PLACE_TYPE_CATEGORY_TOKENS: dict[str, list[str]] = {
+    "culture": [
+        "museum",
+        "landmark",
+        "monument",
+        "gallery",
+        "temple",
+        "church",
+        "mosque",
+        "synagogue",
+        "historic",
+        "plaza",
+        "ruins",
+        "fountain",
+        "attraction",
+        "point_of_interest",
+        "tour",
+        "travel_agency",
+    ],
+    "cooking": ["restaurant", "cafe", "bar", "bakery", "meal", "food"],
+    "nightlife": ["nightlife", "night", "club"],
+    "wellness": ["spa", "wellness", "beauty", "gym", "massage", "yoga"],
+    "hiking": ["hike", "trail", "mountain", "trek"],
+    "skiing": ["ski", "snow"],
+    "diving": ["dive", "snorkel", "reef", "scuba"],
+    "adventure": ["nature", "park", "garden", "zoo", "beach", "camp"],
+}
+
+
 def _placeholder_category_for_place_type(primary_type: Optional[str]) -> str:
     """Map Google Places primaryType to placeholder image category."""
     key = (primary_type or "").strip().lower()
     if not key:
         return "activity"
 
-    if any(
-        token in key
-        for token in [
-            "museum",
-            "landmark",
-            "monument",
-            "gallery",
-            "temple",
-            "church",
-            "mosque",
-            "synagogue",
-            "historic",
-            "plaza",
-            "ruins",
-            "fountain",
-            "attraction",
-            "point_of_interest",
-            "tour",
-            "travel_agency",
-        ]
-    ):
-        return "culture"
-    if any(token in key for token in ["restaurant", "cafe", "bar", "bakery", "meal", "food"]):
-        return "cooking"
-    if any(token in key for token in ["night", "club"]):
-        return "nightlife"
-    if any(token in key for token in ["spa", "wellness", "beauty", "gym", "massage"]):
-        return "wellness"
-    if any(token in key for token in ["hike", "trail", "mountain", "trek"]):
-        return "hiking"
-    if any(token in key for token in ["ski", "snow"]):
-        return "skiing"
-    if any(token in key for token in ["dive", "snorkel", "reef", "scuba"]):
-        return "diving"
-    if any(token in key for token in ["park", "garden", "zoo", "nature", "beach", "camp"]):
-        return "adventure"
+    for category, tokens in PLACE_TYPE_CATEGORY_TOKENS.items():
+        if any(token in key for token in tokens):
+            return category
     return "activity"
 
 
@@ -543,12 +541,30 @@ def get_country_code(destination: str) -> str | None:
 
 def get_geocache_stats() -> dict[str, int]:
     """Return geocode + country_code cache stats for admin observability."""
-    return {
-        "geocode_cache_size": len(_geocode_cache),
-        "geocode_cache_maxsize": _geocode_cache.maxsize,
-        "country_code_cache_size": len(_country_code_cache),
-        "country_code_cache_maxsize": _country_code_cache.maxsize,
-    }
+    with _geocode_thread_lock:
+        return {
+            "geocode_cache_size": len(_geocode_cache),
+            "geocode_cache_maxsize": _geocode_cache.maxsize,
+            "country_code_cache_size": len(_country_code_cache),
+            "country_code_cache_maxsize": _country_code_cache.maxsize,
+        }
+
+
+def clear_geocode_caches() -> dict[str, int]:
+    """Clear geocode + country_code caches and return counts of evicted entries.
+
+    Also drains the enrichment inflight dedup dict to prevent stale futures
+    from being returned after an admin cache reset.
+    """
+    with _geocode_thread_lock:
+        geo_count = len(_geocode_cache)
+        cc_count = len(_country_code_cache)
+        _geocode_cache.clear()
+        _country_code_cache.clear()
+    # Inflight dict is async-lock-guarded elsewhere, but .clear() on a plain
+    # dict is atomic in CPython and safe here for an admin drain operation.
+    _enrich_inflight.clear()
+    return {"geocode_cache": geo_count, "country_code_cache": cc_count}
 
 
 async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
@@ -1503,15 +1519,21 @@ async def _set_cached_enrichment(cache_key: str, payload: dict[str, Any]) -> Non
     async_session_factory = _get_async_session_factory()
     try:
         async with async_session_factory() as db:
-            await l2_upsert(
-                db,
-                cache_key=cache_key,
-                cache_type="tiles",
-                response_json=payload,
-                ttl=timedelta(hours=_ENRICH_L2_TTL_HOURS),
-            )
+            try:
+                await l2_upsert(
+                    db,
+                    cache_key=cache_key,
+                    cache_type="tiles",
+                    response_json=payload,
+                    ttl=timedelta(hours=_ENRICH_L2_TTL_HOURS),
+                )
+            except Exception as e:
+                await db.rollback()
+                logger.debug(
+                    "[GOOGLE_PLACES] Enrichment L2 write failed key=%s err=%s", cache_key, e
+                )
     except Exception as e:
-        logger.debug("[GOOGLE_PLACES] Enrichment L2 write failed key=%s err=%s", cache_key, e)
+        logger.debug("[GOOGLE_PLACES] Enrichment L2 session failed key=%s err=%s", cache_key, e)
 
 
 def _apply_place_to_activity(activity: dict, place: dict, title: str, travelers: int = 1) -> dict:

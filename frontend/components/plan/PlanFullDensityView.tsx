@@ -44,6 +44,12 @@ const DESKTOP_MAP_CONTENT_STYLE = { minWidth: 480, maxWidth: 800 } as const;
 // Extracted animation constants to avoid re-creating objects on every render
 const FADE_INITIAL = { opacity: 0 } as const;
 const FADE_VISIBLE = { opacity: 1 } as const;
+const TILES_TRANSITION = { duration: REVEAL_TIMING.TILES_FADE / 1000 } as const;
+const MAP_TRANSITION = {
+  duration: REVEAL_TIMING.MAP_FADE / 1000,
+  delay: REVEAL_TIMING.MAP_DELAY / 1000,
+  ease: [0.4, 0, 0.2, 1],
+} as const;
 
 function hasTravelIntelligence(section: StrategySection | undefined): boolean {
   return Boolean(section?.travel_intelligence && Object.keys(section.travel_intelligence).length > 0);
@@ -462,7 +468,7 @@ export function PlanFullDensityView({
         {effectiveTiles && Object.keys(effectiveTiles).length > 0 && (
           <motion.section
             key="tiles-section" initial={FADE_INITIAL} animate={FADE_VISIBLE}
-            transition={{ duration: REVEAL_TIMING.TILES_FADE / 1000 }}
+            transition={TILES_TRANSITION}
             id="tiles-section"
             className={cn('mt-1', isExpandingItinerary && 'opacity-50 pointer-events-none')}
           >
@@ -519,7 +525,7 @@ export function PlanFullDensityView({
         <AnimatePresence>
           {showDesktopMap && (
             <motion.div key="desktop-map" initial={FADE_INITIAL} animate={FADE_VISIBLE}
-              transition={{ duration: REVEAL_TIMING.MAP_FADE / 1000, delay: REVEAL_TIMING.MAP_DELAY / 1000, ease: [0.4, 0, 0.2, 1] }} className="flex-1 min-w-[350px] self-stretch pt-10"
+              transition={MAP_TRANSITION} className="flex-1 min-w-[350px] self-stretch pt-10"
             >
               <div
                 className="sticky top-0 relative overflow-hidden rounded-xl"

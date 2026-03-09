@@ -294,6 +294,10 @@ class LocalExpertOutput(BaseModel):
 # (dress codes, altitude warnings, decompression buffers). LLM-generated safety
 # data introduces hallucination risk. Kept as static data by design.
 
+# Curated safety/cultural constraints — Hard Rule 11 exception.
+# Review process: verify facts quarterly; update _CONSTRAINTS_VERSION on any change.
+_CONSTRAINTS_VERSION = "2026-03-09"
+
 LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
     "dubai": {
         "constraints": [

@@ -339,11 +339,17 @@ def _humanize_type(place_type: str) -> str:
 
 
 def _placeholder_category_for_browse(category: str, primary_type: str) -> str:
-    """Map browse category/primaryType to placeholder image category."""
-    c = (category or "").strip().lower()
-    p = (primary_type or "").strip().lower()
+    """Map browse category/primaryType to placeholder image category.
 
-    # User-selected browse category should win over primary type ambiguity.
+    Phase 1: match against the user-selected *browse category* string.
+    Phase 2: fall back to shared primary_type token matching (same dict used
+    by google_places_provider._placeholder_category_for_place_type).
+    """
+    from app.tile_service.google_places_provider import PLACE_TYPE_CATEGORY_TOKENS
+
+    c = (category or "").strip().lower()
+
+    # Phase 1 — user-selected browse category wins over primary type ambiguity.
     if any(token in c for token in ["food", "cooking"]):
         return "cooking"
     if any(token in c for token in ["cultural", "culture", "tours"]):
@@ -361,42 +367,12 @@ def _placeholder_category_for_browse(category: str, primary_type: str) -> str:
     if any(token in c for token in ["nature", "park", "garden", "zoo", "beach", "camp"]):
         return "adventure"
 
-    if any(
-        token in p
-        for token in [
-            "museum",
-            "landmark",
-            "monument",
-            "gallery",
-            "temple",
-            "church",
-            "mosque",
-            "synagogue",
-            "historic",
-            "plaza",
-            "ruins",
-            "fountain",
-            "attraction",
-            "point_of_interest",
-            "tour",
-            "travel_agency",
-        ]
-    ):
-        return "culture"
-    if any(token in p for token in ["restaurant", "cafe", "bar", "bakery", "meal", "food"]):
-        return "cooking"
-    if any(token in p for token in ["nightlife", "night", "club"]):
-        return "nightlife"
-    if any(token in p for token in ["spa", "wellness", "beauty", "gym", "massage", "yoga"]):
-        return "wellness"
-    if any(token in p for token in ["hike", "trail", "mountain", "trek"]):
-        return "hiking"
-    if any(token in p for token in ["ski", "snow"]):
-        return "skiing"
-    if any(token in p for token in ["dive", "snorkel", "reef", "scuba"]):
-        return "diving"
-    if any(token in p for token in ["nature", "park", "garden", "zoo", "beach", "camp"]):
-        return "adventure"
+    # Phase 2 — shared primary_type token matching.
+    p = (primary_type or "").strip().lower()
+    if p:
+        for cat, tokens in PLACE_TYPE_CATEGORY_TOKENS.items():
+            if any(token in p for token in tokens):
+                return cat
     return "activity"
 
 

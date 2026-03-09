@@ -264,6 +264,12 @@ def normalize_currency(value: Any) -> Optional[str]:
         if value.startswith(symbol):
             return code
 
+    # Passthrough: any 3-letter alpha string is plausibly a currency code.
+    # The LLM validates contextually — "VND" for Vietnam is correct. The
+    # hardcoded set above is a fast-path; this catches the long tail.
+    if len(upper) == 3 and upper.isalpha():
+        return upper
+
     return None
 
 

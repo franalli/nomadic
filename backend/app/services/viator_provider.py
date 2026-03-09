@@ -20,6 +20,7 @@ import httpx
 from app.config import settings
 from app.services.cache_core import MemoryCache
 from app.services.circuit_breaker import CircuitBreaker
+from app.services.spend_guard import reserve_partner_api_spend_or_raise
 
 logger = logging.getLogger(__name__)
 
@@ -319,6 +320,7 @@ async def resolve_destination_id(
             return result if return_status else result[0]
         try:
             record_viator_usage("request")
+            reserve_partner_api_spend_or_raise("viator")
             client = await _get_viator_client()
             resp = await client.get(
                 f"{VIATOR_BASE}/destinations",
@@ -399,6 +401,7 @@ async def _search_freetext_with_status(
 
     try:
         record_viator_usage("request")
+        reserve_partner_api_spend_or_raise("viator")
         client = await _get_viator_client()
         payload: dict[str, Any] = {
             "searchTerm": query,
@@ -440,6 +443,7 @@ async def search_products_by_destination(
 
     try:
         record_viator_usage("request")
+        reserve_partner_api_spend_or_raise("viator")
         client = await _get_viator_client()
         payload: dict[str, Any] = {
             "filtering": {"destination": str(dest_id)},

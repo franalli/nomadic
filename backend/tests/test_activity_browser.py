@@ -70,9 +70,17 @@ def _make_place(
 
 
 def _make_settings(api_key: str | None = "fake-key") -> MagicMock:
-    """Build a mock settings object with google_maps_api_key set."""
+    """Build a mock settings object with google_maps_api_key set.
+
+    Partner providers (Viator/GYG) are disabled by default so browse
+    tests exercise the Google Places path without live affiliate calls.
+    """
     mock = MagicMock()
     mock.google_maps_api_key = api_key
+    mock.viator_enabled = False
+    mock.viator_api_key = None
+    mock.get_your_guide_enabled = False
+    mock.get_your_guide_api_key = None
     return mock
 
 

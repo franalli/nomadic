@@ -286,8 +286,15 @@ class TestNormalizeCurrency:
     def test_integer_returns_none(self) -> None:
         assert normalize_currency(100) is None  # type: ignore[arg-type]
 
-    def test_unknown_code_returns_none(self) -> None:
-        assert normalize_currency("XYZ") is None
+    def test_unknown_3_letter_alpha_passes_through(self) -> None:
+        # 3-letter alpha strings are accepted as plausible currency codes
+        assert normalize_currency("XYZ") == "XYZ"
+        assert normalize_currency("vnd") == "VND"
+
+    def test_non_alpha_code_returns_none(self) -> None:
+        assert normalize_currency("12X") is None
+        assert normalize_currency("AB") is None
+        assert normalize_currency("ABCD") is None
 
     def test_empty_string_returns_none(self) -> None:
         assert normalize_currency("") is None

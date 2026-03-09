@@ -48,7 +48,7 @@ backend/app/planner/
   chip_generator.py  → Suggestion chips for complete envelope
   nodes/             → constraint_guard.py, vertical_specialist.py, local_expert.py,
                        logistics_node.py, router_extraction.py,
-                       specialist_schemas.py, input_gates.py, input_gate_config.py,
+                       specialist_schemas.py, input_gate_config.py,
                        expert_constraints.py
   services/          → section_builder.py, state_serde.py,
                        itinerary_adapter.py, iata_resolver.py, admin_utils.py,

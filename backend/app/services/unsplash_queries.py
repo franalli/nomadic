@@ -20,6 +20,10 @@ topic-relevant images.
 # When an activity is specified, use these queries instead of appending
 # the activity to destination queries (which produces poor results like
 # "bali rice terraces temple diving")
+# Curated Unsplash search optimization — graceful fallback for unknown destinations.
+# Update _QUERIES_VERSION when adding/modifying query entries.
+_QUERIES_VERSION = "2026-03-09"
+
 ACTIVITY_QUERIES: dict[str, str] = {
     "diving": "scuba diving underwater coral reef tropical fish",
     "hiking": "mountain hiking trail backpacker summit view",

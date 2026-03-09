@@ -10,6 +10,7 @@
 
 import type { DayBlock, StrategySection } from '@/types/plan-envelope';
 
+import { CATEGORY_ALIAS } from './categoryNormalization';
 import { debugLog } from './debug';
 
 const POI_MEMO_MAX_ENTRIES = 32;
@@ -155,49 +156,21 @@ const _CANONICAL_POI_TYPES = new Set<string>([
   'adventure', 'family', 'activity',
 ]);
 
+/**
+ * POI type aliases — delegates to the shared CATEGORY_ALIAS SSoT in
+ * categoryNormalization.ts, plus a few identity entries required by the
+ * _CANONICAL_POI_TYPES guard below (canonical keys that don't appear in
+ * CATEGORY_ALIAS because they aren't alias remappings).
+ */
 const _POI_TYPE_ALIASES: Record<string, string> = {
+  ...CATEGORY_ALIAS,
+  // Identity entries for canonical keys that the alias map doesn't cover
   cultural: 'cultural',
   food: 'food',
   nature: 'nature',
   shopping: 'shopping',
   spa: 'spa',
   tours: 'tours',
-  tourist_attraction: 'tours',
-  travel_agency: 'tours',
-  point_of_interest: 'tours',
-  museum: 'cultural',
-  art_gallery: 'cultural',
-  historical_landmark: 'cultural',
-  cultural_landmark: 'cultural',
-  monument: 'cultural',
-  plaza: 'cultural',
-  ruins: 'cultural',
-  fountain: 'cultural',
-  hindu_temple: 'temples',
-  temple: 'temples',
-  church: 'cultural',
-  place_of_worship: 'cultural',
-  synagogue: 'cultural',
-  mosque: 'cultural',
-  restaurant: 'food',
-  cafe: 'food',
-  bar: 'food',
-  bakery: 'food',
-  meal_takeaway: 'food',
-  meal_delivery: 'food',
-  park: 'nature',
-  natural_feature: 'nature',
-  national_park: 'nature',
-  campground: 'nature',
-  zoo: 'nature',
-  botanical_garden: 'nature',
-  shopping_mall: 'shopping',
-  market: 'shopping',
-  store: 'shopping',
-  clothing_store: 'shopping',
-  department_store: 'shopping',
-  beauty_salon: 'spa',
-  gym: 'spa',
 };
 
 function _canonicalPoiType(value: unknown): string | null {

@@ -741,20 +741,6 @@ def get(topic: str) -> Optional[SpecialistConfig]:
     return SPECIALIST_REGISTRY.get(topic)
 
 
-def display_name(category: str) -> str:
-    """Canonical display name for an activity category."""
-    return _DISPLAY_NAMES.get(category, category.replace("_", " ").title())
-
-
-_DISPLAY_NAMES: dict[str, str] = {
-    # Override .title() only where it gives wrong results
-    "nightlife": "Nightlife",
-    "wellness": "Wellness",
-    "food": "Food & Drink",
-    "wine": "Wine",
-}
-
-
 def load_prompt(topic: str) -> Optional[str]:
     """Load specialist prompt from .txt file. Returns None if not found."""
     prompts_dir = Path(__file__).parent.parent / "prompts" / "specialists"

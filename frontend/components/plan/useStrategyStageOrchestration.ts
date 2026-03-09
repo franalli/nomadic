@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 
 import { useToast } from '@/components/ui/toast';
@@ -76,11 +77,11 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
 
   const effectiveTripInputs = useTripInputsWithFallback(tripInputs);
   const { toast } = useToast();
-  const storeTiles = useDocumentStore((s) => s.document?.tiles);
-  const storeDayCardsRaw = useDocumentStore((s) => s.document?.day_cards);
-  const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
-  const isRegenUpdating = useDocumentStore((s) => s.isRegenerating);
-  const setMobileHeaderCondensed = useUIStore((s) => s.setMobileHeaderCondensed);
+  const storeTiles = useDocumentStore(useShallow((s) => s.document?.tiles));
+  const storeDayCardsRaw = useDocumentStore(useShallow((s) => s.document?.day_cards));
+  const toggleTilePreference = useDocumentStore(useShallow((s) => s.toggleTilePreference));
+  const isRegenUpdating = useDocumentStore(useShallow((s) => s.isRegenerating));
+  const setMobileHeaderCondensed = useUIStore(useShallow((s) => s.setMobileHeaderCondensed));
   const preferredTileIds = useStoreWithEqualityFn(
     useDocumentStore,
     (s) => s.preferredTileIds,
@@ -195,7 +196,7 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
     return 'analyzing';
   }, [generating, generation?.stage]);
   const isStreaming = generating || isCommitting || isExpandingItinerary;
-  const activeMode: ViewMode = useDocumentStore((s) => (s.activeView ?? 'planning') as ViewMode);
+  const activeMode: ViewMode = useDocumentStore(useShallow((s) => (s.activeView ?? 'planning') as ViewMode));
   const effectiveMode: ViewMode = explicitMode ?? activeMode;
 
   const displayLogic = useMemo(() => {
