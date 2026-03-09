@@ -66,6 +66,26 @@ _viator_cache_ttl = settings.viator_cache_ttl_hours * 3600
 _match_cache = MemoryCache(maxsize=512, ttl=_viator_cache_ttl)  # title->product matches
 _browse_viator_cache = MemoryCache(maxsize=256, ttl=_viator_cache_ttl)  # browse results
 
+# Known activity categories that must not cross-match
+_CATEGORY_CONFLICTS: dict[str, set[str]] = {
+    "diving": {"snorkel", "snorkeling", "snorkelling"},
+    "snorkeling": {"scuba", "scuba diving", "deep dive"},
+    "hiking": {"walking tour", "city walk", "food tour"},
+    "cycling": {"motorbike", "scooter", "atv"},
+    "surfing": {"bodyboard", "paddleboard", "kayak"},
+    "sailing": {"cruise", "ferry"},
+}
+
+
+def _has_category_conflict(specialist_category: str | None, product_title: str) -> bool:
+    """Return True if the product title contains a conflicting category term."""
+    if not specialist_category:
+        return False
+    conflicts = _CATEGORY_CONFLICTS.get(specialist_category.lower(), set())
+    product_lower = product_title.lower()
+    return any(conflict in product_lower for conflict in conflicts)
+
+
 _GENERIC_ACTIVITY_TOKENS = frozenset(
     {
         "activity",
@@ -602,6 +622,7 @@ async def match_activity_to_viator(
     activity_title: str,
     destination: str,
     currency: str = "USD",
+    category: str | None = None,
 ) -> dict | None:
     """Match an activity title to a Viator product. Returns tile dict or None."""
     cache_key = f"viator_match:{destination.lower()}:{activity_title.lower()}"
@@ -650,6 +671,25 @@ async def match_activity_to_viator(
         return None
 
     best_product, best_score, best_anchor_overlap = _best_scored_product(clean_title, products)
+
+    # Reject cross-category matches and try next best
+    if best_product and _has_category_conflict(category, best_product.get("title", "")):
+        logger.info(
+            "[VIATOR] Rejected cross-category: category=%s product='%s'",
+            category,
+            best_product.get("title", ""),
+        )
+        non_conflicting = [
+            p for p in products if not _has_category_conflict(category, p.get("title", ""))
+        ]
+        if non_conflicting:
+            best_product, best_score, best_anchor_overlap = _best_scored_product(
+                clean_title, non_conflicting
+            )
+        else:
+            best_product = None
+            best_score = 0
+
     if best_score < 55 or best_product is None:
         # Loose fallback: accept best product if it shares an activity keyword
         # and retains at least one non-generic site token when available.
@@ -677,7 +717,12 @@ async def match_activity_to_viator(
         shared = any(stem in query_lower and stem in product_title for stem in _ACTIVITY_STEMS)
         anchor_tokens = _match_anchor_tokens(clean_title)
         has_anchor_support = not anchor_tokens or best_anchor_overlap > 0
-        if shared and has_anchor_support and best_product:
+        if (
+            shared
+            and has_anchor_support
+            and best_product
+            and not _has_category_conflict(category, product_title)
+        ):
             logger.info(
                 "[VIATOR] Loose match (score=%d, anchors=%d): '%s' → '%s'",
                 best_score,

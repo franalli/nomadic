@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 async def match_activity_to_best_partner(
-    activity_title: str, destination: str, currency: str = "USD"
+    activity_title: str,
+    destination: str,
+    currency: str = "USD",
+    category: str | None = None,
 ) -> dict | None:
     """Search Viator + GYG in parallel, return best match."""
     tasks: list[Any] = []
@@ -22,12 +25,16 @@ async def match_activity_to_best_partner(
     if settings.viator_enabled and settings.viator_api_key:
         from app.services.viator_provider import match_activity_to_viator
 
-        tasks.append(match_activity_to_viator(activity_title, destination, currency))
+        tasks.append(
+            match_activity_to_viator(activity_title, destination, currency, category=category)
+        )
 
     if settings.get_your_guide_enabled and settings.get_your_guide_api_key:
         from app.services.gyg_provider import match_activity_to_gyg
 
-        tasks.append(match_activity_to_gyg(activity_title, destination, currency))
+        tasks.append(
+            match_activity_to_gyg(activity_title, destination, currency, category=category)
+        )
 
     if not tasks:
         return None
@@ -75,9 +82,11 @@ async def enrich_tiles_with_partners(
 
     sem = asyncio.Semaphore(5)
 
-    async def _throttled_match(title: str) -> dict | None:
+    async def _throttled_match(title: str, category: str | None = None) -> dict | None:
         async with sem:
-            return await match_activity_to_best_partner(title, destination, currency)
+            return await match_activity_to_best_partner(
+                title, destination, currency, category=category
+            )
 
     filtered = [
         (i, t)
@@ -87,7 +96,14 @@ async def enrich_tiles_with_partners(
         and not (t.get("meta") or {}).get("viator_product_code")
         and not (t.get("meta") or {}).get("gyg_tour_id")
     ]
-    tasks = [_throttled_match(t.get("title", "")) for _, t in filtered]
+    tasks = [
+        _throttled_match(
+            t.get("title", ""),
+            category=(t.get("meta") or {}).get("specialist_type")
+            or (t.get("meta") or {}).get("category"),
+        )
+        for _, t in filtered
+    ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     matched = 0

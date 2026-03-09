@@ -63,6 +63,26 @@ _gyg_cache_ttl = settings.get_your_guide_cache_ttl_hours * 3600
 _match_cache = MemoryCache(maxsize=512, ttl=_gyg_cache_ttl)  # title->tour matches
 _browse_gyg_cache = MemoryCache(maxsize=256, ttl=_gyg_cache_ttl)  # browse results
 
+# Known activity categories that must not cross-match
+_CATEGORY_CONFLICTS: dict[str, set[str]] = {
+    "diving": {"snorkel", "snorkeling", "snorkelling"},
+    "snorkeling": {"scuba", "scuba diving", "deep dive"},
+    "hiking": {"walking tour", "city walk", "food tour"},
+    "cycling": {"motorbike", "scooter", "atv"},
+    "surfing": {"bodyboard", "paddleboard", "kayak"},
+    "sailing": {"cruise", "ferry"},
+}
+
+
+def _has_category_conflict(specialist_category: str | None, product_title: str) -> bool:
+    """Return True if the product title contains a conflicting category term."""
+    if not specialist_category:
+        return False
+    conflicts = _CATEGORY_CONFLICTS.get(specialist_category.lower(), set())
+    product_lower = product_title.lower()
+    return any(conflict in product_lower for conflict in conflicts)
+
+
 # -- Concurrency limiter -----------------------------------------------------
 _sem = asyncio.Semaphore(5)
 
@@ -240,6 +260,7 @@ async def match_activity_to_gyg(
     activity_title: str,
     destination: str,
     currency: str = "USD",
+    category: str | None = None,
 ) -> dict | None:
     """Match an activity title to a GYG tour. Returns tile dict or None."""
     cache_key = f"gyg_match:{destination.lower()}:{activity_title.lower()}"
@@ -266,6 +287,29 @@ async def match_activity_to_gyg(
         if score > best_score:
             best_score = score
             best_tour = t
+
+    # Reject cross-category matches
+    if best_tour and _has_category_conflict(category, best_tour.get("title", "")):
+        logger.info(
+            "[GYG] Rejected cross-category: category=%s tour='%s'",
+            category,
+            best_tour.get("title", ""),
+        )
+        non_conflicting = [
+            t for t in tours if not _has_category_conflict(category, t.get("title", ""))
+        ]
+        if non_conflicting:
+            best_score = 0
+            best_tour = None
+            for t in non_conflicting:
+                t_title = t.get("title", "")
+                score = fuzz.token_sort_ratio(activity_title.lower(), t_title.lower())
+                if score > best_score:
+                    best_score = score
+                    best_tour = t
+        else:
+            best_tour = None
+            best_score = 0
 
     if best_score < 65 or best_tour is None:
         _match_cache.set(cache_key, _NO_MATCH)
