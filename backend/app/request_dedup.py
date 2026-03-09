@@ -25,6 +25,14 @@ async def check_idempotency(key: str | None) -> bool:
         return False
 
 
+async def release_idempotency(key: str | None) -> None:
+    """Release an idempotency key so it can be retried after failure."""
+    if not key:
+        return
+    async with _idempotency_lock:
+        _idempotency_cache.pop(key, None)
+
+
 # Per-session expand-itinerary mutex: 1 in-flight per session
 # TTLCache auto-expires after 120s so a crashed generator can't permanently lock a session.
 # Single-process only (same caveat as idempotency cache above).

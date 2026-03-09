@@ -2,31 +2,22 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
+import { useLocalExpertPolling } from '@/hooks/useLocalExpertPolling';
 import { useMapSync } from '@/hooks/useMapSync';
 import { REVEAL_TIMING } from '@/lib/animation-config';
-import {
-  deleteInflight,
-  getCachedDestinationIntel,
-  getInflight,
-  getSpecialistEnrichment,
-  normalizeDestinationKey,
-  setCachedDestinationIntel,
-  setInflight,
-} from '@/lib/destination-intel-cache';
 import type { MapPOI } from '@/lib/ghost-timeline-adapter';
 import { calculateMapCenter, extractPOIsFromSections } from '@/lib/ghost-timeline-adapter';
-import { buildDestinationIntel } from '@/lib/travelIntel';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { DocumentTripInputs } from '@/types/document';
-import type { DestinationCard, PlanViewModel, PlanViewState, StrategySection } from '@/types/plan-envelope';
+import type { DestinationCard, PlanViewModel, PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
@@ -51,30 +42,6 @@ const MAP_TRANSITION = {
   ease: [0.4, 0, 0.2, 1],
 } as const;
 
-function hasTravelIntelligence(section: StrategySection | undefined): boolean {
-  return Boolean(section?.travel_intelligence && Object.keys(section.travel_intelligence).length > 0);
-}
-
-function localExpertEnrichmentState(section: StrategySection | undefined): string {
-  const raw = section?.local_expert_enrichment?.state;
-  if (typeof raw !== 'string') return '';
-  return raw.trim().toLowerCase();
-}
-
-function sectionFingerprint(section: StrategySection | null | undefined): string {
-  if (!section) return '';
-  const enrichment = section.local_expert_enrichment;
-  const updatedAt = typeof enrichment?.updated_at === 'string' ? enrichment.updated_at : '';
-  const enrichmentState = typeof enrichment?.state === 'string' ? enrichment.state : '';
-  return [
-    section.id ?? '',
-    enrichmentState,
-    updatedAt,
-    section.constraints_applied?.length ?? 0,
-    section.content_added?.length ?? 0,
-    section.travel_intelligence ? Object.keys(section.travel_intelligence).length : 0,
-  ].join('|');
-}
 interface PlanFullDensityViewProps {
   state: PlanViewState; viewModel: PlanViewModel;
   fullModeSections: PlanViewModel['strategy_sections']; fullModePOIs: MapPOI[];
@@ -187,171 +154,36 @@ export function PlanFullDensityView({
     }))
   );
 
-  const intelDestinationKey = normalizeDestinationKey(effectiveFullDest);
   const localExpertSection = useMemo(
     () => strategySections.find((s) => s.specialist_type === 'local_expert'),
     [strategySections]
   );
   const localExpertSectionId = localExpertSection?.id ?? null;
-  const localExpertHasTI = hasTravelIntelligence(localExpertSection);
-  const localExpertSectionEnrichment = localExpertEnrichmentState(localExpertSection);
+  const localExpertHasTI = Boolean(
+    localExpertSection?.travel_intelligence && Object.keys(localExpertSection.travel_intelligence).length > 0
+  );
+  const localExpertSectionEnrichment = (() => {
+    const raw = localExpertSection?.local_expert_enrichment?.state;
+    if (typeof raw !== 'string') return '';
+    return raw.trim().toLowerCase();
+  })();
   const localExpertReady = localExpertSectionEnrichment === 'ready';
-  const localExpertSectionRef = useRef<StrategySection | null>(null);
-  // Track streaming state in a ref so the enrichment polling loop can
-  // bail out when a new graph request starts (props are stale in closures).
-  const isStreamingRef = useRef(isStreaming);
-  // Monotonic turn counter — increments each time streaming starts.
-  // Polling loops capture the value at start and bail if it changes,
-  // closing the 0-500ms race window between "user sends" and "first SSE event".
-  const turnCounterRef = useRef(0);
-  useEffect(() => {
-    isStreamingRef.current = isStreaming;
-    if (isStreaming) turnCounterRef.current += 1;
-  }, [isStreaming]);
-  const [enrichedLocalExpertSection, setEnrichedLocalExpertSection] = useState<StrategySection | null>(null);
-  const effectiveStrategySections = useMemo(() => {
-    if (!localExpertSectionId || !enrichedLocalExpertSection) {
-      return strategySections;
-    }
-    return strategySections.map((section) => {
-      if (section.id !== localExpertSectionId) return section;
-      return { ...section, ...enrichedLocalExpertSection };
-    });
-  }, [enrichedLocalExpertSection, localExpertSectionId, strategySections]);
-  const { categories: intelCategories, tipCount: travelIntelItemCount } = useMemo(
-    () => buildDestinationIntel(effectiveStrategySections),
-    [effectiveStrategySections]
-  );
-  const effectiveLocalExpertSection = useMemo(
-    () => effectiveStrategySections.find((s) => s.specialist_type === 'local_expert'),
-    [effectiveStrategySections]
-  );
-  const enrichmentStillPending = localExpertEnrichmentState(effectiveLocalExpertSection) === 'pending';
-  // Only show spinner when truly no data yet — once we have categories, stop spinning
-  const isTravelIntelPending = enrichmentStillPending && intelCategories.length === 0;
-  const hasDestinationIntel = intelCategories.length > 0;
-  useEffect(() => {
-    setEnrichedLocalExpertSection(null);
-  }, [intelDestinationKey, localExpertSectionId]);
 
-  useEffect(() => {
-    localExpertSectionRef.current = localExpertSection ?? null;
-  }, [localExpertSection]);
-
-  useEffect(() => {
-    if (!localExpertSectionId || !intelDestinationKey) return;
-    let cancelled = false;
-
-    const applySectionUpdate = (enriched: StrategySection) => {
-      if (cancelled) return;
-      setEnrichedLocalExpertSection((current) => (
-        sectionFingerprint(current) === sectionFingerprint(enriched) ? current : enriched
-      ));
-    };
-
-    const sourceSection = localExpertSectionRef.current;
-    if (localExpertReady && localExpertHasTI && sourceSection) {
-      setCachedDestinationIntel(intelDestinationKey, sourceSection);
-      applySectionUpdate(sourceSection);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const cached = getCachedDestinationIntel(intelDestinationKey);
-    if (cached) {
-      applySectionUpdate(cached);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const run = async () => {
-      const maxPendingMs = 20_000;
-      const startedAt = Date.now();
-      let pendingAttempts = 0;
-      let transientErrors = 0;
-      const startTurn = turnCounterRef.current;
-
-      // Brief initial delay before first poll
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      if (cancelled) return;
-
-      while (!cancelled) {
-        // Abandon polling when a new graph request starts — fresh
-        // enrichment data will arrive with the new response.
-        if (isStreamingRef.current || turnCounterRef.current !== startTurn) return;
-
-        let result: Awaited<ReturnType<typeof getSpecialistEnrichment>> = null;
-        try {
-          result = await getSpecialistEnrichment(localExpertSectionId);
-        } catch {
-          if (cancelled) return;
-          transientErrors += 1;
-          if (transientErrors >= 3) return;
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
-        }
-        if (cancelled || isStreamingRef.current || turnCounterRef.current !== startTurn) return;
-        transientErrors = 0;
-        if (!result) return;
-
-        if (result.status === 'ready' && result.data) {
-          const enriched = result.data as unknown as StrategySection;
-          setCachedDestinationIntel(intelDestinationKey, enriched);
-          applySectionUpdate(enriched);
-          return;
-        }
-
-        if (result.status === 'failed') return;
-        if (Date.now() - startedAt >= maxPendingMs) return;
-
-        pendingAttempts += 1;
-        const suggestedWait = result.retry_after_ms ?? 1500;
-        const waitMs = Math.max(1500, Math.min(suggestedWait + pendingAttempts * 150, 5000));
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-      }
-    };
-
-    const startPolling = (): Promise<void> => {
-      const inflight = run().finally(() => {
-        deleteInflight(intelDestinationKey);
-      });
-      setInflight(intelDestinationKey, inflight);
-      return inflight;
-    };
-
-    const existingInflight = getInflight(intelDestinationKey);
-    if (existingInflight) {
-      void existingInflight.finally(() => {
-        if (cancelled) return;
-        const fromCache = getCachedDestinationIntel(intelDestinationKey);
-        if (fromCache) {
-          applySectionUpdate(fromCache);
-          return;
-        }
-        // If an older in-flight poll completed without populating cache
-        // (e.g. cancelled during StrictMode remount), kick off one fresh poll.
-        if (!getInflight(intelDestinationKey)) {
-          void startPolling();
-        }
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    void startPolling();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    intelDestinationKey,
-    localExpertHasTI,
-    localExpertReady,
+  const {
+    effectiveStrategySections,
+    intelCategories,
+    travelIntelItemCount,
+    isTravelIntelPending,
+    hasDestinationIntel,
+  } = useLocalExpertPolling({
+    strategySections,
+    effectiveFullDest,
+    isStreaming,
     localExpertSectionId,
-  ]);
+    localExpertReady,
+    localExpertHasTI,
+    localExpertSection,
+  });
 
   // Map sticky offset: distance from viewport top to scroll container top.
   // The sticky map fills calc(100vh - headerOffset) so it occupies the
@@ -375,14 +207,6 @@ export function PlanFullDensityView({
   }, [scrollContainerRef]);
 
   const showTravelAdviceSegment = hasDestinationIntel || isTravelIntelPending;
-
-  useEffect(() => {
-    usePanelToggleStore.getState().setTravelAdviceData({
-      count: travelIntelItemCount,
-      show: showTravelAdviceSegment,
-      pending: isTravelIntelPending,
-    });
-  }, [travelIntelItemCount, showTravelAdviceSegment, isTravelIntelPending]);
 
   return (
     <div className="flex flex-col">

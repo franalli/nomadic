@@ -488,7 +488,7 @@ grep -rn "L2_TTL_HOURS\s*=" backend/app/services/ --include="*.py" | grep -v __p
 # Verify L2 TTL is always >= L1 TTL (L1 evicts first, then L2 shouldn't bring stale data back)
 # For each module, compute: L2_TTL_HOURS * 3600 >= L1_TTL_SECONDS?
 # specialist_cache: L1=3600s (1h), L2=settings.specialist_cache_ttl_hours (default 168h = 604800s) ✓
-# tile_cache: L1=86400s (24h), L2=settings.tile_cache_ttl_hours (default 72h = 259200s) ✓
+# tile_cache: L1=86400s (24h), L2=settings.google_places_cache_ttl_hours (default 72h = 259200s) ✓
 # experience: L1=3600s (1h), L2=settings.experience_cache_ttl_hours (default 72h = 259200s) ✓
 # Flag any module where L2_TTL_HOURS * 3600 < L1_TTL_SECONDS
 ```

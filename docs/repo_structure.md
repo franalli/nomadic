@@ -335,6 +335,7 @@ frontend/
 │
 ├── components/
 │   ├── chat/                   # Chat interface components
+│   │   ├── ChatBootstrapHero.tsx    # Desktop bootstrap hero/banner for ChatPanel
 │   │   ├── ChatInputBar.tsx          # Desktop input capsule (extracted from ChatPanel)
 │   │   ├── ChatInputHandler.tsx      # Thin wrapper around ChatInputBar for ChatPanel integration
 │   │   ├── ChatMessageList.tsx       # Scrollable message list renderer (extracted from ChatPanel)
@@ -347,12 +348,15 @@ frontend/
 │   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
 │   │   ├── MobileChatInput.tsx
 │   │   ├── SmartLoader.tsx
+│   │   ├── chatMessageProcessing.ts  # Pure chat-message sanitizing/splitting utilities
 │   │   └── suggestion-actions.ts     # Shared trigger_action handler (avoids circular import)
 │   │
 │   ├── layout/                 # Layout components
 │   │   ├── FloatingBuildButton.tsx
+│   │   ├── LandingHeaderContent.tsx  # Desktop header chrome extracted from NomadicLanding
 │   │   ├── LandingHelpers.ts         # Shared types and utilities for NomadicLanding (topic detection, field diffing)
 │   │   ├── LandingSheets.tsx         # Sheet rendering extracted from NomadicLanding
+│   │   ├── MobileHeaderMenu.tsx      # Popover body for MobileModeHeader overflow actions
 │   │   ├── MobileModeHeader.tsx
 │   │   ├── MobileSwipeLayout.tsx
 │   │   ├── NomadicLanding.tsx
@@ -409,6 +413,7 @@ frontend/
 │   │   ├── TimelineDayCard.tsx
 │   │   ├── TimelineThread.tsx
 │   │   ├── TripSummaryPills.tsx
+│   │   ├── tripSummaryUtils.ts        # Shared category/day-count inference for pills and activity sheet
 │   │   ├── UnifiedChipRow.tsx
 │   │   ├── useBookingDrawerState.ts        # Booking drawer open/close + fill-day API hook
 │   │   ├── useStrategyStageOrchestration.ts # Heavy computation/state/effects for StrategyStageRenderer
@@ -509,11 +514,14 @@ frontend/
 ├── hooks/                      # Custom React hooks
 │   ├── useActionLoader.ts
 │   ├── useChatEffects.ts         # ChatPanel side effects (scroll, focus, ready-to-generate; extracted from ChatPanel)
+│   ├── useChatMessagePipeline.ts # Memoized stable/streaming chat-message derivation hook
 │   ├── useChatScrolling.ts       # Chat scroll container, auto-scroll, collapse header (extracted from ChatPanel)
 │   ├── useChatSend.ts            # Chat send orchestration + SSE lifecycle (extracted from ChatPanel)
 │   ├── useChatSse.ts             # SSE/streaming connection manager for ChatPanel (extracted from ChatPanel)
 │   ├── useDelayedLoader.ts
+│   ├── useHeaderActions.tsx      # Shared mobile header actions (share/PDF/new trip/auth)
 │   ├── useIsDesktop.ts
+│   ├── useLocalExpertPolling.ts  # Local Expert enrichment cache/polling orchestration
 │   ├── usePreferenceAutoRegen.ts # Auto-triggers itinerary regen on heart changes
 │   ├── useScrollCollapse.ts
 │   ├── useSheetManager.ts

@@ -13,13 +13,14 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useToast } from '@/components/ui/toast';
-import { canonicalCategoryKey, TIER1_CONSTRAINT_HINTS, toCategoryKey } from '@/lib/categoryNormalization';
+import { canonicalCategoryKey } from '@/lib/categoryNormalization';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { ActivitySettings } from '@/types/document';
-import type { DayBlock, DayCard } from '@/types/plan-envelope';
+import type { DayCard } from '@/types/plan-envelope';
 
+import { inferConstraintCategories, resolveBlockCategory } from '../tripSummaryUtils';
 import { ActivitiesSheetContent, ALL_CATEGORIES } from './ActivitiesSheetContent';
 import { BaseSheet } from './BaseSheet';
 
@@ -43,60 +44,6 @@ interface ActivitiesSheetProps {
   onSaveSettings: (settings: ActivitySettings) => void;
   // Navigate to fix prerequisites
   onOpenDestination?: () => void;
-}
-
-const NON_ACTIVITY_TYPES = new Set([
-  'arrival', 'departure', 'check-in', 'check-out', 'check_in', 'check_out',
-  'free_day', 'rest_day', 'buffer', 'decompression_buffer',
-]);
-
-function resolveBlockCategory(block: DayBlock): string | null {
-  if (block.is_buffer) return null;
-  const activityType = toCategoryKey(block.activity_type);
-  if (activityType && NON_ACTIVITY_TYPES.has(activityType)) return null;
-
-  const bookedTile = block.booked_tile as Record<string, unknown> | undefined;
-  const meta = bookedTile?.meta && typeof bookedTile.meta === 'object'
-    ? bookedTile.meta as Record<string, unknown>
-    : undefined;
-
-  return (
-    canonicalCategoryKey(block.map_type) ??
-    canonicalCategoryKey(block.specialist_type) ??
-    canonicalCategoryKey(bookedTile?.map_type) ??
-    canonicalCategoryKey(meta?.map_type) ??
-    canonicalCategoryKey((bookedTile as Record<string, unknown> | undefined)?.browse_category) ??
-    canonicalCategoryKey(bookedTile?.category) ??
-    canonicalCategoryKey(meta?.category)
-  );
-}
-
-function inferConstraintCategories(block: DayBlock): string[] {
-  const categories = new Set<string>();
-  const specialist = canonicalCategoryKey(block.specialist_type);
-  if (specialist && specialist in TIER1_CONSTRAINT_HINTS) {
-    categories.add(specialist);
-  }
-
-  const textParts: string[] = [];
-  if (typeof block.buffer_reason === 'string') textParts.push(block.buffer_reason);
-  if (Array.isArray(block.constraints)) textParts.push(...block.constraints.filter((c): c is string => typeof c === 'string'));
-  if (Array.isArray(block.active_constraints)) {
-    block.active_constraints.forEach((c) => {
-      if (typeof c.id === 'string') textParts.push(c.id);
-      if (typeof c.title === 'string') textParts.push(c.title);
-      if (typeof c.description === 'string') textParts.push(c.description);
-    });
-  }
-  const text = textParts.join(' ');
-  if (!text) return Array.from(categories);
-
-  Object.entries(TIER1_CONSTRAINT_HINTS).forEach(([category, patterns]) => {
-    if (patterns.some((p) => p.test(text))) {
-      categories.add(category);
-    }
-  });
-  return Array.from(categories);
 }
 
 function inferCategoriesFromDayCards(dayCards: DayCard[] | undefined): string[] {

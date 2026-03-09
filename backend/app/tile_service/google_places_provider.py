@@ -27,7 +27,7 @@ import httpx
 from cachetools import TTLCache
 from sqlalchemy import select, update
 
-from app.config import settings
+from app.config import get_media_signing_secret, settings
 from app.placeholders import get_placeholder_image
 from app.planner.hashing import make_cache_key, stable_hash
 from app.schemas import Geo, Tile
@@ -434,18 +434,8 @@ _PHOTO_SIGNED_TTL_MAX = settings.google_places_photo_signed_ttl_max
 
 
 def _media_signing_secret() -> str:
-    """Return server-side secret for signing media proxy URLs.
-
-    Mirrors the fallback chain in main.py to avoid circular imports.
-    """
-    secret = (
-        settings.media_proxy_signing_key
-        or settings.admin_api_key
-        or settings.google_maps_api_secret
-        or settings.google_maps_api_key
-        or ""
-    ).strip()
-    return secret
+    """Return server-side secret for signing media proxy URLs."""
+    return get_media_signing_secret()
 
 
 def build_signed_photo_url(
@@ -1370,7 +1360,9 @@ _ENRICH_FIELD_MASK = (
 _ENRICH_L1_TTL_SECONDS = 86400  # 24h hot cache
 _ENRICH_L1_MAX_SIZE = 2048
 _ENRICH_L2_TTL_HOURS = int(
-    getattr(settings, "google_places_enrichment_cache_ttl_hours", settings.tile_cache_ttl_hours)
+    getattr(
+        settings, "google_places_enrichment_cache_ttl_hours", settings.google_places_cache_ttl_hours
+    )
 )
 _enrich_mem = MemoryCache(maxsize=_ENRICH_L1_MAX_SIZE, ttl=_ENRICH_L1_TTL_SECONDS)
 _ENRICH_MAX_PARALLEL_DEFAULT = 4

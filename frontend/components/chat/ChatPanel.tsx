@@ -12,16 +12,15 @@ import {
 } from 'react';
 
 import { isBootstrap } from '@/components/plan/planStateHelpers';
-import { UnifiedChipRow } from '@/components/plan/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
 import { useChatEffects } from '@/hooks/useChatEffects';
+import { useChatMessagePipeline } from '@/hooks/useChatMessagePipeline';
 import { useChatScrolling } from '@/hooks/useChatScrolling';
 import { useChatSend } from '@/hooks/useChatSend';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
-import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import { useChatStore } from '@/state/chatStore';
-import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
+import { useDocumentStore } from '@/state/documentStore';
 import type {
   ActivitySettings,
   BookingTypes,
@@ -36,61 +35,16 @@ import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
 import { ErrorBoundary } from '../ui/ErrorBoundary';
+import { ChatBootstrapHero } from './ChatBootstrapHero';
 import { ChatInputHandler } from './ChatInputHandler';
 import { ChatMessageList } from './ChatMessageList';
-import { type VisibleMessage } from './ChatMessageRenderer';
 import { ChatModuleSheets } from './ChatModuleSheets';
-import { ChatStatusHeader,getChatStatusConfig } from './ChatStatusHeader';
+import { ChatStatusHeader } from './ChatStatusHeader';
 import { ChatSuggestionBar } from './ChatSuggestionBar';
 import { type ActiveStatus, SmartLoader } from './SmartLoader';
 
-// Helper to fix escaped characters from backend
-const sanitizeContent = (content: string): string => {
-  return content
-    .replace(/\\n/g, '\n')
-    .replace(/\\t/g, '\t')
-    .replace(/\\\*/g, '*')
-    .replace(/\s*(?:[-–—]\s*)?[Cc]heck\s+(?:the\s+)?right\s+panel[^.!?\n]*[.!]?/g, '')
-    .trim();
-};
-
-// Stable empty array to avoid new [] identity on every render when not streaming
-const EMPTY_VISIBLE_MESSAGES: VisibleMessage[] = [];
-
-const MESSAGE_BURST_COOLDOWN_MS = 1000;
-const GENERATE_BURST_COOLDOWN_MS = 3000;
-
-type SendBurstGuardParams = {
-  isGenerateTrigger: boolean;
-  isLoading: boolean;
-  now: number;
-  lastMessageSentAt: number;
-  lastGenerateClickedAt: number;
-};
-
-export function getSendBurstGuardReason(params: SendBurstGuardParams): string | null {
-  const {
-    isGenerateTrigger,
-    isLoading,
-    now,
-    lastMessageSentAt,
-    lastGenerateClickedAt,
-  } = params;
-  if (isGenerateTrigger) {
-    if (isLoading) return 'Plan generation already in progress';
-    if (now - lastGenerateClickedAt < GENERATE_BURST_COOLDOWN_MS) {
-      return 'Please wait a moment before generating again';
-    }
-    return null;
-  }
-  if (isLoading) return 'loading';
-  if (now - lastMessageSentAt < MESSAGE_BURST_COOLDOWN_MS) {
-    return "You're sending too quickly";
-  }
-  return null;
-}
-
-// Re-export for backward compatibility (moved to suggestion-actions.ts)
+// Re-exports for backward compatibility (moved to chatMessageProcessing.ts / suggestion-actions.ts)
+export { getSendBurstGuardReason } from './chatMessageProcessing';
 export { handleSuggestionTriggerAction } from './suggestion-actions';
 
 
@@ -227,10 +181,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [generateTriggered, setGenerateTriggered] = useState(false);
     const [activeStatus, setActiveStatus] = useState<ActiveStatus | null>(null);
 
-    // Module sheet open states
-    const [flightsSheetOpen, setFlightsSheetOpen] = useState(false);
-    const [staysSheetOpen, setStaysSheetOpen] = useState(false);
-    const [activitiesSheetOpen, setActivitiesSheetOpen] = useState(false);
+    // Module sheet open state — at most one sheet open at a time
+    const [openModuleSheet, setOpenModuleSheet] = useState<'flights' | 'stays' | 'activities' | null>(null);
 
     const panelRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -322,93 +274,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         : 'min-h-[300px]';
 
     // ── Visible messages ──
-    const streamingMessageId = chatSend.streamingMessageId;
-    // Build a fingerprint of non-streaming message IDs so the filtered
-    // array keeps stable identity when only streaming tokens change —
-    // prevents downstream visibleStable recomputation on each token.
-    const stableFingerprint = useMemo(() => {
-      const ids: string[] = [];
-      for (const m of messages) {
-        if (m.id !== streamingMessageId) ids.push(m.id);
-      }
-      return ids.join(',');
-    }, [messages, streamingMessageId]);
-
-    const stableMessages = useMemo(
-      () => useChatStore.getState().messages.filter((m) => m.id !== chatSend.streamingMessageId),
-      // eslint-disable-next-line react-hooks/exhaustive-deps -- fingerprint is the semantic dep; store.getState() reads live data
-      [stableFingerprint],
-    );
-    const visibleStable = useMemo(() => {
-      const visible: VisibleMessage[] = [];
-
-      const splitMessageIfNeeded = (m: VisibleMessage): VisibleMessage[] => {
-        if (m.role !== 'assistant') return [m];
-        const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
-        if (paragraphs.length > 1) {
-          return paragraphs.map((paragraph, idx) => ({
-            ...m,
-            id: `${m.id}_p${idx}`,
-            content: paragraph.trim(),
-            _isPartOfSplit: true,
-            _isFirstPart: idx === 0,
-            _isLastPart: idx === paragraphs.length - 1,
-          }));
-        }
-        const words = m.content.split(/\s+/).filter(Boolean).length;
-        const sentences = m.content.split(/(?<=[.!?])\s+(?=[A-Z])/).filter((s) => s.trim());
-        if (sentences.length >= 3 && words > 40) {
-          const parts = [sentences[0].trim(), sentences.slice(1).join(' ').trim()];
-          return parts.map((part, idx) => ({
-            ...m,
-            id: `${m.id}_p${idx}`,
-            content: part,
-            _isPartOfSplit: true,
-            _isFirstPart: idx === 0,
-            _isLastPart: idx === parts.length - 1,
-          }));
-        }
-        return [m];
-      };
-
-      for (const message of stableMessages) {
-        if (message.role === 'system' || message.displayMode === 'ack_line') continue;
-        if (!message.content || message.content.trim().length === 0) continue;
-        if (isGenerating && message.id === 'm0') continue;
-
-        const canonicalContent =
-          hasBranches && message.id === 'm0' ? 'Edit constraints.' : message.content;
-        const sanitized = sanitizeContent(canonicalContent);
-        if (!sanitized || sanitized.trim().length === 0) continue;
-
-        const normalized: VisibleMessage = { ...message, content: sanitized };
-        const split = splitMessageIfNeeded(normalized);
-        visible.push(...split);
-      }
-
-      return visible;
-    }, [stableMessages, isGenerating, hasBranches]);
-
-    const streamingMessage = useMemo(
-      () => messages.find((m) => m.id === streamingMessageId) ?? null,
-      [messages, streamingMessageId],
-    );
-
-    const streamingVisible = useMemo(() => {
-      if (!streamingMessage) return EMPTY_VISIBLE_MESSAGES;
-      const sanitized = sanitizeContent(streamingMessage.content);
-      if (!sanitized || sanitized.trim().length === 0) return EMPTY_VISIBLE_MESSAGES;
-      return [
-        {
-          ...streamingMessage,
-          content: sanitized,
-        },
-      ];
-    }, [streamingMessage]);
-
-    const visibleMessages = useMemo(
-      () => [...visibleStable, ...streamingVisible],
-      [visibleStable, streamingVisible],
+    const visibleMessages = useChatMessagePipeline(
+      messages, chatSend.streamingMessageId, isGenerating ?? false, hasBranches ?? false,
     );
 
     return (
@@ -450,54 +317,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           isDesktop={isDesktop}
           planViewState={planViewState ?? undefined}
           isLanding={isDesktop && (isBootstrap(planViewState) || !!isFramingProp)}
-          scrollHeaderContent={isDesktop && isBootstrap(planViewState) && !isSetupHeaderCollapsed ? (() => {
-            const status = getChatStatusConfig(planViewState, planState, isGenerating ?? false, destination, hasDates, isFramingProp);
-            return (
-              <>
-                {/* Hero banner — scrolls up as messages arrive */}
-                <div className="flex flex-col items-center justify-center text-center px-4 pb-4">
-                  <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-                    {status.text}
-                  </h1>
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <span className={cn(
-                      `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-primary`,
-                      DS.glowClass.dropText,
-                    )}>
-                      {status.label}
-                    </span>
-                    <div className={cn(
-                      'h-1.5 w-1 animate-terminal-blink rounded-sm bg-primary',
-                      DS.glowClass.cursor,
-                    )} />
-                  </div>
-                </div>
-                {/* Unified Chip Row — scrolls with hero */}
-                <UnifiedChipRow
-                  destination={destination}
-                  origin={origin}
-                  dateRange={dateRange}
-                  travelers={tripInputs?.adults ? `${tripInputs.adults} adult${tripInputs.adults > 1 ? 's' : ''}${tripInputs.children ? `, ${tripInputs.children} child${tripInputs.children > 1 ? 'ren' : ''}` : ''}` : undefined}
-                  budget={budget}
-                  bookingTypes={bookingTypes || DEFAULT_BOOKING_TYPES}
-                  flightSettings={flightSettings}
-                  hotelSettings={hotelSettings}
-                  activitySettings={activitySettings}
-                  onOpenDestination={() => onOpenSheet?.('destination')}
-                  onOpenOrigin={() => onOpenSheet?.('origin')}
-                  onOpenDates={() => onOpenSheet?.('dates')}
-                  onOpenTravelers={() => onOpenSheet?.('travelers')}
-                  onOpenBudget={() => onOpenSheet?.('budget')}
-                  onOpenFlights={() => setFlightsSheetOpen(true)}
-                  onOpenStays={() => setStaysSheetOpen(true)}
-                  onOpenActivities={() => setActivitiesSheetOpen(true)}
-                  destinationLocked={!!destination}
-                />
-                {/* Divider between setup controls and conversation */}
-                <div className="mx-auto mb-4 mt-6 w-2/3 border-t border-border/50" />
-              </>
-            );
-          })() : undefined}
+          scrollHeaderContent={isDesktop && isBootstrap(planViewState) && !isSetupHeaderCollapsed ? (
+            <ChatBootstrapHero
+              planViewState={planViewState} planState={planState}
+              isGenerating={isGenerating ?? false} isFraming={isFramingProp}
+              destination={destination} origin={origin} hasDates={hasDates}
+              dateRange={dateRange} budget={budget} tripInputs={tripInputs}
+              bookingTypes={bookingTypes} flightSettings={flightSettings}
+              hotelSettings={hotelSettings} activitySettings={activitySettings}
+              onOpenSheet={onOpenSheet} onOpenModuleSheet={setOpenModuleSheet}
+            />
+          ) : undefined}
         />
 
         {/* Input area with suggestions — pinned below scroll container */}
@@ -520,9 +350,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             onOpenSheet={onOpenSheet}
             onSendMessage={chatSend.sendMessageCore}
             onConfirmReset={onConfirmReset}
-            onOpenFlights={() => setFlightsSheetOpen(true)}
-            onOpenStays={() => setStaysSheetOpen(true)}
-            onOpenActivities={() => setActivitiesSheetOpen(true)}
+            onOpenFlights={() => setOpenModuleSheet('flights')}
+            onOpenStays={() => setOpenModuleSheet('stays')}
+            onOpenActivities={() => setOpenModuleSheet('activities')}
             toast={toast}
           />
 
@@ -565,12 +395,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onOpenSheet={onOpenSheet}
           sendMessageCore={chatSend.sendMessageCore}
           toast={toast}
-          flightsSheetOpen={flightsSheetOpen}
-          setFlightsSheetOpen={setFlightsSheetOpen}
-          staysSheetOpen={staysSheetOpen}
-          setStaysSheetOpen={setStaysSheetOpen}
-          activitiesSheetOpen={activitiesSheetOpen}
-          setActivitiesSheetOpen={setActivitiesSheetOpen}
+          openModuleSheet={openModuleSheet}
+          setOpenModuleSheet={setOpenModuleSheet}
         />
       </div>
       </ErrorBoundary>

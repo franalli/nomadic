@@ -7,6 +7,7 @@ description: >
   pill chips, timeline blocks, tile cards, Framer Motion, Mapbox, mobile layout,
   ghost timeline, content policy guard, loader states, fill-day flow,
   preference auto-regen, stream parser, browse activities, booking drawer,
+  message pipeline, header actions, local-expert polling,
   undo stack, drag-and-drop, travel intelligence, destination intel, panel toggles, consent/legal, booking summary,
   shared trip, auth callback, oauth, user menu, user store, avatar, theme mode constants,
   or any file under frontend/.
@@ -50,16 +51,16 @@ frontend/
                      credits/page.tsx, terms/page.tsx
   components/
     animations/    → Typewriter
-    chat/          → ChatPanel, ChatSkeleton, SmartLoader,
+    chat/          → ChatPanel, ChatBootstrapHero, ChatSkeleton, SmartLoader,
                      MobileChatInput,
                      ChatInputBar, ChatInputHandler, ChatMessageList,
                      ChatMessageRenderer, ChatModuleSheets,
                      ChatStatusHeader,
                      ChatSuggestionBar, ChatSuggestionChips,
-                     suggestion-actions.ts
+                     chatMessageProcessing.ts, suggestion-actions.ts
     plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
                      PlanHeader, NextStepBar, planStateHelpers,
-                     UnifiedChipRow, TripSummaryPills,
+                     UnifiedChipRow, TripSummaryPills, tripSummaryUtils,
                      BookingPlanningView, BookingSummary,
                      ChipGroup, ChipScrollContainer,
                      FullDensityTimeline, PdfExportButton, ShareTripButton,
@@ -90,8 +91,9 @@ frontend/
                      MiniCardContent, TileCardContent, TileDetailsInfo
     shared/        → SharedTripView, ReadOnlyTimeline
     ui/            → Shared UI primitives, UserAvatar
-    layout/        → SplitLayoutView, NomadicLanding, LandingHelpers, LandingSheets,
-                     FloatingBuildButton, MobileSwipeLayout, MobileModeHeader,
+    layout/        → SplitLayoutView, NomadicLanding, LandingHeaderContent,
+                     LandingHelpers, LandingSheets, FloatingBuildButton,
+                     MobileSwipeLayout, MobileModeHeader, MobileHeaderMenu,
                      hooks/ (useSessionHydration, useBranchManager, useBranchState,
                              useItineraryGeneration, useLandingDerived, useLandingEffects,
                              useLandingHandlers, useTileSelection, useTripInputsEditor,
@@ -102,7 +104,8 @@ frontend/
     providers/     → Providers (context wrappers) via `components/providers/Providers.tsx`
   state/           → documentStore.ts, chatStore.ts, panelToggleStore.ts, uiStore.ts,
                      mobileNavStore.ts, userStore.ts
-  hooks/           → useActionLoader, useDelayedLoader, useIsDesktop,
+  hooks/           → useActionLoader, useChatMessagePipeline, useDelayedLoader,
+                     useHeaderActions, useIsDesktop, useLocalExpertPolling,
                      usePreferenceAutoRegen, useScrollCollapse, useSheetManager,
                      useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation,
                      useChatEffects, useChatScrolling, useChatSend, useChatSse,

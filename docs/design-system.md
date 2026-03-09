@@ -173,6 +173,18 @@ Ready-to-use Tailwind shadow classes for emerald glow effects. Apply with `dark:
 | `DS.glowClass.dropMarker` | 0.6 | Map marker drop-shadow |
 | `DS.glowClass.mobileInputSm` | 0.15 | Mobile input (subtle, tighter) |
 | `DS.glowClass.mobileInputMd` | 0.2 | Mobile input (medium, tighter) |
+| `DS.glowClass.dotGlow` | 0.3 | Dot indicator/separator glow (6px, tight) |
+| `DS.glowClass.commandBar` | composite | Command bar elevation (black + emerald tint + inset glass) |
+
+### Neutral Shadows (`DS.shadow.*`)
+
+Non-emerald box shadows for light-mode surfaces. Unlike `DS.glowClass.*`, these use zinc/white tones and do not carry the emerald bioluminescent identity.
+
+| Token | Value | Use For |
+|-------|-------|---------|
+| `DS.shadow.bubble` | `0 2px 8px rgba(10,14,18,0.06)` | Chat bubble resting shadow (light mode) |
+| `DS.shadow.bubbleHover` | `0 4px 12px rgba(10,14,18,0.08)` | Chat bubble hover shadow (light mode) |
+| `DS.shadow.bubbleWhite` | `0 0 10px -6px rgba(255,255,255,0.18)` | White surface self-glow (dark mode user bubble) |
 
 ### Brand Colors
 
@@ -669,13 +681,15 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | ActivitiesSheet | `plan/sheets/ActivitiesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, same as Flights, `Stepper` from `ui/stepper.tsx` (day preference steppers) |
 | TripSettingsSheet | `plan/sheets/TripSettingsSheet.tsx` | BaseSheet, field rows for mobile settings relay |
 | DatesSheet | `plan/sheets/DatesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, `DS.textSize.micro`, raw glass pattern, raw Tactile pills |
-| ChatPanel | `chat/ChatPanel.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (S0 hero terminal text) |
+| ChatPanel | `chat/ChatPanel.tsx` | Shell only; delegates S0 hero styling to `ChatBootstrapHero` and bubble styling to child chat components |
+| ChatBootstrapHero | `chat/ChatBootstrapHero.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (desktop bootstrap hero terminal text) |
 | ChatMessageList | `chat/ChatMessageList.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (terminal status text) |
 | ChatInputBar | `chat/ChatInputBar.tsx` | `DS.glowClass.sm`, `DS.glowClass.md`, Living Void pattern (emerald glow + pulse), Stop button (monochrome square) |
 | MobileChatInput | `chat/MobileChatInput.tsx` | `DS.glowClass.mobileInputSm`, `DS.glowClass.mobileInputMd`, `DS.glowClass.lg`; mobile textarea locks to `text-[16px]` to prevent iOS Safari auto-zoom on focus |
 | SmartLoader | `chat/SmartLoader.tsx` | `DS.textSize.micro` (mutating status line with dynamic Lucide icon) |
 | ChatSuggestionChips | `chat/ChatSuggestionChips.tsx` | Raw Tactile pills (suggestion chips), `Sparkles` icon (planning trigger), `SlidersHorizontal` icon (sheet actions) |
 | BrowseActivitiesSheet | `plan/BrowseActivitiesSheet.tsx` | `DS.pills.shapeFull`, `DS.pills.active`, `DS.pills.inactive`, `DS.infoBox.container` |
+| TripSummaryPills | `plan/TripSummaryPills.tsx` | `DS.glowClass.dotGlow`, `DS.glowClass.commandBar`, `DS.textSize.badgeLabel`, `DS.textSize.micro` (command bar shell, separator dots, counts) |
 | UnifiedChipRow | `plan/UnifiedChipRow.tsx` | `CoreChip` (CSS custom properties, not DS pills) |
 | Calendar | `ui/calendar.tsx` | Custom (see Calendar section) |
 | StrategyHero | `plan/stages/StrategyHero.tsx` | `DS.textSize.nano`, `DS.textSize.micro` directly; child sheets (`StrategyHeroCompactSheet`, `StrategyHeroHeroSheet`, `StrategyHeroAccordion`) use `DS.text.label`, `DS.text.body`, `DS.infoBox.container`. 3 variants: `hero`, `compact`, `accordion` |
@@ -1031,7 +1045,7 @@ The assistant is the **Infrastructure**. It should feel like part of the dashboa
 }>
 ```
 
-> **Exception — White glow on user bubble (dark mode):** `dark:shadow-[0_0_10px_-6px_rgba(255,255,255,0.18)]` is applied only to the user bubble in `ChatMessageRenderer.tsx`. It is **not tokenized** (single usage, no DS token). Do not apply this glow to any other component.
+> **White glow on user bubble (dark mode):** Tokenized as `DS.shadow.bubbleWhite`. Applied only to the user bubble in `ChatMessageRenderer.tsx`. Do not apply this glow to any other component.
 
 ### Why This Works
 
@@ -1805,7 +1819,7 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
 
 Two implementations exist:
 
-**S0 Hero (ChatPanel):** Uses CSS variable `text-primary` / `bg-primary` for theme-aware emerald, plus `DS.glowClass.dropText` and `DS.glowClass.cursor` glow in both modes.
+**S0 Hero (ChatBootstrapHero):** Uses CSS variable `text-primary` / `bg-primary` for theme-aware emerald, plus `DS.glowClass.dropText` and `DS.glowClass.cursor` glow in both modes.
 
 **Chat Status (ChatMessageList):** Uses explicit emerald classes with dark-only glow.
 
@@ -1841,7 +1855,7 @@ Two implementations exist:
 </div>
 ```
 
-### Code Example (S0 Hero — ChatPanel)
+### Code Example (S0 Hero — ChatBootstrapHero)
 
 ```tsx
 // Uses CSS variable tokens for theme-aware emerald + glow in both modes
@@ -1865,7 +1879,7 @@ Two implementations exist:
 
 ### Implementation Reference
 
-- `frontend/components/chat/ChatPanel.tsx` (S0 hero banner)
+- `frontend/components/chat/ChatBootstrapHero.tsx` (S0 hero banner)
 - `frontend/components/chat/ChatMessageList.tsx` (chat empty state)
 
 ---
@@ -2604,6 +2618,9 @@ Updates to Section 6 — new components discovered in audit:
 | `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
 | `InlineDatePrompt` | `plan/timeline/InlineDatePrompt.tsx` | `DS.actions.primary` | Inline CTA to set dates within timeline |
 | `ChatStatusHeader` | `chat/ChatStatusHeader.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText` | Desktop status chip rendered above chat with transition-safe chrome |
+| `LandingHeaderContent` | `layout/LandingHeaderContent.tsx` | `DS.materials.glass`, `DS.textSize.micro` | Desktop split-layout header chrome; auth popover, recent trips, and compact TripSummaryPills strip |
+| `MobileHeaderMenu` | `layout/MobileHeaderMenu.tsx` | `DS.textSize.micro`, `DS.materials.glass` | Mobile overflow menu action list; shared menu-item styling inside popover glass shell |
+| `ChatMessageRenderer` | `chat/ChatMessageRenderer.tsx` | `DS.shadow.bubble`, `DS.shadow.bubbleHover`, `DS.shadow.bubbleWhite` | Chat bubble elevation tokens; `bubbleWhite` remains the single documented dark-mode white-glow exception |
 | `TileDetailsInfo` | `tiles/TileDetailsInfo.tsx` | `DS.textSize.mini` | Metadata strip (distance/ratings/metadata) used by tile cards |
 | `SuggestionCardContent` | `plan/tiles/SuggestionCardContent.tsx` | `DS.textSize.*` | Shared content block for suggestion rendering |
 | `MiniCardContent` | `tiles/MiniCardContent.tsx` | `DS.textSize.*`, `DS.text.accent` | Shared compact tile body renderer with provider-aware deeplink CTA copy |

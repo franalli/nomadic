@@ -14,7 +14,10 @@ from urllib.parse import quote, urlencode
 
 import httpx
 
-from app.config import settings  # noqa: E402 — safe: config.py imports only stdlib+pydantic
+from app.config import (  # noqa: E402 — safe: config.py imports only stdlib+pydantic
+    get_media_signing_secret,
+    settings,
+)
 
 # =============================================================================
 # EARLY WARNING SUPPRESSION (before any imports that might trigger warnings)
@@ -197,12 +200,7 @@ _SESSION_COOKIE_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
 
 def _media_proxy_signing_secret() -> str:
     """Return server-side secret used to sign media proxy URLs."""
-    secret = (
-        settings.media_proxy_signing_key
-        or settings.admin_api_key
-        or settings.google_maps_api_secret
-        or ""
-    ).strip()
+    secret = get_media_signing_secret()
     if not secret:
         raise HTTPException(status_code=503, detail="Media proxy signing key not configured")
     return secret
@@ -4407,10 +4405,13 @@ from app.request_dedup import (  # noqa: E402
 from app.request_dedup import (  # noqa: E402
     release_expand_slot as _release_expand_slot,
 )
+from app.request_dedup import (  # noqa: E402
+    release_idempotency as _release_idempotency,
+)
 
 
 @app.post("/api/expand-itinerary")
-@limiter.limit("20/minute")  # Builder-only (no LLM) — frontend mutex prevents abuse
+@limiter.limit("10/minute")  # Can hit Google Places via refresh_activity_categories
 async def expand_itinerary_endpoint(
     request: Request,
     req: ExpandItineraryRequest,
@@ -4470,15 +4471,21 @@ async def expand_itinerary_endpoint(
         )
 
     async def _ndjson_with_release():
+        succeeded = False
         try:
             async for chunk in generate_ndjson(
                 session_id=session_id,
                 req=req,
                 resolve_stage3_view_state=_resolve_stage3_view_state,
             ):
+                # NB: coupled to json.dumps default separators (': ' with space)
+                if '"type": "done"' in chunk and '"duplicate_noop"' not in chunk:
+                    succeeded = True
                 yield chunk
         finally:
             await _release_expand_slot(session_id)
+            if not succeeded:
+                await _release_idempotency(req.idempotency_key)
 
     return StreamingResponse(
         _ndjson_with_release(),

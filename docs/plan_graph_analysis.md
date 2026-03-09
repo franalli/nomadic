@@ -307,7 +307,7 @@ Flight/hotel/activity fetching with safety logic.
 - No-fly safety logic (registry-driven via `_NOFLY_CATEGORIES`)
 - Hotels and activities fetched in parallel via `asyncio.gather()`
 - Google Places hotel providers cap hotel results at top-3 per fetch (cost guard for photo-proxy traffic)
-- `build_signed_photo_url()` now returns `None` when photos are disabled and caps requested TTL by `settings.google_places_photo_signed_ttl_max` (default max 3600s; default request 1800s)
+- `build_signed_photo_url()` now returns `None` when photos are disabled, caps requested TTL by `settings.google_places_photo_signed_ttl_max` (default max 3600s; default request 1800s), and resolves its signing secret through `config.get_media_signing_secret()` so the tile signer and `/api/media/google-places-photo*` verifier share the same fallback chain.
 - Hotel-star filtering now cascades down (`min_stars-1 ... 1`) before fallback-to-originals, with applied threshold tracked in `state.metadata`.
 - General-only trips (no specialist/categories) call `browse_activities()` across default categories to seed larger activity pools for long itineraries.
 - Experience tiles are stashed into `metadata["browseable_activities"]`, and Google Places backfill now propagates rating/review_count/deeplink when available.
@@ -406,7 +406,7 @@ if total_activity_days > max_capacity:
 Specialist `content_added` is first converted to synthetic activity tiles (`source_agent='vertical_specialist'`) in
 `coordinator._inject_specialist_tiles_into_state()`. Pre-build preparation (`_prepare_activity_tiles_for_build`) applies:
 1. Geocode fallback for tiles missing geo (cheap Geocoding API call, L1+L2 cached)
-2. Photo URL signing for tiles with `photo_name` (free, local computation)
+2. Photo URL signing for tiles with `photo_name` (free, local computation via the shared `get_media_signing_secret()` helper used by both signer and verifier)
 3. Unsplash placeholder fallback for tiles still missing images (free, local)
 
 Builder enrichment follows this order:
@@ -936,7 +936,7 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 |-------|-------------|---------|--------|--------|------------|---------|
 | Specialist | `specialist_cache.py` | 128 | 1h | 168h (env: SPECIALIST_CACHE_TTL_HOURS) | `specialist::v4::{topic}::{dest}::{iso_month}::m::{skill}::{dpref}::{phash}` | LLM outputs. Dates coarsened to ISO month (YYYY-MM); duration dropped (specialist content is duration-agnostic). |
 | Experience | `experience_generator.py` | 128 | 1h | 72h (env: EXPERIENCE_CACHE_TTL_HOURS) | `experience::v2::{dest}::{sorted_cats}::{month_or_half_year}::n{tiles_per_category}` | Tier 2 tiles. Seasonal categories keep `YYYY-MM`; non-seasonal categories normalize to `YYYY-H1`/`YYYY-H2` for higher cache reuse. |
-| Tile | `tile_cache.py` | 256 | 24h | 72h (env: TILE_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
+| Tile | `tile_cache.py` | 256 | 24h | 72h (env: GOOGLE_PLACES_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
 | Browse | `activity_browser.py` | 256 | 6h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
 | Places Enrichment | `google_places_provider.py` | 2048 | 24h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v3::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups. Title normalized via `_normalize_title_for_cache` (strips specialist qualifiers for higher hit rate). Admin cache reset now also drains the in-memory `_enrich_inflight` dedupe map so stale futures cannot survive a manual clear. |
 | Geocode | `google_places_provider.py` | 1000 (TTLCache) | 24h | 8760h (1yr) | `geocode::v1::{normalized_dest}` | Geocoding API lat/lng results. L2 uses `cache_type='geocode'`. |
@@ -1236,6 +1236,11 @@ The `search_tiles` tool (via logistics_node) and `tile_service/service.py` both 
 `google_places_provider.py` runs on a Pro-tier field mask (Enterprise fields like rating, `userRatingCount`, `priceLevel`, and `editorialSummary` are excluded). Browse/activity tiles therefore default to `rating=None`, `review_count=None`, empty descriptions, and a moderate placeholder `price_estimate=35.0` / `price_level=2` until later enrichment fills in better detail.
 
 `google_places_provider.py` also keeps a module-level country-code cache populated from successful geocode responses. Coordinator envelope assembly reads that cache to backfill `trip_inputs.country_code` for downstream UI.
+
+Media proxy URL signing is now centralized in `backend/app/config.py:get_media_signing_secret()`.
+Both `google_places_provider.py` and `main.py` resolve the secret through the same fallback order:
+`media_proxy_signing_key -> admin_api_key -> google_maps_api_secret -> google_maps_api_key`.
+This removes drift between signed photo URL generation and runtime verification for `/api/media/google-places-photo` and `/api/media/google-places-photo-url`.
 
 `spend_guard.py` is explicitly single-worker only. If `SPEND_GUARD_ENABLED=true` and `WEB_CONCURRENCY>1`, startup aborts because in-memory spend counters would otherwise multiply the effective cap by worker count. The guard now persists global, provider, and per-session counters to a temp-file snapshot (debounced to once every 2s, force-flushed on shutdown) so daily caps survive process restarts in the supported single-worker deployment.
 

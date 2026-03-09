@@ -330,6 +330,11 @@ export const DS = {
   // dark:focus:shadow-[0_0_20px_-5px_rgba(16,185,129,0.15)]
   // hover:shadow-[0_6px_24px_rgba(16,185,129,0.45)]
   // hover:shadow-[0_4px_20px_rgba(16,185,129,0.35)]
+  // dark:shadow-[0_0_6px_rgba(16,185,129,0.3)]
+  // shadow-[0_2px_20px_rgba(0,0,0,0.4),0_4px_24px_rgba(16,185,129,0.06),inset_0_1px_0_rgba(255,255,255,0.06)]
+  // shadow-[0_2px_8px_rgba(10,14,18,0.06)]
+  // hover:shadow-[0_4px_12px_rgba(10,14,18,0.08)]
+  // dark:shadow-[0_0_10px_-6px_rgba(255,255,255,0.18)]
   // ---------------------------------------------------------------------------
   glowClass: {
     /** Very subtle focus — opacity 0.1 (input focus in dark mode) */
@@ -366,6 +371,22 @@ export const DS = {
     mobileInputSm: 'shadow-[0_0_12px_-4px_rgba(16,185,129,0.15)]',
     /** Mobile input medium — opacity 0.2, tighter spread */
     mobileInputMd: 'shadow-[0_0_16px_-4px_rgba(16,185,129,0.2)]',
+    /** Dot indicator glow — tiny emerald pulse for separators */
+    dotGlow: 'shadow-[0_0_6px_rgba(16,185,129,0.3)]',
+    /** Command bar composite — elevation + subtle emerald tint + inset glass */
+    commandBar: 'shadow-[0_2px_20px_rgba(0,0,0,0.4),0_4px_24px_rgba(16,185,129,0.06),inset_0_1px_0_rgba(255,255,255,0.06)]',
+  },
+
+  // ---------------------------------------------------------------------------
+  // 7c. NEUTRAL SHADOWS (Non-emerald box shadows for light mode surfaces)
+  // ---------------------------------------------------------------------------
+  shadow: {
+    /** Chat bubble resting shadow — subtle zinc elevation */
+    bubble: 'shadow-[0_2px_8px_rgba(10,14,18,0.06)]',
+    /** Chat bubble hover shadow — slightly elevated */
+    bubbleHover: 'shadow-[0_4px_12px_rgba(10,14,18,0.08)]',
+    /** White surface self-glow in dark mode */
+    bubbleWhite: 'shadow-[0_0_10px_-6px_rgba(255,255,255,0.18)]',
   },
 
   // ---------------------------------------------------------------------------

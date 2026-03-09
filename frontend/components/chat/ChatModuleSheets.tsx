@@ -57,13 +57,9 @@ interface ChatModuleSheetsProps {
   sendMessageCore: (messageText: string, options?: { suggestionClicked?: string }) => Promise<void>;
   toast: (message: string) => void;
 
-  // Open state (controlled from parent)
-  flightsSheetOpen: boolean;
-  setFlightsSheetOpen: (v: boolean) => void;
-  staysSheetOpen: boolean;
-  setStaysSheetOpen: (v: boolean) => void;
-  activitiesSheetOpen: boolean;
-  setActivitiesSheetOpen: (v: boolean) => void;
+  // Open state (controlled from parent) — at most one sheet at a time
+  openModuleSheet: 'flights' | 'stays' | 'activities' | null;
+  setOpenModuleSheet: (v: 'flights' | 'stays' | 'activities' | null) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,12 +83,8 @@ export function ChatModuleSheets({
   onOpenSheet,
   sendMessageCore,
   toast,
-  flightsSheetOpen,
-  setFlightsSheetOpen,
-  staysSheetOpen,
-  setStaysSheetOpen,
-  activitiesSheetOpen,
-  setActivitiesSheetOpen,
+  openModuleSheet,
+  setOpenModuleSheet,
 }: ChatModuleSheetsProps) {
   const [activityUserSaved, setActivityUserSaved] = useState(false);
   const sheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -112,8 +104,8 @@ export function ChatModuleSheets({
   return (
     <>
       <FlightsSheet
-        open={flightsSheetOpen}
-        onOpenChange={setFlightsSheetOpen}
+        open={openModuleSheet === 'flights'}
+        onOpenChange={(v) => setOpenModuleSheet(v ? 'flights' : null)}
         enabled={isBookingEnabled(bookingTypes?.flights)}
         settings={flightSettings || { round_trip: true, cabin_class: 'economy', direct_only: false }}
         hasOrigin={!!origin}
@@ -140,22 +132,22 @@ export function ChatModuleSheets({
           toast('Flight preferences saved');
         }}
         onOpenOrigin={() => {
-          setFlightsSheetOpen(false);
+          setOpenModuleSheet(null);
           sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('origin'), 150);
         }}
         onOpenDestination={() => {
-          setFlightsSheetOpen(false);
+          setOpenModuleSheet(null);
           sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('destination'), 150);
         }}
         onOpenDates={() => {
-          setFlightsSheetOpen(false);
+          setOpenModuleSheet(null);
           sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('dates'), 150);
         }}
       />
 
       <StaysSheet
-        open={staysSheetOpen}
-        onOpenChange={setStaysSheetOpen}
+        open={openModuleSheet === 'stays'}
+        onOpenChange={(v) => setOpenModuleSheet(v ? 'stays' : null)}
         enabled={isBookingEnabled(bookingTypes?.hotels)}
         settings={hotelSettings || { min_stars: 0, amenities: [] }}
         hasDestination={hasDestination}
@@ -182,18 +174,18 @@ export function ChatModuleSheets({
           }
         }}
         onOpenDestination={() => {
-          setStaysSheetOpen(false);
+          setOpenModuleSheet(null);
           sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('destination'), 150);
         }}
         onOpenDates={() => {
-          setStaysSheetOpen(false);
+          setOpenModuleSheet(null);
           sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('dates'), 150);
         }}
       />
 
       <ActivitiesSheet
-        open={activitiesSheetOpen}
-        onOpenChange={setActivitiesSheetOpen}
+        open={openModuleSheet === 'activities'}
+        onOpenChange={(v) => setOpenModuleSheet(v ? 'activities' : null)}
         enabled={isBookingEnabled(bookingTypes?.activities)}
         settings={activitySettings || { categories: [], skill_level: null }}
         hasExplicitSettings={activityUserSaved}
@@ -290,7 +282,7 @@ export function ChatModuleSheets({
           }
         }}
         onOpenDestination={() => {
-          setActivitiesSheetOpen(false);
+          setOpenModuleSheet(null);
           sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.('destination'), 150);
         }}
       />

@@ -4,7 +4,8 @@
 
 - **Focus:** [describe focus]
 - **Secondary:** [secondary priority or "none"]
-- **Active work:** coordinator no-op/reuse behavior, itinerary builder backfill/capacity rules, partner activity provider matching, and frontend stream/regeneration polish across chat, store, renderer, and map surfaces
+- **Active work:** UX and interaction polish, cost-aware recommendation optimizations, and SSoT doc alignment in `docs/*`
+- **Active files:** `backend/app/config.py`, `backend/app/main.py`, `backend/app/request_dedup.py`, `backend/app/tile_service/google_places_provider.py`, `frontend/components/chat/*`, `frontend/components/layout/*`, `frontend/components/plan/{ChipGroup.tsx,PlanFullDensityView.tsx,TripSummaryPills.tsx,sheets/ActivitiesSheet.tsx,tripSummaryUtils.ts}`, `frontend/hooks/{useChatMessagePipeline.ts,useHeaderActions.tsx,useLocalExpertPolling.ts}`, `frontend/lib/design-system.ts`, `docs/{data-contracts.md,design-system.md,plan_graph_analysis.md,repo_structure.md,ux_unified_architecture.md}`
 - **Known broken:** none explicitly tracked in current diff
 - **DO NOT touch this sprint:** `llm_factory.py` provider/model-routing contract; API/schema compatibility surfaces
 

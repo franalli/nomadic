@@ -3,27 +3,18 @@
 import {
   Check,
   Compass,
-  Download,
   Loader2,
-  LogIn,
-  LogOut,
   MoreVertical,
-  Plus,
-  RotateCcw,
-  Share2,
   SlidersHorizontal,
 } from 'lucide-react';
-import Link from 'next/link';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
+import { MobileHeaderMenu } from '@/components/layout/MobileHeaderMenu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useToast } from '@/components/ui/toast';
-import { UserAvatar } from '@/components/ui/UserAvatar';
+import { useHeaderActions } from '@/hooks/useHeaderActions';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
-import { apiFetch } from '@/lib/api';
 import { DS } from '@/lib/design-system';
-import { extractTripPdfData } from '@/lib/pdfData';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import { useMobileNavStore } from '@/state/mobileNavStore';
@@ -74,13 +65,6 @@ const STATUS_CONFIG: Record<
 };
 
 const MOBILE_PLAN_SCROLL_TO_TOP_EVENT = 'nomadic:mobile-plan-scroll-top';
-const MOBILE_MENU_ITEM_CLASS =
-  'flex w-full min-h-11 items-center gap-2 rounded-md px-2 text-left transition-colors';
-const MOBILE_MENU_ACTION_CLASS = cn(
-  MOBILE_MENU_ITEM_CLASS,
-  'hover:bg-zinc-100 dark:hover:bg-white/10 disabled:pointer-events-none disabled:opacity-50'
-);
-const MOBILE_MENU_LINK_CLASS = `${MOBILE_MENU_ITEM_CLASS} hover:bg-muted`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -90,12 +74,12 @@ const MOBILE_MENU_LINK_CLASS = `${MOBILE_MENU_ITEM_CLASS} hover:bg-muted`;
  * MobileModeHeader - Mobile-only header with consistent branding.
  *
  * DESIGN PRINCIPLE: Bottom tabs are the ONLY navigation method.
- * No "← Edit" back button - this creates a parallel workspace model
+ * No "<- Edit" back button - this creates a parallel workspace model
  * like Instagram, Airbnb, or Spotify where you tap tabs to switch views.
  *
  * Both Modes:
  * - Left: Nomadic logo + wordmark (brand anchor)
- * - Right: Menu (⋮) with Reset, Help & Legal
+ * - Right: Menu (three dots) with Reset, Help & Legal
  *
  * Plan Mode additionally shows status indicator.
  */
@@ -108,9 +92,6 @@ function MobileModeHeaderInner({
   const isDesktop = useIsDesktop();
   const [menuOpen, setMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [pdfState, setPdfState] = useState<'idle' | 'loading'>('idle');
-  const [shareState, setShareState] = useState<'idle' | 'loading' | 'copied'>('idle');
-  const { toast } = useToast();
   useEffect(() => setMounted(true), []);
   const activePage = useMobileNavStore((s) => s.activePage);
   const mobileHeaderCondensed = useUIStore((s) => s.mobileHeaderCondensed);
@@ -124,13 +105,11 @@ function MobileModeHeaderInner({
   );
   const hasDayCards = (dayCards?.length ?? 0) > 0;
   const tripContextId = useDocumentStore((s) => s.document?.trip_context_id);
-  const { user, trips, userLoading, login, logout, resumeTrip, resumingTripId } = useUserStore(
+  const { user, trips, userLoading, resumeTrip, resumingTripId } = useUserStore(
     useShallow((s) => ({
       user: s.user,
       trips: s.trips,
       userLoading: s.loading,
-      login: s.login,
-      logout: s.logout,
       resumeTrip: s.resumeTrip,
       resumingTripId: s.resumingTripId,
     }))
@@ -141,82 +120,23 @@ function MobileModeHeaderInner({
     [trips, tripContextId]
   );
 
-  const handleNewTrip = useCallback(async () => {
-    try {
-      await apiFetch('/api/session/new', { method: 'POST' });
-      window.location.reload();
-    } catch {
-      toast('Could not start new trip', { type: 'error' });
-    }
-  }, [toast]);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
 
-  const handlePdfExport = useCallback(async () => {
-    if (pdfState === 'loading' || !dayCards?.length) return;
-    setPdfState('loading');
-    try {
-      const [{ pdf }, { saveAs }, { TripPdfDocument }] = await Promise.all([
-        import('@react-pdf/renderer'),
-        import('file-saver'),
-        import('@/components/plan/pdf/TripPdfDocument'),
-      ]);
-      const data = extractTripPdfData(tripInputs, dayCards, tiles ?? {});
-      const blob = await pdf(<TripPdfDocument data={data} />).toBlob();
-      const dest = (data.destination || 'Trip').replace(/\s+/g, '-');
-      saveAs(blob, `${dest}.pdf`);
-    } catch (err) {
-      console.error('PDF export failed:', err);
-      toast(err instanceof Error ? err.message : 'PDF export failed', { type: 'error' });
-    } finally {
-      setPdfState('idle');
-      setMenuOpen(false);
-    }
-  }, [pdfState, tripInputs, dayCards, tiles, toast]);
-
-  const handleShareTrip = useCallback(async () => {
-    if (shareState === 'loading' || !hasDayCards) return;
-    setShareState('loading');
-    try {
-      const res = await apiFetch('/api/share', { method: 'POST' });
-      if (!res.ok) throw new Error('Failed to create share link');
-      const data = await res.json();
-      const shareUrl = typeof data?.url === 'string' ? data.url : null;
-      const title = typeof data?.title === 'string' ? data.title : 'Shared Trip';
-      if (!shareUrl) throw new Error('Share URL missing');
-
-      if (navigator.share) {
-        try {
-          await navigator.share({ title, url: shareUrl });
-          setShareState('idle');
-          setMenuOpen(false);
-          return;
-        } catch {
-          // User canceled native share; continue with clipboard fallback.
-        }
-      }
-
-      await navigator.clipboard.writeText(shareUrl);
-      setShareState('copied');
-      window.setTimeout(() => setShareState('idle'), 2000);
-      setMenuOpen(false);
-    } catch (err) {
-      console.error('Share failed:', err);
-      toast(err instanceof Error ? err.message : 'Failed to share trip', { type: 'error' });
-      setShareState('idle');
-    }
-  }, [hasDayCards, shareState, toast]);
-
-  const handleLogin = useCallback(async () => {
-    try {
-      await login();
-    } catch (err) {
-      console.error('Login failed:', err);
-    }
-  }, [login]);
-
-  const handleLogout = useCallback(async () => {
-    await logout();
-    setMenuOpen(false);
-  }, [logout]);
+  const {
+    pdfState,
+    shareState,
+    handleNewTrip,
+    handlePdfExport,
+    handleShareTrip,
+    handleLogin,
+    handleLogout,
+  } = useHeaderActions({
+    dayCards,
+    tripInputs,
+    tiles,
+    hasDayCards,
+    onMenuClose: closeMenu,
+  });
 
   useEffect(() => {
     if (activePage !== 1) return;
@@ -231,7 +151,7 @@ function MobileModeHeaderInner({
 
   const status = STATUS_CONFIG[planState];
   const destination = tripInputs?.destination?.trim() || '';
-  const dateRangeText = useMemo(() => {
+  const dateRangeText = (() => {
     if (!tripInputs?.start_date) return '';
     const start = new Date(tripInputs.start_date);
     const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -241,7 +161,7 @@ function MobileModeHeaderInner({
       return `${startFormatted} - ${endFormatted}`;
     }
     return startFormatted;
-  }, [tripInputs?.end_date, tripInputs?.start_date]);
+  })();
   const condensedSummary = useMemo(() => {
     if (destination && dateRangeText) return `${destination} · ${dateRangeText}`;
     return destination || dateRangeText;
@@ -296,231 +216,24 @@ function MobileModeHeaderInner({
               align="end"
               className={cn('w-[200px] p-2', DS.materials.glass)}
             >
-              <nav className="flex flex-col">
-                {user ? (
-                  <>
-                    <div className="px-2 py-2 border-b border-border mb-1">
-                      <div className="flex items-center gap-2">
-                        <UserAvatar
-                          src={user.avatar_url}
-                          alt={user.name || user.email}
-                          imageClassName="h-6 w-6 rounded-full object-cover"
-                          iconClassName="h-5 w-5"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium text-foreground truncate">{user.name || user.email}</p>
-                          <p className="text-xs text-muted-foreground truncate">{user.email}</p>
-                        </div>
-                      </div>
-                    </div>
-                    {otherTrips.length > 0 && (
-                      <div className="px-2 pb-2">
-                        <p className={`${DS.textSize.micro} font-bold uppercase tracking-widest text-muted-foreground mb-1`}>Recent Trips</p>
-                        <div className="space-y-1">
-                          {otherTrips.slice(0, 3).map((trip) => {
-                            const isPast = trip.end_date && new Date(trip.end_date) < new Date();
-                            return (
-                              <button
-                                key={`${trip.trip_id}-${trip.updated_at}`}
-                                type="button"
-                                disabled={resumingTripId !== null}
-                                onClick={async () => {
-                                  const ok = await resumeTrip(trip.trip_id);
-                                  if (!ok) toast('Could not open saved trip', { type: 'error' });
-                                }}
-                                className={cn(
-                                  'w-full min-h-11 rounded-lg px-2 py-2 text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-50',
-                                  isPast && 'opacity-60'
-                                )}
-                              >
-                                <p className="text-xs text-foreground truncate">
-                                  {trip.destination || 'Untitled Trip'}
-                                </p>
-                                <p className={`${DS.textSize.micro} text-muted-foreground`}>
-                                  {resumingTripId === trip.trip_id
-                                    ? 'Opening...'
-                                    : trip.day_count > 0
-                                    ? `${trip.day_count} days${isPast ? ' (Past)' : ''}`
-                                    : 'No itinerary yet'}
-                                </p>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={handleNewTrip}
-                      className={cn(
-                        MOBILE_MENU_ACTION_CLASS,
-                        'rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] text-foreground'
-                      )}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      <span className={DS.textSize.micro}>New Trip</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleLogout}
-                      className={cn(
-                        MOBILE_MENU_ACTION_CLASS,
-                        'rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-white/20 hover:bg-white/[0.06] text-foreground'
-                      )}
-                    >
-                      <LogOut className="h-3.5 w-3.5" />
-                      <span className={DS.textSize.micro}>Sign out</span>
-                    </button>
-                    <div className="h-px bg-border my-1" />
-                  </>
-                ) : (
-                  <>
-                    {onReset && (
-                      <>
-                        <button
-                          type="button"
-                          disabled={isResetting}
-                          onClick={() => {
-                            if (isResetting) return;
-                            setMenuOpen(false);
-                            onReset();
-                          }}
-                          className={cn(
-                            MOBILE_MENU_ACTION_CLASS,
-                            'font-bold uppercase tracking-widest text-zinc-900 dark:text-white',
-                            DS.textSize.micro
-                          )}
-                        >
-                          {isResetting ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <RotateCcw className="h-3.5 w-3.5" />
-                          )}
-                          <span>{isResetting ? 'Resetting...' : 'Reset Trip'}</span>
-                        </button>
-                        <div className="h-px bg-border my-1" />
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      onClick={handleLogin}
-                      disabled={userLoading}
-                      className={cn(
-                        MOBILE_MENU_ACTION_CLASS,
-                        'text-zinc-900 dark:text-white'
-                      )}
-                    >
-                      {userLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogIn className="h-3.5 w-3.5" />}
-                      <span className={DS.textSize.micro}>Sign in</span>
-                    </button>
-                    <div className="h-px bg-border my-1" />
-                  </>
-                )}
-
-                {/* Reset - moved inside menu to prevent accidental taps */}
-                {user && onReset && (
-                  <>
-                    <button
-                      type="button"
-                      disabled={isResetting}
-                      onClick={() => {
-                        if (isResetting) return;
-                        setMenuOpen(false);
-                        onReset();
-                      }}
-                      className={cn(
-                        MOBILE_MENU_ACTION_CLASS,
-                        'font-bold uppercase tracking-widest text-zinc-900 dark:text-white',
-                        DS.textSize.micro
-                      )}
-                    >
-                      {isResetting ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <RotateCcw className="h-3.5 w-3.5" />
-                      )}
-                      <span>{isResetting ? 'Resetting...' : 'Reset Trip'}</span>
-                    </button>
-                    <div className="h-px bg-border my-1" />
-                  </>
-                )}
-
-                {hasDayCards && (
-                  <>
-                    <button
-                      type="button"
-                      disabled={shareState === 'loading'}
-                      onClick={handleShareTrip}
-                      className={cn(
-                        MOBILE_MENU_ACTION_CLASS,
-                        'font-bold uppercase tracking-widest text-zinc-900 dark:text-white',
-                        DS.textSize.micro
-                      )}
-                    >
-                      {shareState === 'loading' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : shareState === 'copied' ? (
-                        <Check className="h-3.5 w-3.5 text-emerald-500" />
-                      ) : (
-                        <Share2 className="h-3.5 w-3.5" />
-                      )}
-                      <span>
-                        {shareState === 'copied' ? 'Copied Link' : 'Share Trip'}
-                      </span>
-                    </button>
-                    <div className="h-px bg-border my-1" />
-
-                    <button
-                      type="button"
-                      disabled={pdfState === 'loading'}
-                      onClick={handlePdfExport}
-                      className={cn(
-                        MOBILE_MENU_ACTION_CLASS,
-                        'font-bold uppercase tracking-widest text-zinc-900 dark:text-white',
-                        DS.textSize.micro
-                      )}
-                    >
-                      {pdfState === 'loading' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Download className="h-3.5 w-3.5" />
-                      )}
-                      <span>{pdfState === 'loading' ? 'Exporting...' : 'Download PDF'}</span>
-                    </button>
-                    <div className="h-px bg-border my-1" />
-                  </>
-                )}
-
-                <span className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Help & Legal</span>
-                <Link
-                  href="/privacy"
-                  className={MOBILE_MENU_LINK_CLASS}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Privacy Policy
-                </Link>
-                <Link
-                  href="/terms"
-                  className={MOBILE_MENU_LINK_CLASS}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Terms of Service
-                </Link>
-                <Link
-                  href="/cookies"
-                  className={MOBILE_MENU_LINK_CLASS}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Cookie Policy
-                </Link>
-                <Link
-                  href="/contact"
-                  className={MOBILE_MENU_LINK_CLASS}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Contact Us
-                </Link>
-              </nav>
+              <MobileHeaderMenu
+                user={user}
+                otherTrips={otherTrips}
+                resumingTripId={resumingTripId}
+                userLoading={userLoading}
+                hasDayCards={hasDayCards}
+                isResetting={isResetting}
+                pdfState={pdfState}
+                shareState={shareState}
+                onNewTrip={handleNewTrip}
+                onLogin={handleLogin}
+                onLogout={handleLogout}
+                onShareTrip={handleShareTrip}
+                onPdfExport={handlePdfExport}
+                onReset={onReset}
+                onResumeTrip={resumeTrip}
+                onClose={closeMenu}
+              />
             </PopoverContent>
           </Popover>
         ) : (
@@ -565,7 +278,7 @@ function MobileModeHeaderInner({
       </div>
     )}
 
-    {/* Floating status pill — centered below header, glass morphism */}
+    {/* Floating status pill -- centered below header, glass morphism */}
     {status.text && !showCondensedBar && (
       <div
         className={cn(

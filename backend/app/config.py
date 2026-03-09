@@ -1,9 +1,10 @@
 import os
 import uuid
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     )
 
     # core — accepts "dev"/"local"/"development" (→ dev) or "prod"/"production" (→ prod)
-    env: str = os.getenv("ENV", "dev")
+    env: str = "dev"
 
     @property
     def is_dev(self) -> bool:
@@ -42,103 +43,49 @@ class Settings(BaseSettings):
 
     # Output limits
     assistant_msg_max_len: int = 2000  # Max chars for assistant message
-    max_destinations: int = 20  # Max destinations per trip
     max_suggested_responses: int = 3  # Max suggested responses
 
-    # Strategy feature flags (default enabled)
-    enable_strategy_boating: bool = True
-    enable_strategy_hiking: bool = True
-    enable_strategy_diving: bool = True
-    enable_strategy_skiing: bool = True
-    enable_strategy_cycling: bool = True
-
-    # Response polish node configuration
-    enable_response_polish: bool = True  # Enable deterministic response polishing
-
-    # LQA (Last Question Answer) pre-pass configuration
-    lqa_max_length: int = 150  # Max input length for LQA pre-pass (chars)
-
-    # Short-circuit configuration
-    short_circuit_max_length: int = 200  # Max input length for short-circuit patterns (chars)
-
-    # LLM timeouts (in seconds)
-    llm_timeout_extractor: float = 120.0  # No timeout limit
-    llm_timeout_router: float = 120.0  # No timeout limit
-    llm_timeout_specialist: float = 120.0  # No timeout limit
-
-    # P0: Streaming timeouts (in milliseconds)
-    # Strategy responses can be large (~900 tokens), increased from 15s to 30s
-    streaming_timeout_strategy_ms: int = 30000  # 30s for strategy responses
-    streaming_timeout_default_ms: int = 20000  # 20s for other responses
-    streaming_warn_threshold_ms: int = 10000  # Log warning if streaming exceeds 10s
-
-    # Node progress bar estimated durations (in milliseconds)
-    # These are used by the frontend to show progress bars during LLM node execution
-    node_progress_required_fields_ms: int = 3000  # Understanding trip fields
-    node_progress_flights_ms: int = 5000  # Finding flights
-    node_progress_hotels_ms: int = 5000  # Searching hotels
-    node_progress_transport_ms: int = 4000  # Planning transport
-    node_progress_activities_ms: int = 5000  # Discovering activities
-    node_progress_general_ms: int = 4000  # Processing general request
-    node_progress_correction_ms: int = 3000  # Adjusting plan
-    node_progress_response_polish_ms: int = 2000  # Polishing response
-
-    # LLM configuration (parity with plan.py)
-    plan_chat_history_limit: int = 20  # Max messages to include in context
-    openai_plan_max_tokens: int = 800  # Token limit for LLM response
-    openai_plan_temperature: float = 0.5  # Response creativity (lower = more consistent)
-    llm_max_retries: int = 3  # Retry count for API errors
-    openai_plan_seed: int | None = None  # Optional seed for reproducibility
     # =============================================================================
     # Node Model Assignments (env-driven, matches .env)
     # =============================================================================
     # extract_trip_fields tool, router_extraction, specialist feasibility
-    router_model: str = os.getenv("ROUTER_MODEL", "gemini-2.5-flash")
-    # router_extraction field extraction LLM
-    extraction_model: str = os.getenv("EXTRACTION_MODEL", "gemini-2.5-flash")
+    router_model: str = "gemini-2.5-flash"
     # local_expert LLM — uses prompt-based JSON parsing (not function_calling)
     # to avoid Gemini $defs limitation
-    local_expert_model: str = os.getenv("LOCAL_EXPERT_MODEL", "gemini-2.5-flash")
-    local_expert_use_llm: bool = (
-        os.getenv("LOCAL_EXPERT_USE_LLM", "true").lower() == "true"
-    )  # Set LOCAL_EXPERT_USE_LLM=false to disable LLM (tests/debug)
+    local_expert_model: str = "gemini-2.5-flash"
+    local_expert_use_llm: bool = True  # Set LOCAL_EXPERT_USE_LLM=false to disable LLM (tests/debug)
     # vertical_specialist domain reasoning — KEEP gpt-4o (quality risk on Gemini Flash)
-    specialist_model: str = os.getenv("SPECIALIST_MODEL", "gpt-4o")
-    specialist_fallback_model: str | None = (
-        os.getenv("SPECIALIST_FALLBACK_MODEL", "").strip() or None
-    )
+    specialist_model: str = "gpt-4o"
+    specialist_fallback_model: str | None = None
+
+    @field_validator("specialist_fallback_model", mode="before")
+    @classmethod
+    def _empty_fallback_to_none(cls, v: Any) -> Any:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
     # constraint_guard place validation
-    guard_model: str = os.getenv("GUARD_MODEL", "gemini-2.5-flash")
+    guard_model: str = "gemini-2.5-flash"
     # synthesizer planning responses
-    synthesizer_planning_model: str = os.getenv("SYNTHESIZER_PLANNING_MODEL", "gemini-2.5-flash")
-    # synthesizer exploration/specialist_update
-    synthesizer_exploration_model: str = os.getenv(
-        "SYNTHESIZER_EXPLORATION_MODEL", "gemini-2.5-flash"
-    )
+    synthesizer_planning_model: str = "gemini-2.5-flash"
     # Tier 2 activity generation (experience_generator.py)
-    experience_model: str = os.getenv("EXPERIENCE_MODEL", "gemini-2.5-flash")
+    experience_model: str = "gemini-2.5-flash"
     # airport code extraction (iata_resolver.py)
-    iata_resolver_model: str = os.getenv("IATA_RESOLVER_MODEL", "gemini-2.5-flash")
+    iata_resolver_model: str = "gemini-2.5-flash"
 
     # Debug flags
-    debug_plan_messages: bool = (
-        os.getenv("DEBUG_PLAN_MESSAGES", "false").lower() == "true"
-    )  # Enable verbose debug logging for planning
+    debug_plan_messages: bool = False  # Enable verbose debug logging for planning
     aggressive_cache_clear: bool = False  # Clear ALL caches on Fresh Start (dev mode)
-    precise_token_count: bool = False  # Use tiktoken for precise token counting
     debug_mode: str = Field(
         default="off", alias="DEBUG"
     )  # DEBUG env var: "off" | "compact" | "full"
     pytest_running: bool = Field(default=False, alias="PYTEST_RUNNING")  # Set by conftest.py
-    cost_threshold_warning: float = float(
-        os.getenv("COST_THRESHOLD_WARNING", "0.10")
-    )  # LLM cost warning threshold (USD)
-    cost_threshold_critical: float = float(
-        os.getenv("COST_THRESHOLD_CRITICAL", "1.00")
-    )  # LLM cost critical threshold (USD)
+    cost_threshold_warning: float = 0.10  # LLM cost warning threshold (USD)
+    cost_threshold_critical: float = 1.00  # LLM cost critical threshold (USD)
 
     # Infrastructure
-    web_concurrency: int = int(os.getenv("WEB_CONCURRENCY", "1"))
+    web_concurrency: int = 1
 
     # backend — 0.0.0.0 required for container environments (Render, Docker)
     backend_host: str = "0.0.0.0"
@@ -146,56 +93,40 @@ class Settings(BaseSettings):
     app_name: str = "Nomadic Backend"  # Application name for OpenAPI docs
 
     # database
-    database_url: str = os.getenv("DATABASE_URL", "")
+    database_url: str = ""
 
     # LLM provider API keys (consumed by LangChain from env; centralised here for defaults)
-    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
+    openai_api_key: str = ""
+    google_api_key: str = ""
 
     # external APIs
-    unsplash_access_key: str | None = os.getenv("UNSPLASH_ACCESS_KEY")
-    unsplash_request_timeout_seconds: float = float(
-        os.getenv("UNSPLASH_REQUEST_TIMEOUT_SECONDS", "2.5")
-    )
-    unsplash_max_retries: int = int(os.getenv("UNSPLASH_MAX_RETRIES", "1"))
-    unsplash_prefetch_timeout_seconds: float = float(
-        os.getenv("UNSPLASH_PREFETCH_TIMEOUT_SECONDS", "1.5")
-    )
-    unsplash_prefetch_max_retries: int = int(os.getenv("UNSPLASH_PREFETCH_MAX_RETRIES", "0"))
-    unsplash_prefetch_failure_cooldown_seconds: float = float(
-        os.getenv("UNSPLASH_PREFETCH_FAILURE_COOLDOWN_SECONDS", "20.0")
-    )
-    unsplash_prefetch_dest_cooldown_seconds: float = float(
-        os.getenv("UNSPLASH_PREFETCH_DEST_COOLDOWN_SECONDS", "30.0")
-    )
-    unsplash_prefetch_streak_threshold: int = int(
-        os.getenv("UNSPLASH_PREFETCH_STREAK_THRESHOLD", "2")
-    )
+    unsplash_access_key: str | None = None
+    unsplash_request_timeout_seconds: float = 2.5
+    unsplash_max_retries: int = 1
+    unsplash_prefetch_timeout_seconds: float = 1.5
+    unsplash_prefetch_max_retries: int = 0
+    unsplash_prefetch_failure_cooldown_seconds: float = 20.0
+    unsplash_prefetch_dest_cooldown_seconds: float = 30.0
+    unsplash_prefetch_streak_threshold: int = 2
 
     # GetYourGuide Partner API
-    get_your_guide_api_key: str = os.getenv("GET_YOUR_GUIDE_API_KEY", "")
-    get_your_guide_enabled: bool = os.getenv("GET_YOUR_GUIDE_ENABLED", "false").lower() == "true"
-    get_your_guide_cache_ttl_hours: int = int(os.getenv("GET_YOUR_GUIDE_CACHE_TTL_HOURS", "24"))
-    get_your_guide_api_url: str = os.getenv(
-        "GET_YOUR_GUIDE_API_URL", "https://api.getyourguide.com/1"
-    )
+    get_your_guide_api_key: str = ""
+    get_your_guide_enabled: bool = False
+    get_your_guide_cache_ttl_hours: int = 24
+    get_your_guide_api_url: str = "https://api.getyourguide.com/1"
 
     # Viator Affiliate API (Basic Access)
-    viator_api_key: str = os.getenv("VIATOR_API_KEY", "")
-    viator_enabled: bool = os.getenv("VIATOR_ENABLED", "false").lower() == "true"
-    viator_cache_ttl_hours: int = int(os.getenv("VIATOR_CACHE_TTL_HOURS", "24"))
-    viator_api_url: str = os.getenv("VIATOR_API_URL", "https://api.viator.com/partner")
+    viator_api_key: str = ""
+    viator_enabled: bool = False
+    viator_cache_ttl_hours: int = 24
+    viator_api_url: str = "https://api.viator.com/partner"
 
     # =============================================================================
     # Cache Configuration
     # =============================================================================
-    response_cache_ttl_seconds: int = 3600  # TTL for cached LLM responses (1 hour)
-    response_cache_maxsize: int = 200  # Max entries in response cache
-    checkpoint_ttl_hours: int = 24  # Hours before idle checkpoints are purged
-
     # L2 TTL overrides (env-driven, tune without deploys)
     # Google Places data changes slowly — 72h avoids redundant API calls
-    tile_cache_ttl_hours: int = 72
+    google_places_cache_ttl_hours: int = 72
     # Deterministic LLM output — same inputs always produce same output
     specialist_cache_ttl_hours: int = 168
     # Nondeterministic LLM — shorter TTL lets model improvements flow through
@@ -205,78 +136,48 @@ class Settings(BaseSettings):
     # IATA resolver L2 cache TTL
     iata_cache_ttl_hours: int = 720  # 30 days
     # Max activities to enrich per call (caps Google Places API spend)
-    google_places_enrichment_cap: int = int(os.getenv("GOOGLE_PLACES_ENRICHMENT_CAP", "3"))
+    google_places_enrichment_cap: int = 3
     # Wipe L2 (PostgreSQL) on session reset — for local dev/testing only
     # Set CLEAR_L2_ON_RESET=true in .env; leave unset in production
-    clear_l2_on_session_reset: bool = os.getenv("CLEAR_L2_ON_RESET", "false").lower() == "true"
-
-    # =============================================================================
-    # Strategy Output Limits (PR-C: Strategy Output Size Limits)
-    # =============================================================================
-    strategy_max_output_chars: int = 4000  # Hard cap on strategy response chars
-    strategy_expansion_max_output_chars: int = 8000  # Hard cap on expansion response chars
+    clear_l2_on_session_reset: bool = Field(default=False, validation_alias="CLEAR_L2_ON_RESET")
 
     # =============================================================================
     # Trip Planning Configuration
     # =============================================================================
-    default_trip_currency: str = "USD"  # Default currency for trip budgets
     # Budget split controls used across allocator and builder filters
-    budget_allocation_flights: float = float(os.getenv("BUDGET_ALLOCATION_FLIGHTS", "0.30"))
-    budget_allocation_hotels: float = float(os.getenv("BUDGET_ALLOCATION_HOTELS", "0.40"))
-    budget_allocation_activities: float = float(os.getenv("BUDGET_ALLOCATION_ACTIVITIES", "0.30"))
-    auto_correct_typo_threshold: int = 100  # Levenshtein distance for typo correction
-    fuzzy_match_score_cutoff: int = 76  # rapidfuzz typo resolution threshold
-    confidence_threshold_skip_router: float = 0.92  # Confidence to skip LLM router
-    tier2_prefetch_wait_budget_ms: int = int(os.getenv("TIER2_PREFETCH_WAIT_BUDGET_MS", "350"))
-    tier2_generation_wait_budget_ms: int = int(os.getenv("TIER2_GENERATION_WAIT_BUDGET_MS", "5500"))
+    budget_allocation_flights: float = 0.30
+    budget_allocation_hotels: float = 0.40
+    budget_allocation_activities: float = 0.30
+    tier2_prefetch_wait_budget_ms: int = 350
+    tier2_generation_wait_budget_ms: int = 5500
 
     # =============================================================================
     # Security: Rate Limiting & Admin Access
     # =============================================================================
-    rate_limit_enabled: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
-    admin_api_key: str = os.getenv("ADMIN_API_KEY", "")
-    media_proxy_signing_key: str = os.getenv("MEDIA_PROXY_SIGNING_KEY", "")
-    max_sessions_per_ip_hour: int = int(
-        os.getenv("MAX_SESSIONS_PER_IP_HOUR", "10")
-    )  # Session creation throttle per IP
-    spend_guard_enabled: bool = os.getenv("SPEND_GUARD_ENABLED", "true").lower() == "true"
+    rate_limit_enabled: bool = True
+    admin_api_key: str = ""
+    media_proxy_signing_key: str = ""
+    max_sessions_per_ip_hour: int = 10  # Session creation throttle per IP
+    spend_guard_enabled: bool = True
     # Hard daily cost caps (USD) for paid external APIs.
     # Code defaults are conservative; .env overrides for dev (3) and prod (3).
-    spend_guard_session_daily_cap_usd: float = float(
-        os.getenv("SPEND_GUARD_SESSION_DAILY_CAP_USD", "1.0")
-    )
-    spend_guard_global_daily_cap_usd: float = float(
-        os.getenv("SPEND_GUARD_GLOBAL_DAILY_CAP_USD", "5.0")
-    )
+    spend_guard_session_daily_cap_usd: float = 1.0
+    spend_guard_global_daily_cap_usd: float = 5.0
     # Estimated per-LLM-call token envelope used for pre-call budgeting.
-    spend_guard_llm_prompt_tokens_estimate: int = int(
-        os.getenv("SPEND_GUARD_LLM_PROMPT_TOKENS_ESTIMATE", "1200")
-    )
-    spend_guard_llm_completion_tokens_estimate: int = int(
-        os.getenv("SPEND_GUARD_LLM_COMPLETION_TOKENS_ESTIMATE", "700")
-    )
-    spend_guard_llm_unknown_model_estimated_call_usd: float = float(
-        os.getenv("SPEND_GUARD_LLM_UNKNOWN_MODEL_ESTIMATED_CALL_USD", "0.02")
-    )
+    spend_guard_llm_prompt_tokens_estimate: int = 1200
+    spend_guard_llm_completion_tokens_estimate: int = 700
+    spend_guard_llm_unknown_model_estimated_call_usd: float = 0.02
     # Google Places Text Search billable-call estimate (USD) — Pro tier Text Search $5/1k + Photo $7/1k blended.
-    spend_guard_places_estimated_call_usd: float = float(
-        os.getenv("SPEND_GUARD_PLACES_ESTIMATED_CALL_USD", "0.007")
-    )
+    spend_guard_places_estimated_call_usd: float = 0.007
     # Provider-specific daily cap for Google Places API spend (USD).
-    spend_guard_places_daily_cap_usd: float = float(
-        os.getenv("SPEND_GUARD_PLACES_DAILY_CAP_USD", "2.00")
-    )
+    spend_guard_places_daily_cap_usd: float = 2.00
     # Partner API (Viator, GYG) estimated per-call cost (nominal for free-tier tracking).
-    spend_guard_partner_estimated_call_usd: float = float(
-        os.getenv("SPEND_GUARD_PARTNER_ESTIMATED_CALL_USD", "0.005")
-    )
+    spend_guard_partner_estimated_call_usd: float = 0.005
     # Provider-specific daily cap for partner API spend (USD).
-    spend_guard_partner_daily_cap_usd: float = float(
-        os.getenv("SPEND_GUARD_PARTNER_DAILY_CAP_USD", "1.0")
-    )
+    spend_guard_partner_daily_cap_usd: float = 1.0
 
     # Validation prewarm destinations (comma-separated, e.g. "Paris,Tokyo")
-    validation_prewarm_destinations: str = os.getenv("VALIDATION_PREWARM_DESTINATIONS", "")
+    validation_prewarm_destinations: str = ""
 
     # Validation cache settings
     validation_cache_size: int = 5000  # Increased for progressive learning of unknown places
@@ -294,125 +195,24 @@ class Settings(BaseSettings):
 
     # Cross-origin / Cookie configuration
     # Frontend origin for CORS (e.g., "https://app.nomadic.com")
-    frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+    frontend_origin: str = "http://localhost:3000"
     # Cookie domain for subdomain sharing (e.g., ".nomadic.com"), or None for same-origin
-    cookie_domain: str | None = os.getenv("COOKIE_DOMAIN", None)
+    cookie_domain: str | None = None
     # Google OAuth (Phase 2 user accounts)
-    google_oauth_client_id: str = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
-    google_oauth_client_secret: str = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
-
-    # =============================================================================
-    # E2E Test Configuration
-    # =============================================================================
-    e2e_test_model: str = "gpt-4o-mini"  # Model for E2E tests
-    router_call_rate_target: float = 0.30  # Target % of turns using LLM router
-    template_hit_rate_target: float = 0.85  # Target % of turns hitting templates
-
-    # =============================================================================
-    # State Integrity Configuration
-    # =============================================================================
-    # Enable invariant checking (compute/log state violations)
-    state_invariants_enabled: bool = True
-    # Restore from snapshot on state regression (false = reconcile prompt only)
-    state_snapshot_restore_enabled: bool = True
-
-    # =============================================================================
-    # Loop Guard Configuration
-    # =============================================================================
-    loop_guard_enabled: bool = True  # Enable loop guard mitigation actions
-    loop_guard_shadow_mode: bool = False  # Enforce loop prevention
-    loop_guard_shadow_audit: bool = False  # Log "would-trigger" events for parameter tuning
-    loop_guard_threshold: int = (
-        1  # Same field asked N times in window triggers loop (lowered to 1 for faster detection)
-    )
-    loop_guard_window_turns: int = 3  # Turns to check for repeated questions
-    loop_guard_extended_window_turns: int = 6  # Extended window (gated by no-progress)
-    loop_guard_no_progress_turns: int = 2  # Turns with no progress before triggering
-    loop_guard_forced_route_cooldown_turns: int = 2  # Cooldown between forced routes
-    loop_guard_max_triggers_per_convo: int = 3  # Max triggers per conversation
-    loop_guard_require_no_progress_for_extended: bool = True  # Require no-progress for window=6
-
-    # =============================================================================
-    # Specialist Pre-Core Mode Configuration
-    # =============================================================================
-    # When enabled, specialist nodes (hotels, flights, activities) can be routed to
-    # even before core fields are fully collected, if the user's intent is clear.
-    # The specialist will acknowledge intent and ask for minimal missing fields inline.
-    specialist_pre_core_enabled: bool = True
-
-    # =============================================================================
-    # Specialist Parallelization Configuration (Tier 10.1)
-    # =============================================================================
-    # When enabled, independent specialist nodes (flights, hotels, transport) can
-    # run concurrently for 100-200ms latency reduction. Mutually exclusive specialists
-    # (required_fields/correction, strategy/activities) still run sequentially.
-    specialist_parallelization_enabled: bool = True
-
-    # When True, use deterministic templates instead of LLM for missing_fields_guard.
-    # Saves ~200-250 tokens per guard call with minimal UX impact.
-    # Set to False to use LLM for more varied phrasing (original behavior).
-    guard_use_templates: bool = True
-
-    # =============================================================================
-    # Default Adults Configuration
-    # =============================================================================
-    # When enabled, after core fields (destination, dates) are collected but adults
-    # is still missing, default to adults=1 with metadata marker instead of asking.
-    default_adults_enabled: bool = True
-
-    # =============================================================================
-    # Turn Journal Configuration
-    # =============================================================================
-    turn_journal_max_turns: int = 20  # Max turns in ring buffer
-
-    # =============================================================================
-    # Extractor Cache Configuration
-    # =============================================================================
-    extractor_cache_ttl_seconds: int = (
-        300  # TTL for extractor cache entries (5 min for multi-turn reuse)
-    )
-    extractor_cache_maxsize: int = 100  # Max entries in extractor cache
-
-    # =============================================================================
-    # Strategy Cache Configuration
-    # =============================================================================
-    strategy_cache_ttl_seconds: int = 300  # TTL for strategy cache (5 min)
-    strategy_cache_maxsize: int = (
-        100  # Max entries in strategy cache (increased to reduce evictions)
-    )
-
-    # =============================================================================
-    # First-Turn Optimization: Strategy Bootstrap Bypass
-    # =============================================================================
-    # Enable deterministic bypass of extractor for strategy pre-core prompts
-    enable_strategy_bootstrap_bypass: bool = True
-    # A/B test sample rate (0.0-1.0): fraction of sessions using bypass
-    strategy_bootstrap_bypass_sample_rate: float = 1.0
-    # Disable automatic cache clearing in production (allow only on deploy/admin)
-    disable_autoclear_caches_in_prod: bool = True
-
-    # =============================================================================
-    # Telemetry Configuration (PR-T1..T3)
-    # =============================================================================
-    # Sampling rates for structured trace events
-    trace_sample_rate: float = 1.0  # Probability of enabling trace (0.0 to 1.0)
-    trace_verbose_sample_rate: float = 0.0  # Probability of verbose trace (0.0 to 1.0)
-    # Redaction mode: "hash_only" (default) or "verbose" (logs raw text)
-    trace_redaction_mode: str = "hash_only"
-    # Console output for trace events (like debug_plan_messages)
-    trace_console_output: bool = True
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
 
     # =============================================================================
     # LangSmith Tracing Configuration
     # =============================================================================
-    langsmith_api_key: str | None = os.getenv("LANGSMITH_API_KEY")
-    langsmith_endpoint: str = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
-    langsmith_project: str = os.getenv("LANGSMITH_PROJECT", "default")
-    langsmith_tracing_enabled: bool = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
+    langsmith_api_key: str | None = None
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+    langsmith_project: str = "default"
+    langsmith_tracing_enabled: bool = Field(default=False, validation_alias="LANGSMITH_TRACING")
     # Fraction of sessions to trace (0.0 = none, 1.0 = all).
     # Recommended: 1.0 during Gemini migration validation, 0.15 in steady-state prod.
-    langsmith_dev_sample_rate: float = float(os.getenv("LANGSMITH_DEV_SAMPLE_RATE", "1.0"))
-    langsmith_prod_sample_rate: float = float(os.getenv("LANGSMITH_PROD_SAMPLE_RATE", "0.15"))
+    langsmith_dev_sample_rate: float = 1.0
+    langsmith_prod_sample_rate: float = 0.15
 
     @property
     def langsmith_sample_rate(self) -> float:
@@ -422,37 +222,41 @@ class Settings(BaseSettings):
     # =============================================================================
     # Demo curation configuration
     # =============================================================================
-    use_demo_curation: bool = os.getenv("USE_DEMO_CURATION", "false").lower() == "true"
+    use_demo_curation: bool = False
 
     # =============================================================================
     # Google Places API Configuration
     # =============================================================================
-    google_maps_api_key: str | None = os.getenv("GOOGLE_MAPS_API_KEY")
-    google_maps_api_secret: str | None = os.getenv("GOOGLE_MAPS_API_SECRET")
+    google_maps_api_key: str | None = None
+    google_maps_api_secret: str | None = None
 
     # Feature flag: enable Google Places for hotels and activities
-    use_google_places_provider: bool = (
-        os.getenv("USE_GOOGLE_PLACES_PROVIDER", "false").lower() == "true"
-    )
-    google_places_photos_enabled: bool = (
-        os.getenv("GOOGLE_PLACES_PHOTOS_ENABLED", "true").lower() == "true"
-    )
-    google_places_enrichment_enabled: bool = (
-        os.getenv("GOOGLE_PLACES_ENRICHMENT_ENABLED", "true").lower() == "true"
-    )
+    use_google_places_provider: bool = False
+    google_places_photos_enabled: bool = True
+    google_places_enrichment_enabled: bool = True
     google_places_photo_signed_ttl_max: int = 60 * 60  # 1 hour
-    google_places_circuit_breaker_enabled: bool = (
-        os.getenv("GOOGLE_PLACES_CIRCUIT_BREAKER_ENABLED", "true").lower() == "true"
-    )
-    google_places_circuit_breaker_failure_threshold: int = int(
-        os.getenv("GOOGLE_PLACES_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "2")
-    )
-    google_places_circuit_breaker_open_seconds: int = int(
-        os.getenv("GOOGLE_PLACES_CIRCUIT_BREAKER_OPEN_SECONDS", "30")
-    )
+    google_places_circuit_breaker_enabled: bool = True
+    google_places_circuit_breaker_failure_threshold: int = 2
+    google_places_circuit_breaker_open_seconds: int = 30
 
 
 settings = Settings()
+
+
+def get_media_signing_secret() -> str:
+    """Canonical fallback chain for media proxy URL signing.
+
+    Used by both the signer (google_places_provider) and verifier (main.py)
+    to ensure the same secret is resolved in all environments.
+    """
+    return (
+        settings.media_proxy_signing_key
+        or settings.admin_api_key
+        or settings.google_maps_api_secret
+        or settings.google_maps_api_key
+        or ""
+    ).strip()
+
 
 # =============================================================================
 # Shared Model Pricing Table (per 1M tokens, USD)

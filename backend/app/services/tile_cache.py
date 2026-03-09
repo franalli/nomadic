@@ -42,7 +42,9 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 L1_TTL_SECONDS = 86400  # 24 hours
 L1_MAX_SIZE = 256
-L2_TTL_HOURS = settings.tile_cache_ttl_hours  # default 72h — env: TILE_CACHE_TTL_HOURS
+L2_TTL_HOURS = (
+    settings.google_places_cache_ttl_hours
+)  # default 72h — env: GOOGLE_PLACES_CACHE_TTL_HOURS
 
 # =============================================================================
 # L1: Thread-safe in-memory cache
