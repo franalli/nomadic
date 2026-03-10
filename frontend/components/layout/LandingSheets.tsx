@@ -38,8 +38,6 @@ interface LandingSheetsProps {
   addToast: (message: string, type?: ToastType) => void;
   storeUpdateTripInputs: (inputs: Partial<DocumentTripInputs>) => void;
   storeCommitTripInputs: (inputs: Partial<DocumentTripInputs>) => Promise<boolean>;
-  hasItinerary: boolean;
-  proceedWithItineraryGeneration: (options?: { forceFullRebuild?: boolean }) => Promise<void>;
   handleUpdateActivitySettings: (settings: NonNullable<DocumentTripInputs['activity_settings']>) => void;
   onSendMessage: (msg: string) => void;
 }
@@ -62,8 +60,6 @@ export function LandingSheets({
   addToast,
   storeUpdateTripInputs,
   storeCommitTripInputs,
-  hasItinerary,
-  proceedWithItineraryGeneration,
   handleUpdateActivitySettings,
   onSendMessage,
 }: LandingSheetsProps) {
@@ -145,10 +141,14 @@ export function LandingSheets({
               end_date: endStr,
             });
             closeSheet();
+            addToast(`Dates: ${startStr} to ${endStr}`, 'confirmation');
 
-            // Trigger itinerary rebuild if one exists
-            if (hasItinerary) {
-              proceedWithItineraryGeneration({ forceFullRebuild: true });
+            // Date changes require full coordinator run to re-dispatch
+            // specialists for the new duration. expand-itinerary only
+            // rebuilds with cached tiles/sections from the previous run.
+            const isActive = !!planViewState && PLAN_ACTIVE_STATES.has(planViewState);
+            if (isActive) {
+              onSendMessage(GENERATE_PLAN_TRIGGER);
             }
           } catch {
             addToast('Failed to save — please try again', 'error');

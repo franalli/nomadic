@@ -328,7 +328,6 @@ export function NomadicLanding() {
   // ─── Itinerary generation ────────────────────────────────────────────────
 
   const {
-    proceedWithItineraryGeneration,
     requestAutoExpandItinerary,
     handleExpandToItinerary,
     handleSelectNights,
@@ -548,7 +547,6 @@ export function NomadicLanding() {
         hasDestination={hasDestination}
         hasOrigin={hasOrigin}
         hasDates={hasDates}
-        hasItinerary={hasItineraryContent}
         planViewState={planViewState ?? undefined}
         activeSheet={activeSheet}
         gearActivitiesSheetOpen={gearActivitiesSheetOpen}
@@ -562,7 +560,6 @@ export function NomadicLanding() {
         addToast={addToast}
         storeUpdateTripInputs={storeUpdateTripInputs}
         storeCommitTripInputs={storeCommitTripInputs}
-        proceedWithItineraryGeneration={proceedWithItineraryGeneration}
         handleUpdateActivitySettings={handleUpdateActivitySettings}
         onSendMessage={handleSendMessage}
       />

@@ -523,8 +523,9 @@ def _should_clear_planning_artifacts(
         return False
 
     categories_changed = "activity_categories" in fields_changed
+    dates_changed = any(f in fields_changed for f in ("start_date", "end_date"))
     is_gpn = bool(classifier.reasoning and "GENERATE_PLAN_NOW" in classifier.reasoning)
-    return not is_gpn or categories_changed
+    return not is_gpn or categories_changed or dates_changed
 
 
 def _is_response_only_plan(plan: ExecutionPlan) -> bool:
@@ -586,14 +587,15 @@ def plan_turn(
     #   - day_cards present  → skip to GENERATE_RESPONSE only (full itinerary ready)
     #   - strategy_sections present but no day_cards → skip specialists/local_intel,
     #     run SEARCH_TILES + BUILD_ITINERARY + GENERATE_RESPONSE
-    categories_changed = "activity_categories" in state.get("turn_meta", {}).get(
-        "fields_changed", []
-    )
+    _gpn_fields_changed = state.get("turn_meta", {}).get("fields_changed", [])
+    categories_changed = "activity_categories" in _gpn_fields_changed
+    dates_changed = any(f in _gpn_fields_changed for f in ("start_date", "end_date"))
     if (
         change_type == ChangeType.INITIAL_PLAN
         and classifier.reasoning
         and "GENERATE_PLAN_NOW" in classifier.reasoning
         and not categories_changed
+        and not dates_changed
     ):
         if state.get("day_cards"):
             return ExecutionPlan(
@@ -1314,6 +1316,53 @@ def _apply_classifier_to_state(
                         )
                 except ValueError:
                     pass
+
+    # Default duration fallback: if we have start_date but no end_date and
+    # the classifier didn't extract duration_days, default to 7 days so the
+    # first turn can build tiles + itinerary instead of producing an empty plan.
+    if (
+        not trip_plan.get("end_date")
+        and trip_plan.get("start_date")
+        and classifier.duration_days is None
+        and not classifier.end_date
+        and classifier.change_type in (ChangeType.INITIAL_PLAN, ChangeType.DESTINATION_CHANGE)
+    ):
+        from datetime import timedelta
+
+        default_duration = 7
+        try:
+            start_dt = datetime.strptime(trip_plan["start_date"], "%Y-%m-%d")
+            end_dt = start_dt + timedelta(days=default_duration - 1)
+            derived_end = end_dt.strftime("%Y-%m-%d")
+            trip_plan["end_date"] = derived_end
+            if "end_date" not in fields_changed:
+                fields_changed.append("end_date")
+            turn_steps.append(
+                {
+                    "type": "end_date",
+                    "summary": (
+                        f"end_date: None -> {derived_end} (default {default_duration}-day trip)"
+                    ),
+                }
+            )
+            if not trip_plan.get("trip_duration"):
+                trip_plan["trip_duration"] = default_duration
+                if "trip_duration" not in fields_changed:
+                    fields_changed.append("trip_duration")
+                turn_steps.append(
+                    {
+                        "type": "trip_duration",
+                        "summary": f"trip_duration: None -> {default_duration} (default)",
+                    }
+                )
+            logger.info(
+                "[coordinator] Default duration applied: %d days (%s -> %s)",
+                default_duration,
+                trip_plan["start_date"],
+                derived_end,
+            )
+        except ValueError:
+            pass
 
     # Budget reset
     if classifier.reset_budget:
@@ -3699,6 +3748,13 @@ async def execute_turn(
     try:
         # Step 0: Reset turn_meta for this turn
         state["turn_meta"] = {}
+        # Carry forward patch-driven field changes (e.g. dates changed via
+        # PATCH pill but not through chat). These bypass the classifier's
+        # field extraction and must propagate into turn_meta so plan_turn()
+        # can avoid short-circuiting.
+        _patch_changed = state.pop("_patch_changed_fields", None)
+        if _patch_changed:
+            state["turn_meta"]["fields_changed"] = list(_patch_changed)
         _normalize_specialist_plan_keys(state)
 
         # Step 1: Merge document settings

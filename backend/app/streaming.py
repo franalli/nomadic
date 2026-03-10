@@ -319,10 +319,21 @@ def _seed_trip_plan_from_inputs(session_state: Dict[str, Any]) -> None:
     """
     src = session_state.get("trip_inputs", {})
     dst = session_state.get("trip_plan", {})
+
+    # Detect date changes from PATCH so coordinator can re-dispatch
+    # specialists instead of short-circuiting on GENERATE_PLAN_NOW.
+    _patch_changed: list[str] = []
+    for field in ("start_date", "end_date"):
+        if field in src and dst.get(field) != src[field]:
+            _patch_changed.append(field)
+
     for field in _CORE_TRIP_FIELDS:
         if field in src:
             dst[field] = src[field]
     session_state["trip_plan"] = dst
+
+    if _patch_changed:
+        session_state["_patch_changed_fields"] = _patch_changed
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -625,6 +636,11 @@ async def generate_sse(
             from app.planner.services.state_serde import restore_agent_state
 
             coordinator_state = restore_agent_state(session_state)
+            # Propagate patch-driven field changes past restore_agent_state
+            # (which only copies keys from _agent_state_defaults).
+            _pcf = session_state.get("_patch_changed_fields")
+            if _pcf:
+                coordinator_state["_patch_changed_fields"] = _pcf
             cancel_event = asyncio.Event()
             event_source = execute_turn(
                 user_message=req.message,
