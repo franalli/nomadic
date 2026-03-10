@@ -103,12 +103,13 @@ function _haversineKm(
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-/** Max distance (km) a POI can be from destination centroid before being filtered. */
-const _MAX_POI_DISTANCE_KM = 200;
+/** Max distance (km) a POI can be from destination centroid before being filtered.
+ * Set to 500 to accommodate road trips and multi-stop itineraries (e.g. Las Vegas → Zion → Bryce). */
+const _MAX_POI_DISTANCE_KM = 500;
 
 /**
  * Filter out POIs whose coordinates are likely LLM-hallucinated.
- * Computes median-based centroid of all POIs, then drops any > 200km.
+ * Computes median-based centroid of all POIs, then drops any > _MAX_POI_DISTANCE_KM.
  * Median is robust to majority-hallucination (mean would shift toward bad data).
  * Only applies when there are >= 3 POIs (need a meaningful cluster).
  */

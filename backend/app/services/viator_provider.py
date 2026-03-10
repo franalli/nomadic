@@ -86,6 +86,35 @@ def _has_category_conflict(specialist_category: str | None, product_title: str) 
     return any(conflict in product_lower for conflict in conflicts)
 
 
+_TITLE_CATEGORY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(?:hike|hiking|trek|trekking|trail\b)", re.I), "hiking"),
+    (re.compile(r"(?:dive|diving|snorkel)", re.I), "diving"),
+    (re.compile(r"(?:surf|surfing)", re.I), "surfing"),
+    (re.compile(r"(?:cycle|cycling|bike|biking)\b", re.I), "cycling"),
+    (re.compile(r"(?:ski|skiing|snowboard)", re.I), "skiing"),
+    (re.compile(r"(?:climb|climbing|bouldering)", re.I), "climbing"),
+    (re.compile(r"(?:sail|sailing|kayak|canoe|rafting)", re.I), "sailing"),
+    (re.compile(r"(?:safari|wildlife)", re.I), "wildlife_safari"),
+    (re.compile(r"(?:canyon|scenic|park|garden|nature|valley|desert|waterfall)", re.I), "nature"),
+    (re.compile(r"(?:museum|gallery|heritage|historic|monument|palace|castle)", re.I), "cultural"),
+    (re.compile(r"(?:temple|church|mosque|cathedral|shrine)", re.I), "temples"),
+    (re.compile(r"(?:food|culinary|cooking|tasting|wine|beer|gastro)", re.I), "food"),
+    (re.compile(r"(?:spa|wellness|massage|hot spring)", re.I), "spa"),
+    (re.compile(r"(?:yoga)", re.I), "yoga"),
+    (re.compile(r"(?:nightlife|club|pub crawl|casino)", re.I), "nightlife"),
+    (re.compile(r"(?:shopping|market|bazaar|souk)", re.I), "shopping"),
+    (re.compile(r"(?:tour|sightseeing|excursion|day trip)", re.I), "tours"),
+]
+
+
+def _infer_category_from_title(title: str) -> str:
+    """Infer an activity category from a product title using keyword patterns."""
+    for pattern, category in _TITLE_CATEGORY_PATTERNS:
+        if pattern.search(title):
+            return category
+    return "tours"
+
+
 _GENERIC_ACTIVITY_TOKENS = frozenset(
     {
         "activity",
@@ -591,7 +620,7 @@ def viator_product_to_tile(product: dict, destination: str) -> dict:
         "deeplink_url": deeplink_url,  # frontend canonical field
         "destination": destination,
         "is_estimate_only": False,
-        "meta": {},
+        "meta": {"category": _infer_category_from_title(title)},
     }
 
     if geo:

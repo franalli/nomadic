@@ -20,6 +20,7 @@ from app.config import settings
 from app.services.cache_core import MemoryCache
 from app.services.circuit_breaker import CircuitBreaker
 from app.services.spend_guard import reserve_partner_api_spend_or_raise
+from app.services.viator_provider import _infer_category_from_title
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +230,7 @@ def gyg_tour_to_tile(tour: dict, destination: str) -> dict:
         "deeplink_url": deeplink_url,
         "destination": destination,
         "is_estimate_only": False,
-        "meta": {},
+        "meta": {"category": _infer_category_from_title(title)},
     }
 
     if geo:

@@ -141,6 +141,8 @@ async def enrich_tiles_with_partners(
             meta["gyg_tour_id"] = result_meta["gyg_tour_id"]
         if result_meta.get("duration_hours"):
             meta["duration_hours"] = result_meta["duration_hours"]
+        if result_meta.get("category"):
+            meta["category"] = result_meta["category"]
         tile["meta"] = meta
 
     if matched:

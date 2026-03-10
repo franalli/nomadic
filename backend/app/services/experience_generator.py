@@ -8,7 +8,7 @@ after the first unique query.
 L1: In-memory TTLCache with RLock (1h TTL, 128 entries)
 L2: PostgreSQL response_cache (72h TTL, env-configurable) via ResponseCache table
 
-Cache key format: experience::v2::{destination}::{sorted_categories}::{month}::n{count}
+Cache key format: experience::v3::{destination}::{sorted_categories}::{month}::n{count}
 
 Usage:
     from app.services.experience_generator import generate_experiences
@@ -179,13 +179,13 @@ def _experience_cache_key(
 ) -> str:
     """
     Generate stable cache key:
-    experience::v2::{dest}::{sorted_cats}::{month}::n{count}
+    experience::v3::{dest}::{sorted_cats}::{month}::n{count}
 
     Categories are sorted alphabetically for stable keys regardless of input order.
     Month granularity (not full dates) — experiences are seasonal, not date-specific.
     Tile count is bucketed to cache-friendly tiers so smaller requests reuse larger caches.
 
-    Example: "experience::v2::bali::cooking|nightlife|yoga::2026-03::n4"
+    Example: "experience::v3::bali::cooking|nightlife|yoga::2026-03::n4"
     """
     dest_normalized = destination.lower().strip() if destination else "unknown"
     cats_normalized = "|".join(sorted(c.lower().strip() for c in categories))
@@ -216,7 +216,7 @@ def _single_category_cache_key(
     )
     key = make_cache_key(
         "experience_single",
-        "v1",
+        "v2",
         dest_normalized,
         category_normalized,
         month_normalized,
@@ -324,6 +324,12 @@ class ExperienceTile(BaseModel):
         default="",
         description="One-sentence hook, e.g. 'Traditional flow with rice paddy views'",
     )
+    lat: float | None = Field(
+        default=None, description="Approximate latitude of the activity venue"
+    )
+    lng: float | None = Field(
+        default=None, description="Approximate longitude of the activity venue"
+    )
 
 
 class ExperienceOutput(BaseModel):
@@ -345,7 +351,8 @@ _EXPERIENCE_FLAT_SCHEMA: dict = gemini_safe_schema(
 SYSTEM_PROMPT = """Generate real, bookable activities for a destination. Each must be a REAL \
 venue or experience (not generic). Single sessions only (1-4h), not multi-day retreats. \
 Vary time_of_day (morning/afternoon/evening). \
-For each activity, write a vivid one-sentence description that hooks the traveler.
+For each activity, write a vivid one-sentence description that hooks the traveler. \
+For each activity, include approximate lat (latitude) and lng (longitude) coordinates of the venue.
 Example: "Sunrise Yoga at Ubud Studio", description "Traditional flow with rice paddy views".
 
 PRICING RULES (price_estimate field, per person USD):
@@ -466,7 +473,7 @@ def _experience_to_tile_dict(
     else:
         _price_level = 4
 
-    return {
+    result = {
         "id": tile_id,
         "type": "activity",
         "partner": "experience_generator",
@@ -494,6 +501,12 @@ def _experience_to_tile_dict(
         "source": "live",
         "source_agent": "experience_generator",
     }
+
+    # Add geo coordinates if available from LLM
+    if tile.lat is not None and tile.lng is not None:
+        result["geo"] = {"lat": tile.lat, "lng": tile.lng}
+
+    return result
 
 
 def _cached_single_category_to_tiles(

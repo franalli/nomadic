@@ -1278,11 +1278,26 @@ def _apply_classifier_to_state(
                 }
             )
         if not classifier.end_date:
-            start_date_to_use = trip_plan.get("start_date")
+            from datetime import timedelta
+
+            start_date_to_use = trip_plan.get("start_date") or None
+            # Auto-derive start_date when only duration is given (e.g. "about a week")
+            if start_date_to_use is None and not classifier.start_date:
+                default_start = (datetime.now() + timedelta(weeks=2)).strftime("%Y-%m-%d")
+                clamped_start = _clamp_date_str(default_start)
+                if clamped_start:
+                    trip_plan["start_date"] = clamped_start
+                    start_date_to_use = clamped_start
+                if "start_date" not in fields_changed:
+                    fields_changed.append("start_date")
+                turn_steps.append(
+                    {
+                        "type": "start_date",
+                        "summary": f"start_date: None -> {default_start} (derived from duration)",
+                    }
+                )
             if isinstance(start_date_to_use, str) and start_date_to_use:
                 try:
-                    from datetime import timedelta
-
                     start_dt = datetime.strptime(start_date_to_use, "%Y-%m-%d")
                     end_dt = start_dt + timedelta(days=classifier.duration_days - 1)
                     derived_end = end_dt.strftime("%Y-%m-%d")
