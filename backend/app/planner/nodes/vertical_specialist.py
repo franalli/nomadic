@@ -105,6 +105,31 @@ class LLMSpecialistOutput(BaseModel):
     constraints: List[LLMConstraint] = []
 
 
+def _coerce_llm_specialist_output(payload: Any) -> LLMSpecialistOutput:
+    """Reject partial payloads that would otherwise validate via model defaults."""
+    if isinstance(payload, LLMSpecialistOutput):
+        return payload
+    if hasattr(payload, "model_dump"):
+        payload = payload.model_dump()
+    if not isinstance(payload, dict):
+        raise ValueError("Structured specialist output must be a dict")
+
+    status = payload.get("feasibility_status")
+    if not isinstance(status, str) or not status.strip():
+        raise ValueError("Structured specialist output missing feasibility_status")
+
+    has_activity_payload = "activities" in payload or "constraints" in payload
+    has_reason_payload = (
+        "feasibility_reason" in payload and payload.get("feasibility_reason") is not None
+    )
+    if status == "feasible" and not has_activity_payload:
+        raise ValueError("Feasible specialist output missing activities/constraints payload")
+    if status != "feasible" and not (has_activity_payload or has_reason_payload):
+        raise ValueError("Non-feasible specialist output missing reason/payload")
+
+    return LLMSpecialistOutput.model_validate(payload)
+
+
 # Cache flat schema at module load — $defs inlined, unsupported keys stripped
 # so Gemini function calling accepts it without warnings.
 _SPECIALIST_FLAT_SCHEMA: dict = gemini_safe_schema(
@@ -609,19 +634,8 @@ async def generate_specialist_output_llm(
 
             parsed_dict = raw_result.get("parsed") if isinstance(raw_result, dict) else None
             if parsed_dict is None:
-                # Attempt raw text extraction before failing (Gemini sometimes
-                # returns content in raw message instead of parsed dict).
-                raw_msg = raw_result.get("raw") if isinstance(raw_result, dict) else None
-                if raw_msg and hasattr(raw_msg, "content"):
-                    import json as _json
-
-                    try:
-                        parsed_dict = _json.loads(raw_msg.content)
-                    except (ValueError, TypeError):
-                        pass
-                if parsed_dict is None:
-                    raise ValueError("Structured output returned parsed=None")
-            output = LLMSpecialistOutput.model_validate(parsed_dict)
+                raise ValueError("Structured output returned parsed=None")
+            output = _coerce_llm_specialist_output(parsed_dict)
 
             # Post-LLM truncation: cap activities at prompt-requested max
             if (

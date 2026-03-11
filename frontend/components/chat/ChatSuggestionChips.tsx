@@ -109,10 +109,8 @@ function normalizeActionTarget(
 function resolveChipAction(chip: SuggestionChip): ResolvedChipAction {
   // Pre-plan date chips are executable prompts (e.g., "Feb 27-01"),
   // so clicking should run extraction, not open the date sheet.
-  // Respect explicit open_pill chips (e.g., "Set dates" → dates sheet).
   if (
-    (chip.category === 'date_prompt' || chip.category === 'date_contextual') &&
-    chip.action_type !== 'open_pill'
+    chip.category === 'date_prompt' || chip.category === 'date_contextual'
   ) {
     return {
       actionType: 'send_message',
@@ -177,12 +175,14 @@ export function ChatSuggestionChips({
   return (
     <div
       key={`suggestions-container-${effectiveSuggestions.length}`}
-      className="flex flex-wrap justify-center gap-2 pt-3 pb-1 px-2"
+      className="flex gap-2 overflow-x-auto overscroll-x-contain px-2 pb-1 pt-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
     >
       {chips.map((chip, idx) => {
         const resolvedAction = resolveChipAction(chip);
         const isCta = chip.chip_type === 'cta';
-        const isPlanningTrigger = isCta || /\bplan\b/i.test(chip.message);
+        const isPlanningTrigger = isCta
+          || chip.category.startsWith('plan_')
+          || resolvedAction.actionType === 'trigger_action';
         const isSheetAction = resolvedAction.actionType === 'open_pill';
 
         // Action routing: open_pill -> sheet, send_message -> chat
@@ -232,6 +232,7 @@ export function ChatSuggestionChips({
             onClick={handleChipClick}
             className={cn(
               'px-4 py-2.5 rounded-lg',
+              'shrink-0 whitespace-nowrap',
               'text-xs font-bold uppercase tracking-wide',
               'transition-all duration-150 active:scale-95',
               'max-w-full truncate',

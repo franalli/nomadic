@@ -10,7 +10,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,7 @@ from app.planner.services.admin_utils import (
     PLANNER_BUILD_ID,
     PROMPT_BUNDLE_HASH,
     checkpoint_stats,
+    clear_all_caches,
     clear_all_checkpoints,
     clear_response_caches,
     clear_session_checkpoint,
@@ -259,6 +260,56 @@ class TestClearResponseCaches:
             result = await clear_response_caches()
             assert result == 0
             mock_factory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cancels_inflight_generators_before_clearing(self):
+        mock_feasibility = MagicMock()
+        mock_feasibility.clear.return_value = 0
+
+        with (
+            patch(
+                "app.planner.services.admin_utils.cancel_cache_population_tasks",
+                new=AsyncMock(return_value={"experience": 1, "browse": 2}),
+            ) as mock_cancel,
+            patch("app.services.experience_generator.clear_experience_cache", return_value=0),
+            patch("app.services.specialist_cache.clear_memory_cache", return_value=0),
+            patch("app.services.tile_cache.clear_memory_cache", return_value=0),
+            patch("app.services.router_cache.clear_cache", return_value=0),
+            patch("app.services.activity_browser.clear_browse_cache", return_value=0),
+            patch("app.planner.services.iata_resolver.clear_iata_cache", return_value=0),
+            patch("app.tile_service.google_places_provider._enrich_mem.clear", return_value=0),
+            patch(
+                "app.planner.services.feasibility_service._feasibility_cache",
+                mock_feasibility,
+            ),
+        ):
+            await clear_response_caches()
+
+        mock_cancel.assert_awaited_once()
+
+
+class TestClearAllCaches:
+    """Tests for clear_all_caches() contract coverage."""
+
+    @pytest.mark.asyncio
+    async def test_clears_validation_cache_with_rate_limit_state(self):
+        with (
+            patch(
+                "app.planner.services.admin_utils.clear_response_caches",
+                new=AsyncMock(return_value=4),
+            ) as mock_response_clear,
+            patch("app.validation.clear_cache", new=AsyncMock(return_value=6)) as mock_validation,
+            patch(
+                "app.planner.services.admin_utils.clear_all_checkpoints",
+                new=AsyncMock(return_value=3),
+            ) as mock_checkpoints,
+        ):
+            result = await clear_all_caches()
+
+        assert result == 13
+        mock_response_clear.assert_awaited_once()
+        mock_validation.assert_awaited_once_with(preserve_rate_limiting=False)
+        mock_checkpoints.assert_awaited_once()
 
 
 class TestClearCheckpoints:

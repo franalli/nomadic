@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, Download, Loader2 } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
 import { DS } from '@/lib/design-system';
@@ -22,6 +22,13 @@ interface PdfExportButtonProps {
 export function PdfExportButton({ tripInputs, dayCards, tiles }: PdfExportButtonProps) {
   const [state, setState] = useState<ExportState>('idle');
   const { toast } = useToast();
+  const resetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (resetTimerRef.current) {
+      window.clearTimeout(resetTimerRef.current);
+    }
+  }, []);
 
   const handleExport = useCallback(async () => {
     if (state === 'loading') return;
@@ -50,11 +57,16 @@ export function PdfExportButton({ tripInputs, dayCards, tiles }: PdfExportButton
 
       saveAs(blob, filename);
       setState('success');
-      setTimeout(() => setState('idle'), 2000);
+      if (resetTimerRef.current) {
+        window.clearTimeout(resetTimerRef.current);
+      }
+      resetTimerRef.current = window.setTimeout(() => {
+        setState('idle');
+        resetTimerRef.current = null;
+      }, 2000);
     } catch (err) {
       console.error('PDF export failed:', err);
-      const message = err instanceof Error ? err.message : 'PDF export failed';
-      toast(message, { type: 'error' });
+      toast('Could not export PDF', { type: 'error' });
       setState('idle');
     }
   }, [state, tripInputs, dayCards, tiles, toast]);

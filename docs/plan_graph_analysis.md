@@ -272,6 +272,7 @@ Recent behavior:
 - `_build_specialist_prompt()` caps specialist `available_days` at 60% of trip duration to preserve room for mixed non-specialist activities.
 - `TripBrief` now flows into `_BriefAsTripPlan` with `activities_per_day` and active `categories` to bias distribution across specialists.
 - Specialist outputs are additionally capped after parsing so `max_acts` is never exceeded in cacheable payloads.
+- Structured function-calling responses now fail closed: `parsed=None` raises immediately, and `_coerce_llm_specialist_output()` rejects partial payloads that would otherwise validate through default `"feasible"` / empty-list fallbacks.
 - Constraint text is anchored to relative wording (for example, "day before departure"), and cached outputs are re-anchored by `_reanchor_constraint_dates()` before merge.
 - "feasible + zero activities" outputs are converted to `caveat` responses and skipped for L2 cache write, preventing stale empty specialist cache entries.
 - Prompt guidance now uses explicit exact bounds (`EXACTLY`) and hard caps (`Do NOT generate more than Y`) to prevent specialist over-generation.
@@ -952,6 +953,8 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 - Regenerated tiles are merged back into state metadata (`generated_tier2_categories`) and written back to the relevant caches, so subsequent turns reuse them.
 - Month normalization is category-aware: any seasonal category in the request keeps month precision; fully non-seasonal sets collapse to half-year buckets.
 
+**Stale-write guard for manual clears:** `activity_browser.py` and `experience_generator.py` each pair their singleflight task maps with a monotonic cache epoch (`_browse_cache_epoch`, `_experience_cache_epoch`). Admin invalidation (`cancel_cache_population_tasks()`, `clear-l1-l2-caches`, `clear-all-caches`) now cancels in-flight browse/experience work, bumps the epoch, and only then clears L1/L2 state. Late completions compare their captured epoch before any L1/L2 write, so a manual clear cannot be immediately undone by stale async work finishing afterward.
+
 ### Cache Invalidation Triggers
 
 | Trigger                  | Caches Invalidated               |
@@ -1317,11 +1320,11 @@ INITIATED -> PENDING_PAYMENT -> HOLD -> CONFIRMED
 | `/api/admin/clear-specialist-cache` | POST   | Clear specialist L1 + L2                                                        |
 | `/api/admin/clear-tile-cache`       | POST   | Clear tile L1 + L2                                                              |
 | `/api/admin/clear-router-cache`     | POST   | Clear router L1 only                                                            |
-| `/api/admin/clear-l1-l2-caches`     | POST   | Force-clear L1 memory caches + L2 response_cache/unsplash cache rows, plus Google Places geocode/country-code memory caches |
+| `/api/admin/clear-l1-l2-caches`     | POST   | Force-clear L1 memory caches + L2 response_cache/unsplash cache rows, cancel in-flight browse/experience population, and drain Google Places geocode/country-code memory caches |
 | `/api/admin/clear-validation-cache` | POST   | Clear validation caches                                                         |
 | `/api/admin/fresh-start`            | POST   | Clear validation + response caches                                              |
 | `/api/admin/clear-all-checkpoints`  | POST   | Clear ALL LangGraph checkpoints                                                 |
-| `/api/admin/clear-all-caches`       | POST   | Comprehensive clear of ALL caches, including Google Places geocode/country-code caches and enrichment inflight dedupe state |
+| `/api/admin/clear-all-caches`       | POST   | Comprehensive clear of planner/validation caches plus the checkpoint-clear hook; also clears specialist/tile/experience L1+L2, browse/router/iata state, cancels in-flight browse/experience population, and drains Google Places geocode/country-code + enrichment inflight state |
 
 ---
 

@@ -97,6 +97,19 @@ def condense_long_message(message: str, max_len: int) -> str:
 # =============================================================================
 
 
+async def cancel_cache_population_tasks() -> Dict[str, int]:
+    """Cancel in-flight cache-populating tasks and bump cache generations."""
+    from app.services.activity_browser import invalidate_browse_cache_state
+    from app.services.experience_generator import invalidate_experience_cache_state
+
+    experience = await invalidate_experience_cache_state()
+    browse = await invalidate_browse_cache_state()
+    return {
+        "experience": experience,
+        "browse": browse,
+    }
+
+
 async def clear_all_checkpoints() -> None:
     """Clear all checkpoints (no-op)."""
     pass
@@ -113,6 +126,8 @@ async def clear_response_caches() -> int:
     from app.services.experience_generator import clear_experience_cache
     from app.services.specialist_cache import clear_memory_cache as clear_specialist_cache
     from app.services.tile_cache import clear_memory_cache as clear_tile_cache
+
+    await cancel_cache_population_tasks()
 
     # L1: always clear in-memory caches
     total = clear_experience_cache()
@@ -166,5 +181,12 @@ def response_cache_stats() -> Dict[str, Any]:
 
 
 async def clear_all_caches() -> int:
-    """Clear all caches (response caches, validation caches, etc.)."""
-    return await clear_response_caches()
+    """Clear planner caches, validation caches, and checkpoints."""
+    from app.validation import clear_cache
+
+    total = await clear_response_caches()
+    total += await clear_cache(preserve_rate_limiting=False)
+    cleared_checkpoints = await clear_all_checkpoints()
+    if isinstance(cleared_checkpoints, int):
+        total += cleared_checkpoints
+    return total

@@ -600,3 +600,42 @@ class TestBrowseActivitiesPersistentCacheAndSingleflight:
 
         assert isinstance(results, list)
         assert len(results) >= 1
+
+
+@pytest.mark.asyncio
+async def test_invalidate_browse_cache_state_cancels_inflight_tasks():
+    import app.services.activity_browser as browser
+
+    gate = asyncio.Event()
+
+    async def _pending() -> list[dict]:
+        await gate.wait()
+        return []
+
+    task = asyncio.create_task(_pending())
+    async with browser._browse_inflight_lock:
+        browser._browse_inflight_tasks["browse::pending"] = task
+
+    cancelled = await browser.invalidate_browse_cache_state()
+
+    assert cancelled == 1
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_stale_browse_cache_write_is_skipped_after_epoch_bump():
+    import app.services.activity_browser as browser
+
+    browser.clear_browse_cache()
+    stale_epoch = browser._browse_cache_epoch
+    await browser.invalidate_browse_cache_state()
+
+    with patch(_BROWSE_L2_SET, new_callable=AsyncMock) as mock_l2_set:
+        await browser._cache_browse_result_if_current(
+            "browse::stale",
+            [{"id": "tile-1"}],
+            stale_epoch,
+        )
+
+    assert browser._browse_cache.get("browse::stale") is None
+    mock_l2_set.assert_not_awaited()

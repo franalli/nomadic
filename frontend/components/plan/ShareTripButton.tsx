@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, Loader2, Share2 } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
 import { apiFetch } from '@/lib/api';
@@ -17,6 +17,13 @@ interface ShareTripButtonProps {
 export function ShareTripButton({ className }: ShareTripButtonProps) {
   const [state, setState] = useState<ShareState>('idle');
   const { toast } = useToast();
+  const resetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (resetTimerRef.current) {
+      window.clearTimeout(resetTimerRef.current);
+    }
+  }, []);
 
   const handleShare = useCallback(async () => {
     if (state === 'loading') return;
@@ -25,9 +32,7 @@ export function ShareTripButton({ className }: ShareTripButtonProps) {
     try {
       const res = await apiFetch('/api/share', { method: 'POST' });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const detail = typeof err?.detail === 'string' ? err.detail : 'Failed to share trip';
-        throw new Error(detail);
+        throw new Error('Could not share trip');
       }
 
       const data = await res.json();
@@ -47,11 +52,16 @@ export function ShareTripButton({ className }: ShareTripButtonProps) {
 
       await navigator.clipboard.writeText(shareUrl);
       setState('copied');
-      window.setTimeout(() => setState('idle'), 2000);
+      if (resetTimerRef.current) {
+        window.clearTimeout(resetTimerRef.current);
+      }
+      resetTimerRef.current = window.setTimeout(() => {
+        setState('idle');
+        resetTimerRef.current = null;
+      }, 2000);
     } catch (err) {
       console.error('Share failed:', err);
-      const message = err instanceof Error ? err.message : 'Failed to share trip';
-      toast(message, { type: 'error' });
+      toast('Could not share trip', { type: 'error' });
       setState('idle');
     }
   }, [state, toast]);

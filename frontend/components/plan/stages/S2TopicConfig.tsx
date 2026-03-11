@@ -21,7 +21,7 @@ import React from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { getSpecialistColorRgb, SPECIALIST_IDS } from '@/lib/specialists';
+import { getSpecialistColorRgb } from '@/lib/specialists';
 
 // ---------------------------------------------------------------------------
 // Markdown helpers
@@ -68,9 +68,6 @@ export const formatConstraintTitle = (rule: string): string => {
 // ---------------------------------------------------------------------------
 // Topic priority and config
 // ---------------------------------------------------------------------------
-
-/** Local Expert first (foundation/logistics), then niche specialists, general last */
-export const TOPIC_PRIORITY = ['local_expert', ...SPECIALIST_IDS, 'general'];
 
 export const TOPIC_CONFIG: Record<string, {
   icon: React.ComponentType<{ className?: string }>;

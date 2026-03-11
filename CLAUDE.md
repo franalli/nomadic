@@ -5,7 +5,7 @@
 - **Focus:** [describe focus]
 - **Secondary:** [secondary priority or "none"]
 - **Active work:** UX and interaction polish, cost-aware recommendation optimizations, and SSoT doc alignment in `docs/*`
-- **Active files:** `backend/app/config.py`, `backend/app/services/{gyg_provider.py,spend_guard.py,viator_provider.py}`, `docs/{data-contracts.md,plan_graph_analysis.md}`
+- **Active files:** `backend/app/{main.py,streaming.py,lifespan.py,debug_utils.py}`, `backend/app/planner/{nodes/vertical_specialist.py,services/admin_utils.py}`, `backend/app/services/{activity_browser.py,experience_generator.py,spend_guard.py}`, `frontend/components/{chat/ChatSuggestionChips.tsx,plan/*,shared/SharedTripView.tsx}`, `frontend/hooks/useHeaderActions.tsx`, `docs/{data-contracts.md,plan_graph_analysis.md,repo_structure.md,ux_unified_architecture.md}`
 - **Known broken:** none explicitly tracked in current diff
 - **DO NOT touch this sprint:** `llm_factory.py` provider/model-routing contract; API/schema compatibility surfaces
 

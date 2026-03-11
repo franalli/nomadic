@@ -241,6 +241,22 @@ def test_session_less_requests_enforce_global_cap_only(
     assert exc_info.value.scope == "global"
 
 
+def test_reserve_or_raise_does_not_persist_to_disk_on_request_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reservations should mutate in-memory counters without synchronous file writes."""
+    monkeypatch.setattr(settings, "spend_guard_enabled", True)
+    write_mock = MagicMock()
+    monkeypatch.setattr(sg_module, "_write_state_to_disk", write_mock)
+
+    with spend_guard_scope("session-inline"):
+        _reserve_or_raise(provider="llm", estimated_usd=0.05, source="test-inline")
+
+    write_mock.assert_not_called()
+    snapshot = get_spend_guard_snapshot()
+    assert snapshot["global_spend_usd"] == pytest.approx(0.05)
+
+
 def test_load_state_ignores_legacy_partner_provider_spend(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

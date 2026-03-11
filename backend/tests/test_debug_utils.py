@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.config import settings
 from app.debug_utils import (
     CompactLogger,
     RequestMetrics,
@@ -27,34 +28,34 @@ from app.debug_utils import (
 
 
 class TestGetDebugMode:
-    """Test environment-driven debug mode resolution."""
+    """Test settings-driven debug mode resolution."""
 
     def test_full(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DEBUG", "full")
+        monkeypatch.setattr(settings, "debug_mode", "full")
         assert get_debug_mode() == "full"
 
     def test_compact(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DEBUG", "compact")
+        monkeypatch.setattr(settings, "debug_mode", "compact")
         assert get_debug_mode() == "compact"
 
     def test_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DEBUG", "off")
+        monkeypatch.setattr(settings, "debug_mode", "off")
         assert get_debug_mode() == "off"
 
     def test_unknown_value_returns_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DEBUG", "verbose")
+        monkeypatch.setattr(settings, "debug_mode", "verbose")
         assert get_debug_mode() == "off"
 
     def test_unset_returns_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("DEBUG", raising=False)
+        monkeypatch.setattr(settings, "debug_mode", "")
         assert get_debug_mode() == "off"
 
     def test_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DEBUG", "FULL")
+        monkeypatch.setattr(settings, "debug_mode", "FULL")
         assert get_debug_mode() == "full"
 
     def test_whitespace_stripped(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DEBUG", "  compact  ")
+        monkeypatch.setattr(settings, "debug_mode", "  compact  ")
         assert get_debug_mode() == "compact"
 
 

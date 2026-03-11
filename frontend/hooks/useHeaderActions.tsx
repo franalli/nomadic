@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
 import { apiFetch } from '@/lib/api';
@@ -38,6 +38,13 @@ export function useHeaderActions({
   const { toast } = useToast();
   const login = useUserStore((s) => s.login);
   const logout = useUserStore((s) => s.logout);
+  const shareResetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (shareResetTimerRef.current) {
+      window.clearTimeout(shareResetTimerRef.current);
+    }
+  }, []);
 
   const handleNewTrip = useCallback(async () => {
     try {
@@ -63,7 +70,7 @@ export function useHeaderActions({
       saveAs(blob, `${dest}.pdf`);
     } catch (err) {
       console.error('PDF export failed:', err);
-      toast(err instanceof Error ? err.message : 'PDF export failed', { type: 'error' });
+      toast('Could not export PDF', { type: 'error' });
     } finally {
       setPdfState('idle');
       onMenuClose();
@@ -94,11 +101,17 @@ export function useHeaderActions({
 
       await navigator.clipboard.writeText(shareUrl);
       setShareState('copied');
-      window.setTimeout(() => setShareState('idle'), 2000);
+      if (shareResetTimerRef.current) {
+        window.clearTimeout(shareResetTimerRef.current);
+      }
+      shareResetTimerRef.current = window.setTimeout(() => {
+        setShareState('idle');
+        shareResetTimerRef.current = null;
+      }, 2000);
       onMenuClose();
     } catch (err) {
       console.error('Share failed:', err);
-      toast(err instanceof Error ? err.message : 'Failed to share trip', { type: 'error' });
+      toast('Could not share trip', { type: 'error' });
       setShareState('idle');
     }
   }, [hasDayCards, shareState, toast, onMenuClose]);

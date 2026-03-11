@@ -98,7 +98,6 @@ function filterBlocks(blocks: DayBlock[]): DayBlock[] {
 
 export interface TimelineBlockListProps {
   card: DayCard;
-  dayCards: DayCard[];
   useRichBlocks: boolean;
   activeBlockId?: string | null;
   showPriceEstimates: boolean;
@@ -129,7 +128,6 @@ export interface TimelineBlockListProps {
 
 export function TimelineBlockList({
   card,
-  dayCards,
   useRichBlocks,
   activeBlockId,
   showPriceEstimates,
@@ -181,7 +179,8 @@ export function TimelineBlockList({
 
   // Compute buffer exclusion logic for free day chips
   const { chipsToShow, isConstraintBuffer } = computeBufferExclusions(
-    bufferBlocks, dayCards, card.day_number, categories,
+    bufferBlocks,
+    categories,
   );
 
   // For free days: skip dayWrapper (it would highlight the entire FreeDayCard).

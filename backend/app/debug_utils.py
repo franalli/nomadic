@@ -54,16 +54,11 @@ _console = Console(theme=_THEME)
 
 
 def get_debug_mode() -> str:
-    """Get current debug mode from environment.
-
-    Reads os.environ directly (not settings singleton) so that
-    monkeypatch.setenv / delenv changes are visible at runtime.
+    """Get current debug mode from config/settings.
 
     Returns: 'full', 'compact', or 'off'
     """
-    import os
-
-    mode = os.environ.get("DEBUG", "off").lower().strip()
+    mode = str(getattr(settings, "debug_mode", "") or "").lower().strip()
     if mode in ("full", "compact"):
         return mode
     return "off"

@@ -4,6 +4,7 @@ Tests for shared trip and user account endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from datetime import UTC, datetime, timedelta
@@ -120,6 +121,12 @@ def set_client_cookies(
     client.cookies.set("csrf", csrf_token)
     if oauth_state is not None:
         client.cookies.set("oauth_state", oauth_state)
+
+
+def current_csrf_headers() -> dict[str, str]:
+    csrf_token = client.cookies.get("csrf")
+    assert csrf_token
+    return {"X-CSRF-Token": csrf_token}
 
 
 def _document_payload(destination: str) -> dict:
@@ -310,8 +317,11 @@ def test_fork_shared_trip_copies_snapshot_to_viewer_session():
     cookie = SimpleCookie()
     cookie.load(set_cookie_header)
     fork_session_token = cookie["session_id"].value
+    fork_csrf_token = cookie["csrf"].value
     assert fork_session_token
     assert fork_session_token != viewer_token
+    assert fork_csrf_token
+    assert fork_csrf_token != TEST_CSRF_TOKEN
     fork_payload = fork_response.json()
     assert fork_payload["ok"] is True
     assert fork_payload["destination"] == "Bali"
@@ -433,9 +443,12 @@ def test_google_callback_links_user_and_trip_listing(monkeypatch):
     cookie = SimpleCookie()
     cookie.load(set_cookie_header)
     rotated_session_token = cookie["session_id"].value
+    rotated_csrf_token = cookie["csrf"].value
     client.cookies.set("session_id", rotated_session_token)
     assert rotated_session_token
     assert rotated_session_token != session.session_token
+    assert rotated_csrf_token
+    assert rotated_csrf_token != TEST_CSRF_TOKEN
     with TestingSessionLocal() as db:
         old_session = (
             db.query(models.Session)
@@ -462,7 +475,7 @@ def test_google_callback_links_user_and_trip_listing(monkeypatch):
     assert isinstance(trips[0]["trip_id"], int)
     assert trips[0]["destination"] == "Bali"
 
-    logout_response = client.post("/api/auth/logout", headers={"X-CSRF-Token": TEST_CSRF_TOKEN})
+    logout_response = client.post("/api/auth/logout", headers=current_csrf_headers())
     assert logout_response.status_code == 200
     assert logout_response.json()["ok"] is True
 
@@ -514,7 +527,7 @@ def test_cross_account_login_does_not_leak_previous_user_trips(monkeypatch):
     assert trips_a.status_code == 200
     assert trips_a.json()["trips"][0]["destination"] == "Bali"
 
-    logout_response = client.post("/api/auth/logout", headers={"X-CSRF-Token": TEST_CSRF_TOKEN})
+    logout_response = client.post("/api/auth/logout", headers=current_csrf_headers())
     assert logout_response.status_code == 200
     set_cookie = logout_response.headers.get("set-cookie", "")
     assert "session_id=" in set_cookie
@@ -799,8 +812,11 @@ def test_resume_trip_switches_active_session_to_selected_trip():
     cookie = SimpleCookie()
     cookie.load(set_cookie_header)
     rotated_token = cookie["session_id"].value
+    rotated_csrf_token = cookie["csrf"].value
     assert rotated_token
     assert rotated_token not in {"resume-session-a", "resume-session-b"}
+    assert rotated_csrf_token
+    assert rotated_csrf_token != TEST_CSRF_TOKEN
     client.cookies.set("session_id", rotated_token)
 
     doc_response = client.get("/api/document")
@@ -920,10 +936,14 @@ def test_resume_trip_old_cookie_becomes_invalid_after_rotation():
     first_cookie = SimpleCookie()
     first_cookie.load(first_cookie_header)
     first_rotated_token = first_cookie["session_id"].value
+    first_rotated_csrf = first_cookie["csrf"].value
     assert first_rotated_token
+    assert first_rotated_csrf
+    assert first_rotated_csrf != TEST_CSRF_TOKEN
 
     # Simulate second rapid click from original session cookie.
     client.cookies.set("session_id", old_token)
+    client.cookies.set("csrf", TEST_CSRF_TOKEN)
     second_resume = client.post(
         f"/api/trips/{target_trip_id}/resume",
         headers={"X-CSRF-Token": TEST_CSRF_TOKEN},
@@ -940,3 +960,43 @@ def test_resume_trip_old_cookie_becomes_invalid_after_rotation():
     client.cookies.set("session_id", first_rotated_token)
     stale_read = client.get("/api/trips")
     assert stale_read.status_code == 401
+
+
+def test_admin_clear_all_caches_clears_validation_cache(monkeypatch):
+    async def _seed_validation_state() -> None:
+        from app.validation import clear_cache
+        from app.validation_cache import _check_rate_limit, store_result
+
+        await clear_cache(preserve_rate_limiting=False)
+        await store_result(
+            "destination",
+            "bali",
+            {
+                "corrected_values": ["Bali"],
+                "is_valid": True,
+                "reason": None,
+            },
+            True,
+            None,
+        )
+        await _check_rate_limit("admin-clear-validation")
+
+    monkeypatch.setattr(main_module.settings, "admin_api_key", "admin-key")
+    asyncio.run(_seed_validation_state())
+    set_client_cookies(session_token="admin-clear-validation")
+
+    response = client.post(
+        "/api/admin/clear-all-caches",
+        headers={**current_csrf_headers(), "X-Admin-Key": "admin-key"},
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["before"]["validation"]["positive"] >= 1
+    assert payload["before"]["validation"]["rate_counters"] >= 1
+    assert payload["after"]["validation"]["positive"] == 0
+    assert payload["after"]["validation"]["negative"] == 0
+    assert payload["after"]["validation"]["split"] == 0
+    assert payload["after"]["validation"]["prompt"] == 0
+    assert payload["after"]["validation"]["fallback"] == 0
+    assert payload["after"]["validation"]["rate_counters"] == 0

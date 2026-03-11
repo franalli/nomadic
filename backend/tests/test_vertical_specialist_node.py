@@ -866,3 +866,88 @@ async def test_generate_specialist_output_llm_logs_when_primary_and_fallback_fai
     assert "Retrying with fallback model 'gemini-2.5-flash'" in logs
     assert "Fallback model 'gemini-2.5-flash' failed" in logs
     assert "FAILED for diving" in logs
+
+
+@pytest.mark.asyncio
+async def test_generate_specialist_output_llm_rejects_partial_raw_json_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trip_plan = TripPlan(
+        destination="Bali",
+        start_date="2026-03-01",
+        end_date="2026-03-07",
+    )
+
+    structured = MagicMock()
+    structured.ainvoke = AsyncMock(
+        return_value={
+            "parsed": None,
+            "raw": MagicMock(content='{"activities": [{"title": "Reef Dive"}]}'),
+        }
+    )
+    llm = MagicMock()
+    llm.with_structured_output.return_value = structured
+    mock_debug_log = MagicMock()
+
+    monkeypatch.setattr(settings, "specialist_model", "gpt-4o")
+    monkeypatch.setattr(settings, "specialist_fallback_model", "")
+
+    with (
+        patch(f"{_VS}.load_prompt", return_value="System prompt"),
+        patch(f"{_VS}.get_llm_by_model", return_value=llm),
+        patch("app.debug_utils._debug_log", mock_debug_log),
+    ):
+        output = await generate_specialist_output_llm(
+            topic="diving",
+            destination="Bali",
+            trip_plan=trip_plan,
+            db=None,
+            skip_cache_lookup=True,
+        )
+
+    assert output is None
+    logs = " | ".join(str(call.args[0]) for call in mock_debug_log.call_args_list if call.args)
+    assert "parsed=None" in logs
+
+
+@pytest.mark.asyncio
+async def test_generate_specialist_output_llm_fails_closed_when_parsed_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """parsed=None must fail closed even if raw content looks superficially valid."""
+    trip_plan = TripPlan(
+        destination="Bali",
+        start_date="2026-03-01",
+        end_date="2026-03-07",
+    )
+
+    structured = MagicMock()
+    structured.ainvoke = AsyncMock(
+        return_value={
+            "parsed": None,
+            "raw": MagicMock(content='{"feasibility_status":"feasible","activities":[]}'),
+        }
+    )
+    llm = MagicMock()
+    llm.with_structured_output.return_value = structured
+    mock_debug_log = MagicMock()
+
+    monkeypatch.setattr(settings, "specialist_model", "gpt-4o")
+    monkeypatch.setattr(settings, "specialist_fallback_model", None)
+
+    with (
+        patch(f"{_VS}.load_prompt", return_value="System prompt"),
+        patch(f"{_VS}.get_llm_by_model", return_value=llm),
+        patch("app.debug_utils._debug_log", mock_debug_log),
+    ):
+        output = await generate_specialist_output_llm(
+            topic="diving",
+            destination="Bali",
+            trip_plan=trip_plan,
+            db=None,
+            skip_cache_lookup=True,
+        )
+
+    assert output is None
+    logs = " | ".join(str(call.args[0]) for call in mock_debug_log.call_args_list if call.args)
+    assert "parsed=None" in logs

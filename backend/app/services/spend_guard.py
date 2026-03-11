@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
-import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -29,8 +28,8 @@ _session_id_ctx: ContextVar[str | None] = ContextVar("spend_guard_session_id", d
 # NOTE: In-memory spend tracking is correct for single-worker deployment.
 # For multi-worker, migrate to Redis or shared state.
 #
-# File-based persistence (via _SPEND_STATE_FILE) is implemented as a bridge so
-# daily caps survive process restarts within a single-worker deployment.
+# File-based persistence (via _SPEND_STATE_FILE) is a shutdown-time bridge so
+# daily caps survive graceful restarts within a single-worker deployment.
 # It does NOT solve multi-worker isolation.
 #
 # TODO: Before scaling to multi-instance, replace module-level dicts with
@@ -55,30 +54,23 @@ _provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0}
 
 _SPEND_STATE_FILE = Path(tempfile.gettempdir()) / "nomadic_spend_guard_state.json"
 
-_last_persist_time: float = 0.0
-_PERSIST_INTERVAL: float = 2.0  # seconds between disk writes
+
+def _snapshot_state_locked() -> dict[str, object]:
+    """Capture the current spend state while holding _spend_lock."""
+    return {
+        "day": _spend_day_key,
+        "global_spend_usd": _global_spend_usd,
+        "provider_spend_usd": dict(_provider_spend_usd),
+        "session_spend_usd": dict(_session_spend_usd),
+    }
 
 
-def _persist_state(*, force: bool = False) -> None:
-    """Write spend state to disk so caps survive restarts. Debounced to at most
-    every 2 seconds unless *force* is True.
-
-    Must be called while _spend_lock is held. File I/O errors are swallowed
-    so they never block API calls.
-    """
-    global _last_persist_time
-    now = time.monotonic()
-    if not force and (now - _last_persist_time) < _PERSIST_INTERVAL:
-        return
+def _write_state_to_disk(snapshot: dict[str, object]) -> None:
+    """Persist a spend snapshot outside _spend_lock."""
     try:
-        data = {
-            "day": _spend_day_key,
-            "global_spend_usd": _global_spend_usd,
-            "provider_spend_usd": dict(_provider_spend_usd),
-            "session_spend_usd": dict(_session_spend_usd),
-        }
-        _SPEND_STATE_FILE.write_text(json.dumps(data), encoding="utf-8")
-        _last_persist_time = now
+        tmp_path = _SPEND_STATE_FILE.with_suffix(f"{_SPEND_STATE_FILE.suffix}.tmp")
+        tmp_path.write_text(json.dumps(snapshot), encoding="utf-8")
+        tmp_path.replace(_SPEND_STATE_FILE)
     except Exception:
         logger.debug("spend_guard: failed to persist state to %s", _SPEND_STATE_FILE, exc_info=True)
 
@@ -86,7 +78,8 @@ def _persist_state(*, force: bool = False) -> None:
 def flush_spend_state() -> None:
     """Force-persist current spend state (call during shutdown)."""
     with _spend_lock:
-        _persist_state(force=True)
+        snapshot = _snapshot_state_locked()
+    _write_state_to_disk(snapshot)
 
 
 def _load_state() -> None:
@@ -173,8 +166,8 @@ if settings.spend_guard_enabled:
 # Log startup info about file-backed persistence (only when guard is active)
 if settings.spend_guard_enabled:
     logger.info(
-        "Spend guard: in-memory with file-backed persistence (%s). "
-        "Daily caps survive single-worker restarts. "
+        "Spend guard: in-memory with shutdown persistence (%s). "
+        "Daily caps survive graceful single-worker restarts. "
         "For multi-worker caps, migrate to Redis (see TODO above).",
         _SPEND_STATE_FILE,
     )
@@ -226,7 +219,6 @@ def _rollover_if_needed() -> None:
     _provider_spend_usd["llm"] = 0.0
     _provider_spend_usd["places"] = 0.0
     _global_spend_usd = 0.0
-    _persist_state()
 
 
 @contextmanager
@@ -295,7 +287,6 @@ def _reserve_or_raise(
             _check_provider_cap(provider, estimated_usd, source)
             _global_spend_usd += estimated_usd
             _provider_spend_usd[provider] = _provider_spend_usd.get(provider, 0.0) + estimated_usd
-            _persist_state()
         return
 
     session_cap = max(0.0, float(settings.spend_guard_session_daily_cap_usd))
@@ -332,7 +323,6 @@ def _reserve_or_raise(
         _session_spend_usd[sid] = session_current + estimated_usd
         _global_spend_usd = global_current + estimated_usd
         _provider_spend_usd[provider] = _provider_spend_usd.get(provider, 0.0) + estimated_usd
-        _persist_state()
 
 
 def _estimate_llm_call_usd(model: str, max_tokens: int | None = None) -> float:
@@ -390,7 +380,8 @@ def clear_spend_guard_counters() -> None:
         _provider_spend_usd["llm"] = 0.0
         _provider_spend_usd["places"] = 0.0
         _global_spend_usd = 0.0
-        _persist_state(force=True)
+        snapshot = _snapshot_state_locked()
+    _write_state_to_disk(snapshot)
 
 
 def get_spend_guard_snapshot() -> dict[str, object]:

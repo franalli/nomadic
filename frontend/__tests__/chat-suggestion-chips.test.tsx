@@ -155,4 +155,51 @@ describe('ChatSuggestionChips fallback action routing', () => {
       suggestionClicked: 'Feb 27-01',
     });
   });
+
+  it('keeps suggestion chips in a horizontal reel without wrapping', () => {
+    renderChips();
+
+    const container = screen.getByRole('button', { name: /set my budget/i }).parentElement;
+
+    expect(container?.className).toContain('overflow-x-auto');
+    expect(container?.className).not.toContain('flex-wrap');
+  });
+
+  it('does not infer planning styling from message text alone', () => {
+    renderChips({
+      suggestionChips: [
+        {
+          message: 'Plan hotels',
+          action_type: 'send_message',
+          action_target: null,
+          chip_type: 'follow_up',
+          category: '',
+          icon: null,
+        },
+      ],
+      effectiveSuggestions: ['Plan hotels'],
+    });
+
+    const button = screen.getByRole('button', { name: /plan hotels/i });
+    expect(button.className).not.toContain('bg-emerald-50');
+  });
+
+  it('uses structured metadata to style planning chips', () => {
+    renderChips({
+      suggestionChips: [
+        {
+          message: 'Direct flights only',
+          action_type: 'trigger_action',
+          action_target: 'set_direct_flights_only',
+          chip_type: 'setting',
+          category: 'plan_flight_direct',
+          icon: null,
+        },
+      ],
+      effectiveSuggestions: ['Direct flights only'],
+    });
+
+    const button = screen.getByRole('button', { name: /direct flights only/i });
+    expect(button.className).toContain('bg-emerald-50');
+  });
 });

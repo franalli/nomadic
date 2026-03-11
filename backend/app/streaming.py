@@ -410,1100 +410,1141 @@ async def generate_sse(
         return
 
     session_factory = _get_async_session_factory()
-    async with session_factory() as db:
-        try:
-            db_session = await get_or_create_session(db, session_id)
-
-            # Get or create document
-            document = None
-            document_data = None
-            document_version = None
+    try:
+        async with session_factory() as db:
             try:
-                document = await get_or_create_document(db, session=db_session)
-                document_data = get_document_data(document)
-                document_version = document.version
+                db_session = await get_or_create_session(db, session_id)
 
-                # Record user message with trip_inputs snapshot for undo functionality
-                user_message_content = req.message
-                trip_inputs_snapshot = None
-                if document_data and document_data.trip_inputs:
-                    ti = document_data.trip_inputs
-                    trip_inputs_snapshot = {
-                        "destination": ti.destination,
-                        "origin": ti.origin,
-                        "start_date": ti.start_date,
-                        "end_date": ti.end_date,
-                        "adults": ti.adults,
-                        "children": ti.children,
-                        "requires_assistance": ti.requires_assistance,
-                        "budget": ti.budget,
-                        "currency": ti.currency,
-                        "booking_types": ti.booking_types.model_dump() if ti.booking_types else {},
-                        "flight_settings": (
-                            ti.flight_settings.model_dump() if ti.flight_settings else {}
-                        ),
-                        "hotel_settings": (
-                            ti.hotel_settings.model_dump() if ti.hotel_settings else {}
-                        ),
-                        "activity_settings": (
-                            ti.activity_settings.model_dump() if ti.activity_settings else {}
-                        ),
-                        "transport_settings": (
-                            ti.transport_settings.model_dump() if ti.transport_settings else {}
-                        ),
-                    }
-
-                await record_chat_message(
-                    db,
-                    session=db_session,
-                    trip_context=None,
-                    role="user",
-                    content=user_message_content,
-                    metadata=None,
-                    trip_inputs_snapshot=trip_inputs_snapshot,
-                )
-
-                # Hydrate session state from document
-                if document_data:
-                    if document_data.branches:
-                        session_state["branches"] = [b.model_dump() for b in document_data.branches]
-                    # Restore specialist content so non-dispatch turns
-                    # (origin/budget/travelers) preserve strategy_sections
-                    # and day_cards. Document is the authoritative source;
-                    # empty lists from document will clear session state,
-                    # ensuring intentional resets propagate correctly.
-                    if document_data.strategy_sections is not None:
-                        session_state["strategy_sections"] = [
-                            s.model_dump() for s in document_data.strategy_sections
-                        ]
-                    if document_data.day_cards is not None:
-                        session_state["day_cards"] = [
-                            dc.model_dump() for dc in document_data.day_cards
-                        ]
-                    # CRITICAL FIX: Always use document trip_inputs as BASELINE,
-                    # then merge request on top. This ensures fields set via settings
-                    # panel (origin, flight_settings, etc.) are preserved when the
-                    # chat request only has partial trip_inputs.
-                    # @see docs/plan_graph_analysis.md - Origin sync for flight fetching
-                    if document_data.trip_inputs:
-                        doc_inputs = document_data.trip_inputs.model_dump()
-                        session_inputs = session_state.get("trip_inputs", {})
-                        # User-owned settings fields — document is SSoT (set via PATCH
-                        # from frontend sheets). Session may carry stale values from
-                        # previous graph runs; document always wins for these.
-                        _USER_OWNED_SETTINGS = {
-                            "activity_settings",
-                            "hotel_settings",
-                            "flight_settings",
-                            "transport_settings",
-                        }
-                        # Document as baseline, session overrides for graph-owned fields only
-                        merged = {**doc_inputs}
-                        for k, v in session_inputs.items():
-                            if v is not None and k not in _USER_OWNED_SETTINGS:
-                                merged[k] = v
-                        session_state["trip_inputs"] = normalize_trip_inputs(merged)
-
-                        # req.trip_inputs is the freshest source for user-owned
-                        # settings (Zustand snapshot at send time).  The document
-                        # may be stale if ensureSettingsFlushed PATCH hasn't
-                        # committed yet, or if get_or_create_document created a
-                        # default doc with empty categories.
-                        if req.trip_inputs:
-                            req_ti = sanitize_trip_inputs_for_category_merge(
-                                dict(req.trip_inputs),
-                                req.message,
-                            )
-                            current = session_state["trip_inputs"]
-                            merge_user_owned_trip_settings(
-                                current,
-                                req_ti,
-                                user_owned_fields=_USER_OWNED_SETTINGS,
-                            )
-                            session_state["trip_inputs"] = normalize_trip_inputs(current)
-
-                        # HARD TRACE: Log doc's activity categories at merge time
-                        _doc_cats = doc_inputs.get("activity_settings", {}).get("categories", [])
-                        _final_cats = (
-                            session_state["trip_inputs"]
-                            .get("activity_settings", {})
-                            .get("categories", [])
-                        )
-                        logger.info(
-                            f"[{request_id}] trip_inputs merge: "
-                            f"doc.categories={_doc_cats}, "
-                            f"final.categories={_final_cats}, "
-                            f"doc.origin={doc_inputs.get('origin')}"
-                        )
-                    # Inject user-pinned tiles into metadata so graph state preserves them
-                    if document_data.user_pinned_tiles:
-                        if "metadata" not in session_state:
-                            session_state["metadata"] = {}
-                        session_state["metadata"]["user_pinned_tiles"] = (
-                            document_data.user_pinned_tiles
-                        )
-            except Exception as e:
-                logger.warning(f"[{request_id}] Failed to load document for session: {e}")
-
-            # ── Pass document's user-owned settings to graph state ──
-            # _restore_graph_state merges these into state.metadata["trip_inputs"],
-            # ensuring the graph sees pill selections / settings panel values
-            # even when the session carries stale trip_inputs from a prior turn.
-            if document:
+                # Get or create document
+                document = None
+                document_data = None
+                document_version = None
                 try:
-                    await db.refresh(document)
-                    fresh_data = get_document_data(document)
-                    if fresh_data.trip_inputs:
-                        ti = fresh_data.trip_inputs
-                        session_state["_doc_settings"] = {
-                            "activity_settings": ti.activity_settings.model_dump()
-                            if ti.activity_settings
+                    document = await get_or_create_document(db, session=db_session)
+                    document_data = get_document_data(document)
+                    document_version = document.version
+
+                    # Record user message with trip_inputs snapshot for undo functionality
+                    user_message_content = req.message
+                    trip_inputs_snapshot = None
+                    if document_data and document_data.trip_inputs:
+                        ti = document_data.trip_inputs
+                        trip_inputs_snapshot = {
+                            "destination": ti.destination,
+                            "origin": ti.origin,
+                            "start_date": ti.start_date,
+                            "end_date": ti.end_date,
+                            "adults": ti.adults,
+                            "children": ti.children,
+                            "requires_assistance": ti.requires_assistance,
+                            "budget": ti.budget,
+                            "currency": ti.currency,
+                            "booking_types": ti.booking_types.model_dump()
+                            if ti.booking_types
                             else {},
-                            "hotel_settings": ti.hotel_settings.model_dump()
-                            if ti.hotel_settings
-                            else {},
-                            "flight_settings": ti.flight_settings.model_dump()
-                            if ti.flight_settings
-                            else {},
-                            "transport_settings": ti.transport_settings.model_dump()
-                            if ti.transport_settings
-                            else {},
-                            "booking_types": (
-                                ti.booking_types.model_dump() if ti.booking_types else {}
+                            "flight_settings": (
+                                ti.flight_settings.model_dump() if ti.flight_settings else {}
+                            ),
+                            "hotel_settings": (
+                                ti.hotel_settings.model_dump() if ti.hotel_settings else {}
+                            ),
+                            "activity_settings": (
+                                ti.activity_settings.model_dump() if ti.activity_settings else {}
+                            ),
+                            "transport_settings": (
+                                ti.transport_settings.model_dump() if ti.transport_settings else {}
                             ),
                         }
-                        # Override _doc_settings with req.trip_inputs (most
-                        # current source — Zustand snapshot at send time).
-                        # Prevents stale/empty doc values from clobbering
-                        # correct pill selections in state_serde.restore_graph_state.
-                        if req.trip_inputs:
-                            req_ti = sanitize_trip_inputs_for_category_merge(
-                                dict(req.trip_inputs),
-                                req.message,
-                            )
-                            merge_user_owned_trip_settings(
-                                session_state["_doc_settings"],
-                                req_ti,
-                                user_owned_fields={
-                                    "activity_settings",
-                                    "hotel_settings",
-                                    "flight_settings",
-                                    "transport_settings",
-                                    "booking_types",
-                                },
-                            )
 
-                        # HARD TRACE: Log what we're injecting
-                        _cats = (
-                            session_state["_doc_settings"]
-                            .get("activity_settings", {})
-                            .get("categories", [])
-                        )
-                        logger.info(
-                            f"[{request_id}] _doc_settings injected: "
-                            f"activity_settings.categories={_cats}"
-                        )
-                    # ── Sync last_builder_success from document state ──
-                    if fresh_data.plan_view_state == "S3_ITINERARY_READY":
-                        session_state.setdefault("metadata", {})["last_builder_success"] = True
-                except Exception as e:
-                    logger.error(f"[{request_id}] _doc_settings injection FAILED: {e}")
-
-            # --- Log user input for DEBUG=full mode ---
-            log_user_input(req.message, request_id)
-
-            # Inject session_id into metadata so Phase B (local_expert background
-            # LLM enrichment) can write travel_intelligence back to the DB document.
-            if session_state.get("metadata") is None:
-                session_state["metadata"] = {}
-            session_state["metadata"]["session_id"] = session_id
-            if document_version is not None:
-                session_state["metadata"]["document_version"] = int(document_version)
-
-            # ── Seed trip_plan with document's core fields ──
-            _seed_trip_plan_from_inputs(session_state)
-
-            # Stream tokens from run_turn_streaming with per-event timeout
-            # Use route timeout for total stream duration protection
-            route_timeout_seconds = settings.graph_plan_route_timeout_ms / 1000.0
-            final_result = None
-            token_count = 0
-            stream_start = asyncio.get_event_loop().time()
-
-            doc_settings = session_state.pop("_doc_settings", None)
-
-            from app.planner.coordinator import execute_turn
-            from app.planner.services.state_serde import restore_agent_state
-
-            coordinator_state = restore_agent_state(session_state)
-            # Propagate patch-driven field changes past restore_agent_state
-            # (which only copies keys from _agent_state_defaults).
-            _pcf = session_state.get("_patch_changed_fields")
-            if _pcf:
-                coordinator_state["_patch_changed_fields"] = _pcf
-            cancel_event = asyncio.Event()
-            event_source = execute_turn(
-                user_message=req.message,
-                state=coordinator_state,
-                session_id=session_id,
-                doc_settings=doc_settings,
-                cancel_event=cancel_event,
-            )
-
-            with spend_guard_scope(session_id):
-                async for event in event_source:
-                    # Check for client disconnect
-                    if await request.is_disconnected():
-                        logger.info(f"[{request_id}] Client disconnected, cancelling stream")
-                        cancel_event.set()
-                        break
-
-                    # Check if we've exceeded total stream timeout
-                    elapsed = asyncio.get_event_loop().time() - stream_start
-                    if elapsed > route_timeout_seconds:
-                        logger.error(
-                            f"[{request_id}] Stream timeout after {elapsed:.1f}s "
-                            f"(limit: {route_timeout_seconds}s)"
-                        )
-                        timeout_payload = json.dumps(
-                            {"type": "error", "message": f"Stream timed out after {elapsed:.1f}s"}
-                        )
-                        yield f"event: error\ndata: {timeout_payload}\n\n"
-                        return
-
-                    if event["type"] == "token":
-                        token_count += 1
-                        if token_count <= 5 or token_count % 50 == 0:
-                            logger.debug(f"[{request_id}] Streaming token #{token_count}")
-                        yield f"event: token\ndata: {json.dumps(event)}\n\n"
-                    elif event["type"] == "node_status":
-                        # Forward strategy node status for frontend progress tracking
-                        node = event["data"].get("node")
-                        status = event["data"].get("status")
-                        logger.debug(f"[{request_id}] Node status: {node} - {status}")
-                        yield f"event: node_status\ndata: {json.dumps(event)}\n\n"
-                    elif event["type"] == "partial":
-                        # Forward partial data events (v2 emits these from tool results)
-                        yield f"event: partial\ndata: {json.dumps(event)}\n\n"
-                    elif event["type"] == "complete":
-                        logger.debug(f"[{request_id}] Stream complete after {token_count} tokens")
-                        final_result = event["data"]
-                    elif event["type"] == "feasibility_warning":
-                        # Forward feasibility warnings for frontend toast feedback
-                        logger.debug(
-                            f"[{request_id}] Feasibility warning: "
-                            f"{event.get('data', {}).get('topic')}"
-                        )
-                        yield f"event: feasibility_warning\ndata: {json.dumps(event)}\n\n"
-                    elif event["type"] == "error":
-                        # Forward graph errors to frontend with actual message
-                        error_msg = event.get("message", "Unknown graph error")
-                        logger.error(f"[{request_id}] Graph error: {error_msg}")
-                        error_payload = json.dumps({"type": "error", "message": error_msg})
-                        yield f"event: error\ndata: {error_payload}\n\n"
-                        return
-
-            if final_result is None:
-                error_payload = json.dumps({"type": "error", "message": "No result from graph"})
-                yield f"event: error\ndata: {error_payload}\n\n"
-                return
-
-            # --- Process and persist final result ---
-            assistant_message = final_result.get("assistant_message", "")
-            if len(assistant_message) > settings.assistant_msg_max_len:
-                try:
-                    assistant_message = condense_long_message(
-                        assistant_message,
-                        settings.assistant_msg_max_len,
-                    )
-                except Exception as e:
-                    logger.warning(f"[{request_id}] Condense failed: {e}")
-                    assistant_message = truncate_assistant_message(assistant_message)
-
-            suggested_responses = validate_suggested_responses(
-                final_result.get("suggested_responses", [])
-            )
-
-            # --- Log LLM output for DEBUG=full mode ---
-            log_llm_output(assistant_message, request_id)
-
-            updated_session_state = final_result.get("session_state", session_state)
-            branches = final_result.get("branches", [])
-            trip_inputs = final_result.get(
-                "trip_inputs", updated_session_state.get("trip_inputs", {})
-            )
-            if hasattr(trip_inputs, "model_dump"):
-                trip_inputs = trip_inputs.model_dump()
-            if not isinstance(trip_inputs, dict):
-                trip_inputs = {}
-            # Merge authoritative trip_settings from graph result (contains
-            # booking_types upgrades, min_stars changes, etc.).
-            # Only merge when the graph explicitly emits trip_settings to avoid
-            # sourcing stale values from session state.
-            graph_trip_settings = final_result.get("trip_settings")
-            if isinstance(graph_trip_settings, dict) and isinstance(trip_inputs, dict):
-                for settings_key in (
-                    "booking_types",
-                    "flight_settings",
-                    "hotel_settings",
-                    "activity_settings",
-                    "transport_settings",
-                ):
-                    if settings_key in graph_trip_settings:
-                        graph_val = graph_trip_settings[settings_key]
-                        existing_val = trip_inputs.get(settings_key)
-                        if isinstance(graph_val, dict) and isinstance(existing_val, dict):
-                            for k, v in graph_val.items():
-                                if v is not None:
-                                    existing_val[k] = v
-                        elif graph_val is not None:
-                            trip_inputs[settings_key] = graph_val
-
-            ready_to_generate_now = final_result.get("ready_to_generate", False)
-            coordinator_reset = bool(final_result.get("coordinator_reset", False))
-            changes_made = bool(
-                final_result.get(
-                    "changes_made",
-                    trip_inputs != session_state.get("trip_inputs", {}),
-                )
-            )
-
-            # Persist document
-            new_document_version = document_version
-            updated_at = datetime.now().isoformat()
-            if document:
-                try:
-                    from app.schemas import DocumentBranch, DocumentTripInputs
-                    from app.schemas import Tile as TileSchema
-
-                    branch_objs = []
-                    for b in branches:
-                        if isinstance(b, dict):
-                            branch_objs.append(DocumentBranch.model_validate(b))
-                        else:
-                            branch_objs.append(b)
-
-                    trip_inputs_obj = None
-                    trip_inputs_explicit_nulls: set[str] | None = None
-                    reset_trip_inputs = False
-                    if coordinator_reset:
-                        trip_inputs_obj = DocumentTripInputs.model_validate({})
-                        reset_trip_inputs = True
-                    elif trip_inputs:
-                        if isinstance(trip_inputs, dict):
-                            trip_inputs_obj = DocumentTripInputs.model_validate(trip_inputs)
-                        else:
-                            trip_inputs_obj = trip_inputs
-
-                    trip_context = await get_latest_trip_context_for_session(db, session=db_session)
-                    trip_context_id = trip_context.id if trip_context else 0
-
-                    # Extract viewModel fields from graph result for persistence
-                    graph_doc = final_result.get("document", {})
-                    graph_debug = graph_doc.get("_debug", {})
-                    graph_applied_updates = graph_doc.get("applied_updates_raw")
-                    if not isinstance(graph_applied_updates, list) and isinstance(
-                        graph_debug, dict
-                    ):
-                        graph_applied_updates = graph_debug.get("applied_updates_raw")
-                    if not isinstance(graph_applied_updates, list):
-                        graph_applied_updates = graph_doc.get("applied_updates", [])
-                    applied_fields = (
-                        {
-                            field
-                            for field in graph_applied_updates
-                            if isinstance(field, str) and field.strip()
-                        }
-                        if isinstance(graph_applied_updates, list)
-                        else set()
-                    )
-                    if not coordinator_reset and applied_fields and isinstance(trip_inputs, dict):
-                        scalar_clearable = {
-                            "destination",
-                            "origin",
-                            "start_date",
-                            "end_date",
-                            "adults",
-                            "children",
-                            "requires_assistance",
-                            "budget",
-                            "trip_duration",
-                            "date_window_start",
-                            "date_window_end",
-                        }
-                        settings_clearable = {
-                            "booking_types",
-                            "flight_settings",
-                            "hotel_settings",
-                            "activity_settings",
-                            "transport_settings",
-                        }
-                        detected_nulls = {
-                            field
-                            for field in scalar_clearable
-                            if field in applied_fields and field not in trip_inputs
-                        }
-                        for field in settings_clearable:
-                            if field not in applied_fields:
-                                continue
-                            value = trip_inputs.get(field)
-                            if value in (None, {}, []):
-                                detected_nulls.add(field)
-                        activity_settings_value = trip_inputs.get("activity_settings")
-                        activity_categories_cleared = "activity_categories" in applied_fields and (
-                            activity_settings_value in (None, {}, [])
-                            or (
-                                isinstance(activity_settings_value, dict)
-                                and not activity_settings_value.get("categories")
-                            )
-                        )
-                        if activity_categories_cleared:
-                            detected_nulls.add("activity_settings")
-                        if detected_nulls:
-                            trip_inputs_explicit_nulls = detected_nulls
-
-                    # Extract tiles from graph document (NOT session_state.metadata!)
-                    # Tiles are returned in final_result.document.tiles by _format_result
-                    tiles_from_graph = graph_doc.get("tiles", {})
-                    tiles_dict = {}
-                    graph_tiles_present = "tiles" in graph_doc and isinstance(
-                        tiles_from_graph, dict
-                    )
-                    if isinstance(tiles_from_graph, dict):
-                        for tile_id, tile_data in tiles_from_graph.items():
-                            if isinstance(tile_data, dict):
-                                _sanitize_tile_geo(tile_data)
-                                tiles_dict[tile_id] = TileSchema.model_validate(tile_data)
-                            elif isinstance(tile_data, TileSchema):
-                                tiles_dict[tile_id] = tile_data
-                    if coordinator_reset:
-                        tiles_dict = {}
-                    logger.info(f"[TILES] Persisting {len(tiles_dict)} tiles to DB")
-                    graph_strategy_sections = graph_doc.get("strategy_sections", [])
-                    strategy_section_objs = None
-                    if coordinator_reset:
-                        strategy_section_objs = []
-                    elif isinstance(graph_strategy_sections, list):
-                        strategy_section_objs = [
-                            StrategySection(**s) if isinstance(s, dict) else s
-                            for s in graph_strategy_sections
-                        ]
-
-                    # Extract NL-extracted settings for deep-merge persistence
-                    nl_extracted = updated_session_state.get("metadata", {}).get(
-                        "extracted_settings"
-                    )
-                    if applied_fields and isinstance(trip_inputs, dict):
-                        derived_extracted: dict[str, Any] = {}
-                        hotel_settings_in = trip_inputs.get("hotel_settings")
-                        if (
-                            "hotel_min_stars" in applied_fields
-                            and isinstance(hotel_settings_in, dict)
-                            and hotel_settings_in.get("min_stars") is not None
-                        ):
-                            derived_extracted["hotel_min_stars"] = hotel_settings_in.get(
-                                "min_stars"
-                            )
-                        if (
-                            "hotel_amenities" in applied_fields
-                            and isinstance(hotel_settings_in, dict)
-                            and "amenities" in hotel_settings_in
-                        ):
-                            derived_extracted["hotel_amenities"] = hotel_settings_in.get(
-                                "amenities"
-                            )
-                        if (
-                            "hotel_style" in applied_fields
-                            and isinstance(hotel_settings_in, dict)
-                            and hotel_settings_in.get("style")
-                        ):
-                            derived_extracted["hotel_style"] = hotel_settings_in.get("style")
-                        if (
-                            "hotel_location" in applied_fields
-                            and isinstance(hotel_settings_in, dict)
-                            and hotel_settings_in.get("location")
-                        ):
-                            derived_extracted["hotel_location"] = hotel_settings_in.get("location")
-
-                        flight_settings_in = trip_inputs.get("flight_settings")
-                        if isinstance(flight_settings_in, dict):
-                            if (
-                                "flight_direct_only" in applied_fields
-                                and flight_settings_in.get("direct_only") is not None
-                            ):
-                                derived_extracted["flight_direct_only"] = flight_settings_in.get(
-                                    "direct_only"
-                                )
-                            if "flight_cabin_class" in applied_fields and flight_settings_in.get(
-                                "cabin_class"
-                            ):
-                                derived_extracted["flight_cabin_class"] = flight_settings_in.get(
-                                    "cabin_class"
-                                )
-
-                        activity_settings_in = trip_inputs.get("activity_settings")
-                        if (
-                            "skill_level" in applied_fields
-                            and isinstance(activity_settings_in, dict)
-                            and activity_settings_in.get("skill_level")
-                        ):
-                            derived_extracted["activity_skill_level"] = activity_settings_in.get(
-                                "skill_level"
-                            )
-
-                        booking_types_in = trip_inputs.get("booking_types")
-                        if (
-                            "flights_toggle" in applied_fields
-                            and isinstance(booking_types_in, dict)
-                            and booking_types_in.get("flights") is not None
-                        ):
-                            derived_extracted["flights_toggle"] = booking_types_in.get("flights")
-
-                        if derived_extracted:
-                            if isinstance(nl_extracted, dict):
-                                merged_extracted = dict(nl_extracted)
-                                merged_extracted.update(derived_extracted)
-                                nl_extracted = merged_extracted
-                            else:
-                                nl_extracted = derived_extracted
-
-                    # Convert graph-built day_cards for persistence
-                    graph_day_cards_raw = graph_doc.get("itinerary_day_cards")
-                    is_flex_dates = bool(trip_inputs.get("date_flex"))
-                    day_card_objs = None
-                    persist_view_state = resolve_itinerary_document_view_state(
-                        graph_doc.get("plan_view_state"),
-                        graph_day_cards_raw,
-                        graph_doc.get("constraint_violations", []),
-                    )
-                    if coordinator_reset:
-                        day_card_objs = []
-                    elif is_flex_dates:
-                        # Flexible dates are planning-only; persist no concrete day cards.
-                        day_card_objs = []
-                    elif "itinerary_day_cards" in graph_doc:
-                        if graph_day_cards_raw:
-                            day_card_objs = [
-                                DayCard(**dc) if isinstance(dc, dict) else dc
-                                for dc in graph_day_cards_raw
-                            ]
-                        else:
-                            day_card_objs = []
-                    elif (
-                        graph_doc.get("strategy_sections")
-                        and document_data
-                        and document_data.day_cards
-                    ):
-                        # Strategy changed but no new itinerary built — check for specialist coverage mismatch.
-                        # If the strategy_sections no longer match the day_cards (specialist added or removed),
-                        # clear stale cards by passing day_card_objs=[] (explicit empty vs None which is no-op).
-                        _graph_strat_topics: set[str] = set()
-                        for _s in graph_doc.get("strategy_sections", []):
-                            _st = (
-                                _s.get("specialist_type")
-                                if isinstance(_s, dict)
-                                else _s.specialist_type
-                            )
-                            if _st and _st not in ("local_expert", "general"):
-                                _graph_strat_topics.add(_st)
-                        _existing_dc_topics: set[str] = set()
-                        for _dc in document_data.day_cards:
-                            for _b in _dc.blocks:
-                                if _b.specialist_type:
-                                    _existing_dc_topics.add(_b.specialist_type)
-                        from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES
-
-                        # Compare only Tier 1 specialist topics so browse-inserted blocks
-                        # (e.g., cultural/food) do not trigger stale detection.
-                        _existing_dc_tier1 = {
-                            _topic
-                            for _topic in _existing_dc_topics
-                            if _topic in TIER1_SPECIALIST_NAMES
-                        }
-                        if _existing_dc_tier1 != _graph_strat_topics:
-                            _debug(
-                                f"[streaming] Stale day_cards in DB: strategy={_graph_strat_topics}, "
-                                f"day_cards={_existing_dc_topics} — clearing for DB persistence"
-                            )
-                            day_card_objs = []  # Explicit empty list clears DB; None would be a no-op
-
-                    constraints_validated_payload: List[Dict[str, Any]] | None
-                    if coordinator_reset:
-                        constraints_validated_payload = []
-                    elif "constraints_validated" in graph_doc:
-                        constraints_validated_payload = _normalize_constraints_validated(
-                            graph_doc.get("constraints_validated")
-                        )
-                    else:
-                        constraints_validated_payload = None
-
-                    updated_doc = await apply_planner_update(
-                        db,
-                        doc=document,
-                        trip_context_id=trip_context_id,
-                        trip_inputs=trip_inputs_obj,
-                        trip_inputs_explicit_nulls=trip_inputs_explicit_nulls,
-                        reset_trip_inputs=reset_trip_inputs,
-                        branches=branch_objs if (branch_objs or coordinator_reset) else None,
-                        replace_branches=coordinator_reset,
-                        tiles=(
-                            tiles_dict
-                            if (tiles_dict or coordinator_reset or graph_tiles_present)
-                            else None
-                        ),
-                        replace_tiles=coordinator_reset or graph_tiles_present,
-                        # ViewModel fields for session restoration
-                        plan_view_state=persist_view_state,
-                        strategy_sections=strategy_section_objs,
-                        executed_strategy_topics=graph_doc.get("executed_strategy_topics"),
-                        pending_strategy_topics=graph_doc.get("pending_strategy_topics"),
-                        day_cards=day_card_objs,
-                        can_expand_to_itinerary=graph_doc.get(
-                            "can_expand_to_itinerary",
-                            bool(graph_strategy_sections),
-                        ),
-                        constraints_validated=constraints_validated_payload,
-                        constraint_violations=graph_doc.get(
-                            "constraint_violations", [] if coordinator_reset else None
-                        ),
-                        extracted_settings=nl_extracted,
-                    )
-                    if updated_doc:
-                        new_document_version = updated_doc.version
-                        document_data = get_document_data(updated_doc)
-
-                    # Record assistant message
                     await record_chat_message(
                         db,
                         session=db_session,
                         trip_context=None,
-                        role="assistant",
-                        content=assistant_message,
+                        role="user",
+                        content=user_message_content,
                         metadata=None,
+                        trip_inputs_snapshot=trip_inputs_snapshot,
                     )
 
-                    await db.commit()
+                    # Hydrate session state from document
+                    if document_data:
+                        if document_data.branches:
+                            session_state["branches"] = [
+                                b.model_dump() for b in document_data.branches
+                            ]
+                        # Restore specialist content so non-dispatch turns
+                        # (origin/budget/travelers) preserve strategy_sections
+                        # and day_cards. Document is the authoritative source;
+                        # empty lists from document will clear session state,
+                        # ensuring intentional resets propagate correctly.
+                        if document_data.strategy_sections is not None:
+                            session_state["strategy_sections"] = [
+                                s.model_dump() for s in document_data.strategy_sections
+                            ]
+                        if document_data.day_cards is not None:
+                            session_state["day_cards"] = [
+                                dc.model_dump() for dc in document_data.day_cards
+                            ]
+                        # CRITICAL FIX: Always use document trip_inputs as BASELINE,
+                        # then merge request on top. This ensures fields set via settings
+                        # panel (origin, flight_settings, etc.) are preserved when the
+                        # chat request only has partial trip_inputs.
+                        # @see docs/plan_graph_analysis.md - Origin sync for flight fetching
+                        if document_data.trip_inputs:
+                            doc_inputs = document_data.trip_inputs.model_dump()
+                            session_inputs = session_state.get("trip_inputs", {})
+                            # User-owned settings fields — document is SSoT (set via PATCH
+                            # from frontend sheets). Session may carry stale values from
+                            # previous graph runs; document always wins for these.
+                            _USER_OWNED_SETTINGS = {
+                                "activity_settings",
+                                "hotel_settings",
+                                "flight_settings",
+                                "transport_settings",
+                            }
+                            # Document as baseline, session overrides for graph-owned fields only
+                            merged = {**doc_inputs}
+                            for k, v in session_inputs.items():
+                                if v is not None and k not in _USER_OWNED_SETTINGS:
+                                    merged[k] = v
+                            session_state["trip_inputs"] = normalize_trip_inputs(merged)
 
-                    # Phase B: fire local_expert LLM enrichment AFTER db.commit() so it
-                    # can't be stomped by apply_planner_update, and runs outside the
-                    # graph's asyncio.timeout() context so it isn't cancelled.
-                    import time as _time
+                            # req.trip_inputs is the freshest source for user-owned
+                            # settings (Zustand snapshot at send time).  The document
+                            # may be stale if ensureSettingsFlushed PATCH hasn't
+                            # committed yet, or if get_or_create_document created a
+                            # default doc with empty categories.
+                            if req.trip_inputs:
+                                req_ti = sanitize_trip_inputs_for_category_merge(
+                                    dict(req.trip_inputs),
+                                    req.message,
+                                )
+                                current = session_state["trip_inputs"]
+                                merge_user_owned_trip_settings(
+                                    current,
+                                    req_ti,
+                                    user_owned_fields=_USER_OWNED_SETTINGS,
+                                )
+                                session_state["trip_inputs"] = normalize_trip_inputs(current)
 
-                    from app.planner.nodes.local_expert import (
-                        _ENRICHMENT_TTL_SECONDS,
-                        _pending_enrichments,
-                        _pending_lock,
-                        _persist_travel_intelligence,
-                    )
-
-                    async with _pending_lock:
-                        _entry = _pending_enrichments.pop(session_id, None)
-                    if _entry is not None:
-                        _enrich_fn, _created_at = _entry
-                        if _time.monotonic() - _created_at < _ENRICHMENT_TTL_SECONDS:
-                            # Wrap in tracing_context(enabled=False) so this post-graph
-                            # background LLM call doesn't create an orphan LangSmith trace.
-                            from langsmith.run_helpers import tracing_context
-
-                            async def _enrich_no_trace(fn=_enrich_fn):
-                                with tracing_context(enabled=False):
-                                    with spend_guard_scope(session_id):
-                                        await fn()
-
-                            _enrich_task = asyncio.create_task(_enrich_no_trace())
-                            _track_bg_task(_enrich_task)
-                            logger.debug("[SSE] Phase B: enrichment task fired")
-                        else:
-                            logger.warning(
-                                "[SSE] Phase B: stale enrichment for %s",
-                                session_id,
+                            # HARD TRACE: Log doc's activity categories at merge time
+                            _doc_cats = doc_inputs.get("activity_settings", {}).get(
+                                "categories", []
                             )
-                            try:
-                                await _persist_travel_intelligence(
-                                    session_id,
-                                    None,
-                                    enrichment_state="failed",
-                                    error_code="stale",
+                            _final_cats = (
+                                session_state["trip_inputs"]
+                                .get("activity_settings", {})
+                                .get("categories", [])
+                            )
+                            logger.info(
+                                f"[{request_id}] trip_inputs merge: "
+                                f"doc.categories={_doc_cats}, "
+                                f"final.categories={_final_cats}, "
+                                f"doc.origin={doc_inputs.get('origin')}"
+                            )
+                        # Inject user-pinned tiles into metadata so graph state preserves them
+                        if document_data.user_pinned_tiles:
+                            if "metadata" not in session_state:
+                                session_state["metadata"] = {}
+                            session_state["metadata"]["user_pinned_tiles"] = (
+                                document_data.user_pinned_tiles
+                            )
+                except Exception as e:
+                    logger.warning(f"[{request_id}] Failed to load document for session: {e}")
+
+                # ── Pass document's user-owned settings to graph state ──
+                # _restore_graph_state merges these into state.metadata["trip_inputs"],
+                # ensuring the graph sees pill selections / settings panel values
+                # even when the session carries stale trip_inputs from a prior turn.
+                if document:
+                    try:
+                        await db.refresh(document)
+                        fresh_data = get_document_data(document)
+                        if fresh_data.trip_inputs:
+                            ti = fresh_data.trip_inputs
+                            session_state["_doc_settings"] = {
+                                "activity_settings": ti.activity_settings.model_dump()
+                                if ti.activity_settings
+                                else {},
+                                "hotel_settings": ti.hotel_settings.model_dump()
+                                if ti.hotel_settings
+                                else {},
+                                "flight_settings": ti.flight_settings.model_dump()
+                                if ti.flight_settings
+                                else {},
+                                "transport_settings": ti.transport_settings.model_dump()
+                                if ti.transport_settings
+                                else {},
+                                "booking_types": (
+                                    ti.booking_types.model_dump() if ti.booking_types else {}
+                                ),
+                            }
+                            # Override _doc_settings with req.trip_inputs (most
+                            # current source — Zustand snapshot at send time).
+                            # Prevents stale/empty doc values from clobbering
+                            # correct pill selections in state_serde.restore_graph_state.
+                            if req.trip_inputs:
+                                req_ti = sanitize_trip_inputs_for_category_merge(
+                                    dict(req.trip_inputs),
+                                    req.message,
                                 )
-                            except Exception as _persist_err:
+                                merge_user_owned_trip_settings(
+                                    session_state["_doc_settings"],
+                                    req_ti,
+                                    user_owned_fields={
+                                        "activity_settings",
+                                        "hotel_settings",
+                                        "flight_settings",
+                                        "transport_settings",
+                                        "booking_types",
+                                    },
+                                )
+
+                            # HARD TRACE: Log what we're injecting
+                            _cats = (
+                                session_state["_doc_settings"]
+                                .get("activity_settings", {})
+                                .get("categories", [])
+                            )
+                            logger.info(
+                                f"[{request_id}] _doc_settings injected: "
+                                f"activity_settings.categories={_cats}"
+                            )
+                        # ── Sync last_builder_success from document state ──
+                        if fresh_data.plan_view_state == "S3_ITINERARY_READY":
+                            session_state.setdefault("metadata", {})["last_builder_success"] = True
+                    except Exception as e:
+                        logger.error(f"[{request_id}] _doc_settings injection FAILED: {e}")
+
+                # --- Log user input for DEBUG=full mode ---
+                log_user_input(req.message, request_id)
+
+                # Inject session_id into metadata so Phase B (local_expert background
+                # LLM enrichment) can write travel_intelligence back to the DB document.
+                if session_state.get("metadata") is None:
+                    session_state["metadata"] = {}
+                session_state["metadata"]["session_id"] = session_id
+                if document_version is not None:
+                    session_state["metadata"]["document_version"] = int(document_version)
+
+                # ── Seed trip_plan with document's core fields ──
+                _seed_trip_plan_from_inputs(session_state)
+
+                # Stream tokens from run_turn_streaming with per-event timeout
+                # Use route timeout for total stream duration protection
+                route_timeout_seconds = settings.graph_plan_route_timeout_ms / 1000.0
+                final_result = None
+                token_count = 0
+                stream_start = asyncio.get_event_loop().time()
+
+                doc_settings = session_state.pop("_doc_settings", None)
+
+                from app.planner.coordinator import execute_turn
+                from app.planner.services.state_serde import restore_agent_state
+
+                coordinator_state = restore_agent_state(session_state)
+                # Propagate patch-driven field changes past restore_agent_state
+                # (which only copies keys from _agent_state_defaults).
+                _pcf = session_state.get("_patch_changed_fields")
+                if _pcf:
+                    coordinator_state["_patch_changed_fields"] = _pcf
+                cancel_event = asyncio.Event()
+                event_source = execute_turn(
+                    user_message=req.message,
+                    state=coordinator_state,
+                    session_id=session_id,
+                    doc_settings=doc_settings,
+                    cancel_event=cancel_event,
+                )
+
+                with spend_guard_scope(session_id):
+                    async for event in event_source:
+                        # Check for client disconnect
+                        if await request.is_disconnected():
+                            logger.info(f"[{request_id}] Client disconnected, cancelling stream")
+                            cancel_event.set()
+                            break
+
+                        # Check if we've exceeded total stream timeout
+                        elapsed = asyncio.get_event_loop().time() - stream_start
+                        if elapsed > route_timeout_seconds:
+                            logger.error(
+                                f"[{request_id}] Stream timeout after {elapsed:.1f}s "
+                                f"(limit: {route_timeout_seconds}s)"
+                            )
+                            timeout_payload = json.dumps(
+                                {
+                                    "type": "error",
+                                    "message": f"Stream timed out after {elapsed:.1f}s",
+                                }
+                            )
+                            yield f"event: error\ndata: {timeout_payload}\n\n"
+                            return
+
+                        if event["type"] == "token":
+                            token_count += 1
+                            if token_count <= 5 or token_count % 50 == 0:
+                                logger.debug(f"[{request_id}] Streaming token #{token_count}")
+                            yield f"event: token\ndata: {json.dumps(event)}\n\n"
+                        elif event["type"] == "node_status":
+                            # Forward strategy node status for frontend progress tracking
+                            node = event["data"].get("node")
+                            status = event["data"].get("status")
+                            logger.debug(f"[{request_id}] Node status: {node} - {status}")
+                            yield f"event: node_status\ndata: {json.dumps(event)}\n\n"
+                        elif event["type"] == "partial":
+                            # Forward partial data events (v2 emits these from tool results)
+                            yield f"event: partial\ndata: {json.dumps(event)}\n\n"
+                        elif event["type"] == "complete":
+                            logger.debug(
+                                f"[{request_id}] Stream complete after {token_count} tokens"
+                            )
+                            final_result = event["data"]
+                        elif event["type"] == "feasibility_warning":
+                            # Forward feasibility warnings for frontend toast feedback
+                            logger.debug(
+                                f"[{request_id}] Feasibility warning: "
+                                f"{event.get('data', {}).get('topic')}"
+                            )
+                            yield f"event: feasibility_warning\ndata: {json.dumps(event)}\n\n"
+                        elif event["type"] == "error":
+                            # Forward graph errors to frontend with actual message
+                            error_msg = event.get("message", "Unknown graph error")
+                            logger.error(f"[{request_id}] Graph error: {error_msg}")
+                            error_payload = json.dumps({"type": "error", "message": error_msg})
+                            yield f"event: error\ndata: {error_payload}\n\n"
+                            return
+
+                if final_result is None:
+                    error_payload = json.dumps({"type": "error", "message": "No result from graph"})
+                    yield f"event: error\ndata: {error_payload}\n\n"
+                    return
+
+                # --- Process and persist final result ---
+                assistant_message = final_result.get("assistant_message", "")
+                if len(assistant_message) > settings.assistant_msg_max_len:
+                    try:
+                        assistant_message = condense_long_message(
+                            assistant_message,
+                            settings.assistant_msg_max_len,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[{request_id}] Condense failed: {e}")
+                        assistant_message = truncate_assistant_message(assistant_message)
+
+                suggested_responses = validate_suggested_responses(
+                    final_result.get("suggested_responses", [])
+                )
+
+                # --- Log LLM output for DEBUG=full mode ---
+                log_llm_output(assistant_message, request_id)
+
+                updated_session_state = final_result.get("session_state", session_state)
+                branches = final_result.get("branches", [])
+                trip_inputs = final_result.get(
+                    "trip_inputs", updated_session_state.get("trip_inputs", {})
+                )
+                if hasattr(trip_inputs, "model_dump"):
+                    trip_inputs = trip_inputs.model_dump()
+                if not isinstance(trip_inputs, dict):
+                    trip_inputs = {}
+                # Merge authoritative trip_settings from graph result (contains
+                # booking_types upgrades, min_stars changes, etc.).
+                # Only merge when the graph explicitly emits trip_settings to avoid
+                # sourcing stale values from session state.
+                graph_trip_settings = final_result.get("trip_settings")
+                if isinstance(graph_trip_settings, dict) and isinstance(trip_inputs, dict):
+                    for settings_key in (
+                        "booking_types",
+                        "flight_settings",
+                        "hotel_settings",
+                        "activity_settings",
+                        "transport_settings",
+                    ):
+                        if settings_key in graph_trip_settings:
+                            graph_val = graph_trip_settings[settings_key]
+                            existing_val = trip_inputs.get(settings_key)
+                            if isinstance(graph_val, dict) and isinstance(existing_val, dict):
+                                for k, v in graph_val.items():
+                                    if v is not None:
+                                        existing_val[k] = v
+                            elif graph_val is not None:
+                                trip_inputs[settings_key] = graph_val
+
+                ready_to_generate_now = final_result.get("ready_to_generate", False)
+                coordinator_reset = bool(final_result.get("coordinator_reset", False))
+                changes_made = bool(
+                    final_result.get(
+                        "changes_made",
+                        trip_inputs != session_state.get("trip_inputs", {}),
+                    )
+                )
+
+                # Persist document
+                new_document_version = document_version
+                updated_at = datetime.now().isoformat()
+                if document:
+                    try:
+                        from app.schemas import DocumentBranch, DocumentTripInputs
+                        from app.schemas import Tile as TileSchema
+
+                        branch_objs = []
+                        for b in branches:
+                            if isinstance(b, dict):
+                                branch_objs.append(DocumentBranch.model_validate(b))
+                            else:
+                                branch_objs.append(b)
+
+                        trip_inputs_obj = None
+                        trip_inputs_explicit_nulls: set[str] | None = None
+                        reset_trip_inputs = False
+                        if coordinator_reset:
+                            trip_inputs_obj = DocumentTripInputs.model_validate({})
+                            reset_trip_inputs = True
+                        elif trip_inputs:
+                            if isinstance(trip_inputs, dict):
+                                trip_inputs_obj = DocumentTripInputs.model_validate(trip_inputs)
+                            else:
+                                trip_inputs_obj = trip_inputs
+
+                        trip_context = await get_latest_trip_context_for_session(
+                            db, session=db_session
+                        )
+                        trip_context_id = trip_context.id if trip_context else 0
+
+                        # Extract viewModel fields from graph result for persistence
+                        graph_doc = final_result.get("document", {})
+                        graph_debug = graph_doc.get("_debug", {})
+                        graph_applied_updates = graph_doc.get("applied_updates_raw")
+                        if not isinstance(graph_applied_updates, list) and isinstance(
+                            graph_debug, dict
+                        ):
+                            graph_applied_updates = graph_debug.get("applied_updates_raw")
+                        if not isinstance(graph_applied_updates, list):
+                            graph_applied_updates = graph_doc.get("applied_updates", [])
+                        applied_fields = (
+                            {
+                                field
+                                for field in graph_applied_updates
+                                if isinstance(field, str) and field.strip()
+                            }
+                            if isinstance(graph_applied_updates, list)
+                            else set()
+                        )
+                        if (
+                            not coordinator_reset
+                            and applied_fields
+                            and isinstance(trip_inputs, dict)
+                        ):
+                            scalar_clearable = {
+                                "destination",
+                                "origin",
+                                "start_date",
+                                "end_date",
+                                "adults",
+                                "children",
+                                "requires_assistance",
+                                "budget",
+                                "trip_duration",
+                                "date_window_start",
+                                "date_window_end",
+                            }
+                            settings_clearable = {
+                                "booking_types",
+                                "flight_settings",
+                                "hotel_settings",
+                                "activity_settings",
+                                "transport_settings",
+                            }
+                            detected_nulls = {
+                                field
+                                for field in scalar_clearable
+                                if field in applied_fields and field not in trip_inputs
+                            }
+                            for field in settings_clearable:
+                                if field not in applied_fields:
+                                    continue
+                                value = trip_inputs.get(field)
+                                if value in (None, {}, []):
+                                    detected_nulls.add(field)
+                            activity_settings_value = trip_inputs.get("activity_settings")
+                            activity_categories_cleared = (
+                                "activity_categories" in applied_fields
+                                and (
+                                    activity_settings_value in (None, {}, [])
+                                    or (
+                                        isinstance(activity_settings_value, dict)
+                                        and not activity_settings_value.get("categories")
+                                    )
+                                )
+                            )
+                            if activity_categories_cleared:
+                                detected_nulls.add("activity_settings")
+                            if detected_nulls:
+                                trip_inputs_explicit_nulls = detected_nulls
+
+                        # Extract tiles from graph document (NOT session_state.metadata!)
+                        # Tiles are returned in final_result.document.tiles by _format_result
+                        tiles_from_graph = graph_doc.get("tiles", {})
+                        tiles_dict = {}
+                        graph_tiles_present = "tiles" in graph_doc and isinstance(
+                            tiles_from_graph, dict
+                        )
+                        if isinstance(tiles_from_graph, dict):
+                            for tile_id, tile_data in tiles_from_graph.items():
+                                if isinstance(tile_data, dict):
+                                    _sanitize_tile_geo(tile_data)
+                                    tiles_dict[tile_id] = TileSchema.model_validate(tile_data)
+                                elif isinstance(tile_data, TileSchema):
+                                    tiles_dict[tile_id] = tile_data
+                        if coordinator_reset:
+                            tiles_dict = {}
+                        logger.info(f"[TILES] Persisting {len(tiles_dict)} tiles to DB")
+                        graph_strategy_sections = graph_doc.get("strategy_sections", [])
+                        strategy_section_objs = None
+                        if coordinator_reset:
+                            strategy_section_objs = []
+                        elif isinstance(graph_strategy_sections, list):
+                            strategy_section_objs = [
+                                StrategySection(**s) if isinstance(s, dict) else s
+                                for s in graph_strategy_sections
+                            ]
+
+                        # Extract NL-extracted settings for deep-merge persistence
+                        nl_extracted = updated_session_state.get("metadata", {}).get(
+                            "extracted_settings"
+                        )
+                        if applied_fields and isinstance(trip_inputs, dict):
+                            derived_extracted: dict[str, Any] = {}
+                            hotel_settings_in = trip_inputs.get("hotel_settings")
+                            if (
+                                "hotel_min_stars" in applied_fields
+                                and isinstance(hotel_settings_in, dict)
+                                and hotel_settings_in.get("min_stars") is not None
+                            ):
+                                derived_extracted["hotel_min_stars"] = hotel_settings_in.get(
+                                    "min_stars"
+                                )
+                            if (
+                                "hotel_amenities" in applied_fields
+                                and isinstance(hotel_settings_in, dict)
+                                and "amenities" in hotel_settings_in
+                            ):
+                                derived_extracted["hotel_amenities"] = hotel_settings_in.get(
+                                    "amenities"
+                                )
+                            if (
+                                "hotel_style" in applied_fields
+                                and isinstance(hotel_settings_in, dict)
+                                and hotel_settings_in.get("style")
+                            ):
+                                derived_extracted["hotel_style"] = hotel_settings_in.get("style")
+                            if (
+                                "hotel_location" in applied_fields
+                                and isinstance(hotel_settings_in, dict)
+                                and hotel_settings_in.get("location")
+                            ):
+                                derived_extracted["hotel_location"] = hotel_settings_in.get(
+                                    "location"
+                                )
+
+                            flight_settings_in = trip_inputs.get("flight_settings")
+                            if isinstance(flight_settings_in, dict):
+                                if (
+                                    "flight_direct_only" in applied_fields
+                                    and flight_settings_in.get("direct_only") is not None
+                                ):
+                                    derived_extracted["flight_direct_only"] = (
+                                        flight_settings_in.get("direct_only")
+                                    )
+                                if (
+                                    "flight_cabin_class" in applied_fields
+                                    and flight_settings_in.get("cabin_class")
+                                ):
+                                    derived_extracted["flight_cabin_class"] = (
+                                        flight_settings_in.get("cabin_class")
+                                    )
+
+                            activity_settings_in = trip_inputs.get("activity_settings")
+                            if (
+                                "skill_level" in applied_fields
+                                and isinstance(activity_settings_in, dict)
+                                and activity_settings_in.get("skill_level")
+                            ):
+                                derived_extracted["activity_skill_level"] = (
+                                    activity_settings_in.get("skill_level")
+                                )
+
+                            booking_types_in = trip_inputs.get("booking_types")
+                            if (
+                                "flights_toggle" in applied_fields
+                                and isinstance(booking_types_in, dict)
+                                and booking_types_in.get("flights") is not None
+                            ):
+                                derived_extracted["flights_toggle"] = booking_types_in.get(
+                                    "flights"
+                                )
+
+                            if derived_extracted:
+                                if isinstance(nl_extracted, dict):
+                                    merged_extracted = dict(nl_extracted)
+                                    merged_extracted.update(derived_extracted)
+                                    nl_extracted = merged_extracted
+                                else:
+                                    nl_extracted = derived_extracted
+
+                        # Convert graph-built day_cards for persistence
+                        graph_day_cards_raw = graph_doc.get("itinerary_day_cards")
+                        is_flex_dates = bool(trip_inputs.get("date_flex"))
+                        day_card_objs = None
+                        persist_view_state = resolve_itinerary_document_view_state(
+                            graph_doc.get("plan_view_state"),
+                            graph_day_cards_raw,
+                            graph_doc.get("constraint_violations", []),
+                        )
+                        if coordinator_reset:
+                            day_card_objs = []
+                        elif is_flex_dates:
+                            # Flexible dates are planning-only; persist no concrete day cards.
+                            day_card_objs = []
+                        elif "itinerary_day_cards" in graph_doc:
+                            if graph_day_cards_raw:
+                                day_card_objs = [
+                                    DayCard(**dc) if isinstance(dc, dict) else dc
+                                    for dc in graph_day_cards_raw
+                                ]
+                            else:
+                                day_card_objs = []
+                        elif (
+                            graph_doc.get("strategy_sections")
+                            and document_data
+                            and document_data.day_cards
+                        ):
+                            # Strategy changed but no new itinerary built — check for specialist coverage mismatch.
+                            # If the strategy_sections no longer match the day_cards (specialist added or removed),
+                            # clear stale cards by passing day_card_objs=[] (explicit empty vs None which is no-op).
+                            _graph_strat_topics: set[str] = set()
+                            for _s in graph_doc.get("strategy_sections", []):
+                                _st = (
+                                    _s.get("specialist_type")
+                                    if isinstance(_s, dict)
+                                    else _s.specialist_type
+                                )
+                                if _st and _st not in ("local_expert", "general"):
+                                    _graph_strat_topics.add(_st)
+                            _existing_dc_topics: set[str] = set()
+                            for _dc in document_data.day_cards:
+                                for _b in _dc.blocks:
+                                    if _b.specialist_type:
+                                        _existing_dc_topics.add(_b.specialist_type)
+                            from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES
+
+                            # Compare only Tier 1 specialist topics so browse-inserted blocks
+                            # (e.g., cultural/food) do not trigger stale detection.
+                            _existing_dc_tier1 = {
+                                _topic
+                                for _topic in _existing_dc_topics
+                                if _topic in TIER1_SPECIALIST_NAMES
+                            }
+                            if _existing_dc_tier1 != _graph_strat_topics:
+                                _debug(
+                                    f"[streaming] Stale day_cards in DB: strategy={_graph_strat_topics}, "
+                                    f"day_cards={_existing_dc_topics} — clearing for DB persistence"
+                                )
+                                day_card_objs = []  # Explicit empty list clears DB; None would be a no-op
+
+                        constraints_validated_payload: List[Dict[str, Any]] | None
+                        if coordinator_reset:
+                            constraints_validated_payload = []
+                        elif "constraints_validated" in graph_doc:
+                            constraints_validated_payload = _normalize_constraints_validated(
+                                graph_doc.get("constraints_validated")
+                            )
+                        else:
+                            constraints_validated_payload = None
+
+                        updated_doc = await apply_planner_update(
+                            db,
+                            doc=document,
+                            trip_context_id=trip_context_id,
+                            trip_inputs=trip_inputs_obj,
+                            trip_inputs_explicit_nulls=trip_inputs_explicit_nulls,
+                            reset_trip_inputs=reset_trip_inputs,
+                            branches=branch_objs if (branch_objs or coordinator_reset) else None,
+                            replace_branches=coordinator_reset,
+                            tiles=(
+                                tiles_dict
+                                if (tiles_dict or coordinator_reset or graph_tiles_present)
+                                else None
+                            ),
+                            replace_tiles=coordinator_reset or graph_tiles_present,
+                            # ViewModel fields for session restoration
+                            plan_view_state=persist_view_state,
+                            strategy_sections=strategy_section_objs,
+                            executed_strategy_topics=graph_doc.get("executed_strategy_topics"),
+                            pending_strategy_topics=graph_doc.get("pending_strategy_topics"),
+                            day_cards=day_card_objs,
+                            can_expand_to_itinerary=graph_doc.get(
+                                "can_expand_to_itinerary",
+                                bool(graph_strategy_sections),
+                            ),
+                            constraints_validated=constraints_validated_payload,
+                            constraint_violations=graph_doc.get(
+                                "constraint_violations", [] if coordinator_reset else None
+                            ),
+                            extracted_settings=nl_extracted,
+                        )
+                        if updated_doc:
+                            new_document_version = updated_doc.version
+                            document_data = get_document_data(updated_doc)
+
+                        # Record assistant message
+                        await record_chat_message(
+                            db,
+                            session=db_session,
+                            trip_context=None,
+                            role="assistant",
+                            content=assistant_message,
+                            metadata=None,
+                        )
+
+                        await db.commit()
+
+                        # Phase B: fire local_expert LLM enrichment AFTER db.commit() so it
+                        # can't be stomped by apply_planner_update, and runs outside the
+                        # graph's asyncio.timeout() context so it isn't cancelled.
+                        import time as _time
+
+                        from app.planner.nodes.local_expert import (
+                            _ENRICHMENT_TTL_SECONDS,
+                            _pending_enrichments,
+                            _pending_lock,
+                            _persist_travel_intelligence,
+                        )
+
+                        async with _pending_lock:
+                            _entry = _pending_enrichments.pop(session_id, None)
+                        if _entry is not None:
+                            _enrich_fn, _created_at = _entry
+                            if _time.monotonic() - _created_at < _ENRICHMENT_TTL_SECONDS:
+                                # Wrap in tracing_context(enabled=False) so this post-graph
+                                # background LLM call doesn't create an orphan LangSmith trace.
+                                from langsmith.run_helpers import tracing_context
+
+                                async def _enrich_no_trace(fn=_enrich_fn):
+                                    with tracing_context(enabled=False):
+                                        with spend_guard_scope(session_id):
+                                            await fn()
+
+                                _enrich_task = asyncio.create_task(_enrich_no_trace())
+                                _track_bg_task(_enrich_task)
+                                logger.debug("[SSE] Phase B: enrichment task fired")
+                            else:
                                 logger.warning(
-                                    "[SSE] Phase B: failed to mark stale enrichment for %s: %s",
+                                    "[SSE] Phase B: stale enrichment for %s",
                                     session_id,
-                                    _persist_err,
                                 )
-                except (SQLAlchemyError, ValueError) as e:
-                    logger.error(f"[{request_id}] Failed to persist document: {e}")
-                    await db.rollback()
-                    # Clean up pending Phase B enrichment so the dict doesn't leak.
-                    # Don't fire enrichment — the Phase A skeleton was not committed.
-                    from app.planner.nodes.local_expert import (
-                        _pending_enrichments as _pe_cleanup,
-                    )
-                    from app.planner.nodes.local_expert import (
-                        _pending_lock as _pe_lock,
-                    )
+                                try:
+                                    await _persist_travel_intelligence(
+                                        session_id,
+                                        None,
+                                        enrichment_state="failed",
+                                        error_code="stale",
+                                    )
+                                except Exception as _persist_err:
+                                    logger.warning(
+                                        "[SSE] Phase B: failed to mark stale enrichment for %s: %s",
+                                        session_id,
+                                        _persist_err,
+                                    )
+                    except (SQLAlchemyError, ValueError) as e:
+                        logger.error(f"[{request_id}] Failed to persist document: {e}")
+                        await db.rollback()
+                        # Clean up pending Phase B enrichment so the dict doesn't leak.
+                        # Don't fire enrichment — the Phase A skeleton was not committed.
+                        from app.planner.nodes.local_expert import (
+                            _pending_enrichments as _pe_cleanup,
+                        )
+                        from app.planner.nodes.local_expert import (
+                            _pending_lock as _pe_lock,
+                        )
 
-                    async with _pe_lock:
-                        _pe_cleanup.pop(session_id, None)
+                        async with _pe_lock:
+                            _pe_cleanup.pop(session_id, None)
 
-                    # Reset version to pre-persist value so frontend doesn't
-                    # hold an uncommitted version number on its next request.
-                    new_document_version = document_version
-                    logger.warning(
-                        "[%s] Persistence failed — continuing to emit complete event "
-                        "with in-memory data (version reset to %s)",
-                        request_id,
-                        document_version,
-                    )
+                        # Reset version to pre-persist value so frontend doesn't
+                        # hold an uncommitted version number on its next request.
+                        new_document_version = document_version
+                        logger.warning(
+                            "[%s] Persistence failed — continuing to emit complete event "
+                            "with in-memory data (version reset to %s)",
+                            request_id,
+                            document_version,
+                        )
 
-            # Build response document
-            response_document = document_data if document_data else PlanDocumentData()
-            response_document.assistant_message = assistant_message
-            response_document.suggested_responses = suggested_responses
-            response_document.suggested_response_meta = []
-            response_document.suggestion_chips = []
-            response_document.ready_to_generate = ready_to_generate_now
+                # Build response document
+                response_document = document_data if document_data else PlanDocumentData()
+                response_document.assistant_message = assistant_message
+                response_document.suggested_responses = suggested_responses
+                response_document.suggested_response_meta = []
+                response_document.suggestion_chips = []
+                response_document.ready_to_generate = ready_to_generate_now
 
-            # --- Compute Plan State Envelope fields ---
-            # Get ui_phase from request (defaults to "bootstrap")
-            response_document.ui_phase = req.ui_phase or "bootstrap"
+                # --- Compute Plan State Envelope fields ---
+                # Get ui_phase from request (defaults to "bootstrap")
+                response_document.ui_phase = req.ui_phase or "bootstrap"
 
-            # Compute readiness from trip_inputs
-            readiness = compute_trip_readiness(trip_inputs, errors=final_result.get("errors", []))
-
-            # Build readiness array for frontend
-            response_document.readiness = [
-                ReadinessItem(key="origin", ok=readiness.has_origin),
-                ReadinessItem(key="destination", ok=readiness.has_destination),
-                ReadinessItem(key="start_date", ok=readiness.has_dates),
-                ReadinessItem(key="end_date", ok=bool(trip_inputs.get("end_date"))),
-                ReadinessItem(key="travelers", ok=trip_inputs.get("adults") is not None),
-                ReadinessItem(key="budget", ok=trip_inputs.get("budget") is not None),
-            ]
-
-            # Compute plan_state from readiness
-            if not readiness.core_complete:
-                response_document.plan_state = "INCOMPLETE"
-            else:
-                response_document.plan_state = "STABLE"
-
-            # Build destination_card if destination exists
-            dest_name = trip_inputs.get("destination")
-            if dest_name:
-                # Non-blocking: check memory cache (populated by fire-and-forget prefetch),
-                # fall back to deterministic Unsplash placeholder. Images are decorative.
-                dest_image_url = get_image_url_sync(dest_name, variant=0, width=1600, height=900)
-                response_document.destination_card = DestinationCard(
-                    title=dest_name,
-                    subtitle=f"Your adventure in {dest_name}" if dest_name else None,
-                    image_url=dest_image_url,
+                # Compute readiness from trip_inputs
+                readiness = compute_trip_readiness(
+                    trip_inputs, errors=final_result.get("errors", [])
                 )
 
-            # resolver is None at completion (was used during streaming)
-            response_document.resolver = None
+                # Build readiness array for frontend
+                response_document.readiness = [
+                    ReadinessItem(key="origin", ok=readiness.has_origin),
+                    ReadinessItem(key="destination", ok=readiness.has_destination),
+                    ReadinessItem(key="start_date", ok=readiness.has_dates),
+                    ReadinessItem(key="end_date", ok=bool(trip_inputs.get("end_date"))),
+                    ReadinessItem(key="travelers", ok=trip_inputs.get("adults") is not None),
+                    ReadinessItem(key="budget", ok=trip_inputs.get("budget") is not None),
+                ]
 
-            # Build booking_status from tiles (always recomputed to avoid stale status).
-            flights_count = sum(1 for t in response_document.tiles.values() if t.type == "flight")
-            hotels_count = sum(1 for t in response_document.tiles.values() if t.type == "hotel")
-            activities_count = sum(
-                1 for t in response_document.tiles.values() if t.type == "activity"
-            )
-            response_document.booking_status = BookingStatus(
-                flights=BookingStatusItem(
-                    state="ready" if flights_count > 0 else "idle",
-                    summary=(
-                        f"Flights · {flights_count} options"
-                        if flights_count
-                        else "Flights · not started"
+                # Compute plan_state from readiness
+                if not readiness.core_complete:
+                    response_document.plan_state = "INCOMPLETE"
+                else:
+                    response_document.plan_state = "STABLE"
+
+                # Build destination_card if destination exists
+                dest_name = trip_inputs.get("destination")
+                if dest_name:
+                    # Non-blocking: check memory cache (populated by fire-and-forget prefetch),
+                    # fall back to deterministic Unsplash placeholder. Images are decorative.
+                    dest_image_url = get_image_url_sync(
+                        dest_name, variant=0, width=1600, height=900
+                    )
+                    response_document.destination_card = DestinationCard(
+                        title=dest_name,
+                        subtitle=f"Your adventure in {dest_name}" if dest_name else None,
+                        image_url=dest_image_url,
+                    )
+
+                # resolver is None at completion (was used during streaming)
+                response_document.resolver = None
+
+                # Build booking_status from tiles (always recomputed to avoid stale status).
+                flights_count = sum(
+                    1 for t in response_document.tiles.values() if t.type == "flight"
+                )
+                hotels_count = sum(1 for t in response_document.tiles.values() if t.type == "hotel")
+                activities_count = sum(
+                    1 for t in response_document.tiles.values() if t.type == "activity"
+                )
+                response_document.booking_status = BookingStatus(
+                    flights=BookingStatusItem(
+                        state="ready" if flights_count > 0 else "idle",
+                        summary=(
+                            f"Flights · {flights_count} options"
+                            if flights_count
+                            else "Flights · not started"
+                        ),
                     ),
-                ),
-                stays=BookingStatusItem(
-                    state="ready" if hotels_count > 0 else "idle",
-                    summary=(
-                        f"Stays · {hotels_count} options" if hotels_count else "Stays · not started"
+                    stays=BookingStatusItem(
+                        state="ready" if hotels_count > 0 else "idle",
+                        summary=(
+                            f"Stays · {hotels_count} options"
+                            if hotels_count
+                            else "Stays · not started"
+                        ),
                     ),
-                ),
-                activities=BookingStatusItem(
-                    state="ready" if activities_count > 0 else "idle",
-                    summary=(
-                        f"Activities · {activities_count} options"
-                        if activities_count
-                        else "Activities · not started"
+                    activities=BookingStatusItem(
+                        state="ready" if activities_count > 0 else "idle",
+                        summary=(
+                            f"Activities · {activities_count} options"
+                            if activities_count
+                            else "Activities · not started"
+                        ),
                     ),
-                ),
-            )
-
-            # --- Graph Output Processing ---
-            # Graph generates strategy_sections, plan_view_state, and executed_topics
-            graph_document = final_result.get("document", {})
-            coordinator_reset = bool(final_result.get("coordinator_reset", False))
-            response_document.ack_status = graph_document.get("ack_status", "no_change")
-            graph_ack_updates = graph_document.get("ack_updates")
-            response_document.ack_updates = (
-                [au if isinstance(au, AckUpdate) else AckUpdate(**au) for au in graph_ack_updates]
-                if graph_ack_updates
-                else []
-            )
-
-            graph_strategy_sections = graph_document.get("strategy_sections", [])
-            graph_can_expand = graph_document.get("can_expand_to_itinerary")
-
-            # Compute plan_view_state based on actual state (tiles/destination/dates)
-            response_document.plan_view_state = graph_document.get(
-                "plan_view_state", "S0_BOOTSTRAP"
-            )
-
-            # Apply strategy sections if present
-            if coordinator_reset:
-                response_document.strategy_sections = []
-                response_document.executed_strategy_topics = []
-                response_document.pending_strategy_topics = []
-                response_document.needs_refresh = False
-                response_document.can_expand_to_itinerary = False
-            elif isinstance(graph_strategy_sections, list):
-                response_document.strategy_sections = [
-                    StrategySection(**section) if isinstance(section, dict) else section
-                    for section in graph_strategy_sections
-                ]
-                response_document.executed_strategy_topics = graph_document.get(
-                    "executed_strategy_topics", []
-                )
-                response_document.pending_strategy_topics = graph_document.get(
-                    "pending_strategy_topics", []
-                )
-                response_document.needs_refresh = False
-                response_document.can_expand_to_itinerary = (
-                    graph_can_expand
-                    if isinstance(graph_can_expand, bool)
-                    else bool(response_document.strategy_sections)
                 )
 
-            # Apply graph tiles if present - ALWAYS replace DB tiles with fresh graph tiles
-            # FIX: Changed from `if graph_tiles and not response_document.tiles` to `if graph_tiles`
-            # This ensures destination changes get fresh tiles instead of keeping old DB tiles
-            graph_tiles = graph_document.get("tiles", {})
-            if coordinator_reset:
-                response_document.tiles = {}
-            elif isinstance(graph_tiles, dict):
-                response_document.tiles = {
-                    tile_id: (
-                        Tile.model_validate(tile_data) if isinstance(tile_data, dict) else tile_data
+                # --- Graph Output Processing ---
+                # Graph generates strategy_sections, plan_view_state, and executed_topics
+                graph_document = final_result.get("document", {})
+                coordinator_reset = bool(final_result.get("coordinator_reset", False))
+                response_document.ack_status = graph_document.get("ack_status", "no_change")
+                graph_ack_updates = graph_document.get("ack_updates")
+                response_document.ack_updates = (
+                    [
+                        au if isinstance(au, AckUpdate) else AckUpdate(**au)
+                        for au in graph_ack_updates
+                    ]
+                    if graph_ack_updates
+                    else []
+                )
+
+                graph_strategy_sections = graph_document.get("strategy_sections", [])
+                graph_can_expand = graph_document.get("can_expand_to_itinerary")
+
+                # Compute plan_view_state based on actual state (tiles/destination/dates)
+                response_document.plan_view_state = graph_document.get(
+                    "plan_view_state", "S0_BOOTSTRAP"
+                )
+
+                # Apply strategy sections if present
+                if coordinator_reset:
+                    response_document.strategy_sections = []
+                    response_document.executed_strategy_topics = []
+                    response_document.pending_strategy_topics = []
+                    response_document.needs_refresh = False
+                    response_document.can_expand_to_itinerary = False
+                elif isinstance(graph_strategy_sections, list):
+                    response_document.strategy_sections = [
+                        StrategySection(**section) if isinstance(section, dict) else section
+                        for section in graph_strategy_sections
+                    ]
+                    response_document.executed_strategy_topics = graph_document.get(
+                        "executed_strategy_topics", []
                     )
-                    for tile_id, tile_data in graph_tiles.items()
-                }
-
-            # Copy origin_just_set flag for frontend flight fetch trigger
-            response_document.origin_just_set = graph_document.get("origin_just_set", False)
-            # Copy tiles_replaced flag — frontend should REPLACE tiles, not merge additively
-            response_document.tiles_replaced = graph_document.get("tiles_replaced", False)
-            # Copy browseable_activities (Tier 1 suppressed tiles stashed by logistics_node)
-            browseable_present = "browseable_activities" in graph_document
-            browseable = graph_document.get("browseable_activities")
-            if coordinator_reset:
-                response_document.browseable_activities = []
-            elif browseable_present:
-                response_document.browseable_activities = browseable or []
-
-            # Copy itinerary day cards if builder ran during graph execution
-            graph_day_cards = graph_document.get("itinerary_day_cards")
-            if coordinator_reset:
-                response_document.day_cards = []
-            elif "itinerary_day_cards" in graph_document:
-                response_document.day_cards = [
-                    DayCard.model_validate(dc) if isinstance(dc, dict) else dc
-                    for dc in (graph_day_cards or [])
-                ]
-                if graph_day_cards:
-                    response_document.plan_view_state = resolve_itinerary_document_view_state(
-                        response_document.plan_view_state,
-                        graph_day_cards,
-                        graph_document.get("constraint_violations", []),
+                    response_document.pending_strategy_topics = graph_document.get(
+                        "pending_strategy_topics", []
                     )
-            # Sync itinerary_overview and itinerary_assumptions from graph envelope
-            graph_overview = graph_document.get("itinerary_overview")
-            if graph_overview is not None:
-                response_document.itinerary_overview = (
-                    ItineraryOverview(**graph_overview)
-                    if isinstance(graph_overview, dict)
-                    else graph_overview
-                )
-            graph_assumptions = graph_document.get("itinerary_assumptions")
-            if graph_assumptions is not None:
-                response_document.itinerary_assumptions = (
-                    ItineraryAssumptions(**graph_assumptions)
-                    if isinstance(graph_assumptions, dict)
-                    else graph_assumptions
-                )
-
-            # Stale day_cards check: strategy changed but no new itinerary built.
-            # Independent of overview/assumptions sync above — guarded by
-            # "itinerary_day_cards" NOT being in graph_document (builder didn't run).
-            if (
-                "itinerary_day_cards" not in graph_document
-                and graph_strategy_sections
-                and response_document.day_cards
-            ):
-                # Strategy changed but no new itinerary built — check specialist coverage mismatch.
-                # Covers both additive (cycling added) and subtractive (cycling removed) changes.
-                # Clearing stale cards forces the frontend expand gate to fire expand-itinerary.
-                _resp_strat_topics = {
-                    s.specialist_type
-                    for s in response_document.strategy_sections
-                    if s.specialist_type and s.specialist_type not in ("local_expert", "general")
-                }
-                _resp_dc_topics: set[str] = set()
-                for _dc in response_document.day_cards:
-                    for _b in _dc.blocks:
-                        if _b.specialist_type:
-                            _resp_dc_topics.add(_b.specialist_type)
-                from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES
-
-                # Compare only Tier 1 specialist topics so browse-inserted blocks
-                # (e.g., cultural/food) do not trigger stale detection.
-                _resp_dc_tier1 = {
-                    _topic for _topic in _resp_dc_topics if _topic in TIER1_SPECIALIST_NAMES
-                }
-                if _resp_dc_tier1 != _resp_strat_topics:
-                    _debug(
-                        f"[streaming] Stale day_cards in SSE response: strategy={_resp_strat_topics}, "
-                        f"day_cards={_resp_dc_topics} — clearing to trigger expand-itinerary"
+                    response_document.needs_refresh = False
+                    response_document.can_expand_to_itinerary = (
+                        graph_can_expand
+                        if isinstance(graph_can_expand, bool)
+                        else bool(response_document.strategy_sections)
                     )
-                    response_document.day_cards = []
-                    # Downgrade view state so frontend expand gate recognizes strategy-only state
-                    response_document.plan_view_state = "S2_STRATEGY_READY"
 
-            # Copy structured suggestion chips from graph document.
-            graph_suggestion_chips = graph_document.get("suggestion_chips")
-            if isinstance(graph_suggestion_chips, list):
-                response_document.suggestion_chips = [
-                    SuggestionChip.model_validate(chip) if isinstance(chip, dict) else chip
-                    for chip in graph_suggestion_chips
-                    if isinstance(chip, dict) or isinstance(chip, SuggestionChip)
-                ]
-
-            # Prefer graph-curated text suggestions. Fallback to chip messages if text
-            # array is absent and chips were provided.
-            graph_suggestions = graph_document.get("suggested_responses")
-            if isinstance(graph_suggestions, list):
-                response_document.suggested_responses = graph_suggestions
-            elif response_document.suggestion_chips:
-                response_document.suggested_responses = [
-                    chip.message for chip in response_document.suggestion_chips if chip.message
-                ]
-
-            # Copy suggestion chip metadata (progression hints etc). If absent,
-            # synthesize from structured chips to keep arrays aligned.
-            graph_chip_meta = graph_document.get("suggested_response_meta")
-            if isinstance(graph_chip_meta, list):
-                response_document.suggested_response_meta = graph_chip_meta
-            elif response_document.suggestion_chips:
-                response_document.suggested_response_meta = [
-                    {
-                        "chip_type": chip.chip_type,
-                        "category": chip.category,
-                        "icon": chip.icon,
+                # Apply graph tiles if present - ALWAYS replace DB tiles with fresh graph tiles
+                # FIX: Changed from `if graph_tiles and not response_document.tiles` to `if graph_tiles`
+                # This ensures destination changes get fresh tiles instead of keeping old DB tiles
+                graph_tiles = graph_document.get("tiles", {})
+                if coordinator_reset:
+                    response_document.tiles = {}
+                elif isinstance(graph_tiles, dict):
+                    response_document.tiles = {
+                        tile_id: (
+                            Tile.model_validate(tile_data)
+                            if isinstance(tile_data, dict)
+                            else tile_data
+                        )
+                        for tile_id, tile_data in graph_tiles.items()
                     }
-                    for chip in response_document.suggestion_chips
-                ]
 
-            # Copy constraint validation state
-            graph_constraints = graph_document.get("constraints_validated")
-            if coordinator_reset:
-                response_document.constraints_validated = []
-            elif "constraints_validated" in graph_document:
-                response_document.constraints_validated = _normalize_constraints_validated(
-                    graph_constraints
+                # Copy origin_just_set flag for frontend flight fetch trigger
+                response_document.origin_just_set = graph_document.get("origin_just_set", False)
+                # Copy tiles_replaced flag — frontend should REPLACE tiles, not merge additively
+                response_document.tiles_replaced = graph_document.get("tiles_replaced", False)
+                # Copy browseable_activities (Tier 1 suppressed tiles stashed by logistics_node)
+                browseable_present = "browseable_activities" in graph_document
+                browseable = graph_document.get("browseable_activities")
+                if coordinator_reset:
+                    response_document.browseable_activities = []
+                elif browseable_present:
+                    response_document.browseable_activities = browseable or []
+
+                # Copy itinerary day cards if builder ran during graph execution
+                graph_day_cards = graph_document.get("itinerary_day_cards")
+                if coordinator_reset:
+                    response_document.day_cards = []
+                elif "itinerary_day_cards" in graph_document:
+                    response_document.day_cards = [
+                        DayCard.model_validate(dc) if isinstance(dc, dict) else dc
+                        for dc in (graph_day_cards or [])
+                    ]
+                    if graph_day_cards:
+                        response_document.plan_view_state = resolve_itinerary_document_view_state(
+                            response_document.plan_view_state,
+                            graph_day_cards,
+                            graph_document.get("constraint_violations", []),
+                        )
+                # Sync itinerary_overview and itinerary_assumptions from graph envelope
+                graph_overview = graph_document.get("itinerary_overview")
+                if graph_overview is not None:
+                    response_document.itinerary_overview = (
+                        ItineraryOverview(**graph_overview)
+                        if isinstance(graph_overview, dict)
+                        else graph_overview
+                    )
+                graph_assumptions = graph_document.get("itinerary_assumptions")
+                if graph_assumptions is not None:
+                    response_document.itinerary_assumptions = (
+                        ItineraryAssumptions(**graph_assumptions)
+                        if isinstance(graph_assumptions, dict)
+                        else graph_assumptions
+                    )
+
+                # Stale day_cards check: strategy changed but no new itinerary built.
+                # Independent of overview/assumptions sync above — guarded by
+                # "itinerary_day_cards" NOT being in graph_document (builder didn't run).
+                if (
+                    "itinerary_day_cards" not in graph_document
+                    and graph_strategy_sections
+                    and response_document.day_cards
+                ):
+                    # Strategy changed but no new itinerary built — check specialist coverage mismatch.
+                    # Covers both additive (cycling added) and subtractive (cycling removed) changes.
+                    # Clearing stale cards forces the frontend expand gate to fire expand-itinerary.
+                    _resp_strat_topics = {
+                        s.specialist_type
+                        for s in response_document.strategy_sections
+                        if s.specialist_type
+                        and s.specialist_type not in ("local_expert", "general")
+                    }
+                    _resp_dc_topics: set[str] = set()
+                    for _dc in response_document.day_cards:
+                        for _b in _dc.blocks:
+                            if _b.specialist_type:
+                                _resp_dc_topics.add(_b.specialist_type)
+                    from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES
+
+                    # Compare only Tier 1 specialist topics so browse-inserted blocks
+                    # (e.g., cultural/food) do not trigger stale detection.
+                    _resp_dc_tier1 = {
+                        _topic for _topic in _resp_dc_topics if _topic in TIER1_SPECIALIST_NAMES
+                    }
+                    if _resp_dc_tier1 != _resp_strat_topics:
+                        _debug(
+                            f"[streaming] Stale day_cards in SSE response: strategy={_resp_strat_topics}, "
+                            f"day_cards={_resp_dc_topics} — clearing to trigger expand-itinerary"
+                        )
+                        response_document.day_cards = []
+                        # Downgrade view state so frontend expand gate recognizes strategy-only state
+                        response_document.plan_view_state = "S2_STRATEGY_READY"
+
+                # Copy structured suggestion chips from graph document.
+                graph_suggestion_chips = graph_document.get("suggestion_chips")
+                if isinstance(graph_suggestion_chips, list):
+                    response_document.suggestion_chips = [
+                        SuggestionChip.model_validate(chip) if isinstance(chip, dict) else chip
+                        for chip in graph_suggestion_chips
+                        if isinstance(chip, dict) or isinstance(chip, SuggestionChip)
+                    ]
+
+                # Prefer graph-curated text suggestions. Fallback to chip messages if text
+                # array is absent and chips were provided.
+                graph_suggestions = graph_document.get("suggested_responses")
+                if isinstance(graph_suggestions, list):
+                    response_document.suggested_responses = graph_suggestions
+                elif response_document.suggestion_chips:
+                    response_document.suggested_responses = [
+                        chip.message for chip in response_document.suggestion_chips if chip.message
+                    ]
+
+                # Copy suggestion chip metadata (progression hints etc). If absent,
+                # synthesize from structured chips to keep arrays aligned.
+                graph_chip_meta = graph_document.get("suggested_response_meta")
+                if isinstance(graph_chip_meta, list):
+                    response_document.suggested_response_meta = graph_chip_meta
+                elif response_document.suggestion_chips:
+                    response_document.suggested_response_meta = [
+                        {
+                            "chip_type": chip.chip_type,
+                            "category": chip.category,
+                            "icon": chip.icon,
+                        }
+                        for chip in response_document.suggestion_chips
+                    ]
+
+                # Copy constraint validation state
+                graph_constraints = graph_document.get("constraints_validated")
+                if coordinator_reset:
+                    response_document.constraints_validated = []
+                elif "constraints_validated" in graph_document:
+                    response_document.constraints_validated = _normalize_constraints_validated(
+                        graph_constraints
+                    )
+                graph_violations = graph_document.get("constraint_violations")
+                if coordinator_reset:
+                    response_document.constraint_violations = []
+                elif "constraint_violations" in graph_document:
+                    response_document.constraint_violations = graph_violations or []
+
+                # Sync reconciled trip_inputs (with booking_types upgrades) to response_document
+                if isinstance(trip_inputs, dict) and trip_inputs:
+                    from app.schemas import DocumentTripInputs
+
+                    response_document.trip_inputs = DocumentTripInputs.model_validate(trip_inputs)
+
+                _debug(
+                    f"[MAIN.PY] Graph output: plan_view_state={response_document.plan_view_state}, "
+                    f"strategy_sections={len(response_document.strategy_sections or [])}, "
+                    f"tiles={len(response_document.tiles or {})}, "
+                    f"day_cards={len(response_document.day_cards or [])}"
                 )
-            graph_violations = graph_document.get("constraint_violations")
-            if coordinator_reset:
-                response_document.constraint_violations = []
-            elif "constraint_violations" in graph_document:
-                response_document.constraint_violations = graph_violations or []
 
-            # Sync reconciled trip_inputs (with booking_types upgrades) to response_document
-            if isinstance(trip_inputs, dict) and trip_inputs:
-                from app.schemas import DocumentTripInputs
-
-                response_document.trip_inputs = DocumentTripInputs.model_validate(trip_inputs)
-
-            _debug(
-                f"[MAIN.PY] Graph output: plan_view_state={response_document.plan_view_state}, "
-                f"strategy_sections={len(response_document.strategy_sections or [])}, "
-                f"tiles={len(response_document.tiles or {})}, "
-                f"day_cards={len(response_document.day_cards or [])}"
-            )
-
-            # Build full response matching GraphPlanResponse
-            full_response = {
-                "document": (
-                    response_document.model_dump()
-                    if hasattr(response_document, "model_dump")
-                    else response_document
-                ),
-                "session_state": updated_session_state,
-                "version": new_document_version or 1,
-                "updated_by": "planner",
-                "updated_at": updated_at,
-                "changes_made": changes_made,
-                "request_id": request_id,
-                "observability": {
-                    "tokens": {"prompt": 0, "completion": 0, "total": 0},
-                    "today_iso": today_iso,
-                    "ready_to_generate_now": ready_to_generate_now,
-                },
-            }
-
-            # DEBUG: Verify strategy_sections in full_response before sending
-            doc_in_response = full_response.get("document", {})
-            strategy_sections = doc_in_response.get("strategy_sections", [])
-            first_id = strategy_sections[0].get("id") if strategy_sections else "none"
-            _debug(
-                f"[MAIN.PY] SSE complete payload: "
-                f"strategy_sections_count={len(strategy_sections)}, "
-                f"plan_view_state={doc_in_response.get('plan_view_state')}, "
-                f"first_section_id={first_id}"
-            )
-
-            complete_payload = json.dumps(
-                {"type": "complete", "data": full_response},
-                default=str,
-            )
-            yield f"event: complete\ndata: {complete_payload}\n\n"
-
-        except (asyncio.CancelledError, GeneratorExit):
-            logger.debug("[SSE] Client disconnected, cleaning up")
-        except TimeoutError:
-            _path = "coordinator"
-            logger.error(f"[{request_id}] {_path} timed out")
-            timeout_payload = json.dumps({"type": "error", "message": "Request timed out"})
-            yield f"event: error\ndata: {timeout_payload}\n\n"
-        except Exception as e:
-            _path = "coordinator"
-            logger.error(f"[{request_id}] {_path} failed: {e}")
-            error_payload = json.dumps(
-                {
-                    "type": "error",
-                    "message": f"Request failed. Reference: {request_id}",
+                # Build full response matching GraphPlanResponse
+                full_response = {
+                    "document": (
+                        response_document.model_dump()
+                        if hasattr(response_document, "model_dump")
+                        else response_document
+                    ),
+                    "session_state": updated_session_state,
+                    "version": new_document_version or 1,
+                    "updated_by": "planner",
+                    "updated_at": updated_at,
+                    "changes_made": changes_made,
+                    "request_id": request_id,
+                    "observability": {
+                        "tokens": {"prompt": 0, "completion": 0, "total": 0},
+                        "today_iso": today_iso,
+                        "ready_to_generate_now": ready_to_generate_now,
+                    },
                 }
-            )
-            yield f"event: error\ndata: {error_payload}\n\n"
-        finally:
-            # Clean up any pending Phase B enrichment that was never fired
-            # (e.g., SSE generator exited early due to client disconnect/timeout).
-            _had_stale = await _cleanup_pending_enrichment(session_id, source="SSE")
-            # Persist failure state for stale enrichments (SSE-specific)
-            if _had_stale:
-                try:
-                    from app.planner.nodes.local_expert import (
-                        _persist_travel_intelligence,
-                    )
 
-                    await _persist_travel_intelligence(
-                        session_id, None, enrichment_state="failed", error_code="sse_exit"
-                    )
-                except Exception:
-                    pass
-            await release_sse_slot(session_key, ip_key)
+                # DEBUG: Verify strategy_sections in full_response before sending
+                doc_in_response = full_response.get("document", {})
+                strategy_sections = doc_in_response.get("strategy_sections", [])
+                first_id = strategy_sections[0].get("id") if strategy_sections else "none"
+                _debug(
+                    f"[MAIN.PY] SSE complete payload: "
+                    f"strategy_sections_count={len(strategy_sections)}, "
+                    f"plan_view_state={doc_in_response.get('plan_view_state')}, "
+                    f"first_section_id={first_id}"
+                )
+
+                complete_payload = json.dumps(
+                    {"type": "complete", "data": full_response},
+                    default=str,
+                )
+                yield f"event: complete\ndata: {complete_payload}\n\n"
+
+            except (asyncio.CancelledError, GeneratorExit):
+                logger.debug("[SSE] Client disconnected, cleaning up")
+            except TimeoutError:
+                _path = "coordinator"
+                logger.error(f"[{request_id}] {_path} timed out")
+                timeout_payload = json.dumps({"type": "error", "message": "Request timed out"})
+                yield f"event: error\ndata: {timeout_payload}\n\n"
+            except Exception as e:
+                _path = "coordinator"
+                logger.error(f"[{request_id}] {_path} failed: {e}")
+                error_payload = json.dumps(
+                    {
+                        "type": "error",
+                        "message": f"Request failed. Reference: {request_id}",
+                    }
+                )
+                yield f"event: error\ndata: {error_payload}\n\n"
+            finally:
+                # Clean up any pending Phase B enrichment that was never fired
+                # (e.g., SSE generator exited early due to client disconnect/timeout).
+                _had_stale = await _cleanup_pending_enrichment(session_id, source="SSE")
+                # Persist failure state for stale enrichments (SSE-specific)
+                if _had_stale:
+                    try:
+                        from app.planner.nodes.local_expert import (
+                            _persist_travel_intelligence,
+                        )
+
+                        await _persist_travel_intelligence(
+                            session_id, None, enrichment_state="failed", error_code="sse_exit"
+                        )
+                    except Exception:
+                        pass
+    finally:
+        await release_sse_slot(session_key, ip_key)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

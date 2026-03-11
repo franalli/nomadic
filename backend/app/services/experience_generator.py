@@ -64,6 +64,7 @@ _cache_set = _mem.set
 
 _inflight_generation_lock = asyncio.Lock()
 _inflight_generation_tasks: dict[str, asyncio.Task[list[dict]]] = {}
+_experience_cache_epoch = 0
 
 
 async def cancel_inflight() -> int:
@@ -78,6 +79,21 @@ async def cancel_inflight() -> int:
     return len(tasks)
 
 
+async def invalidate_experience_cache_state() -> int:
+    """Bump experience cache generation and cancel stale inflight work."""
+    global _experience_cache_epoch
+
+    async with _inflight_generation_lock:
+        _experience_cache_epoch += 1
+        tasks = [task for task in _inflight_generation_tasks.values() if not task.done()]
+        _inflight_generation_tasks.clear()
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return len(tasks)
+
+
 def _set_tier2_generation_source(state, source: str) -> None:
     if state is not None and hasattr(state, "metadata"):
         state.metadata["tier2_generation_source_internal"] = source
@@ -86,6 +102,10 @@ def _set_tier2_generation_source(state, source: str) -> None:
 def clear_experience_cache() -> int:
     """Clear L1 experience cache. Returns count of cleared entries."""
     return _mem.clear()
+
+
+def _experience_cache_write_allowed(cache_epoch: int | None) -> bool:
+    return cache_epoch is None or cache_epoch == _experience_cache_epoch
 
 
 async def clear_experience_db_cache(db: AsyncSession) -> int:
@@ -535,6 +555,7 @@ async def generate_single_category(
     vibe: str | None = None,
     children: int = 0,
     skill_level: str | None = None,
+    cache_epoch: int | None = None,
 ) -> list[dict]:
     """Generate tiles for a SINGLE category. Used for parallel generation.
 
@@ -646,7 +667,7 @@ async def generate_single_category(
             raw = result.get("raw")
             if parsed is None:
                 raise ValueError("Structured output returned parsed=None")
-        elif hasattr(result, "model_fields"):
+        elif isinstance(result, ExperienceOutput):
             parsed = result
             raw = None
         else:
@@ -696,19 +717,22 @@ async def generate_single_category(
             tile.duration_hours = 4
 
     payload = [tile.model_dump() for tile in parsed.activities]
-    _mem.set(cache_key, payload)
+    if _experience_cache_write_allowed(cache_epoch):
+        _mem.set(cache_key, payload)
 
-    if async_session_factory is not None:
-        try:
-            async with async_session_factory() as db:
-                await _set_cached(
-                    db,
-                    cache_key,
-                    payload,
-                    cache_type="experience_single",
-                )
-        except Exception as e:
-            logger.warning(f"[EXPERIENCE] Single category L2 write failed: {e}")
+        if async_session_factory is not None:
+            try:
+                async with async_session_factory() as db:
+                    await _set_cached(
+                        db,
+                        cache_key,
+                        payload,
+                        cache_type="experience_single",
+                    )
+            except Exception as e:
+                logger.warning(f"[EXPERIENCE] Single category L2 write failed: {e}")
+    else:
+        logger.info("[EXPERIENCE_CACHE] Skip stale single-category write key=%s", cache_key)
 
     # Convert to tile dicts with base_index offset
     tile_dicts = []
@@ -766,6 +790,7 @@ async def generate_experience_tiles_for_day(
     # Generate per-category in parallel (reuses L1/L2 cache)
     tasks = []
     base_index = day_number * 100  # Offset for unique tile IDs
+    cache_epoch = _experience_cache_epoch
     for cat, count in cat_tile_counts.items():
         tasks.append(
             generate_single_category(
@@ -778,6 +803,7 @@ async def generate_experience_tiles_for_day(
                 vibe=vibe,
                 children=children,
                 skill_level=skill_level,
+                cache_epoch=cache_epoch,
             )
         )
         base_index += count
@@ -830,6 +856,7 @@ async def _parallel_category_generate(
     vibe: str | None = None,
     children: int = 0,
     skill_level: str | None = None,
+    cache_epoch: int | None = None,
 ) -> list[dict]:
     """Per-category parallel LLM generation. Returns flat list of tile dicts."""
     start_t = time.time()
@@ -848,6 +875,7 @@ async def _parallel_category_generate(
                 vibe=vibe,
                 children=children,
                 skill_level=skill_level,
+                cache_epoch=cache_epoch,
             )
         )
         base_index += tiles_per_category
@@ -906,6 +934,7 @@ async def _generate_experiences_impl(
     adults: int = 1,
     children: int = 0,
     skill_level: str | None = None,
+    cache_epoch: int | None = None,
 ) -> list[dict]:
     """
     Generate Tier 2 experience tiles via gpt-4o-mini structured output.
@@ -1047,7 +1076,8 @@ async def _generate_experiences_impl(
                 all_tiles.extend(existing_tiles_by_cat.get(cat, []))
             logger.info(f"[EXPERIENCE] All categories cached: {len(all_tiles)} tiles")
             # Cache composite result
-            _mem.set(cache_key, all_tiles)
+            if _experience_cache_write_allowed(cache_epoch):
+                _mem.set(cache_key, all_tiles)
             _set_tier2_generation_source(state, "cache")
             return _clamp_tile_durations(all_tiles)
 
@@ -1139,6 +1169,7 @@ async def _generate_experiences_impl(
                     vibe=vibe,
                     children=children,
                     skill_level=skill_level,
+                    cache_epoch=cache_epoch,
                 )
         else:
             # Large request: per-category parallel calls (avoids structured output degradation)
@@ -1152,6 +1183,7 @@ async def _generate_experiences_impl(
                 vibe=vibe,
                 children=children,
                 skill_level=skill_level,
+                cache_epoch=cache_epoch,
             )
 
         duration_ms = int((time.time() - start_t) * 1000)
@@ -1234,10 +1266,13 @@ async def _generate_experiences_impl(
             all_tiles = new_tile_dicts
 
         # Cache the FULL composite result (L1 + L2)
-        _mem.set(cache_key, all_tiles)
+        if _experience_cache_write_allowed(cache_epoch):
+            _mem.set(cache_key, all_tiles)
 
-        async with async_session_factory() as db:
-            await _set_cached(db, cache_key, all_tiles)
+            async with async_session_factory() as db:
+                await _set_cached(db, cache_key, all_tiles)
+        else:
+            logger.info("[EXPERIENCE_CACHE] Skip stale composite write key=%s", cache_key)
 
         logger.info(
             f"[EXPERIENCE] Done: {len(all_tiles)} tiles total "
@@ -1298,6 +1333,7 @@ async def generate_experiences(
             logger.info("[EXPERIENCE] Singleflight wait: key=%s", cache_key)
             logger.debug("[VERIFY][EXPERIENCE] singleflight_waiter key=%s", cache_key)
         else:
+            cache_epoch = _experience_cache_epoch
             task = asyncio.create_task(
                 _generate_experiences_impl(
                     destination=destination,
@@ -1311,6 +1347,7 @@ async def generate_experiences(
                     adults=adults,
                     children=children,
                     skill_level=skill_level,
+                    cache_epoch=cache_epoch,
                 )
             )
             _inflight_generation_tasks[cache_key] = task

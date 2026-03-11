@@ -14,7 +14,7 @@
 import { useMemo } from 'react';
 
 import { BUFFER_EXCLUSIONS } from '@/lib/categoryNormalization';
-import type { DayBlock, DayCard } from '@/types/plan-envelope';
+import type { DayBlock } from '@/types/plan-envelope';
 
 const CATEGORY_ICONS: Record<string, string> = {
   diving: '\u{1F93F}', hiking: '\u{1F97E}', skiing: '\u26F7\uFE0F', cycling: '\u{1F6B4}',
@@ -35,8 +35,6 @@ export interface BufferLogicResult {
  */
 export function computeBufferExclusions(
   bufferBlocks: DayBlock[],
-  _dayCards: DayCard[],
-  _currentDayNumber: number,
   categories: string[] | undefined,
 ): BufferLogicResult {
   // Build excluded category set from same-day buffer blocks only.
@@ -76,12 +74,10 @@ export function computeBufferExclusions(
  */
 export function useTimelineBufferLogic(
   bufferBlocks: DayBlock[],
-  dayCards: DayCard[],
-  currentDayNumber: number,
   categories: string[] | undefined,
 ): BufferLogicResult {
   return useMemo(
-    () => computeBufferExclusions(bufferBlocks, dayCards, currentDayNumber, categories),
-    [bufferBlocks, dayCards, currentDayNumber, categories],
+    () => computeBufferExclusions(bufferBlocks, categories),
+    [bufferBlocks, categories],
   );
 }

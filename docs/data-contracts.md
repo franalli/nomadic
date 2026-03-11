@@ -54,6 +54,7 @@
 | GET    | `/api/shared/{slug}` | Public read-only shared trip payload | --      | `SharedTripPublicResponse` | Public |
 
 `POST /api/share` persists a frozen snapshot of `trip_inputs`, `tiles`, `strategy_sections`, `day_cards`, `plan_view_state`, `executed_strategy_topics`, `constraint_violations`, and `preferred_tile_ids`. Signed `/api/media/*` proxy URLs are stripped before storage so public share pages never depend on session-bound media signatures. Anonymous shares expire after 90 days; authenticated shares are promoted to durable user-owned rows with `expires_at = null`.
+`POST /api/share/fork/{slug}` copies that snapshot into a fresh caller-owned session and rotates the browser `session_id` + `csrf` cookie pair before the frontend reloads onto the forked document.
 
 ### Authentication
 
@@ -66,7 +67,7 @@
 
 Auth flow contract:
 - `GET /api/auth/google/url` sets a short-lived HttpOnly `oauth_state` cookie (10 minutes) and returns the Google consent URL targeting `FRONTEND_ORIGIN/auth/callback`.
-- `POST /api/auth/google/callback` validates `state`, exchanges the code with Google, links the current browser session to a `users` row, rotates the `session_id` cookie, and clears `oauth_state`.
+- `POST /api/auth/google/callback` validates `state`, exchanges the code with Google, links the current browser session to a `users` row, rotates the browser `session_id` + `csrf` cookie pair together, and clears `oauth_state`.
 - If a browser session is already linked to another user, callback flow creates a replacement session before linking to prevent cross-account reuse on shared browsers or tabs.
 
 ### Trips (User Scoped)
@@ -76,7 +77,7 @@ Auth flow contract:
 | GET    | `/api/trips` | List plan documents across sessions for current authenticated user | -- | `UserTripsResponse` | Authenticated user required |
 | POST   | `/api/trips/{trip_id}/resume` | Resume a specific owned trip by switching session cookie to that trip session | -- | `ResumeTripResponse` | Authenticated user + CSRF required |
 
-`GET /api/trips` returns up to 50 most recently updated plan documents across all sessions linked to the authenticated user. `POST /api/trips/{trip_id}/resume` replaces the browser `session_id` cookie with the owning trip session; frontend then reloads and rehydrates from that session's `/api/document`.
+`GET /api/trips` returns up to 50 most recently updated plan documents across all sessions linked to the authenticated user. `POST /api/trips/{trip_id}/resume` rotates the browser `session_id` + `csrf` cookie pair onto the owning trip session; frontend then reloads and rehydrates from that session's `/api/document`.
 
 ### Chat & Session
 
@@ -94,7 +95,7 @@ Auth flow contract:
 
 All admin routes require `X-Admin-Key` header matching `ADMIN_API_KEY` env var. Most admin routes are limited to `10/min`; `POST /api/admin/clear-spend-guard` is limited to `5/min`.
 
-Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified), `spend-guard-stats`. Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache` (L1+L2), `clear-router-cache`, `clear-l1-l2-caches` (force-wipes L1 memory caches + L2 response cache/unsplash cache rows, and also drains Google Places geocode + country-code memory caches), `clear-all-caches` (clears planner/experience/router/browse/places-enrichment/iata caches + validation + unsplash; includes specialist and tile L1/L2 and response-cache types, drains Google Places geocode + country-code caches, and clears the in-memory Places enrichment inflight dedupe map), `clear-all-checkpoints`, `clear-validation-cache`, `clear-spend-guard`, `fresh-start`. Config (GET): `planner`, `graph-stats`. Telemetry (GET): `places-telemetry` (usage counters, circuit-breaker state, and geocode/country-code cache stats).
+Cache stats (GET): `specialist-cache-stats`, `tile-cache-stats`, `router-cache-stats`, `cache-stats` (unified), `spend-guard-stats`. Cache clear (POST): `clear-specialist-cache`, `clear-tile-cache` (L1+L2), `clear-router-cache`, `clear-l1-l2-caches` (force-wipes L1 memory caches + L2 response cache/unsplash cache rows, cancels in-flight browse/experience population, and drains Google Places geocode + country-code memory caches), `clear-all-caches` (clears planner/experience/router/browse/places-enrichment/iata caches + validation + the checkpoint-clear hook + unsplash; includes specialist and tile L1/L2 and response-cache types, cancels/busts in-flight browse + experience population, drains Google Places geocode + country-code caches, and clears the in-memory Places enrichment inflight dedupe map), `clear-all-checkpoints`, `clear-validation-cache`, `clear-spend-guard`, `fresh-start`. Config (GET): `planner`, `graph-stats`. Telemetry (GET): `places-telemetry` (usage counters, circuit-breaker state, and geocode/country-code cache stats).
 
 ---
 
@@ -138,6 +139,7 @@ Media type: `application/x-ndjson`. Events:
 
 - Reads `csrf` cookie (JS-readable, not HttpOnly)
 - Adds `X-CSRF-Token` header on unsafe methods (POST, PUT, PATCH, DELETE)
+- Any server-driven session rotation (`session/new`, shared-trip fork, Google OAuth callback, trip resume) rotates `session_id` and `csrf` together via the same helper so the readable token never lags the active session.
 - Exempt paths: `/health`, `/api/session` (DELETE reset only), `/docs`, `/redoc`, `/openapi.json`
 
 ### Rate Limiting (`slowapi`)
@@ -171,14 +173,14 @@ Keying is route-aware: public/auth routes are IP-keyed; other routes use a trust
 
 ### Security Middleware
 
-- **Body size limit:** 512KB max. Middleware validates `Content-Length` first; non-numeric `Content-Length` returns `400 Invalid Content-Length`. If the header is missing on `POST`/`PUT`/`PATCH`, middleware reads the body once and returns `413 Payload too large` when size exceeds 512KB. Early `400`/`413` middleware responses include CORS headers plus the lightweight security trio (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) so cross-origin frontend callers can read the error body without losing baseline protection.
+- **Body size limit:** 512KB max. Middleware validates `Content-Length` first; non-numeric `Content-Length` returns `400 Invalid Content-Length`. If the header is missing on `POST`/`PUT`/`PATCH`, middleware streams/buffers the request body up to 512KB, returns `413 Payload too large` on overflow, and rehydrates the buffered body for downstream FastAPI/Pydantic consumers when the request is within limits. Early `400`/`413` middleware responses include CORS headers plus the lightweight security trio (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) so cross-origin frontend callers can read the error body without losing baseline protection.
 - **Security headers:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security: max-age=63072000; includeSubDomains`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
 - **Backend CSP:** `Content-Security-Policy` header set on every response -- `default-src 'self'`, `script-src 'self' 'unsafe-inline'` (+ `'unsafe-eval'` in dev/local/test only for Next.js HMR), `style-src 'self' 'unsafe-inline'`, `img-src 'self' data: https://images.unsplash.com https://*.mapbox.com https://media.tacdn.com https://media-cdn.tripadvisor.com https://hare-media-cdn.tripadvisor.com https://cdn.getyourguide.com blob:`, `connect-src 'self' https://api.mapbox.com https://events.mapbox.com wss:`, `font-src 'self' data:`, `frame-ancestors 'none'`
 - **Environment normalization:** `Settings.env` defaults to `"dev"`. Two computed properties: `is_dev` (True for `dev`, `local`, `development`, `test`) and `is_prod` (True for `prod`, `production`). All environment checks in `main.py` and `middleware/session.py` use these properties instead of hardcoded string comparisons.
 - **Session middleware:** Skips `/health` and `/api/shared/*` (public shared reads stay cookie/session-free). Max 10 new sessions per IP per hour
 - **Rate-limit keying:** Public/auth routes (`/api/shared/*`, `/api/auth/*`) are IP-keyed. Other routes use trusted session ids (validated cookie or `request.state.validated_session_id`) with IP fallback for untrusted values.
 - **Rate-limit error contract:** 429 responses include numeric `Retry-After` and matching CORS headers for allowed origins; frontend `fetchWithRetry()` honours that header before retrying.
-- **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP (thread-safe slot reserve/release). SSE state extracted to `backend/app/sse_state.py` to break circular import between `main.py` and `lifespan.py`
+- **SSE connection limit:** Max 2 concurrent streams per session, 5 per IP (thread-safe slot reserve/release). Slots are acquired when the async generator actually starts and released from generator teardown, so abandoned/uniterated `StreamingResponse` objects do not leak capacity. SSE state extracted to `backend/app/sse_state.py` to break circular import between `main.py` and `lifespan.py`
 - **Fill-day/session ordering:** `/api/document/fill-day` waits until no active graph SSE stream exists for that session
 - **Places photo spend/circuit guard:** `/api/media/google-places-photo` requires a valid session, signed URL parameters, and circuit-state checks. It reserves Google Places spend via `spend_guard_scope`; if budget is exceeded it returns HTTP 429 with `Retry-After: 60`. If the photo circuit is open, endpoint returns HTTP 503 with `Service temporarily unavailable`.
 - **Places photo feature flag:** when `GOOGLE_PLACES_PHOTOS_ENABLED=false`, both `/api/media/google-places-photo` and `/api/media/google-places-photo-url` return HTTP 503 and backend tile signing helpers skip signed photo URL generation.
@@ -408,7 +410,7 @@ PlanDocumentData
 | `SpecialistEnrichmentResponse`  | Phase B enrichment: section_id, status ('ready'\|'pending'\|'failed'), data?: Dict, error_code?: str, retry_after_ms?: int |
 | `ShareTripResponse`             | Share creation result: `slug`, absolute `url`, derived `title`, optional `expires_at` (null for authenticated durable shares) |
 | `SharedTripPublicResponse`      | Public shared-trip payload: metadata plus immutable `snapshot` used by `/trip/[slug]` server/client rendering |
-| `ForkSharedTripResponse`        | Shared-trip fork result: `ok`, copied `destination`, `day_count`, and resulting `plan_view_state`; response also rotates the `session_id` cookie to the forked session |
+| `ForkSharedTripResponse`        | Shared-trip fork result: `ok`, copied `destination`, `day_count`, and resulting `plan_view_state`; response also rotates the browser `session_id` + `csrf` cookie pair to the forked session |
 | `GoogleAuthCallbackRequest` / `GoogleAuthUrlResponse` | OAuth bootstrap models for Google login (`code` + `state` callback, consent URL init). OAuth callback `code` and `state` are each capped at 256 chars. |
 | `AuthUser` / `AuthMeResponse`   | Authenticated user summary returned by `/api/auth/me` and callback completion |
 | `UserTripSummary` / `UserTripsResponse` | Lightweight owned-trip list for desktop/mobile account menus and trip resume flows |

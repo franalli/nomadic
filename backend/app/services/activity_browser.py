@@ -69,18 +69,34 @@ L2_TTL_HOURS = settings.google_places_enrichment_cache_ttl_hours
 _browse_cache = MemoryCache(maxsize=L1_MAX_SIZE, ttl=L1_TTL_SECONDS)
 _browse_inflight_lock = asyncio.Lock()
 _browse_inflight_tasks: dict[str, asyncio.Task[list[dict[str, Any]]]] = {}
+_browse_cache_epoch = 0
 
 
 async def cancel_browse_inflight() -> int:
     """Cancel all inflight browse tasks. Returns count cancelled."""
     async with _browse_inflight_lock:
-        count = 0
-        for _key, task in list(_browse_inflight_tasks.items()):
-            if not task.done():
-                task.cancel()
-                count += 1
+        tasks = [task for task in _browse_inflight_tasks.values() if not task.done()]
         _browse_inflight_tasks.clear()
-    return count
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return len(tasks)
+
+
+async def invalidate_browse_cache_state() -> int:
+    """Bump browse cache generation and cancel stale inflight work."""
+    global _browse_cache_epoch
+
+    async with _browse_inflight_lock:
+        _browse_cache_epoch += 1
+        tasks = [task for task in _browse_inflight_tasks.values() if not task.done()]
+        _browse_inflight_tasks.clear()
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return len(tasks)
 
 
 def clear_browse_cache() -> int:
@@ -88,6 +104,23 @@ def clear_browse_cache() -> int:
     count = _browse_cache.clear()
     logger.info(f"[BROWSE_CACHE] Cleared ({count} entries)")
     return count
+
+
+async def _cache_browse_result_if_current(
+    cache_key: str,
+    tiles: list[dict[str, Any]],
+    cache_epoch: int,
+) -> None:
+    if cache_epoch != _browse_cache_epoch:
+        logger.info(
+            "[BROWSE_CACHE] Skip stale write key=%s start_epoch=%s current_epoch=%s",
+            cache_key,
+            cache_epoch,
+            _browse_cache_epoch,
+        )
+        return
+    _browse_cache.set(cache_key, tiles)
+    await _set_cached_browse(cache_key, tiles)
 
 
 _PRICE_BAND_TO_LEVEL: Dict[str, int] = {
@@ -443,6 +476,7 @@ async def _browse_activities_impl(
     valid_categories: list[str],
     cache_key: str,
     max_results: int = MAX_BROWSE_RESULTS,
+    cache_epoch: int = 0,
 ) -> list[dict[str, Any]]:
     from app.tile_service.google_places_provider import (
         _call_places_api_async,
@@ -519,8 +553,11 @@ async def _browse_activities_impl(
                 gyg_tiles = await _enrich_tiles_with_llm(destination, valid_categories, gyg_tiles)
                 partner_tiles = partner_tiles + gyg_tiles
                 if len(partner_tiles) >= max_results:
-                    _browse_cache.set(cache_key, partner_tiles[:max_results])
-                    await _set_cached_browse(cache_key, partner_tiles[:max_results])
+                    await _cache_browse_result_if_current(
+                        cache_key,
+                        partner_tiles[:max_results],
+                        cache_epoch,
+                    )
                     logger.debug(
                         "[BROWSE] Viator+GYG returned %d tiles for %s",
                         len(partner_tiles),
@@ -545,8 +582,7 @@ async def _browse_activities_impl(
         record_google_places_usage("browse", "error", reason="missing_api_key")
         if partner_tiles:
             logger.warning("[BROWSE] No Google Maps API key — returning partner-only results")
-            _browse_cache.set(cache_key, partner_tiles)
-            await _set_cached_browse(cache_key, partner_tiles)
+            await _cache_browse_result_if_current(cache_key, partner_tiles, cache_epoch)
             return partner_tiles
         logger.warning("[BROWSE] No Google Maps API key — returning empty results")
         return []
@@ -624,8 +660,7 @@ async def _browse_activities_impl(
         return tiles
 
     # Cache result
-    _browse_cache.set(cache_key, tiles)
-    await _set_cached_browse(cache_key, tiles)
+    await _cache_browse_result_if_current(cache_key, tiles, cache_epoch)
 
     logger.debug("[BROWSE] Found %d tiles for %s", len(tiles), destination)
     return tiles
@@ -686,9 +721,15 @@ async def browse_activities(
             task = existing
             logger.debug("[VERIFY][BROWSE] singleflight_waiter key=%s", cache_key)
         else:
+            cache_epoch = _browse_cache_epoch
             task = asyncio.create_task(
                 _browse_activities_impl(
-                    destination, center, valid_categories, cache_key, max_results
+                    destination,
+                    center,
+                    valid_categories,
+                    cache_key,
+                    max_results,
+                    cache_epoch,
                 )
             )
             _browse_inflight_tasks[cache_key] = task

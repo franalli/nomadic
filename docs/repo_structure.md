@@ -241,14 +241,17 @@ backend/
 │   ├── test_google_places_circuit_breaker.py  # Google Places circuit breaker tests
 │   ├── test_google_places_enrichment.py  # Google Places enrichment/cache tests
 │   ├── test_google_places_photo_proxy.py # Google Places photo proxy tests
+│   ├── test_gyg_provider.py              # GetYourGuide provider tile conversion, matching, and browse cache tests
 │   ├── test_hash_ban.py                  # Hash ban tests
 │   ├── test_iata_resolver.py             # IATA resolver tests
 │   ├── test_import_contract.py           # Import contract tests
 │   ├── test_itinerary_builder.py         # Itinerary builder tests
 │   ├── test_llm_feasibility.py           # LLM geographic feasibility tests
 │   ├── test_logistics_tier2.py           # Logistics Tier-2 generation, backfill pipeline, affinity sorting tests
+│   ├── test_main_middleware.py           # Main middleware tests (chunked body-size guard)
 │   ├── test_main_trip_input_merge.py     # Document PATCH no-op dedupe + merge behavior tests
 │   ├── test_multi_specialist_integration.py  # Multi-specialist tests
+│   ├── test_partner_enrichment.py        # Unified Viator/GYG winner-selection and tile-merge tests
 │   ├── test_plan_schema.py               # Plan schema tests
 │   ├── test_poi_category_canonicalization.py  # POI category canonicalization tests
 │   ├── test_regen_strategy.py            # Selective regen field hash + strategy tests

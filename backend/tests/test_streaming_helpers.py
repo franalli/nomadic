@@ -1,6 +1,9 @@
 """Tests for pure helper functions in streaming.py."""
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 
 from app.streaming import (
     TripReadiness,
@@ -10,6 +13,7 @@ from app.streaming import (
     _normalized_preference_ids,
     _seed_trip_plan_from_inputs,
     compute_trip_readiness,
+    generate_sse,
 )
 
 # ---------------------------------------------------------------------------
@@ -337,6 +341,50 @@ def test_conflicts_to_violations_enum_severity() -> None:
 
 def test_conflicts_to_violations_empty_list() -> None:
     assert _conflicts_to_constraint_violations([]) == []
+
+
+@pytest.mark.asyncio
+async def test_generate_sse_releases_slot_when_db_session_open_fails(monkeypatch) -> None:
+    """SSE slots must be released even when DB session setup fails after acquisition."""
+
+    class _FailingSessionContext:
+        async def __aenter__(self):
+            raise RuntimeError("db open failed")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    release_slot = AsyncMock()
+    monkeypatch.setattr(
+        "app.streaming._get_async_session_factory",
+        lambda: (lambda: _FailingSessionContext()),
+    )
+    monkeypatch.setattr(
+        "app.streaming._cleanup_pending_enrichment",
+        AsyncMock(return_value=False),
+    )
+
+    stream = generate_sse(
+        session_id="session-123",
+        req=SimpleNamespace(message="Plan Bali", trip_inputs=None),
+        session_state={},
+        request_id="req-1",
+        today_iso="2026-03-11",
+        session_key="session:session-123",
+        ip_key="ip:127.0.0.1",
+        request=SimpleNamespace(),
+        try_acquire_sse_slot=AsyncMock(return_value=None),
+        release_sse_slot=release_slot,
+        sanitize_trip_inputs_for_category_merge=lambda inputs, _message: inputs,
+        merge_user_owned_trip_settings=lambda *args, **kwargs: None,
+        resolve_itinerary_document_view_state=lambda *args, **kwargs: "S0_BOOTSTRAP",
+    )
+
+    with pytest.raises(RuntimeError, match="db open failed"):
+        async for _chunk in stream:
+            pass
+
+    release_slot.assert_awaited_once_with("session:session-123", "ip:127.0.0.1")
 
 
 # ---------------------------------------------------------------------------

@@ -810,3 +810,67 @@ class TestGenerateExperiences:
         assert len(result) == 1
         assert state.metadata.get("tier2_generation_source_internal") == "llm"
         self._clear_l1()
+
+
+@pytest.mark.asyncio
+async def test_invalidate_experience_cache_state_cancels_inflight_tasks():
+    import app.services.experience_generator as generator
+
+    gate = asyncio.Event()
+
+    async def _pending() -> list[dict]:
+        await gate.wait()
+        return []
+
+    task = asyncio.create_task(_pending())
+    async with generator._inflight_generation_lock:
+        generator._inflight_generation_tasks["experience::pending"] = task
+
+    cancelled = await generator.invalidate_experience_cache_state()
+
+    assert cancelled == 1
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+@patch("app.db._get_async_session_factory", side_effect=RuntimeError("db unavailable"))
+@patch("app.services.unsplash.get_image_url_sync", return_value="https://img.test/photo.jpg")
+async def test_generate_single_category_skips_stale_cache_write_after_epoch_bump(
+    _mock_img,
+    _mock_db_factory,
+):
+    import app.services.experience_generator as generator
+
+    generator.clear_experience_cache()
+    stale_epoch = generator._experience_cache_epoch
+    await generator.invalidate_experience_cache_state()
+
+    fake_output = generator.ExperienceOutput(
+        activities=[
+            generator.ExperienceTile(
+                title="Ubud Morning Vinyasa",
+                category="yoga",
+                time_of_day="morning",
+                price_estimate=25,
+            )
+        ]
+    )
+    mock_structured_llm = AsyncMock()
+    mock_structured_llm.ainvoke = AsyncMock(return_value=fake_output)
+
+    with patch("app.services.experience_generator.get_llm_by_model") as mock_get_llm:
+        mock_instance = MagicMock()
+        mock_instance.with_structured_output.return_value = mock_structured_llm
+        mock_get_llm.return_value = mock_instance
+
+        result = await generator.generate_single_category(
+            destination="Bali",
+            category="yoga",
+            month="2099-12",
+            tiles_per_category=1,
+            cache_epoch=stale_epoch,
+        )
+
+    cache_key = generator._single_category_cache_key("Bali", "yoga", "2099-12", 1)
+    assert len(result) == 1
+    assert generator._cache_get(cache_key) is None

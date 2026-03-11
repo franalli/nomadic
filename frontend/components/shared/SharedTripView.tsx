@@ -86,23 +86,13 @@ export function SharedTripView({
         method: 'POST',
       });
       if (!forkResponse.ok) {
-        let detail = 'Could not copy trip';
-        try {
-          const payload = await forkResponse.json();
-          if (typeof payload?.detail === 'string' && payload.detail.trim()) {
-            detail = payload.detail;
-          }
-        } catch {
-          // Fallback to generic message.
-        }
-        throw new Error(detail);
+        throw new Error('Could not copy trip');
       }
 
       toast('Trip copied to your workspace', { type: 'success' });
       router.push('/');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not copy trip';
-      toast(message, { type: 'error' });
+    } catch {
+      toast('Could not copy trip', { type: 'error' });
       setIsForking(false);
     }
   };

@@ -115,6 +115,20 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
             "[Shutdown] Cancelled %d inflight experience generation tasks", cancelled_inflight
         )
 
+    # 1c. Cancel inflight feasibility checks
+    from app.planner.services.feasibility_service import cancel_feasibility_inflight
+
+    cancelled_feasibility = await cancel_feasibility_inflight()
+    if cancelled_feasibility:
+        logger.info("[Shutdown] Cancelled %d inflight feasibility checks", cancelled_feasibility)
+
+    # 1d. Cancel inflight browse tasks before disposing DB-backed cache layers
+    from app.services.activity_browser import cancel_browse_inflight
+
+    cancelled_browse = await cancel_browse_inflight()
+    if cancelled_browse:
+        logger.info("[Shutdown] Cancelled %d inflight browse tasks", cancelled_browse)
+
     # 2a. Dispose async DB engine
     from app.db import _async_engine
 
@@ -152,20 +166,6 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     await close_unsplash_http_client()
     logger.info("[Shutdown] Closed Unsplash HTTP client")
-
-    # 1c. Cancel inflight feasibility checks
-    from app.planner.services.feasibility_service import cancel_feasibility_inflight
-
-    cancelled_feasibility = await cancel_feasibility_inflight()
-    if cancelled_feasibility:
-        logger.info("[Shutdown] Cancelled %d inflight feasibility checks", cancelled_feasibility)
-
-    # 1d. Cancel inflight browse tasks
-    from app.services.activity_browser import cancel_browse_inflight
-
-    cancelled_browse = await cancel_browse_inflight()
-    if cancelled_browse:
-        logger.info("[Shutdown] Cancelled %d inflight browse tasks", cancelled_browse)
 
     # 5a2. Flush spend guard state to disk before shutdown
     from app.services.spend_guard import flush_spend_state

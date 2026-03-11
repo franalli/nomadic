@@ -1726,7 +1726,7 @@ useSessionHydration() runs
 | `BookingSummary` | Supplemental booking-links panel rendered by `PlanFullDensityView` under the timeline. Shows deep links for bookable stays (`tiles`) and mapped itinerary activities (`day_cards`) in Stage 3 states. |
 | `PlanDensityViews` | Density loading view (`PlanMirrorLoader`) only. |
 | `PlanTimelineSection` | Timeline section for full-density view — handles DnD wrapping (`ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`), skeleton loading, regeneration overlay, and wraps `TimelineThread` in `ErrorBoundary` for crash isolation. |
-| `TimelineBlockList` | Renders one day’s timeline blocks, splitting compact vs full variants and injecting optional DnD/slot render-props for drag/drop and free-day actions. |
+| `TimelineBlockList` | Renders one day’s timeline blocks, splitting compact vs full variants and injecting optional DnD/slot render-props for drag/drop and free-day actions. Free-day buffer exclusion chips are derived only from that day’s `bufferBlocks` plus the selected categories (via `useTimelineBufferLogic`), so unrelated `day_cards` mutations do not fan out rerenders across the full timeline subtree. |
 | `TimelineDayCard` | Composes a day header, day-level constraints, and block list for one day in both compact and full timeline modes. |
 | `MapMarkerItem` | Memoized per-marker renderer used by `InteractiveMap` for POI pins; applies type-based icon/color config, active/hover state visuals, and day-based dimming while limiting marker rerender churn. |
 | `useBookingDrawerState` | Hook managing booking drawer open/close state and the fill-day API call triggered when a tile is added to a specific day via the drawer. Extracted from `StrategyStageRenderer`. |
@@ -1758,6 +1758,7 @@ useSessionHydration() runs
 | `ChatMessageList` | Scrollable message list renderer — owns scroll container div and all message rendering. |
 | `ChatInputHandler` | Thin wrapper around `ChatInputBar` converting ChatPanel-level callbacks to form-submit signatures. Extracted from ChatPanel. |
 | `ChatSuggestionBar` | Thin wrapper around `ChatSuggestionChips` for ChatPanel integration. Extracted from ChatPanel. Forwards trigger-action callbacks including `onConfirmReset` (`confirm_reset` target). |
+| `ChatSuggestionChips` | Renders the actual suggestion-chip reel. Keeps chips in a single horizontal overflow row (never wrapped), resolves actions from structured chip metadata (`action_type`, `action_target`, `chip_type`, `category`) with category/text fallbacks for legacy chips, and treats `date_prompt` / `date_contextual` chips as executable send-message prompts instead of opening the date sheet. |
 | `ChatMessageRenderer` | Renders individual chat messages: user bubbles and assistant bubbles with markdown/specialist deep links/streaming pulse/retry button and color-marked activity mentions. |
 | `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |

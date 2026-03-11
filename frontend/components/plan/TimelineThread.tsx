@@ -365,7 +365,6 @@ export function TimelineThread({
           card={card}
           index={index}
           totalDays={sortedDays.length}
-          dayCards={dayCards}
           onDayClick={onDayClick}
           onDayHover={onDayHover}
           onBrowse={handleBrowse}

@@ -787,6 +787,24 @@ def _session_cookie_kwargs() -> dict[str, Any]:
     return kwargs
 
 
+def _set_session_and_csrf_cookies(response: Response, session_token: str) -> Response:
+    """Rotate the browser session cookie pair together."""
+    cookie_kw = _session_cookie_kwargs()
+    response.set_cookie(
+        key=_SESSION_COOKIE_NAME,
+        value=session_token,
+        httponly=True,
+        **cookie_kw,
+    )
+    response.set_cookie(
+        key="csrf",
+        value=secrets.token_urlsafe(32),
+        httponly=False,
+        **cookie_kw,
+    )
+    return response
+
+
 def _is_shared_trip_slug_conflict(exc: IntegrityError) -> bool:
     payload = str(getattr(exc, "orig", exc)).lower()
     return "shared_trips.slug" in payload or "ix_shared_trips_slug" in payload
@@ -834,6 +852,34 @@ app.add_middleware(CSRFMiddleware)
 MAX_BODY_BYTES = 524_288  # 512KB — expand-itinerary sends tiles + strategy_sections
 
 
+async def _buffer_request_body_with_limit(request: Request, max_bytes: int) -> bool:
+    """Buffer a request body up to max_bytes and restore it for downstream consumers."""
+    chunks: list[bytes] = []
+    total_bytes = 0
+
+    async for chunk in request.stream():
+        if not chunk:
+            continue
+        total_bytes += len(chunk)
+        if total_bytes > max_bytes:
+            return False
+        chunks.append(chunk)
+
+    body = b"".join(chunks)
+    consumed = False
+
+    async def _receive() -> dict[str, Any]:
+        nonlocal consumed
+        if consumed:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        consumed = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request._body = body  # type: ignore[attr-defined]
+    request._receive = _receive  # type: ignore[attr-defined]
+    return True
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     """Add security headers to all responses."""
@@ -879,8 +925,8 @@ async def limit_body_size(request: Request, call_next):
                 headers=_standard_error_headers(request),
             )
     if not cl and request.method in {"POST", "PUT", "PATCH"}:
-        body = await request.body()
-        if len(body) > MAX_BODY_BYTES:
+        within_limit = await _buffer_request_body_with_limit(request, MAX_BODY_BYTES)
+        if not within_limit:
             return JSONResponse(
                 status_code=413,
                 content={"detail": "Payload too large"},
@@ -1367,7 +1413,7 @@ async def admin_clear_all_caches(  # noqa: ARG001
     """
     _ = request
     results = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "caches_cleared": {},
     }
 
@@ -1486,14 +1532,17 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
     from sqlalchemy import delete, func, select
 
     from app.db_models import ResponseCache
+    from app.planner.services.admin_utils import cancel_cache_population_tasks
     from app.planner.services.feasibility_service import _feasibility_cache
     from app.planner.services.iata_resolver import clear_iata_cache
-    from app.services.activity_browser import _browse_cache
+    from app.services.activity_browser import clear_browse_cache
     from app.services.experience_generator import clear_experience_cache
     from app.services.router_cache import clear_cache as clear_router_cache
     from app.services.specialist_cache import clear_memory_cache as clear_specialist_memory
     from app.services.tile_cache import clear_memory_cache as clear_tile_memory
     from app.tile_service.google_places_provider import _enrich_mem
+
+    inflight_cancelled = await cancel_cache_population_tasks()
 
     l2_before_by_type: Dict[str, int] = {}
     l2_before_total = 0
@@ -1520,10 +1569,12 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
     l1_cleared = {
         "specialist_memory": clear_specialist_memory(),
         "tile_memory": clear_tile_memory(),
+        "experience_inflight": inflight_cancelled["experience"],
         "experience_memory": clear_experience_cache(),
         "router_memory": clear_router_cache(),
         "feasibility_memory": _feasibility_cache.clear(),
-        "browse_memory": _browse_cache.clear(),
+        "browse_inflight": inflight_cancelled["browse"],
+        "browse_memory": clear_browse_cache(),
         "places_enrichment_memory": _enrich_mem.clear(),
         "iata_memory": clear_iata_cache(),
         "unsplash_memory": unsplash_memory_before,
@@ -2019,22 +2070,7 @@ async def new_session(
 
     # Set the new session cookie (replaces the old one)
     response = Response(status_code=204)
-    cookie_kw = _session_cookie_kwargs()
-    response.set_cookie(
-        key=_SESSION_COOKIE_NAME,
-        value=new_token,
-        httponly=True,
-        **cookie_kw,
-    )
-    # Fresh CSRF token for the new session
-    csrf_token = secrets.token_urlsafe(32)
-    response.set_cookie(
-        key="csrf",
-        value=csrf_token,
-        httponly=False,
-        **cookie_kw,
-    )
-    return response
+    return _set_session_and_csrf_cookies(response, new_token)
 
 
 @app.delete("/api/session", status_code=204)
@@ -2115,21 +2151,7 @@ async def reset_session(
 
     # Set the new session cookie
     response = Response(status_code=204)
-    cookie_kw = _session_cookie_kwargs()
-    response.set_cookie(
-        key=_SESSION_COOKIE_NAME,
-        value=new_token,
-        httponly=True,
-        **cookie_kw,
-    )
-    csrf_token = secrets.token_urlsafe(32)
-    response.set_cookie(
-        key="csrf",
-        value=csrf_token,
-        httponly=False,
-        **cookie_kw,
-    )
-    return response
+    return _set_session_and_csrf_cookies(response, new_token)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2534,13 +2556,7 @@ async def fork_shared_trip(
         plan_view_state=doc_data.plan_view_state,
     )
     response = JSONResponse(content=payload.model_dump())
-    response.set_cookie(
-        key=_SESSION_COOKIE_NAME,
-        value=fork_session_token,
-        httponly=True,
-        **_session_cookie_kwargs(),
-    )
-    return response
+    return _set_session_and_csrf_cookies(response, fork_session_token)
 
 
 def _serialize_auth_user(user: db_models.User) -> AuthUser:
@@ -2636,12 +2652,7 @@ async def google_auth_callback(
     response = JSONResponse(
         content=AuthMeResponse(user=_serialize_auth_user(persisted_user)).model_dump()
     )
-    response.set_cookie(
-        key=_SESSION_COOKIE_NAME,
-        value=session.session_token,
-        httponly=True,
-        **_session_cookie_kwargs(),
-    )
+    _set_session_and_csrf_cookies(response, session.session_token)
     response.delete_cookie(key=_OAUTH_STATE_COOKIE, path="/", domain=settings.cookie_domain)
     return response
 
@@ -2769,13 +2780,7 @@ async def resume_user_trip(
 
     payload = ResumeTripResponse(ok=True, trip_id=trip_id)
     response = JSONResponse(content=payload.model_dump())
-    response.set_cookie(
-        key=_SESSION_COOKIE_NAME,
-        value=target_session.session_token,
-        httponly=True,
-        **_session_cookie_kwargs(),
-    )
-    return response
+    return _set_session_and_csrf_cookies(response, target_session.session_token)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
