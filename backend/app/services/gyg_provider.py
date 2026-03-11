@@ -19,7 +19,6 @@ from rapidfuzz import fuzz
 from app.config import settings
 from app.services.cache_core import MemoryCache
 from app.services.circuit_breaker import CircuitBreaker
-from app.services.spend_guard import reserve_partner_api_spend_or_raise
 from app.services.viator_provider import _infer_category_from_title
 
 logger = logging.getLogger(__name__)
@@ -108,7 +107,6 @@ async def search_tours(
 
     try:
         async with _sem:
-            reserve_partner_api_spend_or_raise("gyg")
             client = await _get_gyg_client()
             resp = await client.get(
                 f"{GYG_BASE}/tours",

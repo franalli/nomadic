@@ -223,8 +223,6 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `get_your_guide_enabled`        | false                | `GET_YOUR_GUIDE_ENABLED`       | Feature flag for GYG browse + enrichment flows |
 | `get_your_guide_cache_ttl_hours`| 24                   | `GET_YOUR_GUIDE_CACHE_TTL_HOURS` | L1 TTL for GYG browse/match cache entries |
 | `get_your_guide_api_url`        | `https://api.getyourguide.com/1` | `GET_YOUR_GUIDE_API_URL` | Base URL for the GYG partner API client |
-| `spend_guard_partner_estimated_call_usd` | 0.005        | `SPEND_GUARD_PARTNER_ESTIMATED_CALL_USD` | Nominal per-call cost used for Viator/GYG spend-guard tracking |
-| `spend_guard_partner_daily_cap_usd` | 1.00            | `SPEND_GUARD_PARTNER_DAILY_CAP_USD` | Provider-level daily spend cap for partner API usage |
 | `spend_guard_places_daily_cap_usd` | 2.00               | `SPEND_GUARD_PLACES_DAILY_CAP_USD` | Provider-level daily spend cap for Google Places API |
 | `google_places_photo_signed_ttl_max` | 3600            | --                             | Max allowed signed Google Places photo URL TTL (seconds) |
 | `langsmith_dev_sample_rate`      | 1.0                  | `LANGSMITH_DEV_SAMPLE_RATE`    | Fraction of dev sessions to trace (0.0=none, 1.0=all)       |

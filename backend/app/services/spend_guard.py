@@ -51,7 +51,7 @@ _spend_lock = Lock()
 _spend_day_key = datetime.now(UTC).date().isoformat()
 _session_spend_usd: dict[str, float] = {}
 _global_spend_usd = 0.0
-_provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0, "partner": 0.0}
+_provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0}
 
 _SPEND_STATE_FILE = Path(tempfile.gettempdir()) / "nomadic_spend_guard_state.json"
 
@@ -118,7 +118,7 @@ def _load_state() -> None:
             restored_providers = {}
 
         _global_spend_usd = max(0.0, restored_global)
-        for key in ("llm", "places", "partner"):
+        for key in ("llm", "places"):
             _provider_spend_usd[key] = max(0.0, float(restored_providers.get(key, 0.0)))
 
         restored_sessions = data.get("session_spend_usd", {})
@@ -225,7 +225,6 @@ def _rollover_if_needed() -> None:
     _session_spend_usd.clear()
     _provider_spend_usd["llm"] = 0.0
     _provider_spend_usd["places"] = 0.0
-    _provider_spend_usd["partner"] = 0.0
     _global_spend_usd = 0.0
     _persist_state()
 
@@ -245,8 +244,6 @@ def _check_provider_cap(provider: str, estimated_usd: float, source: str) -> Non
     cap: float = 0.0
     if provider == "places":
         cap = max(0.0, float(settings.spend_guard_places_daily_cap_usd))
-    elif provider == "partner":
-        cap = max(0.0, float(settings.spend_guard_partner_daily_cap_usd))
     else:
         return
 
@@ -382,17 +379,6 @@ def reserve_places_spend_or_raise(
     )
 
 
-def reserve_partner_api_spend_or_raise(provider_label: str = "partner") -> None:
-    """Reserve budget for a partner API call (Viator, GYG, etc.)."""
-    if not settings.spend_guard_enabled:
-        return
-    _reserve_or_raise(
-        provider="partner",
-        estimated_usd=max(0.0, float(settings.spend_guard_partner_estimated_call_usd)),
-        source=f"partner-{provider_label}",
-    )
-
-
 def clear_spend_guard_counters() -> None:
     """Reset in-memory spend counters (tests/admin maintenance)."""
     global _spend_day_key
@@ -403,7 +389,6 @@ def clear_spend_guard_counters() -> None:
         _session_spend_usd.clear()
         _provider_spend_usd["llm"] = 0.0
         _provider_spend_usd["places"] = 0.0
-        _provider_spend_usd["partner"] = 0.0
         _global_spend_usd = 0.0
         _persist_state(force=True)
 

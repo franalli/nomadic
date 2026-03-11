@@ -133,7 +133,7 @@ _start_server() {
   # limits, MAX_SESSIONS_PER_IP_HOUR=9999 effectively disables session creation
   # throttle, preventing 429s during rapid test runs.
   # Spend guard caps are raised for the managed curl-suite server so Flow 27's
-  # browse step does not exhaust the partner budget before planner enrichment runs.
+  # browse step and downstream planner enrichment do not hit the default caps.
   (cd "$BACKEND_DIR" && \
     PYTHONUNBUFFERED=1 \
     DEBUG=full \
@@ -141,7 +141,6 @@ _start_server() {
     MAX_SESSIONS_PER_IP_HOUR=9999 \
     SPEND_GUARD_SESSION_DAILY_CAP_USD=100 \
     SPEND_GUARD_GLOBAL_DAILY_CAP_USD=100 \
-    SPEND_GUARD_PARTNER_DAILY_CAP_USD=100 \
     "$py" start.py --prod) > "$BACKEND_LOG" 2>&1 &
   SERVER_PID=$!
   MANAGED_SERVER=true

@@ -171,10 +171,6 @@ class Settings(BaseSettings):
     spend_guard_places_estimated_call_usd: float = 0.007
     # Provider-specific daily cap for Google Places API spend (USD).
     spend_guard_places_daily_cap_usd: float = 2.00
-    # Partner API (Viator, GYG) estimated per-call cost (nominal for free-tier tracking).
-    spend_guard_partner_estimated_call_usd: float = 0.005
-    # Provider-specific daily cap for partner API spend (USD).
-    spend_guard_partner_daily_cap_usd: float = 1.0
 
     # Validation prewarm destinations (comma-separated, e.g. "Paris,Tokyo")
     validation_prewarm_destinations: str = ""

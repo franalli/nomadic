@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -237,3 +239,44 @@ def test_session_less_requests_enforce_global_cap_only(
         )
 
     assert exc_info.value.scope == "global"
+
+
+def test_load_state_ignores_legacy_partner_provider_spend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Legacy persisted partner spend is ignored during startup restore."""
+    state_file = tmp_path / "spend_guard_state.json"
+    monkeypatch.setattr(sg_module, "_SPEND_STATE_FILE", state_file)
+
+    state_file.write_text(
+        json.dumps(
+            {
+                "day": sg_module._spend_day_key,
+                "global_spend_usd": 1.23,
+                "provider_spend_usd": {
+                    "llm": 0.11,
+                    "places": 0.22,
+                    "partner": 0.33,
+                },
+                "session_spend_usd": {"session-a": 0.44},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sg_module._global_spend_usd = 0.0
+    sg_module._provider_spend_usd["llm"] = 0.0
+    sg_module._provider_spend_usd["places"] = 0.0
+    sg_module._session_spend_usd.clear()
+
+    sg_module._load_state()
+
+    snapshot = get_spend_guard_snapshot()
+    assert snapshot["global_spend_usd"] == pytest.approx(1.23)
+    assert snapshot["provider_spend_usd"] == {
+        "llm": pytest.approx(0.11),
+        "places": pytest.approx(0.22),
+    }
+    assert "partner" not in snapshot["provider_spend_usd"]
+    assert snapshot["session_count"] == 1
