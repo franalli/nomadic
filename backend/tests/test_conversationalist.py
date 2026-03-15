@@ -14,6 +14,7 @@ from app.planner.conversationalist import (
     _VOICE_QUESTION,
     _build_diff_block,
     _build_from_strategy_sections,
+    _build_grounding_block,
     _build_outcome_block,
     _build_trip_context_block,
     _build_turn_context_block,
@@ -546,6 +547,98 @@ class TestBuildDiffBlock:
         # 8 entries max + header line
         lines = [ln for ln in result.strip().split("\n") if ln.startswith("- ")]
         assert len(lines) == 8
+
+
+# ---------------------------------------------------------------------------
+# _build_grounding_block
+# ---------------------------------------------------------------------------
+
+
+class TestBuildGroundingBlock:
+    """Tests for builder-result and safe-name grounding."""
+
+    def test_includes_builder_metadata_tile_summary_and_safe_names(self):
+        state = {
+            "trip_plan": {"destination": "Bali", "origin": "New York"},
+            "day_cards": [
+                {
+                    "day_number": 2,
+                    "blocks": [
+                        {
+                            "summary": "USAT Liberty Wreck",
+                            "activity_type": "activity",
+                            "booked_tile": {
+                                "title": "USAT Liberty Wreck",
+                            },
+                        },
+                        {
+                            "summary": "Arrive at destination",
+                            "activity_type": "arrival",
+                            "is_buffer": True,
+                            "booked_tile": {
+                                "title": "ITA Airways - Direct",
+                            },
+                        },
+                    ],
+                }
+            ],
+            "tiles": {
+                "hotels": [
+                    {"title": "Maya Ubud Resort", "selected": True},
+                    {"title": "Unused Hotel", "selected": False},
+                ]
+            },
+            "turn_meta": {
+                "tile_search_summary": "Found 2 flights, 4 hotels, 6 activities",
+                "builder_result": {
+                    "success": True,
+                    "activities_placed": 3,
+                    "activities_dropped": 1,
+                    "warnings": ["Only one dive fit after safety spacing."],
+                    "conflicts": [{"message": "Diving and hiking needed trimming."}],
+                    "resolutions": [{"message": "Kept diving, dropped one hike."}],
+                    "requested_activity_categories": ["diving", "hiking"],
+                    "effective_activity_categories": ["diving"],
+                    "infeasible_requested_categories": ["hiking"],
+                },
+            },
+        }
+
+        result = _build_grounding_block(state)
+        assert "Grounding Facts" in result
+        assert "Tile refresh result: Found 2 flights, 4 hotels, 6 activities" in result
+        assert "Builder placement counts: 3 placed, 1 dropped" in result
+        assert "Builder warning: Only one dive fit after safety spacing." in result
+        assert "Builder conflict: Diving and hiking needed trimming." in result
+        assert "Builder resolution: Kept diving, dropped one hike." in result
+        assert "Requested categories not kept in the build: hiking" in result
+        assert "Infeasible requested categories: hiking" in result
+        assert "USAT Liberty Wreck" in result
+        assert "ITA Airways - Direct" in result
+        assert "Maya Ubud Resort" in result
+        assert "Unused Hotel" not in result
+        assert "NEVER mention a named activity, hotel, or flight" in result
+
+    def test_response_context_includes_grounding_block_even_without_day_cards(self):
+        state = {
+            "trip_plan": {"destination": "Bali"},
+            "turn_meta": {
+                "builder_result": {
+                    "success": False,
+                    "activities_placed": 0,
+                    "activities_dropped": 2,
+                    "warnings": ["Trip is too short to place everything requested."],
+                    "conflicts": [{"message": "Only one interior day is available."}],
+                    "resolutions": [],
+                }
+            },
+        }
+        c = _make_classifier(ChangeType.ADD_ACTIVITY)
+        msgs = build_response_context(state, c, "add hiking")
+        system = msgs[0]["content"]
+        assert "Grounding Facts" in system
+        assert "Builder status: itinerary build did not fully succeed" in system
+        assert "Trip is too short to place everything requested." in system
 
 
 # ---------------------------------------------------------------------------

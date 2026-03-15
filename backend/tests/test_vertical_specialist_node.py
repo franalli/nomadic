@@ -376,7 +376,7 @@ class TestCalculateActivityDays:
         assert result == 4
 
     def test_7_day_trip_hiking(self):
-        """7-day hiking trip: 7 - 2 (arrival/departure) - 1 (altitude buffer) = 4."""
+        """Long hiking trips keep the conservative altitude buffer."""
         state = _minimal_state()
         specialist = VerticalSpecialist("hiking")
         result = specialist._calculate_activity_days(state)
@@ -388,8 +388,8 @@ class TestCalculateActivityDays:
         result = specialist._calculate_activity_days(state)
         assert result == 3  # default when no dates
 
-    def test_very_short_trip_returns_zero(self):
-        """2-day trip: 2 - 2 = 0 (no activity days)."""
+    def test_two_day_hiking_trip_gets_partial_day_credit(self):
+        """Short non-diving trips keep one partial activity slot."""
         state = _minimal_state(
             trip_plan=TripPlan(
                 destination="Bali",
@@ -398,6 +398,19 @@ class TestCalculateActivityDays:
             )
         )
         specialist = VerticalSpecialist("hiking")
+        result = specialist._calculate_activity_days(state)
+        assert result == 1
+
+    def test_two_day_diving_trip_stays_infeasible(self):
+        """Diving still needs the no-fly buffer even on short trips."""
+        state = _minimal_state(
+            trip_plan=TripPlan(
+                destination="Bali",
+                start_date="2026-03-01",
+                end_date="2026-03-02",
+            )
+        )
+        specialist = VerticalSpecialist("diving")
         result = specialist._calculate_activity_days(state)
         assert result == 0
 

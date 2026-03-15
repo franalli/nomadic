@@ -1096,6 +1096,7 @@ async def _fetch_hotels(
             )
 
             hotel_tiles = []
+            cache_hotel_results = True
             _provider_t0 = time.time()
 
             from app.config import settings
@@ -1114,6 +1115,7 @@ async def _fetch_hotels(
                 if not hotel_tiles:
                     log("LOGISTICS", "GooglePlaces returned 0 hotels — using mock fallback")
                     hotel_tiles = await asyncio.to_thread(MockHotelProvider().search, ctx)
+                    cache_hotel_results = False
             else:
                 log(
                     "LOGISTICS",
@@ -1130,7 +1132,7 @@ async def _fetch_hotels(
             hotel_dicts = [_tile_to_dict(tile) for tile in hotel_tiles]
             hotel_dicts = _sanitize_tile_geo_list(_normalize_google_places_hotels(hotel_dicts))
 
-            if hotel_dicts:
+            if hotel_dicts and cache_hotel_results:
                 await set_cached_tiles(
                     db,
                     provider,
@@ -1229,6 +1231,7 @@ async def _fetch_activities(
             )
 
             activity_tiles = []
+            cache_activity_results = True
 
             if settings.use_google_places_provider:
                 from app.tile_service.google_places_provider import GooglePlacesActivityProvider
@@ -1238,6 +1241,7 @@ async def _fetch_activities(
                 if not activity_tiles:
                     log("LOGISTICS", "GooglePlaces returned 0 activities — using mock fallback")
                     activity_tiles = await asyncio.to_thread(MockActivityProvider().search, ctx)
+                    cache_activity_results = False
             else:
                 # Mock fallback
                 activity_provider = MockActivityProvider()
@@ -1247,7 +1251,7 @@ async def _fetch_activities(
                 [_tile_to_dict(tile) for tile in activity_tiles]
             )
 
-            if activity_dicts:
+            if activity_dicts and cache_activity_results:
                 await set_cached_tiles(
                     db,
                     provider,

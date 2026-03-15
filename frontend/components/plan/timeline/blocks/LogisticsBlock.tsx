@@ -10,9 +10,18 @@
  * @see docs/ux_unified_architecture.md Section 10.C
  */
 
-import { DoorOpen, Key, type LucideIcon, PlaneLanding, PlaneTakeoff, Settings } from 'lucide-react';
+import {
+  DoorOpen,
+  ExternalLink,
+  Key,
+  type LucideIcon,
+  PlaneLanding,
+  PlaneTakeoff,
+  Settings,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
+import { DS } from '@/lib/design-system';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, normalizeTitle } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
@@ -22,6 +31,11 @@ import {
   type PreferenceStatus,
 } from './PreferenceAttributionBadge';
 import type { DisplayTime } from './types';
+
+const LOGISTICS_THUMBNAIL_CONTAINER = 'h-12 w-12';
+const LOGISTICS_FLIGHT_IMAGE = 'h-8 w-8 object-contain';
+const LOGISTICS_HOTEL_IMAGE = 'h-full w-full object-cover';
+const LOGISTICS_FALLBACK_ICON = 'h-6 w-6';
 
 /** Constraint object for inline display — derived from DayBlock SSoT */
 type ActiveConstraint = NonNullable<DayBlock['active_constraints']>[number];
@@ -43,6 +57,8 @@ interface LogisticsBlockProps {
   onOpenStaysSettings?: () => void;
   /** Callback to open flights settings sheet (for arrival/departure blocks) */
   onOpenFlightsSettings?: () => void;
+  deeplinkLabel?: string;
+  deeplinkUrl?: string;
 }
 
 const CONFIG: Record<
@@ -91,6 +107,8 @@ export function LogisticsBlock({
   activeConstraints,
   onOpenStaysSettings,
   onOpenFlightsSettings,
+  deeplinkLabel,
+  deeplinkUrl,
 }: LogisticsBlockProps) {
   const config = CONFIG[type];
   const Icon = config.icon;
@@ -116,6 +134,9 @@ export function LogisticsBlock({
   // Only show preference badge for check-in blocks (hotels)
   const showPreferenceBadge = type === 'checkin' && preferenceStatus;
   const showImage = Boolean(resolvedImage) && !imageLoadFailed;
+  const showFlightDeeplink =
+    (type === 'arrival' || type === 'departure') &&
+    Boolean(deeplinkUrl && deeplinkUrl !== '#' && deeplinkLabel);
 
   return (
     <div
@@ -160,11 +181,10 @@ export function LogisticsBlock({
           <Settings className="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-400" />
         </button>
       )}
-      {/* Thumbnail: consistent w-10 h-10 for all logistics blocks */}
-      {/* With image: flights get white bg, hotels get cover fill */}
-      {/* Without image: icon fallback in same container */}
+      {/* Shared 48px thumbnail keeps hotel and flight blocks visually aligned in timeline rows */}
       <div className={cn(
-        'w-10 h-10 shrink-0 rounded-lg overflow-hidden flex items-center justify-center',
+        LOGISTICS_THUMBNAIL_CONTAINER,
+        'shrink-0 rounded-lg overflow-hidden flex items-center justify-center',
         showImage
           ? (type === 'arrival' || type === 'departure') ? 'bg-white' : 'bg-zinc-200 dark:bg-zinc-700'
           : 'bg-zinc-100 dark:bg-zinc-800'
@@ -175,8 +195,8 @@ export function LogisticsBlock({
             alt={hotelName || config.label}
             loading="lazy"
             className={(type === 'arrival' || type === 'departure')
-              ? 'w-7 h-7 object-contain'
-              : 'w-full h-full object-cover'
+              ? LOGISTICS_FLIGHT_IMAGE
+              : LOGISTICS_HOTEL_IMAGE
             }
             onError={() => {
               if (!triedPlaceholder) {
@@ -188,7 +208,7 @@ export function LogisticsBlock({
             }}
           />
         ) : (
-          <Icon className={cn('w-5 h-5', config.iconColor)} />
+          <Icon className={cn(LOGISTICS_FALLBACK_ICON, config.iconColor)} />
         )}
       </div>
       <div className="flex-1 min-w-0">
@@ -209,6 +229,23 @@ export function LogisticsBlock({
         )}
         {details && (
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{details}</p>
+        )}
+        {showFlightDeeplink && (
+          <a
+            href={deeplinkUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={deeplinkLabel}
+            className={cn(
+              DS.actions.smallAction,
+              'mt-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 normal-case tracking-normal',
+              'bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
+              'dark:bg-emerald-950/40 dark:text-emerald-400 dark:hover:bg-emerald-900/50'
+            )}
+          >
+            {deeplinkLabel}
+            <ExternalLink className="h-3 w-3" />
+          </a>
         )}
         {/* Preference attribution badge for check-in blocks */}
         {showPreferenceBadge && (

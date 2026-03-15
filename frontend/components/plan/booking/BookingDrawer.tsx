@@ -48,21 +48,40 @@ const CATEGORY_LABELS = {
  * Filter tiles by category using normalized type matching.
  * Handles case variations, compound types, and synonyms.
  */
-function filterTilesByCategory(tiles: Record<string, Tile>, category: 'hotel' | 'flight' | 'activity'): Tile[] {
+function getLogicalTileKey(tile: Tile, category: 'hotel' | 'flight' | 'activity'): string {
+  if (category !== 'flight') return tile.id;
+  return tile.partner_product_id || tile.deeplink_url || `${tile.title}::${tile.subtitle || ''}`;
+}
+
+export function filterTilesByCategory(
+  tiles: Record<string, Tile>,
+  category: 'hotel' | 'flight' | 'activity'
+): Tile[] {
   const all = Object.values(tiles);
   const filtered = all
     .filter((tile) => normalizeTileType(tile.type) === category)
     .filter(isBookableActivityTile);
+  const deduped: Tile[] = [];
+  const seen = new Set<string>();
+
+  for (const tile of filtered) {
+    const logicalKey = getLogicalTileKey(tile, category);
+    if (seen.has(logicalKey)) continue;
+    seen.add(logicalKey);
+    deduped.push(tile);
+  }
 
   // DEBUG: Log tile type distribution to help diagnose "0 options" issue
   if (process.env.NODE_ENV === 'development') {
-    debugLog(`[BookingDrawer] Category: ${category}, Total tiles: ${all.length}, Matched: ${filtered.length}`);
+    debugLog(
+      `[BookingDrawer] Category: ${category}, Total tiles: ${all.length}, Matched: ${filtered.length}, Deduped: ${deduped.length}`
+    );
     if (filtered.length === 0 && all.length > 0) {
       debugLog('[BookingDrawer] All types:', all.map(t => `${t.id}: "${t.type}"`));
     }
   }
 
-  return filtered;
+  return deduped;
 }
 
 export function BookingDrawer({

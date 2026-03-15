@@ -3,10 +3,11 @@
 import { ExternalLink, Heart, Lock } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { useDocumentTripInputs } from '@/state/documentStore';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
-import { getTileDeeplinkActionLabel } from './tileHelpers';
+import { getEffectiveTileDeeplinkUrl, getTileDeeplinkActionLabel } from './tileHelpers';
 
 type TileDetailsFooterProps = {
   tile: Tile;
@@ -25,7 +26,9 @@ export function TileDetailsFooter({
   onClose,
   onOpenSheet,
 }: TileDetailsFooterProps) {
-  const deeplinkLabel = getTileDeeplinkActionLabel(tile);
+  const tripInputs = useDocumentTripInputs();
+  const deeplinkUrl = getEffectiveTileDeeplinkUrl(tile, tripInputs);
+  const deeplinkLabel = getTileDeeplinkActionLabel(tile, deeplinkUrl);
 
   return (
     <div className="sticky bottom-0 border-t border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-zinc-900">
@@ -45,10 +48,10 @@ export function TileDetailsFooter({
         </button>
       </div>
 
-      {tile.deeplink_url && tile.deeplink_url !== '#' && (
+      {deeplinkUrl && deeplinkUrl !== '#' && (
         <button
           type="button"
-          onClick={() => window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer')}
+          onClick={() => window.open(deeplinkUrl, '_blank', 'noopener,noreferrer')}
           className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2.5 font-medium text-white transition-colors hover:bg-emerald-600"
         >
           {deeplinkLabel}

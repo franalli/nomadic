@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.config import settings
 from app.planner.services.admin_utils import (
     CACHE_SCHEMA_VERSION,
     PLANNER_BUILD_ID,
@@ -209,11 +210,7 @@ class TestResponseCacheStats:
 
 
 class TestClearResponseCaches:
-    """Tests for clear_response_caches() — clears L1 in-memory caches only.
-
-    L2 (PostgreSQL) is intentionally NOT cleared on session reset; entries
-    expire via TTL. Only L1 clear functions are called.
-    """
+    """Tests for clear_response_caches() reset semantics."""
 
     @pytest.mark.asyncio
     async def test_returns_sum_of_all_l1_clears(self):
@@ -247,8 +244,12 @@ class TestClearResponseCaches:
             mock_feasibility.clear.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_does_not_touch_l2_database(self):
-        """L2 (PostgreSQL) must not be accessed during session reset."""
+    async def test_does_not_touch_l2_database_when_flag_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """L2 reset stays off unless CLEAR_L2_ON_RESET is enabled."""
+        monkeypatch.setattr(settings, "clear_l2_on_session_reset", False)
+        monkeypatch.setattr(settings, "pytest_running", False)
         with (
             patch("app.services.experience_generator.clear_experience_cache", return_value=0),
             patch("app.services.specialist_cache.clear_memory_cache", return_value=0),
@@ -260,6 +261,109 @@ class TestClearResponseCaches:
             result = await clear_response_caches()
             assert result == 0
             mock_factory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_clears_l2_database_when_flag_enabled(self, monkeypatch: pytest.MonkeyPatch):
+        """CLEAR_L2_ON_RESET=true must wipe persistent response + Unsplash caches."""
+        monkeypatch.setattr(settings, "clear_l2_on_session_reset", True)
+        monkeypatch.setattr(settings, "pytest_running", False)
+
+        class _SessionCtx:
+            def __init__(self) -> None:
+                self.committed = False
+                self.rolled_back = False
+                self.executed_tables: list[str] = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN001
+                return False
+
+            async def execute(self, stmt):
+                table_name = getattr(getattr(stmt, "table", None), "name", "unknown")
+                self.executed_tables.append(table_name)
+                rowcount = 3 if table_name == "response_cache" else 2
+                return MagicMock(rowcount=rowcount)
+
+            async def commit(self):
+                self.committed = True
+
+            async def rollback(self):
+                self.rolled_back = True
+
+        session_ctx = _SessionCtx()
+
+        def _fake_factory():
+            return session_ctx
+
+        with (
+            patch("app.services.experience_generator.clear_experience_cache", return_value=0),
+            patch("app.services.specialist_cache.clear_memory_cache", return_value=0),
+            patch("app.services.tile_cache.clear_memory_cache", return_value=0),
+            patch("app.services.router_cache.clear_cache", return_value=0),
+            patch("app.services.activity_browser.clear_browse_cache", return_value=0),
+            patch("app.planner.services.iata_resolver.clear_iata_cache", return_value=0),
+            patch("app.tile_service.google_places_provider._enrich_mem.clear", return_value=0),
+            patch("app.planner.services.feasibility_service._feasibility_cache") as mock_feas,
+            patch("app.db._get_async_session_factory", return_value=_fake_factory),
+        ):
+            mock_feas.clear.return_value = 0
+            result = await clear_response_caches()
+
+        assert result == 5
+        assert session_ctx.executed_tables == ["response_cache", "unsplash_image_cache"]
+        assert session_ctx.committed is True
+        assert session_ctx.rolled_back is False
+
+    @pytest.mark.asyncio
+    async def test_raises_when_l2_clear_fails(self, monkeypatch: pytest.MonkeyPatch):
+        """L2 reset failures must surface instead of being silently swallowed."""
+        monkeypatch.setattr(settings, "clear_l2_on_session_reset", True)
+        monkeypatch.setattr(settings, "pytest_running", False)
+
+        class _SessionCtx:
+            def __init__(self) -> None:
+                self.rolled_back = False
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN001
+                return False
+
+            async def execute(self, stmt):  # noqa: ARG002
+                raise RuntimeError("db down")
+
+            async def commit(self):
+                raise AssertionError("commit should not be called on failure")
+
+            async def rollback(self):
+                self.rolled_back = True
+
+        session_ctx = _SessionCtx()
+
+        def _fake_factory():
+            return session_ctx
+
+        with (
+            patch("app.services.experience_generator.clear_experience_cache", return_value=0),
+            patch("app.services.specialist_cache.clear_memory_cache", return_value=0),
+            patch("app.services.tile_cache.clear_memory_cache", return_value=0),
+            patch("app.services.router_cache.clear_cache", return_value=0),
+            patch("app.services.activity_browser.clear_browse_cache", return_value=0),
+            patch("app.planner.services.iata_resolver.clear_iata_cache", return_value=0),
+            patch("app.tile_service.google_places_provider._enrich_mem.clear", return_value=0),
+            patch("app.planner.services.feasibility_service._feasibility_cache") as mock_feas,
+            patch("app.db._get_async_session_factory", return_value=_fake_factory),
+        ):
+            mock_feas.clear.return_value = 0
+            with pytest.raises(
+                RuntimeError, match="Failed to clear L2 caches during session reset"
+            ):
+                await clear_response_caches()
+
+        assert session_ctx.rolled_back is True
 
     @pytest.mark.asyncio
     async def test_cancels_inflight_generators_before_clearing(self):

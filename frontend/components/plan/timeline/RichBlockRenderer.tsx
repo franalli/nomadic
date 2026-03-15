@@ -17,6 +17,7 @@
 import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
+import { getTileDeeplinkActionLabel } from '@/components/tiles/tileHelpers';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentBranch } from '@/types/document';
@@ -64,6 +65,31 @@ function normalizeText(value: string | undefined): string {
 function getTileImage(tile: Partial<Tile> | undefined): string | undefined {
   if (!tile) return undefined;
   return tile.image_url;
+}
+
+function resolveTileFromDocument(
+  tile: Partial<Tile> | undefined,
+  tiles: Record<string, Tile> | undefined
+): Partial<Tile> | undefined {
+  if (!tile) return undefined;
+  const hydrated = tile.id ? tiles?.[tile.id] : undefined;
+  if (!hydrated) return tile;
+  return {
+    ...hydrated,
+    ...tile,
+    deeplink_url: tile.deeplink_url ?? hydrated.deeplink_url,
+    image_url: tile.image_url ?? hydrated.image_url,
+    title: tile.title ?? hydrated.title,
+    type: tile.type ?? hydrated.type,
+  };
+}
+
+function getTileLinkLabel(tile: Partial<Tile> | undefined): string | undefined {
+  if (!tile?.deeplink_url || tile.deeplink_url === '#' || !tile.type) return undefined;
+  return getTileDeeplinkActionLabel({
+    deeplink_url: tile.deeplink_url,
+    type: tile.type,
+  });
 }
 
 function isHotelTile(tile: Tile | undefined): boolean {
@@ -187,8 +213,16 @@ export function RichBlockRenderer({
     () => resolveLogisticsImage(block, tiles),
     [block, tiles]
   );
+  const resolvedLogisticsTile = useMemo(
+    () => resolveTileFromDocument(block.booked_tile, tiles),
+    [block.booked_tile, tiles]
+  );
   const resolvedHotelName = selectedStayTile?.title || block.hotel_name;
   const resolvedHotelDetails = block.logistics_details || selectedStayTile?.location_label;
+  const logisticsLinkLabel = useMemo(
+    () => getTileLinkLabel(resolvedLogisticsTile),
+    [resolvedLogisticsTile]
+  );
 
   // 1. LOGISTICS LAYER - Hard times (arrival/departure/check-in/check-out)
   if (block.buffer_type === 'arrival' || block.buffer_type === 'departure') {
@@ -199,7 +233,9 @@ export function RichBlockRenderer({
         time={getDisplayTime(block, blockIndex)}
         details={block.logistics_details}
         hotelImage={resolvedLogisticsImage}
+        deeplinkLabel={logisticsLinkLabel}
         onOpenFlightsSettings={onOpenFlightsSettings}
+        deeplinkUrl={resolvedLogisticsTile?.deeplink_url}
       />
     );
   }

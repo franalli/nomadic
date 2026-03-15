@@ -2609,7 +2609,7 @@ Additional components in the current codebase:
 |-----------|------|----------------|-------|
 | `MiniCard` | `tiles/MiniCard.tsx` | None (delegates to `MiniCardContent`) | `shadow-card hover:shadow-soft` for card elevation; DS tokens used in child components |
 | `MiniCardSkeleton` | `tiles/MiniCard.tsx` | Custom skeleton colors | `bg-zinc-200/50 dark:bg-zinc-700/50` |
-| `TileDetailsModal` | `tiles/TileDetailsModal.tsx` | None (raw patterns) | `shadow-card` for modal container; primary CTA label adapts by deeplink provider (`Book on Viator` / `Book on GYG` vs Google travel/maps copy) |
+| `TileDetailsModal` | `tiles/TileDetailsModal.tsx` | None (raw patterns) | `shadow-card` for modal container; primary CTA label adapts by deeplink provider (`Book on Booking.com`, `Book on Aviasales`, `Book on Google Flights`, `Book on Viator`, `Book on GYG`, or Google travel/maps copy) |
 | `SuggestionCard` | `plan/tiles/SuggestionCard.tsx` | None (delegates to children) | `shadow-card hover:shadow-soft`; child `suggestionCardSections.tsx` uses `DS.textSize.micro`, `DS.actions.primary` |
 | `CategorySection` | `plan/booking/CategorySection.tsx` | `DS.textSize.micro` | `shadow-card hover:shadow-soft` for accordion card |
 | `CheckoutSidebar` | `plan/booking/CheckoutSidebar.tsx` | None | `shadow-card` for summary card |
@@ -2629,7 +2629,7 @@ Additional components in the current codebase:
 | `S2AgentCard` | `plan/stages/S2AgentCard.tsx` | `DS.textSize.*` | Legacy specialist card with topic CSS vars; `shadow-card` on card, `hover:shadow-soft` on hover |
 | `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Loading shell only (`PlanMirrorLoader`); keeps live indicator dot. |
 | `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (orchestrator) | Full-density itinerary layout; section toggle chips use `ModuleChip` (see Section 32.1) and sticky desktop map column |
-| `BookingSummary` | `plan/BookingSummary.tsx` | `DS.materials.glass`, `DS.text.label`, `DS.textSize.micro` | Stage-3-only venue-link summary (stays + activities) rendered below timeline |
+| `BookingSummary` | `plan/BookingSummary.tsx` | `DS.materials.glass`, `DS.text.label`, `DS.textSize.micro` | Stage-3-only booking-link summary (stays + flights + activities) rendered below timeline with de-duped partner-aware CTA rows |
 | `TimelineThread` | `plan/TimelineThread.tsx` | None (delegates to children) | Day-thread renderer; constraint/status chips with light/dark contrast pairs and unschedulable overlays |
 | `BookingSection` | `plan/BookingSection.tsx` | None (delegates to children) | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
 | `InlineDatePrompt` | `plan/timeline/InlineDatePrompt.tsx` | `DS.actions.primary` | Inline CTA to set dates within timeline |
@@ -2644,14 +2644,18 @@ Additional components in the current codebase:
 | `ActivityCardMeta` | `plan/timeline/blocks/ActivityCardMeta.tsx` | `DS.textSize.micro` | Activity metadata badges and metadata row formatting; traveler ratings use amber star treatment and live prices switch copy from `~123` to `from 123` when the partner price is authoritative |
 | `ActivityCardActions` | `plan/timeline/blocks/ActivityCardActions.tsx` | `DS.actions.primary`, `DS.textSize.micro` | Action row for activity detail/visit links; partner deeplinks render as booking CTAs instead of map CTAs, shorten to `Book` on mobile, and overlay controls stay visible on touch layouts with `h-11` targets |
 | `ActivityCardPhoto` | `plan/timeline/blocks/ActivityCardPhoto.tsx` | None (raw pattern) | Full-width landscape photo banner for `ActivityMiniCard`; signed Google Places proxies now request up to 720px width and the allowlist accepts TripAdvisor plus GetYourGuide CDN hosts |
+| `SuggestionCardCompact` | `plan/tiles/suggestionCardSections.tsx` | `DS.textSize.micro` | Compact suggestion row; hotel thumbnails use `h-16 w-24 rounded-xl`, while flight badges use `h-12 w-12 rounded-xl` with a contained `h-9 w-9` logo |
 
 ### Provider-Aware Deeplink Pills
 
 Booking/link pills keep the same emerald treatment across planning and booking surfaces, but the iconography and copy now adapt to the actual destination:
 
+- Booking.com hotel search links use `ExternalLink` with `Book on Booking.com` copy.
+- Aviasales and Google Flights links use `ExternalLink` with `Book on Aviasales` / `Book on Google Flights` copy.
 - Map-style links use `MapPin` with `Map` / `View on Google*` copy.
 - Viator and GYG affiliate links use `ExternalLink` with `Book` / `Book on Viator` / `Book on GYG` copy.
-- This applies consistently across suggestion cards, booking cards, timeline activity actions, and the tile details modal.
+- `getEffectiveTileDeeplinkUrl()` is the canonical hotel-link resolver. It rewrites Booking.com and Google Travel hotel URLs when valid start/end dates are available, and folds in traveler counts when present, while preserving Google Travel / Maps as the fallback path.
+- This applies consistently across suggestion cards, booking cards, booking-summary stay rows, timeline activity actions, and the tile details modal.
 
 ---
 
@@ -2741,6 +2745,10 @@ Inline timeline block for flight segments and transfers. Styling is type-specifi
 | Icon color (departure/checkout) | `text-zinc-600` | `dark:text-zinc-400` |
 | Label text | `text-xs text-zinc-500` | `dark:text-zinc-400` |
 | Value text | `text-sm font-medium text-zinc-900` | `dark:text-white` |
+
+**Thumbnail contract:** Arrival/departure and check-in/out rows now share a `48px` thumbnail container (`h-12 w-12`) so logistics rows stay visually aligned. Flight logos render as contained artwork inside that frame (`h-8 w-8 object-contain`); hotel imagery fills the frame (`h-full w-full object-cover`).
+
+**CTA rule:** Arrival/departure rows may render a secondary deeplink CTA under the copy when the booked flight tile exposes a deeplink. That CTA uses `DS.actions.smallAction` plus the existing emerald partner-booking treatment; check-in/out rows do not add an equivalent inline deeplink.
 
 ### 31.6 Drag Preview Card (DragPreviewCard)
 
@@ -2832,7 +2840,7 @@ These patterns appear in production code and are now documented to prevent futur
 
 ### 32.1 Section Toggle Chips (PlanFullDensityView Row-Two Chips)
 
-Toggle chips for collapsing/expanding sub-sections (Stays, Flights, Travel Advice). These use the `ModuleChip` component with standard DS pill patterns, not a separate subdued toggle style.
+Toggle chips for collapsing/expanding the row-two sub-sections (Stays, Flights, Travel Advice). These use the `ModuleChip` component with standard DS pill patterns, not a separate subdued toggle style. The `Activities` control remains the core `TripSummaryPills` segment and opens `ActivitiesSheet`, so it does not participate in the toggle-chip mutual-exclusion contract.
 
 | State | Light Mode | Dark Mode |
 |-------|-----------|-----------|
@@ -2840,9 +2848,9 @@ Toggle chips for collapsing/expanding sub-sections (Stays, Flights, Travel Advic
 | On (active) | `bg-zinc-900 text-white border-2 border-transparent` | `dark:bg-white dark:text-black dark:border-transparent` |
 | Shape | `h-9 px-4 rounded-full` (desktop), `h-11 px-5` (mobile) | Same |
 
-**Interaction Rule (Hard):** Row-two panels are mutually exclusive with no exceptions. Opening one (`Flights`, `Stays`, `Travel Advice`) must close the other two first. Only one row-two panel can be open at any time. State managed via `panelToggleStore`.
+**Interaction Rule (Hard):** Secondary booking/intel surfaces are mutually exclusive with no exceptions. Opening one (`Flights`, `Stays`, `Travel Advice`) must close the other two first. Only one of these surfaces can be open at any time. State managed via `panelToggleStore`.
 
-**Implementation:** `frontend/components/plan/ModuleChip.tsx`, toggled via `frontend/state/panelToggleStore.ts`
+**Implementation:** `frontend/components/plan/ModuleChip.tsx`, `frontend/components/plan/TripSummaryPills.tsx`, toggled via `frontend/state/panelToggleStore.ts`; the Activities selector remains a core `TripSummaryPills` segment that opens `ActivitiesSheet`
 
 ---
 

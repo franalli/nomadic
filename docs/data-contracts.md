@@ -217,7 +217,7 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `google_places_enrichment_enabled` | true               | `GOOGLE_PLACES_ENRICHMENT_ENABLED` | Kill switch: disable all Google Places enrichment calls |
 | `viator_api_key`                | `""`                 | `VIATOR_API_KEY`               | Viator Affiliate API key for live activity pricing/images/deeplinks |
 | `viator_enabled`                | false                | `VIATOR_ENABLED`               | Feature flag for Viator browse + enrichment flows |
-| `viator_cache_ttl_hours`        | 24                   | `VIATOR_CACHE_TTL_HOURS`       | L1 TTL for Viator browse/match cache entries |
+| `viator_cache_ttl_hours`        | 1                    | `VIATOR_CACHE_TTL_HOURS`       | L1 TTL for Viator browse/match cache entries |
 | `viator_api_url`                | `https://api.viator.com/partner` | `VIATOR_API_URL`    | Base URL for the Viator partner API client |
 | `get_your_guide_api_key`        | `""`                 | `GET_YOUR_GUIDE_API_KEY`       | GYG affiliate API key for live activity pricing/images/deeplinks |
 | `get_your_guide_enabled`        | false                | `GET_YOUR_GUIDE_ENABLED`       | Feature flag for GYG browse + enrichment flows |
@@ -227,6 +227,7 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `aviasales_marker`              | `""`                 | `AVIASALES_MARKER`             | Aviasales affiliate marker for deeplink attribution |
 | `aviasales_enabled`             | false                | `AVIASALES_ENABLED`            | Feature flag for Aviasales real-time flight search |
 | `aviasales_cache_ttl_hours`     | 1                    | `AVIASALES_CACHE_TTL_HOURS`    | TTL for Aviasales flight search cache entries |
+| `booking_affiliate_aid`         | `""`                 | `BOOKING_AFFILIATE_AID`        | Optional Booking.com affiliate aid appended to hotel search deeplinks |
 | `spend_guard_places_daily_cap_usd` | 2.00               | `SPEND_GUARD_PLACES_DAILY_CAP_USD` | Provider-level daily spend cap for Google Places API |
 | `google_places_photo_signed_ttl_max` | 3600            | --                             | Max allowed signed Google Places photo URL TTL (seconds) |
 | `langsmith_dev_sample_rate`      | 1.0                  | `LANGSMITH_DEV_SAMPLE_RATE`    | Fraction of dev sessions to trace (0.0=none, 1.0=all)       |
@@ -349,7 +350,7 @@ PlanDocumentData
   |           |-- price_level?: number (Google Places price level: 0=free, 1=$, 2=$$, 3=$$$, 4=$$$$)
   |           |-- price_estimate?: number (numeric price from tile data)
   |           |-- google_place_id?: string (Google Places ID)
-  |           |-- deeplink?: string (Google Maps URL or partner booking URL such as Viator/GYG)
+  |           |-- deeplink?: string (Google Maps / Google Travel URL or partner booking URL such as Booking.com, Aviasales, Viator, or GYG)
   |           '-- preference_status?, preference_override_reason?, alternative_tile_id?
   |           NOTE: activity_type carries the display title for the card
   |           (e.g. "Potato Head Beach Club"). specialist_type carries the
@@ -486,7 +487,7 @@ Hydration guards:
 
 ## 5. Frontend State Store
 
-Source: `frontend/state/documentStore.ts`, `frontend/state/uiStore.ts`, `frontend/state/userStore.ts` (Zustand)
+Source: `frontend/state/documentStore.ts`, `frontend/state/uiStore.ts`, `frontend/state/userStore.ts`, `frontend/state/panelToggleStore.ts` (Zustand)
 
 ### Store Shape
 
@@ -588,6 +589,19 @@ Separate lightweight Zustand store for ephemeral and session-scoped UI state. It
 | `hoveredActivityId` / `setHoveredActivityId()` | Ephemeral card↔map hover sync |
 | `mobileHeaderCondensed` / `setMobileHeaderCondensed()` | Ephemeral mobile header collapse flag driven by `useStrategyStageOrchestration` scroll state |
 | `setSelectedBranchId()` / `selectBranchIfNone()` | Helpers for the persisted branch-selection mirror in `uiStore` |
+
+### Panel Toggle Store (`frontend/state/panelToggleStore.ts`)
+
+Auxiliary Zustand store for booking-surface and travel-intel chrome. It does not own trip data; it only tracks which secondary panel is open plus the travel-advice badge state shared between `TripSummaryPills`, `LandingHeaderContent`, and `PlanFullDensityView`.
+
+| Field / Action | Purpose |
+| -------------- | ------- |
+| `staysExpanded` / `toggleStays()` | Toggle the stays suggestions panel; opening it collapses flights, activities, and travel advice |
+| `flightsExpanded` / `toggleFlights()` | Toggle the flights suggestions panel; opening it collapses stays, activities, and travel advice |
+| `activitiesExpanded` / `toggleActivities()` | Toggle the activities suggestions panel; opening it collapses stays, flights, and travel advice |
+| `intelExpanded` / `toggleIntel()` | Toggle destination travel advice; opening it collapses the booking suggestion panels |
+| `travelAdviceCount`, `showTravelAdvice`, `isTravelAdvicePending` / `setTravelAdviceData()` | Badge count, visibility, and loading state pushed from local-expert polling |
+| `reset()` | Clears all expanded panels plus travel-advice metadata on session reset |
 | `setComparisonMode()` / `toggleBranchForComparison()` / `exitComparisonMode()` | Comparison-mode state transitions |
 | `resetUI()` | Resets all UI-only state |
 

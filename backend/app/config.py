@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     # Viator Affiliate API (Basic Access)
     viator_api_key: str = ""
     viator_enabled: bool = False
-    viator_cache_ttl_hours: int = 24
+    viator_cache_ttl_hours: int = 1
     viator_api_url: str = "https://api.viator.com/partner"
 
     # Aviasales / Travelpayouts Flights API
@@ -125,6 +125,9 @@ class Settings(BaseSettings):
     aviasales_marker: str = ""
     aviasales_enabled: bool = False
     aviasales_cache_ttl_hours: int = 1
+
+    # Booking.com hotel deeplink aid parameter (optional, future)
+    booking_affiliate_aid: str = ""
 
     # =============================================================================
     # Cache Configuration

@@ -666,6 +666,152 @@ async def test_fetch_hotels_google_places_fresh_results_strip_meta_stars_before_
 
 
 @pytest.mark.asyncio
+async def test_fetch_hotels_google_places_fallback_mock_results_do_not_poison_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.tile_cache as tile_cache_module
+    import app.tile_service.google_places_provider as gp_module
+
+    class _SessionCtx:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+    def _fake_async_session_factory():
+        return _SessionCtx()
+
+    class _FakeGooglePlacesHotelProvider:
+        async def search_async(self, _ctx):
+            return []
+
+    captured_cache_writes: list[list[dict]] = []
+
+    async def _fake_get_cached_tiles(*_args, **_kwargs):
+        return None
+
+    async def _fake_set_cached_tiles(
+        _db,
+        _provider,
+        _tile_type,
+        _destination,
+        _start,
+        _end,
+        tiles,
+        _variant,
+    ):
+        captured_cache_writes.append(tiles)
+
+    monkeypatch.setattr(tile_cache_module, "get_cached_tiles", _fake_get_cached_tiles)
+    monkeypatch.setattr(tile_cache_module, "set_cached_tiles", _fake_set_cached_tiles)
+    monkeypatch.setattr(settings, "use_google_places_provider", True)
+    monkeypatch.setattr(gp_module, "GooglePlacesHotelProvider", _FakeGooglePlacesHotelProvider)
+    monkeypatch.setattr(
+        logistics_node_module,
+        "_tile_to_dict",
+        lambda tile: {"id": tile.id, "partner": tile.partner, "source": tile.source},
+    )
+    monkeypatch.setattr(
+        logistics_node_module.MockHotelProvider,
+        "search",
+        lambda _self, _ctx: [
+            SimpleNamespace(id="tile_mock_hotel_1", partner="mock_hotel", source="cache")
+        ],
+    )
+
+    plan = TripPlan(destination="Bali", start_date="2026-02-15", end_date="2026-02-25")
+    hotels = await logistics_node_module._fetch_hotels(
+        _fake_async_session_factory,
+        plan,
+        {},
+        "google_places",
+        "bali",
+        "2026-02-15",
+        "2026-02-25",
+        {},
+        {},
+    )
+
+    assert [hotel["id"] for hotel in hotels] == ["tile_mock_hotel_1"]
+    assert captured_cache_writes == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_activities_google_places_fallback_mock_results_do_not_poison_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.tile_cache as tile_cache_module
+    import app.tile_service.google_places_provider as gp_module
+
+    class _SessionCtx:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+    def _fake_async_session_factory():
+        return _SessionCtx()
+
+    class _FakeGooglePlacesActivityProvider:
+        async def search_async(self, _ctx):
+            return []
+
+    captured_cache_writes: list[list[dict]] = []
+
+    async def _fake_get_cached_tiles(*_args, **_kwargs):
+        return None
+
+    async def _fake_set_cached_tiles(
+        _db,
+        _provider,
+        _tile_type,
+        _destination,
+        _start,
+        _end,
+        tiles,
+        _variant,
+    ):
+        captured_cache_writes.append(tiles)
+
+    monkeypatch.setattr(tile_cache_module, "get_cached_tiles", _fake_get_cached_tiles)
+    monkeypatch.setattr(tile_cache_module, "set_cached_tiles", _fake_set_cached_tiles)
+    monkeypatch.setattr(settings, "use_google_places_provider", True)
+    monkeypatch.setattr(
+        gp_module, "GooglePlacesActivityProvider", _FakeGooglePlacesActivityProvider
+    )
+    monkeypatch.setattr(
+        logistics_node_module,
+        "_tile_to_dict",
+        lambda tile: {"id": tile.id, "partner": tile.partner, "source": tile.source},
+    )
+    monkeypatch.setattr(
+        logistics_node_module.MockActivityProvider,
+        "search",
+        lambda _self, _ctx: [
+            SimpleNamespace(id="mock_activity_1", partner="mock_activity", source="cache")
+        ],
+    )
+
+    plan = TripPlan(destination="Bali", start_date="2026-02-15", end_date="2026-02-25")
+    activities = await logistics_node_module._fetch_activities(
+        _fake_async_session_factory,
+        plan,
+        {},
+        "google_places",
+        "bali",
+        "2026-02-15",
+        "2026-02-25",
+        {},
+        {},
+    )
+
+    assert [activity["id"] for activity in activities] == ["mock_activity_1"]
+    assert captured_cache_writes == []
+
+
+@pytest.mark.asyncio
 async def test_search_hotels_activities_skips_activity_fetch_when_activities_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

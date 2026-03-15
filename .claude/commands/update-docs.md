@@ -7,6 +7,7 @@ Map each changed file to its affected SSoT doc(s):
 | Changed File Pattern                             | Update Target                                                                        |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------ |
 | `backend/app/planner/nodes/*`                    | `docs/plan_graph_analysis.md` (node details, routing logic)                          |
+| `backend/app/planner/{chip_generator.py,conversationalist.py,coordinator.py}` | `docs/plan_graph_analysis.md` (coordinator flow, response/chip pipeline)             |
 | `backend/app/planner/specialist_registry.py`     | `docs/plan_graph_analysis.md` (specialist domain knowledge, constraint validation)   |
 | `backend/app/planner/state/graph_state.py`       | `docs/data-contracts.md` (core schema reference, enums, graph state shape)           |
 | `backend/app/planner/state/typed_meta.py`        | `docs/data-contracts.md` (state shape)                                               |
@@ -26,6 +27,7 @@ Map each changed file to its affected SSoT doc(s):
 | `backend/app/services/experience_generator.py`   | `docs/plan_graph_analysis.md` (experience generation, tile enrichment)               |
 | `backend/app/services/regen_strategy.py`         | `docs/plan_graph_analysis.md` (selective regeneration strategy)                      |
 | `backend/app/services/unsplash*.py`              | `docs/plan_graph_analysis.md` (image service, unsplash queries)                      |
+| `backend/app/services/*`                         | `docs/plan_graph_analysis.md` (service/provider architecture, booking and tile integrations) |
 | `backend/app/tools/amadeus_client.py`            | `docs/data-contracts.md` (Amadeus API integration, flight/hotel data)                |
 | `backend/app/tools/tile_service.py`              | `docs/plan_graph_analysis.md` (tile service orchestration)                           |
 | `backend/app/tools/constraint_engine.py`         | `docs/plan_graph_analysis.md` (constraint evaluation engine)                         |
@@ -40,6 +42,9 @@ Map each changed file to its affected SSoT doc(s):
 | `backend/app/sse_state.py`                       | `docs/data-contracts.md` (SSE connection state management)                           |
 | `backend/app/request_dedup.py`                   | `docs/data-contracts.md` (request deduplication, idempotency)                        |
 | `backend/app/telemetry.py`                       | `docs/plan_graph_analysis.md` (observability, tracing)                               |
+| `frontend/components/plan/BookingSummary.tsx`   | `docs/design-system.md` (booking-link summary card patterns)                         |
+| `frontend/components/plan/tiles/*`              | `docs/design-system.md` (suggestion-card styling, compact layout, CTA patterns)      |
+| `frontend/components/plan/timeline/blocks/*`    | `docs/design-system.md` (timeline block patterns, logistics styling)                 |
 | `frontend/components/plan/*`                     | `docs/ux_unified_architecture.md` (component responsibilities, rendering)            |
 | `frontend/components/chat/*`                     | `docs/ux_unified_architecture.md` (chat panel, suggestion chips)                     |
 | `frontend/components/tiles/*`                    | `docs/design-system.md` (tile card patterns, component mapping)                      |

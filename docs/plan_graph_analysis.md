@@ -277,6 +277,7 @@ Recent behavior:
 - "feasible + zero activities" outputs are converted to `caveat` responses and skipped for L2 cache write, preventing stale empty specialist cache entries.
 - Prompt guidance now uses explicit exact bounds (`EXACTLY`) and hard caps (`Do NOT generate more than Y`) to prevent specialist over-generation.
 - Safety buffer days are explicitly excluded from the specialist activity-count ceiling in prompt context.
+- `_calculate_activity_days()` now mirrors builder-side short-trip math: trips of 2+ days get a shared `0.8` arrival/departure credit for non-diving specialists, no-fly topics still lose a full day, and altitude buffers only subtract on trips of 4+ days.
 - `SafetyHealth` now includes advisory fields: `advisory_level` (`none`, `caution`, `warning`, `avoid`) and `advisory_reason`.
 
 **LLM-first architecture:** Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
@@ -1151,10 +1152,11 @@ backend/app/prompts/
 6. Outcome (`_build_outcome_block`) for mutation turns (add/remove/settings/date/spatial/preference/logistics changes), including optional budget usage summary from candidate tiles
 7. Turn context (`_build_turn_context_block`)
 8. Diff block (`_build_diff_block`) with top-tracked `trip_plan`/`trip_settings` field deltas for change-aware responses
-9. **Already-Said dedup block** with recent assistant replies (last 6 messages filtered, up to 3 shown), to prevent repetitive responses
-10. **Hard rules** (`_VOICE_BASE`) + intent-specific voice block with per-intent sentence limits (enforced by `_enforce_sentence_limit()`)
+9. Grounding Facts (`_build_grounding_block`) with tile refresh summary, builder placement/conflict/warning facts, infeasible or omitted requested categories, and a curated list of named entities that are safe to mention from current state
+10. **Already-Said dedup block** with recent assistant replies (last 6 messages filtered, up to 3 shown), to prevent repetitive responses
+11. **Hard rules** (`_VOICE_BASE`) + intent-specific voice block with per-intent sentence limits (enforced by `_enforce_sentence_limit()`)
 
-This keeps the final assistant turn aligned with what the backend just applied, and prevents it from repeating already delivered content.
+This keeps the final assistant turn aligned with what the backend just applied, prevents repetition, and adds an explicit anti-hallucination guard: named hotels, flights, and activities must come from itinerary/status/grounding facts instead of free generation.
 
 ---
 
@@ -1248,6 +1250,10 @@ The `search_tiles` tool (via logistics_node) and `tile_service/service.py` both 
 `google_places_provider.py` runs on a Pro-tier field mask (Enterprise fields like rating, `userRatingCount`, `priceLevel`, and `editorialSummary` are excluded). Browse/activity tiles therefore default to `rating=None`, `review_count=None`, empty descriptions, and a moderate placeholder `price_estimate=35.0` / `price_level=2` until later enrichment fills in better detail.
 
 `google_places_provider.py` also keeps a module-level country-code cache populated from successful geocode responses. Coordinator envelope assembly reads that cache to backfill `trip_inputs.country_code` for downstream UI.
+
+Hotel deeplinks from `google_places_provider.py` now prefer a Booking.com search URL assembled from tile context (`name`, destination, dates, travelers). When present, optional `settings.booking_affiliate_aid` is appended as `aid`; Google Travel / Google Maps links are still computed and preserved in tile metadata as fallback context (`meta.booking_deeplink`, `meta.maps_deeplink`).
+
+`aviasales_provider.py` now keeps up to 10 provider rows per request, dedupes logically identical itineraries by a stable SHA1 fingerprint (carrier, flight number, airports, times, transfers, durations), then emits up to 5 unique tiles. The fingerprint also drives stable hashed `tile.id` / `partner_product_id` values so duplicate provider rows collapse onto one booking surface.
 
 Media proxy URL signing is now centralized in `backend/app/config.py:get_media_signing_secret()`.
 Both `google_places_provider.py` and `main.py` resolve the secret through the same fallback order:

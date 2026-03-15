@@ -6,9 +6,14 @@ import { useMemo } from 'react';
 import { DS } from '@/lib/design-system';
 import { formatTilePrice } from '@/lib/format-utils';
 import { cn, isFlightType } from '@/lib/utils';
+import { useDocumentTripInputs } from '@/state/documentStore';
 import type { Tile } from '@/types/tile';
 
-import { getTileDeeplinkPillLabel, isPartnerDeeplinkUrl } from './tileHelpers';
+import {
+  getEffectiveTileDeeplinkUrl,
+  getTileDeeplinkPillLabel,
+  isPartnerDeeplinkUrl,
+} from './tileHelpers';
 
 type MiniCardSummaryPricingProps = {
   tile: Tile;
@@ -16,6 +21,8 @@ type MiniCardSummaryPricingProps = {
 
 export function MiniCardSummaryPricing({ tile }: MiniCardSummaryPricingProps) {
   const priceDisplay = useMemo(() => formatTilePrice(tile), [tile]);
+  const tripInputs = useDocumentTripInputs();
+  const deeplinkUrl = getEffectiveTileDeeplinkUrl(tile, tripInputs);
   const isFlight = isFlightType(tile.type || '');
   const meta = tile.meta as Record<string, unknown> | undefined;
   const logicHook = typeof meta?.logic_hook === 'string' ? meta.logic_hook : undefined;
@@ -26,9 +33,9 @@ export function MiniCardSummaryPricing({ tile }: MiniCardSummaryPricingProps) {
         <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           {priceDisplay}
         </span>
-        {tile.deeplink_url && tile.deeplink_url !== '#' && (
+        {deeplinkUrl && deeplinkUrl !== '#' && (
           <a
-            href={tile.deeplink_url}
+            href={deeplinkUrl}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(event) => event.stopPropagation()}
@@ -42,12 +49,12 @@ export function MiniCardSummaryPricing({ tile }: MiniCardSummaryPricingProps) {
               'dark:hover:shadow-[0_0_12px_-3px_rgba(16,185,129,0.3)]'
             )}
           >
-            {isPartnerDeeplinkUrl(tile.deeplink_url) ? (
+            {isPartnerDeeplinkUrl(deeplinkUrl) ? (
               <ExternalLink className="h-3 w-3" />
             ) : (
               <MapPin className="h-3 w-3" />
             )}
-            {getTileDeeplinkPillLabel(tile)}
+            {getTileDeeplinkPillLabel(tile, deeplinkUrl)}
           </a>
         )}
       </div>

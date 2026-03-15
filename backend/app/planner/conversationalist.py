@@ -382,6 +382,161 @@ def _build_diff_block(state: Dict[str, Any]) -> str:
     return "## What Changed This Turn\n" + "\n".join(lines)
 
 
+def _as_dict(value: Any) -> Dict[str, Any]:
+    """Coerce Pydantic models or plain dicts into a mapping."""
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        dumped = value.model_dump()
+        if isinstance(dumped, dict):
+            return dumped
+    return {}
+
+
+def _collect_grounded_entity_names(state: Dict[str, Any]) -> List[str]:
+    """Collect names the model may safely reference from actual state."""
+    names: List[str] = []
+    seen: set[str] = set()
+    generic_names = {
+        "",
+        "arrive at destination",
+        "depart for home",
+        "arrival",
+        "departure",
+        "free day",
+        "check-in",
+        "check-out",
+        "check in",
+        "check out",
+    }
+
+    def _add_name(raw_name: Any) -> None:
+        name = str(raw_name or "").strip()
+        if not name:
+            return
+        lowered = name.lower()
+        if lowered in generic_names or lowered in seen:
+            return
+        seen.add(lowered)
+        names.append(name)
+
+    for day_card in state.get("day_cards", []) or []:
+        dc = _as_dict(day_card)
+        for block in dc.get("blocks", []) or []:
+            block_dict = _as_dict(block)
+            if not block_dict.get("is_buffer"):
+                _add_name(block_dict.get("summary"))
+            booked_tile = _as_dict(block_dict.get("booked_tile"))
+            if booked_tile:
+                _add_name(booked_tile.get("title"))
+
+    tiles = state.get("tiles", {})
+    if isinstance(tiles, dict):
+        for tile_group in tiles.values():
+            if not isinstance(tile_group, list):
+                continue
+            for tile in tile_group:
+                tile_dict = _as_dict(tile)
+                if (
+                    tile_dict.get("selected")
+                    or tile_dict.get("booked")
+                    or tile_dict.get("preferred")
+                ):
+                    _add_name(tile_dict.get("title"))
+
+    for field_name in ("destination", "origin"):
+        _add_name(state.get("trip_plan", {}).get(field_name))
+
+    return names[:12]
+
+
+def _build_grounding_block(state: Dict[str, Any]) -> str:
+    """Expose builder facts and safe named entities for response grounding."""
+    turn_meta = _as_dict(state.get("turn_meta"))
+    builder_result = _as_dict(turn_meta.get("builder_result"))
+    lines: List[str] = []
+
+    tile_summary = str(turn_meta.get("tile_search_summary") or "").strip()
+    if tile_summary:
+        lines.append(f"- Tile refresh result: {tile_summary}")
+
+    if builder_result:
+        success = builder_result.get("success")
+        if success is False:
+            lines.append("- Builder status: itinerary build did not fully succeed")
+
+        placed = builder_result.get("activities_placed")
+        dropped = builder_result.get("activities_dropped")
+        if isinstance(placed, int) or isinstance(dropped, int):
+            placed_count = int(placed or 0)
+            dropped_count = int(dropped or 0)
+            lines.append(
+                f"- Builder placement counts: {placed_count} placed, {dropped_count} dropped"
+            )
+
+        warnings = [
+            str(w).strip() for w in builder_result.get("warnings", []) or [] if str(w).strip()
+        ]
+        for warning in warnings[:3]:
+            lines.append(f"- Builder warning: {warning}")
+
+        conflicts = builder_result.get("conflicts", []) or []
+        for conflict in conflicts[:2]:
+            conflict_dict = _as_dict(conflict)
+            message = str(conflict_dict.get("message") or conflict_dict.get("type") or "").strip()
+            if message:
+                lines.append(f"- Builder conflict: {message}")
+
+        resolutions = builder_result.get("resolutions", []) or []
+        for resolution in resolutions[:2]:
+            resolution_dict = _as_dict(resolution)
+            message = str(
+                resolution_dict.get("message")
+                or resolution_dict.get("action")
+                or resolution_dict.get("reason")
+                or ""
+            ).strip()
+            if message:
+                lines.append(f"- Builder resolution: {message}")
+
+        requested = [
+            str(cat).strip()
+            for cat in builder_result.get("requested_activity_categories", []) or []
+            if str(cat).strip()
+        ]
+        effective = [
+            str(cat).strip()
+            for cat in builder_result.get("effective_activity_categories", []) or []
+            if str(cat).strip()
+        ]
+        if requested and effective:
+            omitted = [cat for cat in requested if cat not in effective]
+            if omitted:
+                lines.append(
+                    f"- Requested categories not kept in the build: {', '.join(omitted[:4])}"
+                )
+
+        infeasible = [
+            str(cat).strip()
+            for cat in builder_result.get("infeasible_requested_categories", []) or []
+            if str(cat).strip()
+        ]
+        if infeasible:
+            lines.append(f"- Infeasible requested categories: {', '.join(infeasible[:4])}")
+
+    grounded_names = _collect_grounded_entity_names(state)
+    if grounded_names:
+        lines.append(f"- Named entities safe to mention: {', '.join(grounded_names)}")
+
+    if not lines:
+        return ""
+
+    lines.append(
+        "- NEVER mention a named activity, hotel, or flight unless it appears above or in the itinerary block"
+    )
+    return "## Grounding Facts\n" + "\n".join(lines)
+
+
 def _build_outcome_block(state: Dict[str, Any]) -> str:
     """What the system did this turn — so the LLM can confirm or caveat honestly."""
     day_cards: List[Any] = state.get("day_cards", [])
@@ -662,6 +817,7 @@ _VOICE_BASE: str = """\
 - NEVER hyperlink entity names. Mention them naturally in prose.
 - NEVER repeat back information the user just typed.
 - NEVER repeat any content shown in 'Already Said'. Find a NEW angle, constraint, or highlight.
+- Only mention named activities, hotels, or flights that appear in the itinerary/status/grounding blocks.
 - Use natural, confident language. You are an expert, not an assistant.
 - Match the user's energy level. Enthusiastic users get vivid language. Uncertain users get reassurance and clarity. Terse users get equally terse responses.
 - Reference SPECIFIC names, places, and constraints from the specialist data above.
@@ -1050,6 +1206,10 @@ def build_response_context(
     diff_block = _build_diff_block(state)
     if diff_block:
         system_parts.append(diff_block)
+
+    grounding_block = _build_grounding_block(state)
+    if grounding_block:
+        system_parts.append(grounding_block)
 
     # 7. Dedup: show the LLM what it already said (so it doesn't repeat)
     recent_assistant_msgs = [

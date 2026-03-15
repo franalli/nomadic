@@ -1213,10 +1213,10 @@ class VerticalSpecialist:
         - Day 1 = Arrival (no activities)
         - Day N = Departure (no activities)
         - Diving: Day N-1 = No-fly buffer (no diving)
-        - Hiking at high altitude: Day 3 = Acclimatization (no strenuous activity)
+        - Short trips still get partial arrival/departure capacity for
+          non-diving activities, matching the itinerary builder.
 
         Returns the number of days available for specialist activities.
-        For very short trips (1-2 days), returns 0 (no activity days).
         Result is cached on the instance for the duration of this specialist run.
         """
         if self._cached_activity_days is not None:
@@ -1248,21 +1248,34 @@ class VerticalSpecialist:
             self._cached_activity_days = 3
             return 3
 
-        # Subtract arrival (day 1) and departure (last day)
-        available = total_days - 2
-        _debug_info("SPECIALIST", f"  after arrival/departure: available={available}")
+        partial_day_credit = 0.8 if total_days >= 2 else 0.0
+        available = max(0.0, float(total_days - 2)) + partial_day_credit
+        _debug_info(
+            "SPECIALIST",
+            f"  after arrival/departure partial credit: available={available:.1f}",
+        )
 
         # Specialist-specific buffers (registry-driven)
         config = get_specialist_config(self.topic)
         if config and config.has_nofly_buffer:
-            available -= 1
-            _debug_info("SPECIALIST", f"  after {self.topic} no-fly buffer: available={available}")
-        elif config and config.has_altitude_buffer:
-            available -= 1  # Conservative — LLM handles content appropriately
-            message = f"  after {self.topic} altitude buffer: available={available}"
+            available -= 1.0
+            _debug_info(
+                "SPECIALIST",
+                f"  after {self.topic} no-fly buffer: available={available:.1f}",
+            )
+        elif config and config.has_altitude_buffer and total_days >= 4:
+            available -= 1.0
+            message = f"  after {self.topic} altitude buffer: available={available:.1f}"
             _debug_info("SPECIALIST", message)
 
-        result = max(0, available)
+        if available <= 0:
+            result = 0
+        elif config and config.has_nofly_buffer:
+            result = int(available)
+        elif available < 1:
+            result = 1
+        else:
+            result = int(available)
         _debug_info("SPECIALIST", f"  -> FINAL: max_activities={result}")
         self._cached_activity_days = result
         return result

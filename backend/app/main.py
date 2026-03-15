@@ -1992,6 +1992,14 @@ async def graph_plan_stream_endpoint(
     )
 
 
+async def _clear_fresh_session_caches() -> None:
+    """Clear caches that should never survive an explicit fresh-trip action."""
+    if settings.aggressive_cache_clear:
+        await clear_all_caches()  # Clear everything including validation caches
+    else:
+        await clear_response_caches()  # Preserve validation cache in production
+
+
 @app.post("/api/session/new", status_code=204)
 @limiter.limit("20/minute")
 async def new_session(
@@ -2011,6 +2019,8 @@ async def new_session(
 
     from sqlalchemy import delete, select, update
     from sqlalchemy.sql import desc
+
+    await _clear_fresh_session_caches()
 
     # Create a fresh session linked to the same user
     new_token = await _generate_unique_session_token(db)
@@ -2103,11 +2113,7 @@ async def reset_session(
 
         await cancel_pending_enrichment(session_id)
 
-    # Clear response caches (or all caches in dev mode)
-    if settings.aggressive_cache_clear:
-        await clear_all_caches()  # Clear everything including validation caches
-    else:
-        await clear_response_caches()  # Preserve validation cache in production
+    await _clear_fresh_session_caches()
 
     # Lock the session row first to prevent deadlocks with concurrent operations
     session = await get_session_by_token(db, session_id, lock_for_update=True)

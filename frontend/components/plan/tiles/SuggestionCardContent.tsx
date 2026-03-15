@@ -6,6 +6,7 @@ import { useCallback, useState } from 'react';
 
 import {
   getAmenityIconsWithLabels,
+  getEffectiveTileDeeplinkUrl,
   getTileDeeplinkPillLabel,
   isPartnerDeeplinkUrl,
 } from '@/components/tiles/tileHelpers';
@@ -15,6 +16,7 @@ import { formatTilePrice } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { renderStarRating } from '@/lib/renderStarRating';
 import { cn } from '@/lib/utils';
+import { useDocumentTripInputs } from '@/state/documentStore';
 import type { Tile } from '@/types/tile';
 
 import { SuggestionActionRow, SuggestionReasoning } from './suggestionCardSections';
@@ -42,11 +44,13 @@ export function SuggestionCardContent({
 }: SuggestionCardContentProps) {
   const [isReasoningExpanded, setIsReasoningExpanded] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const tripInputs = useDocumentTripInputs();
 
   const isHotel = tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay');
   const amenityIcons = getAmenityIconsWithLabels(tile);
 
   const priceDisplay = formatTilePrice(tile);
+  const deeplinkUrl = getEffectiveTileDeeplinkUrl(tile, tripInputs);
 
   const placeholderUrl = placeholderImageForTile(tile);
   const imageUrl = imageError ? placeholderUrl : (tile.image_url || placeholderUrl);
@@ -137,11 +141,11 @@ export function SuggestionCardContent({
             onToggle={() => setIsReasoningExpanded(!isReasoningExpanded)}
           />
         )}
-        {tile.deeplink_url && tile.deeplink_url !== '' && tile.deeplink_url !== '#' && (() => {
-          const isPartner = isPartnerDeeplinkUrl(tile.deeplink_url);
+        {deeplinkUrl && deeplinkUrl !== '' && deeplinkUrl !== '#' && (() => {
+          const isPartner = isPartnerDeeplinkUrl(deeplinkUrl);
           return (
             <a
-              href={tile.deeplink_url}
+              href={deeplinkUrl}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => {
@@ -160,7 +164,7 @@ export function SuggestionCardContent({
               )}
             >
               {isPartner ? <ExternalLink className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
-              {getTileDeeplinkPillLabel(tile)}
+              {getTileDeeplinkPillLabel(tile, deeplinkUrl)}
             </a>
           );
         })()}

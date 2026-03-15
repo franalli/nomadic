@@ -12,6 +12,7 @@ Graceful degradation: returns empty list on any failure.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime
 from typing import Any
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 # -- Constants ----------------------------------------------------------------
 TRAVELPAYOUTS_BASE = "https://api.travelpayouts.com/aviasales/v3"
 AVIASALES_TIMEOUT = 10.0  # seconds
+_MAX_PROVIDER_RESULTS = 10
+_MAX_TILE_RESULTS = 5
 
 # -- Singleton httpx client ---------------------------------------------------
 _aviasales_client: httpx.AsyncClient | None = None
@@ -138,15 +141,16 @@ async def search_aviasales_flights(
         )
         return []
 
+    unique_results = _dedupe_flight_results(results, origin, destination)
+
     # Convert API results to tile-compatible dicts
     tiles = []
-    for i, flight in enumerate(results[:5]):  # Cap at 5 results
+    for flight in unique_results[:_MAX_TILE_RESULTS]:
         tile = _api_result_to_tile(
             flight,
             origin,
             destination,
             currency,
-            i,
             requested_depart_date=depart_date,
             requested_return_date=return_date,
         )
@@ -176,7 +180,7 @@ async def _search_prices_for_dates(
         "token": token,
         "sorting": "price",
         "direct": "false",
-        "limit": 5,
+        "limit": _MAX_PROVIDER_RESULTS,
         "currency": currency,
     }
     if return_date:
@@ -252,9 +256,9 @@ async def _search_grouped_prices(
             # Convert dict-of-dates to list, sorted by price
             results = list(raw.values())
             results.sort(key=lambda x: x.get("price", float("inf")))
-            return results[:5]
+            return results[:_MAX_PROVIDER_RESULTS]
         elif isinstance(raw, list):
-            return raw[:5]
+            return raw[:_MAX_PROVIDER_RESULTS]
         return []
 
     except httpx.TimeoutException:
@@ -281,7 +285,6 @@ def _api_result_to_tile(
     origin: str,
     destination: str,
     currency: str,
-    index: int,
     requested_depart_date: str = "",
     requested_return_date: str = "",
 ) -> dict[str, Any] | None:
@@ -292,7 +295,6 @@ def _api_result_to_tile(
             return None
 
         airline_code = flight.get("airline", "")
-        flight_number = flight.get("flight_number", "")
         departure_at = flight.get("departure_at", "")
         transfers = flight.get("transfers", 0)
         duration_to = flight.get("duration_to", 0)  # minutes
@@ -348,8 +350,9 @@ def _api_result_to_tile(
             requested_return_date or return_at or "",
         )
 
-        # Build unique tile ID
-        tile_id = f"aviasales_{origin}_{destination}_{airline_code}_{flight_number}_{index}"
+        flight_fingerprint = _flight_fingerprint(flight, origin, destination)
+        tile_id = f"aviasales_{origin}_{destination}_{flight_fingerprint[:12]}"
+        partner_product_id = f"aviasales_{flight_fingerprint}"
 
         logo_url = f"https://pics.avs.io/200/200/{carrier_logo}.png"
 
@@ -357,7 +360,6 @@ def _api_result_to_tile(
             "id": tile_id,
             "type": "flight",
             "partner": "aviasales",
-            "partner_product_id": f"{airline_code}{flight_number}",
             "title": f"{carrier_name} - {stops_label}",
             "subtitle": subtitle,
             "image_url": logo_url,
@@ -369,10 +371,12 @@ def _api_result_to_tile(
             "deeplink_url": deeplink,
             "tags": [carrier_name, stops_label.lower()],
             "availability_status": "available",
+            "partner_product_id": partner_product_id,
             "meta": {
                 "carrier_code": carrier_logo,
                 "carrier_name": carrier_name,
                 "departure_time": departure_at,
+                "arrival_time": flight.get("arrival_at", ""),
                 "duration": duration_str,
                 "stops": transfers,
                 "is_direct": is_direct,
@@ -385,3 +389,57 @@ def _api_result_to_tile(
     except Exception as e:
         logger.warning("[Aviasales] Failed to convert flight result to tile: %s", e)
         return None
+
+
+def _normalize_flight_field(value: Any) -> str:
+    """Normalize provider values so identical itineraries hash identically."""
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value).strip().lower()
+
+
+def _flight_fingerprint(flight: dict[str, Any], origin: str, destination: str) -> str:
+    """Build a stable logical identifier for an Aviasales itinerary."""
+    fingerprint_fields = [
+        origin,
+        destination,
+        flight.get("airline"),
+        flight.get("flight_number"),
+        flight.get("departure_at"),
+        flight.get("arrival_at"),
+        flight.get("return_at"),
+        flight.get("transfers"),
+        flight.get("return_transfers"),
+        flight.get("duration_to"),
+        flight.get("duration_back"),
+        flight.get("origin_airport"),
+        flight.get("destination_airport"),
+    ]
+    raw = "|".join(_normalize_flight_field(field) for field in fingerprint_fields)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _dedupe_flight_results(
+    results: list[dict[str, Any]],
+    origin: str,
+    destination: str,
+) -> list[dict[str, Any]]:
+    """Collapse duplicate provider rows to one logical itinerary."""
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    duplicates = 0
+
+    for flight in results:
+        fingerprint = _flight_fingerprint(flight, origin, destination)
+        if fingerprint in seen:
+            duplicates += 1
+            continue
+        seen.add(fingerprint)
+        deduped.append(flight)
+
+    if duplicates:
+        logger.info("[Aviasales] Deduped %d duplicate flight result(s)", duplicates)
+
+    return deduped

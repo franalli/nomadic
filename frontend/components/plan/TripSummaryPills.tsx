@@ -110,6 +110,7 @@ export function TripSummaryPills({
                     active={flightsActive}
                     onClick={onToggleFlights}
                     disabled={disabled}
+                    toggleable
                     compact={compact}
                   />
                   {(showStays || showAdvice) && <TripSummarySegmentDot />}
@@ -125,6 +126,7 @@ export function TripSummaryPills({
                     active={staysActive}
                     onClick={onToggleStays}
                     disabled={disabled}
+                    toggleable
                     compact={compact}
                   />
                   {showAdvice && <TripSummarySegmentDot />}
@@ -140,6 +142,7 @@ export function TripSummaryPills({
                   active={travelAdviceActive}
                   onClick={onToggleTravelAdvice}
                   disabled={disabled}
+                  toggleable
                   compact={compact}
                   ariaControls="destination-intel-panel"
                   ariaExpanded={travelAdviceActive}

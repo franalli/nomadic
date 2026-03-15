@@ -1,5 +1,6 @@
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { isFlightType, isHotelType } from '@/lib/utils';
+import type { DocumentTripInputs } from '@/types/document';
 import type { Tile } from '@/types/tile';
 
 export type AmenityIconLabel = {
@@ -19,7 +20,18 @@ export type TileCheckTimes = {
   checkOut?: string;
 };
 
-type DeeplinkProvider = 'viator' | 'gyg' | 'aviasales' | 'google_flights' | 'other';
+type DeeplinkProvider = 'viator' | 'gyg' | 'aviasales' | 'google_flights' | 'booking' | 'other';
+
+type TileWithDeeplink = Pick<Tile, 'deeplink_url'>;
+type TileWithTypeAndDeeplink = Pick<Tile, 'deeplink_url' | 'type'>;
+type HotelDeeplinkTile = Pick<
+  Tile,
+  'deeplink_url' | 'meta' | 'title' | 'type'
+>;
+type TripInputDeeplinkContext = Pick<
+  DocumentTripInputs,
+  'adults' | 'children' | 'end_date' | 'start_date'
+>;
 
 const AMENITY_ICONS: Record<string, string> = {
   pool: '\u{1F3CA}',
@@ -52,6 +64,9 @@ const AMENITY_ICONS: Record<string, string> = {
 };
 
 function getDeeplinkProvider(deeplinkUrl: string): DeeplinkProvider {
+  if (deeplinkUrl.includes('booking.com')) {
+    return 'booking';
+  }
   if (deeplinkUrl.includes('viator.com')) return 'viator';
   if (deeplinkUrl.includes('getyourguide.com')) return 'gyg';
   if (deeplinkUrl.includes('aviasales.com')) return 'aviasales';
@@ -63,9 +78,239 @@ export function isPartnerDeeplinkUrl(deeplinkUrl: string): boolean {
   return getDeeplinkProvider(deeplinkUrl) !== 'other';
 }
 
-export function getTileDeeplinkPillLabel(tile: Pick<Tile, 'deeplink_url'>): string {
-  const provider = getDeeplinkProvider(tile.deeplink_url);
+function isBookingComHostname(hostname: string): boolean {
+  return hostname === 'booking.com' || hostname.endsWith('.booking.com');
+}
 
+function isGoogleHostname(hostname: string): boolean {
+  return hostname === 'google.com' || hostname.endsWith('.google.com');
+}
+
+function parseUrl(url: string): URL | null {
+  try {
+    return new URL(url);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeSearchPart(value: string | undefined | null): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  return normalized.length > 0 ? normalized : null;
+}
+
+function appendUniqueSearchPart(parts: string[], candidate: string | undefined | null): void {
+  const normalizedCandidate = normalizeSearchPart(candidate);
+
+  if (!normalizedCandidate) return;
+
+  const normalizedCandidateLower = normalizedCandidate.toLowerCase();
+  const alreadyCovered = parts.some((part) => {
+    const normalizedPartLower = part.toLowerCase();
+    return (
+      normalizedPartLower.includes(normalizedCandidateLower)
+      || normalizedCandidateLower.includes(normalizedPartLower)
+    );
+  });
+
+  if (!alreadyCovered) {
+    parts.push(normalizedCandidate);
+  }
+}
+
+function getBookingSearchString(
+  tile: HotelDeeplinkTile,
+  originalUrl: URL
+): string {
+  const meta = tile.meta as Record<string, unknown> | undefined;
+  const searchParts: string[] = [];
+
+  appendUniqueSearchPart(searchParts, tile.title);
+  appendUniqueSearchPart(
+    searchParts,
+    typeof meta?.destination === 'string' ? meta.destination : undefined
+  );
+  appendUniqueSearchPart(
+    searchParts,
+    typeof meta?.location === 'string' ? meta.location : undefined
+  );
+
+  if (searchParts.length > 0) {
+    return searchParts.join(', ');
+  }
+
+  return normalizeSearchPart(originalUrl.searchParams.get('ss')) ?? '';
+}
+
+function isValidIsoDate(value: string | undefined | null): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function normalizeTravelerCount(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const normalized = Math.trunc(value);
+  return normalized >= 0 ? normalized : null;
+}
+
+function getSearchParamTravelerCount(
+  url: URL,
+  paramName: string
+): number | null {
+  const rawValue = url.searchParams.get(paramName);
+  if (!rawValue) return null;
+  const parsedValue = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
+}
+
+export function isDirectBookingHotelSearchUrl(tile: TileWithTypeAndDeeplink): boolean {
+  if (!isHotelType(tile.type || '')) return false;
+
+  const parsedUrl = parseUrl(tile.deeplink_url);
+  if (!parsedUrl || !isBookingComHostname(parsedUrl.hostname.toLowerCase())) return false;
+
+  return parsedUrl.pathname.toLowerCase().startsWith('/searchresults');
+}
+
+function isGoogleTravelHotelUrl(tile: TileWithTypeAndDeeplink): boolean {
+  if (!isHotelType(tile.type || '')) return false;
+
+  const parsedUrl = parseUrl(tile.deeplink_url);
+  if (!parsedUrl || !isGoogleHostname(parsedUrl.hostname.toLowerCase())) return false;
+
+  return parsedUrl.pathname.toLowerCase().includes('/travel/hotels');
+}
+
+function isGoogleMapsUrl(tile: TileWithTypeAndDeeplink): boolean {
+  if (!isHotelType(tile.type || '')) return false;
+
+  const parsedUrl = parseUrl(tile.deeplink_url);
+  if (!parsedUrl) return false;
+
+  const hostname = parsedUrl.hostname.toLowerCase();
+  if (hostname === 'maps.google.com') return true;
+  return isGoogleHostname(hostname) && parsedUrl.pathname.toLowerCase().startsWith('/maps');
+}
+
+export function getEffectiveHotelBookingDeeplink(
+  tile: HotelDeeplinkTile,
+  tripInputs?: TripInputDeeplinkContext | null
+): string {
+  if (!isDirectBookingHotelSearchUrl(tile)) {
+    return tile.deeplink_url;
+  }
+
+  const parsedOriginalUrl = parseUrl(tile.deeplink_url);
+  if (!parsedOriginalUrl) return tile.deeplink_url;
+
+  const startDate = tripInputs?.start_date;
+  const endDate = tripInputs?.end_date;
+  const adults =
+    normalizeTravelerCount(tripInputs?.adults)
+    ?? getSearchParamTravelerCount(parsedOriginalUrl, 'group_adults')
+    ?? 1;
+  const children =
+    normalizeTravelerCount(tripInputs?.children)
+    ?? getSearchParamTravelerCount(parsedOriginalUrl, 'group_children')
+    ?? 0;
+  const searchString = getBookingSearchString(tile, parsedOriginalUrl);
+
+  if (
+    !isValidIsoDate(startDate)
+    || !isValidIsoDate(endDate)
+    || adults < 1
+    || !searchString
+  ) {
+    return tile.deeplink_url;
+  }
+
+  const effectiveUrl = new URL(parsedOriginalUrl.origin + parsedOriginalUrl.pathname);
+  const affiliateId = parsedOriginalUrl.searchParams.get('aid');
+  const roomCount = parsedOriginalUrl.searchParams.get('no_rooms');
+
+  if (affiliateId) {
+    effectiveUrl.searchParams.set('aid', affiliateId);
+  }
+
+  effectiveUrl.searchParams.set('ss', searchString);
+  effectiveUrl.searchParams.set('checkin', startDate);
+  effectiveUrl.searchParams.set('checkout', endDate);
+  effectiveUrl.searchParams.set('group_adults', String(adults));
+  effectiveUrl.searchParams.set('group_children', String(children));
+  effectiveUrl.searchParams.set('no_rooms', roomCount || '1');
+  effectiveUrl.hash = parsedOriginalUrl.hash;
+
+  return effectiveUrl.toString();
+}
+
+export function getEffectiveGoogleHotelDeeplink(
+  tile: HotelDeeplinkTile,
+  tripInputs?: TripInputDeeplinkContext | null
+): string {
+  if (!isGoogleTravelHotelUrl(tile) && !isGoogleMapsUrl(tile)) {
+    return tile.deeplink_url;
+  }
+
+  const parsedOriginalUrl = parseUrl(tile.deeplink_url);
+  if (!parsedOriginalUrl) return tile.deeplink_url;
+
+  const startDate = tripInputs?.start_date;
+  const endDate = tripInputs?.end_date;
+  const adults = normalizeTravelerCount(tripInputs?.adults);
+  const children = normalizeTravelerCount(tripInputs?.children) ?? 0;
+  const searchString =
+    getBookingSearchString(tile, parsedOriginalUrl)
+    || normalizeSearchPart(parsedOriginalUrl.searchParams.get('q'));
+
+  if (
+    !isValidIsoDate(startDate)
+    || !isValidIsoDate(endDate)
+    || !searchString
+  ) {
+    return tile.deeplink_url;
+  }
+
+  const totalOccupancy =
+    (adults !== null && adults >= 1)
+      ? adults + children
+      : getSearchParamTravelerCount(parsedOriginalUrl, 'brd_occupancy') ?? 1;
+  const effectiveUrl = new URL('https://www.google.com/travel/hotels');
+  const originalGl = normalizeSearchPart(parsedOriginalUrl.searchParams.get('gl'));
+  const originalHl = normalizeSearchPart(parsedOriginalUrl.searchParams.get('hl'));
+
+  effectiveUrl.searchParams.set('q', searchString);
+  effectiveUrl.searchParams.set('brd_dates', `${startDate},${endDate}`);
+  effectiveUrl.searchParams.set('brd_occupancy', String(totalOccupancy));
+
+  if (originalGl) {
+    effectiveUrl.searchParams.set('gl', originalGl);
+  }
+  if (originalHl) {
+    effectiveUrl.searchParams.set('hl', originalHl);
+  }
+
+  return effectiveUrl.toString();
+}
+
+export function getEffectiveTileDeeplinkUrl(
+  tile: HotelDeeplinkTile,
+  tripInputs?: TripInputDeeplinkContext | null
+): string {
+  const bookingDeeplink = getEffectiveHotelBookingDeeplink(tile, tripInputs);
+  if (bookingDeeplink !== tile.deeplink_url) {
+    return bookingDeeplink;
+  }
+
+  return getEffectiveGoogleHotelDeeplink(tile, tripInputs);
+}
+
+export function getTileDeeplinkPillLabel(
+  tile: TileWithDeeplink,
+  deeplinkUrl: string = tile.deeplink_url
+): string {
+  const provider = getDeeplinkProvider(deeplinkUrl);
+
+  if (provider === 'booking') return 'Book on Booking.com';
   if (provider === 'aviasales') return 'Book on Aviasales';
   if (provider === 'google_flights') return 'Book on Google Flights';
   if (provider === 'viator' || provider === 'gyg') return 'Book';
@@ -73,10 +318,12 @@ export function getTileDeeplinkPillLabel(tile: Pick<Tile, 'deeplink_url'>): stri
 }
 
 export function getTileDeeplinkActionLabel(
-  tile: Pick<Tile, 'deeplink_url' | 'type'>
+  tile: Pick<Tile, 'deeplink_url' | 'type'>,
+  deeplinkUrl: string = tile.deeplink_url
 ): string {
-  const provider = getDeeplinkProvider(tile.deeplink_url);
+  const provider = getDeeplinkProvider(deeplinkUrl);
 
+  if (provider === 'booking') return 'Book on Booking.com';
   if (provider === 'aviasales') return 'Book on Aviasales';
   if (provider === 'google_flights') return 'Book on Google Flights';
   if (provider === 'viator') return 'Book on Viator';

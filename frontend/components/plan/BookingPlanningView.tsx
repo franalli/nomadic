@@ -15,6 +15,8 @@ import { useCallback, useState } from 'react';
 
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { ModalErrorBoundary } from '@/components/ui/ModalErrorBoundary';
+import { DS } from '@/lib/design-system';
+import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
@@ -33,7 +35,7 @@ interface BookingPlanningViewProps {
   tileArray: Tile[];
   /** Set of saved/preferred tile IDs */
   savedTileIds: Set<string>;
-  /** Whether stays/activities section is expanded */
+  /** Whether stays section is expanded */
   isExpanded: boolean;
   /** Whether flights section is expanded */
   flightsExpanded: boolean;
@@ -68,6 +70,7 @@ export function BookingPlanningView({
 }: BookingPlanningViewProps) {
   const [selectedTile, setSelectedTile] = useState<Tile | null>(null);
   const [alternativesTile, setAlternativesTile] = useState<Tile | null>(null);
+  const activitiesExpanded = usePanelToggleStore((state) => state.activitiesExpanded);
 
   const handleDetailsClick = useCallback((tile: Tile) => {
     setSelectedTile(tile);
@@ -110,6 +113,44 @@ export function BookingPlanningView({
 
   const stayTiles = filteredStayTiles;
   const flightTiles = filteredFlightTiles;
+  const activityTiles = filteredActivityTiles;
+
+  const renderSection = (
+    title: 'Stays' | 'Flights' | 'Activities',
+    tiles: Tile[],
+    emptyMessage: string,
+    options?: { onOpenStaysSettings?: () => void }
+  ) => (
+    <section aria-label={`${title.toLowerCase()} suggestions`}>
+      <h2 className={`${DS.text.label} mb-3`}>{title}</h2>
+      <div className="space-y-4">
+        {tiles.length > 0 ? (
+          <>
+            {tiles.slice(0, 6).map((tile) => (
+              <SuggestionCard
+                key={tile.id}
+                tile={tile}
+                reasoning={tile.meta?.reasoning as string | undefined}
+                isSaved={savedTileIds.has(tile.id)}
+                onSave={handleSaveClick}
+                onViewAlternatives={() => handleViewAlternatives(tile)}
+                onDetailsClick={handleDetailsClick}
+                onOpenStaysSettings={options?.onOpenStaysSettings}
+                variant="compact"
+              />
+            ))}
+            {tiles.length > 6 && (
+              <p className="pt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                +{tiles.length - 6} more {title.toLowerCase()} available
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="py-2 text-xs text-zinc-500 dark:text-zinc-400">{emptyMessage}</p>
+        )}
+      </div>
+    </section>
+  );
 
   return (
     <ModalErrorBoundary>
@@ -141,91 +182,22 @@ export function BookingPlanningView({
 
         {/* Stays tiles */}
         {isExpanded && (
-          <div className="px-6 pb-4 space-y-4">
-            {stayTiles.length > 0 ? (
-              <>
-                {stayTiles.slice(0, 6).map((tile) => (
-                  <SuggestionCard
-                    key={tile.id}
-                    tile={tile}
-                    reasoning={tile.meta?.reasoning as string | undefined}
-                    isSaved={savedTileIds.has(tile.id)}
-                    onSave={handleSaveClick}
-                    onViewAlternatives={() => handleViewAlternatives(tile)}
-                    onDetailsClick={handleDetailsClick}
-                    onOpenStaysSettings={onOpenStaysSettings}
-                    variant="compact"
-                  />
-                ))}
-                {stayTiles.length > 6 && (
-                  <p className="pt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                    +{stayTiles.length - 6} more stays available
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="py-2 text-xs text-zinc-500 dark:text-zinc-400">No stays found yet.</p>
-            )}
+          <div className="px-6 pb-4">
+            {renderSection('Stays', stayTiles, 'No stays found yet.', { onOpenStaysSettings })}
           </div>
         )}
 
         {/* Flights tiles */}
         {flightsExpanded && (
-          <div className="px-6 pb-4 space-y-4">
-            {flightTiles.length > 0 ? (
-              <>
-                {flightTiles.slice(0, 6).map((tile) => (
-                  <SuggestionCard
-                    key={tile.id}
-                    tile={tile}
-                    reasoning={tile.meta?.reasoning as string | undefined}
-                    isSaved={savedTileIds.has(tile.id)}
-                    onSave={handleSaveClick}
-                    onViewAlternatives={() => handleViewAlternatives(tile)}
-                    onDetailsClick={handleDetailsClick}
-                    variant="compact"
-                  />
-                ))}
-                {flightTiles.length > 6 && (
-                  <p className="pt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                    +{flightTiles.length - 6} more flights available
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="py-2 text-xs text-zinc-500 dark:text-zinc-400">No flights found yet.</p>
-            )}
+          <div className="px-6 pb-4">
+            {renderSection('Flights', flightTiles, 'No flights found yet.')}
           </div>
         )}
 
         {/* Activities tiles */}
-        {isExpanded && (
-          <div className="px-6 pb-4 space-y-4">
-            {filteredActivityTiles.length > 0 ? (
-              <>
-                {filteredActivityTiles.slice(0, 6).map((tile) => (
-                  <SuggestionCard
-                    key={tile.id}
-                    tile={tile}
-                    reasoning={tile.meta?.reasoning as string | undefined}
-                    isSaved={savedTileIds.has(tile.id)}
-                    onSave={handleSaveClick}
-                    onViewAlternatives={() => handleViewAlternatives(tile)}
-                    onDetailsClick={handleDetailsClick}
-                    variant="compact"
-                  />
-                ))}
-                {filteredActivityTiles.length > 6 && (
-                  <p className="pt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                    +{filteredActivityTiles.length - 6} more activities available
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="py-2 text-xs text-zinc-500 dark:text-zinc-400">
-                No activities found yet.
-              </p>
-            )}
+        {activitiesExpanded && (
+          <div className="px-6 pb-4">
+            {renderSection('Activities', activityTiles, 'No activities found yet.')}
           </div>
         )}
       </div>

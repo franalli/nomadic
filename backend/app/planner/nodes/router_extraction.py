@@ -619,7 +619,7 @@ def _normalize_city_name(city: str) -> str:
     return city
 
 
-def _validate_extraction(extracted: dict, today_date: str) -> dict:
+def _validate_extraction(extracted: dict, today_date: str, user_message: str = "") -> dict:
     """
     Validate and clean LLM-extracted trip data.
 
@@ -756,6 +756,13 @@ def _validate_extraction(extracted: dict, today_date: str) -> dict:
         start_date_obj, end_date_obj = end_date_obj, start_date_obj
         extracted["start_date"] = start_date_obj.isoformat()
         extracted["end_date"] = end_date_obj.isoformat()
+
+    lowered_message = user_message.lower()
+    if extracted.get("duration_days") is None and lowered_message:
+        if re.search(r"\blong\s+weekend\b", lowered_message):
+            extracted["duration_days"] = 4
+        elif re.search(r"\bweekend(?:\s+(?:trip|getaway|break))?\b", lowered_message):
+            extracted["duration_days"] = 3
 
     # Normalize activity categories to lowercase
     if extracted.get("activity_categories"):
@@ -925,7 +932,7 @@ async def _classify_and_extract_with_llm(
             # Ensures consistent cache keys (e.g., "Bali, Indonesia" → "Bali")
             # =================================================================
             parsed_dict = parsed if isinstance(parsed, dict) else parsed.model_dump()
-            validated_dict = _validate_extraction(parsed_dict, today_date)
+            validated_dict = _validate_extraction(parsed_dict, today_date, user_text)
             parsed = RouterOutput.model_validate(validated_dict)
 
             if attempt > 0:

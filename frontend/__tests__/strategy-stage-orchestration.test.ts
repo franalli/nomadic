@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildDayCardsFingerprint,
-  shouldDelayPoiSnapshotPromotion,
   selectPoiDayCardSnapshot,
+  shouldDelayPoiSnapshotPromotion,
 } from '@/components/plan/strategyStagePoi';
 import type { DayCard } from '@/types/plan-envelope';
 

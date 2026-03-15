@@ -600,6 +600,49 @@ def test_session_delete_wipes_document():
     assert doc_response.status_code == 204
 
 
+def test_session_new_clears_l2_caches_when_enabled(monkeypatch: pytest.MonkeyPatch):
+    """POST /api/session/new should honor CLEAR_L2_ON_RESET for fresh-trip flows."""
+    seed = seed_session_with_document(session_token="session-new-clears-l2")
+    now = datetime.now(UTC)
+
+    with TestingSessionLocal() as db:
+        db.add(
+            models.ResponseCache(
+                cache_key="tile::v2::google_places::hotel::bali::::bali",
+                cache_type="tiles",
+                response_json={"id": "tile_mock_hotel_1"},
+                expires_at=now + timedelta(days=1),
+            )
+        )
+        db.add(
+            models.UnsplashImageCache(
+                destination="bali",
+                variant=0,
+                image_id="img_123",
+            )
+        )
+        db.commit()
+
+    monkeypatch.setattr(main_module.settings, "clear_l2_on_session_reset", True)
+    monkeypatch.setattr(main_module.settings, "pytest_running", False)
+    monkeypatch.setattr(main_module.settings, "aggressive_cache_clear", False)
+
+    with patch("app.db._get_async_session_factory", return_value=TestingAsyncSessionLocal):
+        response = request_with_session(
+            client,
+            "POST",
+            "/api/session/new",
+            seed["session_token"],
+            headers=get_csrf_headers(),
+        )
+
+    assert response.status_code == 204
+
+    with TestingSessionLocal() as db:
+        assert db.query(models.ResponseCache).count() == 0
+        assert db.query(models.UnsplashImageCache).count() == 0
+
+
 def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
     """Test that apply_planner_update updates the primary branch when trip_inputs change.
 

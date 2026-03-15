@@ -17,7 +17,12 @@ import { isBootstrap } from '@/components/plan/planStateHelpers';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { useMapSync } from '@/hooks/useMapSync';
-import { type SSEFeasibilityWarningEvent, type SSENodeStatusEvent, type SSEPartialEvent, streamGraphPlan } from '@/lib/api';
+import {
+  type SSEFeasibilityWarningEvent,
+  type SSENodeStatusEvent,
+  type SSEPartialEvent,
+  streamGraphPlan,
+} from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { useChatStore } from '@/state/chatStore';
@@ -32,28 +37,47 @@ const READY_MESSAGE_ID_PREFIX = 'ready_';
 
 function getErrorMessage(error: Error): string {
   const message = error.message?.toLowerCase() ?? '';
-  if (message.includes('session_state exceeds 64kb limit') || message.includes('64kb limit')) {
+  if (
+    message.includes('session_state exceeds 64kb limit') ||
+    message.includes('64kb limit')
+  ) {
     return 'This trip got too large to send in one chat turn. Refresh the page to reload the saved plan, then try again.';
   }
-  if (message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) {
+  if (
+    message.includes('network') ||
+    message.includes('fetch') ||
+    message.includes('failed to fetch')
+  ) {
     return "Couldn't connect to the server. Please check your internet connection and try again.";
   }
   if (message.includes('timeout') || message.includes('timed out')) {
-    return "The request took too long. Try a simpler query or check your connection.";
+    return 'The request took too long. Try a simpler query or check your connection.';
   }
-  if (message.includes('rate limit') || message.includes('too many requests') || message.includes('429')) {
+  if (
+    message.includes('rate limit') ||
+    message.includes('too many requests') ||
+    message.includes('429')
+  ) {
     return "You're sending requests too quickly. Please wait a moment before trying again.";
   }
-  if (message.includes('unauthorized') || message.includes('401') || message.includes('authentication')) {
-    return "Session expired. Please refresh the page and try again.";
+  if (
+    message.includes('unauthorized') ||
+    message.includes('401') ||
+    message.includes('authentication')
+  ) {
+    return 'Session expired. Please refresh the page and try again.';
   }
-  if (message.includes('500') || message.includes('internal server') || message.includes('server error')) {
-    return "Something went wrong on our end. Please try again in a few moments.";
+  if (
+    message.includes('500') ||
+    message.includes('internal server') ||
+    message.includes('server error')
+  ) {
+    return 'Something went wrong on our end. Please try again in a few moments.';
   }
   if (message.includes('invalid') || message.includes('validation')) {
-    return "Invalid request. Try rephrasing or adjusting trip details.";
+    return 'Invalid request. Try rephrasing or adjusting trip details.';
   }
-  return "An issue occurred. Try again or adjust the message.";
+  return 'An issue occurred. Try again or adjust the message.';
 }
 
 function fingerprintDayCard(card: DayCard): string {
@@ -69,7 +93,9 @@ function findFirstChangedDay(
   const previousByDay = new Map(
     previousDayCards.map((card) => [card.day_number, fingerprintDayCard(card)])
   );
-  const nextByDay = new Map(nextDayCards.map((card) => [card.day_number, fingerprintDayCard(card)]));
+  const nextByDay = new Map(
+    nextDayCards.map((card) => [card.day_number, fingerprintDayCard(card)])
+  );
   const orderedDays = Array.from(
     new Set([...previousByDay.keys(), ...nextByDay.keys()])
   ).sort((a, b) => a - b);
@@ -106,16 +132,18 @@ export interface ChatSseRefs {
 
 export interface ChatSseCallbacks {
   setHasReceivedFirstToken: (v: boolean) => void;
-  setNodeStatus: (v: {
-    active: boolean;
-    node: string;
-    label: string;
-    iconKey: string;
-    estimatedDurationMs: number;
-    startTime: number;
-    stage?: number;
-    topic?: string;
-  } | null) => void;
+  setNodeStatus: (
+    v: {
+      active: boolean;
+      node: string;
+      label: string;
+      iconKey: string;
+      estimatedDurationMs: number;
+      startTime: number;
+      stage?: number;
+      topic?: string;
+    } | null
+  ) => void;
   setStreamingMessageId: (v: string | null) => void;
   setTriggerContext: (v: TriggerContext | null) => void;
   setSuggestedResponses: (v: string[]) => void;
@@ -124,9 +152,14 @@ export interface ChatSseCallbacks {
   setIsLoading: (v: boolean) => void;
   setSessionState: (v: Record<string, unknown> | null) => void;
   appendToMessage: (id: string, token: string) => void;
-  updateMessage: (id: string, updates: Partial<import('@/types/chat').ChatMessage>) => void;
+  updateMessage: (
+    id: string,
+    updates: Partial<import('@/types/chat').ChatMessage>
+  ) => void;
   updateMessageId: (oldId: string, newId: string) => void;
-  filterMessages: (predicate: (msg: import('@/types/chat').ChatMessage) => boolean) => void;
+  filterMessages: (
+    predicate: (msg: import('@/types/chat').ChatMessage) => boolean
+  ) => void;
   onPlanResult: (result: {
     tripContextId: number | null;
     branches: import('@/types/document').DocumentBranch[];
@@ -196,7 +229,6 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
     requestAnimationFrame(() => {
       scrollPanelIntoView();
       scrollToBottom(true);
-      setTimeout(() => scrollToBottom(true), 150);
     });
   }, [scrollToBottom, scrollPanelIntoView]);
 
@@ -263,7 +295,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           onNodeStatus: (status: SSENodeStatusEvent['data']) => {
             if (isStaleRequest()) return;
             if (status.status === 'started') {
-              const classification = classifyNodeAction(status.node, triggerContext ?? undefined);
+              const classification = classifyNodeAction(
+                status.node,
+                triggerContext ?? undefined
+              );
 
               if (classification) {
                 const store = useDocumentStore.getState();
@@ -330,14 +365,20 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               if (data.kind === 'strategy_sections') {
                 store.mergeEnvelope({ strategy_sections: p }, envelopeGeneration);
               } else if (data.kind === 'tiles') {
-                store.mergeEnvelope({ tiles: p, ...(data.tiles_replaced ? { tiles_replaced: true } : {}) }, envelopeGeneration);
+                store.mergeEnvelope(
+                  { tiles: p, ...(data.tiles_replaced ? { tiles_replaced: true } : {}) },
+                  envelopeGeneration
+                );
               } else if (data.kind === 'trip_inputs') {
                 store.mergeEnvelope({ trip_inputs: p }, envelopeGeneration);
               } else if (data.kind === 'day_cards') {
                 store.mergeEnvelope({ day_cards: p }, envelopeGeneration);
               }
             } catch (partialError) {
-              debugLog('[SSE] Partial merge failed (will reconcile on complete):', partialError);
+              debugLog(
+                '[SSE] Partial merge failed (will reconcile on complete):',
+                partialError
+              );
             }
           },
 
@@ -350,7 +391,9 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             if (isStaleRequest()) {
               debugLog('[SSE] Ignoring stale stream complete event');
               if (sseSetRegenFlag) {
-                useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+                useDocumentStore
+                  .getState()
+                  .setRegenerationState({ isRegenerating: false });
                 sseSetRegenFlag = false;
               }
               resolve('stale');
@@ -377,7 +420,9 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                 streamedMsg.content.endsWith('"') &&
                 streamedMsg.content.length > 2
               ) {
-                updateMessage(streamingMsgId, { content: streamedMsg.content.slice(1, -1) });
+                updateMessage(streamingMsgId, {
+                  content: streamedMsg.content.slice(1, -1),
+                });
               }
             }
 
@@ -386,7 +431,8 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             setSessionState(data.session_state ?? null);
 
             const doc = data.document;
-            const previousDayCards = useDocumentStore.getState().document?.day_cards ?? [];
+            const previousDayCards =
+              useDocumentStore.getState().document?.day_cards ?? [];
             const wasChatPage = useMobileNavStore.getState().activePage === 0;
 
             const prevSpecialistTypes = prevSpecialistTypesRef.current;
@@ -411,7 +457,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               });
             } catch (planResultError) {
               planResultApplied = false;
-              console.error('[ChatPanel] Failed to apply stream result, reconciling from server:', planResultError);
+              console.error(
+                '[ChatPanel] Failed to apply stream result, reconciling from server:',
+                planResultError
+              );
             }
 
             if (planResultApplied && targetUpdatedDayNumber) {
@@ -471,7 +520,11 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             setSuggestionChips(doc.suggestion_chips || []);
 
             if (doc.origin_just_set && doc.trip_inputs?.origin) {
-              debugLog('[ChatPanel] Origin set via chat:', doc.trip_inputs.origin, '- flights fetched by backend');
+              debugLog(
+                '[ChatPanel] Origin set via chat:',
+                doc.trip_inputs.origin,
+                '- flights fetched by backend'
+              );
             }
 
             const freshState = useDocumentStore.getState();
@@ -479,7 +532,9 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
 
             const graphBuiltItinerary = (doc.day_cards?.length ?? 0) > 0;
             if (graphBuiltItinerary) {
-              debugLog(`[EXPAND] SKIPPED — graph response included ${doc.day_cards!.length} day_cards`);
+              debugLog(
+                `[EXPAND] SKIPPED — graph response included ${doc.day_cards!.length} day_cards`
+              );
             }
 
             const freshInputs = freshState.document?.trip_inputs;
@@ -488,13 +543,26 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               (freshInputs?.date_flex === true && freshInputs?.trip_duration != null);
 
             const newSpecialistTypes =
-              (doc.strategy_sections?.map((s) => s.specialist_type).filter((t): t is string => !!t)) ?? [];
-            const getTileCategory = (t: { type: string; meta?: Record<string, unknown> }) =>
-              t.type === 'activity' && t.meta?.category ? String(t.meta.category) : t.type;
-            const newTileCategories = new Set(Object.values(doc.tiles ?? {}).map(getTileCategory));
+              doc.strategy_sections
+                ?.map((s) => s.specialist_type)
+                .filter((t): t is string => !!t) ?? [];
+            const getTileCategory = (t: {
+              type: string;
+              meta?: Record<string, unknown>;
+            }) =>
+              t.type === 'activity' && t.meta?.category
+                ? String(t.meta.category)
+                : t.type;
+            const newTileCategories = new Set(
+              Object.values(doc.tiles ?? {}).map(getTileCategory)
+            );
 
-            const hasNewSpecialist = newSpecialistTypes.some((t) => !prevSpecialistTypes.has(t));
-            const hasNewTileType = [...newTileCategories].some((t) => !prevTileTypes.has(t));
+            const hasNewSpecialist = newSpecialistTypes.some(
+              (t) => !prevSpecialistTypes.has(t)
+            );
+            const hasNewTileType = [...newTileCategories].some(
+              (t) => !prevTileTypes.has(t)
+            );
             const hasStructuralNewTileType = [...newTileCategories].some(
               (t) => t !== 'flight' && !prevTileTypes.has(t)
             );
@@ -516,14 +584,19 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               prevInputs &&
               (prevInputs.start_date !== newTripInputs?.start_date ||
                 prevInputs.end_date !== newTripInputs?.end_date);
-            const shouldExpandDates = datesChanged && hasStrategyContent && !isSilentPlanGeneration;
+            const shouldExpandDates =
+              datesChanged && hasStrategyContent && !isSilentPlanGeneration;
             const travelersChanged =
               prevInputs &&
               (prevInputs.adults !== newTripInputs?.adults ||
                 prevInputs.children !== newTripInputs?.children);
-            const budgetChanged = prevInputs && prevInputs.budget !== newTripInputs?.budget;
-            const originChanged = prevInputs && prevInputs.origin !== newTripInputs?.origin;
-            const otherInputsChanged = Boolean(travelersChanged || budgetChanged || originChanged);
+            const budgetChanged =
+              prevInputs && prevInputs.budget !== newTripInputs?.budget;
+            const originChanged =
+              prevInputs && prevInputs.origin !== newTripInputs?.origin;
+            const otherInputsChanged = Boolean(
+              travelersChanged || budgetChanged || originChanged
+            );
             const shouldExpandTripInputs =
               hasItinerary &&
               Boolean(prevInputs) &&
@@ -538,10 +611,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
 
             debugLog(
               `[EXPAND] gate check: strategy=${newSpecialistTypes.length} tiles=${tileCount} ` +
-              `viewState=${viewState} hasItinerary=${hasItinerary} freshHasDates=${freshHasDates} silent=${isSilentPlanGeneration} graphBuilt=${graphBuiltItinerary} ` +
-              `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!datesChanged} ` +
-              `travelersChanged=${!!travelersChanged} budgetChanged=${!!budgetChanged} originChanged=${!!originChanged} ` +
-              `prevCategories=[${[...prevTileTypes]}] newCategories=[${[...newTileCategories]}]`
+                `viewState=${viewState} hasItinerary=${hasItinerary} freshHasDates=${freshHasDates} silent=${isSilentPlanGeneration} graphBuilt=${graphBuiltItinerary} ` +
+                `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!datesChanged} ` +
+                `travelersChanged=${!!travelersChanged} budgetChanged=${!!budgetChanged} originChanged=${!!originChanged} ` +
+                `prevCategories=[${[...prevTileTypes]}] newCategories=[${[...newTileCategories]}]`
             );
 
             const blockingViolations =
@@ -555,8 +628,12 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               );
             }
 
-            let expandReason: 'STRUCTURAL' | 'DATE_CHANGE' | 'TRIP_INPUTS' | 'CATCH_ALL' | null =
-              null;
+            let expandReason:
+              | 'STRUCTURAL'
+              | 'DATE_CHANGE'
+              | 'TRIP_INPUTS'
+              | 'CATCH_ALL'
+              | null = null;
             if (!graphBuiltItinerary && blockingViolations.length === 0) {
               if (shouldExpandStructural) {
                 expandReason = 'STRUCTURAL';
@@ -582,7 +659,8 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                 newDates: `${newTripInputs?.start_date ?? 'null'} - ${newTripInputs?.end_date ?? 'null'}`,
               });
 
-              if (autoExpandTimeoutRef.current) clearTimeout(autoExpandTimeoutRef.current);
+              if (autoExpandTimeoutRef.current)
+                clearTimeout(autoExpandTimeoutRef.current);
               autoExpandTimeoutRef.current = setTimeout(() => {
                 const activeRequestId = activeStreamRequestIdRef.current;
                 if (activeRequestId !== null && activeRequestId !== requestId) {
@@ -591,7 +669,9 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                 }
                 const latest = useDocumentStore.getState();
                 if (latest.expandInProgress) {
-                  debugLog(`[ChatPanel] ⏭️ ${expandReason} skipped - expand already in progress`);
+                  debugLog(
+                    `[ChatPanel] ⏭️ ${expandReason} skipped - expand already in progress`
+                  );
                   return;
                 }
                 if (
@@ -609,7 +689,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               filterMessages((msg) => msg.id !== streamingMsgId);
             } else {
               if (isReadyToGenerate) {
-                updateMessageId(streamingMsgId, `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}`);
+                updateMessageId(
+                  streamingMsgId,
+                  `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}`
+                );
               }
             }
 
@@ -619,7 +702,8 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             const responseHasDayCards = (doc.day_cards?.length ?? 0) > 0;
             const expectsDayCards = Boolean(
               (doc.trip_inputs?.start_date && doc.trip_inputs?.end_date) ||
-              (doc.trip_inputs?.date_flex === true && doc.trip_inputs?.trip_duration != null)
+              (doc.trip_inputs?.date_flex === true &&
+                doc.trip_inputs?.trip_duration != null)
             );
             const needsReconcile =
               !planResultApplied ||
@@ -652,7 +736,9 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             if (isStaleRequest()) {
               debugLog('[SSE] Ignoring stale stream error event');
               if (sseSetRegenFlag) {
-                useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+                useDocumentStore
+                  .getState()
+                  .setRegenerationState({ isRegenerating: false });
                 sseSetRegenFlag = false;
               }
               resolve('stale');

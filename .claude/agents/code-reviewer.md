@@ -72,6 +72,7 @@ You review against the project's documented invariants. You NEVER modify files â
 - [ ] Budget check: `BUDGET_ALLOCATIONS` (30/40/30 flights/hotels/activities) respected
 - [ ] No-fly buffer: diving enforcement is two-layered in `ItineraryBuilder` â€” dive count may be auto-truncated to fit the departure buffer, and late-day dive placement is blocked near departure
 - [ ] Cross-domain: `ALTITUDE_AFTER_DIVE` blocks hiking/skiing/climbing within 24h of diving
+- [ ] Short non-diving trips keep partial arrival/departure capacity in specialist activity-day ceilings; no-fly specialists still lose the full buffer day, and altitude buffers only reduce capacity on trips of 4+ days
 - [ ] Full-invalidation turns do not clear planning artifacts unless `_should_clear_planning_artifacts()` says the turn actually changed relevant fields; `GENERATE_PLAN_NOW` still forces specialist rebuild when `activity_categories` changed
 - [ ] Fill-day adjacent-day checks only treat `specialist_type='diving'` as authoritative when block content/constraints indicate real diving context
 - [ ] Constraint guard violations returned to caller (coordinator or endpoint); no agent loop
@@ -80,6 +81,7 @@ You review against the project's documented invariants. You NEVER modify files â
 - [ ] `GuardViolation` carries: code, message, severity, category, suggested_action, conflicting_specialists, suggested_specialist
 - [ ] Builder-aware suppression requires BOTH `last_builder_success == True` AND `last_builder_drop_ratio < 0.5`
 - [ ] Past date auto-correction in `router_extraction.py`: dates more than 7 days in the past auto-bump to the next occurrence; recent past dates are left unchanged as likely intentional
+- [ ] Router extraction normalizes weekend phrasing into duration hints: `weekend` -> 3 days, `long weekend` -> 4 days
 - [ ] `constraints_applied.severity` filtering: frontend shows blocking+strong only (specialist system), separate from GuardViolation severity (guard system)
 
 ### 6. Frontend Design System Compliance
@@ -142,6 +144,7 @@ You review against the project's documented invariants. You NEVER modify files â
 - `with_structured_output(Schema)` without `include_raw=True` or without `parsed is None` guard
 - Negative-caching partner lookup misses after transient provider failures or non-definitive destination resolution
 - Reintroducing provider-local spend-guard reservations inside `viator_provider.py` or `gyg_provider.py` without a deliberate architecture decision
+- Mentioning a named hotel, flight, or activity in assistant prose when it is absent from itinerary/status/grounding facts derived from state
 - `import *` from any module
 - `# type: ignore` without explanation
 - `await` missing on async calls (especially `clear_session_checkpoint`)

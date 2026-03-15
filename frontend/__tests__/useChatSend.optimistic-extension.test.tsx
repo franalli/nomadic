@@ -185,4 +185,32 @@ describe('useChatSend optimistic extension rollback', () => {
     expect(sentBodies[0]?.trip_inputs?.end_date).toBe('2026-04-04');
     expect(sentBodies[0]?.trip_inputs?.trip_duration).toBe(4);
   });
+
+  it('keeps the optimistic extension applied when a successful stream regresses the document back to the pre-extension dates', async () => {
+    mockState.executeStreamMock.mockImplementationOnce(async () => {
+      useDocumentStore.getState().mergeEnvelope({
+        trip_inputs: {
+          end_date: '2026-04-04',
+          trip_duration: 4,
+        },
+        day_cards: [
+          { day_number: 1, date: '2026-04-01', label: 'Day 1', blocks: [] },
+          { day_number: 2, date: '2026-04-02', label: 'Day 2', blocks: [] },
+          { day_number: 3, date: '2026-04-03', label: 'Day 3', blocks: [] },
+          { day_number: 4, date: '2026-04-04', label: 'Day 4', blocks: [] },
+        ],
+      });
+      return 'complete';
+    });
+
+    const { result } = renderUseChatSend();
+
+    await act(async () => {
+      await result.current.sendMessageCore('extend by 2 days');
+    });
+
+    expect(useDocumentStore.getState().document?.trip_inputs.end_date).toBe('2026-04-06');
+    expect(useDocumentStore.getState().document?.trip_inputs.trip_duration).toBe(6);
+    expect(useDocumentStore.getState().document?.day_cards).toHaveLength(6);
+  });
 });

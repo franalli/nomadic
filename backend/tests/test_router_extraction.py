@@ -19,6 +19,7 @@ from app.planner.nodes.router_extraction import (
     _build_specialist_keyword_prompt,
     _clamp_date_str,
     _parse_day_preferences,
+    _validate_extraction,
 )
 
 # =============================================================================
@@ -156,6 +157,39 @@ class TestClampDateStr:
         result = _clamp_date_str("2026-06-31")
         # June has 30 days
         assert result == "2026-06-30"
+
+
+# =============================================================================
+# _validate_extraction
+# =============================================================================
+
+
+class TestValidateExtraction:
+    """Post-LLM normalization keeps weekend duration deterministic."""
+
+    def test_weekend_message_sets_three_day_duration_when_missing(self) -> None:
+        result = _validate_extraction(
+            {"destination": "Rome", "duration_days": None},
+            "2026-03-15",
+            "I want a weekend getaway in Rome",
+        )
+        assert result["duration_days"] == 3
+
+    def test_long_weekend_sets_four_day_duration_when_missing(self) -> None:
+        result = _validate_extraction(
+            {"destination": "Lisbon", "duration_days": None},
+            "2026-03-15",
+            "Plan a long weekend in Lisbon",
+        )
+        assert result["duration_days"] == 4
+
+    def test_existing_duration_is_not_overwritten(self) -> None:
+        result = _validate_extraction(
+            {"destination": "Bali", "duration_days": 5},
+            "2026-03-15",
+            "Let's make it a weekend trip to Bali",
+        )
+        assert result["duration_days"] == 5
 
 
 # =============================================================================

@@ -428,7 +428,7 @@ frontend/
 │   │   ├── BookingSection.helpers.ts         # BookingSection helper utilities
 │   │   ├── BookingSection.tsx
 │   │   ├── BookingSectionBookingView.tsx     # Booking view extracted from BookingSection
-│   │   ├── BookingSummary.tsx                # Quick links summary for bookable stays/activities
+│   │   ├── BookingSummary.tsx                # Grouped booking-links summary for bookable stays/flights/activities
 │   │   ├── BrowseActivitiesSheet.tsx  # Bottom sheet for browsing categorized activity tiles (Tier 1 free days)
 │   │   ├── PdfExportButton.tsx               # Export generated itinerary to PDF
 │   │   ├── ChipGroup.helpers.ts            # ChipGroup helper utilities
@@ -676,7 +676,7 @@ frontend/
 │   ├── chatStore.ts            # Chat state
 │   ├── documentStore.ts        # Document/plan state
 │   ├── mobileNavStore.ts       # Mobile navigation state
-│   ├── panelToggleStore.ts     # Zustand toggle state for stays/flights/intel panels
+│   ├── panelToggleStore.ts     # Zustand toggle state for mutually exclusive stays/flights/activities/intel panels
 │   ├── uiStore.ts              # UI state
 │   └── userStore.ts            # Auth user + recent-trip resume state
 │
@@ -710,13 +710,20 @@ frontend/
 │   ├── landing-derived.test.tsx
 │   ├── map-error-boundary.test.ts
 │   ├── map-helpers.test.ts             # InteractiveMap helper hook tests
+│   ├── booking-links.test.tsx          # Booking deeplink label and rewrite tests
+│   ├── booking-planning-view.test.tsx  # BookingPlanningView section-toggle rendering tests
+│   ├── booking-summary.test.tsx        # Stage-3 booking-links summary coverage
+│   ├── logistics-block-sizing.test.tsx # Timeline logistics block thumbnail/CTA layout tests
 │   ├── plan-copy.test.tsx
 │   ├── placeholders.test.ts
 │   ├── rich-block-renderer.test.tsx
+│   ├── suggestion-card-sizing.test.tsx # Suggestion card compact-thumbnail layout tests
 │   ├── split-render-surfaces.test.tsx  # Split render surfaces component extraction tests
 │   ├── strategy-stage-orchestration.test.ts  # StrategyStage orchestration helper tests
 │   ├── streaming.test.ts
 │   ├── tileHelpers.test.ts             # Tile helper utility tests
+│   ├── useBranchManager.test.tsx       # Immediate plan-result apply + missing-flight refresh timing tests
+│   ├── useChatScrolling.test.tsx       # Forced bottom-settle and user-scroll cancellation tests
 │   ├── useChatSend.optimistic-extension.test.tsx  # Optimistic extension rollback tests for chat send
 │   ├── useTripInputsWithFallback.test.tsx  # Trip-input fallback subscription behavior tests
 │   ├── userStore.test.ts               # Auth/recent-trips store tests

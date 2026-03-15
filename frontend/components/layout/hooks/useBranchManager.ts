@@ -12,14 +12,23 @@ import { saveTripSummary } from '@/lib/summary';
 import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import { clearPersistedUIState } from '@/state/uiStore';
-import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse, PlanStatus } from '@/types/document';
+import type {
+  DocumentBranch,
+  DocumentTripInputs,
+  GraphPlanResponse,
+  PlanStatus,
+} from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { TripSummaryPayload } from '@/types/summary';
 import type { Tile, TileSelection } from '@/types/tile';
 
 import { useBranchState } from './useBranchState';
 import { clearSessionTimestamp, useSessionHydration } from './useSessionHydration';
-import { EMPTY_TILE_SELECTION, selectionsToTileSelection, useTileSelection } from './useTileSelection';
+import {
+  EMPTY_TILE_SELECTION,
+  selectionsToTileSelection,
+  useTileSelection,
+} from './useTileSelection';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -187,45 +196,54 @@ type UseBranchManagerReturn = BranchManagerState &
  * ```
  */
 export function useBranchManager(options: BranchManagerOptions): UseBranchManagerReturn {
-  const {
-    chatPanelContainerRef,
-    onToast,
-    onChatKeyIncrement,
-    resetDraft,
-  } = options;
+  const { chatPanelContainerRef, onToast, onChatKeyIncrement, resetDraft } = options;
 
   // Actions (stable refs — never trigger rerenders, 1 subscription)
-  const { fetchDocument, selectTile, deselectTile, hasAllRequiredFields,
-          resetDocumentStore, setFromPlanResponse } =
-    useDocumentStore(useShallow((s) => ({
+  const {
+    fetchDocument,
+    selectTile,
+    deselectTile,
+    hasAllRequiredFields,
+    resetDocumentStore,
+    setFromPlanResponse,
+  } = useDocumentStore(
+    useShallow((s) => ({
       fetchDocument: s.fetchDocument,
       selectTile: s.selectTile,
       deselectTile: s.deselectTile,
       hasAllRequiredFields: s.hasAllRequiredFields,
       resetDocumentStore: s.reset,
       setFromPlanResponse: s.setFromPlanResponse,
-    })));
+    }))
+  );
 
   // Reactive data (settings + origin + regenerating, 1 subscription)
   // JSON equality for settings objects — small objects, negligible cost
-  const { tripInputsOrigin, tripInputsHotelSettings, tripInputsFlightSettings,
-          tripInputsActivitySettings, isRegenerating } =
-    useStoreWithEqualityFn(
-      useDocumentStore,
-      (s) => ({
-        tripInputsOrigin: s.document?.trip_inputs?.origin,
-        tripInputsHotelSettings: s.document?.trip_inputs?.hotel_settings,
-        tripInputsFlightSettings: s.document?.trip_inputs?.flight_settings,
-        tripInputsActivitySettings: s.document?.trip_inputs?.activity_settings,
-        isRegenerating: s.isRegenerating,
-      }),
-      (a, b) =>
-        a.tripInputsOrigin === b.tripInputsOrigin &&
-        a.isRegenerating === b.isRegenerating &&
-        JSON.stringify(a.tripInputsHotelSettings) === JSON.stringify(b.tripInputsHotelSettings) &&
-        JSON.stringify(a.tripInputsFlightSettings) === JSON.stringify(b.tripInputsFlightSettings) &&
-        JSON.stringify(a.tripInputsActivitySettings) === JSON.stringify(b.tripInputsActivitySettings)
-    );
+  const {
+    tripInputsOrigin,
+    tripInputsHotelSettings,
+    tripInputsFlightSettings,
+    tripInputsActivitySettings,
+    isRegenerating,
+  } = useStoreWithEqualityFn(
+    useDocumentStore,
+    (s) => ({
+      tripInputsOrigin: s.document?.trip_inputs?.origin,
+      tripInputsHotelSettings: s.document?.trip_inputs?.hotel_settings,
+      tripInputsFlightSettings: s.document?.trip_inputs?.flight_settings,
+      tripInputsActivitySettings: s.document?.trip_inputs?.activity_settings,
+      isRegenerating: s.isRegenerating,
+    }),
+    (a, b) =>
+      a.tripInputsOrigin === b.tripInputsOrigin &&
+      a.isRegenerating === b.isRegenerating &&
+      JSON.stringify(a.tripInputsHotelSettings) ===
+        JSON.stringify(b.tripInputsHotelSettings) &&
+      JSON.stringify(a.tripInputsFlightSettings) ===
+        JSON.stringify(b.tripInputsFlightSettings) &&
+      JSON.stringify(a.tripInputsActivitySettings) ===
+        JSON.stringify(b.tripInputsActivitySettings)
+  );
 
   const resetChat = useChatStore((state) => state.resetChat);
 
@@ -276,6 +294,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * True from when user submits until results are displayed.
    */
   const [isGenerating, setIsGenerating] = useState(false);
+  const [hasAppliedGeneratingResult, setHasAppliedGeneratingResult] = useState(false);
 
   /**
    * Plan status is always 'ready' since regeneration is now automatic via auto-expand.
@@ -415,7 +434,10 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     // Step 1: Best-effort server-side session deletion
     try {
       const res = await resetSession();
-      debugLog('[branchManager.startNewSession] Server DELETE /api/session ->', res.status);
+      debugLog(
+        '[branchManager.startNewSession] Server DELETE /api/session ->',
+        res.status
+      );
     } catch (error) {
       debugLog('[branchManager.startNewSession] Server reset failed:', error);
     }
@@ -450,14 +472,16 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   }, [branchState, handleClearContext, chatPanelContainerRef, resetChat]);
 
   /**
-   * Finalizes the generating state and displays results.
+   * Applies the latest plan result to document + branch state immediately.
    *
-   * Called after minimum loading time has elapsed.
-   * Updates all state from the plan result.
+   * The loader timing is handled separately so the visible plan never lags
+   * behind the assistant turn that already completed.
    */
-  const finalizeGenerating = useCallback(
+  const applyPlanResult = useCallback(
     (result: PlanResultPayload | null) => {
       if (!result) return;
+
+      setHasAppliedGeneratingResult(true);
 
       // Update document store from response
       if (result.response) {
@@ -479,13 +503,18 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       });
 
       branchState.setSelectedBranchId(result.primaryBranchId);
-
-      // Clear generating state
-      setIsGenerating(false);
-      generatingStartTimeRef.current = null;
     },
     [branchState, setFromPlanResponse]
   );
+
+  /**
+   * Clears the generating state after the minimum loader duration has elapsed.
+   */
+  const finishGenerating = useCallback(() => {
+    setIsGenerating(false);
+    setHasAppliedGeneratingResult(false);
+    generatingStartTimeRef.current = null;
+  }, []);
 
   /**
    * Handles plan generation result from the AI.
@@ -507,32 +536,32 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         generatingTimerRef.current = null;
       }
 
-      // If generating and got branches, apply minimum loading time
+      // Apply the result immediately so trip_inputs, dates, and deeplinks stay in sync
+      // with the completed assistant turn even while the loader animation finishes.
+      applyPlanResult(result);
+
+      // If generating and got branches, keep the loader up for the remaining minimum duration
       if (isCurrentlyGenerating && hasBranchesInResult) {
         const elapsed = Date.now() - generatingStartTimeRef.current!;
         const remaining = GENERATING_MIN_DURATION_MS - elapsed;
 
         if (remaining > 0) {
-          // Schedule delayed display
+          // Schedule delayed loader teardown
           generatingTimerRef.current = setTimeout(() => {
             generatingTimerRef.current = null;
-            finalizeGenerating(result);
+            finishGenerating();
           }, remaining);
           return;
         }
       }
 
-      // If generating but got error (no branches), clear generating state
-      if (isCurrentlyGenerating && !hasBranchesInResult) {
-        setIsGenerating(false);
-        generatingStartTimeRef.current = null;
+      // Loader can clear immediately when minimum duration has elapsed or no branches were produced.
+      if (isCurrentlyGenerating) {
         generatingTimerRef.current = null;
+        finishGenerating();
       }
-
-      // Apply result immediately
-      finalizeGenerating(result);
     },
-    [finalizeGenerating]
+    [applyPlanResult, finishGenerating]
   );
 
   /**
@@ -546,11 +575,19 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   const handleBookTrip = useCallback(
     (branchId: string) => {
       debugLog('[handleBookTrip] Called with branchId:', branchId);
-      debugLog('[handleBookTrip] Available branches:', branchState.branches.map(b => ({ id: b.id, dest: b.destination })));
+      debugLog(
+        '[handleBookTrip] Available branches:',
+        branchState.branches.map((b) => ({ id: b.id, dest: b.destination }))
+      );
 
       const branch = branchState.branches.find((b) => b.id === branchId);
       if (!branch) {
-        debugLog('[handleBookTrip] Branch not found! branchId:', branchId, 'available IDs:', branchState.branches.map(b => b.id));
+        debugLog(
+          '[handleBookTrip] Branch not found! branchId:',
+          branchId,
+          'available IDs:',
+          branchState.branches.map((b) => b.id)
+        );
         return;
       }
 
@@ -576,11 +613,19 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
       // Verify the save worked
       const saved = localStorage.getItem('nomadic_trip_summary');
-      debugLog('[handleBookTrip] Verified localStorage:', saved ? 'saved successfully' : 'SAVE FAILED');
+      debugLog(
+        '[handleBookTrip] Verified localStorage:',
+        saved ? 'saved successfully' : 'SAVE FAILED'
+      );
 
       window.location.href = '/summary';
     },
-    [branchState.branches, branchState.branchSelections, branchState.tiles, branchState.tilesBranchId]
+    [
+      branchState.branches,
+      branchState.branchSelections,
+      branchState.tiles,
+      branchState.tilesBranchId,
+    ]
   );
 
   /**
@@ -591,6 +636,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    */
   const handleGeneratePlanStart = useCallback(() => {
     setIsGenerating(true);
+    setHasAppliedGeneratingResult(false);
     generatingStartTimeRef.current = Date.now();
 
     // Clear any existing timer
@@ -599,6 +645,8 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       generatingTimerRef.current = null;
     }
   }, []);
+
+  const shouldPauseFollowUpRefreshes = isGenerating && !hasAppliedGeneratingResult;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Effects
@@ -646,9 +694,17 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     let cancelled = false;
     const selectedBranchId = branchState.selectedBranchId;
 
-    // Skip if no settings, no branch selected, or currently generating
-    if ((!tripInputsHotelSettings && !tripInputsFlightSettings && !tripInputsActivitySettings) || !selectedBranchId || isGenerating) {
-      return () => { cancelled = true; };
+    // Skip if no settings, no branch selected, or still waiting on the first plan result
+    if (
+      (!tripInputsHotelSettings &&
+        !tripInputsFlightSettings &&
+        !tripInputsActivitySettings) ||
+      !selectedBranchId ||
+      shouldPauseFollowUpRefreshes
+    ) {
+      return () => {
+        cancelled = true;
+      };
     }
 
     const currentSettings = {
@@ -662,7 +718,9 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     // Initialize on first run
     if (!prevSettings) {
       prevSettingsRef.current = currentSettings;
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     // Detect which verticals have changed settings
@@ -693,7 +751,8 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     const prevActivity = prevSettings.activity_settings;
     const currActivity = currentSettings.activity_settings;
     if (
-      JSON.stringify(prevActivity?.categories) !== JSON.stringify(currActivity?.categories) ||
+      JSON.stringify(prevActivity?.categories) !==
+        JSON.stringify(currActivity?.categories) ||
       prevActivity?.skill_level !== currActivity?.skill_level
     ) {
       changedVerticals.push('activity');
@@ -704,7 +763,9 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
     // If no changes, skip
     if (changedVerticals.length === 0) {
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     // Trigger tile refresh for changed verticals
@@ -747,17 +808,23 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         branchState.setTilesMap((prev) => ({ ...prev, ...newTilesMap }));
 
         const refreshedStayIds = response.tiles
-          .filter((tile) => tile.type === 'hotel' || tile.type === 'stay' || tile.type === 'accommodation')
+          .filter(
+            (tile) =>
+              tile.type === 'hotel' ||
+              tile.type === 'stay' ||
+              tile.type === 'accommodation'
+          )
           .map((tile) => tile.id);
         const refreshedFlightIds = response.tiles
           .filter((tile) => tile.type === 'flight')
           .map((tile) => tile.id);
         const refreshedActivityIds = response.tiles
-          .filter((tile) =>
-            tile.type === 'activity' ||
-            tile.type === 'experience' ||
-            tile.type === 'tour' ||
-            tile.type === 'attraction'
+          .filter(
+            (tile) =>
+              tile.type === 'activity' ||
+              tile.type === 'experience' ||
+              tile.type === 'tour' ||
+              tile.type === 'attraction'
           )
           .map((tile) => tile.id);
 
@@ -766,8 +833,10 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
             if (branch.id !== selectedBranchId) return branch;
             const nextTiles = { ...(branch.tiles ?? {}) };
             if (changedVerticals.includes('hotel')) nextTiles.stays = refreshedStayIds;
-            if (changedVerticals.includes('flight')) nextTiles.flights = refreshedFlightIds;
-            if (changedVerticals.includes('activity')) nextTiles.activities = refreshedActivityIds;
+            if (changedVerticals.includes('flight'))
+              nextTiles.flights = refreshedFlightIds;
+            if (changedVerticals.includes('activity'))
+              nextTiles.activities = refreshedActivityIds;
             return { ...branch, tiles: nextTiles };
           })
         );
@@ -785,8 +854,10 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         }
       });
 
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- branchState object recreated each render; individual properties listed instead
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- branchState object recreated each render; individual properties listed instead
   }, [
     tripInputsHotelSettings,
     tripInputsFlightSettings,
@@ -794,7 +865,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     branchState.selectedBranchId,
     branchState.setTilesMap,
     branchState.setBranches,
-    isGenerating,
+    shouldPauseFollowUpRefreshes,
     settingsRefreshTick,
   ]);
 
@@ -815,45 +886,66 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
     // Skip if no branch selected or tiles not loaded for this branch
     if (!selectedBranchId || !selectedBranch) {
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     // Skip if tiles aren't loaded yet for this branch
     if (tilesBranchId !== selectedBranchId) {
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
-    // Skip if currently generating or refreshing
-    if (isGenerating || isSettingsRefreshingRef.current || isFlightsRefreshingRef.current) {
-      return () => { cancelled = true; };
+    // Skip while waiting on the first plan result or while a refresh is already in progress.
+    if (
+      shouldPauseFollowUpRefreshes ||
+      isSettingsRefreshingRef.current ||
+      isFlightsRefreshingRef.current
+    ) {
+      return () => {
+        cancelled = true;
+      };
     }
 
     // Skip if we already attempted to fetch flights for this branch
     if (fetchedMissingFlightsRef.current.has(selectedBranchId)) {
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     const retryCount = missingFlightRetryCountRef.current[selectedBranchId] ?? 0;
     if (retryCount >= MAX_MISSING_FLIGHT_RETRIES) {
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     // Check if flights are missing (with null safety)
     const flightIds = selectedBranch.tiles?.flights ?? [];
     const hasFlights = flightIds.length > 0;
     if (hasFlights) {
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     // Check if we have origin (required for flight search)
     const origin = selectedBranch.origin || tripInputsOrigin;
     if (!origin) {
       debugLog('[useBranchManager] No origin available for flight fetch');
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     // Fetch missing flights
-    debugLog('[useBranchManager] Auto-fetching missing flights for branch:', selectedBranchId);
+    debugLog(
+      '[useBranchManager] Auto-fetching missing flights for branch:',
+      selectedBranchId
+    );
     isFlightsRefreshingRef.current = true;
     let shouldRetry = false;
 
@@ -888,7 +980,8 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
           debugLog('[useBranchManager] Fetched', response.tiles.length, 'flight tiles');
         } else {
           fetchedMissingFlightsRef.current.delete(selectedBranchId);
-          const nextRetry = (missingFlightRetryCountRef.current[selectedBranchId] ?? 0) + 1;
+          const nextRetry =
+            (missingFlightRetryCountRef.current[selectedBranchId] ?? 0) + 1;
           missingFlightRetryCountRef.current[selectedBranchId] = nextRetry;
           shouldRetry = nextRetry < MAX_MISSING_FLIGHT_RETRIES;
         }
@@ -908,8 +1001,10 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         }
       });
 
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- branchState object recreated each render; individual properties listed instead
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- branchState object recreated each render; individual properties listed instead
   }, [
     branchState.selectedBranchId,
     branchState.tilesBranchId,
@@ -917,7 +1012,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     branchState.setTilesMap,
     branchState.setBranches,
     tripInputsOrigin,
-    isGenerating,
+    shouldPauseFollowUpRefreshes,
     settingsRefreshTick,
   ]);
 
@@ -925,49 +1020,67 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   // Return
   // ─────────────────────────────────────────────────────────────────────────
 
-  return useMemo(() => ({
-    // State (from branchState)
-    branches: branchState.branches,
-    selectedBranchId: branchState.selectedBranchId,
-    tilesBranchId: branchState.tilesBranchId,
-    branchSelections: branchState.branchSelections,
+  return useMemo(
+    () => ({
+      // State (from branchState)
+      branches: branchState.branches,
+      selectedBranchId: branchState.selectedBranchId,
+      tilesBranchId: branchState.tilesBranchId,
+      branchSelections: branchState.branchSelections,
 
-    // State (local)
-    isGenerating,
-    isHydratingSnapshot,
-    planStatus,
-    isRegenerating,
+      // State (local)
+      isGenerating,
+      isHydratingSnapshot,
+      planStatus,
+      isRegenerating,
 
-    // Computed (from branchState)
-    selectedBranch: branchState.selectedBranch,
-    tiles: branchState.tiles,
-    hasBranchesReady: branchState.hasBranchesReady,
+      // Computed (from branchState)
+      selectedBranch: branchState.selectedBranch,
+      tiles: branchState.tiles,
+      hasBranchesReady: branchState.hasBranchesReady,
 
-    // Computed (from useTileSelection)
-    activeBranchSelection,
+      // Computed (from useTileSelection)
+      activeBranchSelection,
 
-    // Computed (local)
-    readyToGenerate,
+      // Computed (local)
+      readyToGenerate,
 
-    // Actions (from branchState)
-    setBranches: branchState.setBranches,
-    setSelectedBranchId: branchState.setSelectedBranchId,
-    handleBranchSelect: branchState.handleBranchSelect,
+      // Actions (from branchState)
+      setBranches: branchState.setBranches,
+      setSelectedBranchId: branchState.setSelectedBranchId,
+      handleBranchSelect: branchState.handleBranchSelect,
 
-    // Actions (from useTileSelection)
-    handleTileSelection,
+      // Actions (from useTileSelection)
+      handleTileSelection,
 
-    // Actions (local)
-    handleStartNewSession,
-    handlePlanResult,
-    handleBookTrip,
-    handleGeneratePlanStart,
-  }), [
-    branchState.branches, branchState.selectedBranchId, branchState.tilesBranchId,
-    branchState.branchSelections, branchState.selectedBranch, branchState.tiles,
-    branchState.hasBranchesReady, branchState.setBranches, branchState.setSelectedBranchId,
-    branchState.handleBranchSelect, isGenerating, isHydratingSnapshot, planStatus,
-    isRegenerating, activeBranchSelection, readyToGenerate, handleTileSelection,
-    handleStartNewSession, handlePlanResult, handleBookTrip, handleGeneratePlanStart,
-  ]);
+      // Actions (local)
+      handleStartNewSession,
+      handlePlanResult,
+      handleBookTrip,
+      handleGeneratePlanStart,
+    }),
+    [
+      branchState.branches,
+      branchState.selectedBranchId,
+      branchState.tilesBranchId,
+      branchState.branchSelections,
+      branchState.selectedBranch,
+      branchState.tiles,
+      branchState.hasBranchesReady,
+      branchState.setBranches,
+      branchState.setSelectedBranchId,
+      branchState.handleBranchSelect,
+      isGenerating,
+      isHydratingSnapshot,
+      planStatus,
+      isRegenerating,
+      activeBranchSelection,
+      readyToGenerate,
+      handleTileSelection,
+      handleStartNewSession,
+      handlePlanResult,
+      handleBookTrip,
+      handleGeneratePlanStart,
+    ]
+  );
 }

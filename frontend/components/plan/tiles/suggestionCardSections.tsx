@@ -6,6 +6,7 @@ import { useState } from 'react';
 
 import {
   getAmenityIconsWithLabels,
+  getEffectiveTileDeeplinkUrl,
   getTileDeeplinkPillLabel,
   isPartnerDeeplinkUrl,
 } from '@/components/tiles/tileHelpers';
@@ -14,6 +15,7 @@ import { DS } from '@/lib/design-system';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { renderStarRating } from '@/lib/renderStarRating';
 import { cn, isFlightType } from '@/lib/utils';
+import { useDocumentTripInputs } from '@/state/documentStore';
 import type { Tile } from '@/types/tile';
 
 export function SuggestionCardCompact({
@@ -28,6 +30,7 @@ export function SuggestionCardCompact({
   className?: string;
 }) {
   const [imageError, setImageError] = useState(false);
+  const tripInputs = useDocumentTripInputs();
   const amenityIcons = getAmenityIconsWithLabels(tile);
   const isHotel = tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay');
   const price = tile.price_estimate ?? tile.total_inclusive;
@@ -35,7 +38,13 @@ export function SuggestionCardCompact({
   const placeholderUrl = placeholderImageForTile(tile);
   const imageUrl = imageError ? placeholderUrl : (tile.image_url || placeholderUrl);
   const isFlight = isFlightType(tile.type || '');
-  const deeplinkUrl = tile.deeplink_url;
+  const thumbnailContainerClass = isFlight
+    ? 'flex h-12 w-12 items-center justify-center rounded-xl bg-white ring-1 ring-black/5'
+    : isHotel
+      ? 'h-16 w-24 rounded-xl ring-1 ring-black/5 dark:ring-white/10'
+      : 'h-12 w-12 rounded-lg ring-1 ring-black/5 dark:ring-white/10';
+  const thumbnailSize = isFlight ? '48px' : isHotel ? '96px' : '48px';
+  const deeplinkUrl = getEffectiveTileDeeplinkUrl(tile, tripInputs);
   const hasDeeplink = Boolean(deeplinkUrl && deeplinkUrl !== '#');
   const isPartner = hasDeeplink && deeplinkUrl ? isPartnerDeeplinkUrl(deeplinkUrl) : false;
 
@@ -50,19 +59,17 @@ export function SuggestionCardCompact({
       <div
         className={cn(
           'relative flex-shrink-0 overflow-hidden',
-          isFlight
-            ? 'flex h-10 w-10 items-center justify-center rounded-full bg-white ring-1 ring-black/5'
-            : 'h-12 w-12 rounded-lg ring-1 ring-black/5 dark:ring-white/10'
+          thumbnailContainerClass
         )}
       >
         <Image
           src={imageUrl}
           alt={tile.title}
           fill={!isFlight}
-          width={isFlight ? 32 : undefined}
-          height={isFlight ? 32 : undefined}
-          sizes={isFlight ? '32px' : '48px'}
-          className={isFlight ? 'object-contain' : 'object-cover'}
+          width={isFlight ? 36 : undefined}
+          height={isFlight ? 36 : undefined}
+          sizes={thumbnailSize}
+          className={isFlight ? 'h-9 w-9 object-contain' : 'object-cover'}
           onError={() => setImageError(true)}
         />
       </div>
@@ -117,7 +124,7 @@ export function SuggestionCardCompact({
           )}
         >
           {isPartner ? <ExternalLink className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
-          {getTileDeeplinkPillLabel(tile)}
+          {getTileDeeplinkPillLabel(tile, deeplinkUrl)}
         </a>
       )}
 

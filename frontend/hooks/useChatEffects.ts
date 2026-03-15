@@ -106,7 +106,6 @@ export function useChatEffects(params: UseChatEffectsParams): void {
 
   // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
   useEffect(() => {
-    let scrollTimer: ReturnType<typeof setTimeout> | undefined;
     if (!prevIsLoadingRef.current && isLoading) {
       // Scroll to bottom when loading STARTS so Logic Terminal is visible
       requestAnimationFrame(() => {
@@ -115,19 +114,14 @@ export function useChatEffects(params: UseChatEffectsParams): void {
       });
     } else if (prevIsLoadingRef.current && !isLoading) {
       // Reset and force scroll to bottom when response finishes.
-      // Fire twice: immediately for content already rendered, and after
-      // a short delay to catch any post-render layout shifts.
+      // Late layout shifts are handled inside useChatScrolling's settle passes.
       scrollToBottom(true);
       scrollPanelIntoView();
-      scrollTimer = setTimeout(() => scrollToBottom(true), 150);
       requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
     }
     prevIsLoadingRef.current = isLoading;
-    return () => {
-      if (scrollTimer) clearTimeout(scrollTimer);
-    };
   }, [isLoading, scrollToBottom, scrollPanelIntoView, inputRef]);
 
   // Cleanup timeouts on unmount
@@ -175,7 +169,12 @@ export function useChatEffects(params: UseChatEffectsParams): void {
 
   // Ready-to-generate message tracking (backend sends the message via streaming)
   useEffect(() => {
-    if (readyToGenerate && !readyMessageShownRef.current && !hasBranches && !generateTriggered) {
+    if (
+      readyToGenerate &&
+      !readyMessageShownRef.current &&
+      !hasBranches &&
+      !generateTriggered
+    ) {
       readyMessageShownRef.current = true;
     }
     if (!readyToGenerate) {

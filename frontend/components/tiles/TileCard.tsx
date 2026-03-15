@@ -18,11 +18,16 @@ import { Card } from '@/components/ui/card';
 import { apiFetch } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { cn, isFlightType, isHotelType } from '@/lib/utils';
-import { usePreferenceActions, useTilePreference } from '@/state/documentStore';
+import {
+  useDocumentTripInputs,
+  usePreferenceActions,
+  useTilePreference,
+} from '@/state/documentStore';
 import type { Tile } from '@/types/tile';
 
 import {
   getAmenityIconsWithLabels,
+  getEffectiveTileDeeplinkUrl,
   getTileActivityMeta,
   getTileFeatures,
   getTileRelevanceBadges,
@@ -69,6 +74,11 @@ export const TileCard = memo(function TileCard({
   const activityMeta = useMemo(() => getTileActivityMeta(tile), [tile]);
   const isFlight = isFlightType(tile.type || '');
   const isHotel = isHotelType(tile.type || '');
+  const tripInputs = useDocumentTripInputs();
+  const effectiveDeeplinkUrl = useMemo(
+    () => getEffectiveTileDeeplinkUrl(tile, tripInputs),
+    [tile, tripInputs]
+  );
 
   useEffect(() => {
     if (isSelected && !prevSelectedRef.current) {
@@ -104,8 +114,8 @@ export const TileCard = memo(function TileCard({
 
   const handleClick = useCallback(() => {
     trackClick();
-    window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer');
-  }, [trackClick, tile.deeplink_url]);
+    window.open(effectiveDeeplinkUrl, '_blank', 'noopener,noreferrer');
+  }, [trackClick, effectiveDeeplinkUrl]);
 
   const handleToggleSelect = useCallback(
     (event: MouseEvent | KeyboardEvent<HTMLDivElement>) => {

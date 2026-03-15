@@ -130,6 +130,36 @@ function buildOptimisticExtensionPreview(
   };
 }
 
+function didOptimisticExtensionRegress(
+  currentTripInputs: DocumentTripInputs | null | undefined,
+  previousTripInputs: DocumentTripInputs | null | undefined,
+  optimisticExtension: { tripInputs: DocumentTripInputs; dayCards: DayCard[] } | null
+): boolean {
+  if (!currentTripInputs || !previousTripInputs || !optimisticExtension) {
+    return false;
+  }
+
+  const previousEndDate = previousTripInputs.end_date;
+  const optimisticEndDate = optimisticExtension.tripInputs.end_date;
+  const currentEndDate = currentTripInputs.end_date;
+  if (!previousEndDate || !optimisticEndDate || !currentEndDate) {
+    return false;
+  }
+
+  const previousEnd = parseISODateLocal(previousEndDate);
+  const optimisticEnd = parseISODateLocal(optimisticEndDate);
+  const currentEnd = parseISODateLocal(currentEndDate);
+  if (!previousEnd || !optimisticEnd || !currentEnd) {
+    return false;
+  }
+
+  if (optimisticEnd.getTime() <= previousEnd.getTime()) {
+    return false;
+  }
+
+  return currentEnd.getTime() <= previousEnd.getTime();
+}
+
 function waitForPendingMutationsToSettle(timeoutMs = 5_000): Promise<boolean> {
   if (!useDocumentStore.getState().hasPendingMutations()) {
     return Promise.resolve(true);
@@ -675,6 +705,31 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         });
         if (streamResult === 'complete') {
           pendingOptimisticRollbackRef.current = null;
+          const currentDoc = useDocumentStore.getState().document;
+          const currentTripInputs = currentDoc?.trip_inputs;
+          if (
+            currentTripInputs &&
+            didOptimisticExtensionRegress(
+              currentTripInputs,
+              tripInputsSnapshot,
+              optimisticExtension
+            )
+          ) {
+            useDocumentStore.getState().mergeEnvelope(
+              {
+                trip_inputs: {
+                  ...currentTripInputs,
+                  end_date: optimisticExtension!.tripInputs.end_date ?? null,
+                  trip_duration: optimisticExtension!.tripInputs.trip_duration ?? null,
+                },
+                day_cards:
+                  (currentDoc?.day_cards?.length ?? 0) <= optimisticExtension!.dayCards.length
+                    ? structuredClone(optimisticExtension!.dayCards)
+                    : undefined,
+              },
+              envelopeGenerationRef.current
+            );
+          }
         }
         if (streamResult === 'error') {
           rollbackOptimisticExtension();

@@ -6,7 +6,8 @@ Provider cascade: curated → google_places → mock
 
 Price estimation: price_level (0-4) × destination cost tier.
 Photos: Placeholder images only (avoid exposing Google API keys in client URLs).
-Deeplinks: Google Travel Hotels (preferred) with Maps fallback for hotels, Google Maps for activities.
+Deeplinks: Booking.com hotel search (primary) with Google Travel/Maps fallback for hotels,
+Google Maps for activities.
 
 Quota exhaustion or API errors → returns empty list → mock fallback applies.
 """
@@ -22,6 +23,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
 
 import httpx
 from cachetools import TTLCache
@@ -367,6 +369,28 @@ def _estimate_activity_price(price_level: Optional[int], travelers: int) -> floa
     multiplier = _PRICE_LEVEL_MULTIPLIERS.get(level, 1.0)
     per_person = 60.0 * multiplier
     return round(per_person * max(travelers, 1), 2)
+
+
+def _build_booking_search_url(name: str, destination: str, ctx: SearchContext) -> str:
+    """Build a Booking.com hotel search URL for the current tile context."""
+    if not name or not destination:
+        return ""
+
+    adults = max(int(ctx.adults or 1), 1)
+    params = {
+        "ss": f"{name} {destination}".strip(),
+        "group_adults": str(adults),
+    }
+    if ctx.start_date:
+        params["checkin"] = ctx.start_date
+    if ctx.end_date:
+        params["checkout"] = ctx.end_date
+    if ctx.children:
+        params["group_children"] = str(max(int(ctx.children), 0))
+    booking_aid = (settings.booking_affiliate_aid or "").strip()
+    if booking_aid:
+        params["aid"] = booking_aid
+    return f"https://www.booking.com/searchresults.html?{urlencode(params)}"
 
 
 # Shared mapping: placeholder category → token substrings matched against primaryType.
@@ -1094,11 +1118,13 @@ class GooglePlacesHotelProvider(Provider):
             property_fee = round(nights * 15, 2)
             total_inclusive = round(total_price + tax_and_service + property_fee, 2)
 
-            deeplink = (
+            maps_deeplink = (
                 f"https://www.google.com/travel/hotels/entity/{place_id}"
                 if place_id and not place_id.startswith("gp_hotel_")
                 else place.get("googleMapsUri", "")
             ) or place.get("googleMapsUri", "")
+            booking_deeplink = _build_booking_search_url(name, dest, ctx)
+            deeplink = booking_deeplink or maps_deeplink
             # editorialSummary is Enterprise+Atmosphere — not in our Pro field mask.
             tiles.append(
                 Tile(
@@ -1128,6 +1154,8 @@ class GooglePlacesHotelProvider(Provider):
                         "children": ctx.children,
                         "place_id": place_id,
                         "photo_name": photo_name,
+                        "maps_deeplink": maps_deeplink,
+                        "booking_deeplink": booking_deeplink or None,
                     },
                     score=0.8 - 0.02 * i,
                     source="live",

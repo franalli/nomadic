@@ -1269,6 +1269,7 @@ fi
 #     - tiles non-empty (hotels + activities)
 #     - interior days have activity blocks
 #     - strategy_sections preserved from Turn 1
+#     - assistant_message stays grounded to names that exist in payload state
 if should_run 14; then
 _flow_begin 14
 echo ""
@@ -1404,6 +1405,109 @@ TOOLS=$(extract_tools)
 echo "  ℹ  Tools called: $TOOLS"
 check_contains "Turn 2: build_itinerary called" "$TOOLS" "build_itinerary" || F=false
 
+ASSISTANT_MSG=$(extract_doc "assistant_message")
+check_not_empty "Turn 2: assistant_message present" "$ASSISTANT_MSG" || F=false
+
+GROUNDING_OK=$(python3 - "$RESP" <<'PYEOF'
+import json, re, sys
+
+generic = {
+    "",
+    "arrive at destination",
+    "depart for home",
+    "arrival",
+    "departure",
+    "free day",
+    "check-in",
+    "check-out",
+    "check in",
+    "check out",
+}
+months = {
+    "january","february","march","april","may","june",
+    "july","august","september","october","november","december",
+    "jan","feb","mar","apr","jun","jul","aug","sep","sept","oct","nov","dec",
+}
+
+assistant = ""
+safe_names = set()
+
+def add_name(raw):
+    name = str(raw or "").strip()
+    if not name:
+        return
+    lowered = name.lower()
+    if lowered in generic:
+        return
+    safe_names.add(lowered)
+
+with open(sys.argv[1]) as fh:
+    for line in fh:
+        if not line.startswith("data: "):
+            continue
+        try:
+            outer = json.loads(line[6:])
+        except Exception:
+            continue
+        if outer.get("type") != "complete":
+            continue
+        data = outer.get("data", {})
+        document = data.get("document", {}) or {}
+        session_state = data.get("session_state", {}) or {}
+        assistant = str(document.get("assistant_message") or data.get("assistant_message") or "")
+        trip_plan = session_state.get("trip_plan", {}) or {}
+        add_name(trip_plan.get("destination"))
+        add_name(trip_plan.get("origin"))
+        day_cards = (
+            document.get("day_cards")
+            or document.get("itinerary_day_cards")
+            or session_state.get("day_cards")
+            or []
+        )
+        for card in day_cards:
+            if not isinstance(card, dict):
+                continue
+            for block in card.get("blocks", []) or []:
+                if not isinstance(block, dict):
+                    continue
+                if not block.get("is_buffer"):
+                    add_name(block.get("summary"))
+                booked_tile = block.get("booked_tile") or {}
+                if isinstance(booked_tile, dict):
+                    add_name(booked_tile.get("title"))
+        tiles = document.get("tiles") or session_state.get("tiles") or {}
+        tile_values = tiles.values() if isinstance(tiles, dict) else tiles
+        for tile in tile_values:
+            if not isinstance(tile, dict):
+                continue
+            if tile.get("selected") or tile.get("booked") or tile.get("preferred"):
+                add_name(tile.get("title"))
+        break
+
+phrases = {
+    match.group(0).strip()
+    for match in re.finditer(r"\b(?:[A-Z][A-Za-z0-9'&.-]+(?:\s+[A-Z][A-Za-z0-9'&.-]+)+)\b", assistant)
+}
+
+unknown = []
+for phrase in sorted(phrases):
+    lowered = phrase.lower()
+    if all(token.lower() in months for token in phrase.split()):
+        continue
+    if lowered.startswith("day "):
+        continue
+    if any(lowered == safe or lowered in safe or safe in lowered for safe in safe_names):
+        continue
+    unknown.append(phrase)
+
+if unknown:
+    print("unknown:" + ", ".join(unknown[:5]))
+else:
+    print("grounded")
+PYEOF
+)
+check_contains "Turn 2: assistant_message stays grounded to payload names" "$GROUNDING_OK" "grounded" || F=false
+
 else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 14 || _flow fail 14
 _flow_end 14
@@ -1415,8 +1519,8 @@ fi
 #  FLOW 15: Deeplink URL Format Validation
 # =============================================================================
 # Booking buttons ship this sprint — broken URLs = broken demo.
-# Validates that hotel/activity deeplink_url fields are real HTTP URLs,
-# not "#" placeholders or empty strings.
+# Validates that hotel/activity/flight deeplink_url fields are real HTTP URLs,
+# activity + flight blocks inherit them, and flight tile identities are unique.
 if should_run 15; then
 _flow_begin 15
 echo ""
@@ -1449,6 +1553,56 @@ try:
 except Exception as e: print(f'ERROR: {e}')
 " 2>/dev/null || echo "ERROR")
 check_contains "Hotel deeplinks are valid URLs" "$HOTEL_DL_VALID" "valid" || F=false
+
+# Flight deeplinks must be valid HTTP URLs when flights are present
+FLIGHT_DL_VALID=$(echo "$TILES" | python3 -c "
+import sys,json
+try:
+    tiles=json.load(sys.stdin)
+    vals=tiles.values() if isinstance(tiles,dict) else tiles
+    flights=[t for t in vals if isinstance(t,dict) and t.get('type')=='flight']
+    if not flights:
+        print('no-flights'); sys.exit()
+    bad=[]
+    for t in flights:
+        dl=t.get('deeplink_url','')
+        if not dl or dl=='#' or not dl.startswith('http'):
+            bad.append(f\"{t.get('id','?')}: '{dl[:60]}'\")
+    if bad: print('INVALID: ' + '; '.join(bad[:3]))
+    else: print('valid')
+except Exception as e: print(f'ERROR: {e}')
+" 2>/dev/null || echo "ERROR")
+if [ "$FLIGHT_DL_VALID" = "no-flights" ]; then
+  skip_test "Flight deeplinks are valid URLs" "no flight tiles returned"
+else
+  check_contains "Flight deeplinks are valid URLs" "$FLIGHT_DL_VALID" "valid" || F=false
+fi
+
+# Flight tile identifiers must already be deduped at the provider layer
+FLIGHT_TILE_UNIQUE=$(echo "$TILES" | python3 -c "
+import sys,json
+try:
+    tiles=json.load(sys.stdin)
+    vals=tiles.values() if isinstance(tiles,dict) else tiles
+    flights=[t for t in vals if isinstance(t,dict) and t.get('type')=='flight']
+    if not flights:
+        print('no-flights'); sys.exit()
+    ids=[str(t.get('id') or '') for t in flights]
+    partner_ids=[str(t.get('partner_product_id') or '') for t in flights if t.get('partner_product_id')]
+    dup_ids=sorted({i for i in ids if i and ids.count(i) > 1})
+    dup_partner=sorted({i for i in partner_ids if i and partner_ids.count(i) > 1})
+    if dup_ids or dup_partner:
+        print('duplicate:' + ','.join((dup_ids + dup_partner)[:5]))
+    else:
+        print('unique')
+except Exception as e:
+    print(f'ERROR: {e}')
+" 2>/dev/null || echo "ERROR")
+if [ "$FLIGHT_TILE_UNIQUE" = "no-flights" ]; then
+  skip_test "Flight tile ids are unique" "no flight tiles returned"
+else
+  check_contains "Flight tile ids are unique" "$FLIGHT_TILE_UNIQUE" "unique" || F=false
+fi
 
 # Activity deeplinks must be valid HTTP URLs
 ACT_DL_VALID=$(echo "$TILES" | python3 -c "
@@ -1483,6 +1637,44 @@ try:
 except: print('0/0')
 " 2>/dev/null || echo "0/0")
 echo "  ℹ  Activity blocks with deeplink: $BLOCK_DL"
+BLOCK_DL_OK=$(echo "$BLOCK_DL" | python3 -c "
+import sys
+try:
+    have,total=[int(x) for x in sys.stdin.read().strip().split('/')]
+    print('true' if total == 0 or have > 0 else 'false')
+except: print('false')
+" 2>/dev/null || echo "false")
+check "Activity blocks carry deeplinks when activities are placed" "$BLOCK_DL_OK" "true" || F=false
+
+FLIGHT_BLOCK_DL=$(extract_doc "day_cards" | python3 -c "
+import sys,json
+try:
+    cards=json.load(sys.stdin)
+    total=0; with_dl=0
+    for card in cards:
+        for b in card.get('blocks',[]):
+            if b.get('booking_category')!='flight':
+                continue
+            total+=1
+            tile=b.get('booked_tile') or {}
+            if isinstance(tile,dict) and (tile.get('deeplink') or tile.get('deeplink_url')):
+                with_dl+=1
+    print(f'{with_dl}/{total}')
+except: print('0/0')
+" 2>/dev/null || echo "0/0")
+echo "  ℹ  Flight blocks with booked deeplink: $FLIGHT_BLOCK_DL"
+FLIGHT_BLOCK_DL_OK=$(echo "$FLIGHT_BLOCK_DL" | python3 -c "
+import sys
+try:
+    have,total=[int(x) for x in sys.stdin.read().strip().split('/')]
+    print('skip' if total == 0 else ('true' if have == total else 'false'))
+except: print('false')
+" 2>/dev/null || echo "false")
+if [ "$FLIGHT_BLOCK_DL_OK" = "skip" ]; then
+  skip_test "Flight blocks carry booked deeplinks" "no flight blocks in itinerary"
+else
+  check "Flight blocks carry booked deeplinks" "$FLIGHT_BLOCK_DL_OK" "true" || F=false
+fi
 
 else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 15 || _flow fail 15
@@ -1494,8 +1686,9 @@ fi
 # =============================================================================
 #  FLOW 16: Travelers + Budget Extraction
 # =============================================================================
-# Real users type "2 adults and a kid, $3000 budget." Validates that the
-# router extraction correctly parses adults, children, and budget fields.
+# Real users type "2 adults and a kid, $3000 budget." Also validates that
+# weekend language deterministically maps to a short trip duration even when
+# the router misses the duration field.
 if should_run 16; then
 _flow_begin 16
 echo ""
@@ -1503,7 +1696,7 @@ echo "═══ Flow 16: Travelers + Budget Extraction ═══"
 F=true
 
 if fresh_session; then
-if send_message "Bali for a week starting March 15, 2 adults and 1 child, budget around 3000 dollars"; then
+if send_message "Rome for a weekend getaway, 2 adults and 1 child, budget around 3000 dollars"; then
 
 ADULTS=$(extract_top "session_state.trip_plan.adults")
 check "Adults=2" "$ADULTS" "2" || F=false
@@ -1517,6 +1710,13 @@ if [ -n "$BUDGET" ] && [ "$BUDGET" != "null" ]; then
 else
   skip_test "Budget extracted" "budget extraction is best-effort"
 fi
+
+TRIP_DURATION=$(extract_top "session_state.trip_plan.trip_duration")
+check "Weekend getaway maps to 3 days" "$TRIP_DURATION" "3" || F=false
+
+DEST_WEEKEND=$(extract_top "session_state.trip_plan.destination")
+DEST_WEEKEND_LC=$(echo "$DEST_WEEKEND" | tr '[:upper:]' '[:lower:]')
+check_contains "Weekend destination extracted" "$DEST_WEEKEND_LC" "rome" || F=false
 
 else F=false; fi; else F=false; fi
 $F && _flow pass 16 || _flow fail 16

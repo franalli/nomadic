@@ -4,9 +4,11 @@ import { ExternalLink } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
+import { getEffectiveTileDeeplinkUrl } from '@/components/tiles/tileHelpers';
 import { DS } from '@/lib/design-system';
 import { formatPrice, formatTilePrice } from '@/lib/format-utils';
 import { cn } from '@/lib/utils';
+import { useDocumentTripInputs } from '@/state/documentStore';
 import type { DayBlock, DayCard, PlanViewState } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
@@ -29,6 +31,11 @@ interface VenueLinkRowProps {
   href: string;
   price?: string | null;
   title: string;
+}
+
+interface VenueLinkRowData extends VenueLinkRowProps {
+  dedupeKey: string;
+  id: string;
 }
 
 function formatActivityPrice(block: DayBlock): string | null {
@@ -74,6 +81,16 @@ function VenueLinkRow({ href, price, title }: VenueLinkRowProps) {
   );
 }
 
+function dedupeVenueRows(rows: VenueLinkRowData[]): VenueLinkRowData[] {
+  const seen = new Set<string>();
+
+  return rows.filter((row) => {
+    if (seen.has(row.dedupeKey)) return false;
+    seen.add(row.dedupeKey);
+    return true;
+  });
+}
+
 interface BookingSummaryProps {
   tiles: Record<string, Tile>;
   dayCards: DayCard[];
@@ -87,6 +104,7 @@ export function BookingSummary({
   state,
   headerActions,
 }: BookingSummaryProps) {
+  const tripInputs = useDocumentTripInputs();
   const hotelLinks = useMemo(
     () =>
       Object.values(tiles).filter(
@@ -109,33 +127,77 @@ export function BookingSummary({
 
   const hotelRows = useMemo(
     () =>
-      hotelLinks.map((tile) => ({
-        href: tile.deeplink_url,
-        id: tile.id,
-        price: formatTilePrice(tile) || null,
-        title: tile.title,
-      })),
-    [hotelLinks]
+      dedupeVenueRows(
+        hotelLinks.map((tile) => {
+          const deeplinkUrl = getEffectiveTileDeeplinkUrl(tile, tripInputs);
+
+          return {
+            dedupeKey: tile.partner_product_id || deeplinkUrl || tile.id,
+            href: deeplinkUrl,
+            id: tile.id,
+            price: formatTilePrice(tile) || null,
+            title: tile.title,
+          };
+        })
+      ),
+    [hotelLinks, tripInputs]
+  );
+
+  const flightRows = useMemo(
+    () =>
+      dedupeVenueRows(
+        dayCards
+          .flatMap((dc) => dc.blocks)
+          .filter(
+            (block) =>
+              block.booking_category === 'flight' &&
+              block.booked_tile?.deeplink_url &&
+              block.booked_tile.deeplink_url !== '#'
+          )
+          .map((block, index) => ({
+            dedupeKey:
+              block.booked_tile?.partner_product_id
+              || block.booked_tile?.deeplink_url
+              || block.booked_tile?.id
+              || block.id
+              || `${block.period}-${block.summary}-${block.activity_type}-${index}`,
+            href: block.booked_tile?.deeplink_url as string,
+            id:
+              block.booked_tile?.id ??
+              block.id ??
+              `${block.period}-${block.summary}-${block.activity_type}-${index}`,
+            price: block.booked_tile ? formatTilePrice(block.booked_tile) || null : null,
+            title: block.booked_tile?.title || block.summary || 'Flight',
+          }))
+      ),
+    [dayCards]
   );
 
   const activityRows = useMemo(
     () =>
-      activityLinks.map((block, index) => ({
-        href: block.deeplink as string,
-        id: block.id ?? `${block.period}-${block.summary}-${block.activity_type}-${index}`,
-        price: formatActivityPrice(block),
-        title: block.summary || block.booked_tile?.title || block.activity_type || 'Activity',
-      })),
+      dedupeVenueRows(
+        activityLinks.map((block, index) => ({
+          dedupeKey:
+            block.booked_tile?.partner_product_id
+            || block.deeplink
+            || block.id
+            || `${block.period}-${block.summary}-${block.activity_type}-${index}`,
+          href: block.deeplink as string,
+          id: block.id ?? `${block.period}-${block.summary}-${block.activity_type}-${index}`,
+          price: formatActivityPrice(block),
+          title: block.summary || block.booked_tile?.title || block.activity_type || 'Activity',
+        }))
+      ),
     [activityLinks]
   );
 
   if (!VISIBLE_STATES.has(state)) return null;
-  if (hotelLinks.length === 0 && activityLinks.length === 0) return null;
+  if (hotelRows.length === 0 && flightRows.length === 0 && activityRows.length === 0) return null;
 
   return (
     <div className={cn(DS.materials.glass, 'mt-6 overflow-hidden')}>
       <div className="flex items-center justify-between gap-3 border-b border-zinc-200/70 px-4 py-3 dark:border-white/5">
-        <h3 className={DS.text.label}>Venue Links</h3>
+        <h3 className={DS.text.label}>Booking Links</h3>
         {headerActions ? (
           <div
             className={cn(
@@ -172,8 +234,28 @@ export function BookingSummary({
         </div>
       )}
 
-      {activityRows.length > 0 && (
+      {flightRows.length > 0 && (
         <div className={cn(hotelRows.length > 0 && 'border-t border-zinc-200/70 dark:border-white/5')}>
+          <div className="px-4 pt-3 pb-1">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+              Flights
+            </span>
+          </div>
+          <div>
+            {flightRows.map((row) => (
+              <VenueLinkRow
+                key={row.id}
+                href={row.href}
+                price={row.price}
+                title={row.title}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activityRows.length > 0 && (
+        <div className={cn((hotelRows.length > 0 || flightRows.length > 0) && 'border-t border-zinc-200/70 dark:border-white/5')}>
           <div className="px-4 pt-3 pb-1">
             <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
               Activities
@@ -198,7 +280,7 @@ export function BookingSummary({
           'border-t border-zinc-200/70 px-4 py-3 text-zinc-500 dark:border-white/5 dark:text-zinc-400'
         )}
       >
-        Links open Google Travel Hotels and Google Maps
+        Links open partner booking pages, Google Travel Hotels, and Google Maps
       </p>
     </div>
   );

@@ -35,6 +35,7 @@ export interface TripSummarySegmentProps {
   disabled?: boolean;
   compact?: boolean;
   onClick?: () => void;
+  toggleable?: boolean;
   id?: string;
   ariaControls?: string;
   ariaExpanded?: boolean;
@@ -51,29 +52,36 @@ export function TripSummarySegment({
   disabled = false,
   compact = false,
   onClick,
+  toggleable = false,
   id,
   ariaControls,
   ariaExpanded,
   trailing,
 }: TripSummarySegmentProps) {
   const interactive = Boolean(onClick) && !disabled;
+  const isDisabled = !onClick || disabled;
+  const showActiveState = active;
 
   return (
     <button
       id={id}
       type="button"
       onClick={onClick}
-      disabled={!interactive}
+      disabled={isDisabled}
       aria-controls={ariaControls}
       aria-expanded={ariaExpanded}
+      aria-pressed={toggleable ? active : undefined}
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full whitespace-nowrap transition-all duration-150',
         compact ? 'h-8 px-2 text-xs' : `h-10 px-3 ${DS.textSize.badgeLabel}`,
-        'hover:bg-white/[0.08]',
-        interactive ? 'cursor-pointer' : 'cursor-default opacity-70',
+        showActiveState ? 'bg-white/[0.08]' : 'hover:bg-white/[0.08]',
+        interactive ? 'cursor-pointer' : 'cursor-default',
+        !interactive && !showActiveState && 'opacity-70',
         muted
-          ? cn(active ? 'text-zinc-200' : 'text-zinc-400', 'font-medium hover:text-zinc-200')
-          : isSet
+          ? cn(active ? 'text-zinc-100' : 'text-zinc-400', 'font-medium hover:text-zinc-200')
+          : showActiveState
+            ? 'font-semibold text-zinc-100'
+            : isSet
             ? 'font-semibold text-zinc-100'
             : 'text-zinc-500'
       )}
@@ -81,7 +89,11 @@ export function TripSummarySegment({
       <Icon
         className={cn(
           'h-4 w-4 shrink-0',
-          muted ? cn(active ? 'text-zinc-300' : 'text-zinc-500') : isSet ? 'text-emerald-400/80' : 'text-zinc-600'
+          muted
+            ? cn(active ? 'text-emerald-300' : 'text-zinc-500')
+            : showActiveState || isSet
+              ? 'text-emerald-400/80'
+              : 'text-zinc-600'
         )}
       />
       <span>{label}</span>

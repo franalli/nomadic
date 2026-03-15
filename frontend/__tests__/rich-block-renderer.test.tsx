@@ -258,6 +258,33 @@ describe('RichBlockRenderer check-in thumbnails', () => {
     expect(screen.queryByRole('img', { name: /arrival/i })).not.toBeInTheDocument();
     expect(screen.getByText('Arrival')).toBeInTheDocument();
   });
+
+  it('renders a flight deeplink CTA for arrival blocks with a booked flight', () => {
+    const block = buildArrivalBlock({
+      booked_tile: {
+        id: 'flight_1',
+        type: 'flight',
+        title: 'ITA Airways - Direct',
+        currency: 'USD',
+        deeplink_url: 'https://www.aviasales.com/search/AMS0704FCO14041',
+      },
+    });
+
+    render(
+      <RichBlockRenderer
+        block={block}
+        blockIndex={0}
+        blockId="arrival-flight-link"
+        dayNumber={1}
+        mode="planning"
+      />
+    );
+
+    expect(screen.getByRole('link', { name: /book on aviasales/i })).toHaveAttribute(
+      'href',
+      'https://www.aviasales.com/search/AMS0704FCO14041'
+    );
+  });
 });
 
 describe('RichBlockRenderer activity hierarchy', () => {

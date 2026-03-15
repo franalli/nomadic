@@ -116,7 +116,7 @@ async def clear_all_checkpoints() -> None:
 
 
 async def clear_response_caches() -> int:
-    """Clear L1 in-memory caches (experience, specialist, tile, feasibility, router, browse, enrichment, IATA).
+    """Clear L1 in-memory caches and, when configured, persistent L2 reset caches.
 
     L2 (PostgreSQL) is only cleared when settings.clear_l2_on_session_reset is True
     (set CLEAR_L2_ON_RESET=true in .env for local dev). In production this flag is
@@ -149,20 +149,37 @@ async def clear_response_caches() -> int:
     from app.config import settings
 
     if settings.clear_l2_on_session_reset and not settings.pytest_running:
-        try:
-            from sqlalchemy import text
-
-            from app.db import _get_async_session_factory
-
-            factory = _get_async_session_factory()
-            async with factory() as db:
-                result = await db.execute(text("DELETE FROM response_cache"))
-                total += result.rowcount
-                await db.commit()
-        except Exception:
-            pass
+        total += await _clear_reset_l2_caches()
 
     return total
+
+
+async def _clear_reset_l2_caches() -> int:
+    """Clear all persistent caches that must not survive a fresh-session reset."""
+    from sqlalchemy import delete
+
+    from app.db import _get_async_session_factory
+    from app.db_models import ResponseCache, UnsplashImageCache
+
+    factory = _get_async_session_factory()
+    async with factory() as db:
+        try:
+            response_result = await db.execute(delete(ResponseCache))
+            unsplash_result = await db.execute(delete(UnsplashImageCache))
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            logger.exception("Failed to clear L2 caches during session reset")
+            raise RuntimeError("Failed to clear L2 caches during session reset") from exc
+
+    response_rows = int(response_result.rowcount or 0)
+    unsplash_rows = int(unsplash_result.rowcount or 0)
+    logger.info(
+        "[CACHE_RESET] Cleared L2 rows: response_cache=%d unsplash_image_cache=%d",
+        response_rows,
+        unsplash_rows,
+    )
+    return response_rows + unsplash_rows
 
 
 async def clear_session_checkpoint(session_id: str) -> None:

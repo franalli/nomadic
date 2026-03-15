@@ -8,9 +8,14 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { DS } from '@/lib/design-system';
 import { getDeepLinkParams } from '@/lib/tileUtils';
 import { cn } from '@/lib/utils';
+import { useDocumentTripInputs } from '@/state/documentStore';
 import type { Tile } from '@/types/tile';
 
-import { getTileDeeplinkPillLabel, isPartnerDeeplinkUrl } from './tileHelpers';
+import {
+  getEffectiveTileDeeplinkUrl,
+  getTileDeeplinkPillLabel,
+  isPartnerDeeplinkUrl,
+} from './tileHelpers';
 
 type TileCardActionsProps = {
   tile: Tile;
@@ -18,6 +23,9 @@ type TileCardActionsProps = {
 };
 
 export function TileCardActions({ tile, onViewDetailsClick }: TileCardActionsProps) {
+  const tripInputs = useDocumentTripInputs();
+  const deeplinkUrl = getEffectiveTileDeeplinkUrl(tile, tripInputs);
+
   return (
     <div className="flex flex-col items-end gap-2">
       <div className="flex items-center gap-2">
@@ -46,11 +54,11 @@ export function TileCardActions({ tile, onViewDetailsClick }: TileCardActionsPro
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        {tile.deeplink_url && tile.deeplink_url !== '#' && (() => {
-          const isPartner = isPartnerDeeplinkUrl(tile.deeplink_url);
+        {deeplinkUrl && deeplinkUrl !== '#' && (() => {
+          const isPartner = isPartnerDeeplinkUrl(deeplinkUrl);
           return (
             <a
-              href={tile.deeplink_url}
+              href={deeplinkUrl}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(event) => event.stopPropagation()}
@@ -66,7 +74,7 @@ export function TileCardActions({ tile, onViewDetailsClick }: TileCardActionsPro
               )}
             >
               {isPartner ? <ExternalLink className="h-3.5 w-3.5" /> : <MapPin className="h-3.5 w-3.5" />}
-              {getTileDeeplinkPillLabel(tile)}
+              {getTileDeeplinkPillLabel(tile, deeplinkUrl)}
             </a>
           );
         })()}
